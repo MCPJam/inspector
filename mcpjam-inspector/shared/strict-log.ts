@@ -3,8 +3,12 @@ import { INTERNAL_TO_V1_CODE, V1_ERROR_CODES } from "@mcpjam/sdk/public-api";
 import catalog from "./telemetry-catalog.generated.json";
 
 type Fields = Record<string, unknown>;
-type Rule = { kind?: string; values?: readonly string[] };
-const rules: Record<string, Rule> = catalog.fields;
+export type StrictLogFieldRule = {
+  kind?: string;
+  values?: readonly string[];
+  max?: number;
+};
+const rules: Record<string, StrictLogFieldRule> = catalog.fields;
 const messages = new Set<string>(catalog.messages);
 const ERROR_CLASSES = [
   "Error",
@@ -22,6 +26,21 @@ const ENUMS: Record<string, readonly string[]> = {
   method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
   level: ["debug", "info", "warn", "error"],
 };
+
+/** Own keys only: a field named `toString` or `constructor` has no rule. */
+function own<T>(map: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
+/** The rule a context or payload field must meet to be copied into a row. */
+export function strictLogFieldRule(key: string): StrictLogFieldRule | undefined {
+  const rule = own(rules, key);
+  const values = own(ENUMS, key) ?? rule?.values;
+  if (values) return { values };
+  if (rule?.kind === "number")
+    return { kind: "number", max: key === "durationMs" ? 86400000 : 1000000000 };
+  return rule;
+}
 
 function approved(value: unknown, values: readonly string[]) {
   return typeof value === "string" && values.includes(value)
@@ -70,6 +89,15 @@ export function buildStrictLogRow(
   const event = approved(name, catalog.events) ?? "log.unknown";
   const row: Fields = { event, timestamp: new Date().toISOString() };
   copySafeLogContext(row, context, payload);
+  if (event === "model_catalog.refresh.failed") {
+    row.level = "warn";
+    delete row.reason;
+    const reason = approved(payload.reason, [
+      "fetch_failed",
+      "invalid_catalog",
+    ]);
+    if (reason) row.reason = reason;
+  }
   const code = approved(payload.errorCode, [
     ...V1_ERROR_CODES,
     ...Object.keys(INTERNAL_TO_V1_CODE),
@@ -111,10 +139,9 @@ export function buildStrictLogRow(
 
 function copySafeLogContext(row: Fields, context: Fields, payload: Fields) {
   for (const [key, value] of Object.entries({ ...payload, ...context })) {
-    const rule = rules[key];
-    const values = ENUMS[key] ?? rule?.values;
-    if (values) {
-      const kept = approved(value, values);
+    const rule = strictLogFieldRule(key);
+    if (rule?.values) {
+      const kept = approved(value, rule.values);
       if (kept !== undefined) row[key] = kept;
     } else if (rule?.kind === "boolean" && typeof value === "boolean")
       row[key] = value;
@@ -123,7 +150,7 @@ function copySafeLogContext(row: Fields, context: Fields, payload: Fields) {
       typeof value === "number" &&
       Number.isFinite(value) &&
       value >= 0 &&
-      value <= (key === "durationMs" ? 86400000 : 1000000000)
+      value <= (rule.max ?? 0)
     )
       row[key] = value;
   }

@@ -74,6 +74,8 @@ import { extractHostDisplayModes } from "@/lib/client-config";
 import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
+import { webSearchRefusalCodeOf } from "@/lib/web-search-refusal";
+import { WebSearchRefusalNotice } from "./web-search-refusal-notice";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 
@@ -277,6 +279,9 @@ export function ToolPart({
   const runLocation = localComputerEnabled
     ? readToolRunLocation(label, rawResultData)
     : null;
+  // A web search the organization's AI key policy refused. Read from the
+  // RAW output, like the run location: the editable value is not evidence.
+  const webSearchRefusalCode = webSearchRefusalCodeOf(label, rawResultData);
   const resultDisplayData =
     outputValue !== undefined ? outputValue : rawResultData;
   const imagePreviewData = rawResultData;
@@ -1122,6 +1127,9 @@ export function ToolPart({
       </div>
 
       <ToolResourceAttachments result={rawResultData} serverId={serverId} />
+      {webSearchRefusalCode ? (
+        <WebSearchRefusalNotice code={webSearchRefusalCode} />
+      ) : null}
       {harnessStep &&
         (state === "input-streaming" || state === "input-available") && (
           <HarnessLiveOutput toolCallId={toolCallId} />

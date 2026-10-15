@@ -18,7 +18,7 @@ vi.mock("../PosthogUtils", () => ({
   standardEventProps: standardEventPropsMock,
 }));
 
-import { track, refreshPermittedIdentity } from "../analytics";
+import { track, retryPersonProfile } from "../analytics";
 import * as telemetry from "../telemetry-context";
 
 describe("track()", () => {
@@ -193,7 +193,7 @@ describe("track()", () => {
 });
 
 
-describe("refreshPermittedIdentity", () => {
+describe("retryPersonProfile", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each(["full", "strict", "wrong-actor", "id-only"] as const)(
@@ -211,13 +211,13 @@ describe("refreshPermittedIdentity", () => {
         },
       });
       const capture = vi.fn();
-      refreshPermittedIdentity({ capture }, "member", {
+      retryPersonProfile({ capture }, {
         deployment: "hosted", email: "member@example.test", name: "Member",
-      });
+      }, "member");
       if (scenario === "strict" || scenario === "wrong-actor") {
         expect(capture).not.toHaveBeenCalled();
       } else {
-        expect(capture).toHaveBeenCalledExactlyOnceWith("$set", {
+        expect(capture).toHaveBeenCalledExactlyOnceWith("$set", {}, {
           $set: scenario === "id-only"
             ? { deployment: "hosted" }
             : { deployment: "hosted", email: "member@example.test", name: "Member" },

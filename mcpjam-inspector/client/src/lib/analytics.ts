@@ -1,6 +1,5 @@
 import posthog, { type PostHog } from "posthog-js";
 import { currentTelemetryActor, currentTelemetryCaptureContext } from "./telemetry-context";
-import { withoutIdentifyingProperties } from "@/shared/telemetry-privacy";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import { standardEventProps } from "./PosthogUtils";
 
@@ -120,17 +119,26 @@ export function track(
   }
 }
 
-/** Refresh the SDK person profile through the same guarded capture boundary. */
-export function refreshPermittedIdentity(
-  posthog: Pick<PostHog, "capture">,
-  actor: string,
-  properties: Record<string, string | null | undefined>,
+export interface PersonProfileProperties {
+  deployment: "hosted" | "self_hosted";
+  email?: string | null;
+  name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  occupation?: string | null;
+}
+
+/** Profile recovery shares the capture boundary without posing as a product event. */
+export function retryPersonProfile(
+  client: Pick<PostHog, "capture">,
+  properties: PersonProfileProperties,
+  actor: string | null = currentTelemetryActor(),
 ): void {
   const context = currentTelemetryCaptureContext();
-  if (currentTelemetryActor() !== actor || context.policy.content !== "full") return;
-  posthog.capture("$set", {
+  if (!actor || currentTelemetryActor() !== actor || context.policy.content !== "full") return;
+  client.capture("$set", {}, {
     $set: context.policy.identity === "full"
       ? properties
-      : withoutIdentifyingProperties(properties),
+      : { deployment: properties.deployment },
   });
 }

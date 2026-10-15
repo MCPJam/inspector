@@ -12,7 +12,9 @@
  * (Claude Code, Codex) runs on an organization connection to its own vendor,
  * so it is a problem only when the selection isn't one: another vendor, an
  * MCPJam-provided or personal model, or a connection the harness can't use
- * (a custom base URL, a local runtime).
+ * (a custom base URL, a local runtime). A built-in tool the client enables
+ * (web search) is a problem while it can't run on the organization's
+ * providers: the run would otherwise lose a tool it was configured with.
  */
 import { isOrgKeyPolicyRefusalCode } from "@/shared/ai-execution-refusal";
 import {
@@ -22,7 +24,7 @@ import {
 } from "@/lib/org-keys-refusal";
 
 export type AiLaunchProblemDependency =
-  "target" | "judge" | "persona" | "runtime";
+  "target" | "judge" | "persona" | "runtime" | "builtin_tool";
 
 export type AiLaunchProblem = {
   dependency: AiLaunchProblemDependency | (string & {});
@@ -38,6 +40,7 @@ const DEPENDENCY_TITLE: Readonly<Record<AiLaunchProblemDependency, string>> = {
   judge: "Judge",
   persona: "Simulated user",
   runtime: "Runtime",
+  builtin_tool: "Built-in tool",
 };
 
 function isKnownDependency(

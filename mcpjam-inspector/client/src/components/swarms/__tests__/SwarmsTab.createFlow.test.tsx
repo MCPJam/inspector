@@ -3069,239 +3069,85 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
   });
 });
 
-/**
- * Where a REUSED goal will actually run, said out loud before launch.
- *
- * A persona carries no environment; its goals do. Adding an existing persona
- * brings those goals, and the Describe step's pre-filled environment then wins
- * over the one they were authored against. That override is deliberate and
- * stays — what these tests pin is that Confirm now SAYS so, which is the part
- * that let 15 goals written for one server run against a different one and
- * still read as a clean wave.
- */
-describe("SwarmsTab — Confirm discloses where reused goals run", () => {
+describe("SwarmsTab — Confirm keeps reused personas in their cards", () => {
   function setEnvironments(rows: Array<Record<string, unknown>>) {
     environmentsRef.current = rows as typeof environmentsRef.current;
     environments = environmentsRef.current;
   }
 
-  function reuseAna(journeys: Array<Record<string, unknown>>) {
+  it.each([
+    ["the selected environment", { environmentIds: ["env-1"] }, false],
+    ["another environment", { environmentIds: ["env-2"] }, true],
+    ["a legacy client", { hostIds: ["host-2"] }, true],
+  ])(
+    "does not repeat persona summaries for goals from %s",
+    async (_label, origin, showsWarning) => {
+      existingPersonas = [
+        { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+      ];
+      personaJourneys = [
+        { _id: "j-1", name: "Reconcile payouts", goal: "Reconcile", ...origin },
+      ];
+      openDescribe();
+      pickExistingPersona(/include ana/i);
+      fireEvent.click(screen.getByTestId("new-swarm-continue"));
+      const personas = await screen.findByTestId("new-swarm-reused-personas");
+      await waitFor(() => expect(personas).toHaveTextContent("1 goal"));
+
+      expect(
+        within(personas).getByTestId("new-swarm-persona-compact"),
+      ).toHaveTextContent("Ana");
+      expect(
+        screen.queryByTestId("new-swarm-confirm-env-moves"),
+      ).not.toBeInTheDocument();
+      if (showsWarning) {
+        const warning = await screen.findByTestId(
+          "new-swarm-confirm-env-move-warning",
+        );
+        expect(warning).toHaveAttribute("role", "alert");
+        expect(warning).toHaveTextContent(
+          "Some existing goals were written for a different setup and will run against the one selected for this swarm.",
+        );
+        expect(warning).not.toHaveTextContent("Ana");
+      } else {
+        expect(
+          screen.queryByTestId("new-swarm-confirm-env-move-warning"),
+        ).not.toBeInTheDocument();
+      }
+      expect(screen.queryByText(/authored against/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/Different server group/),
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(within(personas).getByTestId("new-swarm-persona-compact"));
+      const detail = await screen.findByTestId("new-swarm-persona-detail");
+      expect(within(detail).getByLabelText("Goal")).toHaveValue("Reconcile");
+    },
+  );
+
+  it("shows one warning for multiple personas with moved goals", async () => {
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+      { _id: "p-2", personaId: "p2", name: "Ben", role: "Dev", notes: "" },
     ];
-    personaJourneys = journeys;
+    personaJourneys = [
+      { _id: "j-1", goal: "Reconcile", environmentIds: ["env-2"] },
+    ];
     openDescribe();
     pickExistingPersona(/include ana/i);
+    pickExistingPersona(/include ben/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
-    return screen.findByTestId("new-swarm-reused-personas");
-  }
 
-  it("flags no move when reused goals already run on the selection", async () => {
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-1"],
-      },
-    ]);
-
-    // Nothing moves — the stored fan-out already IS the seeded selection.
-    expect(
-      screen.queryByTestId("new-swarm-confirm-env-moves"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("says which goals are being moved, and what they were written for", async () => {
-    // Stored on Amazon; the auto-seed picks Prod-like, so the launch re-stamps.
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-2"],
-      },
-      {
-        _id: "j-2",
-        name: "Chase refunds",
-        goal: "Chase",
-        environmentIds: ["env-2"],
-      },
-    ]);
-
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    expect(moves).toHaveTextContent("Ana");
-    expect(moves).toHaveTextContent("2 goals were authored against Amazon");
-    expect(moves).toHaveTextContent("will run here instead");
-  });
-
-  it("stays silent for a LEGACY goal that never had an environment", async () => {
-    // The launch still overrides this one — it has nothing else to run
-    // against — but there is no authored environment to move it off.
-    await reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
-
-    expect(
-      screen.queryByTestId("new-swarm-confirm-env-moves"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("cautions when the move crosses server groups", async () => {
-    // Same client on both rows, so the server-group caution is the only one
-    // that can fire and the assertion cannot pass by accident.
-    setEnvironments([
-      {
-        environmentId: "env-1",
-        projectId: "proj-1",
-        name: "Prod-like",
-        hostId: "host-1",
-        revision: 1,
-        serverAttachmentId: "att-excalidraw",
-      },
-      {
-        environmentId: "env-2",
-        projectId: "proj-1",
-        name: "Amazon",
-        hostId: "host-1",
-        revision: 1,
-        serverAttachmentId: "att-terac",
-      },
-    ]);
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-2"],
-      },
-    ]);
-
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    expect(moves).toHaveTextContent("Different server group.");
-    expect(moves).toHaveTextContent(
-      "These goals were written for another server",
+    const personas = await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() =>
+      expect(within(personas).getAllByText(/1 goal/)).toHaveLength(2),
     );
-  });
-
-  it("cautions when the move crosses CLIENTS", async () => {
-    // The shape this takes on every project without the environments flag: the
-    // composer seeds the first client and the goals were set up on another.
-    setEnvironments([
-      {
-        environmentId: "env-1",
-        projectId: "proj-1",
-        name: "Prod-like",
-        hostId: "host-1",
-        revision: 1,
-        serverAttachmentId: "att-shared",
-      },
-      {
-        environmentId: "env-2",
-        projectId: "proj-1",
-        name: "Amazon",
-        hostId: "host-2",
-        revision: 1,
-        serverAttachmentId: "att-shared",
-      },
-    ]);
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-2"],
-      },
-    ]);
-
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    expect(moves).toHaveTextContent("Different client.");
-    expect(moves).not.toHaveTextContent("server group");
-  });
-
-  it("names the client a LEGACY goal was set up against", async () => {
-    // No environmentIds at all, but `hostIds` says where it ran. Treating that
-    // as unknowable hid a real move on the most common kind of stored goal.
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        hostIds: ["host-2"],
-      },
-    ]);
-
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    expect(moves).toHaveTextContent("Cursor");
-    expect(moves).toHaveTextContent("Different client and server group.");
-  });
-
-  it("does not caution when the move keeps the same server group", async () => {
-    setEnvironments([
-      {
-        environmentId: "env-1",
-        projectId: "proj-1",
-        name: "Prod-like",
-        hostId: "host-1",
-        revision: 1,
-        serverAttachmentId: "att-shared",
-      },
-      {
-        environmentId: "env-2",
-        projectId: "proj-1",
-        name: "Amazon",
-        hostId: "host-2",
-        revision: 1,
-        serverAttachmentId: "att-shared",
-      },
-    ]);
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-2"],
-      },
-    ]);
-
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    // The move is still disclosed; only the caution is withheld.
-    expect(moves).toHaveTextContent("authored against Amazon");
-    expect(moves).not.toHaveTextContent("Different server group");
-  });
-
-  it("tells two same-named environments apart, and keeps the suffix on Confirm", async () => {
-    // The real project has two live environments both called MCPJam. Without a
-    // suffix the Describe picker is a coin flip AND the move notice reads
-    // "authored against MCPJam — moved to MCPJam", which explains nothing.
-    setEnvironments([
-      {
-        environmentId: "env-1",
-        projectId: "proj-1",
-        name: "MCPJam",
-        hostId: "host-1",
-        revision: 1,
-        serverAttachmentId: "att-excalidraw",
-      },
-      {
-        environmentId: "env-2",
-        projectId: "proj-1",
-        name: "MCPJam",
-        hostId: "host-2",
-        revision: 1,
-        serverAttachmentId: "att-terac",
-      },
-    ]);
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-2"],
-      },
-    ]);
-
     expect(
-      await screen.findByTestId("new-swarm-confirm-env-moves"),
-    ).toHaveTextContent("authored against MCPJam #2");
+      screen.getAllByTestId("new-swarm-confirm-env-move-warning"),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
   });
 
   it("re-seeds the target once hosts and environments land", async () => {
@@ -3361,7 +3207,7 @@ describe("SwarmsTab: Confirm with the environments flag off", () => {
     pickExistingPersona(/include ana/i);
   }
 
-  it("says which reused goals are moving to a different client", async () => {
+  it("keeps reused personas in their cards without a repeated summary", async () => {
     reuseAna([
       {
         _id: "j-1",
@@ -3386,10 +3232,18 @@ describe("SwarmsTab: Confirm with the environments flag off", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
 
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    expect(moves).toHaveTextContent("Ana");
-    expect(moves).toHaveTextContent("Cursor");
-    expect(moves).toHaveTextContent("Different client.");
+    expect(
+      await screen.findByTestId("new-swarm-confirm-env-move-warning"),
+    ).toHaveTextContent("Some existing goals were written for a different setup");
+    const personas = screen.getByTestId("new-swarm-reused-personas");
+    await waitFor(() => expect(personas).toHaveTextContent("1 goal"));
+    expect(
+      within(personas).getByTestId("new-swarm-persona-compact"),
+    ).toHaveTextContent("Ana");
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/authored against/)).not.toBeInTheDocument();
   });
 
   it("quotes the fan-out it will actually launch", async () => {
@@ -3431,7 +3285,11 @@ describe("SwarmsTab: Confirm with the environments flag off", () => {
     reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
-    await screen.findByTestId("new-swarm-reused-personas");
+    const personas = await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() => expect(personas).toHaveTextContent("1 goal"));
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-move-warning"),
+    ).not.toBeInTheDocument();
   });
 });
 
