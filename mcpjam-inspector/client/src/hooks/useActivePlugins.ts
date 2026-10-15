@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { describeConvexFailure } from "@/lib/convex-error";
@@ -123,23 +123,27 @@ export function useActivePlugins(
   const { isAuthenticated } = useConvexAuth();
   const ready =
     flagEnabled && isAuthenticated && shouldQueryProjectId(projectId);
-  // A server this member can't use yet is left out alone, not its plugin.
-  const [olderBackend, setOlderBackend] = useState(false);
-  const { data, error } = useSoftQuery<ActivePluginsResult>(
-    "plugins:resolveActivePlugins",
+  const args =
     ready && projectId
       ? {
           projectId,
           content: false,
           runtimeVenue: options?.runtimeVenue ?? activePluginsRuntimeVenue(),
-          ...(olderBackend ? {} : { componentAdmission: true }),
         }
-      : "skip",
+      : null;
+  // A server this member can't use yet is left out alone, not its plugin.
+  const admitted = useSoftQuery<ActivePluginsResult>(
+    "plugins:resolveActivePlugins",
+    args ? { ...args, componentAdmission: true } : "skip",
   );
-  const refused = !olderBackend && refusesComponentAdmission(error);
-  useEffect(() => {
-    if (refused) setOlderBackend(true);
-  }, [refused]);
+  // Asked the old way only while that read is refused, so it answers again
+  // as soon as it can: one failure never pins the old view.
+  const refused = refusesComponentAdmission(admitted.error);
+  const legacy = useSoftQuery<ActivePluginsResult>(
+    "plugins:resolveActivePlugins",
+    args && refused ? args : "skip",
+  );
+  const { data, error } = refused ? legacy : admitted;
   const plugins =
     !error && data?.enabled === true && Array.isArray(data.plugins)
       ? data.plugins
@@ -152,9 +156,8 @@ export function useActivePlugins(
       plugins,
       activePlugins,
       activeServers: activePluginServers(plugins),
-      isLoading:
-        ready && ((data === undefined && error === undefined) || refused),
-      failed: ready && error !== undefined && !refused,
+      isLoading: ready && data === undefined && error === undefined,
+      failed: ready && error !== undefined,
     };
-  }, [plugins, ready, data, error, refused]);
+  }, [plugins, ready, data, error]);
 }

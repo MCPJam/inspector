@@ -240,9 +240,20 @@ describe("useActivePlugins", () => {
       expect(hook.current.activePlugins.map((p) => p.pluginId)).toEqual([
         "plg_bits",
       ]);
-      // It keeps asking the old way rather than refusing every other render.
+      // The new read answering again takes over: one failure never pins the
+      // old view, which skips a plugin with an unusable server whole.
+      state.next = (args: { componentAdmission?: boolean }) =>
+        args.componentAdmission
+          ? result([{ ...bits, pluginId: "plg_admitted" }])
+          : result([bits]);
       rerender();
-      expect(state.calls.at(-1)?.args).not.toHaveProperty("componentAdmission");
+      expect(state.calls.at(-1)?.args).toHaveProperty(
+        "componentAdmission",
+        true,
+      );
+      expect(hook.current.activePlugins.map((p) => p.pluginId)).toEqual([
+        "plg_admitted",
+      ]);
     },
   );
 
