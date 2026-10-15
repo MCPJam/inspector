@@ -1,6 +1,7 @@
 import { mountedRoutes } from "./telemetry-route-catalog.mjs";
 import { catalogSourceFiles } from "./telemetry-source-files.mjs";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
@@ -152,5 +153,9 @@ for (const [file, catalog] of Object.entries(outputs)) {
   // Compact generated catalogs avoid thousands of mechanically repeated lines.
   const text = `${JSON.stringify(catalog)}\n`;
   // Unchanged bytes keep their mtime, so watchers do not reload for nothing.
-  if (!existsSync(file) || readFileSync(file, "utf8") !== text) writeFileSync(file, text);
+  if (existsSync(file) && readFileSync(file, "utf8") === text) continue;
+  // Parallel workspace runs generate at once; a rename never exposes a half-written catalog.
+  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temp, text);
+  renameSync(temp, file);
 }
