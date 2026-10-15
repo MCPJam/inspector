@@ -46,6 +46,7 @@ import {
   probeFreePort,
   resolveServerPortAttempts,
   resolveServerStartPort,
+  waitForListening,
 } from "./server-port-fallback.js";
 import { computeInstanceEnv } from "../bin/runtime-profile.mjs";
 import log from "electron-log";
@@ -609,6 +610,15 @@ async function startHonoServer(): Promise<number> {
         server?.once("close", cleanup);
       },
     );
+    try {
+      // Without this, a port taken after the probe (see `probeFreePort`)
+      // surfaces as an uncaught EADDRINUSE that kills the app instead of
+      // reaching the startup failure dialog.
+      await waitForListening(server);
+    } catch (error) {
+      server = null;
+      throw error;
+    }
     registerBrowserController(`http://127.0.0.1:${port}`);
     // Attach the computer terminal WebSocket upgrade handler (mirror of
     // server/index.ts). Without this the Computer tab's Shell can't upgrade.
@@ -1226,6 +1236,18 @@ async function handleActivate(): Promise<void> {
         setTrustedUpdateWindow(mainWindow);
       } catch (error) {
         log.error("Failed to restart server:", error);
+        // No server means no window: without the dialog the app would sit in
+        // the dock doing nothing, and every retry reuses the same cached port.
+        // Every dialog choice quits, so the next launch probes afresh.
+        try {
+          showStartupFailureDialog(error);
+        } catch (dialogErr) {
+          log.error(
+            "Failed to show startup failure dialog; quitting silently:",
+            dialogErr,
+          );
+          app.quit();
+        }
       }
     }
   }

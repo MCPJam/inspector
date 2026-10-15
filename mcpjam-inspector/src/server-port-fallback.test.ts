@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
-import { probeFreePort } from "./server-port-fallback";
+import { probeFreePort, waitForListening } from "./server-port-fallback";
 
 function listenBlocker(port: number): Promise<{
   close: () => Promise<void>;
@@ -104,5 +104,32 @@ describe("probeFreePort", () => {
       }),
     ).rejects.toThrow(/No free port available after 4 attempts/);
     expect(onAttemptFailed).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("waitForListening", () => {
+  it("resolves once bound and leaves no extra error listener", async () => {
+    const server = net.createServer();
+    server.listen(0, "127.0.0.1");
+
+    await waitForListening(server);
+
+    expect(server.listening).toBe(true);
+    expect(server.listenerCount("error")).toBe(0);
+    await new Promise<void>((res) => server.close(() => res()));
+  });
+
+  it("rejects with EADDRINUSE instead of throwing it as uncaught", async () => {
+    // The race the probe can't close: something else owns the port by the
+    // time the real server binds.
+    const blocker = await listenBlocker(0);
+    const server = net.createServer();
+    server.listen(blocker.port, "127.0.0.1");
+
+    await expect(waitForListening(server)).rejects.toMatchObject({
+      code: "EADDRINUSE",
+    });
+    expect(server.listenerCount("listening")).toBe(0);
+    await blocker.close();
   });
 });
