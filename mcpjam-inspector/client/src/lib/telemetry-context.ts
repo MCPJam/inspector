@@ -49,12 +49,14 @@ let contentAnswer:
 const identityListeners = new Set<() => void>();
 let policyUpdateDepth = 0;
 let policyNotificationPending = false;
+let policyRevision = 0;
 
 function notifyIdentity(): void {
   if (policyUpdateDepth > 0) {
     policyNotificationPending = true;
     return;
   }
+  policyRevision += 1;
   for (const listener of identityListeners) {
     try {
       listener();
@@ -122,6 +124,11 @@ export function telemetryNamesAllowed(
   actorId: string | null = currentActorId,
 ): boolean {
   return telemetryIdentityFor(actorId) === "full" && contentAllowed();
+}
+
+/** A stable snapshot that also observes batched strict→full transitions. */
+export function currentTelemetryPolicyRevision(): number {
+  return policyRevision;
 }
 
 /** Policy changes notify recorders even when only the visible context changes. */

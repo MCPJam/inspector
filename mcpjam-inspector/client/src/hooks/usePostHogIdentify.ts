@@ -10,6 +10,7 @@ import {
   subscribeTelemetryPolicy,
   currentTelemetryCaptureContext,
   currentTelemetryActor,
+  currentTelemetryPolicyRevision,
   telemetryIdentityFor,
 } from "@/lib/telemetry-context";
 
@@ -45,6 +46,15 @@ export function usePostHogIdentify() {
   const contentFull = useSyncExternalStore(subscribeTelemetryPolicy, () =>
     currentTelemetryCaptureContext().policy.content === "full",
   );
+  const policyRevision = useSyncExternalStore(
+    subscribeTelemetryPolicy,
+    currentTelemetryPolicyRevision,
+  );
+  const profileAttemptRef = useRef<{
+    actor: string;
+    revision: number;
+    client: typeof posthog;
+  } | null>(null);
   const previousActorRef = useRef<{ key: string; wasAuthed: boolean } | null>(
     null,
   );
@@ -114,12 +124,30 @@ export function usePostHogIdentify() {
     }
 
     // Re-read after layout effects: this render may precede an actor/context reset.
-    // A locally accepted identify cannot be retried after the relay rejects it.
+    // The SDK caches accepted profiles before compression and the live policy check.
     const canIdentify =
       contentFull &&
       currentTelemetryActor() === actorKey &&
       currentTelemetryCaptureContext().policy.content === "full";
-    if (canIdentify) posthog.identify(actorKey, personProperties);
+    if (canIdentify) {
+      posthog.identify(actorKey, personProperties);
+      const previousAttempt = profileAttemptRef.current;
+      if (
+        !isActorChange &&
+        previousAttempt?.actor === actorKey &&
+        previousAttempt.client === posthog &&
+        previousAttempt.revision !== policyRevision
+      ) {
+        // Bypass SDK profile dedup after a policy transition may have dropped it.
+        // capture still enforces opt-out, capture-time grants and live send policy.
+        posthog.capture("$set", {}, { $set: personProperties });
+      }
+      profileAttemptRef.current = {
+        actor: actorKey,
+        revision: policyRevision,
+        client: posthog,
+      };
+    }
     if (isActorChange) {
       posthog.register({ user_id: actorKey });
       previousActorRef.current = { key: actorKey, wasAuthed: isAuthedActor };
@@ -131,5 +159,13 @@ export function usePostHogIdentify() {
         getAccessToken: getAccessTokenRef.current,
       });
     }
-  }, [posthog, actorKey, user, convexUser, identity, contentFull]);
+  }, [
+    posthog,
+    actorKey,
+    user,
+    convexUser,
+    identity,
+    contentFull,
+    policyRevision,
+  ]);
 }

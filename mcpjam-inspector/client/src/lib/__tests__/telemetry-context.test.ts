@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   currentTelemetryCaptureContext,
+  currentTelemetryPolicyRevision,
+  setTelemetryCaptureContextAndContent,
+  subscribeTelemetryPolicy,
   resetTelemetryIdentity,
   setTelemetryActor,
   setTelemetryContentPolicy,
@@ -27,6 +30,26 @@ describe("the identity grant", () => {
     setSessionPrivacy("full");
     setTelemetryCaptureContext({ projectIds: ["project_identity"], organizationIds: [] });
     setTelemetryContentPolicy("user_A", "full");
+  });
+
+  it("versions meaningful policy changes once per atomic update", () => {
+    const initial = currentTelemetryPolicyRevision();
+    setTelemetryContentPolicy("user_A", "full");
+    expect(currentTelemetryPolicyRevision()).toBe(initial);
+    setTelemetryContentPolicy("user_A", "strict");
+    setTelemetryContentPolicy("user_A", "full");
+    expect(currentTelemetryPolicyRevision()).toBe(initial + 2);
+    const listener = vi.fn();
+    const unsubscribe = subscribeTelemetryPolicy(listener);
+    setTelemetryCaptureContextAndContent(
+      { projectIds: ["project_next"], organizationIds: [] },
+      "user_A",
+      "full",
+    );
+    unsubscribe();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(currentTelemetryPolicyRevision()).toBe(initial + 3);
+    expect(currentTelemetryCaptureContext().policy.content).toBe("full");
   });
 
   it("is withheld until the backend answers full for the current actor", () => {
