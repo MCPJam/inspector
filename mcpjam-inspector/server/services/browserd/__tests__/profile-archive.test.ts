@@ -66,55 +66,89 @@ describe("browser profile archives", () => {
     await expect(readFile(join(target, "SingletonLock"))).rejects.toThrow();
   });
 
-  it("leaves passwords, autofill, history and extensions out of the archive but keeps cookies", async () => {
-    const source = await mkdtemp(join(tmpdir(), "mcpjam-profile-private-"));
-    temporaryDirectories.push(source);
-    const profile = join(source, "Default");
-    await mkdir(join(profile, "Local Storage", "leveldb"), { recursive: true });
-    await mkdir(join(profile, "Extensions", "abc"), { recursive: true });
-    await mkdir(join(profile, "Local Extension Settings", "abc"), {
-      recursive: true,
-    });
-    await mkdir(join(profile, "Sessions"), { recursive: true });
-    const kept = [
-      "Cookies",
-      "Cookies-journal",
-      "Preferences",
-      "Local Storage/leveldb/000003.log",
-    ];
-    const dropped = [
-      "Login Data",
-      "Login Data-journal",
-      "Login Data For Account",
-      "Login Data For Account-wal",
-      "Web Data",
-      "Web Data-journal",
-      "Account Web Data",
-      "History",
-      "History-journal",
-      "Visited Links",
-      "Top Sites",
-      "Shortcuts",
-      "Network Action Predictor",
-      "Sessions/Session_1",
-      "Extensions/abc/manifest.json",
-      "Local Extension Settings/abc/000003.log",
-    ];
-    for (const path of [...kept, ...dropped]) {
-      await writeFile(join(profile, ...path.split("/")), path);
-    }
+  it.each(["Default", "Profile 1", "Guest Profile"])(
+    "leaves passwords, autofill, history and extensions out of %s but keeps its sessions",
+    async (profileName) => {
+      const source = await mkdtemp(join(tmpdir(), "mcpjam-profile-private-"));
+      temporaryDirectories.push(source);
+      const profile = join(source, profileName);
+      for (const directory of [
+        "Network",
+        "Local Storage/leveldb",
+        "IndexedDB/https_example.com_0.indexeddb.leveldb",
+        "Session Storage",
+        "Extensions/abc",
+        "Extension State",
+        "Local Extension Settings/abc",
+        "Sessions",
+        "Sync Data/LevelDB",
+      ]) {
+        await mkdir(join(profile, ...directory.split("/")), {
+          recursive: true,
+        });
+      }
+      const kept = [
+        "Cookies",
+        "Cookies-journal",
+        "Network/Cookies",
+        "Network/Cookies-wal",
+        "Preferences",
+        "Local Storage/leveldb/000003.log",
+        "IndexedDB/https_example.com_0.indexeddb.leveldb/000003.log",
+        "Session Storage/000003.log",
+      ];
+      const privateStores = [
+        "Login Data",
+        "Login Data For Account",
+        "Affiliation Database",
+        "Web Data",
+        "Account Web Data",
+        "History",
+        "Media History",
+        "Visited Links",
+        "Top Sites",
+        "Shortcuts",
+        "Favicons",
+        "Network Action Predictor",
+        "Current Session",
+        "Last Session",
+        "Current Tabs",
+        "Last Tabs",
+        "Extension Cookies",
+      ];
+      const dropped = [
+        ...privateStores.flatMap((store) => [
+          store,
+          `${store}-journal`,
+          `${store}-wal`,
+          `${store}-shm`,
+        ]),
+        "Sessions/Session_1",
+        "Sync Data/LevelDB/000003.log",
+        "Extensions/abc/manifest.json",
+        "Extension State/000003.log",
+        "Local Extension Settings/abc/000003.log",
+      ];
+      for (const path of [...kept, ...dropped]) {
+        await writeFile(join(profile, ...path.split("/")), path);
+      }
 
-    const archived = tarEntryNames(
-      gunzipSync(await exportBrowserProfileArchive(source)),
-    );
+      const archived = tarEntryNames(
+        gunzipSync(await exportBrowserProfileArchive(source)),
+      );
 
-    for (const path of kept) expect(archived).toContain(`Default/${path}`);
-    for (const path of dropped) {
-      expect(archived).not.toContain(`Default/${path}`);
-    }
-    expect(archived).not.toContain("Default/Extensions");
-    expect(archived).not.toContain("Default/Sessions");
-  });
+      for (const path of kept) {
+        expect(archived).toContain(`${profileName}/${path}`);
+      }
+      const leaked = archived.filter((entry) =>
+        dropped.some((path) => entry.startsWith(`${profileName}/${path}`)),
+      );
+      expect(leaked).toEqual([]);
+      for (const directory of ["Extensions", "Sessions", "Sync Data"]) {
+        expect(archived).not.toContain(`${profileName}/${directory}`);
+      }
+    },
+  );
 
   it("refuses a gzip bomb without allocating its expansion", async () => {
     const target = await mkdtemp(join(tmpdir(), "mcpjam-profile-bomb-"));

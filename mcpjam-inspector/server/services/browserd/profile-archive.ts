@@ -33,22 +33,36 @@ const EXCLUDED_PROFILE_SEGMENTS = new Set([
 // A saved profile exists to carry signed-in sessions, which live in cookies
 // and site storage. Saved passwords, autofill (cards and addresses included),
 // browsing history and extension state are not needed for that, so they never
-// leave the browser that collected them.
+// leave the browser that collected them. Names match at any depth, so every
+// profile directory (`Default`, `Profile 1`, `Guest Profile`) is covered.
+//
+// A denylist, not an allowlist of session stores: Chromium moves site storage
+// between releases (Cookies moved under `Network/`), and an allowlist that
+// misses a store silently signs the user out of every site that used it.
 const PRIVATE_PROFILE_SEGMENTS = new Set([
   "login data",
   "login data for account",
+  "affiliation database",
   "web data",
   "account web data",
   "history",
+  "media history",
   "visited links",
   "top sites",
   "shortcuts",
+  "favicons",
   "network action predictor",
   "sessions",
+  "current session",
+  "last session",
+  "current tabs",
+  "last tabs",
+  "sync data",
   "extensions",
   "extension state",
   "extension rules",
   "extension scripts",
+  "extension cookies",
   "local extension settings",
   "sync extension settings",
   "managed extension settings",
