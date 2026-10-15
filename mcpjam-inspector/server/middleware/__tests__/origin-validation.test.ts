@@ -346,14 +346,14 @@ describe("originValidationMiddleware", () => {
         headers: { Origin: "http://localhost:5173" },
       });
 
-      // The default dev ports are no longer allowed when custom origins are
-      // set. Only the server's own UI origin survives (next test).
+      // A custom list drops the default dev ports. Only the server's own UI
+      // origin stays allowed (next describe).
       expect(res.status).toBe(403);
     });
 
-    // INSPECTOR-CLIENT-2F5: the desktop app inherits the user's OS
-    // environment, and `ALLOWED_ORIGINS` set there for another project
-    // replaced this list, so the app 403'd its own requests.
+    // The desktop app inherits the user's OS environment, so an
+    // `ALLOWED_ORIGINS` set there for another project must not lock the
+    // app's own page out of its server.
     describe("the server's own UI origin outside hosted mode", () => {
       const ownOrigins = [
         `http://localhost:${SERVER_PORT}`,

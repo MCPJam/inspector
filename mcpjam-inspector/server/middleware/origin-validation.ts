@@ -35,8 +35,8 @@ function ownUiOrigins(): string[] {
  * In hosted mode the override replaces the list, since it is the deployment's
  * exact allowlist. Outside hosted mode it can only ADD: `ALLOWED_ORIGINS` is a
  * common variable name, and a desktop app inherits the user's OS environment.
- * A value set there for some other project used to replace this list, and the
- * app then 403'd its own requests (INSPECTOR-CLIENT-2F5).
+ * A value set there for some other project must not remove the origin the
+ * app's own page is served from, or every `/api/*` request from it is 403'd.
  */
 function getAllowedOrigins(): string[] {
   // Allow override via environment variable
