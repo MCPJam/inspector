@@ -70,6 +70,15 @@ export function buildStrictLogRow(
   const event = approved(name, catalog.events) ?? "log.unknown";
   const row: Fields = { event, timestamp: new Date().toISOString() };
   copySafeLogContext(row, context, payload);
+  if (event === "model_catalog.refresh.failed") {
+    row.level = "warn";
+    delete row.reason;
+    const reason = approved(payload.reason, [
+      "fetch_failed",
+      "invalid_catalog",
+    ]);
+    if (reason) row.reason = reason;
+  }
   const code = approved(payload.errorCode, [
     ...V1_ERROR_CODES,
     ...Object.keys(INTERNAL_TO_V1_CODE),
