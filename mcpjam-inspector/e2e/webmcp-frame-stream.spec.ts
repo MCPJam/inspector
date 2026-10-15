@@ -15,6 +15,7 @@
  * which is the right place for it: those are decisions, not integrations.
  */
 import { expect, test } from "@playwright/test";
+import { smokeGuestBearer } from "./smoke-guest-setup";
 import { WebSocket } from "ws";
 import sharp from "sharp";
 import os from "node:os";
@@ -101,14 +102,7 @@ function authed(token: string, extra: Record<string, string> = {}) {
  * so a developer with the inspector open re-authorizes it after a local run.
  */
 async function authorizeLocalBrowser(token: string): Promise<void> {
-  const guest = await fetch(`${BASE}/api/web/guest-session`, {
-    method: "POST",
-    headers: { Origin: ORIGIN, "content-type": "application/json" },
-    body: "{}",
-  });
-  guestBearer = guest.ok
-    ? ((await guest.json()) as { token?: string }).token
-    : undefined;
+  guestBearer = await smokeGuestBearer(BASE, ORIGIN);
 
   const granted = await fetch(
     `${BASE}/api/mcp/computers/local-browser/consent/grant`,
