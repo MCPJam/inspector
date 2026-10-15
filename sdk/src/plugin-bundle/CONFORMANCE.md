@@ -153,10 +153,12 @@ its `__tests__/`.
 
 ## Known gaps
 
-- **Archive permission bits are not preserved.** The file-source contract
-  carries no mode and extraction writes every file with the default umask, so
-  a bundled executable run as `./bin/server` fails with `EACCES` on POSIX.
-  Interpreter commands (`node`, `python`) are unaffected.
+- **Archive permission bits are recorded but not yet applied.** File sources
+  report POSIX modes, the parser lists `executableFiles`, and
+  `executionDigest` covers them, but extraction still writes every file with
+  the default umask, so a bundled executable run as `./bin/server` fails with
+  `EACCES` on POSIX. Interpreter commands (`node`, `python`) are unaffected,
+  and a browser folder selection carries no modes at all.
 
 - **Non-secret configured headers can follow a cross-origin redirect.**
   Stored credential headers are attached only to the origins the backend

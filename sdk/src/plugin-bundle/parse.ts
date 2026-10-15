@@ -16,6 +16,7 @@
 import { parsePluginAppConfig, type ParsedPluginApp } from "./app-config.js";
 import {
   computeAggregateHash,
+  computeExecutionDigest,
   hashCanonicalJson,
   sha256HexBytes,
 } from "./hashes.js";
@@ -276,6 +277,9 @@ export async function parsePluginBundle(
   const bundleHash = await computeAggregateHash(
     files.map((file) => ({ path: file.path, contentHash: file.contentHash }))
   );
+  const executableFiles = files
+    .filter((file) => file.executable)
+    .map((file) => file.path);
 
   // Phase 3 — manifest: `plugin.json` at the bundle root (fixed location;
   // nested plugin.json files are ordinary files, not manifests).
@@ -664,6 +668,13 @@ export async function parsePluginBundle(
     interpretation,
     schemaVersion: manifest.schemaVersion,
     bundleHash,
+    executableFiles,
+    executionDigest: await computeExecutionDigest({
+      bundleHash,
+      executableFiles,
+      profile: interpretation.profile,
+      revision: interpretation.revision,
+    }),
     manifestHash,
     skills,
     mcpServers,
