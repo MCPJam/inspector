@@ -12,7 +12,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import { UserTestingEnvironmentComposer } from "@/components/scenarios/UserTestingEnvironmentComposer";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { RequiredMark } from "@/components/shared/required-mark";
 import { ScenarioTaskListEditor } from "@/components/scenarios/ScenarioTaskListEditor";
@@ -278,11 +278,9 @@ export function isStudyNameTakenError(error: unknown): boolean {
  * that link — the tester is the one who finds out. The button is therefore
  * live, not disabled: pressing it is how someone asks "am I done?", and a
  * button that cannot be pressed answers nothing. The press validates and names
- * what is missing — no client, or a client with no servers — and only then
- * moves the stepper. Nothing is nagged before the ask, which is the half a
- * permanently-inert button got wrong: it read as "I can create a scenario
- * without an environment", which is how this was reported. Marked labels still
- * carry the requirement ahead of the press, and `ScenarioShareSection` holds
+ * what is missing and only then moves the stepper. Server setup guidance
+ * appears beside the picker before the press. Marked labels carry the
+ * requirement ahead of the press, and `ScenarioShareSection` holds
  * the other end — a scenario whose environment stops resolving issues no
  * tester link.
  */
@@ -606,9 +604,8 @@ export function UserTestingScenarioCreateFlow({
   /**
    * Whether to say, on sight, that this account cannot publish here.
    *
-   * Unlike the client and server messages this is NOT press-triggered. Those
-   * name a choice the creator can still make on this screen, so they wait
-   * until Continue asks the question. This one names something no control
+   * Unlike the client message this is NOT press-triggered. That message
+   * waits until Continue asks the question. This one names something no control
    * here can change, and a creator who fills in a whole study before learning
    * that is a creator whose work we wasted.
    */
@@ -622,7 +619,6 @@ export function UserTestingScenarioCreateFlow({
    */
   const [continueAttempted, setContinueAttempted] = useState(false);
   const showClientError = continueAttempted && continueBlocker === "client";
-  const showServersError = continueAttempted && continueBlocker === "servers";
 
   const handleContinue = () => {
     setContinueAttempted(true);
@@ -903,14 +899,13 @@ export function UserTestingScenarioCreateFlow({
                 {/* No empty state any more: a project with zero environments is not
                     a dead end, because the strip can build the one this scenario
                     needs. The handoff below still covers curating a named one. */}
-                <EnvironmentComposer
+                <UserTestingEnvironmentComposer
                   projectId={projectId}
                   environments={liveEnvironments}
                   value={target}
                   onChange={handleTargetChange}
-                  maxTargets={1}
                   disabled={isSaving}
-                  testIdPrefix="user-testing-create"
+                  hostsLoading={hostsLoading}
                 />
                 {environmentsEnabled ? (
                   <button
@@ -950,26 +945,6 @@ export function UserTestingScenarioCreateFlow({
                     data-testid="user-testing-create-environments-loading"
                   >
                     Loading this project&apos;s setup…
-                  </p>
-                ) : null}
-                {/* The gate that would have saved a broken study: a setup with
-                    no servers publishes fine and then refuses to open, and
-                    neither the creator's nor the tester's error names the
-                    cause. Said on press, directly under the server group that
-                    fixes it.
-
-                    One message for one problem — "this setup reaches no
-                    server". Whether that is because the client carries none of
-                    its own or because no group is attached is a distinction the
-                    creator cannot act on differently: the fix is the same
-                    control either way. */}
-                {showServersError ? (
-                  <p
-                    className="text-xs text-destructive"
-                    role="alert"
-                    data-testid="user-testing-create-servers-required"
-                  >
-                    No server picked
                   </p>
                 ) : null}
                 {computersEnabled ? (
