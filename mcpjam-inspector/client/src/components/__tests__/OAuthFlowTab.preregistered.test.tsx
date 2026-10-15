@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OAuthFlowTab } from "../OAuthFlowTab";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { createInspectorOAuthStateMachine } from "@/lib/oauth/debug-state-machine-adapter";
+import { track } from "@/lib/analytics";
 
 vi.mock("@/lib/analytics", () => ({
   track: vi.fn(),
@@ -108,6 +109,12 @@ function renderTab(target: ServerWithName) {
 
 const lastActions = (): LoggerActions =>
   captureLoggerActions.mock.calls.at(-1)?.[0] ?? {};
+const promptedEvents = () =>
+  vi
+    .mocked(track)
+    .mock.calls.filter(
+      ([event]) => event === "oauth_flow_preregistered_client_id_prompted",
+    );
 const lastModalOpen = (): boolean =>
   (captureProfileModalProps.mock.calls.at(-1)?.[0] as { open: boolean })
     ?.open ?? false;
@@ -121,6 +128,7 @@ describe("OAuthFlowTab with a pre-registered target and no client id", () => {
     proceedToNextStep.mockReset();
     captureLoggerActions.mockClear();
     captureProfileModalProps.mockClear();
+    vi.mocked(track).mockClear();
     vi.mocked(createInspectorOAuthStateMachine).mockReturnValue({
       proceedToNextStep,
     } as never);
@@ -172,11 +180,38 @@ describe("OAuthFlowTab with a pre-registered target and no client id", () => {
     expect(lastActions().continueLabel).toBe("Continue");
   });
 
+  it("records the prompt once when the notice appears", async () => {
+    flowStateSeed.currentStep = "received_authorization_server_metadata";
+    const { rerender } = renderTab(server({}));
+    expect(promptedEvents()).toHaveLength(1);
+    expect(promptedEvents()[0][1]).toMatchObject({
+      location: "oauth_flow_tab",
+      protocolVersion: "2025-11-25",
+    });
+
+    // Neither entry point counts it again: the notice's own button, which
+    // never goes through Continue, nor Continue at the registration step.
+    fireEvent.click(screen.getByRole("button", { name: "Add client ID" }));
+    await act(async () => {
+      lastActions().onContinue?.();
+    });
+    const target = server({});
+    rerender(
+      <OAuthFlowTab
+        serverConfigs={{ [target.name]: target }}
+        selectedServerName={target.name}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(promptedEvents()).toHaveLength(1);
+  });
+
   it("stays quiet when the profile has a client id", () => {
     renderTab(server({ clientId: "client-123" }));
     expect(
       screen.queryByTestId("oauth-preregistered-missing-client-id"),
     ).not.toBeInTheDocument();
+    expect(promptedEvents()).toHaveLength(0);
   });
 
   it("stays quiet for dynamic registration", () => {

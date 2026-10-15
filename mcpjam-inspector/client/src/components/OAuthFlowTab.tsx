@@ -316,8 +316,8 @@ export const OAuthFlowTab = ({
   // modal refuses to save that shape, but a server saved by an older build,
   // or one whose stored client record did not survive a migration, still
   // arrives here with it. `profile.clientId` already folds in the config and
-  // the stored `mcp-client-*` record — the same sources the machine's
-  // `loadPreregisteredCredentials` reads — so an empty value here means the
+  // the stored `mcp-client-*` record (the same sources the machine's
+  // `loadPreregisteredCredentials` reads), so an empty value here means the
   // registration step will find nothing either.
   const missingPreregisteredClientId =
     hasProfile &&
@@ -356,6 +356,29 @@ export const OAuthFlowTab = ({
     oauthFlowStateRef.current = next;
     setOAuthFlowState(next);
   }, []);
+
+  // Counted when the missing-client-id notice appears, not when someone acts
+  // on it: the event exists to measure how often saved servers arrive in this
+  // shape, and the notice's own button opens the configuration without going
+  // through Continue. Once per server and flow, so re-renders do not repeat it.
+  const promptedClientIdKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!missingPreregisteredClientId) return;
+    const key = `${serverIdentifier}:${flowGeneration}`;
+    if (promptedClientIdKeyRef.current === key) return;
+    promptedClientIdKeyRef.current = key;
+    track("oauth_flow_preregistered_client_id_prompted", {
+      location: "oauth_flow_tab",
+      protocolVersion,
+      hasClientSecret: Boolean(activeServer?.hasClientSecret),
+    });
+  }, [
+    activeServer?.hasClientSecret,
+    flowGeneration,
+    missingPreregisteredClientId,
+    protocolVersion,
+    serverIdentifier,
+  ]);
 
   useEffect(() => {
     if (
@@ -548,11 +571,7 @@ export const OAuthFlowTab = ({
 
   const handleAdvance = useCallback(async () => {
     if (blockedAtRegistration) {
-      track("oauth_flow_preregistered_client_id_prompted", {
-        location: "oauth_flow_tab",
-        protocolVersion,
-        hasClientSecret: Boolean(activeServer?.hasClientSecret),
-      });
+      // Already counted when the notice appeared; see the prompt effect.
       openProfileModal("edit");
       return;
     }
@@ -596,7 +615,6 @@ export const OAuthFlowTab = ({
       setIsAdvancing(false);
     }
   }, [
-    activeServer?.hasClientSecret,
     blockedAtRegistration,
     hasProfile,
     oauthFlowState.currentStep,
@@ -724,7 +742,7 @@ export const OAuthFlowTab = ({
         ) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "This target uses a pre-registered client but has no client ID saved — open ui_open_oauth_server_config so the user can add one, or switch registration to dcr.",
+            "This target uses a pre-registered client but has no client ID saved. Open ui_open_oauth_server_config so the user can add one, or switch registration to dcr.",
           );
         }
         const previousStep = before.currentStep;
