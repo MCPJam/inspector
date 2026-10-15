@@ -298,7 +298,11 @@ async function localConnectionAttempt(
           Number(response.headers?.get("Retry-After") ?? 2) * 1000;
         if (isServerCheckQueueError(error)) throw error;
       }
-      return { result, intent: metadata.intent };
+      // Read again, not from `metadata`: a click that marked this job manual
+      // mid-flight (`markManual`) must be able to ask for an approval.
+      const intent =
+        serverCheckQueue.attemptMetadata(signal)?.intent ?? metadata.intent;
+      return { result, intent };
     } finally {
       done.abort();
       detach();
@@ -319,10 +323,11 @@ async function localConnectionAttempt(
 // A connect the device has not yet approved (a project stdio server's
 // command, PLB-192) is refused with the terms it would run. The dialog runs
 // BETWEEN attempts, never inside one: an attempt holds a browser slot in the
-// check queue, and a dialog must not hold it. Auto-connect never prompts: the
-// card shows the refusal, and the user's own Connect click (or an eval Start)
-// is what asks. Bounded because a command edited between the approval and the
-// retry is refused again with new terms.
+// check queue, and a dialog must not hold it (a caller that passes its own
+// `queueSignal` still holds ITS slot while the dialog is open). Auto-connect
+// never prompts: the card shows the refusal, and the user's own Connect click
+// (or an eval Start) is what asks. Bounded because a command edited between
+// the approval and the retry is refused again with new terms.
 const MAX_STDIO_APPROVAL_ROUNDS = 3;
 
 async function localConnectionRequest(

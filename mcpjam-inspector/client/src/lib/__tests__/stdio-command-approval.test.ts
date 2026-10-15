@@ -183,7 +183,11 @@ describe("obtainStdioCommandApproval", () => {
   it("queues prompts so one dialog shows at a time", async () => {
     const store = useStdioCommandApprovalStore.getState();
     const first = store.request(PROMPT);
-    const second = store.request({ ...PROMPT, serverName: "Other" });
+    const second = store.request({
+      ...PROMPT,
+      serverName: "Other",
+      terms: { ...TERMS, serverId: "srv-other" },
+    });
 
     const names = () =>
       useStdioCommandApprovalStore.getState().queue.map((p) => p.serverName);

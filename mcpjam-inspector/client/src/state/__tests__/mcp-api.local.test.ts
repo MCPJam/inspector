@@ -493,6 +493,22 @@ describe("mcp-api local-mode stdio command approval handshake", () => {
     expect(authFetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("asks when a click marks an automatic connect manual mid-flight", async () => {
+    serverCheckQueue.markAutomatic("project_xyz", ["Files"]);
+    authFetchMock.mockImplementation(async (url: string) => {
+      if (url === "/api/mcp/servers/checks/promote")
+        return new Response(JSON.stringify({ state: "active" }));
+      // The user's Connect click lands while this attempt is in flight.
+      serverCheckQueue.markManual("project_xyz", "Files");
+      return refusal();
+    });
+    const answered = answerNextPrompt(false);
+
+    await reconnectServer("srv-1", config, options);
+
+    await answered;
+  });
+
   it("never prompts for an automatic connect", async () => {
     serverCheckQueue.markAutomatic("project_xyz", ["Files"]);
     authFetchMock.mockResolvedValue(refusal());

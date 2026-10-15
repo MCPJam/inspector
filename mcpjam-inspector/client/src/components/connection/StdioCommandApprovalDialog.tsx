@@ -10,9 +10,18 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import { useStdioCommandApprovalStore } from "@/lib/stdio-command-approval";
 
-/** Quote only what a shell would need quoted, so the line reads as typed. */
+/**
+ * Quote only what a shell would need quoted, so the line reads as typed. A
+ * control or format character (a bidi override, a zero-width space) is quoted
+ * and escaped too: left raw it would reorder or hide part of what is approved.
+ */
 const shellWord = (word: string) =>
-  word === "" || /[\s"'$`\\]/.test(word) ? JSON.stringify(word) : word;
+  word === "" || /[\s"'$`\\\p{C}]/u.test(word)
+    ? JSON.stringify(word).replace(
+        /\p{C}/gu,
+        (char) => `\\u{${(char.codePointAt(0) ?? 0).toString(16)}}`,
+      )
+    : word;
 
 export function formatStdioCommandLine(command: string, args: string[]) {
   return [command, ...args].map(shellWord).join(" ");
@@ -33,9 +42,16 @@ export function StdioCommandApprovalDialog() {
   const settle = useStdioCommandApprovalStore((state) => state.settle);
   if (!prompt) return null;
   const { serverName, terms } = prompt;
+  // The second click of a double click lands on the NEXT prompt's button,
+  // answering a command nobody read.
+  const answer = (allowed: boolean) => (event: { detail: number }) => {
+    if (event.detail <= 1) settle(allowed);
+  };
 
   return (
-    <AlertDialog open onOpenChange={() => {}}>
+    // Keyed per prompt: the next one remounts, so focus returns to Cancel
+    // instead of staying on the Allow a repeated Enter would press.
+    <AlertDialog key={prompt.id} open onOpenChange={() => {}}>
       <AlertDialogContent
         data-testid="stdio-command-approval-dialog"
         onEscapeKeyDown={() => settle(false)}
@@ -59,29 +75,36 @@ export function StdioCommandApprovalDialog() {
           {terms.envNames.length > 0 && (
             <p className="text-muted-foreground">
               Environment variables:{" "}
-              <span className="font-mono">{terms.envNames.join(", ")}</span>{" "}
+              <span className="font-mono">
+                {terms.envNames.map(shellWord).join(", ")}
+              </span>{" "}
               (values hidden)
             </p>
           )}
           {terms.changedEnvNames && terms.changedEnvNames.length > 0 && (
             <p className="font-medium">
-              New or changed since you approved it:{" "}
+              Changed since you approved it:{" "}
               <span className="font-mono">
-                {terms.changedEnvNames.join(", ")}
+                {terms.changedEnvNames
+                  .map((name) =>
+                    terms.envNames.includes(name)
+                      ? shellWord(name)
+                      : `${shellWord(name)} (removed)`,
+                  )
+                  .join(", ")}
               </span>
             </p>
           )}
           {terms.cwd && (
             <p className="text-muted-foreground">
-              Working directory: <span className="font-mono">{terms.cwd}</span>
+              Working directory:{" "}
+              <span className="font-mono">{shellWord(terms.cwd)}</span>
             </p>
           )}
         </div>
         <AlertDialogFooter>
-          <AlertDialogCancel onClick={() => settle(false)}>
-            Cancel
-          </AlertDialogCancel>
-          <AlertDialogAction onClick={() => settle(true)}>
+          <AlertDialogCancel onClick={answer(false)}>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={answer(true)}>
             Allow on this device
           </AlertDialogAction>
         </AlertDialogFooter>

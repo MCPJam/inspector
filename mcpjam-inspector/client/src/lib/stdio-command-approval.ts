@@ -22,6 +22,9 @@ export interface StdioCommandApprovalPrompt {
 }
 
 interface PendingPrompt extends StdioCommandApprovalPrompt {
+  /** Keys the dialog, so the next prompt mounts fresh instead of in place. */
+  id: number;
+  answer: Promise<boolean>;
   resolve: (allowed: boolean) => void;
 }
 
@@ -32,13 +35,32 @@ interface StdioCommandApprovalState {
   settle: (allowed: boolean) => void;
 }
 
+let promptSequence = 0;
+
 export const useStdioCommandApprovalStore = create<StdioCommandApprovalState>(
   (set, get) => ({
     queue: [],
-    request: (prompt) =>
-      new Promise<boolean>((resolve) => {
-        set((state) => ({ queue: [...state.queue, { ...prompt, resolve }] }));
-      }),
+    request: (prompt) => {
+      // Concurrent connects or chat columns refused for the same command share
+      // one dialog rather than asking the same question again.
+      const pending = get().queue.find(
+        (queued) =>
+          queued.terms.serverId === prompt.terms.serverId &&
+          queued.terms.fingerprint === prompt.terms.fingerprint,
+      );
+      if (pending) return pending.answer;
+      let resolve!: (allowed: boolean) => void;
+      const answer = new Promise<boolean>((done) => {
+        resolve = done;
+      });
+      set((state) => ({
+        queue: [
+          ...state.queue,
+          { ...prompt, id: ++promptSequence, answer, resolve },
+        ],
+      }));
+      return answer;
+    },
     settle: (allowed) => {
       const [head, ...rest] = get().queue;
       if (!head) return;

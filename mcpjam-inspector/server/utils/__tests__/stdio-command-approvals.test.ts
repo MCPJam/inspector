@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -107,6 +114,18 @@ describe("stdio command approval store", () => {
     );
   });
 
+  it("refuses to approve over a file it cannot read, keeping the other approvals", async () => {
+    if (process.platform === "win32" || process.getuid?.() === 0) return;
+    const store = createStdioCommandApprovalStore(() => file);
+    await store.approve("srv-1", BASE);
+    await chmod(file, 0o000);
+    await expect(store.approve("srv-2", BASE)).rejects.toThrow();
+    await chmod(file, 0o600);
+    expect(await store.read("srv-1", stdioLaunchFingerprint(BASE))).toBe(
+      "approved",
+    );
+  });
+
   it("writes the file readable by the owner only", async () => {
     if (process.platform === "win32") return;
     const store = createStdioCommandApprovalStore(() => file);
@@ -125,6 +144,14 @@ describe("stdio command approval store", () => {
       }),
     ).toEqual(["FOO", "NODE_OPTIONS"]);
     expect(await store.changedEnvNames("srv-1", BASE.env)).toEqual([]);
+  });
+
+  it("names an env variable removed since the last approval", async () => {
+    const store = createStdioCommandApprovalStore(() => file);
+    await store.approve("srv-1", BASE);
+    expect(await store.changedEnvNames("srv-1", { FOO: "bar" })).toEqual([
+      "BAZ",
+    ]);
   });
 
   it("keeps env values out of the file", async () => {
@@ -188,6 +215,12 @@ describe("stdioCommandApprovalRequired", () => {
       },
     });
     expect(JSON.stringify(error.details)).not.toContain("secret-value");
+    // Not the status-only "Forbidden (403)" block with OAuth next steps.
+    expect(error.normalized).toMatchObject({
+      title: "Command not approved on this device",
+      oneLine: error.message,
+      nextSteps: [],
+    });
   });
 
   it("points a plugin component at the chat, where its approval is asked", () => {

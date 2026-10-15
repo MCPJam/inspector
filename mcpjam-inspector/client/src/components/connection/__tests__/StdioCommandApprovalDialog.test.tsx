@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   formatStdioCommandLine,
@@ -21,6 +21,12 @@ describe("formatStdioCommandLine", () => {
   it("quotes only the words a shell would need quoted", () => {
     expect(formatStdioCommandLine("npx", ["-y", "pkg", "a b", ""])).toBe(
       'npx -y pkg "a b" ""',
+    );
+  });
+
+  it("escapes a bidi override or zero-width character instead of rendering it", () => {
+    expect(formatStdioCommandLine("node", ["safe\u202E.js", "a\u200Bb"])).toBe(
+      'node "safe\\u{202e}.js" "a\\u{200b}b"',
     );
   });
 });
@@ -75,7 +81,7 @@ describe("StdioCommandApprovalDialog", () => {
     expect(
       screen.getByText(/has changed since you approved it on this device/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/New or changed since you approved/)).toBeNull();
+    expect(screen.queryByText(/Changed since you approved it:/)).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await outcome).toBe(false);
@@ -88,15 +94,17 @@ describe("StdioCommandApprovalDialog", () => {
       terms: {
         ...TERMS,
         previouslyApproved: true,
-        changedEnvNames: ["LOG_LEVEL"],
+        changedEnvNames: ["LOG_LEVEL", "NODE_OPTIONS"],
       },
     });
 
     render(<StdioCommandApprovalDialog />);
 
     expect(
-      screen.getByText(/New or changed since you approved it/),
-    ).toHaveTextContent("New or changed since you approved it: LOG_LEVEL");
+      screen.getByText(/Changed since you approved it:/),
+    ).toHaveTextContent(
+      "Changed since you approved it: LOG_LEVEL, NODE_OPTIONS (removed)",
+    );
   });
 
   it("answers one prompt at a time, in order", async () => {
@@ -130,5 +138,42 @@ describe("StdioCommandApprovalDialog", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await second).toBe(false);
     expect(screen.queryByTestId("stdio-command-approval-dialog")).toBeNull();
+  });
+
+  it("does not let a double click's second click answer the next prompt", () => {
+    const store = useStdioCommandApprovalStore.getState();
+    void store.request({
+      projectId: "proj-1",
+      serverName: "Files",
+      terms: TERMS,
+    });
+    void store.request({
+      projectId: "proj-1",
+      serverName: "Search",
+      terms: { ...TERMS, serverId: "srv-2" },
+    });
+    render(<StdioCommandApprovalDialog />);
+
+    const allow = () =>
+      screen.getByRole("button", { name: "Allow on this device" });
+    fireEvent.click(allow(), { detail: 1 });
+    fireEvent.click(allow(), { detail: 2 });
+
+    expect(
+      screen.getByRole("heading", { name: 'Run "Search" on this machine?' }),
+    ).toBeInTheDocument();
+    expect(useStdioCommandApprovalStore.getState().queue).toHaveLength(1);
+  });
+
+  it("asks once when the same command is refused twice", async () => {
+    const store = useStdioCommandApprovalStore.getState();
+    const prompt = { projectId: "proj-1", serverName: "Files", terms: TERMS };
+    const first = store.request(prompt);
+    const second = store.request(prompt);
+    expect(useStdioCommandApprovalStore.getState().queue).toHaveLength(1);
+
+    store.settle(true);
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
   });
 });

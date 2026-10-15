@@ -13,6 +13,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { lock } from "proper-lockfile";
+import { describeError } from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import {
   createCapabilityMutationLock,
@@ -66,9 +67,24 @@ const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 export function createStdioCommandApprovalStore(filePath: () => string) {
   const serialize = createCapabilityMutationLock();
 
-  async function readApprovals(): Promise<PersistedApprovals["approvals"]> {
+  /**
+   * `strict` is for `approve`, which rewrites the file from what this returns:
+   * a read that failed for any reason but a missing file must not drop every
+   * other server's approval.
+   */
+  async function readApprovals(
+    strict = false,
+  ): Promise<PersistedApprovals["approvals"]> {
+    let text: string;
     try {
-      const parsed: unknown = JSON.parse(await readFile(filePath(), "utf8"));
+      text = await readFile(filePath(), "utf8");
+    } catch (error) {
+      if (strict && (error as NodeJS.ErrnoException).code !== "ENOENT")
+        throw error;
+      return {};
+    }
+    try {
+      const parsed: unknown = JSON.parse(text);
       const approvals = (parsed as Partial<PersistedApprovals> | null)
         ?.approvals;
       if (!approvals || typeof approvals !== "object") return {};
@@ -93,14 +109,20 @@ export function createStdioCommandApprovalStore(filePath: () => string) {
     return stored === fingerprint ? "approved" : "changed";
   }
 
-  /** Names in `env` that are new or changed since the last approval. */
+  /** Env names added, changed or removed since the last approval. */
   async function changedEnvNames(
     serverId: string,
     env: Record<string, string>,
   ): Promise<string[]> {
-    const approved = (await readApprovals())[serverId]?.envValueHashes ?? {};
-    return Object.keys(env).filter(
-      (name) => approved[name] !== envValueHash(name, env[name]),
+    const stored = (await readApprovals())[serverId]?.envValueHashes;
+    const approved: Record<string, unknown> =
+      stored && typeof stored === "object" ? stored : {};
+    const has = (name: string) =>
+      Object.prototype.hasOwnProperty.call(env, name);
+    return [...new Set([...Object.keys(env), ...Object.keys(approved)])].filter(
+      (name) =>
+        approved[name] !==
+        (has(name) ? envValueHash(name, env[name]) : undefined),
     );
   }
 
@@ -114,7 +136,7 @@ export function createStdioCommandApprovalStore(filePath: () => string) {
         stale: 10_000,
       });
       try {
-        const approvals = await readApprovals();
+        const approvals = await readApprovals(true);
         approvals[serverId] = {
           fingerprint: stdioLaunchFingerprint(spec),
           approvedAt: new Date().toISOString(),
@@ -191,7 +213,7 @@ export function stdioCommandApprovalRequired(args: {
     args.approval === "changed"
       ? `The command ${name} runs changed since this device approved it. ${where} to review and approve the new command.`
       : `${name} runs a command this device has not approved yet. ${where} to review and approve the command.`;
-  return new WebRouteError(
+  const error = new WebRouteError(
     403,
     ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED,
     message,
@@ -202,4 +224,16 @@ export function stdioCommandApprovalRequired(args: {
       approval: stdioCommandApprovalTerms(args),
     },
   );
+  // Classified by its status alone this reads "Forbidden (403)" with OAuth
+  // next steps, and the server card, where an auto-connect refusal lands,
+  // renders exactly that block.
+  error.normalized = {
+    ...describeError(error, { surface: "mcpServer" }),
+    title: "Command not approved on this device",
+    oneLine: message,
+    likelyCauses: [],
+    nextSteps: [],
+    docsAnchor: "/troubleshooting/error-codes",
+  };
+  return error;
 }

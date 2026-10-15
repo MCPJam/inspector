@@ -26,8 +26,8 @@ export interface StdioCommandApprovalTerms {
   args: string[];
   envNames: string[];
   /**
-   * Variables that are new or hold another value since this device's last
-   * approval, so a value-only edit is visible. Set when `previouslyApproved`.
+   * Variables added, changed or removed since this device's last approval,
+   * so a value-only edit is visible. Set when `previouslyApproved`.
    */
   changedEnvNames?: string[];
   cwd?: string;
