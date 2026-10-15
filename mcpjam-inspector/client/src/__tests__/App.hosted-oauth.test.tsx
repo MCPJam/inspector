@@ -5289,8 +5289,10 @@ describe("App hosted OAuth callback handling", () => {
     fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
 
     await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledOnce());
-    // The denied round trip must not leave Auto's marker pending, or the
-    // retry would fail with "still returns 401 after OAuth".
+    // Authorize clears any Auto marker this page left pending, or the retry
+    // would fail with "still returns 401 after OAuth". (A marker from before
+    // the redirect is already unreachable: it is keyed by the old page's
+    // local project id.)
     expect(appState.clearAutoOAuthEscalation).toHaveBeenCalledWith(
       "OAuth server",
     );

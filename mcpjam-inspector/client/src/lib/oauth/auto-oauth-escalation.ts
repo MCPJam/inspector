@@ -15,9 +15,10 @@ import { toast } from "@/lib/toast";
  *   the still-401 config error). Clearing here means a later MANUAL attempt
  *   re-prompts instead of being permanently muted for the session.
  *
- * Storage is sessionStorage, keyed by project + server id so identically
- * named servers across projects don't collide; the server NAME is only the
- * last-resort key component when no id exists yet.
+ * Storage is sessionStorage, keyed by project + server id; the server NAME is
+ * only the last-resort key component when no id exists yet. The server id is
+ * what keeps identically named servers apart: in hosted mode every Convex
+ * project shares the page's one local project id.
  *
  * The project component is the local project id, which is regenerated on
  * every page load, so a marker does not outlive the full-page OAuth redirect.
