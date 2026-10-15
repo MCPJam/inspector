@@ -35,8 +35,8 @@ const TITLE = "Web search unavailable";
 
 /**
  * What the tool card says about a refused search. Search runs on the
- * organization's model for background work, so the model codes read as the
- * organization's model to change, never as a pick.
+ * organization's search model, so the model codes read as the
+ * organization's model to set or change, never as a pick.
  */
 export function describeWebSearchRefusal(
   code: AiRefusalCode,
@@ -47,6 +47,16 @@ export function describeWebSearchRefusal(
     return {
       title: TITLE,
       body: "Web search isn't available in this chat.",
+      remediation: described.remediation,
+    };
+  }
+  if (code === "org_model_unconfigured") {
+    return {
+      title: "Web search needs a search model",
+      body:
+        audience === "admin"
+          ? "Choose the organization's search model in Organization → AI providers to turn web search on."
+          : "Ask an organization admin to choose a search model in Organization → AI providers.",
       remediation: described.remediation,
     };
   }
@@ -84,7 +94,10 @@ export function webSearchPolicyNote(
   if (!row || row.status === "ready" || row.status === "hosted") {
     return undefined;
   }
-  return row.status === "unsupported"
-    ? "Off while your organization requires its own AI keys. Web search can't run on them yet."
+  if (row.status === "unsupported") {
+    return "Off while your organization requires its own AI keys. Web search can't run on them yet.";
+  }
+  return row.status === "unconfigured"
+    ? "Needs a search model. Choose one in Organization → AI providers."
     : "Can't run on your organization's AI providers right now. Check Organization → AI providers.";
 }

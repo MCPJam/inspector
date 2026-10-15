@@ -15,6 +15,7 @@ type SearchResult = {
   code?: string;
   remediation?: string;
   results?: unknown[];
+  answer?: string;
 };
 
 function runSearch(opts: { billingFeature?: string } = {}) {
@@ -106,6 +107,29 @@ describe("exa web search — organization AI key policy refusals", () => {
     expect(await runSearch()).toEqual({ error: "Web search failed (422)." });
     expect(await runSearch()).toEqual({ error: "Web search failed (403)." });
     expect(await runSearch()).toEqual({ error: "Web search failed (500)." });
+  });
+
+  it("passes on the short answer a search on the organization's own search model returns", async () => {
+    const results = [
+      {
+        title: "MCP",
+        url: "https://modelcontextprotocol.io",
+        content: "",
+        publishedDate: null,
+      },
+    ];
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        json(200, { results, answer: "  MCP is an open protocol.  " }),
+      )
+      .mockResolvedValueOnce(json(200, { results }));
+    expect(await runSearch()).toEqual({
+      results,
+      answer: "MCP is an open protocol.",
+    });
+    // A search on Exa has no answer, and the result has no answer field.
+    expect(await runSearch()).toEqual({ results });
   });
 
   it("leaves the out-of-credits answer alone", async () => {

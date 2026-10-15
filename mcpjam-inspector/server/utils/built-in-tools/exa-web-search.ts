@@ -83,7 +83,14 @@ export interface WebSearchPolicyRefusal {
 type ExaWebSearchToolResult =
   | { error: string }
   | WebSearchPolicyRefusal
-  | { results: ExaWebSearchResult[] };
+  | {
+      results: ExaWebSearchResult[];
+      /**
+       * A short cited answer, when the search ran on the organization's own
+       * search model (its provider's web search) rather than on Exa.
+       */
+      answer?: string;
+    };
 
 /** The one sentence every platform-billing refusal shows. */
 const UNAVAILABLE = {
@@ -248,7 +255,8 @@ export function buildExaWebSearchTool(
       "Search the web for current information. Use this for questions outside " +
       "the MCPJam docs — recent news, current library/package versions, dev " +
       "tooling, or anything that may have changed recently. Returns up to 5 " +
-      "results, each with a title, URL, and content excerpt.",
+      "results, each with a title, URL, and content excerpt, and sometimes a " +
+      "short answer that cites them.",
     inputSchema: z.object({
       query: z
         .string()
@@ -389,8 +397,14 @@ export function buildExaWebSearchTool(
           if (opts.billingFeature) platformBillingConfirmed = true;
           const data = (await res.json()) as {
             results?: ExaWebSearchResult[];
+            answer?: unknown;
           };
-          return { results: data.results ?? [] };
+          const answer =
+            typeof data.answer === "string" ? data.answer.trim() : "";
+          return {
+            results: data.results ?? [],
+            ...(answer ? { answer } : {}),
+          };
         } catch (error) {
           if (abortSignal?.aborted) {
             return { error: "Web search was cancelled." };

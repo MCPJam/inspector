@@ -59,6 +59,20 @@ describe("describeWebSearchRefusal", () => {
     });
   });
 
+  it("asks for the organization's search model when none is set", () => {
+    expect(
+      describeWebSearchRefusal("org_model_unconfigured", "admin"),
+    ).toMatchObject({
+      title: "Web search needs a search model",
+      body: "Choose the organization's search model in Organization → AI providers to turn web search on.",
+    });
+    expect(
+      describeWebSearchRefusal("org_model_unconfigured", "member").body,
+    ).toBe(
+      "Ask an organization admin to choose a search model in Organization → AI providers.",
+    );
+  });
+
   it("reads the model codes as the organization's model, never a pick", () => {
     const described = describeWebSearchRefusal("capability_missing", "admin");
     expect(described.title).toBe("Web search unavailable");
@@ -76,8 +90,11 @@ describe("webSearchPolicyNote", () => {
     expect(webSearchPolicyNote(readiness("unsupported"))).toBe(
       "Off while your organization requires its own AI keys. Web search can't run on them yet.",
     );
-    expect(webSearchPolicyNote(readiness("unconfigured"))).toContain(
-      "Organization → AI providers",
+    expect(webSearchPolicyNote(readiness("unconfigured"))).toBe(
+      "Needs a search model. Choose one in Organization → AI providers.",
+    );
+    expect(webSearchPolicyNote(readiness("invalid_credentials"))).toContain(
+      "Check Organization → AI providers",
     );
   });
 
