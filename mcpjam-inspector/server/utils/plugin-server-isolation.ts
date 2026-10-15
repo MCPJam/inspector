@@ -1,4 +1,8 @@
-import { describeError, type MCPClientManager } from "@mcpjam/sdk";
+import {
+  describeError,
+  isInsufficientScopeError,
+  type MCPClientManager,
+} from "@mcpjam/sdk";
 import type { UIMessageChunk } from "ai";
 import {
   PLUGIN_SERVER_UNAVAILABLE_DATA_PART_TYPE,
@@ -118,20 +122,21 @@ const SIGN_IN_SLUGS: ReadonlySet<string> = new Set([
   "auth/missing_bearer",
   "auth/oauth_refresh_failed",
   "auth/consent_required",
-  "auth/insufficient_scope",
   "oauth/invalid_grant",
 ]);
 
 /**
  * What the member is told about a server the turn ran without. A 401 from
  * our own builder (a refused or expired grant, or a tokenless `discover`
- * server the MCP server answered with 401) means sign in; so does a describer
- * verdict that names a missing or refused credential. Anything else, a dead
- * server, a timeout, a refusal for another reason, is `unreachable`.
+ * server the MCP server answered with 401) means sign in; so does a refusal
+ * for missing scopes, or a describer verdict that names a missing or refused
+ * credential. Anything else, a dead server, a timeout, a refusal for another
+ * reason, is `unreachable`.
  */
 export function pluginServerUnavailableReason(
   error: unknown,
 ): PluginServerUnavailableReason {
+  if (isInsufficientScopeError(error)) return "needs_auth";
   for (let cause = error, depth = 0; cause && depth < 5; depth += 1) {
     if (cause instanceof WebRouteError) {
       return cause.status === 401 ? "needs_auth" : "unreachable";

@@ -183,6 +183,16 @@ describe("pluginServerUnavailableReason", () => {
     ).toBe("needs_auth");
   });
 
+  it("asks for a sign-in when the server refuses for missing scopes", () => {
+    const refusal = Object.assign(new Error("insufficient_scope"), {
+      name: "InsufficientScopeError",
+    });
+    expect(pluginServerUnavailableReason(refusal)).toBe("needs_auth");
+    expect(
+      pluginServerUnavailableReason(new Error("list", { cause: refusal })),
+    ).toBe("needs_auth");
+  });
+
   it("calls every other failure unreachable", () => {
     for (const error of [
       new WebRouteError(403, ErrorCode.FORBIDDEN, "Access denied"),
