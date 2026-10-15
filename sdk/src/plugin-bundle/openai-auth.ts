@@ -12,7 +12,7 @@
  */
 
 import { OPENAI_EXTENSION_NAMESPACE } from "./manifest.js";
-import { isLoopbackHost } from "./mcp-entry-values.js";
+import { hasUserinfoOrFragment, isLoopbackHost } from "./mcp-entry-values.js";
 import type { PluginHeaderRequirement } from "./mcp-config.js";
 import { SECRET_FIELD_NAME, type PluginIssueCollector } from "./validation.js";
 
@@ -128,13 +128,11 @@ function readEndpoint(field: string, value: unknown): string {
     typeof value !== "string" ||
     url === undefined ||
     !secure ||
-    url.username ||
-    url.password ||
-    url.hash
+    hasUserinfoOrFragment(value, url)
   ) {
     // Not echoed: an endpoint with userinfo carries a credential.
     throw new InvalidAuth(
-      `auth.${field} must be an absolute HTTPS URL without credentials or a fragment`
+      `auth.${field} must be an absolute HTTPS (or loopback HTTP) URL without credentials or a fragment`
     );
   }
   return value;
@@ -226,8 +224,7 @@ function readApiKey(
 
 /**
  * The typed auth an entry's `extensions` declare: `{}` when none, `{ auth }`
- * when valid, `{ error }` when the declaration is invalid, which invalidates
- * the entry.
+ * when valid, `{ error }` (which invalidates the entry) when invalid.
  */
 export function readOpenAiServerAuth(
   extensions: unknown,

@@ -109,6 +109,16 @@ describe("auth types", () => {
     expect(parsed.warnings).toEqual([]);
   });
 
+  it("accepts a loopback HTTP endpoint and an @ inside a path", async () => {
+    const auth = {
+      type: "oauth",
+      authorizationUrl: "https://auth.example.com/u/@me/authorize",
+      tokenUrl: "http://127.0.0.1:8080/token",
+    };
+    const parsed = await parsePluginBundle(withAuth(auth), compat);
+    expect(httpConfig(parsed).auth).toEqual(auth);
+  });
+
   it("marks mixed sign-in optional and none as needing nothing", async () => {
     const mixed = await parsePluginBundle(withAuth({ type: "mixed" }), compat);
     expect(mixed.setupRequirements).toEqual([
@@ -265,6 +275,14 @@ describe("invalid declarations skip only their entry", () => {
     [
       "an endpoint with a fragment",
       { type: "oauth", tokenUrl: "https://a.example.com/t#x" },
+    ],
+    [
+      "an endpoint with empty userinfo",
+      { type: "oauth", tokenUrl: "https://@a.example.com/t" },
+    ],
+    [
+      "an endpoint with an empty fragment",
+      { type: "oauth", tokenUrl: "https://a.example.com/t#" },
     ],
     [
       "a plain-HTTP remote endpoint",
