@@ -421,7 +421,9 @@ export function saveServerOrder(projectId: string, names: string[]) {
 
 /**
  * A refusal the queue retries after `Retry-After`: busy (429) or the queue
- * coordinator briefly unreachable (503). Neither reached the MCP server.
+ * coordinator briefly unreachable (503). Usually the MCP server was never
+ * reached, but a 503 can also end a check that lost its lease mid-run, so a
+ * retry may run that connection check again.
  */
 function isRetryableQueueRefusal(error: unknown): boolean {
   const candidate = error as {

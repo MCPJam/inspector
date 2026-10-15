@@ -32,6 +32,27 @@ const COORDINATOR_CALL_TIMEOUT_MS = 5000;
 const RELEASE_CALL_TIMEOUT_MS = 2000;
 const QUEUE_WINDOW_MS = 30_000;
 
+/** A coordinator failure; `transient` ones may succeed on another try. */
+export class CoordinatorError extends Error {
+  constructor(
+    message: string,
+    readonly transient: boolean,
+  ) {
+    super(message);
+    this.name = "CoordinatorError";
+  }
+}
+
+// Timeouts, network errors and 5xx can clear up. Missing config, 4xx and an
+// unreadable reply will fail the same way again.
+function isTransientCoordinatorError(error: unknown): boolean {
+  if (error instanceof CoordinatorError) return error.transient;
+  return (
+    error instanceof TypeError ||
+    (error instanceof Error && error.name === "TimeoutError")
+  );
+}
+
 function coordinatorFor(
   c: Context,
   metadata?: { requestId: string; intent?: "manual" | "automatic" },
@@ -48,7 +69,10 @@ function coordinatorFor(
       : undefined;
   return async (operation, signal) => {
     if (!url || !serviceToken)
-      throw new Error("Server check coordinator is not configured");
+      throw new CoordinatorError(
+        "Server check coordinator is not configured",
+        false,
+      );
     const response = await fetch(`${url}/internal/server-check-queue`, {
       method: "POST",
       headers: {
@@ -76,8 +100,19 @@ function coordinatorFor(
       ]),
     });
     if (!response.ok)
-      throw new Error(`Server check coordinator returned ${response.status}`);
-    return decisionSchema.parse(await response.json());
+      throw new CoordinatorError(
+        `Server check coordinator returned ${response.status}`,
+        response.status >= 500,
+      );
+    const decision = decisionSchema.safeParse(
+      await response.json().catch(() => null),
+    );
+    if (!decision.success)
+      throw new CoordinatorError(
+        "Server check coordinator sent an invalid decision",
+        false,
+      );
+    return decision.data;
   };
 }
 
@@ -130,6 +165,10 @@ export function createServerCheckMiddleware(makeCoordinator = coordinatorFor) {
     const coordinator = makeCoordinator(c, metadata);
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, c.req.raw.signal]);
+    // Heartbeats get their own stop signal: the check's `signal` also scopes
+    // the route's outbound MCP fetches, so it is not aborted on success.
+    const heartbeatStop = new AbortController();
+    const heartbeatSignal = AbortSignal.any([signal, heartbeatStop.signal]);
     let heartbeat: ReturnType<typeof setTimeout> | undefined;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     let renewing: Promise<void> | undefined;
@@ -158,7 +197,7 @@ export function createServerCheckMiddleware(makeCoordinator = coordinatorFor) {
             const renewDue = Date.now() - renewedAt >= 10_000;
             const decision = await coordinator(
               renewDue ? "renew" : "poll",
-              signal,
+              heartbeatSignal,
             );
             if (done) return;
             if (decision.state === "preempted") {
@@ -188,21 +227,40 @@ export function createServerCheckMiddleware(makeCoordinator = coordinatorFor) {
     // Admission calls are safe to repeat: Convex keeps a live request's place
     // for the same requestId. A slow or failed call is retried inside the
     // queue window instead of refusing the check.
+    // No admission call may run past the queue window, however long its own
+    // call timeout is.
+    const queueWindow = new AbortController();
+    const queueWindowTimer = setTimeout(
+      () =>
+        queueWindow.abort(
+          new DOMException("Server check queue window ended", "TimeoutError"),
+        ),
+      QUEUE_WINDOW_MS,
+    );
+    const admissionSignal = AbortSignal.any([signal, queueWindow.signal]);
     const admissionCall = async (operation: "admit" | "poll") => {
       for (;;) {
         try {
-          return await coordinator(operation, signal);
+          return await coordinator(operation, admissionSignal);
         } catch (error) {
           signal.throwIfAborted();
-          if (Date.now() - started >= QUEUE_WINDOW_MS) throw error;
+          if (
+            queueWindow.signal.aborted ||
+            !isTransientCoordinatorError(error) ||
+            Date.now() - started >= QUEUE_WINDOW_MS
+          )
+            throw error;
           logger.warn("[server-check.queue] admission call failed; retrying", {
             operation,
             error: error instanceof Error ? error.message : String(error),
           });
           await abortableSleep(
             Math.min(500, QUEUE_WINDOW_MS - (Date.now() - started)),
-            signal,
-          );
+            admissionSignal,
+          ).catch((sleepError) => {
+            signal.throwIfAborted();
+            throw queueWindow.signal.aborted ? error : sleepError;
+          });
         }
       }
     };
@@ -250,8 +308,12 @@ export function createServerCheckMiddleware(makeCoordinator = coordinatorFor) {
       return refused(c, "SERVER_CHECK_QUEUE_UNAVAILABLE", 503);
     } finally {
       done = true;
+      clearTimeout(queueWindowTimer);
       clearTimeout(heartbeat);
       clearTimeout(watchdog);
+      // The check is over: cut short an in-flight heartbeat instead of
+      // letting it hold the response until its own timeout.
+      heartbeatStop.abort();
       await renewing;
       // Release is independent of the disconnected request's abort signal.
       try {
