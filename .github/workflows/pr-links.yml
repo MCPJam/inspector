@@ -10,7 +10,8 @@ name: PR Links
 # `pull_request`, not `pull_request_target`: a fork's token is read-only, so a
 # fork PR gets no comment. That is the accepted trade. `pull_request_target`
 # would run with this repo's write token against a PR we do not control, and no
-# advisory nudge is worth that.
+# advisory nudge is worth that. Fork and Dependabot PRs skip the job, because
+# their read-only token turns the comment write into a 403 and a red check.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
@@ -26,6 +27,9 @@ concurrency:
 jobs:
   links:
     name: PR Links
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 5
     steps:
