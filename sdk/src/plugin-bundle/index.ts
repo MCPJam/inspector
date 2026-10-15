@@ -28,9 +28,12 @@ export {
   type ParsedPluginBundle,
   type ParsePluginBundleOptions,
   type PluginAssetKind,
+  type PluginBundleInterpretation,
+  type PluginBundleLayout,
   type PluginBundleLimits,
   type PluginFileEntry,
   type PluginFileSource,
+  type PluginParserProfile,
   type PluginSetupRequirement,
 } from "./types.js";
 

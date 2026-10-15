@@ -19,10 +19,10 @@ import {
   hashCanonicalJson,
   sha256HexBytes,
 } from "./hashes.js";
+import { resolveManifestSource } from "./layout.js";
 import {
   MCPJAM_EXTENSION_NAMESPACE,
   normalizePluginManifest,
-  PLUGIN_MANIFEST_PATH,
   type NormalizedPluginManifest,
 } from "./manifest.js";
 import {
@@ -277,28 +277,29 @@ export async function parsePluginBundle(
 
   // Phase 3 — manifest: `plugin.json` at the bundle root (fixed location;
   // nested plugin.json files are ordinary files, not manifests).
-  const manifestFile = byPath.get(PLUGIN_MANIFEST_PATH);
-  if (manifestFile === undefined) {
-    issues.error(
-      "MANIFEST_MISSING",
-      `bundle is missing "${PLUGIN_MANIFEST_PATH}" at its root`
-    );
+  const filePaths: ReadonlySet<string> = new Set(byPath.keys());
+  const resolved = resolveManifestSource({
+    profile: options?.profile ?? "strict",
+    filePaths,
+    readJson: (path, collector) => {
+      const file = byPath.get(path);
+      return file === undefined
+        ? null
+        : parseJsonFile(file, collector, "MANIFEST_INVALID_JSON");
+    },
+    issues,
+  });
+  if (resolved === null) throw new PluginBundleError(issues.issues());
+  const { interpretation } = resolved;
+  const manifestFile = byPath.get(interpretation.manifestPath);
+  const { manifest } =
+    resolved.record === null || manifestFile === undefined
+      ? { manifest: null as NormalizedPluginManifest | null }
+      : normalizePluginManifest(resolved.record, { filePaths, issues });
+  if (manifest === null || manifestFile === undefined) {
     throw new PluginBundleError(issues.issues());
   }
   const manifestHash = manifestFile.contentHash;
-  const manifestRaw = parseJsonFile(
-    manifestFile,
-    issues,
-    "MANIFEST_INVALID_JSON"
-  );
-  const filePaths: ReadonlySet<string> = new Set(byPath.keys());
-  const { manifest } =
-    manifestRaw === null
-      ? { manifest: null as NormalizedPluginManifest | null }
-      : normalizePluginManifest(manifestRaw, { filePaths, issues });
-  if (manifest === null) {
-    throw new PluginBundleError(issues.issues());
-  }
   issues.throwIfErrors();
 
   const skipped: PluginSkippedComponent[] = [];
@@ -393,18 +394,22 @@ export async function parsePluginBundle(
     skills.push(skill);
   }
 
-  // Phase 5 — MCP servers (root `mcp.json`; fixed location).
+  // Phase 5 — MCP servers (root `mcp.json`; fixed location). Only a root
+  // plugin.json makes a root mcp.json this package's MCP configuration.
   const mcpServers: ParsedPluginServer[] = [];
-  const mcpFile = byPath.get(MCP_CONFIG_PATH);
+  const mcpFile =
+    interpretation.layout === "agent-plugins"
+      ? byPath.get(MCP_CONFIG_PATH)
+      : undefined;
   for (const file of files) {
     if (
-      file.path !== MCP_CONFIG_PATH &&
-      file.path.endsWith(`/${MCP_CONFIG_PATH}`) &&
+      file !== mcpFile &&
+      `/${file.path}`.endsWith(`/${MCP_CONFIG_PATH}`) &&
       !isPathInside(SKILLS_DIR, file.path)
     ) {
       issues.warn(
         "MCP_CONFIG_IGNORED",
-        `only the bundle root "${MCP_CONFIG_PATH}" is used; "${file.path}" is ignored`,
+        `"${file.path}" is not this bundle's MCP configuration; ignored`,
         { path: file.path }
       );
     }
@@ -603,6 +608,7 @@ export async function parsePluginBundle(
 
   return {
     manifest,
+    interpretation,
     schemaVersion: manifest.schemaVersion,
     bundleHash,
     manifestHash,
