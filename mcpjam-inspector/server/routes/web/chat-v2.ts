@@ -1578,6 +1578,13 @@ chatV2.post("/", async (c) => {
       });
     }
 
+    // A Playground turn runs its plugins' servers isolated: one that is
+    // refused or fails is left out of the turn instead of failing it (see
+    // `plugin-server-isolation.ts`). Scenario and harness turns stay strict.
+    const isolatedServerIds =
+      isScenarioSession || resolvedExecution.harness
+        ? []
+        : (effectiveCapabilities?.pluginServerIds ?? []);
     // Membership chat (no share/scenario token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / scenario)
@@ -1586,6 +1593,7 @@ chatV2.post("/", async (c) => {
       manager,
       oauthServerUrls: urls,
       authenticatedUserId,
+      refusedServers,
     } = await createAuthorizedManager(
       callerContextFromHono(c),
       bearerToken,
@@ -1607,6 +1615,7 @@ chatV2.post("/", async (c) => {
       ),
       {
         multiConnection: true,
+        tolerateServerRefusals: isolatedServerIds,
         ...(modelFormDispatch ? { extensionRequestHandlers: modelFormDispatch.handlers } : {}),
         ...(isScenarioSession ? { accessScope: "chat_v2" } : {}),
         scenarioId,
@@ -2742,6 +2751,10 @@ chatV2.post("/", async (c) => {
             : effectiveCapabilities
               ? { effectiveCapabilities }
               : {}),
+          isolatedServers: {
+            serverIds: isolatedServerIds,
+            refused: refusedServers,
+          },
         },
         persist: {
           executionTarget: toResumeExecutionTarget(executionTarget),
