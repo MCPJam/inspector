@@ -59,9 +59,10 @@ type ToolOptions = Parameters<MCPClientManager["getToolsForAiSdkByServer"]>[1];
 /**
  * How `prepareChatV2` lists one turn's MCP tools. With no isolated servers it
  * is exactly the manager's own listing, under the turn's budget. With them,
- * each isolated server is listed on its own, under its own budget, so a plugin
- * server that hangs is reported like one that refused and the rest of the
- * turn is not held up.
+ * each isolated server is listed on its own, under its own budget, alongside
+ * the rest. A plugin server that hangs still holds the turn until that budget
+ * runs out, as it always did, but is then reported like one that refused, and
+ * the turn runs without it instead of failing.
  */
 export function createTurnToolLister(args: {
   manager: Pick<

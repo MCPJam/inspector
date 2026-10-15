@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { UIMessageChunk } from "ai";
 import {
   createTurnToolLister,
@@ -179,7 +178,7 @@ describe("pluginServerUnavailableReason", () => {
   it("asks for a sign-in when the MCP server itself answers 401", () => {
     expect(
       pluginServerUnavailableReason(
-        new StreamableHTTPError(401, "Error POSTing to endpoint (HTTP 401)"),
+        new Error("Error POSTing to endpoint (HTTP 401): unauthorized"),
       ),
     ).toBe("needs_auth");
   });
@@ -188,7 +187,7 @@ describe("pluginServerUnavailableReason", () => {
     for (const error of [
       new WebRouteError(403, ErrorCode.FORBIDDEN, "Access denied"),
       new WebRouteError(502, ErrorCode.SERVER_UNREACHABLE, "Bad gateway"),
-      new StreamableHTTPError(503, "Error POSTing to endpoint (HTTP 503)"),
+      new Error("Error POSTing to endpoint (HTTP 503)"),
       new TypeError("fetch failed"),
     ]) {
       expect(pluginServerUnavailableReason(error)).toBe("unreachable");
