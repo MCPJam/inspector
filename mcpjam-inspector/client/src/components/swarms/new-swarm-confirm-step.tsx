@@ -13,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Loader2, Minus, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Minus, Plus, Trash2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -46,6 +46,7 @@ import {
   describeReusedEnvironmentMove,
   type EnvironmentMoveRow,
 } from "@/components/swarms/reused-environment-move";
+import { Alert, AlertDescription } from "@mcpjam/design-system/alert";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { type JourneyCriterion } from "@/shared/journey-rubric";
 import { toast } from "@/lib/toast";
@@ -1085,34 +1086,21 @@ export function NewSwarmConfirmStep({
       iterationsKey: persona._id,
     }))
   );
-  /**
-   * Which reused goals this launch is about to re-stamp onto the selected
-   * environment, and what they were authored against.
-   *
-   * The override is not new and is not a bug — it is what lets a swarm run
-   * shared goals somewhere new without rewriting definitions other swarms also
-   * launch. What was missing is anyone being TOLD, which is how 15 goals
-   * written for one server's tools ran against a different server and looked
-   * like a successful wave.
-   */
-  const reusedMoves = reusedPersonas.flatMap((persona) => {
-    const targets = reusedResolved[persona._id]?.targets ?? null;
-    // Still loading. Launch is blocked on the same condition, so no move can
-    // slip past while this is empty.
-    if (targets === null) return [];
-    const move = describeReusedEnvironmentMove({
-      goals: targets.map((target) => ({
-        environmentIds: target.environmentIds,
-        hostIds: target.hostIds,
-        serverAttachmentId: target.legacyServerAttachmentId,
-      })),
-      selection: environmentIds,
-      rowsById: environmentRowsById,
-      hostName: hostNameById,
-    });
-    return move
-      ? [{ personaId: persona._id, personaName: persona.name, move }]
-      : [];
+  const hasReusedEnvironmentMove = reusedPersonas.some((persona) => {
+    const targets = reusedResolved[persona._id]?.targets;
+    if (!targets) return false;
+    return (
+      describeReusedEnvironmentMove({
+        goals: targets.map((target) => ({
+          environmentIds: target.environmentIds,
+          hostIds: target.hostIds,
+          serverAttachmentId: target.legacyServerAttachmentId,
+        })),
+        selection: environmentIds,
+        rowsById: environmentRowsById,
+        hostName: hostNameById,
+      }) !== null
+    );
   });
 
   const iterationsFor = (personaKey: string) =>
@@ -1385,44 +1373,17 @@ export function NewSwarmConfirmStep({
             {launchSessionEstimate === 1 ? "conversation" : "conversations"}{" "}
             total across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
           </p>
-          {reusedMoves.length > 0 ? (
-            <ul
-              className="space-y-1 text-sm leading-relaxed text-muted-foreground"
-              data-testid="new-swarm-confirm-env-moves"
+          {hasReusedEnvironmentMove ? (
+            <Alert
+              className="border-warning/30 bg-warning/10 text-warning-foreground"
+              data-testid="new-swarm-confirm-env-move-warning"
             >
-              {reusedMoves.map(({ personaId, personaName, move }) => (
-                <li key={personaId}>
-                  <span className="font-medium text-foreground">
-                    {personaName}
-                  </span>
-                  {": "}
-                  {move.goalCount}{" "}
-                  {move.goalCount === 1 ? "goal was" : "goals were"} authored
-                  against{" "}
-                  {move.fromLabels.length > 0 ? (
-                    <span className="font-medium text-foreground">
-                      {move.fromLabels.join(" · ")}
-                    </span>
-                  ) : (
-                    "another environment"
-                  )}
-                  {" and will run here instead."}
-                  {move.differentClient || move.differentServerGroup ? (
-                    <span className="font-medium text-foreground">
-                      {" "}
-                      {move.differentServerGroup
-                        ? move.differentClient
-                          ? "Different client and server group."
-                          : "Different server group."
-                        : "Different client."}
-                    </span>
-                  ) : null}
-                  {move.differentServerGroup
-                    ? " These goals were written for another server\u2019s tools."
-                    : ""}
-                </li>
-              ))}
-            </ul>
+              <AlertTriangle aria-hidden="true" />
+              <AlertDescription className="text-warning-foreground">
+                Some existing goals were written for a different setup and will
+                run against the one selected for this swarm.
+              </AlertDescription>
+            </Alert>
           ) : null}
         </div>
 
