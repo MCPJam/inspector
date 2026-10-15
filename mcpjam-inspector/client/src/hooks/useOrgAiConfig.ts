@@ -23,9 +23,10 @@ export const TEST_ORG_AI_MODEL_ACTION =
 /**
  * The organization's own AI models for background work, one per kind:
  * `default` for text work nobody picks a model for (analysis, generation,
- * typed decisions, the simulated user), and later `embedding` and
- * `transcription`. An admin chooses each one; MCPJam only suggests. Model
- * pickers never use them, and the judge is always an explicit pick.
+ * typed decisions, the simulated user), `search` for the built-in web
+ * search, and later `embedding` and `transcription`. An admin chooses each
+ * one; MCPJam only suggests. Model pickers never use them, and the judge is
+ * always an explicit pick.
  *
  * The backend says which kinds it supports (`supportedModelKinds`), and the
  * settings card shows one row per supported kind, so a kind this list knows
@@ -33,6 +34,7 @@ export const TEST_ORG_AI_MODEL_ACTION =
  */
 export const ORG_AI_MODEL_KINDS = [
   "default",
+  "search",
   "embedding",
   "transcription",
 ] as const;
@@ -164,6 +166,12 @@ export type OrgAiConfig = {
   aiModels?: Partial<Record<OrgAiModelKind, OrgAiModelEntry | null>>;
   /** Owners and admins only. Shown as suggestions; never applied by itself. */
   aiModelSuggestions?: Partial<Record<OrgAiModelKind, ModelSelection>>;
+  /**
+   * Per kind, the eligible connections whose provider can serve it (a search
+   * model only where MCPJam runs the provider's web search). Absent on an
+   * older backend; the card then offers every eligible connection.
+   */
+  aiModelConnectionIds?: Partial<Record<OrgAiModelKind, string[]>>;
 };
 
 /**
@@ -189,6 +197,7 @@ export function orgAiModelsOf(config: OrgAiConfig | null | undefined): {
   kinds: OrgAiModelKind[];
   models: Partial<Record<OrgAiModelKind, OrgAiModelEntry | null>>;
   suggestions: Partial<Record<OrgAiModelKind, ModelSelection>>;
+  connectionIds: Partial<Record<OrgAiModelKind, string[]>>;
 } | null {
   if (!config) return null;
   const { supportedModelKinds, aiModels } = config;
@@ -205,6 +214,7 @@ export function orgAiModelsOf(config: OrgAiConfig | null | undefined): {
     kinds,
     models: aiModels,
     suggestions: config.aiModelSuggestions ?? {},
+    connectionIds: config.aiModelConnectionIds ?? {},
   };
 }
 

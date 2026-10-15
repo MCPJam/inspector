@@ -195,6 +195,7 @@ export function operationModelFix(
 
 /** The model an operation runs on when the backend does not name it. */
 function modelKindForOperation(operation: AiOperationId): OrgAiModelKind {
+  if (operation === "web_search") return "search";
   if (operation === "embedding") return "embedding";
   if (operation === "speech_transcription") return "transcription";
   return "default";
@@ -405,6 +406,11 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
     noun: "default AI model",
     runs: "Insights and findings, generation, typed decisions and simulated users",
   },
+  search: {
+    label: "Search model",
+    noun: "search model",
+    runs: "Web search",
+  },
   embedding: {
     label: "Embedding model",
     noun: "embedding model",
@@ -417,7 +423,7 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
   },
 };
 
-/** "default AI model", "embedding model", "transcription model". */
+/** "default AI model", "search model", "embedding model", … */
 export function orgAiModelNoun(kind: OrgAiModelKind): string {
   return ORG_AI_MODEL_PRESENTATION[kind]?.noun ?? `${kind} model`;
 }
