@@ -61,6 +61,7 @@ describe("usePluginServerNotices", () => {
           displayName: "Mail",
           reason: "needs_auth",
           partial: true,
+          signIn: { pluginVersionId: "ver_mail", componentKey: "inbox" },
         },
       ],
     });

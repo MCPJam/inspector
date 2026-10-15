@@ -2,6 +2,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { toast } from "@/lib/toast";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import type { ActivePluginSkipReason } from "@/lib/plugins/active-plugins-types";
+import type { PluginSignInBinding } from "@/lib/hosted-oauth-callback";
 
 /**
  * What a Playground chat says about the project's installed plugins it did not
@@ -24,6 +25,8 @@ export interface PluginNoticePlugin {
   placement?: "local" | "computer";
   /** The plugin ran, but without a server whose `reason` this is. */
   partial?: boolean;
+  /** The server to sign in to, when signing in is the fix. */
+  signIn?: PluginSignInBinding;
 }
 
 /**
@@ -141,6 +144,32 @@ function logMethod(data: PluginNoticeData): string {
   return "plugins/unavailable";
 }
 
+type PluginSignIn = (binding: PluginSignInBinding) => void;
+let signInHandler: PluginSignIn | null = null;
+
+/**
+ * The Playground's Sign in for a plugin's server (`usePluginServerSignIn`),
+ * offered on a notice that names a server to sign in to. Returns the
+ * unregister, which leaves a newer registration in place.
+ */
+export function registerPluginNoticeSignIn(handler: PluginSignIn): () => void {
+  signInHandler = handler;
+  return () => {
+    if (signInHandler === handler) signInHandler = null;
+  };
+}
+
+function signInAction(data: PluginNoticeData) {
+  const handler = signInHandler;
+  const binding =
+    data.kind === "skipped"
+      ? data.plugins.find((plugin) => plugin.signIn)?.signIn
+      : undefined;
+  return handler && binding
+    ? { action: { label: "Sign in", onClick: () => handler(binding) } }
+    : undefined;
+}
+
 // Page-lifetime, so a remounted Playground does not repeat a notice the chat
 // already showed. Bounded: an open tab can run many chats.
 const MAX_SHOWN = 500;
@@ -169,7 +198,9 @@ export function showPluginNotice(
   shownNotices.add(key);
 
   const message = describePluginNotice(data);
-  toast.info(message);
+  const withSignIn = signInAction(data);
+  if (withSignIn) toast.info(message, withSignIn);
+  else toast.info(message);
   try {
     useTrafficLogStore.getState().addMcpServerLog({
       id: `plugins:notice:${key}`,

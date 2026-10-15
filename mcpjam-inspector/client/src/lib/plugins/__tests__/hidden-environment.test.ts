@@ -204,6 +204,36 @@ describe("skippedPluginsForNotice", () => {
     ]);
   });
 
+  it("names the server to sign in to when signing in is the fix", () => {
+    const partial = row("p", {
+      servers: [
+        {
+          serverId: "srv_k",
+          name: "k",
+          componentKey: "k",
+          placement: "remote",
+          unavailable: "needs_auth",
+        },
+      ],
+    });
+    const whole = row("w", {
+      status: "skipped",
+      reason: "needs_auth",
+      componentKey: "w",
+    });
+    expect(
+      skippedPluginsForNotice([partial, whole]).map((plugin) => plugin.signIn),
+    ).toEqual([
+      { pluginVersionId: "ver_p", componentKey: "k" },
+      { pluginVersionId: "ver_w", componentKey: "w" },
+    ]);
+    expect(
+      skippedPluginsForNotice([
+        row("s", { status: "skipped", reason: "needs_setup" }),
+      ])[0].signIn,
+    ).toBeUndefined();
+  });
+
   it("says where a placement skip's component would have run", () => {
     const skipped = (placement: "local" | "computer") =>
       row(placement, {
@@ -274,6 +304,19 @@ describe("unavailableServersForNotice", () => {
         ],
       ).map((plugin) => plugin.reason),
     ).toEqual(["needs_auth"]);
+  });
+
+  it("names the server to sign in to only for a sign-in", () => {
+    const signIns = (reason: "needs_auth" | "unreachable") =>
+      unavailableServersForNotice(
+        [twoServers],
+        [{ serverId: "srv_send", reason }],
+      )[0].signIn;
+    expect(signIns("needs_auth")).toEqual({
+      pluginVersionId: "ver_mail",
+      componentKey: "send",
+    });
+    expect(signIns("unreachable")).toBeUndefined();
   });
 
   it("says nothing for a server no plugin lists", () => {

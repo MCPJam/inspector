@@ -60,6 +60,13 @@ vi.mock("@/hooks/useProjectSecrets", () => ({
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query: state.query }),
 }));
+vi.mock("@/hooks/usePluginServerSignIn", () => ({
+  usePluginServerSignIn: () => ({
+    available: false,
+    pendingKey: null,
+    signIn: vi.fn(),
+  }),
+}));
 
 import {
   HIDDEN_ENVIRONMENT_WAIT_MS,

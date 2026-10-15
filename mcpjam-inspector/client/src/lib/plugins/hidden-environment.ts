@@ -131,10 +131,18 @@ export function skippedPluginsForNotice(
       displayName: plugin.displayName,
     };
     if (plugin.status === "active") {
-      const reason = plugin.servers.find(
-        (server) => server.unavailable,
-      )?.unavailable;
-      return reason ? [{ ...identity, reason, partial: true }] : [];
+      const server = plugin.servers.find((candidate) => candidate.unavailable);
+      const reason = server?.unavailable;
+      return server && reason
+        ? [
+            {
+              ...identity,
+              reason,
+              partial: true,
+              ...signInFor(plugin, reason, server.componentKey),
+            },
+          ]
+        : [];
     }
     return plugin.status === "skipped" &&
       plugin.reason &&
@@ -146,10 +154,22 @@ export function skippedPluginsForNotice(
             ...(plugin.reason === "placement"
               ? { placement: skippedPlacement(plugin) }
               : {}),
+            ...signInFor(plugin, plugin.reason, plugin.componentKey),
           },
         ]
       : [];
   });
+}
+
+/** The server a notice offers Sign in for, when signing in is its fix. */
+function signInFor(
+  plugin: ActivePluginRow,
+  reason: string,
+  componentKey: string | undefined,
+): Pick<PluginNoticePlugin, "signIn"> {
+  return reason === "needs_auth" && plugin.pluginVersionId && componentKey
+    ? { signIn: { pluginVersionId: plugin.pluginVersionId, componentKey } }
+    : {};
 }
 
 /**
@@ -165,17 +185,20 @@ export function unavailableServersForNotice(
     const own = servers.filter((unavailable) =>
       plugin.servers.some((server) => server.serverId === unavailable.serverId),
     );
-    const reason =
-      own.find((unavailable) => unavailable.reason === "needs_auth")?.reason ??
-      own[0]?.reason;
-    if (!reason) return [];
+    const chosen =
+      own.find((unavailable) => unavailable.reason === "needs_auth") ?? own[0];
+    if (!chosen) return [];
+    const componentKey = plugin.servers.find(
+      (server) => server.serverId === chosen.serverId,
+    )?.componentKey;
     return [
       {
         pluginId: plugin.pluginId,
         name: plugin.name,
         displayName: plugin.displayName,
-        reason,
+        reason: chosen.reason,
         partial: true,
+        ...signInFor(plugin, chosen.reason, componentKey),
       },
     ];
   });
