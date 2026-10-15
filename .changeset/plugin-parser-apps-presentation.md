@@ -1,0 +1,5 @@
+---
+"@mcpjam/sdk": minor
+---
+
+`parsePluginBundle` reads OpenAI's keyed `.app.json` (`{ "apps": { "<server>": { "id": "plugin_asdk_app_…" } } }`): a registered app runs through the bundle server of the same name (`binding: "registered"`, `status: "bound"`) and is otherwise `unresolved`, never reported runnable, since ChatGPT's app directory is not reachable from MCPJam. An unreadable or invalid app file now skips only its own apps (`skipped` kind `"app"`) instead of rejecting the bundle. The display name is read from OpenAI's `interface.displayName` (the `com.mcpjam` namespace still wins), and the manifest gains a typed `onboarding` field: the `extensions["com.openai"].onboardingSkill` reference is kept only when it names a skill the bundle loaded, including long paths the secret screen would otherwise drop, and removed otherwise.

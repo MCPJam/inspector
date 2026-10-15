@@ -75,6 +75,11 @@ export interface NormalizedPluginManifest {
    */
   composerIcon?: string;
   /**
+   * The packaged onboarding skill (`extensions["com.openai"].onboardingSkill`),
+   * kept only when it names a skill this bundle loaded.
+   */
+  onboarding?: { skillPath: string; componentKey: string };
+  /**
    * Client-extension data keyed by reverse-domain namespace, sanitized
    * (secret-looking keys/values dropped, depth-capped). MCPJam applies only
    * the `com.mcpjam` namespace and ignores the rest, per spec.
@@ -300,15 +305,16 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Read OpenAI's plugin icons — `interface.logo` / `logoDark` (the plugin
- * directory icon, light and dark) and `interface.composerIcon` — from the
- * top-level `interface` block and from `extensions["com.openai"].interface`
- * (which wins when both are present). Each must be a bundle-relative path to
- * a file in the bundle; anything else is reported and ignored, never fatal,
- * so a plugin with a bad icon still imports. The `com.mcpjam` namespace
- * applies afterwards and overrides `logo`.
+ * Read OpenAI's plugin presentation — `interface.displayName`, the directory
+ * icon `interface.logo` / `logoDark` (light and dark) and
+ * `interface.composerIcon` — from the top-level `interface` block and from
+ * `extensions["com.openai"].interface` (which wins when both are present).
+ * Each icon must be a bundle-relative path to a file in the bundle; anything
+ * else is reported and ignored, never fatal, so a plugin with a bad icon
+ * still imports. The `com.mcpjam` namespace applies afterwards and overrides
+ * `displayName` and `logo`.
  */
-function applyOpenAiInterfaceIcons(
+function applyOpenAiInterface(
   manifest: NormalizedPluginManifest,
   sources: Array<{ label: string; value: unknown }>,
   filePaths: ReadonlySet<string>,
@@ -322,6 +328,9 @@ function applyOpenAiInterfaceIcons(
         `"${label}" must be an object; its icons were ignored`
       );
       continue;
+    }
+    if (typeof value.displayName === "string" && value.displayName.trim()) {
+      manifest.displayName = value.displayName;
     }
     for (const key of OPENAI_INTERFACE_ICON_FIELDS) {
       const ref = value[key];
@@ -381,6 +390,8 @@ function checkOpenAiDirectoryIcon(
 export interface PluginManifestNormalization {
   /** `null` when the manifest is unusable (errors were collected). */
   manifest: NormalizedPluginManifest | null;
+  /** The declared onboarding skill, unvalidated: see `applyOnboardingSkill`. */
+  onboardingSkill?: unknown;
 }
 
 /**
@@ -530,7 +541,7 @@ export function normalizePluginManifest(
     ? record.extensions[OPENAI_EXTENSION_NAMESPACE]
     : undefined;
   const declaresOpenAi = record.interface !== undefined || rawOpenAi !== undefined;
-  applyOpenAiInterfaceIcons(
+  applyOpenAiInterface(
     manifest,
     [
       { label: "interface", value: record.interface },
@@ -605,7 +616,51 @@ export function normalizePluginManifest(
     issues
   );
 
-  return { manifest };
+  return {
+    manifest,
+    onboardingSkill: isPlainRecord(rawOpenAi)
+      ? rawOpenAi.onboardingSkill
+      : undefined,
+  };
+}
+
+/**
+ * Keep the declared onboarding skill only when it names, exactly, a skill this
+ * bundle loaded. The reference is read from the raw manifest because the
+ * secret screen can drop a long path; once validated it is restored to
+ * `extensions["com.openai"]` and set as the typed `onboarding` field. An
+ * unvalidated reference is removed, so no consumer can act on it.
+ */
+export function applyOnboardingSkill(
+  manifest: NormalizedPluginManifest,
+  declared: unknown,
+  skills: ReadonlyArray<{ skillFilePath: string; componentKey: string }>,
+  issues: PluginIssueCollector
+): void {
+  const namespace = manifest.extensions[OPENAI_EXTENSION_NAMESPACE];
+  const openai = isPlainRecord(namespace) ? { ...namespace } : undefined;
+  if (openai !== undefined) {
+    delete openai.onboardingSkill;
+    manifest.extensions[OPENAI_EXTENSION_NAMESPACE] = openai;
+  }
+  if (declared === undefined) return;
+  const resolved =
+    typeof declared === "string" ? resolveContainedPath("", declared) : null;
+  const skill = resolved?.ok
+    ? skills.find((candidate) => candidate.skillFilePath === resolved.path)
+    : undefined;
+  if (skill === undefined || openai === undefined) {
+    issues.warn(
+      "MANIFEST_MISSING_FILE",
+      `the onboarding skill this plugin names is not one of its loaded skills; onboarding is unavailable`
+    );
+    return;
+  }
+  manifest.onboarding = {
+    skillPath: skill.skillFilePath,
+    componentKey: skill.componentKey,
+  };
+  openai.onboardingSkill = declared;
 }
 
 /**

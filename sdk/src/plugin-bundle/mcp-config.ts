@@ -147,7 +147,7 @@ export interface ParsedPluginServer {
 
 /** One skipped component, per the spec's failure-isolation boundaries. */
 export interface PluginSkippedComponent {
-  kind: "server" | "skill" | "mcp-config";
+  kind: "server" | "skill" | "mcp-config" | "app";
   /** Server key, skill directory name, or the config path. */
   key: string;
   reason: string;

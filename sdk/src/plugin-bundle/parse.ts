@@ -22,6 +22,7 @@ import {
 import { LEGACY_MCP_CONFIG_PATH, resolveManifestSource } from "./layout.js";
 import { adaptLegacyMcpConfig } from "./legacy-mcp.js";
 import {
+  applyOnboardingSkill,
   MCPJAM_EXTENSION_NAMESPACE,
   normalizePluginManifest,
   type NormalizedPluginManifest,
@@ -293,7 +294,7 @@ export async function parsePluginBundle(
   if (resolved === null) throw new PluginBundleError(issues.issues());
   const { interpretation } = resolved;
   const manifestFile = byPath.get(interpretation.manifestPath);
-  const { manifest } =
+  const { manifest, onboardingSkill } =
     resolved.record === null || manifestFile === undefined
       ? { manifest: null as NormalizedPluginManifest | null }
       : normalizePluginManifest(resolved.record, { filePaths, issues });
@@ -395,6 +396,8 @@ export async function parsePluginBundle(
     skills.push(skill);
   }
 
+  applyOnboardingSkill(manifest, onboardingSkill, skills, issues);
+
   // Phase 5 — MCP servers: the root `mcp.json` (fixed location) when a root
   // plugin.json is the manifest; otherwise whatever the legacy manifest
   // names, rewritten into a strict document before the same normalizer runs.
@@ -472,22 +475,41 @@ export async function parsePluginBundle(
     }
   }
 
-  // Phase 6 — app mappings (`*.app.json`, MCPJam extension).
+  // Phase 6 — app mappings (`*.app.json`). App metadata is extension data,
+  // so one unreadable file skips its apps, never the bundle.
   const apps: ParsedPluginApp[] = [];
   const serverKeys = mcpServers.map((server) => server.key);
   for (const file of files) {
     if (!file.path.endsWith(APP_CONFIG_SUFFIX)) continue;
     if (isPathInside(SKILLS_DIR, file.path)) continue; // skill supporting file
-    const appRaw = parseJsonFile(file, issues, "APP_INVALID_CONFIG");
-    if (appRaw === null) continue;
-    const app = parsePluginAppConfig({
-      sourcePath: file.path,
-      raw: appRaw,
-      serverKeys,
-      contentHash: file.contentHash,
-      issues,
-    });
-    if (app !== null) apps.push(app);
+    const scoped = new PluginIssueCollector();
+    const appRaw = parseJsonFile(file, scoped, "APP_INVALID_CONFIG");
+    const parsedApps =
+      appRaw === null
+        ? null
+        : parsePluginAppConfig({
+            sourcePath: file.path,
+            raw: appRaw,
+            serverKeys,
+            contentHash: file.contentHash,
+            issues: scoped,
+          });
+    const reason = scoped.firstErrorMessage();
+    issues.absorbDemoted(scoped);
+    if (parsedApps === null || reason !== undefined) {
+      issues.warn(
+        "COMPONENT_SKIPPED",
+        `apps in "${file.path}" were skipped: ${reason ?? "invalid app configuration"}`,
+        { path: file.path }
+      );
+      skipped.push({
+        kind: "app",
+        key: file.path,
+        reason: reason ?? "invalid app configuration",
+      });
+      continue;
+    }
+    apps.push(...parsedApps);
   }
 
   // Phase 7 — presentation assets.
