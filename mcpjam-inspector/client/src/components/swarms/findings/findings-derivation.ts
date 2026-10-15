@@ -225,6 +225,7 @@ function stageStateOf(row: SwarmJourneyFinding): StageState {
 function personaAccount(
   rows: readonly SwarmJourneyFinding[],
   goals: readonly GoalFindingsModel[],
+  disposition: SwarmFindingDisposition,
 ): Pick<
   PersonaFindingsModel,
   "issue" | "account" | "accountSessionId" | "cited" | "signal"
@@ -289,7 +290,11 @@ function personaAccount(
       account ??
       lead?.outcomePhrase ??
       leadGoal?.diagnosis.detail ??
-      goals[0]?.diagnosis.detail ??
+      goals.find(
+        (goal) =>
+          goal.sentiment.label ===
+          SWARM_FINDING_DISPOSITION_LABELS[disposition],
+      )?.diagnosis.detail ??
       "No session evidence available.",
     ...(account ? { account } : {}),
     ...(account && supporting?.sessionIds[0]
@@ -329,7 +334,9 @@ export function deriveSwarmFindingsModelFromWire({
       const rows = personaRows.filter((row) => row.goal.runId === runId);
       const run = runs.find((candidate) => candidate.runId === runId);
       const lead = representativeGoalRow(rows);
-      const report = rows.find((row) => row.basis === "sessionReport");
+      const report = representativeGoalRow(
+        rows.filter((row) => row.basis === "sessionReport"),
+      );
       const emptyStage = (): GoalStageModel => ({
         state: "none",
         evidence: [],
@@ -411,7 +418,7 @@ export function deriveSwarmFindingsModelFromWire({
         label: SWARM_FINDING_DISPOSITION_LABELS[persona.disposition],
         tone: toneOfDisposition(persona.disposition),
       },
-      ...personaAccount(personaRows, goals),
+      ...personaAccount(personaRows, goals, persona.disposition),
       goals,
     };
   });
