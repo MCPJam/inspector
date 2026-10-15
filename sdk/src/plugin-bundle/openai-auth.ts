@@ -12,7 +12,11 @@
  */
 
 import { OPENAI_EXTENSION_NAMESPACE } from "./manifest.js";
-import { isLoopbackHost, isUnsafeRawUrl } from "./mcp-entry-values.js";
+import {
+  isLoopbackHost,
+  isUnsafeRawUrl,
+  urlCarriesSecret,
+} from "./mcp-entry-values.js";
 import type { PluginHeaderRequirement } from "./mcp-config.js";
 import {
   isSecretLikeValue,
@@ -164,6 +168,12 @@ function readEndpoint(field: string, value: unknown, ctx: ReadContext): string {
     // Not echoed: an endpoint with userinfo carries a credential.
     throw new InvalidAuth(
       `auth.${field} must be an absolute https:// URL (or a loopback http:// one) without credentials, a fragment, whitespace or backslashes`
+    );
+  }
+  // A package's own key would reach every member who installs it.
+  if (urlCarriesSecret(url)) {
+    throw new InvalidAuth(
+      `auth.${field} looks like it carries a credential, which a plugin must not ship`
     );
   }
   if (url.protocol === "http:") {

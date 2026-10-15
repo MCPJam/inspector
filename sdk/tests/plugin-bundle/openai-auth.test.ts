@@ -109,10 +109,11 @@ describe("auth types", () => {
     expect(parsed.warnings).toEqual([]);
   });
 
-  it("accepts a loopback HTTP endpoint and an @ inside a path", async () => {
+  it("accepts a loopback HTTP endpoint, an @ inside a path and a plain query", async () => {
     const auth = {
       type: "oauth",
-      authorizationUrl: "https://auth.example.com/u/@me/authorize",
+      authorizationUrl:
+        "https://auth.example.com/u/@me/authorize?prompt=consent",
       tokenUrl: "http://127.0.0.1:8080/token",
     };
     const parsed = await parsePluginBundle(withAuth(auth), compat);
@@ -356,6 +357,15 @@ describe("invalid declarations skip only their entry", () => {
     [
       "an endpoint with three slashes after the scheme",
       { type: "oauth", resource: "https:///a.example.com/mcp" },
+    ],
+    // A package's own key, wherever it sits in the URL.
+    [
+      "an endpoint with a key in its query",
+      { type: "oauth", tokenUrl: "https://a.example.com/t?client_secret=p4ss" },
+    ],
+    [
+      "an endpoint with a key in its path",
+      { type: "oauth", resource: "https://a.example.com/sk-live-p4ss01/mcp" },
     ],
     [
       "an endpoint with an empty fragment",
