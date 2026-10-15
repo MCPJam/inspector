@@ -232,12 +232,17 @@ describe("useActivePlugins", () => {
     (_deployment, refusal) => {
       state.next = (args: { componentAdmission?: boolean }) =>
         args.componentAdmission ? refusal : result([bits]);
-      const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
+      const { result: hook, rerender } = renderHook(() =>
+        useActivePlugins(PROJECT_ID),
+      );
       expect(state.calls.at(-1)?.args).not.toHaveProperty("componentAdmission");
       expect(hook.current.failed).toBe(false);
       expect(hook.current.activePlugins.map((p) => p.pluginId)).toEqual([
         "plg_bits",
       ]);
+      // It keeps asking the old way rather than refusing every other render.
+      rerender();
+      expect(state.calls.at(-1)?.args).not.toHaveProperty("componentAdmission");
     },
   );
 

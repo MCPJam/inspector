@@ -62,6 +62,7 @@ export interface ActivePluginRow {
   pluginVersionId: string | null;
   name: string;
   displayName: string | null;
+  /** An active plugin can still list a server this member can't use yet. */
   status: "active" | "skipped";
   /** Present when `status === "skipped"`. */
   reason?: ActivePluginSkipReason;
