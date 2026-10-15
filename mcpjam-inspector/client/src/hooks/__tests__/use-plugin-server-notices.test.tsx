@@ -79,6 +79,23 @@ describe("usePluginServerNotices", () => {
     expect(showPluginNotice).toHaveBeenCalledTimes(1);
   });
 
+  it("says a report once the plugins read lists its server", () => {
+    const { rerender } = renderHook(
+      ({ plugins }) => usePluginServerNotices(plugins),
+      { initialProps: { plugins: [] as ActivePluginRow[] } },
+    );
+
+    report("chat_1", "srv_mail", "needs_auth");
+    expect(showPluginNotice).not.toHaveBeenCalled();
+    rerender({ plugins: [mail] });
+
+    expect(showPluginNotice).toHaveBeenCalledTimes(1);
+    expect(showPluginNotice).toHaveBeenCalledWith(
+      "chat_1",
+      expect.objectContaining({ kind: "skipped" }),
+    );
+  });
+
   it("says a later report for the same chat again", () => {
     renderHook(() => usePluginServerNotices([mail]));
 

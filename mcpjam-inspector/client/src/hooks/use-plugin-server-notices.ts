@@ -15,17 +15,17 @@ export function usePluginServerNotices(
   plugins: readonly ActivePluginRow[],
 ): void {
   const reports = usePluginServerNoticeStore((state) => state.reports);
-  const seen = useRef(0);
+  // Reports that made a notice. One whose server the plugins read doesn't
+  // list yet, during a switch or a recomposition, is checked again when it
+  // does.
+  const said = useRef(new Set<number>());
   useEffect(() => {
-    let newest = seen.current;
     for (const [chatSessionId, report] of Object.entries(reports)) {
-      if (report.seq <= seen.current) continue;
-      newest = Math.max(newest, report.seq);
+      if (said.current.has(report.seq)) continue;
       const skipped = unavailableServersForNotice(plugins, report.servers);
-      if (skipped.length > 0) {
-        showPluginNotice(chatSessionId, { kind: "skipped", plugins: skipped });
-      }
+      if (skipped.length === 0) continue;
+      said.current.add(report.seq);
+      showPluginNotice(chatSessionId, { kind: "skipped", plugins: skipped });
     }
-    seen.current = newest;
   }, [reports, plugins]);
 }
