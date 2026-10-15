@@ -64,9 +64,12 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 20
-    # Each phase workflow's completion starts a run for the same commit. They
-    # queue instead of cancelling, and the gate's marker check makes the
-    # later ones exit.
+    # Each phase workflow's completion starts a run for the same commit. The
+    # group keeps one running and at most one pending run; a newer pending run
+    # replaces the older one. Dropping those is harmless: the gate re-reads
+    # every workflow run, and its marker check makes repeats exit. A push
+    # does not cancel a run on the old head, so review-feedback.mjs checks
+    # the head before any Claude call.
     concurrency:
       group: review-pipeline-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
       cancel-in-progress: false
@@ -123,6 +126,7 @@ jobs:
         run: git -C pr fetch --no-tags --depth=1 origin "$MERGE_BASE"
 
       - name: Collect the phase feedback
+        id: feedback
         if: steps.gate.outputs.proceed == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -131,7 +135,7 @@ jobs:
         run: node .reviewer/scripts/slop/review-feedback.mjs
 
       - name: Triage into autofix, suggest and discuss
-        if: steps.gate.outputs.proceed == 'true'
+        if: steps.gate.outputs.proceed == 'true' && steps.feedback.outputs.stale != 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: node .reviewer/scripts/slop/review-triage.mjs
@@ -141,7 +145,7 @@ jobs:
       # only after triage, in a step that never sees the API key.
       - name: Get a bot token
         id: app-token
-        if: steps.gate.outputs.proceed == 'true'
+        if: steps.gate.outputs.proceed == 'true' && steps.feedback.outputs.stale != 'true'
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.MCPJAM_BOT_CLIENT_ID }}
@@ -150,7 +154,7 @@ jobs:
           permission-pull-requests: write
 
       - name: Push autofixes and post the review
-        if: steps.gate.outputs.proceed == 'true'
+        if: steps.gate.outputs.proceed == 'true' && steps.feedback.outputs.stale != 'true'
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}

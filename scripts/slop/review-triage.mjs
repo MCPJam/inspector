@@ -40,9 +40,14 @@ const FORMAT = {
   additionalProperties: false,
 };
 
-/** Paths the bot never commits to: CI and its own gate, lockfiles, built and generated files. */
+/**
+ * Paths the bot never commits to, even when the PR changed them: CI and its
+ * own gate; files that run code on CI or on developers' machines (package
+ * scripts, git hooks, agent hooks); lockfiles, built and generated files.
+ */
 const NO_AUTOFIX = [
-  /^\.github\//, /^scripts\/slop\//, /(^|\/)package-lock\.json$/, /(^|\/)dist\//,
+  /^\.github\//, /^scripts\/slop\//, /^scripts\/git-hooks\//, /^\.claude\//, /^\.agents\//,
+  /(^|\/)package\.json$/, /(^|\/)package-lock\.json$/, /(^|\/)dist\//,
   /^DESIGN\.md$/, /^docs\/style\.css$/, /^docs\/docs\.json$/, /^chat-ui\/src\/styles\.css$/,
 ];
 export const autofixAllowedFor = (path) => !NO_AUTOFIX.some((pattern) => pattern.test(path));
@@ -75,10 +80,12 @@ const subject = (item) =>
 
 /**
  * Enforce what the prompt asks for. `readFile(path)` returns head content or
- * null. Autofixes are capped, and only allowed when the gate allows them: in
- * suggest mode, or after the autofix limit, every autofix becomes a suggestion.
+ * null. Autofixes are capped, only touch files in `changed` (the PR's own
+ * diff, never a file a CI log merely names), and only run when the gate allows
+ * them: in suggest mode, or after the autofix limit, every autofix becomes a
+ * suggestion.
  */
-export function validate(items, { readFile, autofix, autofixReason = "" }) {
+export function validate(items, { readFile, changed, autofix, autofixReason = "" }) {
   let autofixes = 0;
   // Accepted autofix line ranges per path. Edits are applied one after another,
   // so a later edit overlapping an earlier one could match the earlier edit's
@@ -93,6 +100,7 @@ export function validate(items, { readFile, autofix, autofixReason = "" }) {
       const earlier = accepted.get(item.path) ?? [];
       const reason = !autofix ? autofixReason || "autofix is off for this run"
         : autofixes >= MAX_AUTOFIXES ? `at most ${MAX_AUTOFIXES} autofixes run at once`
+        : !changed.has(item.path) ? "the bot only commits to files this PR changed"
         : !autofixAllowedFor(item.path) ? "the bot does not commit to this path"
         : !placed || item.replace === item.find ? "the edit did not apply cleanly"
         : earlier.some((prior) => prior.start <= range.end && range.start <= prior.end)
@@ -131,7 +139,8 @@ export async function triage({ gate, feedback, readFile, call = callClaude }) {
     format: FORMAT,
   });
   const known = items.filter((item) => CATEGORIES.includes(item.category));
-  return validate(known, { readFile, autofix: gate.autofix, autofixReason: gate.autofixReason });
+  const changed = new Set(feedback.files.filter((file) => file.diff).map((file) => file.path));
+  return validate(known, { readFile, changed, autofix: gate.autofix, autofixReason: gate.autofixReason });
 }
 
 export async function main() {

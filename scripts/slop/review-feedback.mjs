@@ -7,8 +7,10 @@
  *
  * Env: GITHUB_TOKEN, GITHUB_REPOSITORY, STATE_DIR, REPO_DIR (a checkout holding
  * the PR head and its merge base); ANTHROPIC_API_KEY for the review phase.
- * Reads `gate.json`, writes `feedback.json`.
+ * Reads `gate.json`, writes `feedback.json`, or the `stale` step output when
+ * the PR head moved.
  */
+import { appendFileSync } from "node:fs";
 import { collectContext, ReviewBudgetError, runReview } from "./adversarial-review.mjs";
 import {
   githubClient, gitIn, isEntrypoint, paginate, readBlob, readState, requireEnv, runEntrypoint, writeState,
@@ -119,11 +121,26 @@ export async function collectFeedback({ gate, request, runGit, call }) {
   return { phase: gate.phase, verdict: "FAILED", summary, notes, items, files };
 }
 
+/**
+ * Runs for one commit are not cancelled by a push (they are grouped by SHA),
+ * so check the PR still points here before paying for the Claude calls.
+ */
+export async function headMoved(request, gate) {
+  const current = await request(`pulls/${gate.pr}`);
+  return current.state !== "open" || current.head.sha !== gate.sha;
+}
+
 export async function main() {
   requireEnv(["GITHUB_TOKEN", "GITHUB_REPOSITORY", "STATE_DIR", "REPO_DIR"]);
   const gate = readState("gate");
+  const request = githubClient();
+  if (await headMoved(request, gate)) {
+    console.log("::notice::The PR moved on since this run started; the new head gets its own run.");
+    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, "stale=true\n");
+    return;
+  }
   if (gate.phase === "review") requireEnv(["ANTHROPIC_API_KEY"]);
-  const feedback = await collectFeedback({ gate, request: githubClient(), runGit: gitIn(process.env.REPO_DIR) });
+  const feedback = await collectFeedback({ gate, request, runGit: gitIn(process.env.REPO_DIR) });
   writeState("feedback", feedback);
   console.log(`${feedback.items.length} feedback items for the ${gate.phase} phase.`);
 }

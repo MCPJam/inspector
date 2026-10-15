@@ -59,9 +59,13 @@ If `autofixAllowed` is false, do not use `autofix`; use `suggest` instead.
 - `commit`: for autofix, an imperative commit subject under 60 characters,
   such as "Fix typo in retry error message". Empty otherwise.
 
-Only edit files that appear in `files`. Do not edit anything under `.github/`
-or `scripts/slop/`, lockfiles, built `dist/` output, or generated regions
+Only autofix files the PR changed: entries in `files` with a non-empty
+`diff`. A file included only because a log names it can get a `suggest` or a
+`discuss`, never an autofix. Never autofix anything under `.github/`,
+`scripts/slop/`, `scripts/git-hooks/`, `.claude/` or `.agents/`, any
+`package.json` or lockfile, built `dist/` output, or generated regions
 (DESIGN.md front matter, token blocks in `docs/style.css` and
-`chat-ui/src/styles.css`); propose those as `discuss` instead.
+`chat-ui/src/styles.css`); propose those as `suggest` or `discuss` instead.
+The code enforces this, so an autofix there is only downgraded.
 
 Write plainly. Lead with the claim, use the code's own terms, no filler.

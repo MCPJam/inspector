@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkFeedback, collectFeedback, gatherFiles, logTail, referencedPaths } from "./review-feedback.mjs";
+import { checkFeedback, collectFeedback, gatherFiles, headMoved, logTail, referencedPaths } from "./review-feedback.mjs";
 
 test("log tails drop timestamps and color codes and keep the end", () => {
   const log = ["2026-10-14T10:00:00.1234567Z first", `2026-10-14T10:00:01Z ${String.fromCharCode(27)}[31mFAIL${String.fromCharCode(27)}[0m src/a.test.ts`, "last"].join("\r\n");
@@ -88,4 +88,15 @@ test("check phases summarise the failed workflows; the review phase passes the r
   });
   assert.equal(review.verdict, "CLEAN");
   assert.deepEqual(review.items, [{ source: "Adversarial review", title: "nit" }]);
+});
+
+test("a run whose PR moved on or closed stops before any Claude call", async () => {
+  const gate = { pr: 7, sha: "a".repeat(40) };
+  const pr = (sha, state = "open") => async (path) => {
+    assert.equal(path, "pulls/7");
+    return { state, head: { sha } };
+  };
+  assert.equal(await headMoved(pr(gate.sha), gate), false);
+  assert.equal(await headMoved(pr("b".repeat(40)), gate), true);
+  assert.equal(await headMoved(pr(gate.sha, "closed"), gate), true);
 });
