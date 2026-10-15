@@ -213,6 +213,10 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import {
+  OrgAiRefusalHandoffProvider,
+  orgAiRefusalHandoff,
+} from "@/contexts/org-ai-refusal-context";
+import {
   useHost,
   useHostList,
   useHostMutations,
@@ -996,6 +1000,10 @@ export function PlaygroundMain({
     organizationId: projectOrganizationId,
   });
   const manageOrgProviders = useOrgModelsHandoff(projectOrganizationId);
+  const refusalHandoff = useMemo(
+    () => orgAiRefusalHandoff({ onManageOrgProviders: manageOrgProviders }),
+    [manageOrgProviders],
+  );
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -7005,7 +7013,7 @@ export function PlaygroundMain({
   );
 
   // Device frame container - display mode is passed to widgets via Thread
-  return (
+  const surface = (
     // Surface signal for `MCPAppsRenderer` / `chatgpt-app-renderer`: the
     // `cspMode` they compute on first render must already see
     // "playground" before any descendant subscribes. The legacy
@@ -7745,5 +7753,13 @@ export function PlaygroundMain({
           it outlives its turn — answering it re-drives the chat turn. */}
       <HostedMrtrHost />
     </WidgetSurfaceProvider>
+  );
+
+  // Parts of the thread that show a policy refusal (the web search tool
+  // card) read who is reading it, and the fix, from here.
+  return (
+    <OrgAiRefusalHandoffProvider value={refusalHandoff}>
+      {surface}
+    </OrgAiRefusalHandoffProvider>
   );
 }

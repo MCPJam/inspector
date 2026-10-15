@@ -511,6 +511,9 @@ export type RequestEventMap = {
 export type SystemEventMap = {
   telemetry_canary: Record<string, never>;
   llm_spend_unattested_ip_pooled: Record<string, never>;
+  "model_catalog.refresh.failed": {
+    reason: "fetch_failed" | "invalid_catalog";
+  };
   "harness.timing": {
     harnessId?: "claude-code" | "codex" | "cursor";
     harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
