@@ -7,7 +7,9 @@ import {
 } from "../../../shared/plugin-form-payload-limits.js";
 import type { Context } from "hono";
 import {
+  OPENAI_ELICITATION_EXTENSION,
   resumeInputRequiredOperation,
+  selectElicitationFormSchema,
   type MCPClientManager,
   type MrtrInputCollector,
 } from "@mcpjam/sdk";
@@ -73,6 +75,43 @@ export async function endPluginMrtrFormsDisabled(input: {
   );
 }
 
+/**
+ * The one schema every step of an owned form uses: shown, bound, checked at
+ * submit and re-checked before the retry leaves. Owned forms exist only while
+ * this client advertises `openai/elicitation` forms, so the extension schema
+ * is always live here; a missing or invalid one refuses the whole form.
+ */
+export function ownedPluginFormSchema(
+  params: Record<string, unknown> | undefined,
+  serverId: string,
+): unknown {
+  const selected = selectElicitationFormSchema(params, {
+    extensionForms: true,
+  });
+  if (selected.kind === "unsupported")
+    throw withPluginDiagnostic(
+      new PluginInvocationError("PLUGIN_FORM_SCHEMA_MISSING"),
+      serverId,
+      'Form refused: its _meta["openai/elicitation"] schema is missing or invalid',
+    );
+  return selected.schema;
+}
+
+/** MRTR forms need both claims in each request's client capabilities: the core
+ * form mode, and OpenAI's extension, whose `_meta` carries the real schema. */
+export function ownedMrtrFormCapabilities(
+  base: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...base,
+    elicitation: { form: {} },
+    extensions: {
+      ...(base.extensions as Record<string, unknown> | undefined),
+      [OPENAI_ELICITATION_EXTENSION]: { form: {} },
+    },
+  };
+}
+
 type Operation = {
   authorization: ResolvedInvocationContext;
   invocationId: string;
@@ -99,6 +138,8 @@ export function createOwnedPluginMrtr(deps: {
   formsEnabled?: () => boolean;
 }) {
   const formsOff = () => deps.formsEnabled?.() === false;
+  const formSchema = (params: Record<string, unknown> | undefined) =>
+    ownedPluginFormSchema(params, deps.serverId);
   const fileResources = deps.fileResources === true;
   const uploadTarget =
     deps.uploadTarget ??
@@ -183,7 +224,11 @@ export function createOwnedPluginMrtr(deps: {
       };
       if (input.method !== "elicitation/create" || input.params?.mode === "url")
         throw new PluginInvocationError("CONTINUATION_FORM_UNSUPPORTED");
-      openAILegacyFormSchemas.params.parse({ ...input.params, mode: "form" });
+      openAILegacyFormSchemas.params.parse({
+        ...input.params,
+        mode: "form",
+        requestedSchema: formSchema(input.params),
+      });
     }
   };
   const collector: MrtrInputCollector = async (args) => {
@@ -210,6 +255,7 @@ export function createOwnedPluginMrtr(deps: {
       negotiatedEra,
       bindingFingerprint: fingerprint(current, op),
       schemaDisplayMaxBytes: PLUGIN_FORM_SCHEMA_MAX_BYTES,
+      selectFormSchema: formSchema,
       encode: (state) =>
         encodeResumeState(state, PLUGIN_MRTR_PRIVATE_STATE_MAX_BYTES),
       create: (bearer, body, signal) =>
@@ -331,6 +377,7 @@ export function createOwnedPluginMrtr(deps: {
         bearer: deps.bearer,
         submission,
         schemaDisplayMaxBytes: PLUGIN_FORM_SCHEMA_MAX_BYTES,
+        selectFormSchema: formSchema,
         encode: (state) =>
           encodeResumeState(state, PLUGIN_MRTR_PRIVATE_STATE_MAX_BYTES),
         decode: (state) =>
@@ -373,9 +420,9 @@ export function createOwnedPluginMrtr(deps: {
           const sources: AbortSignal[] = [];
           const mapped = Object.fromEntries(
             Object.entries(state.pendingInputRequests).map(([key, request]) => {
-              const requestedSchema = (
-                request as { params?: { requestedSchema?: unknown } }
-              ).params?.requestedSchema;
+              const requestedSchema = formSchema(
+                (request as { params?: Record<string, unknown> }).params,
+              );
               const original = pluginFormSources.find(
                 authorization.owner,
                 invocationId,
@@ -447,6 +494,7 @@ export function createOwnedPluginMrtr(deps: {
               signal,
               requestOptions: { timeout: WEB_CALL_TIMEOUT_MS },
               supportedElicitationModes: ["form"],
+              selectFormSchema: formSchema,
               validateContent: (schema, content) =>
                 validatePluginFormContent(
                   compilePluginForm(schema, profile(op)),

@@ -203,7 +203,6 @@ export function rebuildSentryEvent<T extends object>(
         .filter(Boolean)
     : [];
   const ownedFrames = chain.values.flatMap((value) => value.stacktrace?.frames ?? []);
-  const topFrame = ownedFrames.at(-1);
   const facts = rebuildSentryFacts(extra, options);
   const code = typeof facts.code === "string" ? facts.code : typeof facts.slug === "string" ? facts.slug : undefined;
   const last = chain.values.at(-1);
@@ -218,11 +217,14 @@ export function rebuildSentryEvent<T extends object>(
           ...(approvedMessage ? { message } : {}),
         }
       : { message }),
+    // Exceptions keep Sentry's default hash, which groups source-mapped frames
+    // across builds; emitted file/line positions move with every build. A
+    // message-only event has no stack, so its finite message is the group.
     fingerprint: [
+      ...(chain.values.length ? ["{{ default }}"] : []),
       chain.values.at(-1)?.type ?? message,
       ...(chain.values.length && approvedMessage ? [approvedMessage] : []),
       ...(code ? [code] : []),
-      ...(topFrame ? [`${topFrame.filename}:${topFrame.lineno}`] : []),
     ],
     extra: {
       ...facts,

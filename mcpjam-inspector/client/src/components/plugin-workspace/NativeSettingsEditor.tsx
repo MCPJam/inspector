@@ -65,6 +65,8 @@ export function NativeSettingsEditor({
                 const action = currentActions.find(
                   (action) => action.name === item.tool,
                 );
+                // The referenced tool names the button; a layout title is
+                // deprecated and ignored.
                 const title = action?.title ?? item.tool;
                 const available =
                   Boolean(onAction) &&

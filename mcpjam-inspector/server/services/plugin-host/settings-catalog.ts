@@ -30,6 +30,7 @@ type Catalog = PluginSettingsCatalog;
 
 export interface PluginSettingsActionBinding {
   name: string;
+  /** The referenced tool's display name; layout titles are deprecated and ignored. */
   title: string;
   kind: "tool" | "app" | "unavailable";
   revision: string;

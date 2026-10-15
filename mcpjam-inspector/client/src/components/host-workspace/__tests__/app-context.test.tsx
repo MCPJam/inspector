@@ -5,9 +5,21 @@ import { appContextBlock, useAppContext } from "../use-app-context";
 import { pluginContextAttachments } from "@/shared/plugin-model-context";
 import type { ThreadAppHandle, ThreadAppScope } from "../thread-app-api";
 const { context } = vi.hoisted(() => ({ context: vi.fn() }));
-vi.mock("../thread-app-api", () => ({
+vi.mock("../thread-app-api", async (original) => ({
+  ...(await original<typeof import("../thread-app-api")>()),
   createThreadAppApi: () => ({ context }),
 }));
+// Retry an unknown removal without waiting.
+vi.mock("../context-remove-all", async (original) => {
+  const actual = await original<typeof import("../context-remove-all")>();
+  return {
+    ...actual,
+    removeAllAppContext: (
+      send: Parameters<typeof actual.removeAllAppContext>[0],
+      signal: AbortSignal,
+    ) => actual.removeAllAppContext(send, signal, [0, 0]),
+  };
+});
 const scope = {
   projectId: "project",
   hostId: "host",
@@ -26,6 +38,26 @@ const chipLogo = {
   contentType: "image/png",
 };
 const chipServerIcons = [{ src: "https://cdn.example.invalid/server.png" }];
+const view = (text: string, updateId = "u1") => ({
+  updateId,
+  content: [{ type: "text", text }],
+});
+const removed = (revision: number, cursor = 1) => ({
+  outcome: "applied",
+  snapshot: {
+    revision,
+    sequence: 1,
+    state: null,
+    held: true,
+    cursor,
+    removedAt: cursor,
+  },
+});
+const opened = (state: unknown, extra: Record<string, unknown> = {}) =>
+  ({
+    ...handle,
+    contextSnapshot: { revision: 1, sequence: 1, state, ...extra },
+  }) as ThreadAppHandle;
 describe("retained App composer context", () => {
   it("survives StrictMode, renders shared attachment data and confirms removal before updating host state", async () => {
     const state = {
@@ -38,7 +70,7 @@ describe("retained App composer context", () => {
         },
       ],
     };
-    context.mockResolvedValueOnce({
+    context.mockReset().mockResolvedValueOnce({
       _meta: { "openai/modelContext": { updateId: "update" } },
       snapshot: { revision: 1, sequence: 1, state },
     });
@@ -52,14 +84,17 @@ describe("retained App composer context", () => {
       await result.current.update({ content: state.content });
     });
     expect(result.current.attachments[0]?.title).toBe("Triangle");
+    // Rows are removed as a group, never one by one.
+    expect(result.current.attachments[0]?.remove).toBeUndefined();
     expect(result.current.snapshot.state).toEqual(state);
     const attachments = result.current.attachments;
     rerender();
     expect(result.current.attachments).toBe(attachments);
-    context.mockResolvedValueOnce({ revision: 2, sequence: 1, state: null });
+    context.mockResolvedValueOnce(removed(2));
     await act(async () => {
-      result.current.attachments[0]!.remove();
+      result.current.attachments[0]!.group!.removeAll!();
     });
+    await vi.waitFor(() => expect(result.current.detached).toBe(false));
     expect(result.current.attachments).toEqual([]);
     expect(result.current.snapshot.state).toBeNull();
     const update = result.current.update;
@@ -71,7 +106,7 @@ describe("retained App composer context", () => {
   it("presents each block by type and removes all of an App's context in one request", async () => {
     const png =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-    let state: { updateId: string; content: unknown[] } | null = {
+    const state = {
       updateId: "u0",
       content: [
         {
@@ -102,34 +137,13 @@ describe("retained App composer context", () => {
         },
       ],
     };
-    let revision = 1;
-    context.mockReset().mockImplementation(
-      async (_token: string, action: string, request: { index: "all" }) => {
-        if (action !== "remove" || request.index !== "all")
-          throw new Error(action);
-        state = {
-          updateId: `u${revision}`,
-          // Only the assistant-only block is left.
-          content: state!.content.slice(-1),
-        };
-        revision++;
-        return { revision, sequence: 1, state };
-      },
-    );
+    context.mockReset().mockResolvedValue(removed(5, 3));
     const { result } = renderHook(() =>
-      useAppContext(
-        scope,
-        {
-          ...handle,
-          contextSnapshot: { revision: 1, sequence: 1, state },
-        } as ThreadAppHandle,
-        "",
-        {
-          serverName: "Bits & Bolts",
-          icons: { logo: chipLogo },
-          serverIcons: chipServerIcons,
-        },
-      ),
+      useAppContext(scope, opened(state, { cursor: 2, attachedAt: 2 }), "", {
+        serverName: "Bits & Bolts",
+        icons: { logo: chipLogo },
+        serverIcons: chipServerIcons,
+      }),
     );
     const rows = result.current.attachments;
     expect(
@@ -159,38 +173,32 @@ describe("retained App composer context", () => {
     await act(async () => {
       rows[0]!.group!.removeAll!();
     });
-    await vi.waitFor(() => expect(result.current.attachments).toEqual([]));
-    // One request removed every visible block; the hidden one stays.
-    expect(context).toHaveBeenCalledTimes(1);
-    expect(state!.content).toHaveLength(1);
+    await vi.waitFor(() => expect(result.current.detached).toBe(false));
+    expect(result.current.attachments).toEqual([]);
+    // One request, based on what the person saw; the server clears the
+    // hidden block too.
+    expect(context).toHaveBeenCalledOnce();
+    expect(context).toHaveBeenCalledWith(
+      "token",
+      "remove-all",
+      { operationId: expect.any(String), basis: 2 },
+      expect.any(AbortSignal),
+    );
   });
 
-  it("removes all after an earlier change failed, reading the current state once", async () => {
-    // An App update whose outcome is unknown used to leave every later
-    // removal refused ("outcome unknown"), so "Remove all" kept the chip.
-    const two = {
-      updateId: "u1",
-      content: [
-        { type: "text", text: "Selected view" },
-        { type: "text", text: "Part notes" },
-      ],
+  it("removes all after an earlier change failed, without a separate read", async () => {
+    // An App update whose outcome is unknown refuses later updates, but a
+    // remove-all settles it.
+    const state = {
+      ...view("Selected view"),
+      structuredContent: { part: "t" },
     };
-    let server: typeof two | null = two;
-    context.mockReset().mockImplementation(
-      async (_token: string, action: string, request: { index?: unknown }) => {
-        if (action === "update") throw new Error("network");
-        if (action === "read") return { revision: 1, sequence: 1, state: server };
-        if (request.index !== "all") throw new Error("expected one removal");
-        server = null;
-        return { revision: 2, sequence: 1, state: null };
-      },
-    );
-    const { result } = renderHook(() =>
-      useAppContext(scope, {
-        ...handle,
-        contextSnapshot: { revision: 1, sequence: 1, state: two },
-      } as ThreadAppHandle),
-    );
+    context.mockReset().mockImplementation(async (_token, action: string) => {
+      if (action === "update") throw new Error("network");
+      if (action === "remove-all") return removed(2);
+      throw new Error(action);
+    });
+    const { result } = renderHook(() => useAppContext(scope, opened(state)));
     await act(async () => {
       await result.current.update({ content: [] }).catch(() => {});
     });
@@ -198,70 +206,164 @@ describe("retained App composer context", () => {
     await act(async () => {
       result.current.attachments[0]!.group!.removeAll!();
     });
-    await vi.waitFor(() => expect(result.current.attachments).toEqual([]));
+    await vi.waitFor(() => expect(result.current.detached).toBe(false));
+    expect(result.current.attachments).toEqual([]);
     // The App is told nothing is attached.
     expect(result.current.snapshot.state).toBeNull();
     expect(result.current.error).toBeUndefined();
-    expect(server).toBeNull();
   });
 
-  it("clears the chip and the App's view when the server can't confirm Remove all", async () => {
-    const state = {
-      updateId: "u1",
-      content: [{ type: "text", text: "Selected view" }],
-    };
-    context.mockReset().mockRejectedValue(new Error("unavailable"));
-    const { result } = renderHook(() =>
-      useAppContext(scope, {
-        ...handle,
-        contextSnapshot: { revision: 1, sequence: 1, state },
-      } as ThreadAppHandle),
-    );
+  it("tells the App null exactly once when a removal is applied", async () => {
+    let finish!: (value: unknown) => void;
+    context
+      .mockReset()
+      .mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    const seen: unknown[] = [];
+    const { result } = renderHook(() => {
+      const value = useAppContext(scope, opened(view("Selected view")));
+      if (seen.at(-1) !== value.snapshot.state) seen.push(value.snapshot.state);
+      return value;
+    });
     await act(async () => {
       result.current.attachments[0]!.group!.removeAll!();
     });
-    await vi.waitFor(() => expect(result.current.attachments).toEqual([]));
-    // Nothing of it is shown, sent or reported to the App, and the user is
-    // told the server didn't confirm.
+    // In flight: no turn carries it, and the App already sees null.
+    expect(result.current.detached).toBe(true);
     expect(result.current.snapshot.state).toBeNull();
-    expect(result.current.error).toMatch(/Couldn't remove App context/);
+    await act(async () => finish(removed(2)));
+    await vi.waitFor(() => expect(result.current.detached).toBe(false));
+    expect(result.current.snapshot.state).toBeNull();
+    expect(seen.filter((state) => state === null)).toHaveLength(1);
   });
 
-  it("reports an unconfirmed Remove all as detached until a later revision restores it", async () => {
-    const state = {
-      updateId: "u1",
-      content: [{ type: "text", text: "Selected view" }],
-    };
-    context.mockReset().mockRejectedValue(new Error("unavailable"));
+  it("keeps a lost acknowledgement out of turns until the same operation is confirmed", async () => {
+    let confirm!: (value: unknown) => void;
+    context
+      .mockReset()
+      .mockRejectedValueOnce(new Error("lost acknowledgement"))
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (confirm = resolve)),
+      );
     const { result } = renderHook(() =>
-      useAppContext(scope, {
-        ...handle,
-        contextSnapshot: { revision: 1, sequence: 1, state },
-      } as ThreadAppHandle),
+      useAppContext(scope, opened(view("Selected view"))),
     );
-    expect(result.current.detached).toBe(false);
     await act(async () => {
       result.current.attachments[0]!.group!.removeAll!();
     });
-    // Explicit, so the owner can keep the still-persisted context out of
-    // turns: no chip is not the same as no context.
-    await vi.waitFor(() => expect(result.current.detached).toBe(true));
+    await vi.waitFor(() => expect(context).toHaveBeenCalledTimes(2));
+    // The first answer was lost and the retry hasn't answered: still out.
+    expect(result.current.detached).toBe(true);
+    expect(result.current.snapshot.state).toBeNull();
+    await act(async () => confirm(removed(2)));
+    await vi.waitFor(() => expect(result.current.detached).toBe(false));
+    // The retry re-sent the same operation and basis.
+    expect(context.mock.calls[1]![2]).toEqual(context.mock.calls[0]![2]);
     expect(result.current.attachments).toEqual([]);
-    const later = {
-      updateId: "u2",
-      content: [{ type: "text", text: "New view" }],
-    };
+  });
+
+  it("keeps the person's newer context when they attached again before the removal was confirmed", async () => {
+    const newer = view("New view", "u2");
+    context
+      .mockReset()
+      .mockRejectedValueOnce(new Error("lost acknowledgement"))
+      .mockResolvedValueOnce({
+        outcome: "superseded",
+        snapshot: {
+          revision: 3,
+          sequence: 2,
+          state: newer,
+          cursor: 2,
+          removedAt: 1,
+          attachedAt: 2,
+        },
+      });
+    const { result } = renderHook(() =>
+      useAppContext(scope, opened(view("Selected view"))),
+    );
+    await act(async () => {
+      result.current.attachments[0]!.group!.removeAll!();
+    });
+    await vi.waitFor(() => expect(result.current.detached).toBe(false));
+    expect(result.current.snapshot.state).toEqual(newer);
+    expect(result.current.attachments).toHaveLength(1);
+    expect(result.current.error).toBeUndefined();
+  });
+
+  it("shows a stale removal's current context but keeps it out of turns until the App replaces it", async () => {
+    const newer = view("New view", "u2");
     context.mockReset().mockResolvedValueOnce({
-      revision: 2,
-      sequence: 2,
-      state: later,
+      outcome: "stale",
+      snapshot: {
+        revision: 2,
+        sequence: 2,
+        state: newer,
+        cursor: 1,
+        attachedAt: 1,
+      },
+    });
+    const { result } = renderHook(() =>
+      useAppContext(scope, opened(view("Selected view"))),
+    );
+    await act(async () => {
+      result.current.attachments[0]!.group!.removeAll!();
+    });
+    await vi.waitFor(() =>
+      expect(result.current.error).toMatch(/changed before it was removed/),
+    );
+    // Visible so the person can review it and remove it again, yet no turn
+    // carries it.
+    expect(result.current.detached).toBe(true);
+    expect(result.current.attachments).toHaveLength(1);
+    expect(result.current.snapshot.state).toEqual(newer);
+    // The App replaces its context (a later revision): attached again.
+    context.mockResolvedValueOnce({
+      revision: 3,
+      sequence: 3,
+      state: view("Latest", "u3"),
+      cursor: 2,
+      attachedAt: 2,
     });
     await act(async () => {
       await result.current.refresh();
     });
     expect(result.current.detached).toBe(false);
-    expect(result.current.snapshot.state).toEqual(later);
+  });
+
+  it("keeps an unconfirmed removal out of turns and offers it again once retries run out", async () => {
+    let fail!: (error: Error) => void;
+    context
+      .mockReset()
+      .mockImplementationOnce(
+        () => new Promise((_resolve, reject) => (fail = reject)),
+      )
+      .mockRejectedValue(new Error("unavailable"));
+    const { result } = renderHook(() =>
+      useAppContext(scope, opened(view("Selected view"))),
+    );
+    expect(result.current.detached).toBe(false);
+    await act(async () => {
+      result.current.attachments[0]!.group!.removeAll!();
+    });
+    // While it is in flight, nothing of it is shown, sent or reported to the
+    // App.
+    expect(result.current.detached).toBe(true);
+    expect(result.current.attachments).toEqual([]);
+    expect(result.current.snapshot.state).toBeNull();
+    await act(async () => fail(new Error("unavailable")));
+    await vi.waitFor(() =>
+      expect(result.current.error).toMatch(/Couldn't confirm/),
+    );
+    expect(context).toHaveBeenCalledTimes(3);
+    // Still out of turns, even past later revisions; shown so the person
+    // can remove it again.
+    expect(result.current.detached).toBe(true);
     expect(result.current.attachments).toHaveLength(1);
+    context.mockReset().mockResolvedValueOnce(removed(2));
+    await act(async () => {
+      result.current.attachments[0]!.group!.removeAll!();
+    });
+    await vi.waitFor(() => expect(result.current.detached).toBe(false));
+    expect(result.current.attachments).toEqual([]);
   });
 
   it("labels untitled plain text with a short label", () => {

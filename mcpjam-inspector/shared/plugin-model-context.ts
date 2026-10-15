@@ -28,10 +28,15 @@ export type PluginModelContext = {
   structuredContent?: Record<string, unknown>;
 };
 
+const contextCount = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
 export const pluginContextSnapshotSchema = z
   .strictObject({
     revision: z.number().int().nonnegative(),
-    sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    sequence: contextCount,
     state: z
       .strictObject({
         updateId: z.string().min(1).max(128),
@@ -39,12 +44,40 @@ export const pluginContextSnapshotSchema = z
         structuredContent: z.record(z.string(), z.unknown()).optional(),
       })
       .nullable(),
+    // Removal state, omitted while it is the default (not held, nothing
+    // removed or attached yet). `held`: the person removed this App's context
+    // and its own updates are refused until they use the App again.
+    // `cursor` counts removals and user attaches; `removedAt` and
+    // `attachedAt` are its value at the last of each, so a remove-all retry
+    // can tell what happened after the state it was based on.
+    held: z.literal(true).optional(),
+    cursor: contextCount.optional(),
+    removedAt: contextCount.optional(),
+    attachedAt: contextCount.optional(),
   })
+  .refine((value) => value.sequence <= value.revision, "Invalid context cursor")
   .refine(
-    (value) => value.sequence <= value.revision,
-    "Invalid context cursor",
+    (value) =>
+      (value.removedAt ?? 0) <= (value.cursor ?? 0) &&
+      (value.attachedAt ?? 0) <= (value.cursor ?? 0),
+    "Invalid context removal cursor",
   );
 export type PluginContextSnapshot = z.infer<typeof pluginContextSnapshotSchema>;
+
+/** What a remove-all did. Only `applied` changed anything:
+ * - `applied`: this operation cleared the context and set the hold.
+ * - `in-effect`: a removal made after the request's basis still holds.
+ * - `superseded`: that removal was applied, then the person attached again;
+ *   their newer context is kept.
+ * - `stale`: the removal never landed and the person attached after its
+ *   basis; nothing was erased, so they must review and remove again. */
+export const pluginContextRemoveAllResultSchema = z.strictObject({
+  outcome: z.enum(["applied", "in-effect", "superseded", "stale"]),
+  snapshot: pluginContextSnapshotSchema,
+});
+export type PluginContextRemoveAllResult = z.infer<
+  typeof pluginContextRemoveAllResultSchema
+>;
 
 type InlinePluginContent =
   | { type: "text"; text: string }
@@ -108,64 +141,53 @@ export function pluginInlineContentBlock(
   return { type: "image", mimeType, data };
 }
 
-/**
- * Presentation only: one removable attachment per content block, as the spec
- * says. `structuredContent` is not a content block, so like assistant-only
- * blocks it stays background context: sent to the model, never a row.
- */
+/** Presentation only. Exactly assistant-only blocks remain background context. */
 export function pluginContextAttachments(snapshot: PluginContextSnapshot) {
-  return (snapshot.state?.content ?? []).flatMap((block, index) => {
-    if (
-      block.annotations?.audience?.length === 1 &&
-      block.annotations.audience[0] === "assistant"
-    )
-      return [];
-    const title = block._meta?.["openai/title"];
-    const inline = pluginInlineContentBlock(block);
-    return [
-      {
-        index,
-        block,
-        title:
-          typeof title === "string" && title.trim()
-            ? title.trim().slice(0, 256)
-            : inline.type === "text"
-              ? inline.text.slice(0, 80) || "App context"
-              : inline.type === "resource_link"
-                ? (inline.reference.title ?? inline.reference.name).slice(
-                    0,
-                    256,
-                  )
-                : "App image",
-        image: inline.type === "image" ? inline : undefined,
-        thumbnail:
-          block.type === "text" ? block._meta?.["openai/thumbnail"] : undefined,
-      },
-    ];
-  });
-}
-
-/** What a composer removal drops: one visible block by index, or every
- * visible block (the chip's ×) in a single request. */
-export const pluginContextRemovalIndexSchema = z.union([
-  z.number().int().nonnegative(),
-  z.literal("all"),
-]);
-export type PluginContextRemovalIndex = z.infer<
-  typeof pluginContextRemovalIndexSchema
->;
-
-/** The content indices a removal drops from this snapshot, or `undefined`
- * when it no longer matches what the person sees (nothing to remove). */
-export function pluginContextRemovalIndices(
-  snapshot: PluginContextSnapshot,
-  index: PluginContextRemovalIndex,
-): ReadonlySet<number> | undefined {
-  const visible = pluginContextAttachments(snapshot).map((item) => item.index);
-  if (index === "all") return visible.length ? new Set(visible) : undefined;
-  return Number.isSafeInteger(index) && visible.includes(index)
-    ? new Set([index])
-    : undefined;
+  const attachments = (snapshot.state?.content ?? []).flatMap(
+    (block, index) => {
+      if (
+        block.annotations?.audience?.length === 1 &&
+        block.annotations.audience[0] === "assistant"
+      )
+        return [];
+      const title = block._meta?.["openai/title"];
+      const inline = pluginInlineContentBlock(block);
+      return [
+        {
+          index,
+          block,
+          title:
+            typeof title === "string" && title.trim()
+              ? title.trim().slice(0, 256)
+              : inline.type === "text"
+                ? inline.text.slice(0, 80) || "App context"
+                : inline.type === "resource_link"
+                  ? (inline.reference.title ?? inline.reference.name).slice(
+                      0,
+                      256,
+                    )
+                  : "App image",
+          image: inline.type === "image" ? inline : undefined,
+          thumbnail:
+            block.type === "text"
+              ? block._meta?.["openai/thumbnail"]
+              : undefined,
+        },
+      ];
+    },
+  );
+  return snapshot.state?.structuredContent
+    ? [
+        ...attachments,
+        {
+          index: snapshot.state.content.length,
+          block: undefined,
+          title: "App context",
+          image: undefined,
+          thumbnail: undefined,
+        },
+      ]
+    : attachments;
 }
 
 /** Supplied text/image bytes and inert link data; unsupported binary/audio refuses. */

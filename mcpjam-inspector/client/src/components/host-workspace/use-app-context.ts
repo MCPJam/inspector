@@ -21,6 +21,7 @@ import {
 } from "./thread-app-api";
 import { logPluginExtensionIssue } from "@/lib/plugin-extension-logs";
 import { describePluginError } from "@/lib/plugin-diagnostics";
+import { removeAllAppContext } from "./context-remove-all";
 
 const EMPTY: PluginContextSnapshot = { revision: 0, sequence: 0, state: null };
 const REMOVE_ALL = "*";
@@ -58,10 +59,11 @@ export function appContextBlock(item: ContextItem): {
 } {
   const raw = item.block;
   const titled =
-    typeof raw._meta?.["openai/title"] === "string" &&
+    typeof raw?._meta?.["openai/title"] === "string" &&
     raw._meta["openai/title"].trim()
       ? raw._meta["openai/title"].trim().slice(0, 256)
       : undefined;
+  if (!raw) return { title: "App context", block: { kind: "structured" } };
   if (raw.type === "text") {
     const json = plainJson(raw.text);
     return {
@@ -168,8 +170,13 @@ export function useAppContext(
           message: `${handle.toolTitle ?? "App"}: ${describePluginError("INSTANCE_CONTEXT_HELD")}`,
           dedupeKey: `context-held:${handle.instanceToken}`,
         }),
-      sendRemoval: (request) =>
-        api.context(handle.instanceToken, "remove", request, lifetime.signal),
+      sendRemoveAll: (request) =>
+        api.context(
+          handle.instanceToken,
+          "remove-all",
+          request,
+          lifetime.signal,
+        ),
       read: () =>
         api.context(handle.instanceToken, "read", {}, lifetime.signal),
       onSnapshot: (snapshot) => {
@@ -191,11 +198,19 @@ export function useAppContext(
       });
     };
   }, [owned]);
-  // "Remove all" the server couldn't confirm: the user still asked that this
-  // App add nothing to the chat. Until the App attaches new context (a later
-  // revision), its chip and its own view of the context stay cleared, and
-  // no turn carries it.
-  const [detached, setDetached] = useState<{ key: string; revision: number }>();
+  // The person removed this App's context and the server hasn't confirmed
+  // it: they still asked that this App add nothing, so no turn carries its
+  // context. While the removal is in flight the chip and the App's own view
+  // are cleared too. An unknown outcome holds until a later removal is
+  // confirmed (`revision` never passes it). A stale removal (it never
+  // landed, and the person attached again first) holds until the App
+  // replaces that context with a later revision. Both show the context so
+  // the person can review it and remove it again.
+  const [detached, setDetached] = useState<{
+    key: string;
+    revision: number;
+    visible: boolean;
+  }>();
   const received =
     value.key === key ? value.snapshot : handle.contextSnapshot ?? EMPTY;
   // Explicit, not inferred from the chip: the server may still hold this
@@ -203,35 +218,55 @@ export function useAppContext(
   const isDetached =
     detached?.key === key && received.revision <= detached.revision;
   const snapshot = useMemo(
-    () => (isDetached && received.state ? { ...received, state: null } : received),
-    [received, isDetached],
+    () =>
+      isDetached && !detached?.visible && received.state
+        ? { ...received, state: null }
+        : received,
+    [received, isDetached, detached?.visible],
   );
   const serverName = presentation.serverName;
   const pluginIcons = presentation.icons;
   const serverIcons = presentation.serverIcons;
   const attachments = useMemo<ContextAttachment[]>(() => {
     if (!handle.contextEnabled) return [];
-    // × on the App's chip removes every visible block in one request
-    // against the current state; the App hears the result once.
-    const removeVisible = async () => {
-      const current = owned.latest.snapshot;
-      if (current.state && pluginContextAttachments(current).length)
-        await owned.controller.remove(current.state.updateId, "all");
-    };
+    // × on the App's chip removes all of its context in one server
+    // operation; there is no per-block removal.
     const removeAll = () => {
+      const operation = {
+        operationId: crypto.randomUUID(),
+        basis: owned.latest.snapshot.cursor ?? 0,
+      };
       setRemoving(REMOVE_ALL);
       setError(undefined);
-      void removeVisible()
-        .catch(async () => {
-          // The App replaced its context first, or an earlier request's
-          // outcome is unknown: read the current state once and remove
-          // what it shows.
-          await owned.controller.refresh();
-          await removeVisible();
-        })
-        .catch(() => {
-          setDetached({ key, revision: owned.latest.snapshot.revision });
-          setError("Couldn't remove App context. Refresh and try again.");
+      setDetached({ key, revision: Number.MAX_SAFE_INTEGER, visible: false });
+      void removeAllAppContext(
+        () => owned.controller.removeAll(operation),
+        owned.lifetime.signal,
+      )
+        .then((result) => {
+          if (owned.lifetime.signal.aborted) return;
+          if (result.outcome === "stale") {
+            setDetached({
+              key,
+              revision: owned.latest.snapshot.revision,
+              visible: true,
+            });
+            setError(
+              "This App's context changed before it was removed. Review it, then remove it again.",
+            );
+          } else if (result.outcome) setDetached(undefined);
+          else {
+            // Still unknown: keep it out of turns, and show the last known
+            // context again so the person can retry from the chip.
+            setDetached({
+              key,
+              revision: Number.MAX_SAFE_INTEGER,
+              visible: true,
+            });
+            setError(
+              "Couldn't confirm that App context was removed, so it stays out of this chat. Remove it again to retry.",
+            );
+          }
         })
         .finally(() =>
           setRemoving((value) => (value === REMOVE_ALL ? undefined : value)),
@@ -255,24 +290,7 @@ export function useAppContext(
         description: handle.toolTitle,
         group,
         block: shown.block,
-        removing: removing === id || removing === REMOVE_ALL,
-        remove: () => {
-          setRemoving(id);
-          setError(undefined);
-          void owned.controller
-            .remove(updateId, item.index)
-            .catch(() => {
-              setError("Couldn't remove App context. Refresh and try again.");
-              // Show what is actually attached now, and leave no unknown
-              // outcome behind to refuse the next change.
-              return owned.controller.refresh().catch(() => {});
-            })
-            .finally(() =>
-              setRemoving((current) =>
-                current === id ? undefined : current,
-              ),
-            );
-        },
+        removing: removing === REMOVE_ALL,
       };
     });
   }, [
@@ -290,7 +308,7 @@ export function useAppContext(
   return {
     snapshot,
     attachments,
-    /** Remove all went unconfirmed: no turn may reference this App's context. */
+    /** Remove all is unconfirmed or stale: no turn may reference this App's context. */
     detached: isDetached,
     error,
     update: owned.controller,

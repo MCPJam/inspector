@@ -11,7 +11,7 @@ import type { PluginIcons } from "@/lib/plugins/plugin-api-types";
 
 /** How one App context block reads in its App's Context popover. */
 export interface ContextAttachmentBlock {
-  kind: "text" | "resource_link" | "resource" | "image";
+  kind: "text" | "resource_link" | "resource" | "image" | "structured";
   /** Text excerpt, or the URI of a resource link / embedded resource. */
   detail?: string;
   /** Image format label, e.g. "PNG". */
@@ -35,7 +35,7 @@ export interface ContextAttachment {
     icons?: PluginIcons;
     /** The server's icons (`server/discover`, else `initialize`). */
     serverIcons?: readonly unknown[];
-    /** Removes every block this App supplied. */
+    /** Removes all of this App's context, including blocks not shown here. */
     removeAll?: () => void;
   };
   block?: ContextAttachmentBlock;
@@ -95,11 +95,10 @@ function Thumbnail({ src }: { src: string }) {
 }
 
 /**
- * One chip per App: its plugin icon, "Context" and how many blocks it
- * holds. Opening it lists each block by type (text: title and text;
- * resource link and embedded resource: title and URI; image: title, format
- * and thumbnail). Each row is removable, and × on the chip removes all of
- * that App's context.
+ * One chip per App: its plugin icon and "Context". Opening it lists each
+ * block by type (text: title and text; resource link and embedded resource:
+ * title and URI; image: title, format and thumbnail). An App's context is
+ * removed as a group: × on the chip removes all of it, and rows have no ×.
  */
 export function ContextGroupChip({
   group,
@@ -132,13 +131,6 @@ export function ContextGroupChip({
               serverIcons={group.serverIcons}
             />
             Context
-            <span
-              data-testid="context-group-count"
-              aria-hidden="true"
-              className="tabular-nums text-muted-foreground"
-            >
-              · {items.length}
-            </span>
           </Button>
         </PopoverTrigger>
         {group.removeAll && (
@@ -186,19 +178,6 @@ export function ContextGroupChip({
                   )}
                 </div>
                 {block?.thumbnail && <Thumbnail src={block.thumbnail} />}
-                {item.remove && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-5 shrink-0"
-                    disabled={item.removing}
-                    aria-label={`Remove ${item.title}`}
-                    onClick={item.remove}
-                  >
-                    <X className="size-3" />
-                  </Button>
-                )}
               </li>
             );
           })}

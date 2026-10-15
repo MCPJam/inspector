@@ -49,12 +49,25 @@ let contentAnswer:
 const identityListeners = new Set<() => void>();
 let policyUpdateDepth = 0;
 let policyNotificationPending = false;
+let profileRetryRevision = 0;
+let observedContentFull = false;
+let notifiedContentFull = false;
+let notifiedRetryRevision = 0;
+
+function observeContentPermission(): boolean {
+  const full = contentAllowed();
+  if (observedContentFull && !full) profileRetryRevision += 1;
+  observedContentFull = full;
+  return full;
+}
 
 function notifyIdentity(): void {
   if (policyUpdateDepth > 0) {
     policyNotificationPending = true;
     return;
   }
+  notifiedContentFull = observeContentPermission();
+  notifiedRetryRevision = profileRetryRevision;
   for (const listener of identityListeners) {
     try {
       listener();
@@ -122,6 +135,11 @@ export function telemetryNamesAllowed(
   actorId: string | null = currentActorId,
 ): boolean {
   return telemetryIdentityFor(actorId) === "full" && contentAllowed();
+}
+
+/** Remembers delivery-blocking windows even when React batches their recovery. */
+export function currentTelemetryProfileRetryRevision(): number {
+  return profileRetryRevision;
 }
 
 /** Policy changes notify recorders even when only the visible context changes. */
@@ -195,7 +213,12 @@ export function setTelemetryCaptureContextAndContent(
     setTelemetryContentPolicy(actor, content);
   } finally {
     policyUpdateDepth -= 1;
-    if (policyUpdateDepth === 0 && policyNotificationPending) {
+    if (
+      policyUpdateDepth === 0 &&
+      (policyNotificationPending ||
+        contentAllowed() !== notifiedContentFull ||
+        profileRetryRevision !== notifiedRetryRevision)
+    ) {
       policyNotificationPending = false;
       notifyIdentity();
     }
@@ -273,6 +296,6 @@ export function stampPostHogEvent<T extends PostHogCaptureEvent | null>(
   }
 }
 
-setTelemetryTransportPolicyReader(
-  () => currentTelemetryCaptureContext().policy.content,
+setTelemetryTransportPolicyReader(() =>
+  observeContentPermission() ? "full" : "strict",
 );

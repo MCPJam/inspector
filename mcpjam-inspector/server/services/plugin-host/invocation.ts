@@ -15,7 +15,7 @@ import {
 } from "@mcpjam/sdk/contract";
 import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
 import { stripPluginResourcePath } from "./resource-metadata.js";
-import { isPluginMentionTool } from "../../../shared/plugin-mentions.js";
+import { isPluginMentionSearchTool } from "../../../shared/plugin-mentions.js";
 import {
   describePluginError,
   pluginDiagnostic,
@@ -55,7 +55,14 @@ export interface AuthorizedInvocation {
   revision: string;
   owner: TrustedInvocationOwner;
   enabled: boolean;
-  tool: { name: string; _meta?: Record<string, unknown> };
+  tool: {
+    name: string;
+    annotations?: { readOnlyHint?: boolean };
+    _meta?: Record<string, unknown>;
+  };
+  /** The server's declared capabilities, for checks that depend on them. */
+  serverCapabilities?: unknown;
+  transport?: "legacy" | "mrtr";
   allowedOrigins: readonly PluginInvocationOrigin[];
   toolPolicy?: ToolPolicySnapshot;
   requiresApproval: boolean;
@@ -1196,7 +1203,10 @@ export class AuthorizedToolInvoker {
     )
       fail("TOOL_POLICY_DENIED");
     const visibility = getToolVisibility(authorization.tool._meta);
-    if (origin === "mention" && !isPluginMentionTool(authorization.tool))
+    if (
+      origin === "mention" &&
+      !isPluginMentionSearchTool(authorization.tool, authorization)
+    )
       fail("TOOL_MENTION_DECLARATION_DENIED");
     if (
       (origin === "model" && !visibility.includes("model")) ||

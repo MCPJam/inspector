@@ -40,7 +40,7 @@ telemetry exit, at every level, and never recorded at all. See
 | -------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
 | `off`    | Nothing. No recorder runs.                                         | Unchanged on an `off` surface; masked when the backend answered `off` |
 | `masked` | Layout and interaction only (see [Masked profile](#masked-profile)) | Element text and attributes masked; names scrubbed from URLs |
-| `full`   | The page, with inputs and annotated secrets masked                 | Unchanged                                            |
+| `full`   | Layout and interaction, masked as at `masked`; network requests keep their path minus credentials | Unchanged                                            |
 
 ## Who gets which level
 
@@ -314,9 +314,9 @@ Identity starts **id-only** and follows an explicit grant
   and memberships, so switching projects does not unname and rename anyone.
 
 **PostHog.** `usePostHogIdentify` sends name, email and occupation only under
-the grant. When the answer is `id_only`, it calls `unsetPersonProperties` to
-clear values sent earlier: once per actor, and again whenever the actor turns
-id-only after a `full` answer. The `before_send` stamp records capture policy. The relay removes naming
+the grant. The backend answers `id_only` only together with strict content,
+and strict content withholds identify, so no identify call is made while
+that answer holds. The `before_send` stamp records capture policy. The relay removes naming
 person properties according to that policy and its current backend answer.
 
 **Sentry.** The initial scope carries at most the desktop installation id.
@@ -467,9 +467,10 @@ monitor reports platform and version so those rows are told apart.
 
 ## Masking a secret
 
-At `full`, `maskAllInputs: true` covers every `<input>`. It cannot help with
-secrets rendered as **text**: OAuth access/refresh tokens in the flow diagram,
-the one-time API-key reveal, the SDK quickstart snippet.
+PostHog replay masks every text node and input at every level. Secrets
+rendered as **text** still need an annotation for autocapture and Sentry
+Replay: OAuth access/refresh tokens in the flow diagram, the one-time API-key
+reveal, the SDK quickstart snippet.
 
 There is **one** annotation for those, and it does double duty:
 
@@ -485,12 +486,11 @@ There is **one** annotation for those, and it does double duty:
 - `data-ph-no-capture` / `.ph-no-capture`: PostHog autocapture skips the
   element's text.
 - `.rr-block`: rrweb blocks the node in the recording.
-- `maskTextSelector: "[data-ph-no-capture]"`: the same attribute masks the text
-  in a `full` replay.
+- `[data-ph-no-capture]`: Sentry Replay blocks the element (`SENTRY_REPLAY_OPTIONS.block`).
 
 Annotate once, get all three. **Do not** introduce a second attribute for this.
 `SECRET_SURFACE_ATTRIBUTE` in `session-privacy.ts` is the single source of
-truth, and the selector is asserted in `posthog-utils.test.ts`.
+truth.
 
 Truncation is not masking: a truncated token prefix is still credential
 material. That is why `OAuthFlowProgress`'s token rows carry `sensitive: true`
@@ -640,6 +640,9 @@ transport and the real relay vendor fetch rather than raw first-party ingress.
   are scrubbed at every level.
 - **Edge request logs.** The hosting provider's edge and CDN keep their own
   request logs. Nothing here runs before them.
+- **Names already on a PostHog person.** The client does not remove names
+  sent under an earlier full answer when the answer later turns `id_only`;
+  that needs a vendor-side person update.
 - **Old desktop builds.** See [Old desktop builds](#old-desktop-builds).
 
 ## Access and acceptance

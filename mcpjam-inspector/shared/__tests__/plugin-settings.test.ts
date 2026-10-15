@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { Client } from "@modelcontextprotocol/client";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { DialectAwareJsonSchemaValidator } from "@mcpjam/sdk";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/server";
 import { createSettings } from "@openai/mcp-extensions/server";
 import {
   pluginSettingsCapability,

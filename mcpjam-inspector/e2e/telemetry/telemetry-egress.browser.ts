@@ -21,6 +21,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { captureSentryProof, waitForSentryReplay } from "./replay-resume-proof";
 import { observeFetchOptions } from "./tests/fetch-observer";
+import { TELEMETRY_ACTOR_ID, standInTelemetryPolicy } from "./convex-stand-in";
 import {
   assertTelemetryBuild,
   drain,
@@ -42,6 +43,7 @@ import {
   leakReport,
   missingArrivals,
   pageCorpus,
+  posthogEvents,
   posthogReplayEvents,
   recordedText,
   RRWEB,
@@ -137,18 +139,30 @@ async function throwUncaught(
   await page.waitForTimeout(settleMs);
 }
 
+test("a resolved open context delivers the permitted account identity", async ({ page }) => {
+  expect(standInTelemetryPolicy({ projectIds: [], organizationIds: [] })).toEqual({
+    recording: "off", identity: "id_only", content: "strict", telemetryActorId: TELEMETRY_ACTOR_ID,
+  });
+  const recorder = await installEgressRecorder(page);
+  await openNormalPage(page, recorder);
+  await drain(page, recorder);
+  const scan = expectClean(recorder, "open-context identity", {
+    posthogFullSnapshot: true,
+  });
+  // PostHog sends $set instead of another $identify after resolving the actor.
+  expect(posthogEvents(scan.decoded)).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      properties: expect.objectContaining({ distinct_id: TELEMETRY_ACTOR_ID }),
+      $set: expect.objectContaining({ email: "telemetry@example.invalid", name: "Telemetry Member" }),
+    }),
+  ]));
+});
+
 test("share links on a normal page at full: text, href and iframe src", async ({
   page,
 }) => {
   const recorder = await installEgressRecorder(page);
   await openNormalPage(page, recorder);
-  // A clean console frame is a positive control. The later credential-bearing
-  // console frame is deliberately dropped at the relay's final serializer.
-  await page.evaluate(() => console.log("[egress] full recording control"));
-  await expect.poll(() => posthogReplayEvents(recorder.scanSince(0).decoded).some(
-    event => event.type === RRWEB.Plugin &&
-      (event.data as { plugin?: unknown })?.plugin === "rrweb/console@1",
-  )).toBe(true);
   await page.evaluate(
     (urls) => {
       const section = document.createElement("section");
@@ -194,17 +208,23 @@ test("share links on a normal page at full: text, href and iframe src", async ({
   const scan = expectClean(recorder, "share links at full", {
     posthogEvents: ["$autocapture", "$exception"],
     posthogFullSnapshot: true,
-    posthogPlugins: ["rrweb/console@1", "rrweb/network@1"],
+    posthogPlugins: ["rrweb/network@1"],
     sentryItems: ["event"],
     sentryFullSnapshot: true,
   });
-  // A member, at `full`: AuthKit resolved and the replay shows
-  // the page's words, unmasked.
+  // A member, at `full`: AuthKit resolved, and the replay still masks the
+  // page's words and records no console.
   expect(recorder.api).toContain("POST /user_management/authenticate");
 
-  expect(recordedText(posthogReplayEvents(scan.decoded))).toContain(
-    NORMAL_PAGE_TEXT,
-  );
+  const replay = posthogReplayEvents(scan.decoded);
+  expect(recordedText(replay)).not.toContain(NORMAL_PAGE_TEXT);
+  expect(
+    replay.some(
+      (event) =>
+        event.type === RRWEB.Plugin &&
+        (event.data as { plugin?: unknown })?.plugin === "rrweb/console@1",
+    ),
+  ).toBe(false);
 });
 
 for (const [id, url] of pageCorpus()) {

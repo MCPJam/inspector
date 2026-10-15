@@ -2061,7 +2061,7 @@ describe("ChatInput", () => {
     });
   });
   describe("App context chips", () => {
-    it("shows one Context chip per App with a removable row per block", async () => {
+    it("shows one Context chip per App, removed as a group", async () => {
       const removeAll = vi.fn();
       const removeRow = vi.fn();
       const parts = {
@@ -2100,9 +2100,6 @@ describe("ChatInput", () => {
         />
       );
       expect(screen.getAllByTestId("context-group-chip")).toHaveLength(2);
-      expect(
-        screen.getAllByTestId("context-group-count").map((n) => n.textContent)
-      ).toEqual(["· 2", "· 1"]);
       // Mentions keep their own chip.
       expect(screen.getByText("Joystick cap")).toBeInTheDocument();
       expect(screen.queryByText("Current view")).toBeNull();
@@ -2112,8 +2109,11 @@ describe("ChatInput", () => {
       expect(await screen.findByText("Current view")).toBeInTheDocument();
       expect(screen.getByText("Inspecting in mm.")).toBeInTheDocument();
       expect(screen.getByText("mcp://parts/joystick")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Remove Current view" }));
-      expect(removeRow).toHaveBeenCalledTimes(1);
+      // Rows have no × of their own, even when one is supplied.
+      expect(
+        screen.queryByRole("button", { name: "Remove Current view" }),
+      ).toBeNull();
+      expect(removeRow).not.toHaveBeenCalled();
       fireEvent.click(
         screen.getByRole("button", { name: "Remove all Parts context" })
       );

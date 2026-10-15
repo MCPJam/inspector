@@ -213,13 +213,31 @@ describe("profiles", () => {
     });
   });
 
-  it("full: today's profile, console capture back to the project setting", async () => {
-    const { posthogPrivacyConfig, SESSION_RECORDING_OPTIONS } = await load();
+  it("full: text, inputs and media masked as at masked, console off, network URLs kept", async () => {
+    const {
+      posthogPrivacyConfig,
+      SESSION_RECORDING_OPTIONS,
+      MASKED_BLOCK_SELECTOR,
+      maskReplayRequestFull,
+    } = await load();
     const config = posthogPrivacyConfig("full");
 
     expect(config.session_recording).toBe(SESSION_RECORDING_OPTIONS);
-    // null, not undefined: posthog-js's set_config skips undefined values.
-    expect(config.enable_recording_console_log).toBeNull();
+    expect(SESSION_RECORDING_OPTIONS).toMatchObject({
+      maskAllInputs: true,
+      maskTextSelector: "*",
+      blockSelector: MASKED_BLOCK_SELECTOR,
+      recordHeaders: false,
+      recordBody: false,
+      maskCapturedNetworkRequestFn: maskReplayRequestFull,
+    });
+    expect(SESSION_RECORDING_OPTIONS.maskTextFn("Summarise my chat")).toBe(
+      "********* ** ****",
+    );
+    expect(SESSION_RECORDING_OPTIONS.maskAttributeFn("title", "Q3 plan")).toBe(
+      "***",
+    );
+    expect(config.enable_recording_console_log).toBe(false);
     expect(config.mask_all_text).toBe(false);
     expect(config.mask_all_element_attributes).toBe(false);
   });

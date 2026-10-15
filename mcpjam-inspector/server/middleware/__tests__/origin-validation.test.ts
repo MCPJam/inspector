@@ -8,6 +8,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
+import { SERVER_PORT } from "../../config.js";
 import { originValidationMiddleware } from "../origin-validation.js";
 
 /**
@@ -150,7 +151,8 @@ describe("originValidationMiddleware", () => {
       expect(res.status).toBe(403);
       const data = await res.json();
       expect(data.error).toBe("Forbidden");
-      expect(data.message).toBe("Request origin not allowed.");
+      // Names what was refused, so a client-side report carries it.
+      expect(data.message).toBe("Request origin not allowed: http://evil.com.");
     });
 
     it("blocks requests from IP addresses on network", async () => {
@@ -341,11 +343,112 @@ describe("originValidationMiddleware", () => {
       app = createTestApp();
 
       const res = await app.request("/api/test", {
-        headers: { Origin: "http://localhost:6274" },
+        headers: { Origin: "http://localhost:5173" },
       });
 
-      // localhost is no longer allowed when custom origins are set
+      // A custom list drops the default dev ports. Only the server's own UI
+      // origin stays allowed (next describe).
       expect(res.status).toBe(403);
+    });
+
+    // The desktop app inherits the user's OS environment, so an
+    // `ALLOWED_ORIGINS` set there for another project must not lock the
+    // app's own page out of its server.
+    describe("the server's own UI origin outside hosted mode", () => {
+      const ownOrigins = [
+        `http://localhost:${SERVER_PORT}`,
+        `http://127.0.0.1:${SERVER_PORT}`,
+      ];
+
+      it.each(ownOrigins)("keeps %s next to a custom list", async (origin) => {
+        process.env.ALLOWED_ORIGINS = "http://only-this.com";
+
+        app = createTestApp();
+
+        const res = await app.request("/api/test", {
+          method: "POST",
+          headers: { Origin: origin },
+        });
+        expect(res.status).toBe(200);
+        const custom = await app.request("/api/test", {
+          headers: { Origin: "http://only-this.com" },
+        });
+        expect(custom.status).toBe(200);
+      });
+
+      // The wildcard filter returns early when it strips an entry. A user with
+      // e.g. `https://*.vercel.app` in their environment must still reach the
+      // app, so the own origins have to be added before that return.
+      it.each(ownOrigins)(
+        "keeps %s when an unapproved wildcard is stripped",
+        async (origin) => {
+          process.env.ALLOWED_ORIGINS = "https://*.vercel.app";
+
+          app = createTestApp();
+
+          const res = await app.request("/api/test", {
+            method: "POST",
+            headers: { Origin: origin },
+          });
+          expect(res.status).toBe(200);
+        },
+      );
+
+      // The desktop app falls back to 6275, 6276, ... when 6274 is taken, and
+      // the page is then served from that port.
+      it("follows a non-default SERVER_PORT", async () => {
+        vi.stubEnv("SERVER_PORT", "6276");
+        vi.stubEnv("ALLOWED_ORIGINS", "http://only-this.com");
+        vi.resetModules();
+        try {
+          const { originValidationMiddleware: middleware } =
+            await import("../origin-validation.js");
+          const fallback = new Hono();
+          fallback.use("*", middleware);
+          fallback.post("/api/test", (c) => c.json({ message: "success" }));
+
+          const own = await fallback.request("/api/test", {
+            method: "POST",
+            headers: { Origin: "http://127.0.0.1:6276" },
+          });
+          expect(own.status).toBe(200);
+          const defaultPort = await fallback.request("/api/test", {
+            method: "POST",
+            headers: { Origin: "http://127.0.0.1:6274" },
+          });
+          expect(defaultPort.status).toBe(403);
+        } finally {
+          vi.unstubAllEnvs();
+          vi.resetModules();
+        }
+      });
+    });
+
+    it("still replaces the list in hosted mode", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.stubEnv("ALLOWED_ORIGINS", "https://app.example.com");
+      vi.resetModules();
+      try {
+        const { originValidationMiddleware: hostedMiddleware } =
+          await import("../origin-validation.js");
+        const hosted = new Hono();
+        hosted.use("*", hostedMiddleware);
+        hosted.post("/api/test", (c) => c.json({ message: "success" }));
+
+        const local = await hosted.request("/api/test", {
+          method: "POST",
+          headers: { Origin: `http://127.0.0.1:${SERVER_PORT}` },
+        });
+        expect(local.status).toBe(403);
+        const allowed = await hosted.request("/api/test", {
+          method: "POST",
+          headers: { Origin: "https://app.example.com" },
+        });
+        expect(allowed.status).toBe(200);
+      } finally {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+      }
     });
   });
 

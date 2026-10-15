@@ -30,6 +30,13 @@ describe("settings destinations", () => {
       "personal-support",
     );
   });
+  it("finds the legal links under About MCPJam", () => {
+    for (const query of ["privacy", "terms of use"]) {
+      expect(searchSettings(query, context)[0].destination.id).toBe(
+        "personal-about",
+      );
+    }
+  });
   it("opens Profile by default and keeps Appearance separately reachable", () => {
     expect(resolveSettingsDestination("/settings")?.id).toBe(
       "personal-profile",

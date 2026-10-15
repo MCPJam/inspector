@@ -506,7 +506,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Verify evaluator publication ordering
-        run: node --test .github/scripts/publish-evaluators-first.test.mjs
+        run: node --test .github/scripts/publish-evaluators-first.test.mjs .github/scripts/sdk-sourcemaps.test.mjs
 
       - name: Build evaluators
         run: npm run build -w @mcpjam/evaluators
@@ -543,7 +543,10 @@ jobs:
           # so a token alone would not have been enough.) The upload itself is
           # best-effort: the plugin reports upload failures without failing the
           # build, and Sentry being down must not fail a release. The assert
-          # below is what is allowed to.
+          # below is what is allowed to. `build:server` follows the same rule for
+          # the server's maps (mcpjam-inspector/scripts/server-sourcemaps.mjs):
+          # a missing or mismatched map fails this step, while a failed upload
+          # is an error annotation and step-summary line, not a failed release.
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           MCPJAM_BUILD_SURFACE: npm
 
@@ -706,17 +709,6 @@ jobs:
               || fail "mcpjam-inspector/dist/client is missing — publishing now would ship an inspector with no UI."
           fi
 
-      # NOTE: sdk's `prepublishOnly: npm run build` re-runs during the publish
-      # below, overwriting these injected debug ids in the packed tarball. That
-      # is a pre-existing bug (it predates this job split) and is tracked
-      # separately — the real fix is to inject inside the sdk's own prepack.
-      # Left in place so behavior matches what shipped before.
-      - name: Inject SDK sourcemap debug ids
-        if: fromJSON(needs.preflight.outputs.publish_sdk)
-        run: npm run sentry:inject -w @mcpjam/sdk
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-
       - name: Publish evaluator dependency first
         if: fromJSON(needs.preflight.outputs.publish_evaluators)
         run: node .github/scripts/publish-evaluators-first.mjs
@@ -732,6 +724,8 @@ jobs:
         if: fromJSON(needs.preflight.outputs.publish_sdk)
         continue-on-error: true
         run: |
+          # npm's SDK prepack injects after its prepublish rebuild. No build or
+          # injection may run between packing and uploading these same files.
           version=$(node -p "require('./sdk/package.json').version")
           npx @sentry/cli sourcemaps upload \
             --release="@mcpjam/sdk@${version}" \
@@ -764,6 +758,7 @@ jobs:
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
   deploy-backend-prod:
     needs:

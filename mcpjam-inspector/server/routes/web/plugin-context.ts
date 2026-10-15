@@ -1,9 +1,6 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import {
-  pluginContextRemovalIndexSchema,
-  pluginModelContextParamsSchema,
-} from "../../../shared/plugin-model-context.js";
+import { pluginModelContextParamsSchema } from "../../../shared/plugin-model-context.js";
 import {
   pluginInstances,
   type PluginInstanceIdentity,
@@ -24,10 +21,10 @@ const change = handle.extend({
   /** The person was using the App when it sent this update. */
   attach: z.literal("user").optional(),
 });
-const removal = handle.extend({
+/** `basis` is the snapshot `cursor` the person saw; retries resend it. */
+const removeAll = handle.extend({
   operationId: z.string().uuid(),
-  updateId: z.string().uuid(),
-  index: pluginContextRemovalIndexSchema,
+  basis: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 });
 export function pluginContextRoutes(ports: {
   route: (c: Context, action: () => Promise<Response>) => Promise<Response>;
@@ -115,18 +112,24 @@ export function pluginContextRoutes(ports: {
       });
     }),
   );
-  router.post("/remove", (c) =>
+  router.post("/remove-all", (c) =>
     ports.route(c, async () => {
-      const body = removal.parse(await c.req.json());
+      const body = removeAll.parse(await c.req.json());
       return use(c, body, async (actor, authorize) => {
         const changed = await pluginInstances.changeContextPersistent(
           body.instanceToken,
           actor,
-          { kind: "remove", request: body },
+          { kind: "remove-all", request: body },
           c.req.raw.signal,
           authorize,
         );
-        return c.json(changed.snapshot);
+        if (!("outcome" in changed.result))
+          throw new PluginInvocationError("INSTANCE_CONTEXT_UNAVAILABLE");
+        // The persisted snapshot, not the candidate's: it is what a read returns.
+        return c.json({
+          outcome: changed.result.outcome,
+          snapshot: changed.snapshot,
+        });
       });
     }),
   );

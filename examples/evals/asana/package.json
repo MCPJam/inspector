@@ -20,5 +20,10 @@
     "jest": "^29.7.0",
     "ts-jest": "^29.2.5",
     "typescript": "^5.7.3"
+  },
+  "overrides": {
+    "@istanbuljs/load-nyc-config": {
+      "js-yaml": "^4.1.0"
+    }
   }
 }

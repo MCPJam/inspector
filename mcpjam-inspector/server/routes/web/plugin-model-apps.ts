@@ -1,10 +1,7 @@
 import { Hono, type Context } from "hono";
 import { PLUGIN_APP_UI_MAX_BYTES } from "../../../shared/plugin-app-ui-limits.js";
 import { z } from "zod";
-import {
-  pluginContextRemovalIndexSchema,
-  pluginModelContextParamsSchema,
-} from "../../../shared/plugin-model-context.js";
+import { pluginModelContextParamsSchema } from "../../../shared/plugin-model-context.js";
 import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
 import type { PluginInstanceIdentity } from "../../services/plugin-host/instances.js";
 import type { PluginWorkspaceAdmission } from "../../services/plugin-host/admission.js";
@@ -130,7 +127,7 @@ export function pluginModelAppRoutes(ports: {
     }),
   );
   // Model Apps use their original immutable source, never a replacement instance.
-  for (const action of ["update", "read", "remove"] as const) {
+  for (const action of ["update", "read", "remove-all"] as const) {
     router.post(action === "update" ? "/context" : `/context/${action}`, (c) =>
       ports.route(c, async () => {
         const raw = await c.req.json();
@@ -142,13 +139,16 @@ export function pluginModelAppRoutes(ports: {
                 params: pluginModelContextParamsSchema,
                 attach: z.literal("user").optional(),
               })
-            : action === "remove"
-            ? handle.extend({
-                operationId: z.string().uuid(),
-                updateId: z.string().uuid(),
-                index: pluginContextRemovalIndexSchema,
-              })
-            : handle;
+            : action === "remove-all"
+              ? handle.extend({
+                  operationId: z.string().uuid(),
+                  basis: z
+                    .number()
+                    .int()
+                    .nonnegative()
+                    .max(Number.MAX_SAFE_INTEGER),
+                })
+              : handle;
         const body = schema.parse(raw);
         const { actor, bearer, admission } = await ports.admitted(c, body);
         const record = modelApps.get(body.instanceToken, actor);
@@ -180,12 +180,11 @@ export function pluginModelAppRoutes(ports: {
           // All admission awaits finish before this synchronous, bounded mutation.
           if (action === "read")
             return c.json(record.context.snapshot(id, generation));
-          if (action === "remove")
+          if (action === "remove-all")
             return c.json(
-              record.context.remove(id, generation, {
+              record.context.removeAll(id, generation, {
                 operationId: raw.operationId,
-                updateId: raw.updateId,
-                index: raw.index,
+                basis: raw.basis,
               }),
             );
           const result = record.context.update(id, generation, {

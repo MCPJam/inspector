@@ -22,8 +22,7 @@ describe("a removed App context stays removed", () => {
     const ws = workspace();
     const first = { operationId: "u-1", sequence: 1, params: view("camera A") };
     ws.update(instanceId, 1, first);
-    const updateId = ws.snapshot(instanceId, 1).state!.updateId;
-    ws.remove(instanceId, 1, { operationId: "rm-1", updateId, index: 0 });
+    ws.removeAll(instanceId, 1, { operationId: "rm-1", basis: 0 });
     // A retried pre-removal update acknowledges without resurrecting it.
     ws.update(instanceId, 1, first);
     expect(ws.snapshot(instanceId, 1).state).toBeNull();
@@ -39,6 +38,7 @@ describe("a removed App context stays removed", () => {
     expect(ws.snapshot(instanceId, 1)).toMatchObject({
       sequence: 1,
       state: null,
+      held: true,
     });
     // The hold is part of the saved state, so another process holds it too.
     const saved = ws.export(instanceId, 1);
@@ -77,57 +77,5 @@ describe("a removed App context stays removed", () => {
       sequence: 2,
       params: view("next"),
     });
-  });
-
-  it("removes every visible block in one request, keeping background context", () => {
-    const ws = workspace();
-    ws.update(instanceId, 1, {
-      operationId: "u-1",
-      sequence: 1,
-      params: {
-        content: [
-          { type: "text", text: "Current view" },
-          {
-            type: "text",
-            text: "hidden",
-            annotations: { audience: ["assistant"] },
-          },
-          { type: "resource_link", uri: "cad://part", name: "part" },
-        ],
-        structuredContent: { page: "part" },
-      },
-    });
-    const updateId = ws.snapshot(instanceId, 1).state!.updateId;
-    const all = { operationId: "rm-all", updateId, index: "all" as const };
-    const removed = ws.remove(instanceId, 1, all);
-    expect(removed.state).toMatchObject({
-      content: [
-        {
-          type: "text",
-          text: "hidden",
-          annotations: { audience: ["assistant"] },
-        },
-      ],
-      structuredContent: { page: "part" },
-    });
-    expect(removed.revision).toBe(2);
-    // A retry acknowledges without removing again.
-    expect(ws.remove(instanceId, 1, all)).toEqual(removed);
-    // Nothing visible is left to remove.
-    expect(() =>
-      ws.remove(instanceId, 1, {
-        operationId: "rm-again",
-        updateId: removed.state!.updateId,
-        index: "all",
-      }),
-    ).toThrow("INSTANCE_CONTEXT_REMOVAL_STALE");
-    // It holds like any removal.
-    expect(() =>
-      ws.update(instanceId, 1, {
-        operationId: "u-2",
-        sequence: 2,
-        params: view("camera B"),
-      }),
-    ).toThrow("INSTANCE_CONTEXT_HELD");
   });
 });

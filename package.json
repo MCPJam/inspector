@@ -17,9 +17,7 @@
     "vitest"
   ],
   "scripts": {
-    "telemetry:generate": "node scripts/generate-telemetry-catalogs.mjs",
-    "telemetry:check": "node scripts/generate-telemetry-catalogs.mjs --check",
-    "prepare": "node -e \"require('fs').existsSync('scripts/git-hooks/install.mjs') && import('./scripts/git-hooks/install.mjs').then((m) => m.main())\"",
+    "prepare": "node -e \"require('fs').existsSync('scripts/git-hooks/install.mjs') && import('./scripts/git-hooks/install.mjs').then((m) => m.main())\" && node -e \"require('fs').existsSync('scripts/generate-telemetry-catalogs.mjs') && import('./scripts/generate-telemetry-catalogs.mjs').then((m) => m.writeTelemetryCatalogs()).catch((e) => console.warn('[telemetry] catalogs not generated: ' + e.message))\"",
     "build": "npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli && npm run build -w @mcpjam/vitest && npm run build -w @mcpjam/chat-ui && npm run build -w @mcpjam/widget-react && npm run build -w @mcpjam/inspector",
     "build:packages": "npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli",
     "build:inspector": "npm run build -w @mcpjam/inspector",
@@ -84,6 +82,15 @@
     "@ai-sdk/provider-utils@^3.0.0": "3.0.30",
     "external-editor": {
       "tmp": "^0.2.6"
+    },
+    "@openai/mcp-extensions": {
+      "zod": "^4.6.5"
+    },
+    "global-agent": "^4.1.3",
+    "gray-matter": {
+      "js-yaml": {
+        "argparse": "^2.0.1"
+      }
     }
   }
 }
