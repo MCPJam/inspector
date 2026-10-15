@@ -122,7 +122,37 @@ describe("unread swarm findings", () => {
     },
   );
 
-  it("shows unread coverage caveats alongside the recorded findings", () => {
+  it("uses the session report when the mechanism has no prose", () => {
+    const wire = brokenWire();
+    wire.findings = wire.findings.map((row) =>
+      row.basis === "verifiedMechanism"
+        ? { ...row, mechanismPhrase: null, outcomePhrase: null }
+        : row,
+    );
+    render(<SwarmFindingsTab {...props} journeyFindings={wire} />);
+    expect(
+      within(screen.getByRole("complementary")).getByText(
+        "The change was rejected.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/No session report is available/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows coverage notes when the wire result has no personas", () => {
+    const wire = unreadWire("notEstablished");
+    wire.personas = [];
+    wire.findings = [];
+    render(<SwarmFindingsTab {...props} journeyFindings={wire} />);
+    expect(
+      within(screen.getByTestId("findings-summary-card")).getByText(
+        "Only part of this wave was read",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("accepts repeated coverage caveats without dropping their text", () => {
     const wire = brokenWire();
     wire.coverageNotes = ["budgetExhausted", "partialRead", "partialRead"];
     render(<SwarmFindingsTab {...props} journeyFindings={wire} />);

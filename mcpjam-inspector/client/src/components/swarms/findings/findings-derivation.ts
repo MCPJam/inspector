@@ -329,6 +329,7 @@ export function deriveSwarmFindingsModelFromWire({
       const rows = personaRows.filter((row) => row.goal.runId === runId);
       const run = runs.find((candidate) => candidate.runId === runId);
       const lead = representativeGoalRow(rows);
+      const report = rows.find((row) => row.basis === "sessionReport");
       const emptyStage = (): GoalStageModel => ({
         state: "none",
         evidence: [],
@@ -386,11 +387,12 @@ export function deriveSwarmFindingsModelFromWire({
           detail:
             lead?.mechanismPhrase ??
             lead?.reportExcerpt?.actual ??
+            report?.reportExcerpt?.actual ??
             (disposition === "notRun"
               ? "No session launched for this goal, so nothing about the server was tested."
-              : lead?.verdictSeen === "passed"
+              : !report && lead?.verdictSeen === "passed"
                 ? "The grader recorded this goal as met. No session report is available."
-                : lead?.verdictSeen === "failed"
+                : !report && lead?.verdictSeen === "failed"
                   ? "The grader recorded this goal as missed. No session report is available."
                   : "No session evidence available."),
         },
