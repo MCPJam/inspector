@@ -281,6 +281,14 @@ describe("invalid declarations skip only their entry", () => {
       { type: "oauth", tokenUrl: "https://@a.example.com/t" },
     ],
     [
+      "an endpoint with empty userinfo after extra slashes",
+      { type: "oauth", tokenUrl: "https:///@a.example.com/t" },
+    ],
+    [
+      "an endpoint with empty userinfo and no slashes",
+      { type: "oauth", tokenUrl: "https:@a.example.com/t" },
+    ],
+    [
       "an endpoint with an empty fragment",
       { type: "oauth", tokenUrl: "https://a.example.com/t#" },
     ],
