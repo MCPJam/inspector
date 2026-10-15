@@ -262,6 +262,7 @@ import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-to
 import { clientDisplayName } from "@/lib/client-display-name";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
+import { useMissingLeadFallback } from "./use-missing-lead-fallback";
 import { playgroundClientInitNotice } from "./playground-client-init-notice";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
@@ -2302,32 +2303,14 @@ export function PlaygroundMain({
       setSelectedHostIds,
     },
   });
-  useEffect(() => {
-    if (
-      !isConvexAuthenticated ||
-      hostListLoading ||
-      !multiHostProjectId ||
-      hostList.length === 0
-    ) {
-      return;
-    }
-    if (restoringAdhoc) return;
-    const previewedHostIsValid =
-      previewedHostId !== null &&
-      hostList.some((host) => host.hostId === previewedHostId);
-    if (previewedHostIsValid) return;
-    const fallbackHostId = resolveFallbackHostId(hostList);
-    if (fallbackHostId) setPreviewedHostId(fallbackHostId);
-  }, [
-    isConvexAuthenticated,
-    hostListLoading,
-    multiHostProjectId,
-    hostList,
+  useMissingLeadFallback({
+    enabled: isConvexAuthenticated && !hostListLoading && !restoringAdhoc,
+    projectId: multiHostProjectId,
+    hosts: hostList,
     previewedHostId,
-    resolveFallbackHostId,
-    restoringAdhoc,
     setPreviewedHostId,
-  ]);
+    resolveFallbackHostId,
+  });
   // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
   // short-circuits on null id so passing fewer ids is free. See
   // `usePlaygroundHostSlots` for the rules-of-hooks reasoning.
