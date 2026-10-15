@@ -229,8 +229,9 @@ describe("engine failure telemetry", () => {
   });
 
   it("does not own a 400 that refuses a retired model", async () => {
-    // INSPECTOR-HONO-T: the internal hop promotes an `ambiguous` verdict, and a
-    // bare 400 is `internal/unknown` — so every turn on a retired model paged.
+    // The internal hop promotes an `ambiguous` verdict, and a bare 400 is
+    // `internal/unknown` — so without the code, every turn on a retired model
+    // would page.
     global.fetch = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({

@@ -80,9 +80,9 @@ describe("describeBackendStreamFailure", () => {
     },
   );
 
-  // INSPECTOR-HONO-T: hosted eval turns on a retired model, or on a model the
-  // org's OpenRouter allowlist leaves out, paged as `internal/unknown`. The
-  // backend was refusing the user's own model choice, as designed.
+  // A turn on a retired model, or on a model the org's OpenRouter allowlist
+  // leaves out, would page as `internal/unknown` by status alone. The backend
+  // is refusing the user's own model choice, as designed.
   it.each([
     [
       "model_retired",
