@@ -1,5 +1,41 @@
 # `@mcpjam/sdk` changelog
 
+## 9.3.1
+
+### Patch Changes
+
+- [#6385](https://github.com/MCPJam/inspector/pull/6385) [`2dfc194`](https://github.com/MCPJam/inspector/commit/2dfc19414efdda058c675fe7bc634c0108aa2096) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Show a clear generation failure and request ID when a model response cannot be validated.
+
+- [#6420](https://github.com/MCPJam/inspector/pull/6420) [`5777933`](https://github.com/MCPJam/inspector/commit/5777933e2985c3ee60a6723705eabc99e49bafdb) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The Codex client template now reports a ChatGPT desktop build (26.928.20710) as its MCP Apps `hostInfo`, so Apps that require OpenAI's minimum desktop version for the DevDay 2026 extensions (such as Bits & Bolts) run instead of asking for an update.
+
+- [#6405](https://github.com/MCPJam/inspector/pull/6405) [`e62d4d1`](https://github.com/MCPJam/inspector/commit/e62d4d18cf76c23d052eb85e95e4ca953578b297) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Publish hosted MCPJam's egress addresses for IP allowlists, at docs.mcpjam.com/hosted/network and as JSON at app.mcpjam.com/egress-ips.json, and point the "Proxy rejected" guidance to them.
+
+- [#6472](https://github.com/MCPJam/inspector/pull/6472) [`5dd89b5`](https://github.com/MCPJam/inspector/commit/5dd89b54aeae778e45baa79715a7fb581bc11285) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Release the latest Inspector, CLI, and SDK improvements together.
+
+- [#6369](https://github.com/MCPJam/inspector/pull/6369) [`10969cd`](https://github.com/MCPJam/inspector/commit/10969cd9c388d1f48f0503ab4c1289d365855da9) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Carry hosted lease selections for requested-versus-executed model evidence.
+
+- [#6366](https://github.com/MCPJam/inspector/pull/6366) [`6c082bf`](https://github.com/MCPJam/inspector/commit/6c082bf02c80be4474bc533f322f85e7001a5602) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Label AI requests with their client version and surface, and carry the platform agent's hosted model selection.
+
+- [#6417](https://github.com/MCPJam/inspector/pull/6417) [`13d207f`](https://github.com/MCPJam/inspector/commit/13d207f9d9bd4e67f817796d95da6dc723e3c63f) Thanks [@chelojimenez](https://github.com/chelojimenez)! - ChatGPT and Codex clients with the Display modes extension on follow OpenAI's display-mode rules for the Apps plugin extensions host (entrypoint Apps and the model-invoked Apps the extension workspace owns): an App whose resource declares both inline and fullscreen starts fullscreen, a preference picks the starting mode without narrowing the others, and an entrypoint App that says at initialization it can't show fullscreen is refused with a Logs entry instead of being forced fullscreen. Other MCP Apps keep the existing display-mode negotiation.
+
+- [#6415](https://github.com/MCPJam/inspector/pull/6415) [`acc9ddc`](https://github.com/MCPJam/inspector/commit/acc9ddc39ce33a2cce7cef81bf3a5d0c26fbe936) Thanks [@chelojimenez](https://github.com/chelojimenez)! - OpenAI extended forms work over MCP 2026-07-28 (MRTR): the ChatGPT and Codex clients advertise `extensions["openai/elicitation"]` alongside form elicitation, and a form's schema is read from `_meta["openai/elicitation"].requestedSchema` everywhere it is shown, bound and validated. A form whose extension schema is missing or invalid is refused with a described error instead of appearing empty.
+  
+  SDK: `setMrtrInputCollector` takes `extensionClaims` and `selectFormSchema`, and `runInputRequiredOperation` takes `selectFormSchema`, so an answer collected in-process is validated against the schema the form showed. A collector's extension claims are withheld on 2026-07-28 connections that don't drive MRTR rounds (`supportsMrtr: false`).
+
+- [#6364](https://github.com/MCPJam/inspector/pull/6364) [`3fee6ab`](https://github.com/MCPJam/inspector/commit/3fee6ab3931a5ff47e3f4ec95fd1d08c5aa998c0) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Preserve validated selection origins and own-key markers when reading execution records.
+
+- [#6430](https://github.com/MCPJam/inspector/pull/6430) [`297627a`](https://github.com/MCPJam/inspector/commit/297627a1ec742e1b25db90c64c29ace34a18a311) Thanks [@ZeHuari](https://github.com/ZeHuari)! - Name the MCP server in refused-connection and HTTP 404 connect errors, so a hosted chat or reconnect against a stopped server reports the server as the problem instead of an MCPJam outage.
+
+- [#6396](https://github.com/MCPJam/inspector/pull/6396) [`de063f1`](https://github.com/MCPJam/inspector/commit/de063f1691e9abaed6fa7dfaa9cec856224e50f0) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Restore reliable identity, error grouping, and delivery diagnostics while preserving organization telemetry restrictions and opt-outs.
+
+- [#6421](https://github.com/MCPJam/inspector/pull/6421) [`061e14f`](https://github.com/MCPJam/inspector/commit/061e14f6b51d29fdcb4d0e1f1181916dea3a5068) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Group SDK diagnostics by Sentry's default grouping and approved error codes instead of build-specific file and line positions, and keep verified SDK file and line locations when the SDK runs on Windows.
+
+- [#6340](https://github.com/MCPJam/inspector/pull/6340) [`f12d220`](https://github.com/MCPJam/inspector/commit/f12d22010b1e5ccfdefba798fcf29b8ee4c9f717) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Restrict SDK analytics to bounded run counts and honor telemetry opt-outs again before network delivery.
+
+- [#6332](https://github.com/MCPJam/inspector/pull/6332) [`5ebe792`](https://github.com/MCPJam/inspector/commit/5ebe7925319d9b7e498d64dc41f0f3b801d94eca) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add a reconstructive telemetry boundary for first-party clients.
+
+- [#6340](https://github.com/MCPJam/inspector/pull/6340) [`f12d220`](https://github.com/MCPJam/inspector/commit/f12d22010b1e5ccfdefba798fcf29b8ee4c9f717) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Keep verified SDK file and line locations in packaged diagnostics without sending function names or customer paths.
+
 ## 9.3.0
 
 ### Minor Changes
