@@ -31,10 +31,13 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { debuglog } from "node:util";
 import { createRequire } from "node:module";
 import { createSourceCache, loadTypeScript, mountedRoutes } from "./telemetry-route-catalog.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// NODE_DEBUG=telemetry shows why the parse cache was skipped.
+const debug = debuglog("telemetry");
 export const OUTPUTS = {
   sdk: "sdk/src/internal/telemetry-catalog.generated.json",
   inspector: "mcpjam-inspector/shared/telemetry-catalog.generated.json",
@@ -261,8 +264,9 @@ export function loadCatalogCache(root = ROOT) {
   try {
     const saved = JSON.parse(readFileSync(join(cacheDir(root), "facts.json"), "utf8"));
     if (saved.version === CACHE_VERSION) return createCatalogCache(new Map(saved.entries));
-  } catch {
+  } catch (error) {
     // No cache yet, or a torn one: parse every file.
+    debug("parse cache not loaded: %s", error.message);
   }
   return createCatalogCache();
 }
@@ -271,8 +275,9 @@ function saveCache(root, cache, changed) {
   if (!changed || !existsSync(join(root, "node_modules"))) return;
   try {
     writeIfChanged(join(cacheDir(root), "facts.json"), JSON.stringify({ version: CACHE_VERSION, entries: [...cache.entries] }));
-  } catch {
+  } catch (error) {
     // A cache that cannot be written only costs the next run a re-parse.
+    debug("parse cache not saved: %s", error.message);
   }
 }
 

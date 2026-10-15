@@ -28,6 +28,10 @@ describe("explainTelemetry: Axiom log rows", () => {
     const { dropped } = explainTelemetry({ log: "my.new.event", context: { route: "/api/customer/acme", method: "GET" } });
     expect(dropped.event).toMatch(/not in RequestEventMap or SystemEventMap.*log\.unknown/);
     expect(dropped.route).toMatch(/rewritten to "unknown_route"/);
+    expect(() =>
+      expectTelemetryFields({ log: "http.request.failed", context: { route: "/api/customer/acme", method: "GET" } }, ["route"]),
+    ).toThrow(/route: rewritten to "unknown_route"/);
+    expect(() => expectTelemetryFields({ log: "http.request.failed", context: { statusCode: undefined } }, ["statusCode"])).toThrow();
   });
 });
 
@@ -43,6 +47,7 @@ describe("explainTelemetry: server analytics", () => {
     expect(dropped.deduped).toBe("expects a boolean, got string");
     expect(dropped.server_url).toMatch(/no field rule: declare it in shared\/strict-server-analytics\.ts/);
     expect(() => expectTelemetryFields(sample, ["server_url"])).toThrow(/server_url: no field rule/);
+    expect(explainTelemetry({ ...sample, properties: { outcome: 1n } }).dropped.outcome).toMatch(/^1 is not an allowed value/);
   });
 
   it("says why a whole event is not sent", () => {

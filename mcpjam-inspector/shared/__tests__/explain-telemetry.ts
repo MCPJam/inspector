@@ -24,6 +24,16 @@ export type TelemetryExplanation = {
 };
 
 type Rule = { values?: readonly string[]; kind?: string; max?: number };
+
+/** Any sample value, including ones JSON cannot encode (BigInt, cycles). */
+function show(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    // Not JSON-encodable; the plain string form still names the value.
+    return String(value);
+  }
+}
 const LOG_FIELDS = "server/utils/log-events.ts";
 const ANALYTICS_FIELDS = "shared/strict-server-analytics.ts";
 
@@ -31,10 +41,10 @@ function ruleReason(rule: Rule | undefined, value: unknown, declareIn: string) {
   if (!rule) return `no field rule: declare it in ${declareIn} (literal union, boolean or number)`;
   if (rule.values) {
     const allowed = rule.values.slice(0, 8).join(", ") + (rule.values.length > 8 ? ", …" : "");
-    return `${JSON.stringify(value)} is not an allowed value (${allowed})`;
+    return `${show(value)} is not an allowed value (${allowed})`;
   }
   if (rule.kind === "boolean") return `expects a boolean, got ${typeof value}`;
-  return `expects a finite number from 0 to ${rule.max}, got ${JSON.stringify(value)}`;
+  return `expects a finite number from 0 to ${rule.max}, got ${show(value)}`;
 }
 
 const LOG_SPECIAL: Record<string, (row: Fields) => string> = {
@@ -52,7 +62,7 @@ function explainLog(sample: Extract<TelemetrySample, { log: string }>): Telemetr
   if (row.event !== sample.log)
     dropped.event = `${JSON.stringify(sample.log)} is not in RequestEventMap or SystemEventMap (${LOG_FIELDS}); sent as ${JSON.stringify(row.event)}`;
   for (const [key, value] of Object.entries({ ...payload, ...context })) {
-    if (row[key] === value) continue;
+    if (Object.hasOwn(row, key) && row[key] === value) continue;
     dropped[key] = LOG_SPECIAL[key]?.(row) ?? ruleReason(strictLogFieldRule(key), value, LOG_FIELDS);
   }
   return { forwarded: row, dropped };
@@ -70,7 +80,7 @@ function explainAnalytics(sample: Extract<TelemetrySample, { analytics: string }
     return { forwarded: {}, dropped };
   }
   for (const [key, value] of Object.entries(sample.properties)) {
-    if (built.properties[key] === value) continue;
+    if (Object.hasOwn(built.properties, key) && built.properties[key] === value) continue;
     dropped[key] =
       key === "pack_version"
         ? "only a pack version listed in runtime-compat for that harness is kept"
@@ -86,7 +96,8 @@ export function explainTelemetry(sample: TelemetrySample): TelemetryExplanation 
 /** Fails with each missing field's drop reason, so the fix is in the message. */
 export function expectTelemetryFields(sample: TelemetrySample, fields: string[]) {
   const { forwarded, dropped } = explainTelemetry(sample);
-  const missing = fields.filter((field) => !(field in forwarded));
+  // A field rewritten on the way out (a route sent as unknown_route) did not arrive.
+  const missing = fields.filter((field) => !Object.hasOwn(forwarded, field) || Object.hasOwn(dropped, field));
   if (missing.length)
     throw new Error(
       `Telemetry drops ${missing.join(", ")}:\n${missing
