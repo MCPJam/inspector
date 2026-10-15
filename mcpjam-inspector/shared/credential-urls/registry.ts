@@ -236,6 +236,12 @@ export const SECRET_PARAM_KEYS: ReadonlySet<string> = new Set([
   "apikey",
   "key",
   "password",
+  // Bearer tokens and one-time passcodes; the relay's
+  // `CREDENTIAL_QUERY_KEYS` (`shared/telemetry-privacy.ts`) already strips them
+  "jwt",
+  "auth",
+  "authorization",
+  "otp",
   // Signed URLs
   "signature",
   "sig",

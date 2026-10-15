@@ -1,11 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
+import { getCanonicalModelId } from "@/shared/types";
 import {
   loadSelectedModelId,
   loadSelectedModelIds,
+  loadSelectedModelSelections,
   saveSelectedModelId,
   saveSelectedModelIds,
   subscribeSelectedModelId,
   subscribeSelectedModelIds,
+  subscribeSelectedModelSelections,
 } from "@/lib/selected-model-storage";
 
 const MULTI_MODEL_ENABLED_STORAGE_KEY = "mcp-inspector-multi-model-enabled";
@@ -32,6 +36,7 @@ function normalizeSelectedModelIds(modelIds: string[]): string[] {
 }
 
 export interface UsePersistedModelReturn {
+  selectedModelSelection: RequestedModelSelection | null;
   selectedModelId: string | null;
   setSelectedModelId: (modelId: string | null) => void;
   selectedModelIds: string[];
@@ -61,9 +66,10 @@ export interface UsePersistedModelReturn {
  * The multi-model toggle stays owned by this hook.
  */
 export function usePersistedModel(): UsePersistedModelReturn {
-  const [selectedModelId, setSelectedModelIdState] = useState<string | null>(
-    null,
-  );
+  const [lead, setLead] = useState<{
+    modelId: string | null;
+    selection: RequestedModelSelection | null;
+  }>({ modelId: null, selection: null });
   const [selectedModelIds, setSelectedModelIdsState] = useState<string[]>([]);
   const [multiModelEnabled, setMultiModelEnabledState] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -75,7 +81,21 @@ export function usePersistedModel(): UsePersistedModelReturn {
       setIsInitialized(true);
       return;
     }
-    setSelectedModelIdState(loadSelectedModelId());
+    const refreshLead = () => {
+      const modelId = loadSelectedModelId();
+      const saved = loadSelectedModelSelections()?.[0];
+      // Legacy id writers cannot reassign an unrelated saved connection.
+      // Keep native/catalog aliases, and leave the compare line-up intact.
+      const selection = saved && modelId && (
+        saved.modelId === modelId ||
+        (saved.source !== "legacy" && (saved.nativeModelId === modelId ||
+          saved.modelId === getCanonicalModelId(modelId)))
+      ) ? saved : null;
+      setLead((current) => current.modelId === modelId &&
+        JSON.stringify(current.selection) === JSON.stringify(selection)
+        ? current : { modelId, selection });
+    };
+    refreshLead();
     setSelectedModelIdsState(loadSelectedModelIds());
     try {
       const storedMultiModelEnabled = localStorage.getItem(
@@ -94,9 +114,8 @@ export function usePersistedModel(): UsePersistedModelReturn {
     // events) re-reads the lead. In-app `setSelectedModelIds` does NOT
     // fire this channel — see lib/selected-model-storage for the
     // rationale.
-    const unsubscribeLead = subscribeSelectedModelId(() => {
-      setSelectedModelIdState(loadSelectedModelId());
-    });
+    const unsubscribeLead = subscribeSelectedModelId(refreshLead);
+    const unsubscribeSelections = subscribeSelectedModelSelections(refreshLead);
     // Array channel: fires only from `replaceLeadModelId` (outside-seam
     // host-switch primitive) and cross-tab `storage` events on the
     // array key. Keeping this narrow is what fixes the regression
@@ -106,6 +125,7 @@ export function usePersistedModel(): UsePersistedModelReturn {
     });
     return () => {
       unsubscribeLead();
+      unsubscribeSelections();
       unsubscribeIds();
     };
   }, []);
@@ -165,7 +185,8 @@ export function usePersistedModel(): UsePersistedModelReturn {
   }, []);
 
   return {
-    selectedModelId,
+    selectedModelSelection: lead.selection,
+    selectedModelId: lead.modelId,
     setSelectedModelId,
     selectedModelIds,
     setSelectedModelIds,

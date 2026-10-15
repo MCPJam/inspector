@@ -77,12 +77,29 @@ jobs:
           path: .authoring-backend
           persist-credentials: false
           sparse-checkout: convex/lib
+      # The backend commit whose AI refusal vocabulary
+      # (`convex/lib/aiKeyPolicy.ts`) the SDK's `sdk/src/ai-refusal-codes.ts`
+      # matches. It has its own pin because it moves on its own schedule. It
+      # is the head of the backend's refusal-code branch, not yet on `main`:
+      # once the backend refusal-code PRs merge, bump it to a backend `main`
+      # commit. Bump it again whenever the vocabulary changes there.
+      - name: Checkout pinned backend AI refusal vocabulary
+        uses: actions/checkout@v7
+        with:
+          repository: MCPJam/mcpjam-backend
+          ref: ba5363a0f97c40b9905d14778f1cd132eaee8a81
+          token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          path: .ai-refusal-backend
+          persist-credentials: false
+          sparse-checkout: convex/lib
       - name: Install contract checker dependencies
         run: npm ci --ignore-scripts --legacy-peer-deps
       - name: Compare authoring implementation and step fixtures
         run: |
           node --test scripts/authoring-contract-normalization.test.mjs
           node scripts/check-authoring-mirror.mjs --backend .authoring-backend
+      - name: Compare AI refusal vocabulary with backend
+        run: node scripts/check-ai-refusal-parity.mjs --backend .ai-refusal-backend
 
   test:
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
@@ -323,11 +340,18 @@ jobs:
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: E2E Smoke (Playwright)
-    # Same pinned Playwright image — Chromium + system deps are preinstalled.
-    container: mcr.microsoft.com/playwright:v1.63.0-noble
-    # This job builds the PR's code and runs it against prod Convex. Keep its
-    # errors out of prod Sentry, which pages us: the build flag turns off the
-    # browser SDK, DO_NOT_TRACK turns off the server's.
+    # Run as the host user so Local Browser keeps Chromium sandboxed.
+    # This job boots the PR's build against the community backend, which runs
+    # backend main, and bars the browser from production
+    # (e2e/community-backend.ts). Minting a guest there takes its guest-session
+    # secret, which GitHub withholds from fork and Dependabot PRs, so those
+    # skip the job rather than fail it. Keep its errors out of prod Sentry,
+    # which pages us: the build flag turns off the browser SDK, DO_NOT_TRACK
+    # turns off the server's.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]')
     env:
       VITE_DISABLE_SENTRY: "true"
       DO_NOT_TRACK: "1"
@@ -337,7 +361,7 @@ jobs:
       # Rebuild the system trust store before checkout and select it explicitly.
       - name: Prepare container certificates
         run: |
-          update-ca-certificates --fresh
+          sudo update-ca-certificates --fresh
           test -s /etc/ssl/certs/ca-certificates.crt
           echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
@@ -363,22 +387,31 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
+      - name: Install pinned Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+
       - name: Build inspector
         # Playwright's webServer boots `npm run start`, which serves built artifacts.
         run: npm run build -w @mcpjam/inspector
 
+      # The secret goes on these two steps only, so `npm ci`'s lifecycle
+      # scripts never see it.
       - name: Run Playwright smoke
+        env:
+          MCPJAM_GUEST_SESSION_SHARED_SECRET: ${{ secrets.E2E_GUEST_SESSION_SHARED_SECRET }}
         run: npm run test:e2e -w @mcpjam/inspector
 
       - name: Run local access e2e
         # Its own config: the smoke config seeds every page with the access key,
         # and this spec proves what a browser without one sees.
+        env:
+          MCPJAM_GUEST_SESSION_SHARED_SECRET: ${{ secrets.E2E_GUEST_SESSION_SHARED_SECRET }}
         run: npm run test:e2e:local-access -w @mcpjam/inspector
 
       - name: Run OAuth Debugger e2e
@@ -522,6 +555,9 @@ jobs:
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
+
+      - name: Build SDK exports used by telemetry fixtures
+        run: npm run build -w @mcpjam/sdk
 
       - name: Run telemetry privacy browser test
         run: npm run test:e2e:telemetry-privacy -w @mcpjam/inspector

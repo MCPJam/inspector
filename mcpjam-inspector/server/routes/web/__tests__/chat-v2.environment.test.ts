@@ -401,6 +401,32 @@ describe("web chat-v2 — environment execution target", () => {
       expect("reasoningEffort" in opts).toBe(false);
     });
 
+    it.each([{}, { ...HOST_SELECTION, modelId: "other/model" },
+      { ...HOST_SELECTION, source: "local", connectionRef: { kind: "localProvider", providerKey: "openai" } },
+      { modelId: BASE_BODY.model.id, source: "legacy" }])("refuses explicit invalid or unsupported choices before dispatch", async (modelSelection) => {
+      const response = await run({ modelSelection }, { modelSelection: HOST_SELECTION });
+      expect(response.status).toBe(400);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+      expect(prepareChatV2Mock).not.toHaveBeenCalled();
+    });
+
+    it("an explicit cleared effort does not inherit the host effort", async () => {
+      const modelSelection = { ...HOST_SELECTION, settings: undefined, fallback: { provider: "none", model: "none" } };
+      const response = await run({ modelSelection, temperature: 0.7 }, { modelSelection: HOST_SELECTION });
+      expect(response.status).toBe(200);
+      const opts = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect(opts.reasoningEffort).toBeUndefined();
+      expect(opts.modelSelection).toEqual({ modelId: BASE_BODY.model.id, source: "hosted", fallback: modelSelection.fallback, settings: { temperature: 0.7 } });
+    });
+
+    it("uses the explicit selection's temperature when there is no body override", async () => {
+      const modelSelection = { ...HOST_SELECTION, settings: { temperature: 0.2 } };
+      const response = await run({ modelSelection }, { modelSelection: HOST_SELECTION, temperature: 0.8 });
+      expect(response.status).toBe(200);
+      expect(prepareChatV2Mock).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0.2 }));
+      expect(prepareChatV2Mock.mock.calls[0][0].reasoningEffort).toBeUndefined();
+    });
+
     it("a level that is not an effort is a 400 before any model call", async () => {
       const response = await run({ reasoningEffort: "ultra" });
       expect(response.status).toBe(400);

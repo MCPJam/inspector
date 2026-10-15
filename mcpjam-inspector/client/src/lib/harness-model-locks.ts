@@ -12,6 +12,10 @@
  * OpenAI) on the organization's key — read on the canonical id that row's
  * saved selection names. Any other row (a key on this machine, an org
  * connection to another vendor) is refused, exactly as the server refuses it.
+ *
+ * While the organization requires its own provider keys (`HarnessKeyPolicy`),
+ * MCPJam-provided models are off: a brokered harness runs only on an
+ * organization connection to its own vendor, and the copy says so.
  */
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import {
@@ -22,6 +26,7 @@ import {
   harnessOrgProviderUnsupportedReason,
   harnessPinnedVersion,
   harnessRunsOnOrgProvider,
+  type HarnessKeyPolicy,
   type HarnessModelPurpose,
 } from "@/shared/harness-model-support";
 import {
@@ -34,6 +39,9 @@ import {
   modelRowKey,
   providerKeyForModelDefinition,
 } from "@/components/chat-v2/shared/model-selection";
+import { ORG_KEYS_MODEL_REASON } from "@/lib/org-keys-refusal";
+
+export type { HarnessKeyPolicy };
 
 /** A host that runs a harness, and (optionally) the runtime version it runs.
  *  Absent version ⇒ the adapter's pinned version. */
@@ -81,6 +89,7 @@ function harnessTakesOrgKeys(harnessId: string): boolean {
 export function harnessRowModelId(
   model: ModelDefinition,
   target: HarnessModelTarget,
+  policy: HarnessKeyPolicy = {},
 ):
   | { modelId: string; rail: "hosted" | "org" | "evidence" }
   | { refusal: string } {
@@ -88,7 +97,16 @@ export function harnessRowModelId(
     return { modelId: String(model.id), rail: "evidence" };
   }
   if (isMCPJamProvidedModelMenuItem(model)) {
-    return { modelId: String(model.id), rail: "hosted" };
+    // Under the key policy MCPJam's key is off, so the harness's only key is
+    // the organization's own.
+    return policy.requireOrgKeys
+      ? {
+          refusal: harnessOrgProviderUnsupportedReason(
+            target.harnessId,
+            policy,
+          ),
+        }
+      : { modelId: String(model.id), rail: "hosted" };
   }
   if (
     model.orgProvider &&
@@ -103,9 +121,16 @@ export function harnessRowModelId(
     const canonical = canonicalSelectionModelId(model);
     return canonical
       ? { modelId: canonical, rail: "org" }
-      : { refusal: harnessOrgProviderUnsupportedReason(target.harnessId) };
+      : {
+          refusal: harnessOrgProviderUnsupportedReason(
+            target.harnessId,
+            policy,
+          ),
+        };
   }
-  return { refusal: harnessOrgProviderUnsupportedReason(target.harnessId) };
+  return {
+    refusal: harnessOrgProviderUnsupportedReason(target.harnessId, policy),
+  };
 }
 
 /**
@@ -116,9 +141,10 @@ export function harnessRowRefusalReason(
   model: ModelDefinition,
   target: HarnessModelTarget | null | undefined,
   purpose: HarnessModelPurpose,
+  policy: HarnessKeyPolicy = {},
 ): string | undefined {
   if (!target) return undefined;
-  const row = harnessRowModelId(model, target);
+  const row = harnessRowModelId(model, target, policy);
   if ("refusal" in row) return row.refusal;
   return harnessModelRefusalReason(row.modelId, target, purpose);
 }
@@ -168,11 +194,12 @@ export function harnessModelLockReason(
   model: ModelDefinition,
   targets: ReadonlyArray<HarnessModelTarget | null | undefined>,
   purpose: HarnessModelPurpose,
+  policy: HarnessKeyPolicy = {},
 ): string | undefined {
   if (targets.length === 0) return undefined;
   let firstReason: string | undefined;
   for (const target of targets) {
-    const reason = harnessRowRefusalReason(model, target, purpose);
+    const reason = harnessRowRefusalReason(model, target, purpose, policy);
     if (reason === undefined) return undefined;
     firstReason ??= reason;
   }
@@ -187,11 +214,12 @@ export function applyHarnessModelLocks(
   models: ModelDefinition[],
   targets: ReadonlyArray<HarnessModelTarget | null | undefined>,
   purpose: HarnessModelPurpose,
+  policy: HarnessKeyPolicy = {},
 ): ModelDefinition[] {
   if (!targets.some(Boolean)) return models;
   return models.map((model) => {
     if (model.disabled) return model;
-    const reason = harnessModelLockReason(model, targets, purpose);
+    const reason = harnessModelLockReason(model, targets, purpose, policy);
     return reason
       ? { ...model, disabled: true, disabledReason: reason }
       : model;
@@ -203,11 +231,12 @@ export function harnessModelLockReasonsByRow(
   models: readonly ModelDefinition[],
   targets: ReadonlyArray<HarnessModelTarget | null | undefined>,
   purpose: HarnessModelPurpose,
+  policy: HarnessKeyPolicy = {},
 ): Map<string, string> {
   const byRow = new Map<string, string>();
   if (targets.length === 0) return byRow;
   for (const model of models) {
-    const reason = harnessModelLockReason(model, targets, purpose);
+    const reason = harnessModelLockReason(model, targets, purpose, policy);
     if (reason) byRow.set(modelRowKey(model), reason);
   }
   return byRow;
@@ -232,15 +261,30 @@ export function harnessModelLockReasonsByRow(
  * A harness that never takes an org key (Cursor, whose account picks its own
  * model and ignores the turn's) keeps the list as it was when nothing in it
  * is runnable: there the turn's model is not what runs.
+ *
+ * Under the organization's key policy (`policy.requireOrgKeys`) a brokered
+ * harness offers only organization rows on its own vendor. A saved model the
+ * policy no longer allows (`ORG_KEYS_MODEL_REASON`) is kept as it is: the
+ * picker never lists it and shows it only on its trigger, as a warning, so
+ * the saved choice is never switched silently.
  */
 export function harnessPickerModels(
   models: ModelDefinition[],
   target: HarnessModelTarget | null | undefined,
+  policy: HarnessKeyPolicy = {},
 ): ModelDefinition[] {
   if (!target) return models;
   const kept: ModelDefinition[] = [];
   for (const model of models) {
-    const row = harnessRowModelId(model, target);
+    if (
+      policy.requireOrgKeys &&
+      model.disabled &&
+      model.disabledReason === ORG_KEYS_MODEL_REASON
+    ) {
+      kept.push(model);
+      continue;
+    }
+    const row = harnessRowModelId(model, target, policy);
     if ("refusal" in row) continue;
     if (row.rail === "evidence" && !isMCPJamProvidedModelMenuItem(model)) {
       continue;
@@ -270,14 +314,17 @@ const NO_RUNNABLE_HARNESS_MODEL_ID = "mcpjam/no-runnable-harness-model";
  * connection. Disabled, with the reason, so the picker shows the empty state
  * and the chat refuses to send rather than send an id the server refuses.
  */
-export function noRunnableHarnessModel(harnessId: string): ModelDefinition {
+export function noRunnableHarnessModel(
+  harnessId: string,
+  policy: HarnessKeyPolicy = {},
+): ModelDefinition {
   return {
     id: NO_RUNNABLE_HARNESS_MODEL_ID,
     name: "No runnable model",
     provider: "custom",
     hosted: false,
     disabled: true,
-    disabledReason: harnessNoRunnableModelReason(harnessId),
+    disabledReason: harnessNoRunnableModelReason(harnessId, policy),
   };
 }
 

@@ -1,5 +1,5 @@
-// Must stay the first import; see the module comment.
-import "./lib/install-failed-request-tracker";
+// Must stay first; OAuth modules and SDKs retain window.fetch at load time.
+import "./lib/install-telemetry-transport";
 import { HostedAuthEntry } from "./components/auth/hosted-auth-entry";
 import { authRefusalDiagnostics } from "./lib/auth/auth-refusal-diagnostics";
 import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";
@@ -19,6 +19,7 @@ import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extension
 import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
+import { WorkosAuthUnavailableDialog } from "./components/auth/WorkosAuthUnavailableDialog";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { installConvexAuthRecovery } from "./lib/convex-auth-recovery";
 import { AuthRecoveryBoundary } from "./components/AuthRecoveryBoundary";
@@ -83,7 +84,6 @@ import {
   WORKOS_DEV_MODE,
 } from "./lib/workos-authkit-config";
 
-// Initialize Sentry before React mounts
 initSentry();
 
 // After Sentry, so this wraps `history.pushState` OUTSIDE Sentry's own
@@ -238,6 +238,7 @@ if (isInIframe) {
         {...handoffWorkosOptions}
       >
         <ServerConnectionHandoff />
+        <WorkosAuthUnavailableDialog />
       </AuthKitProvider>
     </StrictMode>,
   );
@@ -464,6 +465,7 @@ if (isInIframe) {
           </SignOutBoundary>
         </ConvexProviderWithAuth>
       </HostedAuthEntry>
+      <WorkosAuthUnavailableDialog />
     </AuthKitProvider>
   );
 

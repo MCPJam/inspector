@@ -79,7 +79,7 @@ import type { EvaluatorResult } from "./contract/evaluator-types.js";
 import { definitionHash, resolveScoreDefinition } from "./contract/derive.js";
 import type { Scorer } from "./scorers/types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
-import { posthog } from "./telemetry.js";
+import { captureSdkRun } from "./telemetry.js";
 import {
   captureEvalReporting,
   notRequestedReceipt,
@@ -957,14 +957,7 @@ export class EvalTest {
         // public-facing parameter name is `executor`.
         const agent = executor;
         if (!options.__suppressTelemetry) {
-          posthog.capture({
-            distinctId: "anonymous",
-            event: "eval_test_run_triggered",
-            properties: {
-              iterations: options.iterations,
-              concurrency: options.concurrency ?? 5,
-            },
-          });
+          captureSdkRun(options.iterations, options.concurrency ?? 5);
         }
         const concurrency = options.concurrency ?? 5;
         const retries = options.retries ?? 0;

@@ -1,3 +1,7 @@
+import {
+  projectTransitionRecovery,
+  currentProjectTransitionPath,
+} from "./project-transition-recovery";
 import { authCorrelationId } from "./correlation-id";
 import { flushSync } from "react-dom";
 import { createStore } from "zustand/vanilla";
@@ -47,6 +51,7 @@ export function createGuestTabRecovery(deps: {
   publish: (message: GuestTransition) => void;
   reload: () => void;
   allowAutomaticReload: () => boolean;
+  beforeTransition?: (message: GuestTransition) => void;
 }) {
   const store = createStore<Recovery>(() => ({
     status: "idle",
@@ -135,6 +140,7 @@ export function createGuestTabRecovery(deps: {
       return;
     if (current?.attempt === message.attempt && current.phase !== "started")
       return;
+    deps.beforeTransition?.(message);
     current = message;
     clearTimeout(timer);
     store.setState({ status: "waiting", attempt: message.attempt });
@@ -237,6 +243,11 @@ export function createGuestTabRecovery(deps: {
 
 let channel: BroadcastChannel | undefined;
 export const guestTabRecovery = createGuestTabRecovery({
+  beforeTransition: (message) =>
+    projectTransitionRecovery.arm(
+      currentProjectTransitionPath(),
+      message.attempt,
+    ),
   publish(message) {
     try {
       channel?.postMessage(message);

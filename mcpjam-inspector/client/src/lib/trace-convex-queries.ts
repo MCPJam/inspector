@@ -7,6 +7,7 @@ import type { ConvexReactClient } from "convex/react";
 import { getFunctionName } from "convex/server";
 import { ConvexError } from "convex/values";
 import { reportCaught } from "./error-reporting";
+import { isEnvironmentErrorPayload } from "./environment-error";
 import {
   isAuthorizationRefusal,
   isSessionRevokedError,
@@ -30,6 +31,18 @@ function isParentDeletedRefusal(error: unknown): boolean {
     error instanceof ConvexError &&
     (error.data as { reason?: unknown } | undefined)?.reason ===
       "eval_parent_deleted"
+  );
+}
+
+/** Environment preflight renders these refusals; they are not query faults. */
+function isEnvironmentRefusal(error: unknown): boolean {
+  if (!(error instanceof ConvexError)) return false;
+  const data: unknown = error.data;
+  return (
+    isEnvironmentErrorPayload(data) &&
+    data.message.length > 0 &&
+    typeof data.code === "string" &&
+    data.code.startsWith("ENV_")
   );
 }
 
@@ -69,7 +82,11 @@ export function traceConvexQueries(
             notifySessionRevoked();
           return;
         }
-        if (isAuthorizationRefusal(error) || isParentDeletedRefusal(error))
+        if (
+          isAuthorizationRefusal(error) ||
+          isParentDeletedRefusal(error) ||
+          isEnvironmentRefusal(error)
+        )
           return;
         const original =
           error instanceof Error

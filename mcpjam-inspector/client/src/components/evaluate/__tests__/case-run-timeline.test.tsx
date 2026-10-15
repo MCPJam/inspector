@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   EvalIteration,
@@ -7,6 +7,8 @@ import type {
   EvalSuiteRunListItem,
 } from "@/components/evals/types";
 import { CaseRunTimeline } from "../case-workspace/case-run-timeline";
+import { beginCaseLaunch, useCaseLaunches } from "../case-workspace/pending-case-launches";
+beforeEach(() => useCaseLaunches.setState({ launches: [] }));
 const iteration = (
   id: string,
   model: string,
@@ -29,6 +31,76 @@ const chooseFilter = async (filter: "Client" | "Model", option: string) => {
   await user.click(screen.getByRole("option", { name: option, exact: true }));
 };
 describe("CaseRunTimeline", () => {
+  it("sorts newest first independently of status, with stable time ties", () => {
+    const trials = [
+      { ...iteration("old", "model", "pending", 0), createdAt: 1, iterationNumber: 1 },
+      { ...iteration("new-b", "model", "passed", 1000), suiteRunId: "new", createdAt: 3, iterationNumber: 2 },
+      { ...iteration("middle", "model", "failed", 1000), createdAt: 2, iterationNumber: 1 },
+      { ...iteration("new-a", "model", "passed", 1000), suiteRunId: "new", createdAt: 3, iterationNumber: 1 },
+    ];
+    const props = { caseTitle: "Case", selectedIterationId: null, onSelect: vi.fn() };
+    const { rerender } = render(<CaseRunTimeline {...props} iterations={trials}>Evidence</CaseRunTimeline>);
+    const labels = () => screen.getAllByTestId("case-run-row").map((row) => row.textContent);
+    expect(labels().map((text) => text?.match(/Passed|Failed|Running/)?.[0])).toEqual(["Passed", "Passed", "Failed", "Running"]);
+    expect(within(screen.getAllByTestId("case-run-row")[0]).getByText("#1")).toBeVisible();
+    const times = screen.getAllByTestId("case-run-time").map((cell) => cell.querySelector("time")?.dateTime);
+    rerender(<CaseRunTimeline {...props} iterations={trials.map((row) => ({ ...row, status: "pending" }))}>Evidence</CaseRunTimeline>);
+    expect(screen.getAllByTestId("case-run-time").map((cell) => cell.querySelector("time")?.dateTime)).toEqual(times);
+  });
+
+  it("shows temporary pending rows without metrics or details, then actual backend status", async () => {
+    const scope = { projectId: "p", suiteId: "s", caseId: "c" };
+    beginCaseLaunch(scope, [{ client: "Claude", hostId: "claude", model: "model" }], 2);
+    const props = { caseTitle: "Case", scope, selectedIterationId: null, onSelect: vi.fn(), hostNamesById: new Map([["claude", "Claude"]]) };
+    const { rerender } = render(<CaseRunTimeline {...props} iterations={[]}>Evidence</CaseRunTimeline>);
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(2);
+    screen.getAllByTestId("case-run-row").forEach((row) => {
+      expect(row).toBeDisabled();
+      expect(row).toHaveTextContent("Pending");
+      expect(within(row).getByTestId("case-run-number")).toHaveTextContent("—");
+    });
+    expect(screen.getByText("0/0")).toBeVisible();
+    await chooseFilter("Client", "Claude");
+    await chooseFilter("Model", "model");
+    const id = useCaseLaunches.getState().launches[0].id;
+    const runs = [{ _id: "run", runGroupId: id, namedHostId: "claude", configSnapshot: {}, effectiveModelId: "model" }] as EvalSuiteRunListItem[];
+    const trial = { ...iteration("real", "model", "pending", 0), testCaseId: scope.caseId, suiteRunId: "run", iterationNumber: 1, status: "pending" as const };
+    rerender(<CaseRunTimeline {...props} iterations={[trial]} suiteRuns={runs}>Evidence</CaseRunTimeline>);
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(2);
+    expect(screen.getAllByText("Pending")).toHaveLength(2);
+    rerender(<CaseRunTimeline {...props} iterations={[{ ...trial, status: "running" }]} suiteRuns={runs}>Evidence</CaseRunTimeline>);
+    expect(screen.getByText("Running")).toBeVisible();
+    expect(screen.getByText("Pending")).toBeVisible();
+    act(() => useCaseLaunches.setState({ launches: [] }));
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(1);
+    expect(screen.getByTestId("case-run-row")).toBeEnabled();
+  });
+  it("labels recording separately from a run and stops it when closed", async () => {
+    const onStopRecording = vi.fn();
+    render(
+      <CaseRunTimeline
+        caseTitle="Case"
+        iterations={[]}
+        selectedIterationId={null}
+        onSelect={vi.fn()}
+        live
+        recording
+        onStopRecording={onStopRecording}
+      >
+        Live app
+      </CaseRunTimeline>,
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Record interactions" }),
+    ).toBeVisible();
+    expect(screen.getByTestId("case-run-status")).toHaveTextContent(
+      "Recording",
+    );
+    expect(screen.getByText("Live app")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onStopRecording).toHaveBeenCalledTimes(1);
+  });
+
   it("switches client and model targets and updates their averages", async () => {
     const trials = [
       {
@@ -81,8 +153,8 @@ describe("CaseRunTimeline", () => {
     expect(
       screen.getByTestId("case-run-table"),
     ).toHaveClass("bg-background", "text-foreground");
-    expect(screen.getByTestId("case-run-table")).not.toHaveClass("overflow-x-auto");
-    expect(screen.getByTestId("case-run-table").firstElementChild).toHaveClass("min-w-0", "w-full");
+    expect(screen.getByTestId("case-run-table")).toHaveClass("overflow-x-auto");
+    expect(screen.getByTestId("case-run-table").firstElementChild).toHaveClass("w-full");
     expect(screen.getByText("Iteration").parentElement).toHaveClass("bg-muted");
     await chooseFilter("Client", "ChatGPT");
     expect(screen.getAllByTestId("case-run-row")).toHaveLength(1);
@@ -208,17 +280,25 @@ describe("CaseRunTimeline", () => {
     </CaseRunTimeline>);
     expect(screen.getByText("Run", { exact: true })).toBeVisible();
     expect(screen.getByText("Date", { exact: true })).toBeVisible();
-    expect(screen.getByText("Date", { exact: true }).parentElement?.lastElementChild).toBe(screen.getByText("Date", { exact: true }));
+    expect(screen.getByText("Time", { exact: true })).toBeVisible();
+    expect(screen.getByText("Date", { exact: true }).nextElementSibling).toBe(
+      screen.getByText("Time", { exact: true }),
+    );
     for (const [index, row] of screen.getAllByTestId("case-run-row").entries()) {
       expect(within(row).getByTestId("case-run-number")).toHaveTextContent(/^#7$/);
       expect(within(row).getByText("#1", { exact: true })).toBeVisible();
       const date = within(row).getByTestId("case-run-date");
-      expect(row.lastElementChild).toBe(date);
-      const timestamp = new Date(trials[index].createdAt);
+      const time = within(row).getByTestId("case-run-time");
+      expect(date.nextElementSibling).toBe(time);
+      expect(row.lastElementChild).toBe(time);
+      const timestamp = new Date([...trials].sort((a, b) => b.createdAt - a.createdAt)[index].createdAt);
       expect(date).toHaveAttribute("title", timestamp.toLocaleString());
-      expect(within(date).getByText(timestamp.toLocaleDateString())).toHaveClass("block");
-      expect(within(date).getByText(timestamp.toLocaleTimeString())).toHaveClass("block");
-      expect(date.querySelector("time")).toHaveAttribute("datetime", new Date(trials[index].createdAt).toISOString());
+      expect(date).toHaveTextContent(timestamp.toLocaleDateString());
+      expect(time).toHaveTextContent(timestamp.toLocaleTimeString());
+      expect(date).not.toHaveTextContent(timestamp.toLocaleTimeString());
+      expect(time).not.toHaveTextContent(timestamp.toLocaleDateString());
+      expect(date.querySelector("time")).toHaveAttribute("datetime", timestamp.toISOString());
+      expect(time.querySelector("time")).toHaveAttribute("datetime", timestamp.toISOString());
     }
     await chooseFilter("Client", "ChatGPT");
     expect(screen.getByTestId("case-run-number")).toHaveTextContent(/^#7$/);
@@ -575,6 +655,9 @@ it("shows an opening live run as a row and replaces it with its recorded iterati
   ).toBeNull();
   const row = screen.getByTestId("case-run-row");
   expect(row).toHaveTextContent("Running");
+  expect(within(row).getByTestId("case-run-date")).toHaveTextContent("just now");
+  expect(within(row).getByTestId("case-run-time")).toHaveTextContent("—");
+  expect(within(row).getByTestId("case-run-time").querySelector("time")).toBeNull();
   expect(row).toHaveTextContent("nova");
   expect(row).toHaveTextContent("SDK");
   await userEvent.setup().click(row);

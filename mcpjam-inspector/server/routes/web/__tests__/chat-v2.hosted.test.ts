@@ -900,6 +900,8 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-1"],
         scenarioId: "cbx_shared",
         accessVersion: 2,
+        modelSelection: { invalid: "visitor choice" },
+        reasoningEffort: "low",
         surface: "share_link",
         chatSessionId: "chat-session-shared",
         messages: [{ role: "user", content: "hello from guest" }],
@@ -920,6 +922,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
       })
     );
+    expect(handleMCPJamFreeChatModelMock.mock.calls[0]![0].reasoningEffort).toBeUndefined();
   });
 
   it("uses one authorize-batch request for multi-server hosted chat", async () => {

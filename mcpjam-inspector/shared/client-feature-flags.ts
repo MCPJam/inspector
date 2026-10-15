@@ -19,6 +19,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "eval-run-stage-analytics",
   "evaluate-enabled",
   "evaluate-observe-first",
+  "evals-start-recording",
   "guest-credit-wall-copy",
   "hosted-browser-enabled",
   "integrations-tab",

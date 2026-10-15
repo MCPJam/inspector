@@ -1,6 +1,6 @@
 import { ScenarioSignInGate } from "./ScenarioSignInGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { startSessionRevocation } from "@/lib/auth/revoke-session";
 import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
@@ -410,7 +410,7 @@ export function ScenarioChatPage({
     signOut,
     user: workOsUser,
     isLoading: isWorkOsLoading,
-  } = useAuth();
+  } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const themeMode = usePreferencesStore((s) => s.themeMode);
 

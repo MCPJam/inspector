@@ -7,7 +7,10 @@ import {
   harnessModelLockReasonsByRow,
   harnessPickerModels,
   harnessRowRefusalReason,
+  isNoRunnableHarnessModel,
+  noRunnableHarnessModel,
 } from "../harness-model-locks";
+import { ORG_KEYS_MODEL_REASON } from "@/lib/org-keys-refusal";
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -297,6 +300,93 @@ describe("organization-key rows on a harness", () => {
     expect(
       harnessRowRefusalReason(ORG_ANTHROPIC, { harnessId: "cursor" }, "chat"),
     ).toMatch(/Cursor/);
+  });
+});
+
+describe("a harness under the organization's key policy", () => {
+  const POLICY = { requireOrgKeys: true };
+  const WITH_ORG = [
+    ...CATALOG,
+    ORG_ANTHROPIC,
+    ORG_OPENAI,
+    ORG_OPENROUTER_CLAUDE,
+    LOCAL_ANTHROPIC,
+  ];
+
+  it("Claude Code offers only the organization's Anthropic rows", () => {
+    expect(
+      harnessPickerModels(WITH_ORG, { harnessId: "claude-code" }, POLICY).map(
+        modelRowKey,
+      ),
+    ).toEqual(["org:orgprov_anthropic:claude-sonnet-4-5"]);
+  });
+
+  it("Codex offers only the organization's OpenAI rows", () => {
+    expect(
+      harnessPickerModels(WITH_ORG, { harnessId: "codex" }, POLICY).map(
+        modelRowKey,
+      ),
+    ).toEqual(["org:orgprov_openai:gpt-5-mini"]);
+  });
+
+  it("refuses an MCPJam-provided row with copy that offers no MCPJam model", () => {
+    const hosted = CATALOG[0]!;
+    expect(
+      harnessRowRefusalReason(
+        hosted,
+        { harnessId: "claude-code" },
+        "eval",
+        POLICY,
+      ),
+    ).toBe(
+      "the Claude Code harness runs only on your organization's Anthropic key",
+    );
+    const locked = applyHarnessModelLocks(
+      [hosted, ORG_ANTHROPIC],
+      [{ harnessId: "claude-code" }],
+      "eval",
+      POLICY,
+    );
+    expect(locked[0]).toMatchObject({ disabled: true });
+    expect(locked[1]!.disabled).toBeFalsy();
+    expect(
+      harnessModelLockReasonsByRow(
+        [ORG_OPENAI],
+        [{ harnessId: "claude-code" }],
+        "eval",
+        POLICY,
+      ).get(modelRowKey(ORG_OPENAI)),
+    ).toMatch(/runs only on your organization's Anthropic key/);
+  });
+
+  it("keeps a saved model the policy no longer allows, so the trigger can warn", () => {
+    const disallowed = {
+      ...CATALOG[0]!,
+      disabled: true,
+      disabledReason: ORG_KEYS_MODEL_REASON,
+    } as ModelDefinition;
+    expect(
+      harnessPickerModels(
+        [disallowed, ORG_ANTHROPIC, ORG_OPENAI],
+        { harnessId: "claude-code" },
+        POLICY,
+      ),
+    ).toEqual([disallowed, ORG_ANTHROPIC]);
+  });
+
+  it("an empty list says which organization provider the harness needs", () => {
+    expect(
+      harnessPickerModels(
+        [ORG_OPENAI, ...CATALOG],
+        { harnessId: "claude-code" },
+        POLICY,
+      ),
+    ).toEqual([]);
+    const standIn = noRunnableHarnessModel("claude-code", POLICY);
+    expect(isNoRunnableHarnessModel(standIn)).toBe(true);
+    expect(standIn.disabledReason).toBe(
+      "This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider.",
+    );
   });
 });
 

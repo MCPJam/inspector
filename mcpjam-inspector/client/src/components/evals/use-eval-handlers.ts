@@ -3,6 +3,7 @@ import { useConvex } from "convex/react";
 import { DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT } from "@mcpjam/sdk/contract";
 import { toast } from "sonner";
 import { convexErrMessage } from "@/lib/convex-error";
+import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
@@ -41,6 +42,7 @@ import {
   getEvalIterationLimitFromError,
 } from "@/lib/billing-entitlements";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
+import { trackCaseLaunchTarget } from "../evaluate/case-workspace/pending-case-launches";
 import type { ModelDefinition } from "@/shared/types";
 import {
   buildEvalConvexAuthPayload,
@@ -777,6 +779,7 @@ export function useEvalHandlers({
         caseIds?: string[];
         /** The selected case explicitly opts out of launch-triggered judging. */
         skipJudge?: boolean;
+        caseLaunchId?: string;
         /**
          * Throw a launch failure instead of toasting it, so the Setup Run
          * sheet can show it inline and stay open. Unlike `stayOnPage`, the
@@ -920,13 +923,9 @@ export function useEvalHandlers({
         executionContext.suiteServers,
       );
 
-      // Generate a shared group id ONLY when the rerun fans out to more
-      // than one host/environment. The inspector route threads this through
-      // the Zod schema → recorder → Convex mutation; every sibling run
-      // carries the same id so the UI can collapse them into a single
-      // parent row. Single-plan launches stay ungrouped so legacy +
-      // single-host rows render identically.
-      const runGroupId = runPlans.length > 1 ? crypto.randomUUID() : undefined;
+      const runGroupId =
+        options?.caseLaunchId ??
+        (runPlans.length > 1 ? crypto.randomUUID() : undefined);
 
       // Shown on click, then turned into the outcome: a success toast fired
       // before the server answered stood next to its own failure.
@@ -936,6 +935,7 @@ export function useEvalHandlers({
               isEnvironmentSuite ? "environments" : "hosts"
             }…`
           : "Starting run…",
+        { id: options?.caseLaunchId },
       );
 
       const suiteRunStartedAt = Date.now();
@@ -1036,46 +1036,50 @@ export function useEvalHandlers({
         // targets keep starting independently and join the shared run group.
         let openedRun = false;
         const settled = await Promise.allSettled(
-          runPlans.map((plan) =>
-            runEvals({
-              projectId,
-              suiteId: suite._id,
-              suiteName: suite.name,
-              suiteDescription: suite.description,
-              tests: narrowedTests,
-              serverIds: plan.serverIds,
-              modelApiKeys:
-                Object.keys(executionContext.modelApiKeys).length > 0
-                  ? executionContext.modelApiKeys
-                  : undefined,
-              convexAuthToken: accessToken,
-              passCriteria: { minimumPassRate },
-              notes: criteriaNote,
-              suiteRerun: true,
-              ...(options?.idempotencyKey
-                ? {
-                    idempotencyKey: `${options.idempotencyKey}:${
-                      plan.namedHostId ?? plan.environmentId ?? "default"
-                    }`,
-                  }
-                : {}),
-              ...(wantedCaseIds?.length ? { caseIds: wantedCaseIds } : {}),
-              iterationOverride: options?.iterationOverride,
-              matchOptionsOverride: options?.matchOptionsOverride,
-              refreshSnapshot: options?.refreshSnapshot,
-              ...(plan.namedHostId ? { namedHostId: plan.namedHostId } : {}),
-              // Always sent explicitly on env plans — even single-env
-              // suites — so the server's authoritative resolution runs.
-              ...(plan.environmentId
-                ? {
-                    environmentId: plan.environmentId,
-                    ...(options?.ephemeralEnvironment
-                      ? { ephemeralEnvironment: true }
-                      : {}),
-                  }
-                : {}),
-              ...(runGroupId ? { runGroupId } : {}),
-            }).then((response) => {
+          runPlans.map((plan, index) =>
+            trackCaseLaunchTarget(
+              options?.caseLaunchId,
+              index,
+              runEvals({
+                projectId,
+                suiteId: suite._id,
+                suiteName: suite.name,
+                suiteDescription: suite.description,
+                tests: narrowedTests,
+                serverIds: plan.serverIds,
+                modelApiKeys:
+                  Object.keys(executionContext.modelApiKeys).length > 0
+                    ? executionContext.modelApiKeys
+                    : undefined,
+                convexAuthToken: accessToken,
+                passCriteria: { minimumPassRate },
+                notes: criteriaNote,
+                suiteRerun: true,
+                ...(options?.idempotencyKey
+                  ? {
+                      idempotencyKey: `${options.idempotencyKey}:${
+                        plan.namedHostId ?? plan.environmentId ?? "default"
+                      }`,
+                    }
+                  : {}),
+                ...(wantedCaseIds?.length ? { caseIds: wantedCaseIds } : {}),
+                iterationOverride: options?.iterationOverride,
+                matchOptionsOverride: options?.matchOptionsOverride,
+                refreshSnapshot: options?.refreshSnapshot,
+                ...(plan.namedHostId ? { namedHostId: plan.namedHostId } : {}),
+                // Always sent explicitly on env plans — even single-env
+                // suites — so the server's authoritative resolution runs.
+                ...(plan.environmentId
+                  ? {
+                      environmentId: plan.environmentId,
+                      ...(options?.ephemeralEnvironment
+                        ? { ephemeralEnvironment: true }
+                        : {}),
+                    }
+                  : {}),
+                ...(runGroupId ? { runGroupId } : {}),
+              }),
+            ).then((response) => {
               const runId = response?.runId;
               if (
                 !options?.stayOnPage &&
@@ -1246,7 +1250,7 @@ export function useEvalHandlers({
           // message would name servers this run never asked for. Its 409 says
           // what is actually wrong (no group picked, a group that is gone), so
           // that sentence is what reaches the user.
-          const message = isEnvironmentSuite
+          const launchMessage = isEnvironmentSuite
             ? convexErrMessage(error, "Failed to start eval run")
             : options?.stayOnPage
               ? formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
@@ -1255,9 +1259,14 @@ export function useEvalHandlers({
                 })
               : getEnvironmentConflictMessage(error) ??
                 getBillingErrorMessage(error, "Failed to start eval run");
+          // A refusal under the organization's AI key policy names every
+          // dependency that can't run on its providers: it goes through
+          // whole, so the run sheet can list them, and a toast says all of it.
+          const policyRefusal = aiLaunchRefusalSentence(error);
+          const message = policyRefusal ?? launchMessage;
           if (options?.stayOnPage || options?.throwOnFailure) {
             toast.dismiss(runStartedToastId);
-            throw new Error(message);
+            throw policyRefusal ? error : new Error(message);
           }
           toast.error(message, { id: runStartedToastId });
         }

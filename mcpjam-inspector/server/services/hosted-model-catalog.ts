@@ -36,9 +36,19 @@ import {
   type ModelDefinition,
 } from "@/shared/types";
 import { logger } from "../utils/logger.js";
+import type { SystemEventMap } from "../utils/log-events.js";
+import { getSystemLogger } from "../utils/request-logger.js";
 
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000; // hourly, matches the backend cron
 const FETCH_TIMEOUT_MS = 10_000;
+const catalogLog = getSystemLogger("hosted-model-catalog");
+type CatalogRefreshFailureReason =
+  SystemEventMap["model_catalog.refresh.failed"]["reason"];
+
+function failedCatalogRefresh(reason: CatalogRefreshFailureReason): null {
+  catalogLog.event("model_catalog.refresh.failed", { reason });
+  return null;
+}
 
 // Static seed: byte-identical to the legacy isMCPJamProvidedModel membership.
 // Canonical (slash-prefixed) ids. Never mutated — the dynamic catalog only
@@ -67,54 +77,41 @@ function catalogUrl(): string | undefined {
  */
 async function fetchCatalogIds(): Promise<Set<string> | null> {
   const url = catalogUrl();
-  if (!url) {
-    logger.warn(
-      "[hosted-model-catalog] CONVEX_HTTP_URL is not set; hosted-model billing " +
-        "falls back to the static seed only"
-    );
-    return null;
-  }
+  if (!url) return failedCatalogRefresh("fetch_failed");
 
+  let failureReason: CatalogRefreshFailureReason = "fetch_failed";
   try {
     const res = await fetch(url, {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    if (!res.ok) {
-      logger.warn("[hosted-model-catalog] catalog fetch returned non-2xx", {
-        status: res.status,
-      });
-      return null;
-    }
-    const body = (await res.json()) as { items?: Array<{ id?: unknown }> };
-    if (!Array.isArray(body.items) || body.items.length === 0) {
-      logger.warn(
-        "[hosted-model-catalog] catalog payload missing/empty items array"
-      );
-      return null;
-    }
+    if (!res.ok) return failedCatalogRefresh("fetch_failed");
+    failureReason = "invalid_catalog";
+    const body: unknown = await res.json();
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("items" in body) ||
+      !Array.isArray(body.items) ||
+      body.items.length === 0
+    )
+      return failedCatalogRefresh("invalid_catalog");
     const ids = new Set<string>();
     for (const item of body.items) {
       if (typeof item?.id === "string" && item.id.length > 0) {
         ids.add(item.id);
       }
     }
-    if (ids.size === 0) {
-      logger.warn("[hosted-model-catalog] catalog yielded no usable ids");
-      return null;
-    }
+    if (ids.size === 0) return failedCatalogRefresh("invalid_catalog");
     return ids;
-  } catch (error) {
-    logger.warn("[hosted-model-catalog] catalog fetch threw", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
+  } catch {
+    return failedCatalogRefresh(failureReason);
   }
 }
 
 /**
  * Refresh the dynamic catalog once. On failure the prior cache is retained and
- * a warn is emitted (which also alerts via Sentry) — billing keeps working off
+ * a typed warning is emitted to Axiom — billing keeps working off
  * the seed, so this is a degraded-but-safe condition, not an outage. In-flight
  * refreshes are deduped so a manual refresh can't race the interval.
  */

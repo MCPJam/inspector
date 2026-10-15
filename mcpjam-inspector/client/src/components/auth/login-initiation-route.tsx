@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { Button } from "@mcpjam/design-system/button";
 import { useAppNavigate, useCurrentSearchParam } from "@/lib/app-navigation";
 
@@ -44,7 +44,7 @@ export function LoginInitiationRoute({
     organizationId: currentOrganizationId,
     isLoading,
     signIn,
-  } = useAuth();
+  } = useInspectorAuth();
   const navigate = useAppNavigate();
   const requestedOrganizationId = useCurrentSearchParam("organization_id");
   const organizationId =
@@ -70,7 +70,11 @@ export function LoginInitiationRoute({
     try {
       void Promise.resolve(
         organizationId ? signIn({ organizationId }) : signIn(),
-      ).catch(() => setFailed(true));
+      )
+        .then((result) => {
+          if (result === "blocked") setFailed(true);
+        })
+        .catch(() => setFailed(true));
     } catch {
       setFailed(true);
     }

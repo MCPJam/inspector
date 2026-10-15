@@ -8,11 +8,13 @@ import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { composeAvailableModels } from "@/components/chat-v2/shared/available-models";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import {
   useFreeTierOnly,
   useOutOfCreditsReason,
 } from "@/hooks/useCreditBalance";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 
 /**
@@ -37,8 +39,28 @@ export function useAvailableModels(options?: {
    * project is globally active.
    */
   projectId?: string | null;
+  /**
+   * Model ids the surface has saved. While the organization requires its own
+   * keys, one it no longer offers stays in the list as an
+   * `orgKeysDisallowedRow` instead of vanishing, so the surface keeps it
+   * selected; pickers show it only on the trigger, as a warning.
+   */
+  savedModelIds?: readonly (string | null | undefined)[];
 }): {
   availableModels: ModelDefinition[];
+  /**
+   * The scoped organization requires its own provider keys for AI features:
+   * the list holds only organization models (and may be empty).
+   */
+  requireOrgKeys: boolean;
+  /**
+   * Opens the scoped organization's AI providers. Present only while the
+   * organization requires its own keys and the viewer may manage its
+   * providers: a picker with no organization model then offers "Add a
+   * provider" instead of "Ask an organization admin". Absent otherwise, so a
+   * picker off the policy looks as it always has.
+   */
+  onManageOrgProviders?: () => void;
   /**
    * Whether this deployment stores a saved model selection beside a model id
    * (`getCapabilities.modelSelections` for the scoped project). A picker that
@@ -78,6 +100,14 @@ export function useAvailableModels(options?: {
   const freeTierOnly = useFreeTierOnly(organizationId);
   const { hostedCatalog } = useHostedModelCatalog();
   const modelSelectionsSupported = useModelSelectionsSupported(convexProjectId);
+  const manageOrgProviders = useOrgModelsHandoff(organizationId);
+  const savedModelIdsKey = (options?.savedModelIds ?? [])
+    .filter((id): id is string => typeof id === "string" && id.length > 0)
+    .join("\u0001");
+  const savedModelIds = useMemo(
+    () => (savedModelIdsKey ? savedModelIdsKey.split("\u0001") : undefined),
+    [savedModelIdsKey],
+  );
 
   const availableModels = useMemo(
     () =>
@@ -93,6 +123,7 @@ export function useAvailableModels(options?: {
         outOfCredits,
         freeTierOnly,
         hostedCatalog,
+        savedModelIds,
       }),
     [
       hostedOrgModelConfig,
@@ -106,8 +137,18 @@ export function useAvailableModels(options?: {
       outOfCredits,
       freeTierOnly,
       hostedCatalog,
+      savedModelIds,
     ]
   );
 
-  return { availableModels, modelSelectionsSupported, outOfCreditsReason };
+  const requireOrgKeys = orgRequiresOwnKeys(hostedOrgModelConfig);
+  return {
+    availableModels,
+    modelSelectionsSupported,
+    outOfCreditsReason,
+    requireOrgKeys,
+    ...(requireOrgKeys && manageOrgProviders
+      ? { onManageOrgProviders: manageOrgProviders }
+      : {}),
+  };
 }

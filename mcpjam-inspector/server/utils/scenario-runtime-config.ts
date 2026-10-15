@@ -15,6 +15,7 @@
 
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import type { SandboxNoticeReason } from "@/shared/sandbox-notice";
+import { AI_CONFIGURATION_REFUSAL_CODES } from "@/shared/ai-execution-refusal";
 import { logger } from "./logger.js";
 import { backendFailureText } from "./backend-failure-text.js";
 import type {
@@ -298,6 +299,11 @@ const PARTICIPANT_MISCONFIGURED_CODES = new Set([
   "no_pin",
   "image_unavailable",
   "not_env_backed",
+  // The organization AI-key policy's configuration refusals: the study's
+  // organization requires its own provider keys and its model or provider
+  // cannot serve this turn. Only the owner (an org admin) can change that;
+  // the tester gets no admin detail.
+  ...AI_CONFIGURATION_REFUSAL_CODES,
 ]);
 
 /**

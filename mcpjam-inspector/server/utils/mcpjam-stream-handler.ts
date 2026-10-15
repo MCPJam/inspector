@@ -1,3 +1,5 @@
+import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
+import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 /**
  * MCPJam Stream Handler
@@ -32,6 +34,11 @@ import type {
   Harness,
   ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
+import {
+  isAiPolicyRecognizedDenialCode,
+  orgPolicyRefusalSlug,
+  type BackendStreamFailureContext,
+} from "./org-policy-stream-refusal.js";
 import {
   describeAsSlug,
   describeError,
@@ -100,6 +107,7 @@ import {
   scrubChatGPTAppsToolResultsForBackend,
 } from "./chat-helpers";
 import { normalizeModelMessagesForConvex } from "./normalize-model-messages-for-convex";
+import { hostedMessagesWithoutEmptyText } from "./empty-text-blocks";
 import {
   serializeToolsForConvex,
   type ToolDefinition,
@@ -695,10 +703,16 @@ export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
   code?: string,
+  context?: BackendStreamFailureContext,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
+
+  // The organization's AI-key policy refused the request. Before every status
+  // rule below: see {@link orgPolicyRefusalSlug}.
+  const orgPolicySlug = orgPolicyRefusalSlug(code, context);
+  if (orgPolicySlug) return describeAsSlug(orgPolicySlug, detail);
 
   // Before the status branches: a body that names MCPJam settles ownership no
   // matter which upstream status was mirrored onto it. The slug still comes
@@ -764,10 +778,17 @@ export function describeStreamErrorChunkFailure(
   status: number | undefined,
   rawText: string,
   code?: string,
+  context?: BackendStreamFailureContext,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
+
+  // A mid-stream policy refusal (the org's provider rejecting its key, or
+  // throttling) carries the UPSTREAM status, which read alone would blame the
+  // user's key or page us. Its code settles it.
+  const orgPolicySlug = orgPolicyRefusalSlug(code, context);
+  if (orgPolicySlug) return describeAsSlug(orgPolicySlug, detail);
 
   if (code === "platform_free_budget_exhausted")
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
@@ -901,12 +922,13 @@ export interface MCPJamHandlerOptions {
    */
   reasoningEffort?: ModelReasoningEffort;
   /**
-   * The turn's saved model selection, typed. Read by `runHarnessTurn`: a
-   * `source: 'org'` selection runs the harness on the organization's own
+   * The turn's saved selection, forwarded on every hosted step and read by
+   * `runHarnessTurn`: an org selection runs the harness on the organization's own
    * provider key (its canonical id is the turn's model, its connection is
    * what the lease is minted for). Absent ⇒ the hosted path, unchanged.
    */
   modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
   tools: ToolSet;
   /**
    * MCPJam's own server-executed built-in tools (e.g. web_search) as a subset
@@ -1875,11 +1897,8 @@ function normalizePreservedReasoning(messages: ModelMessage[]): ModelMessage[] {
  * Scrub messages for sending to the backend LLM.
  * Removes UI-specific metadata that shouldn't be sent to the model.
  *
- * `preserveReasoningFromIndex` is the index of the first message in the
- * *current* user turn (post the latest user message). Messages at or after
- * that index keep their reasoning parts so a thinking model can see its
- * own scratchpad between tool steps. Messages before that index still get
- * reasoning pruned to match prior behavior.
+ * `preserveReasoningFromIndex` starts the current user turn. Reasoning from
+ * that index survives tool steps; reasoning from earlier turns is pruned.
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
@@ -2329,6 +2348,9 @@ async function processStream(
   // supplied. Chat / synthetic omit (handler still writes the UI
   // chunk + trace event unchanged).
   onToolCall?: (event: MCPJamToolCallEvent) => void,
+  // The backend path this stream came from, so an error chunk's code can be
+  // read per route (`credential_missing` on `/stream/org`).
+  dispatchPath?: string,
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
@@ -2684,6 +2706,7 @@ async function processStream(
             parsed.statusCode,
             errorText,
             parsed.code,
+            dispatchPath !== undefined ? { endpointPath: dispatchPath } : undefined,
           );
           throw Object.assign(new Error(parsed.message), {
             normalized,
@@ -3656,15 +3679,17 @@ async function processOneStep(ctx: StepContext): Promise<{
   const llmStartAbs = stepStartAbs;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
 
-  // Scrub messages before sending to backend. Preserve reasoning on
-  // assistant messages added during the current turn so thinking models can
-  // see their own scratchpad across tool steps.
-  const backendMessages = scrubMessagesForBackend(
-    messageHistory,
-    tools,
-    mcpClientManager,
-    selectedServers,
-    traceTurn.promptMessageStartIndex,
+  // Keep current-turn reasoning while cleaning only the outgoing provider copy.
+  const backendMessages = hostedMessagesWithoutEmptyText(
+    scrubMessagesForBackend(
+      messageHistory,
+      tools,
+      mcpClientManager,
+      selectedServers,
+      traceTurn.promptMessageStartIndex,
+    ),
+    modelId,
+    provider,
   );
   const scrubbedMessages = historyPresentation
     ? presentHistoryForModel(backendMessages, tools, historyPresentation)
@@ -3714,15 +3739,13 @@ async function processOneStep(ctx: StepContext): Promise<{
     clientIp,
     onLiveTextDelta,
   } = ctx;
-  // Hash the originating IP for the per-IP daily spend cap. Hashing here
-  // (server-side) keeps the raw IP off the wire to Convex. If no hash can be
-  // produced, omit the header so Convex uses its cookie-only guest fallback
-  // instead of pooling unrelated guests in a shared unknown-IP bucket.
+  // Hash IPs server-side; absent hashes keep the per-cookie guest fallback.
   const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
   const convexHeaders: Record<string, string> = {
     "content-type": "application/json",
     ...(authHeader ? { authorization: authHeader } : {}),
     ...(extraHeaders ?? {}),
+    ...inspectorAiRequestHeaders("stream"),
   };
   for (const header of Object.keys(convexHeaders)) {
     if (header.toLowerCase() === GUEST_IP_HASH_HEADER) {
@@ -3941,6 +3964,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       res.status,
       errorText,
       parsed.code,
+      { endpointPath: dispatchPath },
     );
     // `isJsonDenial` proves only that the body was JSON — NOT that it was the
     // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
@@ -3950,8 +3974,13 @@ async function processOneStep(ctx: StepContext): Promise<{
     // happen to carry a code would silence exactly the failures worth paging
     // on. Only the codes below are user-owned refusals from a backend that is
     // working correctly, so only they skip the boundary.
+    //
+    // The organization AI-key policy's refusals are recognized at any status
+    // (they arrive as 403/422/503): the org's own configuration, or its own
+    // provider, said no (see `org-policy-stream-refusal.ts`).
     const isRecognizedDenial =
-      isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "");
+      (isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "")) ||
+      isAiPolicyRecognizedDenialCode(parsed.code);
     // Through the reporter, not a bare capture call: reportRouteFailure runs
     // the same maybeCaptureOriginError decision (source becomes the identical
     // `route:mcp.chat-v2.backend-stream` Sentry tag), then a free-form Axiom
@@ -4058,6 +4087,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     onLiveTextDelta,
     abortSignal,
     onToolCall,
+    dispatchPath,
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -4912,13 +4942,17 @@ export async function runChatEngineLoop(
     progressivePlan,
     discoveryState,
   } = options;
-  // The turn's effort rides every per-step hosted body as the top-level field
-  // (which the backend prefers over a forwarded selection's). Set last so a
-  // caller-supplied extra field cannot contradict the typed one.
-  const extraBodyFields: Record<string, unknown> | undefined =
-    options.reasoningEffort !== undefined
-      ? { ...(callerExtraBodyFields ?? {}), reasoningEffort: options.reasoningEffort }
-      : callerExtraBodyFields;
+  // Typed settings and origin are authoritative on every step.
+  const extraBodyFields = {
+    ...callerExtraBodyFields,
+    ...(options.reasoningEffort !== undefined ? { reasoningEffort: options.reasoningEffort } : {}),
+    ...streamSelectionFields(
+      options.modelSelection ?? callerExtraBodyFields?.modelSelection,
+      { id: modelId, provider },
+      endpointPath ?? "/stream",
+      options.modelSelectionOrigin,
+    ),
+  };
   // One typed route.operation.failed per turn, whatever combination of the
   // three failure sites fires; the system fallback covers eval/swarm runs
   // that have no request context. Later failures in the same turn still get

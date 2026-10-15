@@ -1,6 +1,10 @@
 import { messagePartPlainText } from "@/shared/plugin-message";
 import { looksLikeErrorPage } from "@/shared/error-page";
 import { PROVIDER_NOT_ALLOWLISTED_CODE } from "@/lib/provider-not-allowlisted";
+import {
+  formatOrgKeysRefusalEnvelope,
+  formatPrefixedOrgKeysRefusal,
+} from "./org-keys-error";
 import { generateId, type UIMessage } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
@@ -482,6 +486,13 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
           ? parsed.retryAfter
           : undefined;
 
+      const orgKeysRefusal = formatOrgKeysRefusalEnvelope(
+        parsed,
+        message,
+        details,
+      );
+      if (orgKeysRefusal) return orgKeysRefusal;
+
       if (isMCPJamModelLimit(code, message, details)) {
         return formatMCPJamModelLimit(
           formatRetryAfter(parsed.retryAfter) ??
@@ -564,6 +575,9 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
   if (isMCPJamModelLimit(undefined, errorString)) {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
+
+  const prefixedOrgKeysRefusal = formatPrefixedOrgKeysRefusal(errorString);
+  if (prefixedOrgKeysRefusal) return prefixedOrgKeysRefusal;
 
   const protocolPin = summarizeProtocolVersionPin(errorString);
   if (protocolPin) return protocolPin;

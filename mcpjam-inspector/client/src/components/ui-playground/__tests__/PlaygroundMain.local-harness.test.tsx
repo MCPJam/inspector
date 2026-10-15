@@ -155,10 +155,6 @@ vi.mock("lucide-react", async (importOriginal) => ({
   ArrowLeft: () => <span data-testid="icon-arrow-left" />,
   Code2: () => <span data-testid="icon-code2" />,
   MessageSquare: () => <span data-testid="icon-message-square" />,
-  // Icons used by MultiHostPicker (rendered via PlaygroundHostPicker in the
-  // header `leading` slot)
-  Server: () => <span data-testid="icon-server" />,
-  X: () => <span data-testid="icon-x" />,
 }));
 
 // Mock UI components

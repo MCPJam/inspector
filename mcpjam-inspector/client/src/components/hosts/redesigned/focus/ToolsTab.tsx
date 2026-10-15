@@ -8,6 +8,7 @@ import {
   useBrowserEnabled,
 } from "@/hooks/useComputersEnabled";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
+import { useBuiltInToolNotes } from "@/hooks/use-built-in-tool-notes";
 
 interface ToolsTabProps {
   projectId?: string;
@@ -31,11 +32,13 @@ interface ToolsTabProps {
  * to the Computer tab).
  */
 export function ToolsTab({
+  projectId,
   draft,
   onDraftChange,
   readOnly = false,
 }: ToolsTabProps) {
   const builtInToolCatalog = useBuiltInToolCatalog();
+  const builtInToolNotes = useBuiltInToolNotes(projectId);
   const computersEnabled = useComputersEnabled();
   const browsersEnabled = useBrowserEnabled();
   // Render only the rows this user may see: with `computers-enabled` off,
@@ -69,6 +72,7 @@ export function ToolsTab({
           computerAttached={draft.computer !== undefined}
           computerAttachHint="attach it in the Computer tab"
           readOnly={readOnly}
+          notes={builtInToolNotes}
           onChange={(builtInToolIds) => update({ builtInToolIds })}
         />
       </FocusBlock>

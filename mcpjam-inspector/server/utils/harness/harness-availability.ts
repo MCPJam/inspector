@@ -32,6 +32,7 @@ import {
   harnessOrgProviderUnsupportedReason,
   harnessRunsOnOrgProvider,
   type HarnessModelPurpose,
+  type HarnessKeyPolicy,
 } from "@/shared/harness-model-support";
 import type {
   ModelConnectionRef,
@@ -139,6 +140,7 @@ export function harnessModelPurposeForSourceType(
  *    sentence comes back as `warning`.
  */
 export function harnessModelRefusal(args: {
+  keyPolicy?: HarnessKeyPolicy;
   adapter: HarnessRuntimeAdapter;
   model: { id: string; provider?: string; hosted?: boolean };
   /** See `hostModelId` on {@link checkHarnessRuntimeAvailable}. */
@@ -158,7 +160,6 @@ export function harnessModelRefusal(args: {
     });
     return reason ? { refusal: { kind: "model-unsupported", reason } } : {};
   }
-  const name = adapter.displayName;
   const orgSelection = orgHarnessSelection(args.selection);
   if (orgSelection) {
     // The provider of the connection, from the resolved picker row. The
@@ -173,7 +174,7 @@ export function harnessModelRefusal(args: {
       return {
         refusal: {
           kind: "model-provider-unsupported",
-          reason: harnessOrgProviderUnsupportedReason(adapter.id),
+          reason: harnessOrgProviderUnsupportedReason(adapter.id, args.keyPolicy ?? null),
         },
       };
     }
@@ -181,9 +182,7 @@ export function harnessModelRefusal(args: {
     return {
       refusal: {
         kind: "model-not-hosted",
-        reason:
-          `the ${name} harness only runs MCPJam-provided models — pick one on ` +
-          "this host to run the real runtime",
+        reason: harnessOrgProviderUnsupportedReason(adapter.id, args.keyPolicy ?? null),
       },
     };
   }

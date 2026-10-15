@@ -575,6 +575,37 @@ describe("authorized plugin invocation boundary", () => {
     ).rejects.toThrow("TOOL_MENTION_DECLARATION_DENIED");
     expect(f.ports.execute).toHaveBeenCalledTimes(1);
   });
+  it("admits a mention through the openai/mentions capability, rechecked on each call", async () => {
+    const capabilities = (searchTool: string) => ({
+      extensions: { "openai/mentions": { searchTool } },
+    });
+    const f = fixture({
+      tool: {
+        name: "synthetic",
+        annotations: { readOnlyHint: true },
+        _meta: { ui: { visibility: ["app"] } },
+      },
+      serverCapabilities: capabilities("synthetic"),
+      transport: "mrtr",
+    });
+    await f.invoker.invoke("mention", "capability", { name: "synthetic" });
+    // The capability now names another tool: the deprecated marker can't stand in.
+    f.set({
+      tool: {
+        name: "synthetic",
+        annotations: { readOnlyHint: true },
+        _meta: {
+          ui: { visibility: ["app"] },
+          "openai/extensions": { "mentions/search": {} },
+        },
+      },
+      serverCapabilities: capabilities("other"),
+    });
+    await expect(
+      f.invoker.invoke("mention", "capability", { name: "synthetic" }),
+    ).rejects.toThrow("TOOL_MENTION_DECLARATION_DENIED");
+    expect(f.ports.execute).toHaveBeenCalledTimes(1);
+  });
   it("checks complete owner identity and authority availability before delivering a cached result", async () => {
     const f = fixture();
     await f.invoker.invoke("app", "owner", { name: "synthetic" });

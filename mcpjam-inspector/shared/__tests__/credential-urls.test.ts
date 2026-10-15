@@ -234,13 +234,28 @@ describe("isSecretParamKey", () => {
       "RelayState",
       "ticket",
       "x_vendor_access_token",
+      "jwt",
+      "Auth",
+      "AUTHORIZATION",
+      "otp",
     ]) {
       expect(isSecretParamKey(key)).toBe(true);
     }
   });
 
   it("leaves ordinary keys alone", () => {
-    for (const key of ["tab", "q", "session", "projectId", "installation_id"]) {
+    // `auth` and `otp` match whole keys only, never as a substring.
+    for (const key of [
+      "tab",
+      "q",
+      "session",
+      "projectId",
+      "installation_id",
+      "oauth",
+      "author",
+      "auth_method",
+      "otp_sent",
+    ]) {
       expect(isSecretParamKey(key)).toBe(false);
     }
   });

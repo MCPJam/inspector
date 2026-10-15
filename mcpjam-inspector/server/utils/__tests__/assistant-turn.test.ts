@@ -461,7 +461,7 @@ describe("runAssistantTurn", () => {
           "claude-code"
         )
       ).rejects.toThrow(
-        /This host runs the claude-code harness, which isn't available: the Claude Code harness only runs MCPJam-provided models/
+        /This host runs the claude-code harness, which isn't available: the Claude Code harness requires a supported model and an eligible Anthropic connection/
       );
       expect(global.fetch).not.toHaveBeenCalled();
       expect(runHarnessTurnMock).not.toHaveBeenCalled();
@@ -529,7 +529,7 @@ describe("runAssistantTurn", () => {
           } as ModelDefinition,
           modelSelection: { ...ORG_ANTHROPIC, modelId: "openai/gpt-5" },
         }),
-      ).rejects.toThrow(/organization's Anthropic key/);
+      ).rejects.toThrow(/eligible Anthropic connection/);
       expect(runHarnessTurnMock).not.toHaveBeenCalled();
       expect(global.fetch).not.toHaveBeenCalled();
     });
@@ -538,7 +538,7 @@ describe("runAssistantTurn", () => {
       global.fetch = vi.fn();
       runHarnessTurnMock.mockClear();
       await expect(turn({})).rejects.toThrow(
-        /only runs MCPJam-provided models/,
+        /requires a supported model and an eligible Anthropic connection/,
       );
       expect(runHarnessTurnMock).not.toHaveBeenCalled();
     });

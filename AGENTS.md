@@ -105,6 +105,12 @@ npm run test -w @mcpjam/inspector -- <path>            # targeted Vitest run
 npm run typecheck && npm run typecheck:client -w @mcpjam/inspector
 ```
 
+Work in a git worktree and start the app there with
+`npm run dev:worktree -w @mcpjam/inspector -- <N>` (client 5173+N, server
+6274+N, reads the main worktree's `.env.development.local`), unless the user
+wants it run locally, e.g. to QA a PR on the default ports with `npm run dev`.
+Options: CONTRIBUTING.md, "Running several instances (worktrees)".
+
 The repo is not Prettier-clean: format only the lines you change, never whole
 files or the tree.
 

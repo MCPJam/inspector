@@ -6,6 +6,11 @@ import {
 } from "./settings-sheet-harness";
 import type { EvalSuiteSettingKey } from "@/shared/eval-suite-settings-manifest";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 /**
  * WHAT THE SETTINGS PAGE MOUNTS.
  *
@@ -117,7 +122,8 @@ describe("the suite settings page mounts its editors", () => {
     { key: "checks", edits: "defaultPredicates" },
     { key: "matchOptions", edits: "defaultMatchOptions" },
     { key: "judge", edits: "judgeConfig" },
-    { key: "judgeRubric", edits: "judgeRubric" },
+    // `judgeRubric` is hidden for now (SETTINGS_PAGE_HIDDEN_KEYS): the judge
+    // section shows only the judge model.
     { key: "validity", edits: "verdictPolicyDefaults.validity" },
     {
       key: "qualityGateNoGatingScoreErrors",
@@ -139,18 +145,15 @@ describe("the suite settings page mounts its editors", () => {
     ).toEqual([]);
   });
 
-  it("renders the judge card, so the judge is configurable at all", () => {
-    // The sharpest instance of the general failure: `SuiteJudgeCard` mounts
-    // ONLY inside the scorer table, so unmounting one section took the judge's
-    // model, threshold, auto-run, gating role and rubric with it — the entire
-    // visible half of the judge program — while `judgeConfig` kept deciding
-    // whether runs passed.
+  it("renders the judge model picker, so the judge is configurable at all", () => {
+    // The judge section mounts ONLY inside the scorer table, so unmounting one
+    // section would take the judge's model with it while `judgeConfig` kept
+    // deciding whether runs passed. Threshold and role ride the Goal
+    // completion row in the same table.
     const { container } = renderSettingsSheet({ suite: v2Suite });
     showSettingsKey(container, "judge", {}, v2Suite);
     expect(
-      container.querySelector(
-        '[data-testid="suite-judge-card-goalCompletion"]',
-      ),
+      container.querySelector('[data-testid="suite-judge-model-trigger"]'),
     ).toBeTruthy();
   });
 

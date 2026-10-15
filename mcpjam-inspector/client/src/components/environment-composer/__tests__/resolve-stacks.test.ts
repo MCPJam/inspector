@@ -5,7 +5,7 @@ import {
   composerMissingServerGroup,
   describeSkippedModelCells,
   isAdhocUnavailable,
-  lacksEvalServerSource,
+  lacksServerSource,
   resolveComposerEnvironments,
   type EnsureAdhocEnvironmentsFn,
 } from "../resolve-stacks";
@@ -341,9 +341,9 @@ describe("resolveComposerEnvironments — requireServerAttachment (evals)", () =
   });
 
   it("gates submit on the same rule", () => {
-    expect(lacksEvalServerSource({})).toBe(true);
-    expect(lacksEvalServerSource({ serverAttachmentId: "g" })).toBe(false);
-    expect(lacksEvalServerSource({ pluginVersionIds: ["pv"] })).toBe(false);
+    expect(lacksServerSource({})).toBe(true);
+    expect(lacksServerSource({ serverAttachmentId: "g" })).toBe(false);
+    expect(lacksServerSource({ pluginVersionIds: ["pv"] })).toBe(false);
     expect(
       composerMissingServerGroup(composeState({ hostIds: ["h1"] }), []),
     ).toBe(true);

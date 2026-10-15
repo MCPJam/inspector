@@ -66,6 +66,20 @@ export function allowMint(ip: string): boolean {
   return true;
 }
 
+/**
+ * Whole seconds until `ip`'s current window reopens, for the Retry-After on a
+ * request `allowMint` refused. Without it the client cannot tell this burst
+ * limit from the backend's daily creation cap, and holds the guest off for
+ * the cap's default ten minutes.
+ */
+export function mintRetryAfterSeconds(ip: string): number {
+  const entry = ipWindows.get(ip);
+  const remainingMs = entry
+    ? entry.windowStart + IP_WINDOW_MS - Date.now()
+    : 0;
+  return Math.max(1, Math.ceil(remainingMs / 1000));
+}
+
 export const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
 
 // Forward only the guest-session cookie to the upstream guest service.

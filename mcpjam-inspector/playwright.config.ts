@@ -1,5 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import { smokeGuestStorageFile } from "./e2e/smoke-guest-setup";
+import {
+  communityBackendEnv,
+  NO_PRODUCTION_BROWSER_ARGS,
+} from "./e2e/community-backend";
 
 // When PLAYWRIGHT_BASE_URL is set (e.g. the post-deploy staging lane), tests run
 // against that deployed URL and no local server is booted. Otherwise we boot the
@@ -9,7 +14,6 @@ const testSessionToken =
   process.env.MCPJAM_SESSION_TOKEN ?? "playwright-local-access-credential";
 process.env.MCPJAM_SESSION_TOKEN = testSessionToken;
 const baseURL = deployedBaseUrl ?? "http://localhost:6274";
-
 // staging.mcpjam.com sits behind Cloudflare Access. Without a service token
 // every navigation lands on the Access login page instead of the app, and the
 // failures read as product bugs. Only sent when both halves are present, so a
@@ -30,6 +34,7 @@ const packageRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",
+  globalSetup: deployedBaseUrl ? undefined : "./e2e/smoke-guest-setup.ts",
   // Visual captures and these two specs run under their own configs.
   // local-access.spec.ts needs a browser that
   // has NOT been handed the access key seeded below, and a local server, so it
@@ -44,20 +49,12 @@ export default defineConfig({
     baseURL,
     ...(!deployedBaseUrl
       ? {
-          storageState: {
-            cookies: [],
-            origins: [
-              {
-                origin: new URL(baseURL).origin,
-                localStorage: [
-                  { name: "mcpjam.local-access", value: testSessionToken },
-                ],
-              },
-            ],
-          },
+          storageState: smokeGuestStorageFile(),
+          // A local boot must never reach production; see e2e/community-backend.ts.
+          launchOptions: { args: NO_PRODUCTION_BROWSER_ARGS },
         }
       : {}),
-    ...(cfAccessHeaders ? { extraHTTPHeaders: cfAccessHeaders } : {}),
+    extraHTTPHeaders: cfAccessHeaders,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
@@ -79,6 +76,7 @@ export default defineConfig({
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
         env: {
+          ...communityBackendEnv(),
           NODE_ENV: "production",
           MCPJAM_SESSION_TOKEN: testSessionToken,
           MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN: "1",

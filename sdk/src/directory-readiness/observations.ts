@@ -114,6 +114,7 @@ export const DIRECTORY_OBSERVATION_STATUSES = [
   "billing-blocked",
   "provider-failed",
   "invalid-output",
+  "ai-unavailable",
 ] as const;
 
 export type DirectoryObservationStatus =
@@ -126,10 +127,20 @@ export type DirectoryObservationStatus =
  * `billing_limit_reached` is the load-bearing one: it is the value a UI keys
  * on to offer a top-up, and the value a CLI keys on for its distinct exit
  * code. Renaming it is a breaking change to three surfaces at once.
+ *
+ * `platform_cap_reached` is its deliberate opposite: MCPJam's own daily budget
+ * for observations is spent, so there is nothing for the customer to buy.
+ *
+ * `ai_unavailable`: the organization requires its own provider keys and has
+ * no compatible provider (or model) for this pass, so no model ran. A
+ * configuration state, not an outage: a surface says "Not analyzed" and never
+ * offers a top-up.
  */
 export const DIRECTORY_OBSERVATION_REASONS = [
   "not_requested",
   "billing_limit_reached",
+  "platform_cap_reached",
+  "ai_unavailable",
   "provider_error",
   "provider_timeout",
   "schema_invalid",
@@ -204,6 +215,7 @@ export interface DirectoryObservationState<
   reason?: DirectoryObservationReason;
   /** A sentence for a human. Never parsed — branch on `reason`. */
   detail?: string;
+  refusalCode?: string;
   /** Present only when `status` is `completed`. */
   envelope?: DirectoryObservationEnvelope<Kind, Id>;
 }
@@ -618,7 +630,9 @@ export function observationFailure(
   detail: string,
 ): DirectoryObservationState {
   const reason: DirectoryObservationReason =
-    status === "billing-blocked"
+    status === "ai-unavailable"
+      ? "ai_unavailable"
+      : status === "billing-blocked"
       ? "billing_limit_reached"
       : status === "invalid-output"
       ? "schema_invalid"

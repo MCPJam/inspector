@@ -117,10 +117,6 @@ vi.mock("lucide-react", async (importOriginal) => ({
   ArrowLeft: () => <span data-testid="icon-arrow-left" />,
   Code2: () => <span data-testid="icon-code2" />,
   MessageSquare: () => <span data-testid="icon-message-square" />,
-  // Icons used by MultiHostPicker (rendered via PlaygroundHostPicker in the
-  // header `leading` slot)
-  Server: () => <span data-testid="icon-server" />,
-  X: () => <span data-testid="icon-x" />,
 }));
 
 // Mock UI components
@@ -567,10 +563,24 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
   },
 }));
 
-// Mock ErrorBox
+// Mock ErrorBox. `onRetry` is forwarded so a test can see whether the
+// playground handed the banner a Retry action, and click it.
 vi.mock("@/components/chat-v2/error", () => ({
-  ErrorBox: ({ message }: { message: string }) => (
-    <div data-testid="error-box">{message}</div>
+  ErrorBox: ({
+    message,
+    onRetry,
+  }: {
+    message: string;
+    onRetry?: () => void;
+  }) => (
+    <div data-testid="error-box">
+      {message}
+      {onRetry && (
+        <button data-testid="error-box-retry" onClick={onRetry}>
+          Retry
+        </button>
+      )}
+    </div>
   ),
 }));
 
@@ -816,8 +826,16 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
   >();
   return {
     ...actual,
+    // A test that needs `errorMessage.code` attaches a `formatted` bag to
+    // the Error it hands to `mockUseChatSession.error`.
     formatErrorMessage: (error: any) =>
-      error ? { message: error.message || "Error", details: null } : null,
+      error
+        ? {
+            message: error.message || "Error",
+            details: null,
+            ...error.formatted,
+          }
+        : null,
     STARTER_PROMPTS: [{ label: "Starter chip", text: "Starter chip prompt" }],
   };
 });
@@ -857,7 +875,7 @@ describe("PlaygroundMain", () => {
   };
 
   beforeEach(() => {
-    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false });
+    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false, browserLocation: null });
     vi.clearAllMocks();
     mockEnvironmentReadiness.enabled = false;
     localStorage.clear();
@@ -1201,6 +1219,9 @@ describe("PlaygroundMain", () => {
       mockConvexAuthState.isAuthenticated = true;
       mockDefaultHostConfig.result = { builtInToolIds: ["browser"] };
       mockSharedAppState.projects = { default: { sharedProjectId: "project-1" } };
+      // Cloud reads the host's capability as-is; a local Browser answers from
+      // its own setting instead.
+      localStorage.setItem("mcp-browser-engine:project-1", "cloud");
       try {
         render(<PlaygroundMain {...defaultProps} />);
         expect(capturedChatSessionOptions.builtInToolIds).toEqual(["browser"]);
@@ -1583,7 +1604,7 @@ describe("PlaygroundMain", () => {
               connectionRef: { kind: "localProvider", providerKey: "openai" },
               nativeModelId: "gpt-5",
               settings: { reasoningEffort: "high" },
-              fallback: { provider: "openrouter", model: "none" },
+              fallback: { provider: "none", model: "none" },
             },
           ]);
         });
@@ -2360,10 +2381,17 @@ describe("PlaygroundMain", () => {
 
       // Not "no param at all": once the branch's transcript has content the sync
       // effect writes the BRANCH's id here. What must never survive is the
-      // original's, which is what the restore effect would act on.
-      await waitFor(() => {
-        expect(window.location.search).not.toContain(ORIGINAL_CONVERSATION_ID);
-      });
+      // original's, which is what the restore effect would act on. The URL
+      // updates after several effects settle, which can pass the default
+      // one-second wait on a loaded CI runner.
+      await waitFor(
+        () => {
+          expect(window.location.search).not.toContain(
+            ORIGINAL_CONVERSATION_ID
+          );
+        },
+        { timeout: 5000 }
+      );
     });
 
     it("withholds the edit affordance when signed out, where there is no history to go back to", () => {
@@ -3641,6 +3669,123 @@ describe("PlaygroundMain", () => {
         "Something went wrong"
       );
     });
+
+    it("offers Retry for a temporary organization policy refusal and resends the last user message", async () => {
+      // The organization's AI-key policy couldn't be read, or its provider
+      // was briefly down. Both lift on their own, so the playground must hand
+      // the banner a Retry action.
+      mockUseChatSession.messages = [
+        {
+          id: "1",
+          role: "user",
+          parts: [{ type: "text", text: "List my open tickets" }],
+        },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI policy couldn't be checked."),
+        { formatted: { code: "ai_key_policy_unavailable" } }
+      );
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("error-box-retry"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      });
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "List my open tickets" })
+      );
+    });
+
+    it("runs a policy Retry through the send gates and tracks it once", async () => {
+      // Retry is a send like any other: a disconnected server is connected
+      // first, and nothing is sent when it can't be.
+      mockUseChatSession.messages = [
+        {
+          id: "1",
+          role: "user",
+          parts: [{ type: "text", text: "List my open tickets" }],
+        },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI provider is unavailable."),
+        { formatted: { code: "provider_unavailable" } }
+      );
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "disconnected",
+      };
+      const notReady = {
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames: ["test-server"],
+        reauthServerNames: [],
+      };
+      const ensureServersReady = vi
+        .fn()
+        .mockResolvedValueOnce(notReady)
+        .mockResolvedValue({
+          ...notReady,
+          readyServerNames: ["test-server"],
+          failedServerNames: [],
+        });
+      vi.mocked(track).mockClear();
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          ensureServersReady={ensureServersReady}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId("error-box-retry"));
+      await waitFor(() => {
+        expect(ensureServersReady).toHaveBeenCalledTimes(1);
+      });
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTestId("error-box-retry"));
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "List my open tickets" })
+        );
+      });
+      expect(ensureServersReady).toHaveBeenCalledTimes(2);
+      expect(
+        vi
+          .mocked(track)
+          .mock.calls.filter(([event]) => event === "app_builder_send_message")
+      ).toHaveLength(2);
+    });
+
+    it("offers Retry when the organization's provider is briefly unavailable", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI provider is unavailable."),
+        { formatted: { code: "provider_unavailable" } }
+      );
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getByTestId("error-box-retry")).toBeInTheDocument();
+    });
+
+    it("offers no Retry for a policy refusal that needs a configuration change", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("Choose a model from an organization provider."),
+        { formatted: { code: "org_keys_required" } }
+      );
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getByTestId("error-box")).toBeInTheDocument();
+      expect(screen.queryByTestId("error-box-retry")).not.toBeInTheDocument();
+    });
   });
 
   describe("clear chat", () => {
@@ -4142,7 +4287,8 @@ describe("PlaygroundMain", () => {
     const RESTORED_SESSION_ID = "restored-target-session";
 
     const arriveAtRestoredConversation = (
-      resumeConfig: Record<string, unknown>
+      resumeConfig: Record<string, unknown>,
+      sessionFields: Record<string, unknown> = {}
     ) => {
       window.history.replaceState(
         {},
@@ -4166,6 +4312,7 @@ describe("PlaygroundMain", () => {
           isUnread: false,
           messagesBlobUrl: "https://storage.test/blob",
           resumeConfig,
+          ...sessionFields,
         },
         widgetSnapshots: [],
       });
@@ -4177,9 +4324,10 @@ describe("PlaygroundMain", () => {
      */
     const openRestoredConversation = async (
       resumeConfig: Record<string, unknown>,
-      extraProps: Record<string, unknown> = {}
+      extraProps: Record<string, unknown> = {},
+      sessionFields: Record<string, unknown> = {}
     ) => {
-      arriveAtRestoredConversation(resumeConfig);
+      arriveAtRestoredConversation(resumeConfig, sessionFields);
       const props = { ...defaultProps, ...extraProps };
       const { rerender: rerenderRaw } = render(
         <PlaygroundMain {...props} syncConversationToUrl />
@@ -4237,6 +4385,32 @@ describe("PlaygroundMain", () => {
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
     });
+
+    // The binding outranks every engine default, so a local conversation
+    // bound to Cloud keeps minting hosted tokens the backend refuses.
+    it.each([
+      ["local", "local"],
+      ["hosted", "cloud"],
+    ])(
+      "binds a reopened %s browser conversation to where its browser runs",
+      async (engine, location) => {
+        await openRestoredConversation(
+          { executionTarget: { kind: "adhoc" } },
+          {},
+          {
+            projectId: "project-1",
+            browser: { browserSessionId: "logical", state: "active", engine },
+          }
+        );
+        await waitFor(() =>
+          expect(useActiveChatSessionStore.getState().browserLocation).toEqual({
+            projectId: "project-1",
+            sessionId: RESTORED_SESSION_ID,
+            engine: location,
+          })
+        );
+      }
+    );
 
     it("reopens an explicitly ad-hoc conversation without the unavailable-configuration gate", async () => {
       await openRestoredConversation({ executionTarget: { kind: "adhoc" } });

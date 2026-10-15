@@ -18,7 +18,7 @@ jobs:
   visual:
     name: Visual pipeline (advisory)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
@@ -30,10 +30,23 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24.14.0"
+      # pull_request runs this workflow from the merge ref but checks out the PR
+      # head, so a branch cut before the pipeline landed has no scripts to run.
+      - name: Check branch includes the visual pipeline
+        id: pipeline
+        run: |
+          if [ -f mcpjam-inspector/scripts/visual/select.mjs ]; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+            echo 'Visual capture skipped: rebase on main to pick up the visual pipeline.' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Test visual contracts
+        if: steps.pipeline.outputs.present == 'true'
         run: node --test mcpjam-inspector/scripts/visual/*.test.mjs
       - name: Select visual coverage
         id: selection
+        if: steps.pipeline.outputs.present == 'true'
         run: node mcpjam-inspector/scripts/visual/select.mjs
       - name: Determine credential eligibility
         id: eligibility

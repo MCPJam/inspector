@@ -11,6 +11,7 @@ import {
   harnessModelSupportAtPinnedVersion,
   harnessModelVerdictAdmits,
   harnessNoRunnableModelReason,
+  harnessOrgProviderUnsupportedReason,
   harnessOrgUpstream,
   harnessRunsOnOrgProvider,
   harnessVersionInRange,
@@ -356,5 +357,32 @@ describe("harnessNoRunnableModelReason", () => {
     expect(harnessNoRunnableModelReason("cursor")).toBe(
       "Cursor CLI has no model it can run here.",
     );
+  });
+
+  it("under the organization's key policy, names only the org vendor", () => {
+    expect(
+      harnessNoRunnableModelReason("claude-code", { requireOrgKeys: true }),
+    ).toBe(
+      "This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider.",
+    );
+    expect(
+      harnessNoRunnableModelReason("cursor", { requireOrgKeys: true }),
+    ).toBe("Cursor CLI has no model it can run here.");
+  });
+});
+
+describe("harnessOrgProviderUnsupportedReason", () => {
+  it("does not advertise platform funding when the organization policy is unknown", () => {
+    expect(harnessOrgProviderUnsupportedReason("codex", null)).toBe(
+      "the Codex harness requires a supported model and an eligible OpenAI connection",
+    );
+  });
+  it("offers MCPJam models only while the key policy is off", () => {
+    expect(harnessOrgProviderUnsupportedReason("codex")).toBe(
+      "the Codex harness runs MCPJam-provided models or your organization's OpenAI key",
+    );
+    expect(
+      harnessOrgProviderUnsupportedReason("codex", { requireOrgKeys: true }),
+    ).toBe("the Codex harness runs only on your organization's OpenAI key");
   });
 });

@@ -19,8 +19,12 @@ import {
   type PluginNoticeData,
 } from "@/lib/plugins/plugin-notice-display";
 import { usePluginMessage } from "@/hooks/use-plugin-message";
+import { useAppMessageDraft } from "@/components/host-workspace/use-app-message-draft";
 import { useChatThreadTransition } from "@/hooks/use-chat-thread-transition";
-import type { PluginMessageIntent } from "@/shared/plugin-message";
+import {
+  PLUGIN_MESSAGE_PREPARATION_MS,
+  type PluginMessageIntent,
+} from "@/shared/plugin-message";
 import {
   ChatPluginFormHosts,
   OwnedPluginFormHost,
@@ -78,11 +82,15 @@ import {
   mergePickedRows,
   replaceLeadCompareSelection,
   resolveCompareCards,
+  resolveCompareSelectionRow,
   setCompareCardEffort,
   MAX_COMPARE_SELECTIONS,
   type CompareCard,
 } from "@/lib/compare-cards";
-import { withReasoningEffort } from "@/lib/reasoning-effort-selection";
+import {
+  selectionReasoningEffort,
+  withReasoningEffort,
+} from "@/lib/reasoning-effort-selection";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 /**
@@ -125,7 +133,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { toast } from "sonner";
@@ -205,6 +213,10 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import {
+  OrgAiRefusalHandoffProvider,
+  orgAiRefusalHandoff,
+} from "@/contexts/org-ai-refusal-context";
+import {
   useHost,
   useHostList,
   useHostMutations,
@@ -261,6 +273,7 @@ import {
   isComputerStartLimitError,
 } from "@/lib/billing-entitlements";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { isRetryableOrgKeysRefusal } from "@/lib/org-keys-refusal";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
@@ -285,6 +298,8 @@ import {
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { snapshotFromHostConfig, type HostSnapshot } from "@/lib/host-snapshot";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -308,6 +323,7 @@ import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-cl
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
+  getAppDraftInteractivity,
   getChatComposerInteractivity,
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
@@ -694,7 +710,7 @@ export function PlaygroundMain({
   recorder,
   syncConversationToUrl = false,
 }: PlaygroundMainProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useInspectorAuth();
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
@@ -984,6 +1000,10 @@ export function PlaygroundMain({
     organizationId: projectOrganizationId,
   });
   const manageOrgProviders = useOrgModelsHandoff(projectOrganizationId);
+  const refusalHandoff = useMemo(
+    () => orgAiRefusalHandoff({ onManageOrgProviders: manageOrgProviders }),
+    [manageOrgProviders],
+  );
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -1020,8 +1040,8 @@ export function PlaygroundMain({
   // chatUiOverride, and the model id via localStorage). The fields
   // re-seeded here live inside `useChatSession`'s own state, so they
   // need imperative setters.
-  // Match the global host picker / HostsTab / useAppState scope: prefer
-  // the shared project id (what `GlobalHostBar` and `HostsTab` write),
+  // Match the HostsTab / useAppState scope: prefer the shared project
+  // id (what Connect's `HostsTab` and `HostCanvasSelector` write),
   // falling back to `activeProjectId` for CLI / no-cloud-sync flows where
   // `convexProjectId` is null. Reading only from `activeProjectId` here
   // silently disabled the reseed in authed projects because the writer
@@ -1374,7 +1394,7 @@ export function PlaygroundMain({
     traceViewsSupported,
     isStreaming,
     disableForAuthentication,
-    submitBlocked,
+    submitBlocked: baseSubmitBlocked,
     requireToolApproval,
     setRequireToolApproval,
     addToolApprovalResponse,
@@ -1407,6 +1427,7 @@ export function PlaygroundMain({
     usePageTools: webmcpPageToolsEnabled,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
+    selectionIntent: isEnvironmentMode || previewedHostId ? "inherit" : "picked",
     hostedContext: {
       ...(shouldUseOwnedExtensionModelRoute({
         flag: extensionsFlag,
@@ -1581,6 +1602,13 @@ export function PlaygroundMain({
   // while an eval-chat handoff is still pending. The handoff-consume
   // effect that flips this ref runs later in the file.
   const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
+  const liveChatSessionIdRef = useRef(chatSessionId);
+  liveChatSessionIdRef.current = chatSessionId;
+  const [readyEvalChatHandoffId, setReadyEvalChatHandoffId] = useState<
+    string | null
+  >(null);
+  const isEvalChatHandoffPending =
+    !!evalChatHandoff && readyEvalChatHandoffId !== evalChatHandoff.id;
   useEffect(() => {
     if (!previewedHostId || !previewedHost) {
       // Clear the dedupe ref so a later return to the same (hostId, configId)
@@ -1676,12 +1704,12 @@ export function PlaygroundMain({
         undefined,
       );
       if (match) {
-        setSelectedModel(match);
+        setSelectedModel(match, { selection: cfg.modelSelection });
         // A selected host's saved effort is the default for its own model
         // (a later pick on the chip wins and is remembered per model).
         // A host with none clears what the previous host seeded (High must
         // not stick across a switch to a host that saved nothing).
-        const hostEffort = cfg.modelSelection?.settings?.reasoningEffort;
+        const hostEffort = selectionReasoningEffort(cfg.modelSelection);
         const clearsSeededEffort =
           hostEffort === undefined && hostSeededEffortRef.current;
         if (hostEffort || hostSeededEffortRef.current) {
@@ -1694,7 +1722,7 @@ export function PlaygroundMain({
         // the lead card keeps a level the USER chose for this row, but not
         // one the previous host seeded.
         const cards = compareCardsRef.current;
-        const leadSelection = compareSelectionForRow(
+        const leadSelection = cfg.modelSelection ?? compareSelectionForRow(
           match,
           hostedOrgModelConfig,
         );
@@ -2036,6 +2064,7 @@ export function PlaygroundMain({
     // not tear down running model Apps, only stop the next turn and the
     // composer from carrying their (now refused) context references.
     pluginExtensions.capabilities.modelContext,
+    pluginExtensions.capabilities.displayModes,
   );
   usePublishPluginIcons(pluginIconsById);
   const composerMentions = useComposerMentions(
@@ -2157,10 +2186,11 @@ export function PlaygroundMain({
   const collapseCompareSelectionsTo = useCallback(
     (model: ModelDefinition) => {
       if (!compareSelections) return;
-      const selection = compareSelectionForRow(model, hostedOrgModelConfig);
+      const selection = compareCards?.find((card) => modelRowKey(card.model) === modelRowKey(model))?.selection ??
+        compareSelectionForRow(model, hostedOrgModelConfig);
       setCompareSelections(selection ? [selection] : []);
     },
-    [compareSelections, hostedOrgModelConfig, setCompareSelections],
+    [compareCards, compareSelections, hostedOrgModelConfig, setCompareSelections],
   );
 
   const compareCardsRef = useRef(compareCards);
@@ -2217,8 +2247,8 @@ export function PlaygroundMain({
   // per-project `usePreviewedHostId`, so `selectedHostIds[0]` is always
   // the lead.
   //
-  // This is the SINGLE source of truth for picker + grid. The
-  // `PlaygroundHostPicker` rendered below is a controlled component —
+  // This is the SINGLE source of truth for picker + grid. The chat-input
+  // `ClientSelector` (`clientSelector` below) is a controlled component —
   // it does NOT call `usePersistedHost` itself. Two sibling hooks
   // wouldn't stay in sync because `selected-host-storage.ts` doesn't
   // dispatch same-tab events on `saveSelectedHostIds` (deliberate, per
@@ -2746,6 +2776,13 @@ export function PlaygroundMain({
     multiModelEnabled &&
     !viewingHistoryReplay &&
     !isMultiHostMode;
+  // A compare card on a saved model the organization's AI key policy no
+  // longer allows never sends (its picker warns on the trigger): a personal
+  // key in local mode has no server-side check to refuse it.
+  const submitBlocked =
+    baseSubmitBlocked ||
+    (isMultiModelMode &&
+      modelCompareCards.some((entry) => isOrgKeysDisallowedRow(entry.model)));
   // Unified "the compare grid is live" flag. Submit/stop/deterministic-
   // execution/state-pruning all branch on this — anything that used to
   // gate on `isMultiModelMode` and writes to (or reads from) the
@@ -3317,7 +3354,7 @@ export function PlaygroundMain({
       collapseCompareSelectionsTo(selectedModel);
     }
 
-    startChatWithMessages(evalChatHandoff.messages);
+    const handoffHydration = startChatWithMessages(evalChatHandoff.messages);
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
 
     if (typeof handoffExec.systemPrompt === "string") {
@@ -3337,7 +3374,31 @@ export function PlaygroundMain({
     if (evalChatHandoff.messages.length > 0) {
       composer.setInput("");
     }
-    onEvalChatHandoffConsumed?.(evalChatHandoff.id);
+    // Session hydration resets the transcript asynchronously. Sending before
+    // it finishes can erase the recording prompt and leave an empty chat.
+    // Publish readiness through state so auto-run uses the hydrated session
+    // and the case settings from a fresh render.
+    const handoffId = evalChatHandoff.id;
+    void Promise.resolve(handoffHydration).then(
+      (hydratedSessionId) => {
+        if (
+          appliedEvalChatHandoffIdRef.current !== handoffId ||
+          hydratedSessionId !== liveChatSessionIdRef.current
+        ) {
+          return;
+        }
+        setReadyEvalChatHandoffId(handoffId);
+        onEvalChatHandoffConsumed?.(handoffId);
+      },
+      (error) => {
+        if (appliedEvalChatHandoffIdRef.current !== handoffId) return;
+        appliedEvalChatHandoffIdRef.current = null;
+        console.error("[PlaygroundMain] Failed to load eval chat", error);
+        toast.error(
+          "Couldn't start the recording chat. Close it and try again.",
+        );
+      },
+    );
   }, [
     availableModels,
     collapseCompareSelectionsTo,
@@ -3359,8 +3420,8 @@ export function PlaygroundMain({
   // Chat history coordination (docked `chatHistory` pane bridge)
   //
   // Ported from ChatTabV2:466-996 with the following intentional differences:
-  // - Draft-discard uses `window.confirm` instead of the full DiscardDraftDialog
-  //   port (matches PlaygroundHeader's existing window.confirm style).
+  // - Draft-discard uses an inline `AlertDialog` (`discardDraftDialogOpen`)
+  //   instead of ChatTabV2's `DiscardDraftDialog` component.
   // - `widgetStateQueue` is not part of `hasUnsavedDraft` (Playground doesn't
   //   queue widget-state updates the way ChatTabV2 does).
   // - Multi-server restoration: Playground is single-server in v1; if a saved
@@ -3371,7 +3432,17 @@ export function PlaygroundMain({
   //   completed turns is a follow-up.
   // ------------------------------------------------------------------------
 
+  const appMessageDraft = useAppMessageDraft(
+    JSON.stringify([
+      currentUserForSender?._id,
+      convexProjectId,
+      previewedHostId,
+      chatSessionId,
+    ]),
+    { setInput: composer.setInput, setFileAttachments },
+  );
   const hasUnsavedDraft =
+    appMessageDraft.items.length > 0 ||
     composer.input.trim().length > 0 ||
     mcpPromptResults.length > 0 ||
     skillResults.length > 0 ||
@@ -3396,6 +3467,7 @@ export function PlaygroundMain({
     null,
   );
   const discardDraftSettledRef = useRef(false);
+  const discardDraftReleaseRef = useRef<(() => void) | null>(null);
 
   const settleDiscardDraft = useCallback((confirmed: boolean) => {
     if (discardDraftSettledRef.current) {
@@ -3405,6 +3477,10 @@ export function PlaygroundMain({
     const resolve = discardDraftResolveRef.current;
     discardDraftResolveRef.current = null;
     resolve?.(confirmed);
+    // Released after `resolve`: its caller clears the composer in a
+    // microtask, before any App message can arrive.
+    discardDraftReleaseRef.current?.();
+    discardDraftReleaseRef.current = null;
     setDiscardDraftDialogOpen(false);
   }, []);
 
@@ -3412,12 +3488,17 @@ export function PlaygroundMain({
     if (!hasUnsavedDraftRef.current) {
       return Promise.resolve(true);
     }
+    // One question at a time: a second caller would orphan the first answer.
+    if (discardDraftResolveRef.current) return Promise.resolve(false);
     return new Promise((resolve) => {
       discardDraftSettledRef.current = false;
       discardDraftResolveRef.current = resolve;
+      // "Discard" clears the composer, so an App draft is refused while the
+      // person decides rather than acknowledged and then cleared.
+      discardDraftReleaseRef.current = appMessageDraft.hold();
       setDiscardDraftDialogOpen(true);
     });
-  }, []);
+  }, [appMessageDraft.hold]);
 
   const clearComposerDraft = useCallback(() => {
     composer.setInput("");
@@ -3426,7 +3507,8 @@ export function PlaygroundMain({
     revokeFileAttachmentUrls(fileAttachments);
     setFileAttachments([]);
     setModelContextQueue([]);
-  }, [composer, fileAttachments]);
+    appMessageDraft.clear();
+  }, [composer, fileAttachments, appMessageDraft.clear]);
 
   const cancelPendingHistorySelection = useCallback(() => {
     historySelectionRequestIdRef.current += 1;
@@ -3622,13 +3704,12 @@ export function PlaygroundMain({
         );
         if (!apply) return false;
       }
-      // Resolved BEFORE the load so the pinned effort seeds for the model the
-      // session restores, not the one the picker is on now.
+      // Resolve history before seeding its saved effort.
       const restoredModel =
         ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
-          ? // By `modelSource` as well as id: an OpenRouter id can also be a
-            // hosted row, and this thread must reopen on the one it ran on (#5472).
-            resolveRestoredModel(
+          ? detail.modelSelection
+            ? resolveCompareSelectionRow(detail.modelSelection, availableModels, hostedOrgModelConfig)
+            : resolveRestoredModel(
               availableModels,
               detail.modelId,
               detail.modelSource,
@@ -3647,6 +3728,7 @@ export function PlaygroundMain({
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
           restoredModel,
+          restoredSelection: detail.modelSelection,
         },
       );
       if (options?.shouldApply && !options.shouldApply()) {
@@ -3661,10 +3743,10 @@ export function PlaygroundMain({
         useActiveChatSessionStore.getState().setBrowserLocation({
           projectId: detail.projectId,
           sessionId: detail.chatSessionId,
-          engine: "cloud",
+          engine: detail.browser.engine === "local" ? "local" : "cloud",
         });
-      if (restoredModel) {
-        setSelectedModel(restoredModel);
+      if ((options?.shouldRestoreComposerState?.() ?? true) && (restoredModel || detail.modelSelection)) {
+        setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection, persist: false });
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -3679,6 +3761,8 @@ export function PlaygroundMain({
     },
     [
       availableModels,
+      hostedOrgModelConfig,
+      selectedModel,
       loadChatSession,
       adoptRestoredConversationTarget,
       readRecordedTarget,
@@ -4102,7 +4186,7 @@ export function PlaygroundMain({
         adoptRestoredConversationTarget(detail.session);
         // `loadHistorySession` skips the model when the catalog hasn't loaded
         // yet; remember it so the effect below can apply it on arrival.
-        pendingRestoredModelRef.current = detail.session.modelId
+        pendingRestoredModelRef.current = !detail.session.modelSelection && detail.session.modelId
           ? {
               chatSessionId: detail.session.chatSessionId,
               modelId: detail.session.modelId,
@@ -4170,9 +4254,7 @@ export function PlaygroundMain({
       isStreaming,
       projectId: convexProjectId,
       isMultiModelLayoutMode,
-      isEvalHandoffPending:
-        !!evalChatHandoff &&
-        appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id,
+      isEvalHandoffPending: isEvalChatHandoffPending,
       activeHistorySessionId,
       restoreConversation: restoreConversationFromUrl,
     });
@@ -4205,9 +4287,12 @@ export function PlaygroundMain({
   }, [clearMultiModelUiState]);
 
   const handleNewChat = useCallback(
-    async (options?: { shared?: boolean }) => {
+    async (options?: { shared?: boolean; isCurrent?: () => boolean }) => {
       if (isStreaming) return false;
       if (!(await ensureDiscardDraftConfirmed())) return false;
+      // An App's new-chat action can lapse while the person decides; a reset
+      // for it then would discard their draft for nothing.
+      if (options?.isCurrent && !options.isCurrent()) return false;
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
       }
@@ -4248,8 +4333,22 @@ export function PlaygroundMain({
       convexProjectId,
       previewedHostId,
     ]),
-    begin: handleNewChat,
+    begin: (isCurrent) => handleNewChat({ isCurrent }),
   });
+
+  // Archive-all clears the composer only once its archive request returns,
+  // so App drafts wait for it as they wait for the discard dialog.
+  const archiveAllReleaseRef = useRef<(() => void) | null>(null);
+  const confirmArchiveAllReset = useCallback(async () => {
+    if (!(await ensureDiscardDraftConfirmed())) return false;
+    archiveAllReleaseRef.current?.();
+    archiveAllReleaseRef.current = appMessageDraft.hold();
+    return true;
+  }, [ensureDiscardDraftConfirmed, appMessageDraft.hold]);
+  const settleArchiveAll = useCallback(() => {
+    archiveAllReleaseRef.current?.();
+    archiveAllReleaseRef.current = null;
+  }, []);
 
   const handleArchiveAllComplete = useCallback(
     (hadActiveHistorySelection: boolean) => {
@@ -4361,15 +4460,17 @@ export function PlaygroundMain({
       onNewChat: handleNewChat,
       // Without this the rail's "Archive all" path would call resetChat
       // through onArchiveAllComplete and blow away the user's unsaved draft.
-      beforeResetChatAfterArchiveAll: ensureDiscardDraftConfirmed,
+      beforeResetChatAfterArchiveAll: confirmArchiveAllReset,
       onArchiveAllComplete: handleArchiveAllComplete,
+      onArchiveAllSettled: settleArchiveAll,
       onSessionAction: handleHistorySessionAction,
     });
     return () => setBridge(null);
   }, [
     activeHistorySessionId,
     convexProjectId,
-    ensureDiscardDraftConfirmed,
+    confirmArchiveAllReset,
+    settleArchiveAll,
     handleArchiveAllComplete,
     handleHistorySessionAction,
     handleNewChat,
@@ -4794,6 +4895,21 @@ export function PlaygroundMain({
       pluginActionInteractivity.composerDisabled ||
       pluginActionInteractivity.sendBlocked ||
       isStreaming,
+    ...getAppDraftInteractivity({
+      readOnly:
+        !extensionScope ||
+        isCompareMode ||
+        apiSessionViewOnly ||
+        disableChatInput ||
+        !pluginExtensions.capabilities.messages,
+      transitioning:
+        isEnvironmentTargetPending ||
+        loadingHistorySessionId !== null ||
+        restoringTarget !== null,
+      sendInFlight: isPreparingServerForSend,
+      isStreamingActive,
+    }),
+    draft: appMessageDraft.place,
     gates: [
       async () => !conversationSendBlockedRef.current,
       ensureSelectedServerReadyForChat,
@@ -4808,6 +4924,9 @@ export function PlaygroundMain({
     prepareNew: async (intent, isCurrent) =>
       (await ownedModelWorkspace.prepareMessage(intent, isCurrent)) ??
       threadApps.prepareMessage(intent, isCurrent),
+    // Leaves the new chat time to publish and send before the server's
+    // preparation lapses.
+    preparedForMs: PLUGIN_MESSAGE_PREPARATION_MS - 15_000,
     send: (intent, isCurrent) =>
       sendMessage({
         text: "",
@@ -4880,9 +4999,6 @@ export function PlaygroundMain({
   // makes it fire exactly once per mount even as deps change.
   const autoRanRef = useRef(false);
   useEffect(() => {
-    const handoffPending =
-      !!evalChatHandoff &&
-      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
     if (
       !shouldAutoRunPreview({
         autoRunInput,
@@ -4890,7 +5006,7 @@ export function PlaygroundMain({
         isSessionBootstrapComplete,
         isThreadEmpty,
         isStreaming,
-        handoffPending,
+        handoffPending: isEvalChatHandoffPending,
       })
     ) {
       return;
@@ -4918,6 +5034,7 @@ export function PlaygroundMain({
     autoRunInput,
     composer,
     evalChatHandoff,
+    isEvalChatHandoffPending,
     isSessionBootstrapComplete,
     isThreadEmpty,
     isStreaming,
@@ -5151,7 +5268,7 @@ export function PlaygroundMain({
       // Compare off" — that left the user having to manually
       // uncheck/recheck a host to re-enter compare. Falling back to
       // an empty array lets `effectiveSelectedHostIds` in
-      // `MultiHostPicker` pick up the live lead from `currentHostId`.
+      // `ClientSelector` pick up the live lead from `currentHostId`.
       // Checked against `selectedHostIds.length` directly, NOT
       // `isComparingHosts` (which also requires `canEnableMultiHost`, a
       // transient signal that lags behind the Convex host-list query) and
@@ -5176,11 +5293,11 @@ export function PlaygroundMain({
   );
 
   // Phase 4 lightweight mutual exclusion (see comment on
-  // `handleMultiModelEnabledChange`). Wired into `PlaygroundHostPicker`
-  // via `onMultiHostEnabledChange`. After the "lift state ownership"
-  // fix the picker no longer calls `usePersistedHost` itself — both
-  // the toggle value and its setter come from THIS component's single
-  // hook instance, so any flip propagates without storage events.
+  // `handleMultiModelEnabledChange`). Wired into the chat-input
+  // `ClientSelector` via `onMultiHostEnabledChange`. The selector does
+  // not call `usePersistedHost` itself — both the toggle value and its
+  // setter come from THIS component's single hook instance, so any flip
+  // propagates without storage events.
   const handleMultiHostEnabledChange = useCallback(
     (enabled: boolean) => {
       setMultiHostEnabled(enabled);
@@ -5415,6 +5532,7 @@ export function PlaygroundMain({
   // composer that visibly holds an attached skill.
   const composerHasContent =
     composerMentions.selections.length > 0 ||
+    appMessageDraft.items.length > 0 ||
     threadApps.contextAttachments.length > 0 ||
     ownedModelWorkspace.attachments.length > 0 ||
     composer.input.trim().length > 0 ||
@@ -5424,8 +5542,18 @@ export function PlaygroundMain({
 
   // Submit handler — shared by the composer form and eval Quick Run.
 
-  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
+  const submitComposer = useCallback(async (): Promise<boolean> => {
     if (!composerHasContent || sendBlocked) {
+      return false;
+    }
+    // Read once: what this send carries is all it may clear.
+    const draftItems = appMessageDraft.snapshot();
+    // A compare grid has no place for an App's draft items; leaving compare
+    // mode sends them with this chat. Checked before any gate or upload runs.
+    if (isCompareMode && draftItems.length > 0) {
+      toast.error(
+        "Items an App added can't go to a comparison. Remove them or leave compare mode.",
+      );
       return false;
     }
     // The composer is disabled in this state, so this is the belt to that
@@ -5543,9 +5671,11 @@ export function PlaygroundMain({
         metadata: outgoingSenderMetadata,
         widgetModelContext: modelContextQueue,
         pluginMentions: composerMentions.selections,
+        extraParts: draftItems.map((item) => item.part),
       });
       if (!sent) return false;
       composerMentions.clear();
+      appMessageDraft.discard(draftItems);
       setModelContextQueue([]);
     }
 
@@ -5561,6 +5691,8 @@ export function PlaygroundMain({
     composerHasContent,
     composerMentions.selections,
     composerMentions.clear,
+    appMessageDraft.snapshot,
+    appMessageDraft.discard,
     mcpPromptResults,
     skillResults,
     fileAttachments,
@@ -5581,6 +5713,16 @@ export function PlaygroundMain({
     computerAttachmentsActive,
     computerAttachmentUpload,
   ]);
+  // An App draft is refused for the whole submit, which captures the composer
+  // first and clears it last.
+  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
+    const release = appMessageDraft.hold();
+    try {
+      return await submitComposer();
+    } finally {
+      release();
+    }
+  }, [submitComposer, appMessageDraft.hold]);
 
   sendPluginOnboardingRef.current = async (
     spec,
@@ -5828,16 +5970,13 @@ export function PlaygroundMain({
   const lastRunPreviewRequestRef = useRef(0);
   const [quickRunPending, setQuickRunPending] = useState(false);
   useEffect(() => {
-    const handoffPending =
-      !!evalChatHandoff &&
-      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id;
     if (
       !shouldRunPreview({
         runPreviewRequest,
         alreadyHandledRequest: lastRunPreviewRequestRef.current,
         isSessionBootstrapComplete,
         isStreaming,
-        handoffPending,
+        handoffPending: isEvalChatHandoffPending,
       })
     ) {
       return;
@@ -5848,6 +5987,7 @@ export function PlaygroundMain({
   }, [
     runPreviewRequest,
     evalChatHandoff,
+    isEvalChatHandoffPending,
     isSessionBootstrapComplete,
     isStreaming,
     handleResetAllChats,
@@ -5867,6 +6007,43 @@ export function PlaygroundMain({
   ]);
 
   const errorMessage = formatErrorMessage(error);
+
+  // The organization AI-key policy's two temporary refusals
+  // (`ai_key_policy_unavailable`, `provider_unavailable`) lift on their own, so
+  // the banner offers Retry, which resends the last user message's text, as
+  // the chat tab's banner does. Every other policy refusal needs a
+  // configuration change first and offers no Retry. Single-model only: a
+  // compare card's turn is not the root chat's to resend. The resend goes
+  // through `handleSendFollowUp`, so it takes the same server readiness,
+  // resumed-thread and local-execution gates as every other send; that
+  // helper does not track, so the one `trackSendMessage` here is the only
+  // analytics event.
+  const lastUserMessageText = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.role === "user") {
+        return extractUserMessageText(message).trim();
+      }
+    }
+    return "";
+  }, [messages]);
+  const handleRetryLastMessage = useCallback(() => {
+    if (
+      !lastUserMessageText ||
+      sendBlocked ||
+      conversationSendBlockedRef.current
+    ) {
+      return;
+    }
+    trackSendMessage({ single_model_send: true });
+    handleSendFollowUp(lastUserMessageText);
+  }, [lastUserMessageText, sendBlocked, trackSendMessage, handleSendFollowUp]);
+  const errorRetryHandler =
+    !isCompareMode &&
+    lastUserMessageText &&
+    isRetryableOrgKeysRefusal(errorMessage?.code)
+      ? handleRetryLastMessage
+      : undefined;
 
   // Starter chips render in both empty states (compare grid and single-model
   // hero), so route by mode like `submitAgentToolPrompt`: compare mode feeds
@@ -6174,7 +6351,7 @@ export function PlaygroundMain({
     ? {
         reasoningEffort,
         reasoningEffortLevels,
-        onReasoningEffortChange: setReasoningEffort,
+        onReasoningEffortChange: (effort: ModelReasoningEffort | undefined) => setReasoningEffort(effort, true),
       }
     : leadCompareCard?.editableSelection
       ? {
@@ -6195,6 +6372,7 @@ export function PlaygroundMain({
     formWorkspaceId: extensionScope?.pluginWorkspace.workspaceId,
     contextAttachments: [
       ...composerMentions.contextAttachments,
+      ...appMessageDraft.contextAttachments,
       ...threadApps.contextAttachments,
       ...ownedModelWorkspace.attachments,
     ],
@@ -6239,7 +6417,7 @@ export function PlaygroundMain({
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
-    onTemperatureChange: setTemperature,
+    onTemperatureChange: (value: number) => setTemperature(value, true),
     ...composerEffortProps,
     onResetChat: handleResetAllChats,
     submitDisabled:
@@ -6327,6 +6505,7 @@ export function PlaygroundMain({
       : undefined,
     voiceInputAuthHeaders: authHeaders,
     onManageOrgProviders: manageOrgProviders,
+    requireOrgKeys: orgRequiresOwnKeys(hostedOrgModelConfig),
   };
 
   // Check if widget should take over the full container
@@ -6528,6 +6707,7 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -6536,6 +6716,7 @@ export function PlaygroundMain({
                               isMCPJamPlatformError={
                                 errorMessage.isMCPJamPlatformError
                               }
+                              onRetry={errorRetryHandler}
                               onResetChat={resetChat}
                             />
                           </div>
@@ -6598,6 +6779,7 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -6606,6 +6788,7 @@ export function PlaygroundMain({
                               isMCPJamPlatformError={
                                 errorMessage.isMCPJamPlatformError
                               }
+                              onRetry={errorRetryHandler}
                               onResetChat={resetChat}
                             />
                           </div>
@@ -6768,12 +6951,14 @@ export function PlaygroundMain({
                 {errorMessage && (
                   <div className="pb-3">
                     <ErrorBox
+                      onManageOrgProviders={manageOrgProviders}
                       message={errorMessage.message}
                       errorDetails={errorMessage.details}
                       code={errorMessage.code}
                       statusCode={errorMessage.statusCode}
                       isRetryable={errorMessage.isRetryable}
                       isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                      onRetry={errorRetryHandler}
                       onResetChat={resetChat}
                     />
                   </div>
@@ -6828,7 +7013,7 @@ export function PlaygroundMain({
   );
 
   // Device frame container - display mode is passed to widgets via Thread
-  return (
+  const surface = (
     // Surface signal for `MCPAppsRenderer` / `chatgpt-app-renderer`: the
     // `cspMode` they compute on first render must already see
     // "playground" before any descendant subscribes. The legacy
@@ -6977,9 +7162,9 @@ export function PlaygroundMain({
                 />
               ) : null
             }
-            // The standalone "Compare" host picker moved into the chat-input
-            // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
-            // switching still lives in the global `GlobalHostBar`.
+            // Client switching and host comparison both live in the chat-input
+            // client chip (see `clientSelector` in `sharedChatInputProps`), so
+            // the header carries no host picker.
             trailing={
               effectiveHasMessages ? (
                 <Tooltip>
@@ -7050,6 +7235,7 @@ export function PlaygroundMain({
                     errorMessage ? (
                       <div className="max-w-4xl mx-auto px-4 pt-4">
                         <ErrorBox
+                          onManageOrgProviders={manageOrgProviders}
                           message={errorMessage.message}
                           errorDetails={errorMessage.details}
                           code={errorMessage.code}
@@ -7277,6 +7463,7 @@ export function PlaygroundMain({
                             compareLabel={entry.label}
                             compareKind="model"
                             model={model}
+                            selection={card?.selection}
                             reasoningEffort={card?.reasoningEffort}
                             reasoningEffortHarness={compareEffortHarness}
                             effort={
@@ -7437,6 +7624,7 @@ export function PlaygroundMain({
                             {errorMessage && (
                               <div className="pb-3">
                                 <ErrorBox
+                                  onManageOrgProviders={manageOrgProviders}
                                   message={errorMessage.message}
                                   errorDetails={errorMessage.details}
                                   code={errorMessage.code}
@@ -7445,6 +7633,7 @@ export function PlaygroundMain({
                                   isMCPJamPlatformError={
                                     errorMessage.isMCPJamPlatformError
                                   }
+                                  onRetry={errorRetryHandler}
                                   onResetChat={resetChat}
                                 />
                               </div>
@@ -7514,12 +7703,7 @@ export function PlaygroundMain({
         open={discardDraftDialogOpen}
         onOpenChange={(open) => {
           setDiscardDraftDialogOpen(open);
-          if (!open && !discardDraftSettledRef.current) {
-            discardDraftSettledRef.current = true;
-            const resolve = discardDraftResolveRef.current;
-            discardDraftResolveRef.current = null;
-            resolve?.(false);
-          }
+          if (!open) settleDiscardDraft(false);
         }}
       >
         <AlertDialogContent>
@@ -7569,5 +7753,13 @@ export function PlaygroundMain({
           it outlives its turn — answering it re-drives the chat turn. */}
       <HostedMrtrHost />
     </WidgetSurfaceProvider>
+  );
+
+  // Parts of the thread that show a policy refusal (the web search tool
+  // card) read who is reading it, and the fix, from here.
+  return (
+    <OrgAiRefusalHandoffProvider value={refusalHandoff}>
+      {surface}
+    </OrgAiRefusalHandoffProvider>
   );
 }

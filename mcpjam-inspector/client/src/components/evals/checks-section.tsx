@@ -586,10 +586,7 @@ export function CheckRow({
     <div
       className={cn(
         embedded
-          ? cn(
-              "min-w-0 space-y-3",
-              paper && PAPER_FIELD_STYLES,
-            )
+          ? cn("min-w-0 space-y-3", paper && PAPER_FIELD_STYLES)
           : cn(
               "rounded-md border p-3",
               anyErrorShown
@@ -2929,6 +2926,7 @@ export function PatternMatchFields({
                   value={predicate.min}
                   placeholder="1"
                   readOnly={readOnly}
+                  min={0}
                   onChange={(n) => setCount("min", String(n))}
                   onClear={() => setCount("min", "")}
                 />
@@ -2939,6 +2937,7 @@ export function PatternMatchFields({
                   value={predicate.max}
                   placeholder="∞"
                   readOnly={readOnly}
+                  min={0}
                   onChange={(n) => setCount("max", String(n))}
                   onClear={() => setCount("max", "")}
                 />
@@ -3646,6 +3645,7 @@ function PaperNumberField({
   id: fieldId,
   ariaLabel,
   placeholder,
+  min = 1,
 }: {
   value: number | undefined;
   onChange: (next: number) => void;
@@ -3656,6 +3656,7 @@ function PaperNumberField({
   id?: string;
   ariaLabel?: string;
   placeholder?: string;
+  min?: number;
 }) {
   const generatedId = useId();
   const id = fieldId ?? generatedId;
@@ -3670,7 +3671,7 @@ function PaperNumberField({
         id={id}
         aria-label={ariaLabel ?? `Strictly under (${unit})`}
         type="number"
-        min={1}
+        min={min}
         step={1}
         value={value ?? ""}
         placeholder={placeholder}
@@ -3679,8 +3680,8 @@ function PaperNumberField({
             onClear();
             return;
           }
-          const number = Number(event.target.value);
-          if (Number.isFinite(number)) onChange(Math.floor(number));
+          const number = Math.floor(Number(event.target.value));
+          if (Number.isFinite(number) && number >= min) onChange(number);
         }}
         disabled={readOnly}
         className={cn(
@@ -3695,9 +3696,12 @@ function PaperNumberField({
         }}
       />
       {unit ? (
-        <label htmlFor={id} data-paper-unit className="text-sm font-normal leading-[18px] text-card-foreground">
+        <span
+          data-paper-unit
+          className="text-sm font-normal leading-[18px] text-card-foreground"
+        >
           {unit}
-        </label>
+        </span>
       ) : null}
     </div>
   );

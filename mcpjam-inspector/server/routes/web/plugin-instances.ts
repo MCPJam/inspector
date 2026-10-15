@@ -52,7 +52,7 @@ import { PluginModelContextError } from "../../../shared/plugin-model-context.js
 
 import { pluginMentionRoutes } from "./plugin-mentions.js";
 import {
-  isPluginMentionTool,
+  pluginMentionSearchTool,
   PluginMentionError,
 } from "../../../shared/plugin-mentions.js";
 import path from "node:path";
@@ -85,6 +85,7 @@ import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
 import { isAbortError } from "../../../shared/abort-errors.js";
 import {
   PluginActivationError,
+  pluginEntrypointDiagnostics,
   pluginEntrypointKinds,
   pluginEntrypointPlan,
   pluginEntrypointTitle,
@@ -479,10 +480,10 @@ instances.post("/discover", (c) =>
       });
       // Whether this server offers @ mention search, so the composer need
       // not probe every server for a mention tool.
-      const mentionTools =
+      const mention =
         catalog.extensions?.capabilities.mentions === false
-          ? []
-          : catalog.tools.filter(isPluginMentionTool);
+          ? { diagnostics: [] }
+          : pluginMentionSearchTool(catalog, body.serverId);
       // The installed plugin that owns this server, so the client can show
       // that plugin's manifest icons (its project plugin list carries them).
       // Display only: never authority.
@@ -490,18 +491,22 @@ instances.post("/discover", (c) =>
         catalog.serverIdentity?.kind === "plugin"
           ? catalog.serverIdentity.pluginId
           : undefined;
+      const diagnostics = [
+        ...pluginEntrypointDiagnostics(catalog.tools, body.serverId),
+        ...mention.diagnostics,
+      ];
       return c.json({
         entries,
+        ...(diagnostics.length ? { diagnostics } : {}),
         ...(icons.serverIcons.length ? { serverIcons: icons.serverIcons } : {}),
         ...(pluginId ? { pluginId } : {}),
-        mentions:
-          mentionTools.length === 1
-            ? {
-                available: true,
-                toolName: mentionTools[0].name,
-                title: mentionTools[0].title ?? mentionTools[0].name,
-              }
-            : { available: false },
+        mentions: mention.tool
+          ? {
+              available: true,
+              toolName: mention.tool.name,
+              title: mention.tool.title ?? mention.tool.name,
+            }
+          : { available: false },
       });
     } finally {
       await runtime.release();

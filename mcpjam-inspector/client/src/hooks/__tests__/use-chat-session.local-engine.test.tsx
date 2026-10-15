@@ -290,6 +290,7 @@ describe("useChatSession — local computer engine transmission", () => {
         executionTarget: { kind: "environment", environmentId: "env-1" },
       },
       {
+        selectionIntent: "inherit",
         personalBrowserEngine: {
           engine: "local",
           consentToken: "browser-capability",
@@ -370,6 +371,7 @@ describe("useChatSession — local computer engine transmission", () => {
     await renderWithEngine(
       { engine: "local", consentToken: "cap-token-123" },
       { projectId: "proj-1", requiresWebChatApi: true },
+      { selectionIntent: "inherit" },
     );
     const { body, headers } = lastTransport();
     expect(body.computerEngine).toBeUndefined();

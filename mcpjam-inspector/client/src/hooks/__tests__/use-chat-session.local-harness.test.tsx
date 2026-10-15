@@ -415,9 +415,8 @@ describe("useChatSession — local Claude Code transmission", () => {
       projectId: "proj-1",
       requiresWebChatApi: true,
     });
-    const { body, headers } = sendRequest();
-    expect(body.harnessTarget).toBeUndefined();
-    expect(headers[LOCAL_HARNESS_GRANT_HEADER]).toBeUndefined();
+    expect(() => sendRequest()).toThrow("Choose a model available in this workspace");
+    expect(latestTransport().headers ?? {}).not.toHaveProperty(LOCAL_HARNESS_GRANT_HEADER);
   });
 });
 

@@ -22,8 +22,9 @@
  *     which is our own throttle and may classify as `rate_limited`. A refusal
  *     REASON a producer read off the proxy (or the lease start) classifies by
  *     the shared vocabulary (`@/shared/harness-proxy-refusal-reasons`): an
- *     organization's key or policy failing is `configuration` or `auth`, kept
- *     apart from a provider outage.
+ *     organization's key or policy refusing is `configuration` or `auth`, kept
+ *     apart from a provider outage. The two codes it shares with the key
+ *     policy read exactly as the policy's own rows.
  *
  * A turn timeout never reaches this: the runner records it as measured first.
  */
@@ -80,6 +81,59 @@ const BACKEND_CODE_TABLE: Readonly<Record<string, Row>> = {
   },
   invalid_model: { class: "configuration", layer: MODEL, retryable: false },
   model_retired: { class: "configuration", layer: MODEL, retryable: false },
+  // The organization AI-key policy ("Use your keys for all AI features",
+  // `shared/ai-execution-refusal.ts`). Explicit rows, so a configuration
+  // refusal is never read by status: a 403 `org_keys_required` is not a
+  // credential wall and a 422 is not a request this iteration broke. Permanent
+  // until the organization's configuration changes, so never retried — and
+  // never `account_limit`: no purchase lifts any of them.
+  // `org_keys_required` is the policy itself saying no: the platform's layer,
+  // as the harness proxy's row for the same code reads it.
+  org_keys_required: {
+    class: "configuration",
+    layer: "platform",
+    retryable: false,
+  },
+  org_model_unconfigured: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
+  org_runtime_unsupported: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
+  ai_scope_unresolved: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
+  provider_auth_failed: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
+  // The org connection the selection names is gone or has no key
+  // (`/stream/org`).
+  credential_missing: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
+  // The policy's two transient refusals: the org's provider is throttling or
+  // failing, or the backend could not read the policy and failed closed
+  // before any model ran (our platform).
+  provider_unavailable: {
+    class: "provider_unavailable",
+    layer: MODEL,
+    retryable: true,
+  },
+  ai_key_policy_unavailable: {
+    class: "provider_unavailable",
+    layer: "platform",
+    retryable: true,
+  },
 };
 
 /** An upstream status read as a provider failure, or `undefined`. */
@@ -185,6 +239,17 @@ const CODEX_CONNECTION_CODES = new Set([
 ]);
 
 /**
+ * The key policy's row for a code the harness proxy shares with it, without
+ * `retryable`: the proxy's own `x-should-retry` decides that on its surface.
+ */
+function policyRow(
+  code: "org_keys_required" | "ai_key_policy_unavailable",
+): Omit<Row, "retryable"> {
+  const { class: rowClass, layer } = BACKEND_CODE_TABLE[code]!;
+  return { class: rowClass, layer };
+}
+
+/**
  * Each refusal of the harness model proxy as the classifier reads it. The
  * organization's own key failing is the model credential's layer, its policy
  * the platform's; `null` — spend, lease caps, a transport limit — is not an
@@ -206,8 +271,11 @@ const PROXY_REFUSAL_ROWS: Record<
   lease_daily_harness_calls: null,
   no_billable_usage: null,
   proxy_error: null,
-  org_keys_required: { class: "configuration", layer: "platform" },
-  ai_key_policy_unavailable: { class: "configuration", layer: "platform" },
+  // The codes the proxy shares with the key policy read as the policy's rows.
+  // Only `retryable` differs: the proxy never re-sends a call, so on its
+  // surface a policy that could not be read is not retryable.
+  org_keys_required: policyRow("org_keys_required"),
+  ai_key_policy_unavailable: policyRow("ai_key_policy_unavailable"),
   byok_credential_rejected: { class: "auth", layer: MODEL },
   byok_credential_unavailable: { class: "configuration", layer: MODEL },
   byok_connection_changed: { class: "configuration", layer: MODEL },

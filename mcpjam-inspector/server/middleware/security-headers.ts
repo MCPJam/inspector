@@ -15,15 +15,13 @@
  *   plugin content. It is inherited by srcdoc iframes, including MCP-UI
  *   rawHtml widgets, so it holds nothing a widget document may rely on;
  * - in hosted mode, a REPORT-ONLY policy describing the full intended source
- *   list, built from this deploy's runtime config. It blocks nothing; its
- *   reports are what a later enforcing policy gets tuned against. The app
+ *   list, built from this deploy's runtime config. It blocks nothing; browser
+ *   console violations can guide validation of a future enforcing policy. The app
  *   integrates with many external services (WorkOS, PostHog, Sentry, Convex,
  *   Stripe, MCP servers with OAuth), which is why it is not enforced yet.
- *   The header goes on every hosted response, documents and assets alike
- *   (MJ-016), but only a sampled share of responses
- *   carries the report-uri directive (CSP_REPORT_SAMPLE_RATE), which is what
- *   bounds how many violation reports page views produce — a report-only
- *   policy without a report endpoint only logs to the console. On documents,
+ *   The header goes on every hosted response, documents and assets alike.
+ *   It has no reporting endpoint: native browser reports bypass our telemetry
+ *   serializers and include the document URL. On documents,
  *   its script-src allows the inline scripts the server writes into the
  *   document through a per-response nonce (documentScriptNonce).
  *
@@ -67,13 +65,6 @@ export const DOCUMENT_PERMISSIONS_POLICY = [
   "usb=()",
   "window-management=()",
 ].join(", ");
-
-/**
- * Share of hosted responses whose report-only policy carries report-uri,
- * which bounds how many violation reports page views produce. The policy
- * itself is on every hosted response.
- */
-export const CSP_REPORT_SAMPLE_RATE = 0.05;
 
 const DEFAULT_WORKOS_API_HOSTNAME = "api.workos.com";
 
@@ -149,19 +140,6 @@ function convexSources(value: string | undefined): string[] {
   return [url.origin, `${socket}//${url.host}`];
 }
 
-/** The Sentry ingest origin and the CSP report endpoint for a DSN. */
-export function sentryCspTargets(
-  dsn: string,
-): { ingestOrigin: string; reportUri: string } | null {
-  const url = originOf(dsn);
-  const projectId = url?.pathname.replace(/^\/+|\/+$/g, "");
-  if (!url || !url.username || !projectId) return null;
-  return {
-    ingestOrigin: url.origin,
-    reportUri: `${url.origin}/api/${projectId}/security/?sentry_key=${url.username}`,
-  };
-}
-
 type Directive = [name: string, sources: Iterable<string>];
 
 function reportOnlyDirectives(
@@ -169,7 +147,7 @@ function reportOnlyDirectives(
   sandboxHosts: ReadonlySet<string>,
   sentryDsn: string,
 ): Directive[] {
-  const sentry = sentryCspTargets(sentryDsn);
+  const sentry = originOf(sentryDsn);
   const workosHost =
     runtimeConfig.workosApiHostname ?? DEFAULT_WORKOS_API_HOSTNAME;
   const connectSources = new Set<string>([
@@ -177,7 +155,7 @@ function reportOnlyDirectives(
     ...convexSources(runtimeConfig.convexUrl),
     ...convexSources(runtimeConfig.convexSiteUrl),
     `https://${workosHost}`,
-    ...(sentry ? [sentry.ingestOrigin] : []),
+    ...(sentry ? [sentry.origin] : []),
     ...STRIPE_CONNECT_SOURCES,
     ...METICULOUS_CONNECT_SOURCES,
   ]);
@@ -219,17 +197,14 @@ function reportOnlyDirectives(
     ["img-src", ["'self'", "data:", "blob:", "https:"]],
     ["worker-src", ["'self'", "blob:"]],
     ["base-uri", ["'self'"]],
-    ...(sentry ? ([["report-uri", [sentry.reportUri]]] as Directive[]) : []),
   ];
 }
 
 function renderPolicy(
   directives: Directive[],
   scriptNonce?: string,
-  includeReportUri = true,
 ): string {
   return directives
-    .filter(([name]) => includeReportUri || name !== "report-uri")
     .map(([name, iterable]) => {
       const sources = Array.from(iterable);
       if (name === "script-src" && scriptNonce) {
@@ -250,27 +225,22 @@ export function buildReportOnlyContentSecurityPolicy(
   sandboxHosts: ReadonlySet<string> = SANDBOX_HOSTS,
   sentryDsn: string = SENTRY_DSN.client,
   scriptNonce?: string,
-  includeReportUri = true,
 ): string {
   return renderPolicy(
     reportOnlyDirectives(runtimeConfig, sandboxHosts, sentryDsn),
     scriptNonce,
-    includeReportUri,
   );
 }
 
 let reportOnlyBase: Directive[] | null = null;
 
-function reportOnlyContentSecurityPolicy(
-  scriptNonce: string | undefined,
-  includeReportUri: boolean,
-): string {
+function reportOnlyContentSecurityPolicy(scriptNonce: string | undefined): string {
   reportOnlyBase ??= reportOnlyDirectives(
     getInspectorClientRuntimeConfig(),
     SANDBOX_HOSTS,
     SENTRY_DSN.client,
   );
-  return renderPolicy(reportOnlyBase, scriptNonce, includeReportUri);
+  return renderPolicy(reportOnlyBase, scriptNonce);
 }
 
 /** Test-only: drop the memoized report-only policy. */
@@ -356,7 +326,6 @@ export async function securityHeadersMiddleware(
   const reportOnlyPolicy = HOSTED_MODE
     ? reportOnlyContentSecurityPolicy(
         isDocument ? scriptNonces.get(c) : undefined,
-        Math.random() < CSP_REPORT_SAMPLE_RATE,
       )
     : null;
   if (!isDocument && !reportOnlyPolicy) {
