@@ -392,6 +392,21 @@ describe("buildHostedOAuthUnauthorizedHandler", () => {
     vi.unstubAllGlobals();
   });
 
+  it("preserves the original challenge when the login has no refresh token", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      code: "refresh_token_unavailable",
+      message: "Sign in again to continue this call.",
+    }), { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const original = Object.assign(new Error("HTTP 401"), { statusCode: 401 });
+    const handler = buildHostedOAuthUnauthorizedHandler({
+      bearerToken: "token", projectId: "project-1",
+      serverId: "server-1", serverName: "Server One",
+    });
+    await expect(handler({ serverId: "server-1", error: original })).rejects.toBe(original);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns a handler that POSTs and resolves to {accessToken}", async () => {
     const fetchMock = vi.fn(async (_input: any, init?: any) => {
       expect(JSON.parse(init?.body)).toEqual({

@@ -8,7 +8,6 @@ import { captureHostedOAuthConnection } from "@/lib/apis/web/oauth-connections";
 import {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   canonicalizeResourceUrl,
-  discoverAuthorizationServerMetadata,
   discoverOAuthServerInfo,
   evaluateResourceIndicator,
   getBrowserDebugDynamicRegistrationMetadata,
@@ -1262,23 +1261,11 @@ async function loadOAuthDiscoveryState(
   const cachedState = await provider.discoveryState();
   if (
     cachedState?.authorizationServerUrl &&
+    cachedState.authorizationServerMetadata &&
+    cachedState.resourceMetadata &&
     (!resourceMetadataUrl ||
       cachedState.resourceMetadataUrl === resourceMetadataUrl)
-  ) {
-    const authorizationServerMetadata =
-      cachedState.authorizationServerMetadata ??
-      (await discoverAuthorizationServerMetadata(
-        cachedState.authorizationServerUrl,
-        { fetchFn: discoveryFetch }
-      ));
-
-    const discoveryState: OAuthDiscoveryState = {
-      ...cachedState,
-      authorizationServerMetadata,
-    };
-    await provider.saveDiscoveryState(discoveryState);
-    return discoveryState;
-  }
+  ) return cachedState;
 
   const discovered = await discoverOAuthServerInfo(serverUrl, {
     fetchFn: discoveryFetch,

@@ -704,9 +704,7 @@ export type HostedOAuthUnauthorizedHandlerArgs = {
 
 /**
  * Build the `onUnauthorized` callback used by the SDK's 401-retry path. The
- * handler closes over the routing context (bearer/project/server identity and
- * scope) so the SDK only has to invoke `({serverId, error}) => Promise<{accessToken}>`
- * without knowing how refresh actually happens.
+ * handler keeps routing context outside the SDK.
  */
 export function buildHostedOAuthUnauthorizedHandler(
   args: HostedOAuthUnauthorizedHandlerArgs
@@ -717,8 +715,7 @@ export function buildHostedOAuthUnauthorizedHandler(
   return async (context) => {
     const unauthorized: unknown = context?.error;
     // The 401 that prompted this refresh may have been a sign-in challenge
-    // for one protected operation. If the refresh cannot repair it, the
-    // failure reports that challenge, so the caller can offer sign-in for it
+    // for one protected operation. Keep it so the caller can offer sign-in
     // instead of a generic refresh error.
     const challenge = extractAuthChallenge(unauthorized);
     const withChallenge = (failure: WebRouteError): WebRouteError => {
@@ -747,6 +744,10 @@ export function buildHostedOAuthUnauthorizedHandler(
         ),
       };
     } catch (error) {
+      if (error instanceof WebRouteError &&
+          String(error.code) === "refresh_token_unavailable" && unauthorized) {
+        throw unauthorized;
+      }
       if (error instanceof WebRouteError) {
         throw withChallenge(error).withSetupFailureSource("oauth_refresh");
       }

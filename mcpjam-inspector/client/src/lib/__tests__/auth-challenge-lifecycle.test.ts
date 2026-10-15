@@ -332,6 +332,15 @@ describe("auth challenge lifecycle", () => {
   });
 
   describe("connecting", () => {
+    it("keeps a restoring comparison retryable without starting OAuth", async () => {
+      const card = await presentCard();
+      card.onConnect = () => ({ ok: false, reason: "loading" });
+      expect(await connectAuthChallenge(card, server, { isTrusted: true })).toEqual({
+        kind: "waiting", message: "Chats are still restoring. Please try Connect again in a moment.",
+      });
+      expect(initiateOAuthMock).not.toHaveBeenCalled();
+      expect(useAuthChallengeCardStore.getState().cards[card.key]).toBeDefined();
+    });
     it("keeps the card and never opens OAuth when its pending save fails", async () => {
       const card = await presentCard();
       card.onConnect = () => ({ ok: false, reason: "storage" });

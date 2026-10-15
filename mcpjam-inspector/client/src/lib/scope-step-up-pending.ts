@@ -172,7 +172,7 @@ export type PendingChatSelector = {
 };
 export type PendingWriteResult =
   | { ok: true }
-  | { ok: false; reason: "storage" | "missing" | "expired" | "phase" };
+  | { ok: false; reason: "storage" | "missing" | "expired" | "phase" | "loading" };
 export interface ChatAuthAttempt extends RecoveryContext {
   continuationId: string;
   toolCallId: string;

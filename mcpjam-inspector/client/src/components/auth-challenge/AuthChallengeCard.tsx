@@ -62,19 +62,22 @@ export function AuthChallengeCard({
 }: AuthChallengeCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [waitingMessage, setWaitingMessage] = useState<string>();
   const now = useNow(true);
   const remaining = card.expiresAt - now;
   const expired = remaining <= 0;
 
   const handleConnect = async (event: MouseEvent<HTMLButtonElement>) => {
     setConnecting(true);
+    setWaitingMessage(undefined);
     try {
       const result = await connectAuthChallenge(card, server, {
         // Only a real user gesture may send the browser to an authorization
         // server; a scripted `.click()` is not trusted.
         isTrusted: event.nativeEvent.isTrusted,
       });
-      onResult?.(result);
+      if (result.kind === "waiting") setWaitingMessage(result.message);
+      else onResult?.(result);
     } finally {
       setConnecting(false);
     }
@@ -110,6 +113,7 @@ export function AuthChallengeCard({
             sign in {operationPhrase(card)}.
           </p>
           <p className="text-xs text-muted-foreground">{followUp}</p>
+          {waitingMessage && <p role="status">{waitingMessage}</p>}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 pl-7">

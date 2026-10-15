@@ -1793,6 +1793,17 @@ describe("mcp-oauth", () => {
       expect(provider.discoveryState()).toBeUndefined();
     });
 
+    it("rediscovers resource metadata after an incomplete cached fallback", async () => {
+      const { MCPOAuthProvider, initiateOAuth } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider("asana", "https://mcp.asana.com/sse");
+      await provider.saveDiscoveryState({ authorizationServerUrl: "https://mcp.asana.com/" });
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
+      mockStartAuthorization.mockResolvedValueOnce({ authorizationUrl: new URL("https://auth.example.com/authorize"), codeVerifier: "verifier" });
+      await initiateOAuth({ serverName: "asana", serverUrl: "https://mcp.asana.com/sse" });
+      expect(mockDiscoverOAuthServerInfo).toHaveBeenCalled();
+      expect(provider.discoveryState()?.authorizationServerUrl).toBe(createAsanaDiscoveryState().authorizationServerUrl);
+    });
+
     it("reuses cached discovery state after the callback reload", async () => {
       const discoveryState = createAsanaDiscoveryState();
       mockDiscoverOAuthServerInfo.mockResolvedValue(discoveryState);

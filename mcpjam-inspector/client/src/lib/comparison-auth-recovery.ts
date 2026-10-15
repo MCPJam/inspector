@@ -63,6 +63,8 @@ export function prepareComparisonAuthRecovery(
   const lanes = [...(columns.get(id)?.values() ?? [])].sort(
     (a, b) => a.order - b.order,
   );
+  if (expectedColumns !== undefined && lanes.length < expectedColumns)
+    return { ok: false, reason: "loading" };
   if (
     (expectedColumns !== undefined && lanes.length !== expectedColumns) ||
     !layout ||

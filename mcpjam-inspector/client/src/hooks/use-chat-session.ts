@@ -2670,7 +2670,6 @@ export function useChatSession(
         server,
         projectId: hostedProjectId,
         chatSessionId: sessionId,
-        // Without a session the call cannot resume: sign in only.
         event: resumable ? event : { ...event, continuationId: undefined },
         ...(resumable && event.continuationId
           ? {
@@ -2680,6 +2679,7 @@ export function useChatSession(
                   event.continuationId!,
                 );
                 if (comparison && !comparison.ok) {
+                  if (comparison.reason === "loading") return comparison;
                   recordChatAuthRecoveryFailure("save_failed", {
                     continuationId: event.continuationId,
                     toolCallId: event.toolCallId,
@@ -6633,7 +6633,7 @@ export function useChatSession(
     fetchToolsMetadata();
   }, [
     selectedServersSignature,
-    selectedModel,
+    // The selection key tracks identity; rebuilt catalog rows must not refetch.
     tokenCountSelectionKey,
     hostedScenarioId,
     apiContextRevision,

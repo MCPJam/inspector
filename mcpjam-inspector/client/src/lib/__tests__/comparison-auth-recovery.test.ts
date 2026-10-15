@@ -49,6 +49,22 @@ describe("comparison OAuth restoration", () => {
     b();
     layout();
   });
+  it("keeps an early click retryable until every column is registered", () => {
+    const layout = registerComparisonLayout("loading", {
+      projectId: "p1", multiModelEnabled: true, hostIds: [], modelSelections: [], selectedServers: [],
+    });
+    const a = registerComparisonColumn("loading", {
+      compareId: "a", kind: "model", order: 0, chatSessionId: "a-chat", hasMessages: true,
+    });
+    expect(prepareComparisonAuthRecovery("loading", "a", "call", 2)).toEqual({ ok: false, reason: "loading" });
+    expect(window.location.search).toBe("");
+    const b = registerComparisonColumn("loading", {
+      compareId: "b", kind: "model", order: 1, chatSessionId: "b-chat", hasMessages: true,
+    });
+    expect(prepareComparisonAuthRecovery("loading", "a", "call", 2)).toEqual({ ok: true });
+    expect(readComparisonAuthRecovery("p1")?.columns).toHaveLength(2);
+    a(); b(); layout();
+  });
   it("refuses navigation if the comparison cannot be saved", () => {
     const l = registerComparisonLayout("group", {
       projectId: "p1",

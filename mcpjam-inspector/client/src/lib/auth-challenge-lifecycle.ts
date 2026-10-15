@@ -4,12 +4,7 @@ import {
 } from "@/lib/chat-auth-recovery";
 import type { PendingWriteResult } from "@/lib/scope-step-up-pending";
 /**
- * Mid-session sign-in ("lazy authentication") lifecycle on direct surfaces:
- * the one place that decides what a sign-in challenge on a Tools, Playground,
- * Resources or Prompts call turns into, and that starts the sign-in.
- *
- * Three rules hold everywhere:
- *
+ * Shared sign-in challenge lifecycle for Tools, Playground, Resources and Prompts.
  * - PRESENTING HAS NO SIDE EFFECTS. {@link presentAuthChallenge} decides
  *   between a Connect card, a notice and nothing. It writes no ledger, saves
  *   no call and never navigates.
@@ -407,6 +402,7 @@ export type AuthChallengeConnectResult =
   | { kind: "blocked"; hint: string }
   | { kind: "permanent" }
   | { kind: "started" }
+  | { kind: "waiting"; message: string }
   | { kind: "failed"; message: string };
 
 /**
@@ -429,6 +425,11 @@ export async function connectAuthChallenge(
 
   if (card.onConnect) {
     const prepared = card.onConnect();
+    if (!prepared.ok && prepared.reason === "loading")
+      return {
+        kind: "waiting",
+        message: "Chats are still restoring. Please try Connect again in a moment.",
+      };
     if (!prepared.ok)
       return {
         kind: "failed",

@@ -459,7 +459,7 @@ async function runMuseCheck(
     enteredUrl: target,
     // The global fetch — see `runClaudeCheck`.
     fetchFn: fetch,
-    headers: requestHeaders(options, target),
+    headers: mcpRequestHeaders(options, target),
     timeoutMs: options.timeout,
     submissionProfile: options.submissionProfile
       ? await readSubmissionProfile(options.submissionProfile)
