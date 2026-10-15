@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -87,6 +87,7 @@ try {
   }
 
   if (packageSpecs.inspector.publish) {
+    await assertPackedServerBytes(installDir);
     await smokeInspectorStartup(installDir);
   }
 } finally {
@@ -263,6 +264,21 @@ function collectDependencyVersions(node, packageName, versions = []) {
   }
 
   return versions;
+}
+
+/** The tarball holds the server bytes whose maps `build:server` verified, and no maps. */
+async function assertPackedServerBytes(installDir) {
+  const { verifyServerSourcemaps } = await import(
+    path.join(rootDir, "mcpjam-inspector", "scripts", "server-sourcemaps.mjs")
+  );
+  const built = path.join(rootDir, "mcpjam-inspector", "dist", "server");
+  const packed = path.join(installDir, "node_modules", "@mcpjam", "inspector", "dist", "server");
+  for (const { file, debugId } of verifyServerSourcemaps(built)) {
+    if (!readFileSync(path.join(packed, file)).equals(readFileSync(path.join(built, file))))
+      throw new Error(`packed dist/server/${file} is not the verified build`);
+    if (existsSync(path.join(packed, `${file}.map`))) throw new Error(`the tarball ships ${file}.map`);
+    console.log(`Packed dist/server/${file} carries debug ID ${debugId}, verified against its map.`);
+  }
 }
 
 async function smokeInspectorStartup(installDir) {
