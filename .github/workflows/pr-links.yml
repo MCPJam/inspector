@@ -2,16 +2,15 @@ name: PR Links
 
 # Advisory only. Reads the PR body for the three "Task, spec and plan" lines and
 # leaves one comment naming any that are empty or still a placeholder. It never
-# fails, is never a required check, and nothing here blocks a merge: 61 of 144
-# open PRs already fail a required check, so a sixth gate would deepen the
-# backlog rather than raise the floor. Promote it only once the fill rate is
-# high — the same ratchet logic the rest of the repo uses.
+# fails, is never a required check, and nothing here blocks a merge. Promote it
+# to a gate only once the fill rate justifies one — the same ratchet logic the
+# rest of the repo uses.
 #
 # `pull_request`, not `pull_request_target`: a fork's token is read-only, so a
 # fork PR gets no comment. That is the accepted trade. `pull_request_target`
 # would run with this repo's write token against a PR we do not control, and no
-# advisory nudge is worth that. Fork and Dependabot PRs skip the job, because
-# their read-only token turns the comment write into a 403 and a red check.
+# advisory nudge is worth that. Dependabot runs get the same read-only token, so
+# the job skips both: a comment write there would 403 and turn the check red.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
@@ -81,7 +80,8 @@ jobs:
                 missing.push(`\`${name}\` — empty, or still the placeholder`);
               } else if (/^none\s*:?\s*(?:<reason>)?$/i.test(value)) {
                 // "None" on its own is not an answer; the reason is the point.
-                // `None:` and the template's literal `None: <reason>` count too.
+                // "None:" with nothing after it, or the template's literal
+                // "<reason>" copied over, is the same non-answer.
                 missing.push(`\`${name}\` — says "None" with no reason after it`);
               }
             }
@@ -92,12 +92,13 @@ jobs:
               github.rest.issues.listComments,
               { owner, repo, issue_number, per_page: 100 },
             );
-            // Author and leading marker both, so a human comment that quotes
-            // the marker is never the one overwritten.
+            // The marker alone is not enough: a review bot quoting this file,
+            // or anyone pasting the string, would otherwise get its comment
+            // overwritten.
             const existing = comments.find(
               (c) =>
                 c.user?.login === 'github-actions[bot]' &&
-                c.body?.startsWith(MARKER),
+                c.body?.includes(MARKER),
             );
 
             if (!missing.length) {
