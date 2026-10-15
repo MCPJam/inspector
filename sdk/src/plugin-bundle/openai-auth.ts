@@ -17,10 +17,7 @@ import type { PluginHeaderRequirement } from "./mcp-config.js";
 import { SECRET_FIELD_NAME, type PluginIssueCollector } from "./validation.js";
 
 export type PluginTokenEndpointAuthMethod =
-  | "none"
-  | "client_secret_basic"
-  | "client_secret_post"
-  | "private_key_jwt";
+  "none" | "client_secret_basic" | "client_secret_post" | "private_key_jwt";
 
 export type PluginOAuthClient =
   | {
@@ -282,22 +279,29 @@ export function withApiKeyHeader(
 }
 
 /**
- * The header to send for a user-supplied API key. Bearer and Basic values
- * gain their scheme once: a pasted "Bearer abc" stays "Bearer abc". A Basic
- * credential is taken as the already-encoded token; a custom header gets the
- * value as given.
+ * The header to send for a user-supplied API key, or null when the credential
+ * holds no token or a character no header can carry (NUL, CR, LF). Bearer and
+ * Basic values gain their scheme once: a pasted "Bearer abc" stays
+ * "Bearer abc". A Basic credential is taken as the already-encoded token; a
+ * custom header gets the value as given.
  */
 export function renderPluginApiKeyHeader(
   auth: PluginApiKeyAuth,
   credential: string
-): { name: string; value: string } {
+): { name: string; value: string } | null {
   const value = credential.trim();
+  if (/[\0\r\n]/.test(value)) return null;
   if (auth.headerScheme === "custom_header") {
-    return { name: auth.headerName, value };
+    return value ? { name: auth.headerName, value } : null;
   }
-  const scheme = auth.headerScheme === "bearer" ? "Bearer" : "Basic";
-  const token = value.toLowerCase().startsWith(`${scheme.toLowerCase()} `)
-    ? value.slice(scheme.length + 1).trimStart()
-    : value;
-  return { name: "Authorization", value: `${scheme} ${token}` };
+  const bearer = auth.headerScheme === "bearer";
+  const token = value.replace(
+    bearer ? /^bearer(?:\s+|$)/i : /^basic(?:\s+|$)/i,
+    ""
+  );
+  if (!token) return null;
+  return {
+    name: "Authorization",
+    value: `${bearer ? "Bearer" : "Basic"} ${token}`,
+  };
 }

@@ -360,10 +360,10 @@ describe("renderPluginApiKeyHeader", () => {
   });
 
   it("prefixes an encoded Basic token once", () => {
-    expect(renderPluginApiKeyHeader(basic, "dXNlcjpwYXNz").value).toBe(
+    expect(renderPluginApiKeyHeader(basic, "dXNlcjpwYXNz")?.value).toBe(
       "Basic dXNlcjpwYXNz"
     );
-    expect(renderPluginApiKeyHeader(basic, "Basic dXNlcjpwYXNz").value).toBe(
+    expect(renderPluginApiKeyHeader(basic, "Basic dXNlcjpwYXNz")?.value).toBe(
       "Basic dXNlcjpwYXNz"
     );
   });
@@ -375,5 +375,20 @@ describe("renderPluginApiKeyHeader", () => {
         " Bearer k "
       )
     ).toEqual({ name: "X-Key", value: "Bearer k" });
+  });
+
+  it.each([
+    ["an empty bearer credential", bearer, "   "],
+    ["a bare bearer scheme", bearer, "bearer"],
+    ["a bare basic scheme", basic, "Basic "],
+    [
+      "an empty custom header",
+      { type: "api_key", headerScheme: "custom_header", headerName: "X-Key" },
+      "",
+    ],
+    ["a credential with a line break", bearer, "abc\r\nX-Evil: 1"],
+    ["a credential with a NUL", basic, "abc\u0000"],
+  ] as const)("sends no header for %s", (_label, auth, credential) => {
+    expect(renderPluginApiKeyHeader(auth, credential)).toBeNull();
   });
 });
