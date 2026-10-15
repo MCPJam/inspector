@@ -63,7 +63,11 @@ function explainLog(sample: Extract<TelemetrySample, { log: string }>): Telemetr
     dropped.event = `${JSON.stringify(sample.log)} is not in RequestEventMap or SystemEventMap (${LOG_FIELDS}); sent as ${JSON.stringify(row.event)}`;
   for (const [key, value] of Object.entries({ ...payload, ...context })) {
     if (Object.hasOwn(row, key) && row[key] === value) continue;
-    dropped[key] = LOG_SPECIAL[key]?.(row) ?? ruleReason(strictLogFieldRule(key), value, LOG_FIELDS);
+    const special = Object.hasOwn(LOG_SPECIAL, key)
+      ? LOG_SPECIAL[key]
+      : undefined;
+    dropped[key] =
+      special?.(row) ?? ruleReason(strictLogFieldRule(key), value, LOG_FIELDS);
   }
   return { forwarded: row, dropped };
 }
@@ -72,7 +76,9 @@ function explainAnalytics(sample: Extract<TelemetrySample, { analytics: string }
   const built = rebuildServerAnalytics(sample.analytics, sample.actorId, sample.properties);
   const dropped: Record<string, string> = {};
   if (!built) {
-    const declared = ANALYTICS_EVENTS[sample.analytics as ServerAnalyticsEventName]?.source === "server";
+    const declared =
+      Object.hasOwn(ANALYTICS_EVENTS, sample.analytics) &&
+      ANALYTICS_EVENTS[sample.analytics as ServerAnalyticsEventName].source === "server";
     dropped.event = declared
       ? "the actor is not a telemetry actor ID (a WorkOS user ID or a minted UUID), so nothing is sent"
       : `${JSON.stringify(sample.analytics)} is not declared with source "server" in shared/analytics-events.ts, so nothing is sent`;

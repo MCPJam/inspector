@@ -27,13 +27,19 @@ const ENUMS: Record<string, readonly string[]> = {
   level: ["debug", "info", "warn", "error"],
 };
 
+/** Own keys only: a field named `toString` or `constructor` has no rule. */
+function own<T>(map: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
 /** The rule a context or payload field must meet to be copied into a row. */
 export function strictLogFieldRule(key: string): StrictLogFieldRule | undefined {
-  const values = ENUMS[key] ?? rules[key]?.values;
+  const rule = own(rules, key);
+  const values = own(ENUMS, key) ?? rule?.values;
   if (values) return { values };
-  if (rules[key]?.kind === "number")
+  if (rule?.kind === "number")
     return { kind: "number", max: key === "durationMs" ? 86400000 : 1000000000 };
-  return rules[key];
+  return rule;
 }
 
 function approved(value: unknown, values: readonly string[]) {

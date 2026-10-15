@@ -76,7 +76,8 @@ export type ServerAnalyticsFieldRule =
 export function serverAnalyticsFieldRule(
   key: string,
 ): ServerAnalyticsFieldRule | undefined {
-  if (enums[key]) return { values: enums[key] };
+  // Own keys only: a property named `toString` or `constructor` has no rule.
+  if (Object.hasOwn(enums, key)) return { values: enums[key] };
   if (booleans.has(key)) return { kind: "boolean" };
   if (numbers.has(key)) return { kind: "number", max: 86400000 };
   return undefined;
@@ -91,7 +92,8 @@ export function rebuildServerAnalytics(
   const distinctId = telemetryActorId(actorId);
   if (
     !distinctId ||
-    ANALYTICS_EVENTS[event as ServerAnalyticsEventName]?.source !== "server"
+    !Object.hasOwn(ANALYTICS_EVENTS, event) ||
+    ANALYTICS_EVENTS[event as ServerAnalyticsEventName].source !== "server"
   )
     return null;
   const properties: Record<string, string | boolean | number> = {};

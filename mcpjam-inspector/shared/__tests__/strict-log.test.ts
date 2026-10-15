@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildLegacyLogRow, buildStrictLogRow } from "../strict-log";
+import {
+  buildLegacyLogRow,
+  buildStrictLogRow,
+  strictLogFieldRule,
+} from "../strict-log";
 import catalog from "../telemetry-catalog.generated.json";
 
 describe("strict log boundary", () => {
@@ -146,5 +150,19 @@ describe("strict log boundary", () => {
     expect(row).toMatchObject({ event: "log.unknown", route: "unknown_route" });
     expect(row).not.toHaveProperty("durationMs");
     expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
+  });
+  it("drops fields named after Object.prototype members instead of throwing", () => {
+    const fields = JSON.parse(
+      '{"toString":"x","constructor":"ok","hasOwnProperty":1,"valueOf":true,"__proto__":"x"}',
+    );
+    for (const key of Object.keys(fields))
+      expect(strictLogFieldRule(key)).toBeUndefined();
+    const row = buildStrictLogRow("http.request.failed", fields, fields);
+    for (const key of Object.keys(fields))
+      expect(Object.hasOwn(row, key)).toBe(false);
+    expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
+    expect(buildLegacyLogRow("[harness] turn failed", fields)).toMatchObject({
+      event: "harness.turn.failed",
+    });
   });
 });

@@ -50,6 +50,28 @@ describe("explainTelemetry: server analytics", () => {
     expect(explainTelemetry({ ...sample, properties: { outcome: 1n } }).dropped.outcome).toMatch(/^1 is not an allowed value/);
   });
 
+  it("explains Object.prototype member names as fields without a rule", () => {
+    const log = explainTelemetry({
+      log: "http.request.failed",
+      context: { toString: "x", constructor: "ok" },
+    });
+    expect(log.dropped.toString).toMatch(/^no field rule/);
+    expect(log.dropped.constructor).toMatch(/^no field rule/);
+    const analytics = explainTelemetry({
+      analytics: "api_agent_turn_completed",
+      actorId: USER,
+      properties: { constructor: "ok" },
+    });
+    expect(analytics.dropped.constructor).toMatch(/^no field rule/);
+    expect(
+      explainTelemetry({
+        analytics: "constructor",
+        actorId: USER,
+        properties: {},
+      }).dropped.event,
+    ).toMatch(/is not declared/);
+  });
+
   it("says why a whole event is not sent", () => {
     expect(explainTelemetry({ analytics: "made_up_event", actorId: USER, properties: { outcome: "ok" } }).dropped).toEqual({
       event: '"made_up_event" is not declared with source "server" in shared/analytics-events.ts, so nothing is sent',
