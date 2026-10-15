@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMockMcpClientManager, createTestApp } from "./helpers/index.js";
 import {
+  approveStdioLaunch,
+  readChangedEnvNames,
   readStdioLaunchApproval,
   stdioLaunchFingerprint,
 } from "../../../utils/stdio-command-approvals.js";
@@ -110,6 +112,7 @@ describe("POST /api/mcp/servers/approve-command", () => {
     expect(await readStdioLaunchApproval(SERVER_ID, FINGERPRINT)).toBe(
       "approved",
     );
+    expect(await readChangedEnvNames(SERVER_ID, SPEC.env)).toEqual([]);
   });
 
   it("returns 409 with the current terms when the command moved since the dialog was shown", async () => {
@@ -133,6 +136,24 @@ describe("POST /api/mcp/servers/approve-command", () => {
     });
     expect(JSON.stringify(body)).not.toContain("bar");
     expect(await readStdioLaunchApproval(SERVER_ID, FINGERPRINT)).toBe("none");
+  });
+
+  it("names the env variables whose value changed since this device approved the server", async () => {
+    await approveStdioLaunch(SERVER_ID, { ...SPEC, env: { FOO: "old" } });
+
+    const res = await post({
+      ...validBody,
+      fingerprint: stdioLaunchFingerprint({ ...SPEC, env: { FOO: "old" } }),
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      approval: {
+        fingerprint: FINGERPRINT,
+        envNames: ["FOO"],
+        changedEnvNames: ["FOO"],
+        previouslyApproved: true,
+      },
+    });
   });
 
   it("refuses to approve an http server", async () => {

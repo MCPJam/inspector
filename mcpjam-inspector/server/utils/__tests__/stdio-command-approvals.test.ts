@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   approveStdioLaunch,
   createStdioCommandApprovalStore,
+  readChangedEnvNames,
   readStdioLaunchApproval,
   stdioCommandApprovalRequired,
   stdioLaunchFingerprint,
@@ -63,13 +64,13 @@ describe("stdio command approval store", () => {
   it("reports approved after approving the same fingerprint", async () => {
     const store = createStdioCommandApprovalStore(() => file);
     const fingerprint = stdioLaunchFingerprint(BASE);
-    await store.approve("srv-1", fingerprint);
+    await store.approve("srv-1", BASE);
     expect(await store.read("srv-1", fingerprint)).toBe("approved");
   });
 
   it("reports changed when the stored fingerprint differs", async () => {
     const store = createStdioCommandApprovalStore(() => file);
-    await store.approve("srv-1", stdioLaunchFingerprint(BASE));
+    await store.approve("srv-1", BASE);
     expect(
       await store.read(
         "srv-1",
@@ -82,8 +83,8 @@ describe("stdio command approval store", () => {
     const store = createStdioCommandApprovalStore(() => file);
     const first = stdioLaunchFingerprint(BASE);
     const second = stdioLaunchFingerprint({ ...BASE, args: ["v2.js"] });
-    await store.approve("srv-1", first);
-    await store.approve("srv-1", second);
+    await store.approve("srv-1", BASE);
+    await store.approve("srv-1", { ...BASE, args: ["v2.js"] });
     expect(await store.read("srv-1", second)).toBe("approved");
     expect(await store.read("srv-1", first)).toBe("changed");
   });
@@ -91,15 +92,15 @@ describe("stdio command approval store", () => {
   it("keeps other servers' approvals when approving one", async () => {
     const store = createStdioCommandApprovalStore(() => file);
     const fingerprint = stdioLaunchFingerprint(BASE);
-    await store.approve("srv-1", fingerprint);
-    await store.approve("srv-2", fingerprint);
+    await store.approve("srv-1", BASE);
+    await store.approve("srv-2", BASE);
     expect(await store.read("srv-1", fingerprint)).toBe("approved");
     expect(await store.read("srv-2", fingerprint)).toBe("approved");
   });
 
   it("treats an unreadable file as no approvals", async () => {
     const store = createStdioCommandApprovalStore(() => file);
-    await store.approve("srv-1", stdioLaunchFingerprint(BASE));
+    await store.approve("srv-1", BASE);
     await writeFile(file, "{not json");
     expect(await store.read("srv-1", stdioLaunchFingerprint(BASE))).toBe(
       "none",
@@ -109,18 +110,43 @@ describe("stdio command approval store", () => {
   it("writes the file readable by the owner only", async () => {
     if (process.platform === "win32") return;
     const store = createStdioCommandApprovalStore(() => file);
-    await store.approve("srv-1", stdioLaunchFingerprint(BASE));
+    await store.approve("srv-1", BASE);
     expect((await stat(file)).mode & 0o777).toBe(0o600);
+  });
+
+  it("names the env variables that are new or hold another value since the last approval", async () => {
+    const store = createStdioCommandApprovalStore(() => file);
+    await store.approve("srv-1", BASE);
+    expect(
+      await store.changedEnvNames("srv-1", {
+        FOO: "evil",
+        BAZ: "1",
+        NODE_OPTIONS: "--require=/tmp/x.js",
+      }),
+    ).toEqual(["FOO", "NODE_OPTIONS"]);
+    expect(await store.changedEnvNames("srv-1", BASE.env)).toEqual([]);
+  });
+
+  it("keeps env values out of the file", async () => {
+    const store = createStdioCommandApprovalStore(() => file);
+    await store.approve("srv-1", {
+      ...BASE,
+      env: { TOKEN: "secret-value-123" },
+    });
+    expect(await readFile(file, "utf8")).not.toContain("secret-value-123");
   });
 
   it("the default store follows MCPJAM_STDIO_APPROVALS_FILE", async () => {
     const custom = join(dir, "custom.json");
     vi.stubEnv("MCPJAM_STDIO_APPROVALS_FILE", custom);
     const fingerprint = stdioLaunchFingerprint(BASE);
-    await approveStdioLaunch("srv-1", fingerprint);
+    await approveStdioLaunch("srv-1", BASE);
     expect(await readStdioLaunchApproval("srv-1", fingerprint)).toBe(
       "approved",
     );
+    expect(
+      await readChangedEnvNames("srv-1", { ...BASE.env, FOO: "evil" }),
+    ).toEqual(["FOO"]);
     const persisted = JSON.parse(await readFile(custom, "utf8"));
     expect(persisted.approvals["srv-1"].fingerprint).toBe(fingerprint);
   });
@@ -140,6 +166,7 @@ describe("stdioCommandApprovalRequired", () => {
       },
       fingerprint,
       approval: "changed",
+      changedEnvNames: ["TOKEN"],
     });
 
     expect(error.status).toBe(403);
@@ -148,17 +175,32 @@ describe("stdioCommandApprovalRequired", () => {
     expect(error.details).toEqual({
       reason: "stdio_command_approval_required",
       serverId: "srv-1",
+      serverName: "Files",
       approval: {
         serverId: "srv-1",
         fingerprint,
         command: "node",
         args: ["server.js"],
         envNames: ["TOKEN"],
+        changedEnvNames: ["TOKEN"],
         cwd: "/srv",
         previouslyApproved: true,
       },
     });
     expect(JSON.stringify(error.details)).not.toContain("secret-value");
+  });
+
+  it("points a plugin component at the chat, where its approval is asked", () => {
+    const error = stdioCommandApprovalRequired({
+      serverId: "srv-1",
+      serverDisplayName: "Files",
+      spec: { command: "node", args: ["${PLUGIN_ROOT}/index.js"], env: {} },
+      fingerprint: "ab".repeat(32),
+      approval: "none",
+      pluginComponent: true,
+    });
+    expect(error.message).toContain("Use it in a chat");
+    expect(error.message).not.toContain("Servers");
   });
 
   it("omits cwd when the spec has none and marks a first approval", () => {
@@ -172,6 +214,7 @@ describe("stdioCommandApprovalRequired", () => {
     const approval = (error.details as any).approval;
     expect(approval.previouslyApproved).toBe(false);
     expect("cwd" in approval).toBe(false);
+    expect("changedEnvNames" in approval).toBe(false);
     expect(approval.envNames).toEqual([]);
   });
 });

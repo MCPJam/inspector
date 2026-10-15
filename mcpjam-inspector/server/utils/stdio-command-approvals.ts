@@ -44,7 +44,21 @@ export type StdioLaunchApproval = "approved" | "changed" | "none";
 
 interface PersistedApprovals {
   version: 1;
-  approvals: Record<string, { fingerprint: string; approvedAt: string }>;
+  approvals: Record<
+    string,
+    {
+      fingerprint: string;
+      approvedAt: string;
+      /** Per-variable digests, so a refusal can name what changed. */
+      envValueHashes?: Record<string, string>;
+    }
+  >;
+}
+
+function envValueHash(name: string, value: string): string {
+  return createHash("sha256")
+    .update(JSON.stringify([name, value]))
+    .digest("hex");
 }
 
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
@@ -79,7 +93,18 @@ export function createStdioCommandApprovalStore(filePath: () => string) {
     return stored === fingerprint ? "approved" : "changed";
   }
 
-  function approve(serverId: string, fingerprint: string): Promise<void> {
+  /** Names in `env` that are new or changed since the last approval. */
+  async function changedEnvNames(
+    serverId: string,
+    env: Record<string, string>,
+  ): Promise<string[]> {
+    const approved = (await readApprovals())[serverId]?.envValueHashes ?? {};
+    return Object.keys(env).filter(
+      (name) => approved[name] !== envValueHash(name, env[name]),
+    );
+  }
+
+  function approve(serverId: string, spec: StdioLaunchSpec): Promise<void> {
     return serialize(async () => {
       const file = filePath();
       await mkdir(dirname(file), { recursive: true, mode: 0o700 });
@@ -91,8 +116,14 @@ export function createStdioCommandApprovalStore(filePath: () => string) {
       try {
         const approvals = await readApprovals();
         approvals[serverId] = {
-          fingerprint,
+          fingerprint: stdioLaunchFingerprint(spec),
           approvedAt: new Date().toISOString(),
+          envValueHashes: Object.fromEntries(
+            Object.entries(spec.env).map(([name, value]) => [
+              name,
+              envValueHash(name, value),
+            ]),
+          ),
         };
         const state: PersistedApprovals = { version: 1, approvals };
         await persistCapabilityState(file, state);
@@ -102,7 +133,7 @@ export function createStdioCommandApprovalStore(filePath: () => string) {
     });
   }
 
-  return { read, approve };
+  return { read, changedEnvNames, approve };
 }
 
 /** `MCPJAM_STDIO_APPROVALS_FILE` relocates the file; it never disables the check. */
@@ -117,6 +148,7 @@ const defaultStore = createStdioCommandApprovalStore(
   stdioCommandApprovalsFilePath,
 );
 export const readStdioLaunchApproval = defaultStore.read;
+export const readChangedEnvNames = defaultStore.changedEnvNames;
 export const approveStdioLaunch = defaultStore.approve;
 
 export function stdioCommandApprovalTerms(args: {
@@ -124,6 +156,8 @@ export function stdioCommandApprovalTerms(args: {
   spec: StdioLaunchSpec;
   fingerprint: string;
   approval: Exclude<StdioLaunchApproval, "approved">;
+  /** From {@link readChangedEnvNames}, when the approval is `changed`. */
+  changedEnvNames?: string[];
 }): StdioCommandApprovalTerms {
   return {
     serverId: args.serverId,
@@ -131,6 +165,7 @@ export function stdioCommandApprovalTerms(args: {
     command: args.spec.command,
     args: args.spec.args,
     envNames: Object.keys(args.spec.env),
+    ...(args.changedEnvNames ? { changedEnvNames: args.changedEnvNames } : {}),
     ...(args.spec.cwd !== undefined ? { cwd: args.spec.cwd } : {}),
     previouslyApproved: args.approval === "changed",
   };
@@ -142,14 +177,20 @@ export function stdioCommandApprovalRequired(args: {
   spec: StdioLaunchSpec;
   fingerprint: string;
   approval: Exclude<StdioLaunchApproval, "approved">;
+  changedEnvNames?: string[];
+  /** A plugin's local component: it has no Connect, the chat asks instead. */
+  pluginComponent?: boolean;
 }): WebRouteError {
   const name = `"${args.serverDisplayName}"`;
   // Shown where no dialog can open (swarms, eval authoring, the environment
-  // tools pane): the Servers tab connect is the surface that asks.
+  // tools pane), pointing at the surface that asks.
+  const where = args.pluginComponent
+    ? "Use it in a chat"
+    : "Connect it from Servers";
   const message =
     args.approval === "changed"
-      ? `The command ${name} runs changed since this device approved it. Connect it from Servers to review and approve the new command.`
-      : `${name} runs a command this device has not approved yet. Connect it from Servers to review and approve the command.`;
+      ? `The command ${name} runs changed since this device approved it. ${where} to review and approve the new command.`
+      : `${name} runs a command this device has not approved yet. ${where} to review and approve the command.`;
   return new WebRouteError(
     403,
     ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED,
@@ -157,6 +198,7 @@ export function stdioCommandApprovalRequired(args: {
     {
       reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
       serverId: args.serverId,
+      serverName: args.serverDisplayName,
       approval: stdioCommandApprovalTerms(args),
     },
   );

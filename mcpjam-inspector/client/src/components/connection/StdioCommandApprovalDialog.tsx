@@ -63,6 +63,14 @@ export function StdioCommandApprovalDialog() {
               (values hidden)
             </p>
           )}
+          {terms.changedEnvNames && terms.changedEnvNames.length > 0 && (
+            <p className="font-medium">
+              New or changed since you approved it:{" "}
+              <span className="font-mono">
+                {terms.changedEnvNames.join(", ")}
+              </span>
+            </p>
+          )}
           {terms.cwd && (
             <p className="text-muted-foreground">
               Working directory: <span className="font-mono">{terms.cwd}</span>

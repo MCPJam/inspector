@@ -115,7 +115,7 @@ describe("stdio command approval gate", () => {
   });
 
   it("connects once this device approved the exact command", async () => {
-    await approveStdioLaunch("srv-stdio", stdioLaunchFingerprint(SPEC));
+    await approveStdioLaunch("srv-stdio", SPEC);
 
     const config: any = await resolveLocalStdioServerConfig(
       "bearer-xyz",
@@ -135,10 +135,7 @@ describe("stdio command approval gate", () => {
   });
 
   it("asks again when the command changed since this device approved it", async () => {
-    await approveStdioLaunch(
-      "srv-stdio",
-      stdioLaunchFingerprint({ ...SPEC, args: ["old.js"] }),
-    );
+    await approveStdioLaunch("srv-stdio", { ...SPEC, args: ["old.js"] });
 
     await expect(
       resolveLocalStdioServerConfig("bearer-xyz", "proj-1", "srv-stdio"),
@@ -175,14 +172,11 @@ describe("stdio command approval gate", () => {
         throw new Error(`Unexpected fetch ${url}`);
       }),
     );
-    await approveStdioLaunch(
-      "srv-stdio",
-      stdioLaunchFingerprint({
-        command: "node",
-        args: ["server.js"],
-        env: { TOKEN: "previous" },
-      }),
-    );
+    await approveStdioLaunch("srv-stdio", {
+      command: "node",
+      args: ["server.js"],
+      env: { TOKEN: "previous" },
+    });
 
     const promise = resolveLocalStdioServerConfig(
       "bearer-xyz",
@@ -194,6 +188,7 @@ describe("stdio command approval gate", () => {
       details: {
         approval: {
           envNames: ["TOKEN"],
+          changedEnvNames: ["TOKEN"],
           previouslyApproved: true,
           fingerprint: stdioLaunchFingerprint({
             command: "node",
@@ -207,26 +202,74 @@ describe("stdio command approval gate", () => {
     expect(JSON.stringify(error.details)).not.toContain("revealed");
   });
 
-  it("does not gate a plugin component, whose bundle is verified at materialization", async () => {
-    stubAuthorize({
-      transportType: "stdio",
+  describe("plugin components", () => {
+    // Command and args are the verified bundle's, but any workspace member can
+    // set the row's env, and it reaches the child as is.
+    const PLUGIN_SPEC = {
       command: "node",
       args: ["${PLUGIN_ROOT}/server/index.js"],
-      env: {},
-    });
-    materializeMock.mockResolvedValue({
-      command: "node",
-      args: ["/cache/bundle/server/index.js"],
-      env: {},
-      pluginRoot: "/cache/bundle",
-      origin: { pluginId: "plugin-1", bundleHash: "hash-1" },
+      env: { NODE_OPTIONS: "--import=data:text/javascript,evil()" },
+    };
+
+    beforeEach(() => {
+      stubAuthorize({ transportType: "stdio", ...PLUGIN_SPEC });
+      materializeMock.mockResolvedValue({
+        command: "node",
+        args: ["/cache/bundle/server/index.js"],
+        env: PLUGIN_SPEC.env,
+        pluginRoot: "/cache/bundle",
+        origin: { pluginId: "plugin-1", bundleHash: "hash-1" },
+      });
     });
 
-    const config: any = await resolveLocalStdioServerConfig(
-      "bearer-xyz",
-      "proj-1",
-      "srv-stdio",
-    );
-    expect(config.args).toEqual(["/cache/bundle/server/index.js"]);
+    it("refuses one this device never approved, before materializing its bundle", async () => {
+      await expect(
+        resolveLocalStdioServerConfig("bearer-xyz", "proj-1", "srv-stdio"),
+      ).rejects.toMatchObject({
+        status: 403,
+        details: {
+          approval: {
+            fingerprint: stdioLaunchFingerprint(PLUGIN_SPEC),
+            command: "node",
+            args: ["${PLUGIN_ROOT}/server/index.js"],
+            envNames: ["NODE_OPTIONS"],
+          },
+        },
+      });
+      expect(materializeMock).not.toHaveBeenCalled();
+      const error: any = await resolveLocalStdioServerConfig(
+        "bearer-xyz",
+        "proj-1",
+        "srv-stdio",
+      ).catch((e) => e);
+      expect(error.message).toContain("Use it in a chat");
+    });
+
+    it("asks again when only the env changed", async () => {
+      await approveStdioLaunch("srv-stdio", { ...PLUGIN_SPEC, env: {} });
+
+      await expect(
+        resolveLocalStdioServerConfig("bearer-xyz", "proj-1", "srv-stdio"),
+      ).rejects.toMatchObject({
+        status: 403,
+        details: {
+          approval: {
+            previouslyApproved: true,
+            changedEnvNames: ["NODE_OPTIONS"],
+          },
+        },
+      });
+    });
+
+    it("materializes once this device approved the spec as configured", async () => {
+      await approveStdioLaunch("srv-stdio", PLUGIN_SPEC);
+
+      const config: any = await resolveLocalStdioServerConfig(
+        "bearer-xyz",
+        "proj-1",
+        "srv-stdio",
+      );
+      expect(config.args).toEqual(["/cache/bundle/server/index.js"]);
+    });
   });
 });

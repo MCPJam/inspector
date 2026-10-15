@@ -46,6 +46,7 @@ import {
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { toast } from "sonner";
 import { track } from "@/lib/analytics";
+import { askStdioCommandApprovalForChatError } from "@/lib/stdio-command-approval";
 import {
   convertToModelMessages,
   type ChatTransport,
@@ -3634,8 +3635,11 @@ export function useChatSession(
         limitKind,
         ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
       });
+      if (hostedProjectId) {
+        void askStdioCommandApprovalForChatError(chatError, hostedProjectId);
+      }
     },
-    [hostedScenarioId],
+    [hostedScenarioId, hostedProjectId],
   );
 
   // Create transport

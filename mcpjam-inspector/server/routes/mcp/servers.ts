@@ -19,6 +19,7 @@ import {
 } from "../../utils/local-server-resolver.js";
 import {
   approveStdioLaunch,
+  readChangedEnvNames,
   readStdioLaunchApproval,
   stdioCommandApprovalTerms,
   stdioLaunchFingerprint,
@@ -355,12 +356,20 @@ servers.post("/approve-command", async (c) => {
               spec,
               fingerprint,
               approval,
+              ...(approval === "changed"
+                ? {
+                    changedEnvNames: await readChangedEnvNames(
+                      serverId,
+                      spec.env
+                    ),
+                  }
+                : {}),
             }),
           }
         )
       );
     }
-    await approveStdioLaunch(serverId, fingerprint);
+    await approveStdioLaunch(serverId, spec);
     return c.json({ success: true, fingerprint });
   } catch (error) {
     if (error instanceof WebRouteError) {

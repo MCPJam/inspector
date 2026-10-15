@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const authFetchMock = vi.fn();
+const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+
+vi.mock("sonner", () => ({ toast: toastMock }));
 
 vi.mock("@/lib/session-token", () => ({
   authFetch: (...args: unknown[]) => authFetchMock(...args),
 }));
 
 import {
+  askStdioCommandApprovalForChatError,
   obtainStdioCommandApproval,
   readStdioCommandApprovalTerms,
   useStdioCommandApprovalStore,
@@ -64,6 +68,23 @@ function jsonResponse(body: unknown, status = 200) {
 describe("readStdioCommandApprovalTerms", () => {
   it("reads the terms off a refusal", () => {
     expect(readStdioCommandApprovalTerms(REFUSAL)).toEqual(TERMS);
+  });
+
+  it("reads which env values changed since the last approval", () => {
+    const changed = {
+      ...TERMS,
+      previouslyApproved: true,
+      changedEnvNames: ["FOO"],
+    };
+    expect(
+      readStdioCommandApprovalTerms({ ...REFUSAL, approval: changed }),
+    ).toEqual(changed);
+    expect(
+      readStdioCommandApprovalTerms({
+        ...REFUSAL,
+        approval: { ...TERMS, changedEnvNames: "FOO" },
+      }),
+    ).toEqual(TERMS);
   });
 
   it.each([
@@ -147,6 +168,18 @@ describe("obtainStdioCommandApproval", () => {
     await expect(outcome).rejects.toThrow("disk full");
   });
 
+  it("falls back to its own message when the answer is not JSON", async () => {
+    authFetchMock.mockResolvedValue(
+      new Response("<html>Bad gateway</html>", { status: 502 }),
+    );
+
+    const outcome = obtainStdioCommandApproval(PROMPT);
+    await answerNextPrompt(true);
+    await expect(outcome).rejects.toThrow(
+      "The command could not be approved on this device.",
+    );
+  });
+
   it("queues prompts so one dialog shows at a time", async () => {
     const store = useStdioCommandApprovalStore.getState();
     const first = store.request(PROMPT);
@@ -163,5 +196,68 @@ describe("obtainStdioCommandApproval", () => {
     useStdioCommandApprovalStore.getState().settle(false);
     expect(await second).toBe(false);
     expect(names()).toEqual([]);
+  });
+});
+
+describe("askStdioCommandApprovalForChatError", () => {
+  // The web chat route answers a refused turn with this body; the transport
+  // hands it to onError as the message.
+  const refusedTurn = () =>
+    new Error(
+      JSON.stringify({
+        code: "STDIO_COMMAND_APPROVAL_REQUIRED",
+        message: "needs approval",
+        details: {
+          reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
+          serverId: "srv-1",
+          serverName: "Files",
+          approval: TERMS,
+        },
+      }),
+    );
+
+  beforeEach(() => {
+    authFetchMock.mockReset();
+    toastMock.success.mockReset();
+    toastMock.error.mockReset();
+    useStdioCommandApprovalStore.setState({ queue: [] });
+  });
+
+  it.each([
+    new Error("Model provider timed out"),
+    new Error(JSON.stringify({ code: "FORBIDDEN", message: "no" })),
+  ])("leaves any other failure alone (%s)", async (error) => {
+    await askStdioCommandApprovalForChatError(error, "proj-1");
+    expect(useStdioCommandApprovalStore.getState().queue).toEqual([]);
+  });
+
+  it("asks for the refused server's command, then says to send again", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse({ success: true }));
+
+    const asked = askStdioCommandApprovalForChatError(refusedTurn(), "proj-1");
+    expect(await answerNextPrompt(true)).toEqual(TERMS);
+    expect(useStdioCommandApprovalStore.getState().queue).toEqual([]);
+    await asked;
+
+    const [, init] = authFetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      projectId: "proj-1",
+      serverId: "srv-1",
+      serverName: "Files",
+    });
+    expect(toastMock.success).toHaveBeenCalledWith(
+      "Allowed on this device. Send your message again.",
+    );
+  });
+
+  it("reports an approval that fails", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse({ success: false, error: "disk full" }, 500),
+    );
+
+    const asked = askStdioCommandApprovalForChatError(refusedTurn(), "proj-1");
+    await answerNextPrompt(true);
+    await asked;
+    expect(toastMock.error).toHaveBeenCalledWith("disk full");
   });
 });

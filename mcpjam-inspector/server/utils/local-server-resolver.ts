@@ -90,8 +90,12 @@ import {
   releasePluginLease,
   retainPluginLease,
 } from "../services/plugins/local-stdio.js";
-import type { PluginStdioLaunchSpec } from "../services/plugins/plugin-root.js";
 import {
+  needsPluginRoot,
+  type PluginStdioLaunchSpec,
+} from "../services/plugins/plugin-root.js";
+import {
+  readChangedEnvNames,
   readStdioLaunchApproval,
   stdioCommandApprovalRequired,
   stdioLaunchFingerprint,
@@ -1029,6 +1033,38 @@ async function applyLocalRuntimeResolution<
 
   if (result.serverConfig.transportType === "stdio") {
     const stdioConfig = result.serverConfig;
+    // Any workspace member can change what a stdio row runs (a plugin
+    // component's env included), and it spawns here with the user's
+    // privileges, so this device must have approved the exact spec as
+    // configured first (PLB-192). Checked after the secret reveal so env
+    // VALUES are part of what was approved, and before materialization so a
+    // refusal pins no bundle.
+    const spec: StdioLaunchSpec = {
+      command: stdioConfig.command,
+      args: stdioConfig.args ?? [],
+      env: stdioConfig.env ?? {},
+      ...(stdioConfig.cwd !== undefined ? { cwd: stdioConfig.cwd } : {}),
+    };
+    const fingerprint = stdioLaunchFingerprint(spec);
+    const approval = await readStdioLaunchApproval(serverId, fingerprint);
+    if (approval !== "approved") {
+      throw stdioCommandApprovalRequired({
+        serverId,
+        serverDisplayName: args.serverDisplayName ?? args.managerKey,
+        spec,
+        fingerprint,
+        approval,
+        ...(approval === "changed"
+          ? { changedEnvNames: await readChangedEnvNames(serverId, spec.env) }
+          : {}),
+        pluginComponent: needsPluginRoot({
+          command: spec.command,
+          args: spec.args,
+          env: spec.env,
+          workingDirectory: spec.cwd,
+        }),
+      });
+    }
     const materialized = await materializePluginStdioForConnect({
       // Lazy: an ordinary stdio server must not pay a Convex read — or
       // require Convex configuration at all — to connect.
@@ -1068,31 +1104,6 @@ async function applyLocalRuntimeResolution<
           : {}),
       },
     });
-    if (!materialized) {
-      // Plugin components are exempt: their bundle is verified against the
-      // plugin's hash at materialization and only a project admin manages
-      // them. Every other stdio row is editable by any workspace member and
-      // spawns here with the user's privileges, so this device must have
-      // approved the exact spec first (PLB-192). Checked after the secret
-      // reveal so env VALUES are part of what was approved.
-      const spec: StdioLaunchSpec = {
-        command: stdioConfig.command,
-        args: stdioConfig.args ?? [],
-        env: stdioConfig.env ?? {},
-        ...(stdioConfig.cwd !== undefined ? { cwd: stdioConfig.cwd } : {}),
-      };
-      const fingerprint = stdioLaunchFingerprint(spec);
-      const approval = await readStdioLaunchApproval(serverId, fingerprint);
-      if (approval !== "approved") {
-        throw stdioCommandApprovalRequired({
-          serverId,
-          serverDisplayName: args.serverDisplayName ?? args.managerKey,
-          spec,
-          fingerprint,
-          approval,
-        });
-      }
-    }
     if (materialized) {
       logger.debug("[plugin-stdio] materialized bundle for launch", {
         serverId,

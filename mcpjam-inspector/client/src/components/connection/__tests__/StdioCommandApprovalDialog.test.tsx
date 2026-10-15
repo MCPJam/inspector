@@ -75,9 +75,28 @@ describe("StdioCommandApprovalDialog", () => {
     expect(
       screen.getByText(/has changed since you approved it on this device/),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/New or changed since you approved/)).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await outcome).toBe(false);
+  });
+
+  it("names the env variables whose value changed, since values stay hidden", () => {
+    useStdioCommandApprovalStore.getState().request({
+      projectId: "proj-1",
+      serverName: "Files",
+      terms: {
+        ...TERMS,
+        previouslyApproved: true,
+        changedEnvNames: ["LOG_LEVEL"],
+      },
+    });
+
+    render(<StdioCommandApprovalDialog />);
+
+    expect(
+      screen.getByText(/New or changed since you approved it/),
+    ).toHaveTextContent("New or changed since you approved it: LOG_LEVEL");
   });
 
   it("answers one prompt at a time, in order", async () => {

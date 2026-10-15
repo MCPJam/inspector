@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { toast } from "sonner";
 import { authFetch } from "@/lib/session-token";
 import {
   STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
@@ -74,6 +75,9 @@ export function readStdioCommandApprovalTerms(
     command: approval.command,
     args: approval.args,
     envNames: approval.envNames,
+    ...(isStringArray(approval.changedEnvNames)
+      ? { changedEnvNames: approval.changedEnvNames }
+      : {}),
     ...(typeof approval.cwd === "string" ? { cwd: approval.cwd } : {}),
     previouslyApproved: approval.previouslyApproved === true,
   };
@@ -93,10 +97,12 @@ async function approveStdioCommand(args: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(args),
   });
-  const body = (await response.json().catch(() => null)) as Record<
-    string,
-    unknown
-  > | null;
+  let body: Record<string, unknown> | null = null;
+  try {
+    body = (await response.json()) as Record<string, unknown> | null;
+  } catch {
+    // Not JSON (a proxy's error page): the fallback message below applies.
+  }
   if (response.ok && body?.success === true) return { ok: true };
   return {
     ok: false,
@@ -134,4 +140,43 @@ export async function obtainStdioCommandApproval(
     terms = outcome.terms;
   }
   return false;
+}
+
+/**
+ * A chat turn the web route refused because this device has not approved a
+ * stdio server's command. A plugin's local component spawns only there, with
+ * no Connect to ask from, so the chat asks; the user then sends again.
+ */
+export async function askStdioCommandApprovalForChatError(
+  error: Error,
+  projectId: string,
+): Promise<void> {
+  const start = error.message.indexOf("{");
+  if (start < 0) return;
+  let details: Record<string, unknown> | undefined;
+  try {
+    details = JSON.parse(error.message.slice(start))?.details;
+  } catch {
+    return;
+  }
+  const terms = readStdioCommandApprovalTerms(details);
+  if (!terms) return;
+  try {
+    const allowed = await obtainStdioCommandApproval({
+      projectId,
+      serverName:
+        typeof details?.serverName === "string"
+          ? details.serverName
+          : terms.serverId,
+      terms,
+    });
+    if (allowed)
+      toast.success("Allowed on this device. Send your message again.");
+  } catch (failure) {
+    toast.error(
+      failure instanceof Error
+        ? failure.message
+        : "The command could not be approved on this device.",
+    );
+  }
 }
