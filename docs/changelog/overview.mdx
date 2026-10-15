@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-15
+
+#### Fixed
+
+- **Claude and Bedrock no longer fail when an MCP tool returns an empty text caption** — conversations with Claude or Bedrock models no longer fail with `messages: text content blocks must be non-empty` when an MCP tool produces an empty or whitespace-only text part alongside an image. The empty text is stripped from the request before it reaches the provider; saved conversation history and requests to other providers (Gemini, OpenAI-compatible) are unchanged.
+
 ### 2026-10-14
 
 #### Added
