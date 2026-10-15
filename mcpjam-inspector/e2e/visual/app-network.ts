@@ -158,13 +158,6 @@ async function serveHttp(
     url.pathname === "/repos/MCPJam/inspector"
   )
     return route.fulfill({ json: { stargazers_count: 2500 } });
-  if (
-    ["https://fonts.googleapis.com", "https://fonts.gstatic.com"].includes(
-      url.origin,
-    ) &&
-    route.request().method() === "GET"
-  )
-    return route.continue();
   failures.push(`HTTP: ${url.origin}${url.pathname}`);
   await route.abort("blockedbyclient");
 }

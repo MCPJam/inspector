@@ -5,7 +5,7 @@ import { authFetch } from "@/lib/session-token";
 import {
   buildStoredOAuthConfig,
   handleOAuthCallback,
-  serializeStoredOAuthConfig,
+  serializePublicConnectionSettings,
 } from "../mcp-oauth";
 
 describe("OAuth recovery security boundary", () => {
@@ -20,11 +20,11 @@ describe("OAuth recovery security boundary", () => {
       scopes: ["read"],
     });
     expect(config.hasCustomHeaders).toBe(false);
-    expect(JSON.parse(serializeStoredOAuthConfig(config))).toEqual({
+    expect(JSON.parse(serializePublicConnectionSettings(config))).toEqual({
       scopes: ["read"],
       useRegistryOAuthProxy: false,
     });
-    expect(serializeStoredOAuthConfig(config)).not.toContain("transport");
+    expect(serializePublicConnectionSettings(config)).not.toContain("transport");
   });
   it.each([
     { callbackState: "wrong", callbackIss: "https://issuer.example" },

@@ -1538,7 +1538,7 @@ describe("mcp-oauth", () => {
       expect(result).toEqual({
         success: false,
         error:
-          "CIMD is unavailable on this preview host because its OAuth callback is not registered. Choose Automatic or DCR for this preview.",
+          "CIMD is unavailable on this preview host. Choose Automatic or DCR.",
       });
       expect(mockRunOAuthStateMachine).not.toHaveBeenCalled();
     });
@@ -1560,7 +1560,7 @@ describe("mcp-oauth", () => {
       expect(result).toEqual({
         success: false,
         error:
-          "CIMD is unavailable on this preview host, and the authorization server does not offer DCR. Use a different server or run this on a registered host.",
+          "CIMD is unavailable on this preview host. Use a different server or run this on a registered host.",
       });
       expect(mockRunOAuthStateMachine).not.toHaveBeenCalled();
     });

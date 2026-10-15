@@ -60,7 +60,7 @@ import {
   clearPendingOAuthAttempt,
   initiateOAuth,
   readStoredOAuthConfig,
-  serializeStoredOAuthConfig,
+  serializePublicConnectionSettings,
   type StoredOAuthConfig,
   OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/oauth/mcp-oauth";
@@ -360,7 +360,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
       `mcp-oauth-config-${formData.name}`,
-      serializeStoredOAuthConfig(oauthConfig),
+      serializePublicConnectionSettings(oauthConfig),
     );
   }
 

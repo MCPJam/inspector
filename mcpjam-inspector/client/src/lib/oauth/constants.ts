@@ -131,8 +131,8 @@ export function applyPreviewRegistrationPolicy(
   supportsCimd: boolean,
 ): { plan: ResolvedAuthorizationPlan; reason?: string; error?: string } {
   if (plan.status !== "ready" || plan.registrationStrategy !== "cimd" || supportsCimd) return { plan };
-  if (mode !== "auto") return { plan, error: "CIMD is unavailable on this preview host because its OAuth callback is not registered. Choose Automatic or DCR for this preview." };
-  if (!plan.capabilities.supportsDcr) return { plan, error: "CIMD is unavailable on this preview host, and the authorization server does not offer DCR. Use a different server or run this on a registered host." };
+  if (mode !== "auto") return { plan, error: "CIMD is unavailable on this preview host. Choose Automatic or DCR." };
+  if (!plan.capabilities.supportsDcr) return { plan, error: "CIMD is unavailable on this preview host. Use a different server or run this on a registered host." };
   // Change only the selected strategy; re-planning would feed credential-bearing
   // options back into metadata that is later persisted in the browser.
   return {

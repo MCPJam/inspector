@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { containsCredential } from "@/shared/credential-urls";
 import type { StoredOAuthConfig } from "./mcp-oauth";
 
 // Browser storage keeps public settings only. The same schema validates reads
@@ -42,6 +43,10 @@ export function parseStoredOAuthConfig(value: unknown): StoredOAuthConfig {
   };
 }
 
-export function serializeStoredOAuthConfig(config: StoredOAuthConfig): string {
-  return JSON.stringify(publicConfigSchema.parse(config));
+export function serializePublicConnectionSettings(config: StoredOAuthConfig): string {
+  const settings = publicConfigSchema.parse(config);
+  if (settings.resourceUrl && containsCredential(settings.resourceUrl)) {
+    throw new Error("Resource URL contains credentials. Remove them before connecting.");
+  }
+  return JSON.stringify(settings);
 }

@@ -58,9 +58,9 @@ import {
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import {
   parseStoredOAuthConfig,
-  serializeStoredOAuthConfig,
+  serializePublicConnectionSettings,
 } from "./stored-oauth-config";
-export { serializeStoredOAuthConfig } from "./stored-oauth-config";
+export { serializePublicConnectionSettings } from "./stored-oauth-config";
 import {
   resolveLocalOAuthHeaders,
   stageLocalOAuthHeaders,
@@ -1698,7 +1698,7 @@ function writeStoredOAuthConfig(
   };
   localStorage.setItem(
     `mcp-oauth-config-${serverName}`,
-    serializeStoredOAuthConfig(publicConfig)
+    serializePublicConnectionSettings(publicConfig)
   );
 }
 
@@ -2748,7 +2748,7 @@ export async function initiateOAuth(
       registrationStrategy,
     });
     // Initiation replaces stale settings; only partial updates merge them.
-    localStorage.setItem(`mcp-oauth-config-${options.serverName}`, serializeStoredOAuthConfig(oauthConfig));
+    localStorage.setItem(`mcp-oauth-config-${options.serverName}`, serializePublicConnectionSettings(oauthConfig));
 
     // Store custom client id if provided, so it can be retrieved during callback.
     // Client secrets are stored in the encrypted backend server-secret table.
