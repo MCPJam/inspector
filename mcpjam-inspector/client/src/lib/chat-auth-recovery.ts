@@ -169,7 +169,7 @@ export function recordChatAuthRecoveryFailure(
   write(state);
   if (!report) return;
   try {
-    captureSentryMessage("Chat sign-in recovery failed", {
+    captureSentryMessage(CHAT_AUTH_RECOVERY_MESSAGE, {
       level: "error",
       tags: { source: "chat_auth_resume", origin: "mcpjam", reason },
       fingerprint: ["chat_auth_resume", reason],

@@ -4,6 +4,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { detectPlatform } from "@/lib/PosthogUtils";
 import { refreshServerFeatureFlagsForActor } from "@/lib/server-feature-flags";
+import { captureContextKey } from "@/shared/telemetry-privacy";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActorKey } from "@/hooks/use-actor-key";
 import {
@@ -45,6 +46,10 @@ export function usePostHogIdentify() {
   const contentFull = useSyncExternalStore(subscribeTelemetryPolicy, () =>
     currentTelemetryCaptureContext().policy.content === "full",
   );
+  const contextKey = useSyncExternalStore(subscribeTelemetryPolicy, () =>
+    captureContextKey(currentTelemetryCaptureContext()),
+  );
+  const lastIdentifyRef = useRef<{ actor: string; context: string | null } | null>(null);
   const previousActorRef = useRef<{ key: string; wasAuthed: boolean } | null>(
     null,
   );
@@ -118,8 +123,20 @@ export function usePostHogIdentify() {
     const canIdentify =
       contentFull &&
       currentTelemetryActor() === actorKey &&
-      currentTelemetryCaptureContext().policy.content === "full";
-    if (canIdentify) posthog.identify(actorKey, personProperties);
+      currentTelemetryCaptureContext().policy.content === "full" &&
+      captureContextKey(currentTelemetryCaptureContext()) === contextKey;
+    if (canIdentify) {
+      const previousIdentify = lastIdentifyRef.current;
+      posthog.identify(actorKey, personProperties);
+      if (previousIdentify?.actor === actorKey && previousIdentify.context !== contextKey) {
+        // The relay may have dropped a queued identify during navigation. The
+        // SDK caches it locally, so refresh properties once under this grant.
+        posthog.capture("$set", { $set: personProperties });
+      }
+      lastIdentifyRef.current = { actor: actorKey, context: contextKey };
+    } else if (lastIdentifyRef.current?.actor === actorKey) {
+      lastIdentifyRef.current.context = null;
+    }
     if (isActorChange) {
       posthog.register({ user_id: actorKey });
       previousActorRef.current = { key: actorKey, wasAuthed: isAuthedActor };
@@ -131,5 +148,5 @@ export function usePostHogIdentify() {
         getAccessToken: getAccessTokenRef.current,
       });
     }
-  }, [posthog, actorKey, user, convexUser, identity, contentFull]);
+  }, [posthog, actorKey, user, convexUser, identity, contentFull, contextKey]);
 }

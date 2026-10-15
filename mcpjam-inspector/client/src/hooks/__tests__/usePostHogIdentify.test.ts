@@ -6,6 +6,7 @@ import { usePostHogIdentify } from "../usePostHogIdentify";
 const mockState = vi.hoisted(() => ({
   posthog: {
     identify: vi.fn(),
+    capture: vi.fn(),
     register: vi.fn(),
     reset: vi.fn(),
     setPersonPropertiesForFlags: vi.fn(),
@@ -15,6 +16,7 @@ const mockState = vi.hoisted(() => ({
   /** Whether the answer is held for the current actor. */
   grant: true,
   content: "full" as "full" | "strict",
+  projectId: "project-one",
   telemetryActor: undefined as string | null | undefined,
   auth: {
     user: null as {
@@ -71,6 +73,8 @@ vi.mock("@/lib/telemetry-context", () => ({
       ? mockState.actorKey
       : mockState.telemetryActor,
   currentTelemetryCaptureContext: () => ({
+    projectIds: [mockState.projectId],
+    organizationIds: [],
     policy: { content: mockState.content },
   }),
   telemetryIdentityFor: (actorKey: string | null) =>
@@ -94,7 +98,26 @@ describe("usePostHogIdentify", () => {
     mockState.grant = true;
     mockState.content = "full";
     mockState.telemetryActor = undefined;
+    mockState.projectId = "project-one";
     mockState.detectPlatform.mockReturnValue("mac");
+  });
+
+  it("refreshes identity after a context change without waiting for the SDK dedupe cache", () => {
+    mockState.actorKey = "user_123";
+    mockState.auth.user = { id: "user_123", email: "member@example.test" };
+    const hook = renderHook(identify);
+    expect(mockState.posthog.capture).not.toHaveBeenCalled();
+    mockState.projectId = "project-two";
+    mockState.content = "strict";
+    hook.rerender();
+    expect(mockState.posthog.capture).not.toHaveBeenCalled();
+    mockState.content = "full";
+    hook.rerender();
+    expect(mockState.posthog.capture).toHaveBeenCalledExactlyOnceWith("$set", {
+      $set: expect.objectContaining({ email: "member@example.test" }),
+    });
+    hook.rerender();
+    expect(mockState.posthog.capture).toHaveBeenCalledTimes(1);
   });
 
   it("rechecks content after layout effects before committing the SDK identity", () => {

@@ -1309,7 +1309,7 @@ export function gateAuthChallenge(
       return {
         kind: "blocked",
         reason: "xaa",
-        hint: "This server uses enterprise-managed (Cross-App Access) authorization, so MCPJam does not start an interactive sign-in for it. Check the server's XAA configuration.",
+        hint: "Interactive sign-in is not available for this server. Check the server's XAA configuration.",
       };
     default:
       return {

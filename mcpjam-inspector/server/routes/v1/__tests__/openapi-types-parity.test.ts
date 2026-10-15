@@ -298,7 +298,9 @@ const unresolvedHeritage: string[] = [];
 function parseSdkInterfaces(): Map<string, SdkInterface> {
   const source = ts.createSourceFile(
     TYPES_PATH,
-    readFileSync(TYPES_PATH, "utf8"),
+    [TYPES_PATH, resolve(dirname(TYPES_PATH), "readiness-start-types.ts")]
+      .map(path => readFileSync(path, "utf8"))
+      .join("\n"),
     ts.ScriptTarget.Latest,
     true
   );
