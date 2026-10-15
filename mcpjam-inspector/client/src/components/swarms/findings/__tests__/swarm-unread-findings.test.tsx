@@ -192,6 +192,11 @@ describe("unread swarm findings", () => {
     const report = wire.findings.find((row) => row.basis === "sessionReport")!;
     wire.findings.push({
       ...report,
+      id: "a-empty-report",
+      reportExcerpt: null,
+    });
+    wire.findings.push({
+      ...report,
       id: "z-report",
       reportExcerpt: { actual: "Another session observation.", citations: [] },
     });

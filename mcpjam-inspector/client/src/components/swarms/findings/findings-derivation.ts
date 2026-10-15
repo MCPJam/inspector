@@ -334,9 +334,11 @@ export function deriveSwarmFindingsModelFromWire({
       const rows = personaRows.filter((row) => row.goal.runId === runId);
       const run = runs.find((candidate) => candidate.runId === runId);
       const lead = representativeGoalRow(rows);
-      const report = representativeGoalRow(
-        rows.filter((row) => row.basis === "sessionReport"),
-      );
+      const reports = rows.filter((row) => row.basis === "sessionReport");
+      const report =
+        representativeGoalRow(
+          reports.filter((row) => row.reportExcerpt?.actual?.trim()),
+        ) ?? representativeGoalRow(reports);
       const emptyStage = (): GoalStageModel => ({
         state: "none",
         evidence: [],
