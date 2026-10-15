@@ -20,9 +20,11 @@ export function ReasoningPart({
   const [isExpanded, setIsExpanded] = useState(displayMode !== "collapsed");
   const contentId = useId();
 
+  // Resync only when the display mode changes. `text` grows with every
+  // streamed delta, so depending on it closed the panel on each token.
   useEffect(() => {
     setIsExpanded(displayMode !== "collapsed");
-  }, [displayMode, text]);
+  }, [displayMode]);
 
   if (isRedacted || isHidden) return null;
 
