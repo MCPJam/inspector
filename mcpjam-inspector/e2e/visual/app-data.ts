@@ -24,6 +24,7 @@ export const queries: Record<string, unknown> = {
   },
   "projects:getMyProjects": [project],
   "organizations:getMyOrganizations": [],
+  "organizations:getMyPendingOrganizationDeletions": [],
   "servers:getProjectServers": [],
   "servers:listForProjects": {},
   "hostConfigsV2:getProjectDefault": null,
@@ -48,6 +49,13 @@ export const mutations: Record<string, unknown> = {
 
 export const responses: Record<string, unknown> = {
   "/api/session-token": { ok: true },
+  "/api/web/capabilities": {
+    hostedMode: false,
+    hostedServices: false,
+    hostedUrl: "https://app.mcpjam.com",
+    hostedOnly: [],
+    degraded: [],
+  },
   "/api/web/guest-session": {
     guestId: "visual-guest",
     token: "synthetic-guest-token",

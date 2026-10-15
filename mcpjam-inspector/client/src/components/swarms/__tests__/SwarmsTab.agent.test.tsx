@@ -26,6 +26,10 @@ vi.mock("@/hooks/use-host-harness-targets", () => ({
   useHostHarnessTargets: () => ({}),
   useHostHarnessLoader: () => async () => null,
 }));
+vi.mock("@/components/environment-composer/environment-composer", () => ({
+  SWARM_COMPOSER_SLOTS: {},
+  EnvironmentComposer: () => <div>Pick a server or group</div>,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -62,7 +66,10 @@ const { createPersonaMutation } = vi.hoisted(() => ({
   createPersonaMutation: vi.fn(),
 }));
 
+const convexClient = vi.hoisted(() => ({ query: vi.fn().mockResolvedValue({}) }));
+
 vi.mock("convex/react", () => ({
+  useConvex: () => convexClient,
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     switch (name) {

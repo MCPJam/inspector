@@ -1640,6 +1640,7 @@ export type EvalSuiteRunListItem = Pick<
 
 /** One-case suite launch, with the same transient setup as the suite sheet. */
 export type CaseRunLaunchOptions = {
+  caseLaunchId?: string;
   iterationOverride?: number;
   skipJudge?: boolean;
   ephemeralEnvironment?: boolean;

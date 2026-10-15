@@ -6,8 +6,9 @@
  * (`openai/elicitation/create`) and the MRTR input collector. Neither answers
  * a STANDARD legacy `elicitation/create`, so the 2025 `initialize` must not
  * claim standard form support — a server relying on that claim would get
- * `-32601` mid tool call. The 2026 era keeps the claim: the MRTR collector
- * answers it there.
+ * `-32601` mid tool call. The 2026 era keeps both claims: the MRTR collector
+ * answers standard form elicitation there, and OpenAI's extended forms ride
+ * on it with their schema in `_meta["openai/elicitation"]`.
  *
  * Executor-selection tests mock the manager and so cannot see this; here the
  * runtime's own capability set and handlers drive the real `MCPClientManager`
@@ -398,12 +399,13 @@ describe("an unpinned (Auto) plugin client's form claims on the wire", () => {
     const caps = (resolved.manager.getInitializationInfo("server")
       ?.clientCapabilities ?? {}) as Record<string, unknown>;
     expect(caps.elicitation).toEqual({ form: {} });
-    // The OpenAI claim is legacy-only and withheld on this era.
+    // The MRTR collector also answers OpenAI's extended forms, so the claim
+    // the legacy handler would lose on this era is kept.
     expect(
       (caps.extensions as Record<string, unknown> | undefined)?.[
         "openai/elicitation"
       ],
-    ).toBeUndefined();
+    ).toEqual({ form: {} });
 
     // The server embeds a form only for a client that declared form support
     // on the request envelope (otherwise -32021); the collector answers it.

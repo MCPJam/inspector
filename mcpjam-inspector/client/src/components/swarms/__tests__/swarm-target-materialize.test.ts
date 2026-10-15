@@ -131,8 +131,8 @@ describe("materializeSwarmTargets", () => {
       stackName: "Billing",
       legos: {
         ...emptyEnvironmentStack(),
-        hostIds: ["h1", "h2"],
         serverAttachmentId: "sg1",
+        hostIds: ["h1", "h2"],
       },
       hostName: (id) => (id === "h1" ? "Claude" : "Cursor"),
       liveEnvironments: [
@@ -170,13 +170,17 @@ describe("materializeSwarmTargets", () => {
       materializeSwarmTargets({
         projectId: "proj-1",
         stackName: "Swarm setup",
-        legos: { ...emptyEnvironmentStack(), hostIds },
+        legos: {
+          ...emptyEnvironmentStack(),
+          serverAttachmentId: "sg1",
+          hostIds,
+        },
         hostName: (id) => id,
         liveEnvironments: [],
         createEnvironment: vi.fn(),
         skillsEnabled: false,
         computersEnabled: false,
-      })
+      }),
     ).rejects.toBeInstanceOf(SwarmTargetMaterializeError);
   });
 
@@ -190,7 +194,11 @@ describe("materializeSwarmTargets", () => {
     await materializeSwarmTargets({
       projectId: "proj-1",
       stackName: describe,
-      legos: { ...emptyEnvironmentStack(), hostIds: ["h1"] },
+      legos: {
+        ...emptyEnvironmentStack(),
+        serverAttachmentId: "sg1",
+        hostIds: ["h1"],
+      },
       hostName: () => "Claude Code",
       liveEnvironments: [],
       createEnvironment,
@@ -215,7 +223,11 @@ describe("materializeSwarmTargets", () => {
     await materializeSwarmTargets({
       projectId: "proj-1",
       stackName: "Billing",
-      legos: { ...emptyEnvironmentStack(), hostIds: ["h1", "h2"] },
+      legos: {
+        ...emptyEnvironmentStack(),
+        serverAttachmentId: "sg1",
+        hostIds: ["h1", "h2"],
+      },
       // Both clients render the same display name, so the auto-names collide.
       hostName: () => "Claude",
       liveEnvironments: [
@@ -242,7 +254,11 @@ describe("materializeSwarmTargets", () => {
     const result = await materializeSwarmTargets({
       projectId: "proj-1",
       stackName: "Billing",
-      legos: { ...emptyEnvironmentStack(), hostIds: ["h1"] },
+      legos: {
+        ...emptyEnvironmentStack(),
+        serverAttachmentId: "sg1",
+        hostIds: ["h1"],
+      },
       hostName: () => "Claude",
       liveEnvironments: [],
       createEnvironment,
@@ -270,26 +286,34 @@ describe("materializeSwarmTargets", () => {
       materializeSwarmTargets({
         projectId: "proj-1",
         stackName: "Billing",
-        legos: { ...emptyEnvironmentStack(), hostIds: ["h1"] },
+        legos: {
+          ...emptyEnvironmentStack(),
+          serverAttachmentId: "sg1",
+          hostIds: ["h1"],
+        },
         hostName: () => "Claude",
         liveEnvironments: [],
         createEnvironment,
         skillsEnabled: false,
         computersEnabled: false,
-      })
+      }),
     ).rejects.toThrow(/requires project admin/);
     // And it must arrive as the type the create flow renders verbatim.
     await expect(
       materializeSwarmTargets({
         projectId: "proj-1",
         stackName: "Billing",
-        legos: { ...emptyEnvironmentStack(), hostIds: ["h1"] },
+        legos: {
+          ...emptyEnvironmentStack(),
+          serverAttachmentId: "sg1",
+          hostIds: ["h1"],
+        },
         hostName: () => "Claude",
         liveEnvironments: [],
         createEnvironment,
         skillsEnabled: false,
         computersEnabled: false,
-      })
+      }),
     ).rejects.toBeInstanceOf(SwarmTargetMaterializeError);
   });
 
@@ -306,6 +330,7 @@ describe("materializeSwarmTargets", () => {
       stackName: "Swarm setup",
       legos: {
         ...emptyEnvironmentStack(),
+        serverAttachmentId: "sg1",
         hostIds: ["h1"],
         skillSelection: { mode: "explicit", skillIds: ["sk1"] },
         computerEnvironmentId: "img1",

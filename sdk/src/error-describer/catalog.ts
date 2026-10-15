@@ -80,6 +80,7 @@ const DOCS_BASE = "/troubleshooting/error-codes";
  * A slug missing from this table fails the catalog test.
  */
 const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
+  "generation/invalid_output": "ambiguous",
   // --- The server answered, and the answer was the problem -----------------
   // This is a server-side error only when the wire evidence identifies the
   // server as the failing boundary. Keep protocol codes that can also be
@@ -638,7 +639,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "A corporate proxy or SSO portal intercepted the request.",
     ],
     [
-      "Allow MCPJam's egress addresses, or the address you connect from, on the server's firewall.",
+      "Allow MCPJam's egress addresses (docs.mcpjam.com/hosted/network), or the address you connect from, on the server's firewall.",
       "Open the server URL in a browser from the same network to see what answers.",
     ],
     "proxy-rejected",
@@ -985,6 +986,14 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
 
   // --- Organization AI-key policy (org-policy-catalog.ts) ---
   ...orgPolicyCatalogEntries(entry),
+
+  "generation/invalid_output": entry(
+    "generation/invalid_output", "Generation failed",
+    "Generation failed. Please try again.",
+    ["The generation response did not match the required format."],
+    ["Try generation again. If it keeps failing, contact support with the request ID."],
+    "generation-failed",
+  ),
 
   // --- Internal / unknown ---
   "internal/unknown": entry(

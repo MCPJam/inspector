@@ -5,7 +5,7 @@ name: Docker Release
 # version is on npm. Dispatching it by hand is the retry path, and the way to
 # push the current version without cutting a release.
 #
-# Same Dockerfile Railway builds the hosted app from, but with no build args:
+# Same Dockerfile Railway builds the hosted app from, but without hosted settings:
 # without VITE_MCPJAM_HOSTED_MODE the bundle is the local Inspector, the one
 # `npx @mcpjam/inspector` runs.
 on:
@@ -19,6 +19,8 @@ on:
       DOCKERHUB_USERNAME:
         required: true
       DOCKERHUB_TOKEN:
+        required: true
+      SENTRY_AUTH_TOKEN:
         required: true
   workflow_dispatch:
 
@@ -116,6 +118,28 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # The shared Dockerfile must also work on Railway, whose Docker builder
+      # rejects secret mounts. Keep the token in an ephemeral container's
+      # environment instead; the final build reuses this exact server stage.
+      - name: Build server source-map stage
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./mcpjam-inspector/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          target: server-build
+          load: true
+          build-args: |
+            MCPJAM_BUILD_SURFACE=local
+          tags: mcpjam-server-sourcemaps:local
+
+      - name: Upload server source maps
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          docker run --rm --env SENTRY_AUTH_TOKEN --entrypoint node \
+            mcpjam-server-sourcemaps:local mcpjam-inspector/scripts/server-sourcemaps.mjs
 
       - name: Build and push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0

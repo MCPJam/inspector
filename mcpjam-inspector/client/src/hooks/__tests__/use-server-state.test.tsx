@@ -1889,6 +1889,18 @@ describe("useServerState OAuth callback failures", () => {
     expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
   });
 
+  it("clears the Auto escalation marker under the identity the hook writes", () => {
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify(["default::srv_demo", "default::name:demo-server"]),
+    );
+    const { result } = renderUseServerState(vi.fn());
+
+    act(() => result.current.clearAutoOAuthEscalation("demo-server"));
+
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]");
+  });
+
   it("does not resurrect a stale 2026 pin when the form downgrades to 2025", async () => {
     // Regression: switching an existing OAuth server from 2026 back to 2025
     // must not recover the stale 2026 pin from the stored server.config /
@@ -3298,6 +3310,60 @@ describe("useServerState OAuth callback failures", () => {
     }
   );
 
+  it("reports superseded when a stale reconnect ends in reauth_required", async () => {
+    // The first-run recovery reconnect runs non-interactively, which is what
+    // yields reauth_required. If a newer op took the server meanwhile, the
+    // result must be "superseded" so callers leave the newer op alone.
+    const { ensureAuthorizedForReconnect } =
+      await import("@/state/oauth-orchestrator");
+    let resolveAuth: (value: unknown) => void = () => {};
+    vi.mocked(ensureAuthorizedForReconnect)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveAuth = resolve;
+        }) as any,
+      )
+      .mockResolvedValue({
+        kind: "ready",
+        serverConfig:
+          createAppState().projects.default.servers["demo-server"].config,
+        tokens: undefined,
+      } as any);
+    reconnectServerMock.mockResolvedValue({
+      success: true,
+      initInfo: { clientCapabilities: {} },
+    } as any);
+    const appState = createAppState();
+    for (const bucket of [
+      appState.projects.default.servers,
+      appState.servers,
+    ]) {
+      (bucket["demo-server"] as any).useOAuth = false;
+    }
+    const { result } = renderUseServerState(vi.fn(), appState);
+
+    let outcome: unknown = null;
+    await act(async () => {
+      const recovery = result.current
+        .reconnectServerWithResult("demo-server", {
+          allowInteractiveOAuthFlow: false,
+          suppressErrors: true,
+        })
+        .then((value) => {
+          outcome = value;
+        });
+      await flushAsyncWork();
+      // A newer reconnect takes the server while authorization is resolving.
+      const newer = result.current.handleReconnect("demo-server");
+      await flushAsyncWork();
+      resolveAuth({ kind: "reauth_required", error: "Sign in again" });
+      await recovery;
+      await newer;
+    });
+
+    expect(outcome).toMatchObject({ status: "superseded" });
+  });
+
   it("treats a superseded client-switch reconnect as in-progress, not a failure", async () => {
     // Repro of the client-switch toast bug: when the user switches clients
     // faster than a reconnect completes, the in-flight reconnect's op token
@@ -4081,6 +4147,83 @@ describe("useServerState auth mode regressions", () => {
     expect(initiateOAuthMock).toHaveBeenCalledOnce();
     expect(toastError).not.toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("does not let a marker from an abandoned redirect block the next authorization", async () => {
+    // Keyed the way a redirect-surviving identity would key it. The user left
+    // at the provider (Back), so no callback ever cleared it.
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify(["project_default::name:auto-server"]),
+    );
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+    const requestOAuthAuthorization = vi.fn().mockResolvedValue(true);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const { result } = renderUseServerState(vi.fn(), appState);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "auto-server",
+          type: "http",
+          url: "https://auto.example.com/mcp",
+          useOAuth: true,
+          authMethod: "auto",
+        },
+        { suppressErrorToast: true, requestOAuthAuthorization },
+      );
+    });
+
+    // Re-prompts instead of failing with "still returns 401 after OAuth".
+    expect(requestOAuthAuthorization).toHaveBeenCalledWith("auto-server");
+    expect(initiateOAuthMock).toHaveBeenCalledOnce();
+  });
+
+  it("clears Auto's pending marker when OAuth init throws after confirmation", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockRejectedValueOnce(new Error("network down"));
+    const requestOAuthAuthorization = vi.fn().mockResolvedValue(true);
+    const { result } = renderUseServerState(vi.fn());
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "auto-server",
+          type: "http",
+          url: "https://auto.example.com/mcp",
+          useOAuth: true,
+          authMethod: "auto",
+        },
+        { suppressErrorToast: true, requestOAuthAuthorization },
+      );
+    });
+
+    expect(requestOAuthAuthorization).toHaveBeenCalledOnce();
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]");
+  });
+
+  it("clears Auto's pending marker on disconnect", async () => {
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify(["default::name:auto-server"]),
+    );
+    const { result } = renderUseServerState(vi.fn());
+
+    await act(async () => {
+      await result.current.handleDisconnect("auto-server");
+    });
+
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]");
   });
 
   it("persists authorization edits before starting Auto's OAuth redirect", async () => {

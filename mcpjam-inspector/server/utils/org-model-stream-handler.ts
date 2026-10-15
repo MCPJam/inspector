@@ -1,3 +1,5 @@
+import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
+import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 /**
  * Org BYOK Stream Handler
  *
@@ -17,9 +19,7 @@
  *   Engine consolidation route 3 collapse: this handler used to own its
  *   own inline `streamText({...})` block (~390 LOC) that duplicated the
  *   driver in `runDirectChatTurn`. The collapse keeps the route-specific
- *   pieces here (the unsupported-approval-gate guard, the local-runtime
- *   config validation, the `postLocalUsage` writeback) and delegates
- *   streaming + trace + persistence to the shared engine.
+ *   pieces here (the unsupported-approval-gate guard, the local-runtime   config validation, the `postLocalUsage` writeback) and delegates   streaming + trace + persistence to the shared engine.
  */
 
 import {
@@ -106,6 +106,7 @@ export interface OrgModelHandlerOptions {
   discoveryState?: ToolDiscoveryState;
   modelId: string;
   modelSelection?: ModelSelection & { source: "org" };
+  modelSelectionOrigin?: "backfill";
   /**
    * The provider-native id chosen explicitly for this model (the row's
    * `nativeModelId`): an org Azure deployment name. Sent to `/stream/org` as
@@ -326,6 +327,9 @@ export interface OrgLocalModelHandlerOptions {
   historyPresentation?: HistoryPresentation;
   projectId: string;
   modelId: string;
+  modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
+  reasoningEffort?: import("./model-selection-settings.js").EffectiveModelSettings["reasoningEffort"];
   chatSessionId?: string;
   sourceType?: string;
   messages: ModelMessage[];
@@ -592,6 +596,7 @@ export function handleLocalOrgChatModel(
   // Validate and build the AI SDK model before opening the stream.
   // If config/allowlist checks fail, return a formatted error stream rather
   // than letting the exception propagate as a 500.
+  const attempts: LocalExecutionAttempt[] = [];
   let llmModel: ReturnType<typeof admitEachLocalOrgAttempt>;
   try {
     assertOrgModelAllowed(provider, modelId);
@@ -599,6 +604,7 @@ export function handleLocalOrgChatModel(
       buildOrgModelFromResolvedConfig(provider, modelId),
       options.admission,
       modelId,
+      attempts,
     );
   } catch (configErr) {
     // The response is still a 200 stream whose first chunk is the error, so
@@ -736,13 +742,10 @@ export function handleLocalOrgChatModel(
         onEngineError: () => {
           streamErrored = true;
         },
-        // Route-3-only persistence wrapper: fire `onConversationComplete`
-        // (chat ingestion) AND post usage back to Convex. Silent-cancel
-        // is enforced by `runDirectChatTurn` — `onPersist` only fires on
-        // non-aborted completion, preserving the legacy `postLocalUsage`
-        // semantics (success only, never on abort).
+        // The engine suppresses persistence on abort; completed work posts usage.
         onPersist: buildLocalOrgOnPersist({
           options,
+          attempts,
           isStreamErrored: () => streamErrored,
           onConversationComplete,
           onOutcome: (outcome, turnId) => {
@@ -877,6 +880,7 @@ export function resolveLocalOrgMaxSteps(maxSteps: number | undefined): number {
  */
 function buildLocalOrgOnPersist(params: {
   options: OrgLocalModelHandlerOptions;
+  attempts: LocalExecutionAttempt[];
   isStreamErrored: () => boolean;
   onConversationComplete: OrgLocalModelHandlerOptions["onConversationComplete"];
   /**
@@ -891,13 +895,21 @@ function buildLocalOrgOnPersist(params: {
   const { options, isStreamErrored, onConversationComplete, onOutcome } =
     params;
   return async (event) => {
-    // Post usage to Convex (best-effort, non-blocking on failure).
-    // Preserves the legacy fire-and-forget behavior so an ingestion
-    // failure can't block the usage writeback or vice versa.
+    // Best-effort usage accounting must not delay transcript persistence.
     postLocalUsage({
       projectId: options.projectId,
       providerKey: options.provider.providerKey,
       model: options.modelId,
+      modelSelection: options.modelSelection,
+      modelSelectionOrigin: options.modelSelectionOrigin,
+      execution: buildLocalExecutionRecord({
+        selection: options.modelSelection, origin: options.modelSelectionOrigin,
+        providerKey: options.provider.providerKey, wireModelId: options.modelId,
+        attempts: params.attempts,
+        effectiveSettings: { temperature: options.temperature,
+          ...(options.providerOptions && options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}) },
+        outcome: isStreamErrored() ? { kind: "error", code: "provider_error" } : { kind: "ok" }, at: Date.now(),
+      }),
       usage: event.usage,
       finishReason: event.finishReason,
       chatSessionId: options.chatSessionId,
@@ -915,25 +927,9 @@ function buildLocalOrgOnPersist(params: {
       });
     });
 
-    // Cursor PR-review fix (Medium "Failed turns persist sessions"):
-    // skip ingestion when the stream errored mid-flight; matches
-    // legacy `if (!streamErrored)` gate at the old
-    // `onConversationComplete` site. Billing already happened
-    // above so the only thing we're suppressing is persistence
-    // of a partial transcript.
+    // Usage is recorded even when a partial transcript cannot be persisted.
     if (isStreamErrored() || !onConversationComplete) return;
 
-    // Cursor PR-review fix (Medium "History rebuild skips
-    // deduplication"): legacy code did
-    // `appendDedupedModelMessages(traceHistory, responseMessages)`
-    // against the FULL prefix (initial messages + accumulated
-    // responses). The engine dedupes `responseMessages` against
-    // itself across steps; the wrapper now dedupes again against
-    // the initial-messages prefix so messages that overlap by
-    // id / JSON identity don't double-write into the persisted
-    // transcript. Real-world impact is low (AI SDK rarely emits
-    // overlapping content with the prompt prefix), but restores
-    // the legacy defensive-dedup semantics.
     const fullHistory: ModelMessage[] = [...options.messages];
     appendDedupedModelMessages(fullHistory, event.responseMessages);
     const outcome = await onConversationComplete(fullHistory, event.turnTrace);
@@ -983,6 +979,7 @@ export async function postLocalUsage(params: {
    * (the connection must still be this org's) before checking `execution`.
    */
   modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
   /**
    * What the turn actually ran ({@link buildLocalExecutionRecord}). Sent only
    * with `modelSelection`: the backend checks it against its own resolution
@@ -1001,6 +998,7 @@ export async function postLocalUsage(params: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...inspectorAiRequestHeaders("local-usage"),
         ...(params.authHeader ? { Authorization: params.authHeader } : {}),
       },
       body: JSON.stringify({
@@ -1030,7 +1028,7 @@ export async function postLocalUsage(params: {
           : {}),
         ...(params.evalRunId ? { evalRunId: params.evalRunId } : {}),
         ...(params.modelSelection
-          ? { modelSelection: params.modelSelection }
+          ? { modelSelection: params.modelSelection, modelSelectionOrigin: params.modelSelectionOrigin }
           : {}),
         ...(params.modelSelection && params.execution
           ? { execution: params.execution }
@@ -1065,6 +1063,7 @@ export async function handleHostedOrgChatModel(
     messages: options.messages,
     modelId: options.modelId,
     modelSelection: options.modelSelection,
+    modelSelectionOrigin: options.modelSelectionOrigin,
     chatSessionId: options.chatSessionId,
     sourceType: options.sourceType,
     systemPrompt: options.systemPrompt,
@@ -1102,9 +1101,7 @@ export async function handleHostedOrgChatModel(
     failureReporter: options.failureReporter,
     endpointPath: "/stream/org",
     extraBodyFields: {
-      // Caller-provided fields first; sibling fields from this handler
-      // (providerKey, serverIds) override on collision so the hosted
-      // contract can't be silently broken by a downstream caller.
+      // Server-resolved fields override caller extras.
       ...(options.extraBodyFields ?? {}),
       providerKey: options.providerKey,
       ...(options.nativeModelId?.trim()

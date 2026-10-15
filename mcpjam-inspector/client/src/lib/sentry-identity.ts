@@ -4,7 +4,7 @@ import {
   type SentryActor as SharedSentryActor,
 } from "../../../shared/sentry-identity";
 import {
-  subscribeTelemetryIdentity,
+  subscribeTelemetryPolicy,
   telemetryNamesAllowed,
 } from "./telemetry-context";
 
@@ -105,7 +105,7 @@ export function setSentryActor(actor: SentryActor | null): void {
 // arriving, a membership reload). Re-apply the current actor each time, still
 // through `setSentryActor`, so this module stays the only writer of identity
 // and the email leaves the scope the moment the grant does.
-subscribeTelemetryIdentity(() => {
+subscribeTelemetryPolicy(() => {
   const actor = lastSentryActor;
   if (!actor) return;
   const named = actor.kind === "signedIn" && telemetryNamesAllowed(actor.id);

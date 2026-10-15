@@ -1,3 +1,4 @@
+import { replayMutationEvents } from "./fixtures/replay-mutations.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { gunzipSync, gzipSync } from "node:zlib";
@@ -49,9 +50,21 @@ import {
 
 const ORIGINAL_FETCH = global.fetch;
 const TOKEN = "relay-bearer-token";
-const FULL: TelemetryPolicy = { recording: "full", identity: "full" };
-const MASKED: TelemetryPolicy = { recording: "masked", identity: "id_only" };
-const OFF: TelemetryPolicy = { recording: "off", identity: "id_only" };
+const FULL: TelemetryPolicy = {
+  recording: "full",
+  identity: "full",
+  content: "full",
+};
+const MASKED: TelemetryPolicy = {
+  recording: "masked",
+  identity: "id_only",
+  content: "full",
+};
+const OFF: TelemetryPolicy = {
+  recording: "off",
+  identity: "id_only",
+  content: "strict",
+};
 
 const PUBLIC_ORG = "org_public_00000000000000001";
 const PRIVATE_ORG = "org_private_0000000000000001";
@@ -82,163 +95,9 @@ function stamp(organizationIds: string[], policy: TelemetryPolicy = FULL) {
 
 // ── rrweb fixtures carrying synthetic personal data ──────────────────────
 
-function pageNode() {
-  return {
-    type: 0,
-    id: 1,
-    childNodes: [
-      { type: 1, id: 2, name: "html", publicId: "", systemId: "" },
-      {
-        type: 2,
-        id: 3,
-        tagName: "html",
-        attributes: { lang: "en" },
-        childNodes: [
-          {
-            type: 2,
-            id: 4,
-            tagName: "head",
-            attributes: {},
-            childNodes: [
-              {
-                type: 2,
-                id: 5,
-                tagName: "style",
-                attributes: {},
-                childNodes: [
-                  {
-                    type: 3,
-                    id: 6,
-                    textContent: ".row { color: red; }",
-                    isStyle: true,
-                  },
-                ],
-              },
-            ],
-          },
-          {
-            type: 2,
-            id: 7,
-            tagName: "body",
-            attributes: { class: "app" },
-            childNodes: [
-              {
-                type: 2,
-                id: 8,
-                tagName: "h1",
-                attributes: {
-                  class: "title",
-                  title: SYNTHETIC_PII.title,
-                  "data-state": "open",
-                },
-                childNodes: [
-                  { type: 3, id: 9, textContent: SYNTHETIC_PII.domText },
-                ],
-              },
-              {
-                type: 2,
-                id: 10,
-                tagName: "input",
-                attributes: {
-                  type: "text",
-                  value: SYNTHETIC_PII.inputValue,
-                  placeholder: SYNTHETIC_PII.placeholder,
-                },
-                childNodes: [],
-              },
-              {
-                type: 2,
-                id: 11,
-                tagName: "img",
-                attributes: {
-                  src: SYNTHETIC_PII.imageUrl,
-                  alt: SYNTHETIC_PII.name,
-                  width: "32",
-                  height: "32",
-                },
-                childNodes: [],
-              },
-              {
-                type: 5,
-                id: 12,
-                textContent: `owner: ${SYNTHETIC_PII.email}`,
-              },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-}
-
 function replayEvents(): unknown[] {
   return [
-    {
-      type: 4,
-      timestamp: 1,
-      data: {
-        href: `https://app.mcpjam.com/servers/${SYNTHETIC_PII.serverName}`,
-        width: 1280,
-        height: 800,
-      },
-    },
-    {
-      type: 2,
-      timestamp: 2,
-      data: { node: pageNode(), initialOffset: { top: 0, left: 0 } },
-    },
-    {
-      type: 3,
-      timestamp: 3,
-      data: {
-        source: 0,
-        texts: [{ id: 9, value: SYNTHETIC_PII.name }],
-        attributes: [
-          { id: 8, attributes: { title: SYNTHETIC_PII.title, class: "big" } },
-        ],
-        removes: [{ parentId: 7, id: 12 }],
-        adds: [
-          {
-            parentId: 7,
-            nextId: null,
-            node: { type: 3, id: 13, textContent: SYNTHETIC_PII.email },
-          },
-          {
-            parentId: 5,
-            nextId: null,
-            node: { type: 3, id: 14, textContent: ".added { margin: 0 }" },
-          },
-        ],
-      },
-    },
-    {
-      type: 3,
-      timestamp: 4,
-      data: {
-        source: 5,
-        id: 10,
-        text: SYNTHETIC_PII.inputValue,
-        isChecked: false,
-      },
-    },
-    {
-      type: 3,
-      timestamp: 5,
-      data: { source: 2, type: 2, id: 10, x: 10, y: 20 },
-    },
-    {
-      type: 3,
-      timestamp: 6,
-      data: { source: 9, id: 11, type: 0, commands: [] },
-    },
-    {
-      type: 6,
-      timestamp: 7,
-      data: {
-        plugin: "rrweb/console@1",
-        payload: { level: "log", payload: [SYNTHETIC_PII.consoleMessage] },
-      },
-    },
+    ...replayMutationEvents(),
     {
       type: 6,
       timestamp: 8,
@@ -324,6 +183,18 @@ function identifyEvent(context: ReturnType<typeof stamp> | undefined) {
   };
 }
 
+function productEvent(context?: ReturnType<typeof stamp>) {
+  return {
+    event: "send_message",
+    properties: {
+      token: POSTHOG_PROJECT_KEY,
+      location: "chat_tab",
+      prompt: SYNTHETIC_PII.domText,
+      ...(context ? { [TELEMETRY_CONTEXT_PROPERTY]: context } : {}),
+    },
+  };
+}
+
 function batch(events: unknown[]) {
   return JSON.stringify({ api_key: POSTHOG_PROJECT_KEY, batch: events });
 }
@@ -337,6 +208,7 @@ async function post(
     method: "POST",
     body: body as BodyInit,
     headers: {
+      "x-mcpjam-telemetry-policy": "full",
       "content-length": String(Buffer.byteLength(body as string)),
       "cf-connecting-ip": "198.51.100.7",
       "x-forwarded-for": "198.51.100.7",
@@ -475,7 +347,14 @@ describe("relay privacy gate", () => {
       "/tlm/s/",
       batch([
         snapshotEvent(stamp([PUBLIC_ORG], FULL)),
-        identifyEvent(stamp([PUBLIC_ORG], FULL)),
+        {
+          event: "send_message",
+          properties: {
+            [TELEMETRY_CONTEXT_PROPERTY]: stamp([PUBLIC_ORG], FULL),
+            multi_model_count: 2,
+            prompt: "SENTINEL",
+          },
+        },
       ]),
       { Authorization: `Bearer expired` },
     );
@@ -483,7 +362,7 @@ describe("relay privacy gate", () => {
     const sent = forwarded();
     // The full replay is dropped; the rest is restricted.
     expect(sent.json.batch.map((e: { event: string }) => e.event)).toEqual([
-      "$identify",
+      "send_message",
     ]);
     expect(findSyntheticPii(sent.text)).toEqual([]);
     expect(sent.headers.get("x-forwarded-for")).toBeNull();
@@ -574,14 +453,14 @@ describe("relay privacy gate", () => {
       batch([
         snapshotEvent(stamp([PRIVATE_ORG], MASKED)),
         snapshotEvent(stamp([PRIVATE_ORG], FULL)),
-        identifyEvent(stamp([PRIVATE_ORG], FULL)),
+        productEvent(stamp([PRIVATE_ORG], FULL)),
       ]),
       { Authorization: `Bearer ${TOKEN}` },
     );
     expect(response.status).toBe(200);
     const sent = forwarded();
     expect(sent.json.batch.map((e: { event: string }) => e.event)).toEqual([
-      "$identify",
+      "send_message",
     ]);
     expect(findSyntheticPii(sent.text)).toEqual([]);
     expect(sent.headers.get("x-forwarded-for")).toBeNull();
@@ -657,14 +536,12 @@ describe("relay privacy gate", () => {
 
   it("drops a legacy client's unstamped replay and restricts its other events", async () => {
     backend({ [PUBLIC_ORG]: FULL });
-    await post(
-      "/relay/s/",
-      batch([snapshotEvent(undefined), identifyEvent(undefined)]),
-      { Authorization: `Bearer ${TOKEN}` },
-    );
+    await post("/relay/s/", batch([snapshotEvent(undefined), productEvent()]), {
+      Authorization: `Bearer ${TOKEN}`,
+    });
     const sent = forwarded();
     expect(sent.json.batch.map((e: { event: string }) => e.event)).toEqual([
-      "$identify",
+      "send_message",
     ]);
     expect(findSyntheticPii(sent.text)).toEqual([]);
     expect(privacyCounts()).toMatchObject({
@@ -675,7 +552,12 @@ describe("relay privacy gate", () => {
   });
 
   it("removes identifying person fields, IP and autocapture text from restricted events", async () => {
-    await post("/tlm/i/v0/e/", batch([identifyEvent(undefined)]));
+    backend({ [PRIVATE_ORG]: MASKED });
+    await post(
+      "/tlm/i/v0/e/",
+      batch([identifyEvent(stamp([PRIVATE_ORG], MASKED))]),
+      { Authorization: `Bearer ${TOKEN}` },
+    );
     const [event] = forwarded().json.batch;
     expect(event.$set).toEqual({ deployment: "hosted" });
     expect(event.$set_once).toEqual({});
@@ -693,6 +575,7 @@ describe("relay privacy gate", () => {
   });
 
   it("scrubs URLs, hosts and names from every property of a restricted event, $set_once included", async () => {
+    backend({ [PRIVATE_ORG]: MASKED });
     const serverUrl = `https://app.mcpjam.com/servers/${SYNTHETIC_PII.serverName}`;
     await post(
       "/tlm/e/",
@@ -706,6 +589,7 @@ describe("relay privacy gate", () => {
           },
           properties: {
             token: POSTHOG_PROJECT_KEY,
+            [TELEMETRY_CONTEXT_PROPERTY]: stamp([PRIVATE_ORG], MASKED),
             distinct_id: "user_1",
             project_name: SYNTHETIC_PII.projectName,
             serverName: SYNTHETIC_PII.serverName,
@@ -737,6 +621,7 @@ describe("relay privacy gate", () => {
           },
         },
       ]),
+      { Authorization: `Bearer ${TOKEN}` },
     );
     const [event] = forwarded().json.batch;
     expect(findSyntheticPii(JSON.stringify(event))).toEqual([]);
@@ -793,33 +678,23 @@ describe("relay privacy gate", () => {
     }));
     await post("/tlm/e/", batch(events));
     const sent = forwarded().json.batch as Array<{
-      properties: { $current_url: string };
+      properties: { $pathname: string };
     }>;
     expect(sent).toHaveLength(CREDENTIAL_PATH_PREFIXES.length);
-    const placeholder = scrubSensitiveUrl("/results/x").slice("/results/".length);
-    sent.forEach((event) => {
-      expect(event.properties.$current_url).not.toContain(
-        "kd7a8f9g0h1j2k3l4m5n6p7q8r9s",
-      );
-      // The secret segment is the shared sanitizer's placeholder. The route
-      // words before it may be name-masked themselves (`/connect/server/`).
-      expect(event.properties.$current_url.endsWith(`/${placeholder}`)).toBe(
-        true,
-      );
-    });
+    sent.forEach((event) =>
+      expect(["/:path", "/evals"]).toContain(event.properties.$pathname),
+    );
   });
 
   it("gates and rewrites GET ingestion", async () => {
-    const data = Buffer.from(batch([identifyEvent(undefined)])).toString(
-      "base64",
-    );
+    const data = Buffer.from(batch([productEvent()])).toString("base64");
     const response = await createTestApp().request(
       `http://localhost:6274/tlm/e/?data=${encodeURIComponent(data)}&compression=base64&ver=1`,
     );
     expect(response.status).toBe(200);
     const sent = forwarded();
     expect(sent.url.searchParams.has("compression")).toBe(false);
-    expect(sent.url.searchParams.get("ver")).toBe("1");
+    expect(sent.url.searchParams.has("ver")).toBe(false);
     const payload = sent.url.searchParams.get("data") ?? "";
     expect(findSyntheticPii(payload)).toEqual([]);
     expect(JSON.parse(payload).batch[0].properties.$geoip_disable).toBe(true);
@@ -842,7 +717,7 @@ describe("relay privacy gate", () => {
   it("asks about at most eight distinct contexts per request", async () => {
     const calls = backend({});
     const events = Array.from({ length: 9 }, (_, i) =>
-      identifyEvent(stamp([`org_${String(i).padStart(24, "0")}`])),
+      productEvent(stamp([`org_${String(i).padStart(24, "0")}`])),
     );
     await post("/tlm/i/v0/e/", batch(events), {
       Authorization: `Bearer ${TOKEN}`,
@@ -889,7 +764,7 @@ describe("relay privacy gate", () => {
     const answerInTurn = await waitingOnBackend(RELAY_MAX_PAYLOAD_CHECKS + 4);
 
     // Every admission slot is free while those wait on the backend.
-    const anonymous = await post("/tlm/e/", batch([identifyEvent(undefined)]));
+    const anonymous = await post("/tlm/e/", batch([productEvent()]));
     expect(anonymous.status).toBe(200);
 
     expect(new Set(await answerInTurn())).toEqual(new Set([200]));

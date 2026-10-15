@@ -1,3 +1,4 @@
+import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 /**
  * HOST TARGETING for the v1 agent-Playground turn — which ENGINE runs it.
  *
@@ -45,7 +46,6 @@ import {
 } from "@mcpjam/sdk";
 import { selectionIfMatches } from "@mcpjam/sdk/browser";
 import {
-  readRoutingSelection,
   readStoredModelSelection,
 } from "../../utils/model-resolution-local.js";
 import { routingSelectionForModel } from "../../utils/selection-rail.js";
@@ -173,7 +173,7 @@ export function hostSelectionForModel(
   modelId: string,
 ): ModelSelection | undefined {
   return selectionIfMatches(
-    readStoredModelSelection(runtimeConfig?.modelSelection),
+    readStoredModelSelection(readRuntimeModelChoice(runtimeConfig).selection),
     modelId,
   );
 }
@@ -189,7 +189,7 @@ export function hostRoutingSelectionForModel(
   model: { id: string | { toString(): string }; provider?: string },
 ): RequestedModelSelection | undefined {
   return routingSelectionForModel(
-    readRoutingSelection(runtimeConfig?.modelSelection),
+    readRuntimeModelChoice(runtimeConfig).selection,
     model,
   );
 }

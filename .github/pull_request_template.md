@@ -18,6 +18,11 @@
 
 <!-- One paragraph on why the code is this way now. Leave the narration of the diff to the diff. -->
 
+## Documentation
+
+<!-- For public docs changes, state the evidence that the feature is broadly released to the documented audience and explain what meaningful user task needs new or corrected guidance. Merged code alone is not release evidence. Do not document unreleased, gated, or internal-only features, minor UI polish, transient loading states, or implementation details. A human maintainer must review publication scope before merging. Otherwise write "Nothing applicable". -->
+
+
 ## Architecture
 
 <!-- Required when the PR adds a component, moves a boundary, or changes how data or requests flow. A Mermaid block renders on GitHub. Draw only the parts this PR touches and label each arrow with what crosses it. Otherwise write "None: no new component or flow".
