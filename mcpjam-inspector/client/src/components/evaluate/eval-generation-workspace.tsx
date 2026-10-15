@@ -15,7 +15,7 @@ import {
 } from "@/lib/evals/eval-generation-config";
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
 import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
-import { isUnretryableGenerationScope } from "@/shared/eval-generation-errors";
+import { EvalGenerationRecovery } from "./eval-generation-recovery";
 
 export function EvalGenerationWorkspace({
   projectId,
@@ -104,7 +104,6 @@ export function EvalGenerationWorkspace({
   const errorText = error
     ? (describeMCPJamLimitMessage(error) ?? error)
     : undefined;
-  const scopeIsUnfixableByRetry = isUnretryableGenerationScope(error);
   /**
    * An empty list reads as "nothing was generated", but the usual way to
    * reach it is the opposite: every draft was saved or discarded, and the
@@ -174,27 +173,12 @@ export function EvalGenerationWorkspace({
                 {errorText}
               </p>
             )}
-            {/* Retrying a scope the servers cannot satisfy fails identically
-                every time. Offer the setting that would fix it instead. */}
-            {scopeIsUnfixableByRetry && onChangeSettings ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onChangeSettings}
-                disabled={busy}
-              >
-                Change generation settings
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={start}
-                disabled={busy}
-              >
-                Retry generation
-              </Button>
-            )}
+            <EvalGenerationRecovery
+              error={error}
+              disabled={busy}
+              onRetry={start}
+              onChangeSettings={onChangeSettings}
+            />
           </div>
         )}
         {!busy && !error && !generation?.drafts.length && (
