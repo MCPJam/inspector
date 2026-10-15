@@ -620,7 +620,10 @@ export async function parsePluginBundle(
     }
     const { auth, oauth } = server.config;
     const declaresOAuth = auth?.type === "oauth" || auth?.type === "mixed";
-    if (oauth !== undefined || declaresOAuth) {
+    // A declared method decides. MCPJam's own `oauth` hint asks for a
+    // sign-in only for a server that declares none, so `none` and `api_key`
+    // never surface one.
+    if (declaresOAuth || (auth === undefined && oauth !== undefined)) {
       setupRequirements.push({
         kind: "oauth",
         componentKey: server.componentKey,

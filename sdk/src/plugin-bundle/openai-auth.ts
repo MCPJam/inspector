@@ -14,7 +14,11 @@
 import { OPENAI_EXTENSION_NAMESPACE } from "./manifest.js";
 import { isLoopbackHost, isUnsafeRawUrl } from "./mcp-entry-values.js";
 import type { PluginHeaderRequirement } from "./mcp-config.js";
-import { SECRET_FIELD_NAME, type PluginIssueCollector } from "./validation.js";
+import {
+  isSecretLikeValue,
+  SECRET_FIELD_NAME,
+  type PluginIssueCollector,
+} from "./validation.js";
 
 export type PluginTokenEndpointAuthMethod =
   "none" | "client_secret_basic" | "client_secret_post" | "private_key_jwt";
@@ -91,17 +95,49 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** Report a key the allowlist does not keep, as secret-bearing when it looks it. */
-function dropField(field: string, ctx: ReadContext): void {
-  const secret = SECRET_FIELD_NAME.test(field);
-  ctx.issues.warn(
-    secret ? "MCP_SECRET_FIELD_OMITTED" : "MCP_UNKNOWN_FIELD",
-    `server "${ctx.serverKey}": auth field "${field}" ${
-      secret
-        ? "looks secret-bearing and is not stored"
-        : "is not supported; ignored"
-    }`,
-    { componentKey: ctx.componentKey }
+/** Field names one dropped-fields warning shows; the rest are counted. */
+const NAMED_FIELDS = 3;
+
+/**
+ * Report the keys one auth object carries that the allowlist does not keep,
+ * as secret-bearing when they look it. One warning of each kind per object,
+ * so a crafted object cannot flood the warnings, and a name that looks like a
+ * credential itself is never echoed.
+ */
+function dropFields(fields: readonly string[], ctx: ReadContext): void {
+  const report = (
+    code: "MCP_SECRET_FIELD_OMITTED" | "MCP_UNKNOWN_FIELD",
+    names: readonly string[],
+    what: [one: string, many: string]
+  ) => {
+    if (names.length === 0) return;
+    const shown = names
+      .slice(0, NAMED_FIELDS)
+      .map((name) =>
+        isSecretLikeValue(name) ? "(redacted)" : `"${name.slice(0, 64)}"`
+      )
+      .join(", ");
+    const more =
+      names.length > NAMED_FIELDS
+        ? ` and ${names.length - NAMED_FIELDS} more`
+        : "";
+    ctx.issues.warn(
+      code,
+      names.length === 1
+        ? `server "${ctx.serverKey}": auth field ${shown} ${what[0]}`
+        : `server "${ctx.serverKey}": auth fields ${shown}${more} ${what[1]}`,
+      { componentKey: ctx.componentKey }
+    );
+  };
+  const secret = (field: string) => SECRET_FIELD_NAME.test(field);
+  report("MCP_SECRET_FIELD_OMITTED", fields.filter(secret), [
+    "looks secret-bearing and is not stored",
+    "look secret-bearing and are not stored",
+  ]);
+  report(
+    "MCP_UNKNOWN_FIELD",
+    fields.filter((field) => !secret(field)),
+    ["is not supported; ignored", "are not supported; ignored"]
   );
 }
 
@@ -109,7 +145,7 @@ function dropField(field: string, ctx: ReadContext): void {
  * Absolute HTTPS (or loopback HTTP) with nothing `URL` drops or rewrites, so
  * the string kept is the one checked: a resource indicator matches bytewise.
  */
-function readEndpoint(field: string, value: unknown): string {
+function readEndpoint(field: string, value: unknown, ctx: ReadContext): string {
   let url: URL | undefined;
   try {
     url = typeof value === "string" ? new URL(value) : undefined;
@@ -130,6 +166,13 @@ function readEndpoint(field: string, value: unknown): string {
       `auth.${field} must be an absolute HTTPS (or loopback HTTP) URL without credentials, a fragment, whitespace or backslashes`
     );
   }
+  if (url.protocol === "http:") {
+    ctx.issues.warn(
+      "MCP_INSECURE_URL_LOCALHOST",
+      `server "${ctx.serverKey}": auth.${field} is a plain-HTTP loopback URL, which only works in local development`,
+      { componentKey: ctx.componentKey }
+    );
+  }
   return value;
 }
 
@@ -137,14 +180,20 @@ function readClient(raw: unknown, ctx: ReadContext): PluginOAuthClient {
   if (!isPlainRecord(raw))
     throw new InvalidAuth("auth.client must be an object");
   const { mode, clientId, tokenEndpointAuthMethod, ...rest } = raw;
-  for (const field of Object.keys(rest)) dropField(field, ctx);
   if (mode === "dcr" || mode === "cimd") {
-    if (clientId !== undefined) dropField("clientId", ctx);
-    if (tokenEndpointAuthMethod !== undefined) {
-      dropField("tokenEndpointAuthMethod", ctx);
-    }
+    dropFields(
+      [
+        ...Object.keys(rest),
+        ...(clientId !== undefined ? ["clientId"] : []),
+        ...(tokenEndpointAuthMethod !== undefined
+          ? ["tokenEndpointAuthMethod"]
+          : []),
+      ],
+      ctx
+    );
     return { mode };
   }
+  dropFields(Object.keys(rest), ctx);
   if (mode !== "provided") {
     throw new InvalidAuth(
       `auth.client.mode must be "provided", "dcr" or "cimd"`
@@ -167,12 +216,13 @@ function readOAuth(
   ctx: ReadContext
 ): PluginOAuthDeclaration {
   const declaration: PluginOAuthDeclaration = {};
+  const dropped: string[] = [];
   for (const [field, value] of Object.entries(raw)) {
     if (field === "type") continue;
     if (field === "client") {
       declaration.client = readClient(value, ctx);
     } else if (oneOf(URL_FIELDS, field)) {
-      declaration[field] = readEndpoint(field, value);
+      declaration[field] = readEndpoint(field, value, ctx);
     } else if (oneOf(SCOPE_FIELDS, field)) {
       if (!Array.isArray(value) || value.some((s) => typeof s !== "string")) {
         throw new InvalidAuth(`auth.${field} must be an array of strings`);
@@ -184,9 +234,10 @@ function readOAuth(
       }
       declaration.oidcEnabled = value;
     } else {
-      dropField(field, ctx);
+      dropped.push(field);
     }
   }
+  dropFields(dropped, ctx);
   return declaration;
 }
 
@@ -195,11 +246,15 @@ function readApiKey(
   ctx: ReadContext
 ): PluginApiKeyAuth {
   const { type: _type, headerScheme, headerName, ...rest } = raw;
-  for (const field of Object.keys(rest)) dropField(field, ctx);
-  if (headerScheme === "bearer" || headerScheme === "basic") {
-    if (headerName !== undefined) dropField("headerName", ctx);
-    return { type: "api_key", headerScheme };
-  }
+  const keyed = headerScheme === "bearer" || headerScheme === "basic";
+  dropFields(
+    [
+      ...Object.keys(rest),
+      ...(keyed && headerName !== undefined ? ["headerName"] : []),
+    ],
+    ctx
+  );
+  if (keyed) return { type: "api_key", headerScheme };
   if (headerScheme !== "custom_header") {
     throw new InvalidAuth(
       `auth.headerScheme must be "bearer", "basic" or "custom_header"`
@@ -234,9 +289,10 @@ export function readOpenAiServerAuth(
     if (!isPlainRecord(raw)) throw new InvalidAuth("auth must be an object");
     switch (raw.type) {
       case "none":
-        for (const field of Object.keys(raw)) {
-          if (field !== "type") dropField(field, ctx);
-        }
+        dropFields(
+          Object.keys(raw).filter((field) => field !== "type"),
+          ctx
+        );
         return { auth: { type: "none" } };
       case "oauth":
       case "mixed":

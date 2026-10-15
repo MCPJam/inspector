@@ -117,6 +117,14 @@ describe("auth types", () => {
     };
     const parsed = await parsePluginBundle(withAuth(auth), compat);
     expect(httpConfig(parsed).auth).toEqual(auth);
+    // Kept, and reported as a loopback server URL is.
+    expect(parsed.warnings).toEqual([
+      expect.objectContaining({
+        code: "MCP_INSECURE_URL_LOCALHOST",
+        componentKey: "server:api",
+        message: expect.stringContaining("auth.tokenUrl"),
+      }),
+    ]);
   });
 
   it("marks mixed sign-in optional and none as needing nothing", async () => {
@@ -132,6 +140,38 @@ describe("auth types", () => {
     const none = await parsePluginBundle(withAuth({ type: "none" }), compat);
     expect(httpConfig(none).auth).toEqual({ type: "none" });
     expect(none.setupRequirements).toEqual([]);
+  });
+
+  it("lets a declared none or api_key outrank MCPJam's oauth hint", async () => {
+    for (const auth of [
+      { type: "none" },
+      { type: "api_key", headerScheme: "bearer" },
+    ]) {
+      const parsed = await parsePluginBundle(
+        withAuth(auth, { oauth: { scopes: ["read"] } }),
+        compat
+      );
+      expect(
+        parsed.setupRequirements.filter((need) => need.kind === "oauth")
+      ).toEqual([]);
+    }
+    // With no declared method the hint still asks for a sign-in.
+    const hinted = await parsePluginBundle(
+      bundle({
+        "plugin.json": manifestJson(),
+        "mcp.json": mcpJson({
+          api: {
+            type: "streamable-http",
+            url: URL_OK,
+            oauth: { scopes: ["read"] },
+          },
+        }),
+      }),
+      compat
+    );
+    expect(hinted.setupRequirements).toEqual([
+      expect.objectContaining({ kind: "oauth", serverKey: "api" }),
+    ]);
   });
 
   it("turns an API key into a secret header requirement with its scheme", async () => {
@@ -230,6 +270,23 @@ describe("credentials and unknown fields", () => {
         client: { mode },
       });
     }
+  });
+
+  it("reports an object's dropped fields once, naming a few", async () => {
+    const auth: Record<string, unknown> = {
+      type: "none",
+      "sk-live0123456789": true,
+    };
+    for (let i = 0; i < 10_000; i += 1) auth[`extra${i}`] = i;
+    const parsed = await parsePluginBundle(withAuth(auth), compat);
+    expect(httpConfig(parsed).auth).toEqual({ type: "none" });
+    expect(parsed.warnings).toHaveLength(1);
+    const [warning] = parsed.warnings;
+    expect(warning.code).toBe("MCP_UNKNOWN_FIELD");
+    expect(warning.message).toContain('(redacted), "extra0", "extra1"');
+    expect(warning.message).toContain("and 9998 more");
+    expect(warning.message).not.toContain("sk-live");
+    expect(warning.message.length).toBeLessThan(200);
   });
 
   it("drops undocumented fields with a warning", async () => {
@@ -375,7 +432,7 @@ describe("renderPluginApiKeyHeader", () => {
     });
   });
 
-  it("sends a custom header verbatim", () => {
+  it("sends a custom header's value trimmed", () => {
     expect(
       renderPluginApiKeyHeader(
         { type: "api_key", headerScheme: "custom_header", headerName: "X-Key" },
