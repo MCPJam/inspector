@@ -107,9 +107,17 @@ describe("client sentry init", () => {
   });
 
   it("derives environment from the Vite build mode, not NODE_ENV", async () => {
+    vi.stubEnv("VITE_ENVIRONMENT", undefined);
     const { resolveClientSentryConfig } = await import("../sentry");
     expect(import.meta.env.PROD).toBe(false);
     expect(resolveClientSentryConfig().environment).toBe("dev");
+  });
+
+  it("reports an optimized preview build as preview, like its rebuilt events", async () => {
+    vi.stubEnv("VITE_ENVIRONMENT", "preview");
+    vi.stubEnv("PROD", true);
+    const { resolveClientSentryConfig } = await import("../sentry");
+    expect(resolveClientSentryConfig().environment).toBe("preview");
   });
 
   it("does not record replays on a self-hosted web build", async () => {
