@@ -9,7 +9,7 @@ import { useBrowserProfileArchivesAvailable } from "@/lib/browser-profiles/avail
 // What it leaves out mirrors the exclusions in browserd's profile-archive.ts.
 const SAVE_PROFILE_PROMPT = [
   "Name this browser profile.",
-  "It keeps you signed in to the sites this browser visited, so any chat that uses it acts as you on those sites. Saved passwords, autofill and history are left out. The profile stays stored until you delete it in Settings.",
+  "Chats that use this profile act as you on the sites this browser visited. It leaves out saved passwords, autofill and history. Delete it in Settings.",
 ].join("\n\n");
 
 export interface BrowserProfileArchiveResult {
