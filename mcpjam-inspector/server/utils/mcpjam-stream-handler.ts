@@ -107,6 +107,7 @@ import {
   scrubChatGPTAppsToolResultsForBackend,
 } from "./chat-helpers";
 import { normalizeModelMessagesForConvex } from "./normalize-model-messages-for-convex";
+import { hostedMessagesWithoutEmptyText } from "./empty-text-blocks";
 import {
   serializeToolsForConvex,
   type ToolDefinition,
@@ -1896,11 +1897,8 @@ function normalizePreservedReasoning(messages: ModelMessage[]): ModelMessage[] {
  * Scrub messages for sending to the backend LLM.
  * Removes UI-specific metadata that shouldn't be sent to the model.
  *
- * `preserveReasoningFromIndex` is the index of the first message in the
- * *current* user turn (post the latest user message). Messages at or after
- * that index keep their reasoning parts so a thinking model can see its
- * own scratchpad between tool steps. Messages before that index still get
- * reasoning pruned to match prior behavior.
+ * `preserveReasoningFromIndex` starts the current user turn. Reasoning from
+ * that index survives tool steps; reasoning from earlier turns is pruned.
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
@@ -3681,15 +3679,17 @@ async function processOneStep(ctx: StepContext): Promise<{
   const llmStartAbs = stepStartAbs;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
 
-  // Scrub messages before sending to backend. Preserve reasoning on
-  // assistant messages added during the current turn so thinking models can
-  // see their own scratchpad across tool steps.
-  const backendMessages = scrubMessagesForBackend(
-    messageHistory,
-    tools,
-    mcpClientManager,
-    selectedServers,
-    traceTurn.promptMessageStartIndex,
+  // Keep current-turn reasoning while cleaning only the outgoing provider copy.
+  const backendMessages = hostedMessagesWithoutEmptyText(
+    scrubMessagesForBackend(
+      messageHistory,
+      tools,
+      mcpClientManager,
+      selectedServers,
+      traceTurn.promptMessageStartIndex,
+    ),
+    modelId,
+    provider,
   );
   const scrubbedMessages = historyPresentation
     ? presentHistoryForModel(backendMessages, tools, historyPresentation)
