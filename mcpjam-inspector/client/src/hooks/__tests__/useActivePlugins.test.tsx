@@ -212,18 +212,49 @@ describe("useActivePlugins", () => {
     ]);
   });
 
-  it("asks a backend from before component admission the old way, without failing", () => {
-    const refusal = new Error(
-      "ArgumentValidationError: Object contains extra field `componentAdmission` that is not in the validator.",
+  // What the browser client throws: the deployment's message between its
+  // `[CONVEX Q(…)]` prefix and "Called by client" line.
+  const thrown = (body: string) =>
+    new Error(
+      `[CONVEX Q(plugins:resolveActivePlugins)] [Request ID: 6f2c3a9b1d4e5f60] ${body}\n  Called by client`,
     );
-    state.next = (args: { componentAdmission?: boolean }) =>
-      args.componentAdmission ? refusal : result([bits]);
+
+  it.each([
+    [
+      "development",
+      thrown(
+        "Server Error\nArgumentValidationError: Object contains extra field `componentAdmission` that is not in the validator.",
+      ),
+    ],
+    ["production", thrown("Server Error")],
+  ])(
+    "asks a backend from before component admission the old way, without failing (%s)",
+    (_deployment, refusal) => {
+      state.next = (args: { componentAdmission?: boolean }) =>
+        args.componentAdmission ? refusal : result([bits]);
+      const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
+      expect(state.calls.at(-1)?.args).not.toHaveProperty("componentAdmission");
+      expect(hook.current.failed).toBe(false);
+      expect(hook.current.activePlugins.map((p) => p.pluginId)).toEqual([
+        "plg_bits",
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "another error naming the field",
+      thrown("Server Error\nUncaught Error: componentAdmission needs a venue"),
+    ],
+    [
+      "a ConvexError",
+      Object.assign(thrown("Server Error"), { data: { code: "FORBIDDEN" } }),
+    ],
+  ])("fails without asking again on %s", (_case, error) => {
+    state.next = error;
     const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
-    expect(state.calls.at(-1)?.args).not.toHaveProperty("componentAdmission");
-    expect(hook.current.failed).toBe(false);
-    expect(hook.current.activePlugins.map((p) => p.pluginId)).toEqual([
-      "plg_bits",
-    ]);
+    expect(state.calls.at(-1)?.args).toHaveProperty("componentAdmission", true);
+    expect(hook.current.failed).toBe(true);
   });
 
   it("reads a gate denial as no plugins", () => {

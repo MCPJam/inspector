@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
+import { describeConvexFailure } from "@/lib/convex-error";
 import type {
   ActivePluginRow,
   ActivePluginsResult,
@@ -72,9 +73,18 @@ export function activePluginServers(
  * A backend from before component admission refuses the argument as an extra
  * field. Callers ask it again without one rather than reading that refusal as
  * "no plugins".
+ *
+ * A development deployment names the field. A production one redacts every
+ * error that isn't a `ConvexError` to `Server Error`, so there the refusal
+ * looks like any other failure of the read, and that gets the second read too.
+ * On a backend that has the argument, that read leaves out a plugin with a
+ * server the member can't use, as before admission. A `ConvexError` is the
+ * backend answering on purpose, never a validator refusal.
  */
 export function refusesComponentAdmission(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("componentAdmission");
+  if (!(error instanceof Error) || "data" in error) return false;
+  if (error.message.includes("extra field `componentAdmission`")) return true;
+  return describeConvexFailure(error, "").redacted;
 }
 
 /**
