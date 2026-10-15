@@ -116,10 +116,8 @@ export function FeatureSignUpNudgeDialog({
     >
       <DialogContent className="sm:max-w-md">
         <JamIllustration />
-        {/* No bullet list. It once carried three sell lines including "run
-            your first swarm on us, no card needed", a pricing promise nobody
-            had made. The title and one sentence about what the run teaches
-            are what is left. */}
+        {/* Title and one sentence only: no bullet list, and no pricing or
+            free-run claims in this copy. */}
         <DialogHeader>
           <DialogTitle>{copy.nudge.title}</DialogTitle>
           <DialogDescription>{copy.nudge.body}</DialogDescription>

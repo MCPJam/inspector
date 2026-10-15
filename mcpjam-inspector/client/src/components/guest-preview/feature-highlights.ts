@@ -180,8 +180,7 @@ export const GATED_FEATURE_COPY: Record<GatedFeatureId, GatedFeatureCopy> = {
     analyticsLocation: "swarms_guest_preview",
     nudge: {
       title: "Create an account to run your first swarm",
-      // Sells what the run teaches, not why we need the account. Still no
-      // claim about what it costs, and no free-run offer.
+      // No claim about what it costs, and no free-run offer.
       body: "Test your MCP server with agent personas pursuing different user goals. See where they succeed, where they get stuck, and what to improve.",
     },
   },
