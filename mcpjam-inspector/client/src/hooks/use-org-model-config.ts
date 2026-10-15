@@ -1,5 +1,7 @@
+import { useOrgUsagePages } from "./org-usage-pages";
 import { useCallback, useState } from "react";
 import { useQuery, useAction } from "convex/react";
+import type { PolicyEligibility } from "@/shared/org-ai-key-policy";
 
 export interface OrgModelProvider {
   /**
@@ -16,6 +18,19 @@ export interface OrgModelProvider {
   displayName?: string;
   selectedModels?: string[];
   hasSecret: boolean;
+  /**
+   * Where the connection runs (`cloud`: MCPJam calls the provider; `local`:
+   * an Inspector does), as the backend reports it. Display only: whether the
+   * connection may serve AI requests is `policyEligibility`.
+   */
+  runtimeLocation?: "cloud" | "local";
+  /**
+   * The backend's verdict on whether AI requests may run on this connection
+   * while the organization requires its own keys. Read it only through
+   * `connectionPolicyEligibility` (`@/shared/org-ai-key-policy`), which fails
+   * closed when an older backend sent none.
+   */
+  policyEligibility?: PolicyEligibility;
 }
 
 export interface OrgModelConfigResult {
@@ -91,23 +106,7 @@ export function useOrgModelUsageSummary(
   organizationId: string | null,
   options: { enabled?: boolean; rangeDays?: number } = {}
 ): { summary: OrgModelUsageSummary | undefined; isLoading: boolean } {
-  const enabled = options.enabled ?? true;
-  const shouldQuery = !!organizationId && enabled;
-
-  const summary = useQuery(
-    "organizationModelProviders:getUsageSummary" as any,
-    shouldQuery
-      ? ({
-          organizationId,
-          rangeDays: options.rangeDays ?? 30,
-        } as any)
-      : "skip"
-  ) as OrgModelUsageSummary | undefined;
-
-  return {
-    summary,
-    isLoading: shouldQuery && summary === undefined,
-  };
+  return useOrgUsagePages(organizationId, options.enabled ?? true, options.rangeDays ?? 30);
 }
 
 export function useOrgModelConfig(

@@ -2657,6 +2657,77 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
+    it("answers a key-policy refusal from /stream/org/resolve as the refusal, not an internal 500", async () => {
+      // The organization requires its own provider keys and this connection
+      // runs on a local runtime, so the backend refuses before handing back
+      // any key. That is the organization's configuration, not an MCPJam
+      // fault: the answer keeps the refusal's status, code and copy, is not
+      // reported as an internal failure (which pages), and never falls back
+      // to another rail.
+      const { logger } = await import("../../../utils/logger");
+      const errorSpy = vi.spyOn(logger, "error");
+      const refusalSentence =
+        "This organization runs AI only on its own provider keys.";
+      const originalFetch = global.fetch;
+      const fetchMock = vi.fn().mockImplementation(async (input) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org/resolve") {
+          return Response.json(
+            { ok: false, code: "org_keys_required", error: refusalSentence },
+            { status: 403 },
+          );
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock;
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: {
+            id: "custom:local-one:m-1",
+            provider: "custom",
+            customProviderName: "local-one",
+          },
+          projectId: "project-1",
+        });
+        const { status, data } = await expectJson<{
+          code: string;
+          message: string;
+          error?: string;
+          details: Record<string, unknown>;
+          origin?: string;
+        }>(res);
+
+        expect(status).toBe(403);
+        expect(data.code).toBe("FORBIDDEN");
+        expect(data.details).toMatchObject({
+          code: "org_keys_required",
+          remediation: "choose_org_model",
+        });
+        expect(data.message).toContain(refusalSentence);
+        expect(data.error).toBeUndefined();
+        expect(data.origin).toBe("user_config");
+        expect(res.headers.get("x-mcpjam-error-origin")).toBe("user_config");
+        expect(
+          errorSpy.mock.calls.some(
+            ([, , context]) =>
+              (context as { hop?: unknown } | undefined)?.hop ===
+              "mcpjam_internal",
+          ),
+        ).toBe(false);
+        expect(
+          fetchMock.mock.calls.some(
+            ([input]) =>
+              String(input) === "https://test-convex.example.com/stream/org",
+          ),
+        ).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+        errorSpy.mockRestore();
+      }
+    });
+
     it("forces the cloud /stream/org proxy for local-only MCP even with a local-eligible provider", async () => {
       // A `custom:` provider is local-runtime-eligible, so without the flag this
       // chat resolves + runs the model locally (see the test above). When a
@@ -3672,6 +3743,28 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(streamedTo()).toEqual(["/stream"]);
     });
 
+    it.each([{}, { source: "hosted", modelId: "other/model", fallback: none }])("refuses an explicit invalid selection before dispatch", async (modelSelection) => {
+      hostWith();
+      const res = await turn({ modelSelection });
+      expect(res.status).toBe(400);
+      expect(streamedTo()).toEqual([]);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).not.toHaveBeenCalled();
+    });
+
+    it("forwards the explicit selection and applied effort to the backend and record", async () => {
+      const modelSelection = { modelId: HOSTED_ID, source: "hosted", fallback: none, settings: { reasoningEffort: "low" } };
+      hostWith({ ...modelSelection, settings: { reasoningEffort: "medium" } });
+      const res = await turn({ modelSelection, reasoningEffort: "high", chatSessionId: "chat-selected" });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      const body = JSON.parse(String((fetchMock.mock.calls.find(([url]) => String(url).endsWith("/stream"))![1] as RequestInit).body));
+      expect(body.modelSelection).toEqual({ ...modelSelection, settings: { reasoningEffort: "high" } });
+      expect(body.reasoningEffort).toBe("high");
+      const ingest = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/ingest-chat"));
+      expect(JSON.parse(String((ingest![1] as RequestInit).body)).modelSelection).toEqual(body.modelSelection);
+    });
+
     it("a hosted selection: MCPJam /stream", async () => {
       hostWith({ modelId: HOSTED_ID, source: "hosted", fallback: none });
       const res = await turn();
@@ -3710,6 +3803,23 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(streamedTo()).toEqual(["/stream/org"]);
     });
 
+    it.each([401, 403, 429])("an org refusal (%s) never retries on platform credentials", async (status) => {
+      const modelSelection = { modelId: HOSTED_ID, source: "org", connectionRef: { kind: "orgProvider", id: "selected-connection" }, fallback: { provider: "openrouter", model: "none" } };
+      hostWith();
+      fetchMock.mockImplementation(async (input) => {
+        if (String(input).endsWith("/stream/org")) return Response.json({ error: "connection refused", code: "org_keys_required" }, { status });
+        throw new Error(`Unexpected fetch: ${input}`);
+      });
+      const res = await turn({ modelSelection });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream/org"]);
+      const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+      expect(body.modelSelection).toEqual(modelSelection);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).not.toHaveBeenCalled();
+    });
+
     it("a local selection runs on the request's own key, never MCPJam or the org", async () => {
       hostWith({
         modelId: HOSTED_ID,
@@ -3726,6 +3836,79 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(vi.mocked(createLlmModel)).toHaveBeenCalledWith(
         expect.objectContaining({ id: HOSTED_ID, hosted: false }),
         "sk-request-key",
+        expect.anything(),
+        undefined,
+      );
+    });
+
+    // The organization's config, with its AI-key policy. A turn on its own
+    // key reaches nothing else on the backend.
+    const answerOrgConfig = (aiKeyPolicy: Record<string, unknown>) =>
+      fetchMock.mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.endsWith("/org-model-config/resolve")) {
+          return Response.json({ ok: true, providers: [], aiKeyPolicy });
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+
+    it("a local selection on a strict organization's project is refused before any provider call", async () => {
+      // The organization requires its own keys. A key on this machine is no
+      // exemption: the turn reads the policy and is refused server-side, so
+      // the picker is not the only guard.
+      answerOrgConfig({ requireOrgKeys: true, revision: 2 });
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "llama3", provider: "ollama" },
+        apiKey: "local",
+        projectId: "project-strict",
+        modelSelection: {
+          modelId: "ollama/llama3",
+          nativeModelId: "llama3",
+          source: "local",
+          connectionRef: { kind: "localProvider", providerKey: "ollama" },
+          fallback: none,
+        },
+      });
+      const { status, data } = await expectJson<{
+        code: string;
+        details: Record<string, unknown>;
+      }>(res);
+      expect(status).toBe(403);
+      expect(data.code).toBe("FORBIDDEN");
+      expect(data.details).toMatchObject({ code: "org_keys_required" });
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).endsWith("/org-model-config/resolve"),
+        ),
+      ).toBe(true);
+      expect(streamedTo()).toEqual([]);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).not.toHaveBeenCalled();
+    });
+
+    it("a local selection runs as before when the organization does not require its own keys", async () => {
+      answerOrgConfig({ requireOrgKeys: false, revision: 1 });
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "llama3", provider: "ollama" },
+        apiKey: "local",
+        projectId: "project-open",
+        modelSelection: {
+          modelId: "ollama/llama3",
+          nativeModelId: "llama3",
+          source: "local",
+          connectionRef: { kind: "localProvider", providerKey: "ollama" },
+          fallback: none,
+        },
+      });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual([]);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "llama3" }),
+        "local",
         expect.anything(),
         undefined,
       );

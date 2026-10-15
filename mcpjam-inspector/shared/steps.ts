@@ -109,7 +109,7 @@ export const WIDGET_ASSERTION_LABELS: Record<WidgetAssertion["kind"], string> =
     elementVisible: "Element visible",
     elementHidden: "Element hidden",
     inputValue: "Input value equals",
-    widgetToolCalled: "View called tool",
+    widgetToolCalled: "View called a tool",
   };
 
 // ── case-level selectors (replace isPinnedTurn / isPinnedOnly / countModelTurns) ─

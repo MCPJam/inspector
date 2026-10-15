@@ -20,6 +20,7 @@
  *   - it expires, so a path stored days ago in a long-lived tab cannot
  *     hijack an unrelated sign-in later.
  */
+import { projectTransitionRecovery } from "./auth/project-transition-recovery";
 import { normalizeReturnTargetPath, routePaths } from "./app-navigation";
 import { isAppRelativeTarget, readProjectPathSegment } from "./project-route";
 
@@ -66,9 +67,10 @@ export function writeAppSignInReturnPath(
   path: string | null | undefined,
   now: number = Date.now(),
 ): boolean {
-  if (typeof sessionStorage === "undefined") return false;
   const trimmed = path?.trim() ?? "";
   if (!isStorableReturnPath(trimmed)) return false;
+  projectTransitionRecovery.arm(trimmed);
+  if (typeof sessionStorage === "undefined") return false;
   try {
     const payload: StoredReturnPath = { path: trimmed, storedAt: now };
     sessionStorage.setItem(

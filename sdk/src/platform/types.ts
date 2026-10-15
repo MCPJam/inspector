@@ -28,6 +28,16 @@ import type {
   ModelReasoningEffort,
   RequestedModelSelection,
 } from "../host-config/model-selection.js";
+import type {
+  PlatformAnalysisRouting,
+  PlatformFindingsJobStatus,
+  PlatformReadinessObservationReason,
+} from "./analysis-outcome-types.js";
+export type {
+  PlatformAnalysisRouting,
+  PlatformFindingsJobStatus,
+  PlatformReadinessObservationReason,
+} from "./analysis-outcome-types.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -1449,12 +1459,7 @@ export interface PlatformAnalysisTouchpointDisclosure {
   rail: {
     fixed: "openrouter" | null;
     because: string;
-    /**
-     * `gateway_preferred`: Gateway when configured and priced there, else
-     * OpenRouter. `typed_decision`: a typed classifier through the Gateway,
-     * with a fallback model only when the classifier cannot be reached.
-     */
-    routing?: "gateway_preferred" | "typed_decision";
+    routing?: PlatformAnalysisRouting;
   };
   destinations: readonly string[];
   evidenceSent: readonly string[];
@@ -5292,7 +5297,7 @@ export interface PlatformUnifiedFindings {
   } | null;
   job: null | {
     kind: "build" | "enrich";
-    status: "pending" | "completed" | "failed";
+    status: PlatformFindingsJobStatus;
     startedAt: number;
     updatedAt: number;
     errorCode?: string;
@@ -5947,15 +5952,7 @@ export interface PlatformReadinessObservationState {
     | "billing-blocked"
     | "provider-failed"
     | "invalid-output";
-  reason?:
-    | "not_requested"
-    | "billing_limit_reached"
-    | "platform_cap_reached"
-    | "provider_error"
-    | "provider_timeout"
-    | "schema_invalid"
-    | "no_evidence"
-    | "cancelled";
+  reason?: PlatformReadinessObservationReason;
   detail?: string;
 }
 

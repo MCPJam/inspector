@@ -104,33 +104,38 @@ export function PluginSkillsSection({
       }),
     [plugins, activeRows],
   );
-  const fallbackPlugins = plugins.filter(
-    (plugin) =>
-      plugin.activeVersionId &&
-      !activeRows.some((row) => row.pluginId === plugin.pluginId),
+  const fallbackPlugins = useMemo(
+    () =>
+      plugins.filter(
+        (plugin) =>
+          plugin.activeVersionId &&
+          !activeRows.some((row) => row.pluginId === plugin.pluginId),
+      ),
+    [plugins, activeRows],
   );
 
   // What each fallback plugin's version lists, once that version answered.
-  const [fallbackCounts, setFallbackCounts] = useState<
-    Record<string, number | undefined>
+  const [fallbackRows, setFallbackRows] = useState<
+    Record<string, PluginSkillSelection[] | undefined>
   >({});
   const reportFallback = useCallback(
-    (pluginId: string, count: number | undefined) =>
-      setFallbackCounts((previous) =>
-        previous[pluginId] === count
+    (pluginId: string, listed: PluginSkillSelection[] | undefined) =>
+      setFallbackRows((previous) =>
+        previous[pluginId] === listed
           ? previous
-          : { ...previous, [pluginId]: count },
+          : { ...previous, [pluginId]: listed },
       ),
     [],
   );
-  const fallbackCount = fallbackPlugins.reduce(
-    (total, plugin) => total + (fallbackCounts[plugin.pluginId] ?? 0),
-    0,
+  const listedFallback = useMemo(
+    () =>
+      fallbackPlugins.flatMap((plugin) => fallbackRows[plugin.pluginId] ?? []),
+    [fallbackPlugins, fallbackRows],
   );
   const fallbackPending = fallbackPlugins.some(
-    (plugin) => fallbackCounts[plugin.pluginId] === undefined,
+    (plugin) => fallbackRows[plugin.pluginId] === undefined,
   );
-  const count = rows.length + fallbackCount;
+  const count = rows.length + listedFallback.length;
 
   useEffect(() => {
     onListingChange?.({ count, pending: fallbackPending });
@@ -139,11 +144,14 @@ export function PluginSkillsSection({
   const [focusHandled, setFocusHandled] = useState(false);
   useEffect(() => {
     if (!focusPluginId || focusHandled) return;
-    const first = rows.find((row) => row.pluginId === focusPluginId);
+    const fromActive = rows.find((row) => row.pluginId === focusPluginId);
+    const first = fromActive
+      ? toSelection(fromActive)
+      : listedFallback.find((skill) => skill.pluginId === focusPluginId);
     if (!first) return;
     setFocusHandled(true);
-    onOpenSkill(toSelection(first));
-  }, [focusPluginId, focusHandled, rows, onOpenSkill]);
+    onOpenSkill(first);
+  }, [focusPluginId, focusHandled, rows, listedFallback, onOpenSkill]);
 
   if (rows.length === 0 && fallbackPlugins.length === 0) return null;
   return (
@@ -162,7 +170,7 @@ export function PluginSkillsSection({
           plugin={plugin}
           selectedSkillId={selectedSkillId}
           onOpenSkill={onOpenSkill}
-          onCount={reportFallback}
+          onListed={reportFallback}
         />
       ))}
     </div>
@@ -173,53 +181,50 @@ function PluginVersionSkillRows({
   plugin,
   selectedSkillId,
   onOpenSkill,
-  onCount,
+  onListed,
 }: {
   plugin: PluginSummary;
   selectedSkillId: string | null;
   onOpenSkill: (skill: PluginSkillSelection) => void;
-  /** How many rows this lists; `undefined` until the version answers. */
-  onCount: (pluginId: string, count: number | undefined) => void;
+  /** The skills this lists; `undefined` until the version answers. */
+  onListed: (
+    pluginId: string,
+    listed: PluginSkillSelection[] | undefined,
+  ) => void;
 }) {
   const version = usePluginVersion(plugin.activeVersionId ?? null);
   const label = plugin.displayName || plugin.name;
-  const listed = version
-    ? version.skills.filter((component) => component.materializedSkillId).length
-    : undefined;
-  useEffect(() => {
-    onCount(plugin.pluginId, listed);
-  }, [plugin.pluginId, listed, onCount]);
-  return (
-    <>
-      {(version?.skills ?? []).flatMap((component) =>
+  const listed = useMemo(
+    () =>
+      version?.skills.flatMap((component) =>
         component.materializedSkillId
           ? [
-              <PluginSkillRow
-                key={component.componentId}
-                row={{
-                  key: component.componentId,
-                  pluginId: plugin.pluginId,
-                  pluginLabel: label,
-                  skillId: component.materializedSkillId,
-                  modelRef: component.modelRef,
-                  name: component.declaredName,
-                  description: "",
-                }}
-                selected={component.materializedSkillId === selectedSkillId}
-                onOpen={() =>
-                  onOpenSkill({
-                    pluginId: plugin.pluginId,
-                    pluginLabel: label,
-                    skillId: component.materializedSkillId!,
-                    modelRef: component.modelRef,
-                    name: component.declaredName,
-                    description: "",
-                  })
-                }
-              />,
+              {
+                pluginId: plugin.pluginId,
+                pluginLabel: label,
+                skillId: component.materializedSkillId,
+                modelRef: component.modelRef,
+                name: component.declaredName,
+                description: "",
+              },
             ]
           : [],
-      )}
+      ),
+    [version, plugin.pluginId, label],
+  );
+  useEffect(() => {
+    onListed(plugin.pluginId, listed);
+  }, [plugin.pluginId, listed, onListed]);
+  return (
+    <>
+      {(listed ?? []).map((skill) => (
+        <PluginSkillRow
+          key={skill.skillId}
+          row={{ ...skill, key: skill.skillId }}
+          selected={skill.skillId === selectedSkillId}
+          onOpen={() => onOpenSkill(skill)}
+        />
+      ))}
     </>
   );
 }

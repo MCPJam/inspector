@@ -118,3 +118,17 @@ describe("directChatEffort", () => {
     if (!result.ok) expect(result.reason).toContain("cannot both be applied");
   });
 });
+
+
+describe("explicit selection effort authority", () => {
+  const selected = { modelId: "openai/gpt-5", source: "org", connectionRef: { kind: "orgProvider", id: "conn-1" }, fallback: { provider: "none", model: "none" } } as const;
+  it("does not restore host effort after an explicit clear", () => {
+    expect(resolveChatReasoningEffort({ hostSelection: HOST_SELECTION, requestSelection: selected, hostWins: false })).toBeUndefined();
+  });
+  it("uses selected effort, then a top-level override; scenarios retain host authority", () => {
+    const requestSelection = { ...selected, settings: { reasoningEffort: "high" as const } };
+    expect(resolveChatReasoningEffort({ hostSelection: HOST_SELECTION, requestSelection, hostWins: false })).toBe("high");
+    expect(resolveChatReasoningEffort({ hostSelection: HOST_SELECTION, requestSelection, bodyEffort: "low", hostWins: false })).toBe("low");
+    expect(resolveChatReasoningEffort({ hostSelection: HOST_SELECTION, requestSelection, bodyEffort: "low", hostWins: true })).toBe("medium");
+  });
+});

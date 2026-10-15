@@ -64,7 +64,10 @@ import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
-import { ComparisonBrowser } from "@/components/browser/ComparisonBrowser";
+import {
+  ComparisonBrowser,
+  LocalBrowserUnavailable,
+} from "@/components/browser/ComparisonBrowser";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -155,7 +158,10 @@ function RightRailTabbed({
   railRef.current = rail;
   const computersEnabled = useComputersEnabledState();
   const browsersEnabled = useBrowserEnabledState();
-  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
+  // No Shell for a harness client: it runs on a throwaway per-conversation box,
+  // not the personal computer this tab would open.
+  const shellAvailable =
+    computersEnabled === true && !!hostConfig?.computer && !hostConfig?.harness;
   // Which engine serves this project's computer work. The rail is an INDICATOR
   // only — switching lives on the Computer tab, which owns the consent gate.
   //
@@ -412,10 +418,7 @@ function RightRailTabbed({
               Loading conversation…
             </p>
           ) : isLocalBrowser && browserEngine.localAvailable === false ? (
-            <p className="p-4 text-sm text-muted-foreground">
-              Browser is unavailable on this machine. Check Browser settings or
-              choose Cloud for a new chat.
-            </p>
+            <LocalBrowserUnavailable engine={browserEngine} />
           ) : isLocalBrowser ? (
             <LocalBrowserBody
               key={`${projectId}:${browserSessionId}:local`}

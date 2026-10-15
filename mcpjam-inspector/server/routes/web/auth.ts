@@ -416,6 +416,21 @@ export function buildSingleServerOAuthTokens(serverId: string, token?: string) {
   return token ? { [serverId]: token } : undefined;
 }
 
+/**
+ * The name to show the user for a server: the one the caller passed, else the
+ * one the backend stored, else its id. A swarm run pins only server ids, so
+ * without the stored name its sign-in failures named the server by its id.
+ */
+function displayNameForServer(
+  serverId: string,
+  serverNamesById: Record<string, string> | undefined,
+  serverConfig: { name?: unknown } | undefined,
+): string {
+  const stored =
+    typeof serverConfig?.name === "string" ? serverConfig.name.trim() : "";
+  return serverNamesById?.[serverId] ?? (stored || serverId);
+}
+
 export function buildServerNamesById(
   serverIds: string[],
   serverNames?: readonly string[],
@@ -456,6 +471,9 @@ export type ConvexAuthorizeResponse = {
   };
   serverConfig: {
     credentialConfigurationId?: string;
+    // The server's stored display name. Absent on older backends; a caller's
+    // own `serverNames` still win (see `displayNameForServer`).
+    name?: string;
     transportType: "stdio" | "http";
     url?: string;
     // Declared wire transport from a plugin manifest (parser `httpVariant`),
@@ -1611,7 +1629,11 @@ export async function createAuthorizedManager(
           { serverId, serverName: serverNamesById?.[serverId] ?? null },
         );
       }
-      const displayServerName = serverNamesById?.[serverId] ?? serverId;
+      const displayServerName = displayNameForServer(
+        serverId,
+        serverNamesById,
+        auth.serverConfig,
+      );
       const effectiveAuth = resolveEffectiveAuthMethod(
         auth.serverConfig,
         options?.xaaPolicy,
@@ -1924,7 +1946,11 @@ export async function createAuthorizedManager(
           recoveredOAuthTokens[serverId] ??
           auth.oauthAccessToken ??
           oauthTokens?.[serverId];
-        const displayServerName = serverNamesById?.[serverId] ?? serverId;
+        const displayServerName = displayNameForServer(
+          serverId,
+          serverNamesById,
+          auth.serverConfig,
+        );
         // Resolved in PASS 1 (canonical authMethod wins; "auto" selects XAA
         // when configured or when the host policy forces it, "discover"
         // otherwise; legacy rows fall back to the boolean pair). Reused rather

@@ -40,6 +40,13 @@ import {
   type HarnessModelSupportVerdict,
 } from "@/shared/harness-model-support";
 import {
+  claudeCodeNativeModelPins,
+  toClaudeCodeModel,
+  toClaudeCodeNativeModel,
+  toCodexNativeModel,
+  type HarnessNativeUpstream,
+} from "./runtime-model-ids.js";
+import {
   HARNESS_MCP_DELIVERY,
   type HarnessMcpDelivery,
 } from "@/shared/harness-mcp-delivery";
@@ -403,8 +410,13 @@ type HarnessRuntimeAdapterBase = {
    *  static `builtinTools` ToolSet. */
   listBuiltinTools(): HarnessBuiltinToolInfo[];
   /** Map a host model id to the harness's native model id/alias, if it needs
-   *  one. Undefined ⇒ let the harness use its default. */
-  toNativeModel?(modelId: string): string | undefined;
+   *  one. Undefined ⇒ let the harness use its default. With a native upstream
+   *  (the organization's own key) the leased native id is what the runtime
+   *  must put on the wire. */
+  toNativeModel?(
+    modelId: string,
+    upstream?: HarnessNativeUpstream,
+  ): string | undefined;
   /** The runtime CLI version this adapter pins (`HARNESS_PINNED_VERSIONS`),
    *  or undefined when the adapter does not pin one (Cursor). The model-support
    *  evidence is evaluated against it. */
@@ -494,6 +506,14 @@ export type HarnessCreateArgs = {
    * silently dropped.
    */
   sandboxPolicy?: Readonly<CodexWorkspaceWriteSandboxPolicy>;
+  /**
+   * The native upstream the turn's lease was minted for (the organization's
+   * own Anthropic or OpenAI key). Absent ⇒ the AI Gateway profile. A native
+   * profile talks to the vendor's API: no Gateway model spellings or effort
+   * workarounds, and every model the runtime picks for itself pinned to the
+   * leased native id, the only model the lease admits.
+   */
+  upstream?: HarnessNativeUpstream;
 };
 
 /** Brokered model access: MCPJam supplies the credential, so the adapter needs
@@ -620,57 +640,6 @@ export type HarnessRuntimeAdapter = HarnessRuntimeAdapterBase &
   (BrokeredModelAccessArm | ExternalAccountModelAccessArm) &
   (NativeSandboxFilesArm | NativeSessionConfigArm | HostExecutedArm);
 
-/** Map a host model id (Gateway `creator/model`, e.g.
- *  `anthropic/claude-opus-4.7`) to a Claude Code native model id. Haiku is the
- *  exception: Claude Code accepts the `haiku` alias as a main model, but rejects
- *  `claude-haiku-4-5` as a selectable main model. The patched bridge adds
- *  `settings.modelOverrides` so aliases/native ids still talk to the Gateway
- *  provider-specific id on the wire. */
-function toClaudeCodeModel(modelId: string): string | undefined {
-  const m = modelId.toLowerCase();
-  const withoutProvider = m.startsWith("anthropic/")
-    ? m.slice("anthropic/".length)
-    : m;
-  // Trailing 8-digit date absorbs an optional dated/pinned snapshot suffix
-  // (e.g. "claude-haiku-4-5-20251001", the exact shape Claude Code's own
-  // internal alias resolution can produce on the wire — see the bridge's
-  // modelOverrides keys below) without being captured; the return value only
-  // ever depends on family/major/minor, same as the undated shape. The
-  // alternation tries the bare "major + date, no minor" shape FIRST
-  // (-\d{8}) — a plain (?:-\d+)? suffix here is wrong: the earlier optional
-  // minor group's greedy \d+ swallows the date digits as if they were a
-  // minor version (e.g. "claude-opus-4-20250929" -> minor="20250929"),
-  // producing an invalid native model string instead of "claude-opus-4".
-  const match = withoutProvider.match(
-    /^claude-(haiku|sonnet|opus)-(\d+)(?:-\d{8}|[.-](\d+)(?:-\d{8})?)?$/,
-  );
-  if (match) {
-    const [, family, major, minor] = match;
-    // Claude Code accepts "haiku" as a selectable main model but rejects the
-    // native shape ("claude-haiku-4-5") — only THIS shortcut needs the alias;
-    // gated on the regex match so it can't fire for a non-Anthropic or
-    // malformed id that merely contains "haiku" as a substring.
-    if (family === "haiku") return "haiku";
-    return `claude-${family}-${major}${minor ? `-${minor}` : ""}`;
-  }
-  if (
-    withoutProvider === "haiku" ||
-    withoutProvider === "sonnet" ||
-    withoutProvider === "opus"
-  ) {
-    return withoutProvider;
-  }
-  // Another Anthropic model (the evidence table's `unknown` row: no native id
-  // verified). Playground chat may still run it with a warning, and then the
-  // honest attempt is the model's own id — passing nothing would let the CLI
-  // silently run its DEFAULT model under this model's name. Evals and swarms
-  // never get here: they refuse an unverified pair before the turn starts.
-  if (m.startsWith("anthropic/") && /^claude-[a-z0-9.-]+$/.test(withoutProvider)) {
-    return withoutProvider;
-  }
-  return undefined;
-}
-
 /**
  * Model support is no longer decided here. Which models each harness can run
  * is an evidence table keyed by the runtime VERSION
@@ -686,20 +655,6 @@ function toClaudeCodeModel(modelId: string): string | undefined {
  * reads that pair as `unknown` until someone measures it, instead of silently
  * inheriting the old verdict.
  */
-
-/** Map a host model id to a Codex-native OpenAI model. ALLOWLIST, not a blanket
- *  `openai/` strip: only the gpt-5 family (what Codex CLI runs) passes through;
- *  anything else ⇒ undefined so Codex uses its own pinned default rather than
- *  being forced onto a model it can't run. Whether a mapped model is actually
- *  RUN is the evidence table's call ({@link modelSupportFor}), so a line the
- *  pinned CLI runs without tools is refused by the preflight, not dropped
- *  here. */
-function toCodexModel(modelId: string): string | undefined {
-  if (!modelId.toLowerCase().startsWith("openai/")) return undefined;
-  const slug = modelId.slice("openai/".length);
-  if (!/^gpt-5/i.test(slug)) return undefined;
-  return slug;
-}
 
 /** The evidence-table verdict for `modelId` on `harnessId` at its pinned
  *  runtime version. One helper so every adapter (both Codex transports
@@ -821,9 +776,12 @@ function memoizedBuiltinTools(
 function claudeCodeTurnEnv(
   permissionMode: HarnessV1PermissionMode | undefined,
   modelId: string,
+  upstream?: HarnessNativeUpstream,
 ): Record<string, string> {
   return {
-    ...claudeCodeModelPins(modelId),
+    ...(upstream?.profile === "anthropic-native"
+      ? claudeCodeNativeModelPins(upstream.nativeModelId)
+      : claudeCodeModelPins(modelId)),
     ...(permissionMode === "allow-all"
       ? {}
       : { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" }),
@@ -930,7 +888,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // Claude Code does not emit file-change stream parts.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createClaudeCodeHarness()),
-  toNativeModel: toClaudeCodeModel,
+  toNativeModel: toClaudeCodeNativeModel,
   // Which models the pinned CLI runs is the evidence table's call, at the
   // pinned version: haiku/sonnet/opus supported, other Anthropic ids unknown,
   // everything else unsupported.
@@ -940,7 +898,15 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   parseToolName: parseHarnessToolName,
   // No `model` here: the adapter no longer reads one at construction. The
   // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
-  createHarness({ modelId, auth, mcpJson, reasoningEffort, permissionMode }) {
+  createHarness({
+    modelId,
+    auth,
+    mcpJson,
+    reasoningEffort,
+    permissionMode,
+    upstream,
+  }) {
+    const env = claudeCodeTurnEnv(permissionMode, modelId, upstream);
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A
     // local session swaps this bootstrap for the Inspector layer's
@@ -949,46 +915,42 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     return createHostedClaudeCodeHarness({
       mcpServers: mcpJson.mcpServers,
       auth,
-      // Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
-      // Anthropic API shape the AI Gateway's Anthropic-compat schema rejects
-      // (400: expected 'disabled' | 'enabled'). Pin thinking off until the
-      // gateway accepts adaptive. (`"off"` on the canary line; the stable
-      // line takes the richer `{ type }` config, where `'disabled'` is the
-      // same wire behavior.)
-      //
       // WITH an effort the turn asks for adaptive thinking (the only shape the
-      // `effort` option controls), so the disabled pin is dropped for it.
-      // A turn with no effort keeps the exact options above.
-      ...(reasoningEffort ? {} : { thinking: { type: "disabled" as const } }),
-      // AI Gateway's Anthropic-compat schema rejects the newer
-      // output_config.effort request field ("400 output_config.effort: Extra
-      // inputs are not permitted"). "unset" makes the CLI omit the field
-      // entirely (verified in CLI 0.2.x-2.1.x: CLAUDE_CODE_EFFORT_LEVEL of
-      // "unset"/"auto" short-circuits effort resolution).
+      // `effort` option controls), and the env carries that level: it beats
+      // the `--effort` flag. Applied the same way on either upstream, so
+      // changing whose key pays never changes the effort a turn runs at.
+      //
+      // On the organization's own Anthropic key the runtime talks to
+      // Anthropic natively, so with no effort the CLI's defaults stand. On the
+      // AI Gateway they are pinned instead:
+      //  - Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
+      //    Anthropic API shape the Gateway's Anthropic-compat schema rejects
+      //    (400: expected 'disabled' | 'enabled'). (`"off"` on the canary
+      //    line; the stable line takes the richer `{ type }` config, where
+      //    `'disabled'` is the same wire behavior.)
+      //  - The same schema rejects the newer output_config.effort request
+      //    field ("400 output_config.effort: Extra inputs are not
+      //    permitted"). "unset" makes the CLI omit the field entirely
+      //    (verified in CLI 0.2.x-2.1.x: CLAUDE_CODE_EFFORT_LEVEL of
+      //    "unset"/"auto" short-circuits effort resolution).
       //
       // This used to be a `process.env.… ??=` write injected into the bridge
       // source. Stable's first-class `env` merges OVER the bridge process
       // env, so unlike `??=` it is now authoritative rather than a default —
       // deliberate: the sandbox env is ours, and the adapter's own `effort`
       // option is the supported way to ask for a value.
-      //
-      // With an effort, the env is set to that level instead: it beats the
-      // `--effort` flag, so leaving "unset" would silently drop the request.
       ...(reasoningEffort
         ? {
             effort: reasoningEffort,
             thinking: { type: "adaptive" as const },
-            env: {
-              ...claudeCodeTurnEnv(permissionMode, modelId),
-              CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort,
-            },
+            env: { ...env, CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort },
           }
-        : {
-            env: {
-              ...claudeCodeTurnEnv(permissionMode, modelId),
-              CLAUDE_CODE_EFFORT_LEVEL: "unset",
-            },
-          }),
+        : upstream?.profile === "anthropic-native"
+          ? { env }
+          : {
+              thinking: { type: "disabled" as const },
+              env: { ...env, CLAUDE_CODE_EFFORT_LEVEL: "unset" },
+            }),
     });
   },
 };
@@ -1026,7 +988,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["codex"],
   requiresComputer: true,
   // Brokered, same as Claude Code — an OpenAI-protocol lease instead of an
-  // Anthropic one.
+  // Anthropic one — or on the organization's own OpenAI key.
   modelAccess: "broker",
   // Hosted: `never` + `danger-full-access`, the disposable box being the
   // boundary. Locally the bridge refuses `allow-all` without an explicit
@@ -1080,7 +1042,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // wanted here.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createCodexAppServer()),
-  toNativeModel: toCodexModel,
+  toNativeModel: toCodexNativeModel,
   // Codex only runs the gpt-5 family, and at the pinned 0.149.x not the
   // tool-less gpt-5.6 line; anything else would silently fall back to Codex's
   // default model (or run without tools), so the preflight rejects it.
@@ -1094,8 +1056,8 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // run match a Codex run tool-for-tool. Codex's own natives arrive as common
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort }) {
-    const nativeModel = toCodexModel(modelId);
+  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream }) {
+    const nativeModel = toCodexNativeModel(modelId, upstream);
     return createCodexAppServer({
       ...(nativeModel ? { model: nativeModel } : {}),
       // Forwarded on the bridge `start` message, which sends it as

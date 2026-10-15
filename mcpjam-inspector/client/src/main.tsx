@@ -1,10 +1,11 @@
-// Must stay the first import; OAuth modules retain window.fetch at load time.
-import "./lib/install-failed-request-tracker";
+// Must stay first; OAuth modules and SDKs retain window.fetch at load time.
+import "./lib/install-telemetry-transport";
 import { resolveProtectedPreviewAppUrl } from "./lib/oauth/constants";
 import {
   consumeAccessLinkFromUrl,
   watchForAccessLinks,
 } from "./lib/access-link";
+import { captureOAuthCallbackFromUrl } from "./lib/oauth-callback-inbox";
 import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { appRoot } from "./app-root";
@@ -73,12 +74,12 @@ function FirstRunOAuthReturnBootScreen({ serverName }: { serverName: string }) {
 
 const protectedPreviewUrl = resolveProtectedPreviewAppUrl(window.location);
 if (protectedPreviewUrl) {
-  // Stop before access links, guest setup, or OAuth pending markers can write
-  // origin-local state that cannot follow this cross-origin redirect.
+  // Canonicalize before any origin-local state is created.
   window.location.replace(protectedPreviewUrl);
 } else {
   consumeAccessLinkFromUrl();
   watchForAccessLinks();
+  captureOAuthCallbackFromUrl();
 
   const electronMcpReturnUrl = buildElectronMcpCallbackUrl();
   if (electronMcpReturnUrl) {

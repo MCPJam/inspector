@@ -1,4 +1,5 @@
 import { navigateApp } from "@/lib/app-navigation";
+import { depositOAuthCallbackParams } from "@/lib/oauth-callback-inbox";
 import { useEffect } from "react";
 
 export function useElectronOAuth() {
@@ -33,7 +34,12 @@ export function useElectronOAuth() {
           params.get("state")?.startsWith("electron_mcp:")
         ) {
           params.delete("flow");
-          navigateApp(`/oauth/callback?${params}`, {
+          // Into the inbox, and only the marker into the address bar: the
+          // desktop app's telemetry runs already, so writing the one-time code
+          // into the URL here would hand it straight to it. The callback
+          // readers find it in the inbox exactly as after a browser return
+          // (see `lib/oauth-callback-inbox.ts`).
+          navigateApp(depositOAuthCallbackParams(params), {
             replace: true,
             unscoped: true,
           });

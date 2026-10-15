@@ -59,6 +59,7 @@ import {
   type OrgModelUsageSummary,
   type OrgModelProvider,
 } from "@/hooks/use-org-model-config";
+import { OrganizationAiCards } from "./OrganizationAiCards";
 
 // ---------------------------------------------------------------------------
 // Provider catalog -- defines known providers and their configuration fields
@@ -356,7 +357,16 @@ function OrganizationProviderSettings({
           </SettingsPageDescription>
         </CardHeader>
 
+        <OrganizationAiCards
+          organizationId={organizationId}
+          isAdmin={isAdmin}
+          providers={providers}
+        />
+
         <CardContent className="space-y-1 p-0">
+          <h2 className="pb-2 text-sm font-medium text-muted-foreground">
+            Providers
+          </h2>
           {isLoading ? (
             <div className="flex items-center gap-2 py-4 text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />

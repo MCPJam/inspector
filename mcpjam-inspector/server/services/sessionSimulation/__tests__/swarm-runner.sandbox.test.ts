@@ -435,8 +435,12 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     async (hosted) => {
       personaDrivesOneTurn();
       await startJourneyRun(baseOpts({ modelId: "gpt-5-nano", hosted }));
+      // What this pins is the `hosted` flag reaching the turn. The source mock
+      // answers `mcpjam` for every row, so each turn takes the `/stream` rail
+      // and its id is canonicalized; in production `hosted: false` resolves to
+      // the org's own key and keeps the bare id (runner.dispatch.test.ts).
       expect(turnOptions().modelDefinition).toMatchObject({
-        id: "gpt-5-nano",
+        id: "openai/gpt-5-nano",
         provider: "openai",
       });
       expect((turnOptions().modelDefinition as { hosted?: boolean }).hosted).toBe(
@@ -444,6 +448,23 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
       );
     },
   );
+
+  it("records the pinned id on the session row while /stream runs the canonical one", async () => {
+    // The split is deliberate: the row says what the target pinned, the wire
+    // says what the hosted catalog serves. A change to either side should
+    // change this test, not drift silently.
+    personaDrivesOneTurn();
+    await startJourneyRun(baseOpts({ modelId: "gpt-5-nano" }));
+
+    expect(turnOptions().modelDefinition).toMatchObject({
+      id: "openai/gpt-5-nano",
+    });
+    const persistedModelIds = persistChatSessionToConvexMock.mock.calls.map(
+      ([args]) => (args as { modelId?: string }).modelId,
+    );
+    expect(persistedModelIds.length).toBeGreaterThan(0);
+    expect(new Set(persistedModelIds)).toEqual(new Set(["gpt-5-nano"]));
+  });
 
   it("provisions after the claim, binds the box, and releases it", async () => {
     await startJourneyRun(baseOpts());
@@ -1129,7 +1150,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(runAssistantTurnMock).not.toHaveBeenCalled();
     expect(terminalReports()[0]).toMatchObject({
       status: "failed",
-      errorMessage: expect.stringMatching(/MCPJam-provided/i),
+      errorMessage: expect.stringMatching(/supported model and an eligible Anthropic connection/i),
     });
   });
 
@@ -1148,7 +1169,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     const terminals = terminalReports();
     expect(terminals[0]!.status).toBe("failed");
-    expect(String(terminals[0]!.errorMessage)).toMatch(/MCPJam-provided/i);
+    expect(String(terminals[0]!.errorMessage)).toMatch(/supported model and an eligible Anthropic connection/i);
   });
 
   it("refuses an enterprise-managed (XAA) target", async () => {

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./app-test";
 
 // Guards the collapsed (icon-mode) sidebar rail: every icon-only control in
 // the footer must sit on the rail's horizontal centerline. This is geometry

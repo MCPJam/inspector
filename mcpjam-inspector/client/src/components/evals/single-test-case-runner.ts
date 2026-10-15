@@ -4,6 +4,7 @@ import type { EvalCase, EvalSuite } from "./types";
 import type { PromptTurn } from "@/shared/steps";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import { caseModelEntryValue } from "@/components/chat-v2/shared/model-selection";
 
 /**
  * Per-Run hostConfig override shape sent in the request. Subset of
@@ -155,7 +156,9 @@ export function buildTestCaseModelOptions(
   }
 
   for (const modelConfig of testCase?.models ?? []) {
-    const value = `${modelConfig.provider}/${modelConfig.model}`;
+    // An entry saved with an organization row's canonical id reads back as
+    // that row, not as an extra option.
+    const value = caseModelEntryValue(modelConfig, availableModels);
     if (!options.has(value)) {
       options.set(value, {
         value,
@@ -213,12 +216,17 @@ export function resolveSelectedTestCaseModelValue(params: {
   testCaseId: string | null | undefined;
   testCase: Pick<EvalCase, "models"> | null | undefined;
   modelOptions: TestCaseModelOption[];
+  /** The picker value a saved entry reads back as (default `provider/model`). */
+  entryValue?: (entry: EvalCase["models"][number]) => string;
 }) {
-  const { testCaseId, testCase, modelOptions } = params;
+  const { testCaseId, testCase, modelOptions, entryValue } = params;
   const optionValues = new Set(modelOptions.map((option) => option.value));
+  const firstEntry = testCase?.models?.[0];
   const preferredValues = [
     getPersistedTestCaseModelValue(testCaseId),
-    getDefaultTestCaseModelValue(testCase),
+    entryValue && firstEntry?.provider && firstEntry.model
+      ? entryValue(firstEntry)
+      : getDefaultTestCaseModelValue(testCase),
     modelOptions[0]?.value ?? null,
   ];
 

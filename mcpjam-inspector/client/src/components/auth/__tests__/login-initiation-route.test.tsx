@@ -20,6 +20,7 @@ vi.mock("@/lib/app-navigation", () => ({
 }));
 
 import { LoginInitiationRoute } from "../login-initiation-route";
+import { useWorkosAuthUnavailableStore } from "@/stores/workos-auth-unavailable-store";
 
 describe("LoginInitiationRoute", () => {
   const organizationId = "org_01H00000000000000000000001";
@@ -31,7 +32,20 @@ describe("LoginInitiationRoute", () => {
     window.history.replaceState(null, "", "/login");
   });
 
-  afterEach(() => window.history.replaceState(null, "", "/"));
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useWorkosAuthUnavailableStore.getState().dismiss();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("stops the spinner when automatic sign-in is blocked on HTTP", async () => {
+    vi.stubGlobal("location", new URL("http://devhub.htb:6274"));
+    render(<LoginInitiationRoute />);
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(screen.queryByText("Signing you in…")).toBeNull();
+    expect(signInMock).not.toHaveBeenCalled();
+    expect(useWorkosAuthUnavailableStore.getState().open).toBe(true);
+  });
 
   it("routes an organization link through AuthKit without forwarding other URL parameters", async () => {
     window.history.replaceState(
@@ -90,6 +104,15 @@ describe("LoginInitiationRoute", () => {
     await waitFor(() =>
       expect(navigateMock).toHaveBeenCalledWith("/", { replace: true }),
     );
+    expect(signInMock).not.toHaveBeenCalled();
+  });
+
+  it("lets a standalone entry reload the app for an existing session", async () => {
+    authState = { user: { id: "user_1" }, isLoading: false };
+    const onAlreadySignedIn = vi.fn();
+    render(<LoginInitiationRoute onAlreadySignedIn={onAlreadySignedIn} />);
+    await waitFor(() => expect(onAlreadySignedIn).toHaveBeenCalledOnce());
+    expect(navigateMock).not.toHaveBeenCalled();
     expect(signInMock).not.toHaveBeenCalled();
   });
 

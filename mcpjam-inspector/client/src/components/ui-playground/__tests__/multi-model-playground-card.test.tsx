@@ -178,7 +178,9 @@ const model = {
   provider: "openai" as const,
 };
 
-function Harness({ browserWorkspace, extensionBinding }: {
+function Harness({ browserWorkspace, extensionBinding, selection, compareKind = "model" }: {
+  selection?: Parameters<typeof MultiModelPlaygroundCard>[0]["selection"];
+  compareKind?: "model" | "host";
   browserWorkspace?: { id: string; order: number; clientCount: number };
   extensionBinding?: Parameters<
     typeof MultiModelPlaygroundCard
@@ -201,8 +203,9 @@ function Harness({ browserWorkspace, extensionBinding }: {
         hostedContext={{ projectId: "project-1", selectedServerIds: [] }}
         compareId={String(model.id)}
         compareLabel={model.name}
-        compareKind="model"
+        compareKind={compareKind}
         model={model}
+        selection={selection}
         comparisonSummaries={Object.values(summaries)}
         selectedServers={[]}
         broadcastRequest={null}
@@ -232,6 +235,13 @@ function Harness({ browserWorkspace, extensionBinding }: {
 }
 
 describe("MultiModelPlaygroundCard", () => {
+  it("passes a model card's selection while host cards explicitly inherit", () => {
+    const selection = { modelId: String(model.id), source: "hosted" as const, fallback: { provider: "none", model: "none" } as const };
+    const { rerender } = render(<Harness selection={selection} />);
+    expect(lane.chatOptions.mock.calls.at(-1)![0]).toMatchObject({ pickedModelSelection: selection, selectionIntent: "picked" });
+    rerender(<Harness compareKind="host" />);
+    expect(lane.chatOptions.mock.calls.at(-1)![0]).toMatchObject({ selectionIntent: "inherit" });
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     useBrowserComparisonStore.setState({ clients: {}, selected: {} });

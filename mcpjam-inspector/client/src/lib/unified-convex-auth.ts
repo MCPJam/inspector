@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useAuth as useWorkOSAuth } from "@workos-inc/authkit-react";
 import { isLoginRequiredError } from "@/lib/auth/login-required-error";
 import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
@@ -10,9 +16,11 @@ import {
   getOrCreateGuestSessionOrThrow,
   markGuestActivated,
   getGuestSessionRefusal,
+  subscribeGuestSessionChanges,
 } from "@/lib/guest-session";
 import { shouldSkipGuestSession } from "@/lib/vanity-landing-hosts";
 import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
+import { useGuestSessionRecovery } from "./use-guest-session-recovery";
 
 /** Stable token getters for Convex's public custom-auth provider. */
 export type AuthTokenRequest = {
@@ -166,6 +174,16 @@ export function useUnifiedConvexAuth() {
   // rather than at module load: it is a Set lookup, and a module-level
   // constant would freeze the hostname before a test could stub it.
   const skipGuest = shouldSkipGuestSession();
+  // Refusal expiry must restart guest bootstrap: Convex stops fetching after
+  // a null token, so merely hiding the refusal banner cannot reconnect it.
+  const guestRefusal = useSyncExternalStore(
+    subscribeGuestSessionChanges,
+    getGuestSessionRefusal,
+    () => null,
+  );
+  const guestRecovery = useGuestSessionRecovery(
+    !skipGuest && !workos.isLoading && !workos.user && !guestRefusal,
+  );
   // Bumped when the user presses Retry on the session-refresh banner. It feeds
   // both the memo below (new `fetchAccessToken` identity → Convex re-runs
   // `setAuth`) and the guest bootstrap effect (a fully-lapsed guest has
@@ -189,16 +207,32 @@ export function useUnifiedConvexAuth() {
       return;
     }
     if (skipGuest) {
+      guestRecovery.reset();
       setGuestToken(null);
       setGuestLoading(false);
       return;
     }
     if (workos.user) {
+      guestRecovery.reset();
       setGuestToken(null);
       setGuestLoading(false);
       return;
     }
     let cancelled = false;
+    const round = new AbortController();
+    const acceptSession = (token: string) => {
+      guestRecovery.reset();
+      round.abort();
+      setGuestToken(token);
+      setGuestLoading(false);
+      useSessionRefreshStore.getState().clear();
+    };
+    // A cloud action may obtain a session after bootstrap gave up. Adopt its
+    // cached token so Convex can authenticate without another mint or reload.
+    const stopWatchingGuest = subscribeGuestSessionChanges(() => {
+      const session = getCachedGuestSession();
+      if (!cancelled && session) acceptSession(session.token);
+    });
     // Only flip to loading if we have no cached token; if we do, the async
     // call will resolve immediately and setting true→false would cause the
     // very flicker the lazy initializer was designed to prevent.
@@ -213,6 +247,13 @@ export function useUnifiedConvexAuth() {
         attempt <= GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length;
         attempt += 1
       ) {
+        if (
+          !getCachedGuestSession() &&
+          !getGuestSessionRefusal() &&
+          !(await guestRecovery.wait(round.signal))
+        )
+          return;
+        if (cancelled || round.signal.aborted) return;
         let session: Awaited<
           ReturnType<typeof getOrCreateGuestSessionOrThrow>
         > = null;
@@ -224,10 +265,9 @@ export function useUnifiedConvexAuth() {
           lastError = error;
         }
 
-        if (cancelled) return;
+        if (cancelled || round.signal.aborted) return;
         if (session) {
-          setGuestToken(session?.token ?? null);
-          setGuestLoading(false);
+          acceptSession(session.token);
           return;
         }
 
@@ -235,26 +275,45 @@ export function useUnifiedConvexAuth() {
         // of its window: retrying cannot succeed and is not an error worth
         // paging on. The banner offers sign-in instead.
         if (getGuestSessionRefusal()) {
+          useSessionRefreshStore.getState().clear();
           setGuestToken(null);
           setGuestLoading(false);
           return;
         }
 
         if (attempt === GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length) {
-          reportCaught(
-            lastError ??
-              new Error("Guest session bootstrap exhausted without a token"),
-            {
-              source: "guest_session_bootstrap",
-              level: "error",
-              extra: {
-                attempts: GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length + 1,
-                ...guestFailureExtra(lastError),
-              },
-            },
-          );
           setGuestToken(null);
           setGuestLoading(false);
+          const failure = guestFailureExtra(lastError);
+          const shouldReport = guestRecovery.failed();
+          const status = failure.httpStatus;
+          if (
+            (status === undefined && lastError !== undefined) ||
+            (typeof status === "number" && (status === 408 || status >= 500))
+          ) {
+            useSessionRefreshStore.getState().notifyFailure("transient");
+          } else {
+            useSessionRefreshStore.getState().notifyFailure("manual");
+          }
+          if (!shouldReport) return;
+          try {
+            reportCaught(
+              lastError ??
+                new Error("Guest session bootstrap exhausted without a token"),
+              {
+                source: "guest_session_bootstrap",
+                level: "error",
+                extra: {
+                  attempts: GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length + 1,
+                  ...failure,
+                },
+              },
+            );
+          } catch {
+            // Reporting is best effort; a telemetry failure cannot prevent
+            // the visitor from retrying guest authentication.
+            console.debug("Guest session failure could not be reported.");
+          }
           return;
         }
 
@@ -267,8 +326,17 @@ export function useUnifiedConvexAuth() {
 
     return () => {
       cancelled = true;
+      round.abort();
+      stopWatchingGuest();
     };
-  }, [skipGuest, workos.isLoading, workos.user, retryNonce]);
+  }, [
+    skipGuest,
+    workos.isLoading,
+    workos.user,
+    retryNonce,
+    guestRefusal,
+    guestRecovery,
+  ]);
 
   // Convex keys its auth configuration on these callbacks.
   // Changing one replaces authentication, even when the token is still valid.

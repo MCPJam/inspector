@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useWorkosAuthUnavailableStore } from "@/stores/workos-auth-unavailable-store";
 import {
   handleWorkosRefreshFailure,
   markWorkosSessionSeen,
@@ -35,8 +36,10 @@ vi.mock("@/lib/permalink-signin-return", () => ({
 }));
 
 describe("handleWorkosRefreshFailure", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
     vi.clearAllMocks();
+    useWorkosAuthUnavailableStore.getState().dismiss();
     resetSignOutLatchForTests();
     resetWorkosSessionSeenForTests();
     // Most cases model a tab that held a session; the guest case resets this.
@@ -55,6 +58,16 @@ describe("handleWorkosRefreshFailure", () => {
 
     expect(useSessionRefreshStore.getState().status).toBe("failed");
     expect(useSessionRefreshStore.getState().kind).toBe("signed_out");
+  });
+
+  it("shows the modal for automatic sign-in on HTTP custom domains", () => {
+    vi.stubGlobal("location", new URL("http://devhub.htb:6274"));
+    const signIn = vi.fn();
+    handleWorkosRefreshFailure({ signIn });
+    expect(signIn).not.toHaveBeenCalled();
+    expect(useWorkosAuthUnavailableStore.getState().open).toBe(true);
+    expect(useSessionRefreshStore.getState().kind).toBe("signed_out");
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
   });
 
   it("preserves where the user was across the forced redirect", () => {

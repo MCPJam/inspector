@@ -48,6 +48,7 @@
           "hosted/slack",
           "hosted/claude-connector",
           "hosted/sso",
+          "hosted/network",
           "github-checks",
           "troubleshooting/common-errors",
           "troubleshooting/error-codes",
@@ -93,6 +94,13 @@
             "pages": [
               "inspector/tools-prompts-resources",
               "inspector/debugging"
+            ]
+          },
+          {
+            "group": "Privacy",
+            "icon": "eye-off",
+            "pages": [
+              "inspector/telemetry-privacy"
             ]
           },
           {

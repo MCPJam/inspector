@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ConvexError } from "convex/values";
 import { ShareProjectDialog } from "../ShareProjectDialog";
 
 const mockCapture = vi.fn();
@@ -21,6 +22,7 @@ const mockUpdateProjectMemberRole = vi.fn();
 const mockUpdateProjectInviteRole = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
+const mockReportCaught = vi.fn();
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -41,6 +43,10 @@ vi.mock("convex/react", () => ({
   useQuery: () => undefined,
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
+}));
+
+vi.mock("@/lib/error-reporting", () => ({
+  reportCaught: (...args: unknown[]) => mockReportCaught(...args),
 }));
 
 vi.mock("@/hooks/useProfilePicture", () => ({
@@ -795,5 +801,123 @@ describe("ShareProjectDialog", () => {
       });
     });
     expect(mockToastSuccess).toHaveBeenCalledWith("Project access removed");
+  });
+});
+
+/**
+ * The dialog that produced the screenshot: a `unique() query returned more than
+ * one result` invariant reached the user as a wall of server stack, and nothing
+ * on the client recorded the failure at all.
+ */
+describe("ShareProjectDialog failures", () => {
+  beforeEach(() => {
+    mockReportCaught.mockClear();
+  });
+
+  function lastToast() {
+    const [message, data] = mockToastError.mock.calls.at(-1) ?? [];
+    // `@/lib/toast` wraps an error string in the copyable row and lifts the
+    // support reference onto the description, so the two halves the user reads
+    // are that row's `text` prop and `data.description`.
+    return {
+      title:
+        (message as { props?: { text?: string } })?.props?.text ??
+        (message as string),
+      description: (data as { description?: string } | undefined)?.description,
+    };
+  }
+
+  it("shows a sentence and a reference, never the server stack", async () => {
+    mockInviteProjectMember.mockRejectedValueOnce(
+      new Error(
+        "[CONVEX M(projects:inviteMember)] [Request ID: da0bbc6cf9261481] Server Error\n" +
+          "Uncaught Error: unique() query returned more than one result from table users\n" +
+          "    at handler (../convex/projects.ts:212:5)\n" +
+          "  Called by client",
+      ),
+    );
+
+    renderDialog();
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "invitee@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+    const { title, description } = lastToast();
+    expect(title).toBe(
+      "Uncaught Error: unique() query returned more than one result from table users",
+    );
+    expect(description).toBe("Reference da0bbc6cf9261481");
+    expect(title).not.toContain("at handler");
+    expect(title).not.toContain("Called by client");
+  });
+
+  it("reports the masked throw so the reference resolves to a real stack", async () => {
+    mockInviteProjectMember.mockRejectedValueOnce(
+      new Error("[Request ID: da0bbc6cf9261481] Server Error"),
+    );
+
+    renderDialog();
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "invitee@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() =>
+      expect(mockReportCaught).toHaveBeenCalledWith(expect.any(Error), {
+        source: "share_project_dialog_invite",
+      }),
+    );
+    expect(lastToast()).toEqual({
+      title: "Something went wrong",
+      description: "Reference da0bbc6cf9261481",
+    });
+  });
+
+  it("does not report a refusal that arrived without a ConvexError wrapper", async () => {
+    // The toast and the reporter must agree about the same error. Deciding
+    // this on `instanceof ConvexError` while the shared parser decides it on
+    // the `data` payload meant a refusal could read as a refusal and page as
+    // an incident at the same time. Both now ask the parser.
+    mockInviteProjectMember.mockRejectedValueOnce(
+      Object.assign(new Error("[Request ID: da0bbc6cf9261481] Server Error"), {
+        data: { code: "FORBIDDEN", message: "Not a member of this project." },
+      }),
+    );
+
+    renderDialog();
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "invitee@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+    expect(lastToast()).toEqual({
+      title: "Not a member of this project.",
+      description: undefined,
+    });
+    expect(mockReportCaught).not.toHaveBeenCalled();
+  });
+
+  it("does not report a refusal the backend worded for this user", async () => {
+    // A billing cap or a permission refusal is the product working as designed.
+    // It reads as its own sentence, with no reference and no Sentry issue.
+    mockInviteProjectMember.mockRejectedValueOnce(
+      new ConvexError("Only project admins can invite people."),
+    );
+
+    renderDialog();
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
+      target: { value: "invitee@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+    expect(lastToast()).toEqual({
+      title: "Only project admins can invite people.",
+      description: undefined,
+    });
+    expect(mockReportCaught).not.toHaveBeenCalled();
   });
 });

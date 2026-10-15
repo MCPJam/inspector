@@ -3,8 +3,10 @@ import type { ThreadAppScope } from "./thread-app-api";
 import type { WidgetHost } from "@mcpjam/widget-react";
 import {
   parsePluginMessage,
+  pluginMessageSendMode,
   type PluginMessageIntent,
 } from "@/shared/plugin-message";
+import { logPluginExtensionIssue } from "@/lib/plugin-extension-logs";
 import type { ThreadAppHandle } from "./thread-app-api";
 
 /** Host-supplied dispatch uses the normal composer/session gates, not a second session. */
@@ -51,6 +53,18 @@ export function withAppMessages(
                 },
                 port.isLive,
               );
+              if (!accepted && !pluginMessageSendMode(params).send) {
+                logPluginExtensionIssue({
+                  code: "app-draft-refused",
+                  level: "warning",
+                  message:
+                    "An App's draft wasn't added to the composer. Retry the App's action once the chat is idle and editable, or remove App items if the composer is full.",
+                  dedupeKey: "app-draft-refused",
+                });
+                throw new Error(
+                  "The draft could not be added to the composer. Try again when the chat is ready.",
+                );
+              }
               if (!accepted)
                 throw new Error("The App message could not be sent");
               return {};

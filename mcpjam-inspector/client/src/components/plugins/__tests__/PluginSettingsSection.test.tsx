@@ -47,8 +47,8 @@ vi.mock("@/hooks/useProjects", () => ({
   useServerMutations: () => ({
     updateServerWithClientSecret: h.updateServerWithClientSecret,
   }),
-  useProjectMembers: () => ({
-    canManageMembers: h.canManage.value,
+  useCanManageProjectClients: () => ({
+    canManage: h.canManage.value === true,
     isLoading: h.canManage.value === undefined,
   }),
 }));

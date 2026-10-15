@@ -58,11 +58,14 @@ import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import {
   decideTurnRail,
-  readRoutingSelection,
-  routingSelectionForModel,
+  harnessTurnRail,
+  resolveChatSelection,
+  forwardableSelection,
   withSelectionRouting,
 } from "../../utils/selection-rail.js";
 import { backendModelSelection } from "../../utils/model-resolution-local.js";
+import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
+import { mapRuntimeError, webErrorFromRoute } from "../web/errors.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
@@ -98,6 +101,7 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import { ownKeyTurnRefusal, withOwnKeyTurnPolicy, type OwnKeyTurn } from "../../utils/own-key-turn-policy.js";
 import {
   createEmptyTurnWatcher,
   hasSettledToolCallThisPrompt,
@@ -122,7 +126,6 @@ import {
 import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
 import {
   directChatEffort,
-  hostSelectionForTurn,
   parseChatReasoningEffort,
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
@@ -557,7 +560,6 @@ function buildLocalScopeStepUpCancellation(input: {
  * is the SSE terminal — it wraps the helper's trace-event callbacks in
  * `createUIMessageStream` writer events and drives the result through
  * `result.toUIMessageStream(...)` into the writer.
- *
  * Eval's local-BYOK suite path (PR 4b) uses the same helper with the
  * headless terminal (`consumeDirectChatTurnHeadless`).
  */
@@ -1089,7 +1091,7 @@ chatV2.post("/", async (c) => {
           "[mcp/chat-v2] client requireToolApproval differs from host; using resolved override value",
           {
             scenarioId: bodyScenarioId,
-            body: entry.overrideValue,
+            client: entry.overrideValue,
             host: entry.hostValue,
           },
         );
@@ -1098,7 +1100,7 @@ chatV2.post("/", async (c) => {
           "[mcp/chat-v2] client progressiveToolDiscovery differs from host; using host value",
           {
             scenarioId: bodyScenarioId,
-            body: entry.overrideValue,
+            client: entry.overrideValue,
             host: entry.hostValue,
           },
         );
@@ -1107,7 +1109,7 @@ chatV2.post("/", async (c) => {
           "[mcp/chat-v2] client respectToolVisibility differs from host; using host value",
           {
             scenarioId: bodyScenarioId,
-            body: entry.overrideValue,
+            client: entry.overrideValue,
             host: entry.hostValue,
           },
         );
@@ -1119,7 +1121,7 @@ chatV2.post("/", async (c) => {
           `[mcp/chat-v2] client ${entry.field} differs from host; using host value`,
           {
             scenarioId: bodyScenarioId,
-            body: entry.overrideValue,
+            client: entry.overrideValue,
             host: entry.hostValue,
           },
         );
@@ -1192,7 +1194,7 @@ chatV2.post("/", async (c) => {
         "[mcp/chat-v2] client model differs from host; using host model",
         {
           scenarioId: bodyScenarioId,
-          body: model.id,
+          client: model.id,
           host: hostModelId,
           provider: hostModel.provider,
         },
@@ -1200,7 +1202,6 @@ chatV2.post("/", async (c) => {
       resolvedModelOverride = hostModel;
     }
     const systemPrompt = resolvedExecution.systemPrompt;
-    const temperature = resolvedExecution.temperature;
     const requireToolApproval = resolvedExecution.requireToolApproval;
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
@@ -1247,19 +1248,22 @@ chatV2.post("/", async (c) => {
     // takes the host's alone: a share-link visitor owns the body. A stored
     // legacy selection is "own key only"; NO selection keeps today's
     // hosted-list routing, byte for byte.
-    const routingSelection =
-      (isScenarioSession
-        ? undefined
-        : routingSelectionForModel(
-            readRoutingSelection(
-              (body as { modelSelection?: unknown }).modelSelection,
-            ),
-            unroutedModelDefinition,
-          )) ??
-      routingSelectionForModel(
-        resolvedExecution.routingSelection,
-        unroutedModelDefinition,
-      );
+    const selected = resolveChatSelection({
+      raw: (body as { modelSelection?: unknown }).modelSelection,
+      inherited: resolvedExecution.routingSelection,
+      inheritedOrigin: resolvedExecution.modelSelectionOrigin,
+      model: unroutedModelDefinition,
+      hostWins: isScenarioSession,
+      allowLocal: true,
+    });
+    if (!selected.ok) {
+      return c.json({ error: selected.error, code: "invalid_model_selection" }, 400);
+    }
+    let routingSelection = selected.selection;
+    const selectedTemperature = routingSelection?.source === "legacy"
+      ? undefined : routingSelection?.settings?.temperature;
+    const temperature = (selected.requestSelection ? bodyTemperature : undefined) ??
+      selectedTemperature ?? resolvedExecution.temperature;
     // A non-hosted selection stamps `hosted: false`, so every downstream check
     // (harness eligibility, skills, the dispatch) agrees with the rail.
     const modelDefinition = withSelectionRouting(
@@ -1286,26 +1290,25 @@ chatV2.post("/", async (c) => {
       );
     }
 
-    // Reasoning effort: the body's top-level field, else the selected host's
-    // saved effort — the latter only when the host's selection is for THIS
-    // turn's model. A scenario turn takes the host's alone.
+    // A picked selection owns its settings; scenarios force host settings.
     const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
     if (!bodyEffort.ok) return c.json({ error: bodyEffort.error }, 400);
     const reasoningEffort = resolveChatReasoningEffort({
       bodyEffort: bodyEffort.effort,
-      hostSelection: hostSelectionForTurn(
-        resolvedExecution.modelSelection,
-        String(modelDefinition.id),
-      ),
+      hostSelection:
+        routingSelection?.source === "legacy" ? undefined : routingSelection,
+      requestSelection: selected.requestSelection,
       hostWins: isScenarioSession,
     });
-    // What the session records for this turn: the selection it ran, effort
-    // included (last turn wins, like its modelId).
-    const sessionModelSelection = ranTurnSelection({
+    // Apply settings independently of the session's origin-free saved choice.
+    const appliedModelSelection = ranTurnSelection({
       selection: routingSelection,
       model: modelDefinition,
       reasoningEffort,
+      ...(routingSelection && reasoningEffort === undefined ? { temperature } : {}),
     });
+    const sessionModelSelection = selected.origin ? undefined : appliedModelSelection;
+    if (routingSelection) routingSelection = appliedModelSelection;
     // Only a temperature sent ALONGSIDE a body effort counts as explicit: a
     // host default (or the slider value a client sends with a host's saved
     // effort) yields to the effort; an explicit pair is refused on the direct
@@ -1327,24 +1330,21 @@ chatV2.post("/", async (c) => {
     const isMcpJamProvidedModel = Boolean(
       modelDefinition.id && turnRail === "hosted",
     );
-    // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
-    // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
-    // `streamWebChatTurn` makes, for the same reason: without it a Cursor host
-    // on this rail passes the harness preflight above and then falls into the
-    // org-BYOK branch, which asks the org config for a `cursor` provider key
-    // that cannot exist — so the harness never runs and the user sees a
-    // configuration error for a host the product just called ready.
-    //
-    // Kept separate from `isMcpJamProvidedModel` rather than folded into it:
-    // that name means "MCPJam pays for this model", and an external-account
-    // turn is precisely the case where it does not. The two facts differ, so
-    // the values do too — `modelSource` below reads this one.
-    const isExternalAccountHarnessTurn = Boolean(
-      resolvedExecution.harness &&
-        harnessUsesExternalAccount(resolvedExecution.harness),
-    );
-    const usesMcpjamFreePath =
-      isMcpJamProvidedModel || isExternalAccountHarnessTurn;
+    // …OR an external-account or org-key harness turn: both run the real
+    // runtime, never the org-BYOK branch below. Same rail as
+    // `streamWebChatTurn` (`harnessTurnRail`).
+    const rail = harnessTurnRail({
+      harness: resolvedExecution.harness,
+      model: {
+        id: String(modelDefinition.id),
+        provider: modelDefinition.provider,
+        hosted: modelDefinition.hosted,
+      },
+      selection: routingSelection,
+      mcpjamProvided: isMcpJamProvidedModel,
+      stepUpResume: Boolean(scopeStepUpResumeRequest),
+    });
+    const usesMcpjamFreePath = rail.usesFreePath;
     // Guests may use any hosted model — model curation for guests is gone;
     // the backend enforces spend caps (a soft postpaid guard), not an
     // allowlist. A guest MCPJam-model request still gets its bearer minted
@@ -1359,7 +1359,10 @@ chatV2.post("/", async (c) => {
       // `undefined` and 503-ing on "Unable to authenticate with MCPJam
       // servers" before the harness ever started, on a host the preflight had
       // just called ready.
-      if (mcpJamAuthHeader || !usesMcpjamFreePath) return mcpJamAuthHeader;
+      // Never for an org-key turn: an org's key is never spent for a guest.
+      if (mcpJamAuthHeader || !usesMcpjamFreePath || rail.orgSelection) {
+        return mcpJamAuthHeader;
+      }
       try {
         mcpJamAuthHeader = (await getProductionGuestAuthHeader()) ?? undefined;
       } catch {
@@ -1571,6 +1574,7 @@ chatV2.post("/", async (c) => {
           provider: modelDefinition.provider,
           hosted: modelDefinition.hosted,
         },
+        ...(routingSelection ? { selection: routingSelection } : {}),
         // The HOST's own configured id, kept separate from the resolved model
         // above. Only the external-account rule reads it, and only that rule
         // should: it asks whether this HOST carries the runtime's sentinel, a
@@ -1711,6 +1715,7 @@ chatV2.post("/", async (c) => {
         ...(playgroundEnvironmentId
           ? { projectEnvironmentId: playgroundEnvironmentId }
           : {}),
+        harness: resolvedExecution.harness,
         signal: c.req.raw.signal as AbortSignal | undefined,
       });
       if (!acquired.ok) {
@@ -1719,12 +1724,25 @@ chatV2.post("/", async (c) => {
           playgroundBoxReason,
           acquired.refusal,
         );
+        // The control plane's own wait, so a caller backs off for as long as
+        // it asked instead of guessing.
+        const retryAfterMs =
+          described.status === 429 || described.status === 503
+            ? acquired.refusal.retryAfterMs
+            : undefined;
         return c.json(
           {
             error: described.message,
             code: described.code ?? "PLAYGROUND_SANDBOX_PROVISION_FAILED",
           },
           described.status,
+          retryAfterMs !== undefined
+            ? {
+                "Retry-After": String(
+                  Math.max(1, Math.ceil(retryAfterMs / 1000)),
+                ),
+              }
+            : {},
         );
       }
       playgroundHarnessBox = acquired.box;
@@ -2507,6 +2525,10 @@ chatV2.post("/", async (c) => {
           taskCreatedBridge?.attachStreamWriter(writer);
           emitBrowserReadiness(writer);
         },
+        // Preserve the resolved selection for hosted steps and harness leases.
+        ...(forwardableSelection(routingSelection)
+          ? { modelSelection: forwardableSelection(routingSelection), modelSelectionOrigin: selected.origin }
+          : {}),
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
@@ -2560,13 +2582,9 @@ chatV2.post("/", async (c) => {
                 chatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSelection: sessionModelSelection,
-                // `'external-account'` rather than `'mcpjam'` when the runtime
-                // pays on the customer's own vendor account: `'mcpjam'` is what
-                // makes a turn consume the org's MCPJam spend limit, and this
-                // turn spent none of it.
-                modelSource: isExternalAccountHarnessTurn
-                  ? "external-account"
-                  : "mcpjam",
+                // Whose spend the turn is: only `'mcpjam'` consumes the org's
+                // MCPJam spend limit.
+                modelSource: rail.modelSource,
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
                 ...(!isScenarioSession && body.rewind
@@ -2752,8 +2770,6 @@ chatV2.post("/", async (c) => {
         : undefined;
 
       if (runtime.runtimeLocation === "local") {
-        // The inspector calls the provider on this runtime, so the effort is
-        // applied here as provider options, or refused before any spend.
         const localEffort = directChatEffort({
           providerKey: runtime.provider.providerKey,
           modelId,
@@ -2763,6 +2779,10 @@ chatV2.post("/", async (c) => {
         if (!localEffort.ok) return c.json({ error: localEffort.reason }, 400);
         return handleLocalOrgChatModel({
           provider: runtime.provider,
+          admission: runtime.admission,
+          modelSelection: routingSelection?.source === "org" ? routingSelection : undefined,
+          modelSelectionOrigin: selected.origin,
+          reasoningEffort,
           failureReporter: createRequestStreamFailureReporter(c, "chat"),
           projectId: body.projectId,
           modelId,
@@ -2809,6 +2829,9 @@ chatV2.post("/", async (c) => {
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
+        ...(routingSelection?.source === "org"
+          ? { modelSelection: { ...routingSelection, source: "org" as const }, modelSelectionOrigin: selected.origin }
+          : {}),
         ...(typeof modelDefinition.nativeModelId === "string"
           ? { nativeModelId: modelDefinition.nativeModelId }
           : {}),
@@ -2851,11 +2874,8 @@ chatV2.post("/", async (c) => {
     // still carries a client apiKey for a CLOUD provider is a personal-BYOK
     // attempt we don't support; reject it regardless of the caller's identity.
     //
-    // Ollama (local daemon, "local" placeholder apiKey) and `custom`
-    // (self-hosted OpenAI-compatible endpoints) are exempt — they're local /
-    // self-hosted, not a shared cloud account, and the org surface doesn't
-    // model them. Local OSS (no CONVEX_HTTP_URL) is exempt too; the frontend
-    // hook is the only enforcement on `npx`.
+    // Ollama and custom endpoints use the local path. Their organization
+    // policy is checked below and again during the turn's provider attempts.
     const isCloudByokProvider =
       modelDefinition.provider !== "ollama" &&
       modelDefinition.provider !== "custom";
@@ -2869,16 +2889,33 @@ chatV2.post("/", async (c) => {
         401,
       );
     }
+    // A key on this machine still answers to the organization's AI-key policy.
+    const ownKeyTurn: OwnKeyTurn = {
+      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
+      selection: routingSelection,
+      provider: modelDefinition.provider,
+      hasRequestKey: Boolean(apiKey),
+      auth: {
+        authHeader: requestAuthHeader,
+        scenarioId: bodyScenarioId,
+        accessVersion: bodyAccessVersion,
+        serverIds: hostConfigServerIds,
+      },
+    };
+    const ownKeyCheckedAt = performance.now();
+    const ownKeyRefusal = await ownKeyTurnRefusal(ownKeyTurn);
+    if (ownKeyRefusal) {
+      return webErrorFromRoute(c, mapRuntimeError(ownKeyRefusal));
+    }
 
     // User-provided models: direct streamText
-    const llmModel = createLlmModel(
-      modelDefinition,
-      apiKey ?? "",
-      {
+    const llmModel = withOwnKeyTurnPolicy(
+      createLlmModel(modelDefinition, apiKey ?? "", {
         ollama: body.ollamaBaseUrl,
         azure: body.azureBaseUrl,
-      },
-      body.customProviders,
+      }, body.customProviders),
+      ownKeyTurn,
+      { allowedAt: ownKeyCheckedAt },
     );
 
     const modelMessages = await convertToMcpjamModelMessages(
@@ -3013,6 +3050,17 @@ chatV2.post("/", async (c) => {
     });
   } catch (error) {
     // (The box, if one was acquired, is released in `finally` below.)
+    // A refusal by the organization's AI-key policy (from
+    // `/stream/org/resolve`: a local-runtime connection when the org requires
+    // its own keys, a connection that is gone, …) is the organization's
+    // configuration working as designed, not an MCPJam fault. Answer it the
+    // way the hosted web route does — the refusal's own status, its code in
+    // `details.code` — and keep it out of the internal-fault report below,
+    // which would page and answer an opaque 500. Only failures before the
+    // response starts reach here; once the turn is streaming, a failure is an
+    // error chunk in the stream, as before.
+    const aiRefusal = asAiRefusalRouteError(error);
+    if (aiRefusal) return webErrorFromRoute(c, mapRuntimeError(aiRefusal));
     // This catch wraps MCPJam's OWN request handling — config resolution,
     // backend dispatch, stream setup — not a hop into the user's MCP server,
     // so an unrecognized throw here is ours by default and the boundary

@@ -127,7 +127,7 @@ describe("checkEvalHarnessAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("only runs MCPJam-provided models");
+    expect(verdict.reason).toContain("requires a supported model and an eligible Anthropic connection");
     expect(verdict.reason).toContain("byok case");
     expect(verdict.reason).not.toContain("hosted case");
   });
@@ -321,7 +321,7 @@ describe("checkEvalHarnessStaticAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("MCPJam-provided models");
+    expect(verdict.reason).toContain("requires a supported model and an eligible Anthropic connection");
   });
 
   // The rule is asserted DIRECTLY rather than through a refusal, because no

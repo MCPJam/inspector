@@ -38,6 +38,7 @@ import {
 import { hostSupportsWidgetRendering, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { HostStyleTokens } from "./HostStyleTokens";
+import { SameOriginAppIframeCard } from "./SameOriginAppIframeCard";
 import {
   PLUGIN_EXTENSION_CAPABILITY_KEYS,
   PLUGIN_EXTENSION_CAPABILITY_LABELS,
@@ -108,6 +109,9 @@ const SEGMENT_BUTTON_CLASSES =
  *                                    4 SEP-blessed features
  *   sandbox.browserStorage            observed browser storage APIs in the
  *                                    sandboxed iframe (not an MCP concept)
+ *   sandbox.sameOriginAppIframe       whether the app iframe shares the
+ *                                    sandbox page's origin (not an MCP
+ *                                    concept; `false` = opaque origin)
  *
  * Inspector-internal resolver fields (`mode`, `extensions`) stay out of
  * the JSON entirely — they're owned by the structured editor and preserved
@@ -165,6 +169,12 @@ type SandboxDoc = {
     sessionStorage?: boolean;
     indexedDB?: boolean;
   };
+  /**
+   * Observed: whether the app iframe shares the sandbox page's origin.
+   * `false` mounts the app in an opaque origin. Not an MCP
+   * capability.
+   */
+  sameOriginAppIframe?: boolean;
   /**
    * Inspector-only: extra tokens for the proxy iframe's HTML `sandbox=`
    * attribute, on top of the spec-required `allow-scripts allow-same-origin`.
@@ -288,6 +298,9 @@ function sandboxFromPolicy(
   if (policy.browserStorage !== undefined) {
     out.browserStorage = { ...policy.browserStorage };
   }
+  if (policy.sameOriginAppIframe !== undefined) {
+    out.sameOriginAppIframe = policy.sameOriginAppIframe;
+  }
 
   // Inspector-only knobs round-trip with their full undefined-vs-empty
   // semantics so the JSON faithfully represents what's in storage.
@@ -402,13 +415,15 @@ function liftSandboxIntoPolicy(args: {
   const nextSandboxAttrs = incoming?.iframeSandboxAttrs;
   const nextAllowFeatures = incoming?.permissionsPolicy;
   const nextBrowserStorage = incoming?.browserStorage;
+  const nextSameOriginAppIframe = incoming?.sameOriginAppIframe;
 
   if (
     !cspNonEmpty &&
     !permsNonEmpty &&
     nextSandboxAttrs === undefined &&
     nextAllowFeatures === undefined &&
-    nextBrowserStorage === undefined
+    nextBrowserStorage === undefined &&
+    nextSameOriginAppIframe === undefined
   ) {
     return undefined;
   }
@@ -418,6 +433,9 @@ function liftSandboxIntoPolicy(args: {
   if (nextSandboxAttrs !== undefined) next.sandboxAttrs = nextSandboxAttrs;
   if (nextAllowFeatures !== undefined) next.allowFeatures = nextAllowFeatures;
   if (nextBrowserStorage !== undefined) next.browserStorage = nextBrowserStorage;
+  if (nextSameOriginAppIframe !== undefined) {
+    next.sameOriginAppIframe = nextSameOriginAppIframe;
+  }
   return next;
 }
 
@@ -842,6 +860,9 @@ export function applyJsonToDraft(
         // The parent key itself is meaningful: an empty record clears an
         // earlier measurement when the JSON block is saved.
         parsedSandbox.browserStorage = storage;
+      }
+      if (typeof sandboxBlock.sameOriginAppIframe === "boolean") {
+        parsedSandbox.sameOriginAppIframe = sandboxBlock.sameOriginAppIframe;
       }
       incomingSandbox = parsedSandbox;
     }
@@ -2205,6 +2226,10 @@ export function AppsExtensionTab({
             confuse them. */}
         <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
         <BrowserStorageCard draft={draft} onDraftChange={onDraftChange} />
+        <SameOriginAppIframeCard
+          draft={draft}
+          onDraftChange={onDraftChange}
+        />
         <WidgetToolResultsCard draft={draft} onDraftChange={onDraftChange} />
         <PluginExtensionsCard draft={draft} onDraftChange={onDraftChange} />
         {/* Read-only companion to the two matrices: the capability rows say

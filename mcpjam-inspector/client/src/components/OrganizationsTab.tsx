@@ -22,7 +22,7 @@ import {
 } from "react";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -47,6 +47,8 @@ import {
   UserPlus,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { convexErrMessage } from "@/lib/convex-error";
+import { reportCaught } from "@/lib/error-reporting";
 import { useImageUpload } from "@/hooks/useImageUpload";
 import {
   IMAGE_UPLOAD_ACCEPT,
@@ -357,7 +359,7 @@ function PendingSeatPaymentNotice({
 // the settings danger zone, so removal rules and error handling stay in sync.
 function useLeaveOrganization(organization: Organization) {
   const appNavigate = useAppNavigate();
-  const { user } = useAuth();
+  const { user } = useInspectorAuth();
   const { removeMember } = useOrganizationMutations();
   const currentUserEmail = user?.email;
 
@@ -377,7 +379,8 @@ function useLeaveOrganization(organization: Organization) {
       setLeaveConfirmOpen(false);
       appNavigate("/servers");
     } catch (error) {
-      toast.error((error as Error).message || "Failed to leave organization");
+      reportCaught(error, { source: "organizations_leave" });
+      toast.error(convexErrMessage(error, "Failed to leave organization"));
     } finally {
       setIsLeaving(false);
     }
@@ -506,7 +509,7 @@ export function OrganizationsTab({
   onOrganizationDeleted,
 }: OrganizationsTabProps) {
   const appNavigate = useAppNavigate();
-  const { user, signIn } = useAuth();
+  const { user, signIn } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
   const { sortedOrganizations, isLoading } = useOrganizationQueries({
@@ -655,7 +658,7 @@ function OrganizationPage({
 }: OrganizationPageProps) {
   const appNavigate = useAppNavigate();
   const { isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
+  const { user } = useInspectorAuth();
   const currentUserEmail = user?.email;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1265,7 +1268,8 @@ function OrganizationPage({
       });
       toast.success(`Updated role for ${member.email}`);
     } catch (error) {
-      toast.error((error as Error).message || "Failed to update member role");
+      reportCaught(error, { source: "organizations_change_member_role" });
+      toast.error(convexErrMessage(error, "Failed to update member role"));
     } finally {
       setRoleUpdatingEmail(null);
     }
@@ -1289,8 +1293,9 @@ function OrganizationPage({
 
       setTransferTargetMember(null);
     } catch (error) {
+      reportCaught(error, { source: "organizations_transfer_ownership" });
       toast.error(
-        (error as Error).message || "Failed to transfer organization ownership",
+        convexErrMessage(error, "Failed to transfer organization ownership"),
       );
     } finally {
       setIsTransferringOwnership(false);
@@ -1301,8 +1306,19 @@ function OrganizationPage({
     setIsDeleting(true);
     beginOrganizationDeletion(organization._id);
     try {
-      await deleteOrganization({ organizationId: organization._id });
-      toast.success("Organization deleted");
+      const result = (await deleteOrganization({
+        organizationId: organization._id,
+      })) as { purgeAfter?: number } | undefined;
+      // The window check keeps a slow client clock from offering a cancel
+      // the backend never granted.
+      const purgeAfter = result?.purgeAfter;
+      toast.success(
+        (organization.deletionCancellationWindowHours ?? 0) > 0 &&
+          typeof purgeAfter === "number" &&
+          purgeAfter > Date.now()
+          ? `Deletion scheduled. You can cancel until ${new Date(purgeAfter).toLocaleString()}.`
+          : "Organization deleted",
+      );
       setDeleteConfirmOpen(false);
       onOrganizationDeleted?.(organization._id);
       if (!onOrganizationDeleted) {
@@ -1311,7 +1327,8 @@ function OrganizationPage({
     } catch (error) {
       // Only on failure: clearing after success re-renders before the org list drops it.
       endOrganizationDeletion(organization._id);
-      toast.error((error as Error).message || "Failed to delete organization");
+      reportCaught(error, { source: "organizations_delete" });
+      toast.error(convexErrMessage(error, "Failed to delete organization"));
     } finally {
       setIsDeleting(false);
     }
@@ -2221,7 +2238,10 @@ function OrganizationPage({
                       </h3>
                       <p className="text-sm text-foreground">
                         {isOwner
-                          ? "Permanently delete this organization. This action cannot be undone."
+                          ? (organization.deletionCancellationWindowHours ??
+                              0) > 0
+                            ? `Delete this organization and its data. You can cancel within ${organization.deletionCancellationWindowHours} hours.`
+                            : "Permanently delete this organization and its data."
                           : "You’ll lose access to this organization and its projects."}
                       </p>
                     </div>
@@ -2451,6 +2471,7 @@ function OrganizationPage({
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         name={organization.name}
+        cancellationWindowHours={organization.deletionCancellationWindowHours}
         pending={isDeleting}
         onConfirm={handleDelete}
       />

@@ -251,6 +251,12 @@ The fix is included in 3.8.1 and later. If you are on an affected version:
 
 ## Getting Help
 
+### "Reference" line on an error toast
+
+When an unexpected failure occurs in the app — for example, while inviting a member, changing a role, or connecting to a registry — the error toast shows a **Reference `<id>`** line beneath the message. You can hover the toast and click **Copy error message** to copy both the message and the reference together.
+
+That reference is a request ID you can include when reporting the issue. It lets the MCPJam team look up the exact failure in the logs, so you don't need to reproduce it or capture a stack trace — a screenshot of the toast (or the copied text) is enough.
+
 If you're still experiencing issues:
 
 1. **Check server documentation**

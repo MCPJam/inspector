@@ -65,6 +65,7 @@ jobs:
     # merged result is scanned again by the push to main.
     if: ${{ !(github.event.action == 'synchronize' && github.event.sender.login == 'dependabot[bot]') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     name: Scan ${{ matrix.image }}
     strategy:
       fail-fast: false

@@ -109,6 +109,31 @@ describe("PluginServerCard", () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(2);
   });
 
+  it("opens Settings from the keyboard, and leaves the ⋮ button's keys alone", () => {
+    const onOpenSettings = vi.fn();
+    render(
+      <PluginServerCard
+        plugin={plugin}
+        server={server}
+        status={{ label: "Active", tone: "active" }}
+        canManage
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+    const card = screen.getByRole("button", { name: "Open settings for cad" });
+    expect(card.tabIndex).toBe(0);
+    fireEvent.keyDown(card, { key: "Enter" });
+    fireEvent.keyDown(card, { key: " " });
+    expect(onOpenSettings).toHaveBeenCalledTimes(2);
+    expect(onOpenSettings).toHaveBeenCalledWith("s_cad");
+
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Open actions menu for cad" }),
+      { key: "Enter" },
+    );
+    expect(onOpenSettings).toHaveBeenCalledTimes(2);
+  });
+
   it("uninstalls the plugin from ⋮ after the confirm", async () => {
     render(
       <PluginServerCard
@@ -280,7 +305,51 @@ describe("InstalledPluginServerCards", () => {
     const { container } = render(
       <InstalledPluginServerCards
         plugin={plugin}
+        row={{
+          ...activeRow,
+          servers: [],
+          skills: [
+            {
+              skillId: "sk_triage",
+              modelRef: "bits-and-bolts/triage",
+              name: "triage",
+              description: "",
+            },
+          ],
+        }}
+        canManage
+        onOpenSettings={vi.fn()}
+      />,
+    );
+    expect(container.textContent).toBe("");
+  });
+
+  it("gives an active plugin with no servers or skills its own card, opening its Settings", () => {
+    h.version.value = { pluginVersionId: "pv_1", servers: [], skills: [] };
+    const onOpenSettings = vi.fn();
+    render(
+      <InstalledPluginServerCards
+        plugin={plugin}
         row={{ ...activeRow, servers: [] }}
+        canManage
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+    expect(screen.queryByTestId("plugin-server-card")).toBeNull();
+    fireEvent.click(screen.getByTestId("plugin-card"));
+    expect(onOpenSettings).toHaveBeenCalledWith({
+      pluginId: "pl_bits",
+      pluginLabel: "Bits & Bolts",
+      serverId: null,
+      serverName: "Bits & Bolts",
+    });
+  });
+
+  it("waits for an answer before giving an active plugin its own card", () => {
+    const { container } = render(
+      <InstalledPluginServerCards
+        plugin={plugin}
+        row={undefined}
         canManage
         onOpenSettings={vi.fn()}
       />,

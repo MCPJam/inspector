@@ -182,6 +182,7 @@ async function renderHidden(extra: Record<string, unknown> = {}) {
     useChatSession({
       selectedServers: ["server-1"],
       hostedContext: hiddenContext,
+      selectionIntent: "inherit",
       ...extra,
     } as never),
   );
@@ -226,7 +227,7 @@ describe("useChatSession — hidden environment on this machine", () => {
 
   it("keeps a model keyed on this machine on the local route, without plugins", async () => {
     vi.mocked(isMCPJamProvidedModelMenuItem).mockReturnValue(false);
-    const { result } = await renderHidden();
+    const { result } = await renderHidden({ selectionIntent: "picked" });
     expect(result.current.hiddenEnvironmentActive).toBe(false);
     expect(result.current.hiddenEnvironmentOffReason).toBe("local_model");
     const { api, body } = lastTransport();
@@ -273,6 +274,7 @@ describe("useChatSession — hidden environment on this machine", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: { ...hiddenContext, hiddenEnvironment: undefined },
+        selectionIntent: "inherit",
       } as never),
     );
     await waitFor(() =>

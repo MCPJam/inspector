@@ -68,6 +68,7 @@ jobs:
       group: preview-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     environment:
       name: preview-pr-${{ github.event.pull_request.number }}
       url: https://pr-${{ github.event.pull_request.number }}.mcpjam.dev
@@ -386,6 +387,7 @@ jobs:
       group: preview-pr-be-${{ github.event.client_payload.backend_pr_number }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     environment:
       name: preview-pr-be-${{ github.event.client_payload.backend_pr_number }}
       url: https://pr-be-${{ github.event.client_payload.backend_pr_number }}.mcpjam.dev
@@ -704,6 +706,7 @@ jobs:
       group: preview-pr-${{ github.event.client_payload.inspector_pr_number }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}

@@ -1,6 +1,8 @@
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import {
   getStepsBlockReason,
@@ -52,6 +54,16 @@ vi.mock("@/lib/PosthogUtils", () => ({
 vi.mock("@/lib/apis/evals-api", () => ({
   listEvalTools: vi.fn().mockResolvedValue({ tools: [] }),
   runEvalTestCase: vi.fn(),
+}));
+
+// A case with a prompt renders its preview turn, which reads app state.
+vi.mock("@/state/app-state-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/state/app-state-context")>()),
+  useSharedAppState: () => ({
+    activeProjectId: null,
+    projects: {},
+    servers: {},
+  }),
 }));
 
 vi.mock("convex/react", () => ({
@@ -441,5 +453,59 @@ describe("TestTemplateEditor prompt validation UI", () => {
 
     const runButton = screen.getByRole("button", { name: /Quick Run/ });
     expect(runButton).toBeDisabled();
+  });
+
+  it("turns Quick Run off, with the reset text, when its only model is out of credits", async () => {
+    const hosted = "anthropic/claude-haiku-4.5";
+    useQueryMock.mockImplementation((name: string, args: unknown) => {
+      if (name === "testSuites:listTestCases") {
+        return [
+          {
+            ...caseDoc,
+            query: "List my projects",
+            models: [{ provider: "anthropic", model: hosted }],
+            // No last run: this test is about the Run control, not a trace.
+            lastMessageRun: undefined,
+          },
+        ];
+      }
+      if (name === "testSuites:getTestSuite") {
+        return { _id: "suite-1", environment: { servers: ["srv"] } };
+      }
+      if (
+        name === "testSuites:getTestIteration" &&
+        (args as { iterationId?: string } | null)?.iterationId ===
+          baseIteration._id
+      ) {
+        return baseIteration;
+      }
+      return undefined;
+    });
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            id: hosted,
+            name: "Claude Haiku 4.5",
+            provider: "anthropic",
+            disabled: true,
+            disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+          } as any,
+        ]}
+        outOfCreditsReason="Out of MCPJam credits · resets in 3h"
+        suiteIterations={[]}
+      />,
+    );
+
+    const runButton = await screen.findByRole("button", { name: /Quick Run/ });
+    await waitFor(() => expect(runButton).toBeDisabled());
+    await userEvent.setup().hover(runButton.parentElement!);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Out of MCPJam credits · resets in 3h",
+    );
   });
 });

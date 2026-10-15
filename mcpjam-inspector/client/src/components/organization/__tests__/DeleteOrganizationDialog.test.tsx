@@ -37,3 +37,28 @@ it("requires the exact name and both acknowledgements, and resets on reopening",
     screen.getByRole("button", { name: "Permanently delete organization" }),
   ).toBeDisabled();
 });
+
+it("explains the enterprise cancellation window", () => {
+  render(
+    <DeleteOrganizationDialog
+      open
+      name="Example"
+      pending={false}
+      cancellationWindowHours={48}
+      onOpenChange={vi.fn()}
+      onConfirm={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByText(/You can cancel within 48 hours/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText(/This action cannot be undone/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Delete organization" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Permanently/ }),
+  ).not.toBeInTheDocument();
+});

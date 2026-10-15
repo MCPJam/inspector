@@ -1536,6 +1536,7 @@ export function NewSwarmRunningStep({
                           code: "mcpjam_rate_limit",
                           organizationId,
                           surface: "swarm",
+                          userInitiated: true,
                         })
                       }
                     >

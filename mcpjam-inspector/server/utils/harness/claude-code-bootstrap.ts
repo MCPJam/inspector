@@ -107,14 +107,22 @@ const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != 
  *  provider-qualified Gateway id verbatim (`anthropic/claude-fable-5`) — so the
  *  model on the wire is the model that was asked for, never the CLI default.
  *
+ *  On the NATIVE profile (a turn on the organization's own Anthropic key)
+ *  there is no Gateway, so the overrides are switched off by the turn's
+ *  `MCPJAM_HARNESS_UPSTREAM_PROFILE=anthropic-native` env and the CLI's native
+ *  ids go on the wire as they are (pinned to the leased model by the turn).
+ *  The turn's `env` reaches the bridge on its `start` message (`start.env`),
+ *  NOT as the bridge process's own environment, so that is where it is read.
+ *
  *  The companion `CLAUDE_CODE_EFFORT_LEVEL` write this group used to carry is
  *  GONE from the patch: stable exposes a first-class `env` option on
  *  `createClaudeCode`, so it is passed as configuration instead (see
  *  `createHarness` below). */
 const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE = `var HOST_TOOL_PREFIX = "mcp__harness-tools__";`;
 const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_PATCH = `var HOST_TOOL_PREFIX = "mcp__harness-tools__";
-function gatewayModelOverrideSettingsFor(model) {
+function gatewayModelOverrideSettingsFor(model, env) {
   if (typeof model !== "string") return undefined;
+  if (env?.MCPJAM_HARNESS_UPSTREAM_PROFILE === "anthropic-native") return undefined;
   let overrides;
   if (model === "haiku") {
     overrides = {
@@ -149,7 +157,7 @@ const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_NEEDLE = `      ...permissionOptions,
 const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH = `      ...permissionOptions,
       settings: {
         ...(permissionOptions.settings ?? {}),
-        ...(gatewayModelOverrideSettingsFor(start.model) ?? {}),
+        ...(gatewayModelOverrideSettingsFor(start.model, start.env) ?? {}),
         ...(process.env.MCPJAM_LOCAL_CONTROL_ROOT ? { permissions: {
           ...(permissionOptions.settings?.permissions ?? {}),
           deny: [...(permissionOptions.settings?.permissions?.deny ?? []),
@@ -223,8 +231,9 @@ const MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH = `  const toUserMessage = (t
     parent_tool_use_id: null
   });`;
 const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_NEEDLE = `  const q = claudeSdk.query({`;
-const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH = `  function gatewayModelOverrideSettingsFor(model) {
+const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH = `  function gatewayModelOverrideSettingsFor(model, env) {
     if (typeof model !== "string") return undefined;
+    if (env?.MCPJAM_HARNESS_UPSTREAM_PROFILE === "anthropic-native") return undefined;
     let overrides;
     if (model === "haiku") {
       overrides = {

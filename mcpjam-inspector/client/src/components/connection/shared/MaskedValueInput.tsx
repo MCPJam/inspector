@@ -74,9 +74,13 @@ export function MaskedValueInput({
         // server's config value as a login.
         autoComplete="off"
         aria-label={inputLabel}
+        // `meticulous-redact-recording`: a `type="text"` field is not a
+        // password to the Meticulous recorder, so this keeps what is typed
+        // here out of session recordings (see src/lib/meticulous-middleware.ts
+        // for the matching network redaction).
         className={cn(
-          "h-8 w-full pr-8 font-mono text-xs",
-          hidden && "select-none tracking-[0.2em] text-muted-foreground"
+          "meticulous-redact-recording h-8 w-full pr-8 font-mono text-xs",
+          hidden && "select-none tracking-[0.2em] text-muted-foreground",
         )}
       />
       <button

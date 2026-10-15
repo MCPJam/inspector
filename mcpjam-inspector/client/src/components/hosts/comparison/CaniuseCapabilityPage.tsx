@@ -86,7 +86,10 @@ export function CaniuseCapabilityPage({
                 {
                   hostName: subject.hostName,
                   supportLevel: level,
-                  supportLabel: getCaniuseSupportLabel(level),
+                  supportLabel: getCaniuseSupportLabel(
+                    level,
+                    capability.field.id
+                  ),
                 },
               ];
             })
@@ -165,7 +168,7 @@ export function CaniuseCapabilityPage({
               capability.field,
               subject.config
             );
-            const label = getCaniuseSupportLabel(level);
+            const label = getCaniuseSupportLabel(level, capability.field.id);
             const logoSrc = getScenarioHostLogo(
               subject.hostStyle,
               subject.config.chatUiOverride,
