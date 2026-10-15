@@ -77,7 +77,12 @@ env:
   # production monitor passes the other file explicitly.
   DEFAULT_SUITE_FILE: .mcpjam/evals/mcpjam-mcp.yaml
   PRODUCTION_SUITE_FILE: .mcpjam/evals/mcpjam-mcp-production.yaml
-  CLI_VERSION: 5.10.3
+  # At least 5.15.0, the first CLI that gives hosted eval commands a 120s
+  # deadline. Older ones keep the 30s probe default, and syncing this suite
+  # file (one request per case, then the launch) always runs past it: the CLI
+  # gives up before the launch answers, so no run id and every verdict is
+  # no-verdict.
+  CLI_VERSION: 5.16.1
 
 jobs:
   # The CLI lane. Syncs the suite file, runs it, gates the result, and reports a
