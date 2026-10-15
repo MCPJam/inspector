@@ -13,6 +13,8 @@ import { reportCaught } from "@/lib/error-reporting";
 
 /** Waits before the 2nd, 3rd and 4th attempt; then the user gets a Retry. */
 const RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
+/** `setTimeout` fires at once past 2^31-1 ms, so a backend hint is capped. */
+const MAX_RETRY_AFTER_MS = 60_000;
 
 const NO_ACCESS_MESSAGE =
   "You don't have access to set up clients in this project.";
@@ -88,11 +90,14 @@ function classifyFailure(error: unknown): Failure {
     };
   }
   if (data?.code === "rate_limited") {
+    const hint = data.retryAfterMs;
     return {
       refused: false,
       message: "",
       retryAfterMs:
-        typeof data.retryAfterMs === "number" ? data.retryAfterMs : undefined,
+        typeof hint === "number" && Number.isFinite(hint)
+          ? Math.min(Math.max(hint, 0), MAX_RETRY_AFTER_MS)
+          : undefined,
     };
   }
   // Drops refusals and auth churn itself; anything else is a real fault.
@@ -133,7 +138,12 @@ function runAttempt<T>(attempt: Attempt<T>): Promise<void> {
     (result) => {
       // The list may have refreshed first; IDLE lets a later empty list ensure.
       if (attempt.isCurrent()) attempt.settle(attempt.isNeeded() ? DONE : IDLE);
-      attempt.onSuccess(result);
+      try {
+        attempt.onSuccess(result);
+      } catch (error) {
+        // The client exists; only saving the selection failed.
+        reportCaught(error, { source: "project-client-initialization" });
+      }
     },
     (error: unknown) => {
       if (!attempt.isCurrent()) return;
@@ -231,7 +241,8 @@ export function useProjectClientInitStatus(
  * other components, tabs or devices converge; this only avoids local repeats.
  *
  * Transient failures retry after 1s, 4s and 10s, or after the backend's
- * `retryAfterMs` when that is longer, then stop with a Retry. Refusals do not
+ * `retryAfterMs` (capped at a minute) when that is longer, then stop with a
+ * Retry. Refusals do not
  * retry. When `needed` turns false (another caller's client arrived) pending
  * retries are cancelled and any error is cleared. A failure for a project the
  * caller has left is dropped; a success still reaches `onSuccess`, which

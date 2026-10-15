@@ -520,17 +520,13 @@ const previewedHostFixture = { resolve: false };
 const usePersistedHostProjectIds: (string | null)[] = [];
 const mockSetSelectedHostIds = vi.fn();
 const mockSetMultiHostEnabled = vi.fn();
-const mockCreateHost = vi.hoisted(() => vi.fn());
 const mockEnsureProjectClient = vi.hoisted(() => vi.fn());
 const mockHostMutations = vi.hoisted(() => ({
-  createHost: undefined as unknown as ReturnType<typeof vi.fn>,
-  ensureProjectClient: undefined as unknown as ReturnType<typeof vi.fn>,
+  ensureProjectClient: mockEnsureProjectClient,
   updateHost: vi.fn(),
   deleteHost: vi.fn(),
   duplicateHost: vi.fn(),
 }));
-mockHostMutations.createHost = mockCreateHost;
-mockHostMutations.ensureProjectClient = mockEnsureProjectClient;
 
 // Local Claude Code execution, forced ON so the per-column wiring is
 // observable. Left to the real controller this would settle to "unavailable"
@@ -615,12 +611,8 @@ vi.mock("@/hooks/useClients", () => ({
     hosts: multiHostFixture.hostList,
     isLoading: false,
   }),
-  // Every mutation is a STABLE reference, matching Convex's `useMutation`
-  // (which memoizes per mutation). Minting fresh `vi.fn()`s here instead
-  // would change these identities on every render, and the seed effect
-  // depends on `createHost`/`deleteHost` — so the effect would re-run on
-  // every render and quietly retry a failed seed on its own, hiding whether
-  // the real retry path works at all.
+  // Stable references, matching Convex's `useMutation`, which memoizes per
+  // mutation.
   useHostMutations: () => mockHostMutations,
 }));
 
@@ -865,7 +857,6 @@ describe("PlaygroundMain — multi-host render path", () => {
     await waitFor(() => {
       expect(readPreviewedHostId()).toBe("h-mcpjam");
     });
-    expect(mockCreateHost).not.toHaveBeenCalled();
   });
 
   it("ensures the default for a member and asks for no comparison", async () => {
@@ -880,7 +871,6 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockEnsureProjectClient.mock.calls).toEqual([
       [{ projectId: "default", themeMode: expect.any(String) }],
     ]);
-    expect(mockCreateHost).not.toHaveBeenCalled();
   });
 
   it("selects the comparison lineup, Claude leading, when the backend creates it", async () => {
