@@ -1,4 +1,4 @@
-import { useRef, useState, type RefObject } from "react";
+import { useState, type RefObject } from "react";
 import { useHostMutations, type HostListItem } from "@/hooks/useClients";
 import type { EnsureProjectClientResult } from "@/shared/ensure-project-client";
 import { useCanManageProjectClients } from "@/hooks/useProjects";
@@ -43,9 +43,10 @@ function unchangedSince(
 
 /**
  * Applies a selection this flow chose, unless the user chose something else
- * while the request was out. What this flow last wrote for the project is not
- * a user choice either: the default's write can land after a comparison
- * request read `before`, and the backend reports a created lineup only once.
+ * while the request was out. The default client alone is not a user choice
+ * either: it is what the default flow writes, in this tab or another one
+ * sharing the storage, and that write can land after a comparison request
+ * read `before`, while the backend reports a created lineup only once.
  *
  * Saved to the request's project even after a switch, so returning to it
  * shows the lineup; live state only changes while that project is open.
@@ -53,15 +54,22 @@ function unchangedSince(
 function applySelection(
   projectId: string,
   before: Selection,
-  next: { lead: string; lineup: string[]; ownHostIds: string[] },
+  next: {
+    lead: string;
+    lineup: string[];
+    defaultHostId: string;
+    ownHostIds: string[];
+  },
   live: PlaygroundSelectionTarget,
-  written: Map<string, Selection>,
 ) {
   const now = readSelection(projectId);
-  const lastWrite = written.get(projectId);
+  const defaultOnly = {
+    previewed: next.defaultHostId,
+    selected: [next.defaultHostId],
+  };
   if (
     !unchangedSince(now, before, next.ownHostIds) &&
-    !(lastWrite && unchangedSince(now, lastWrite, next.ownHostIds))
+    !unchangedSince(now, defaultOnly, next.ownHostIds)
   ) {
     return;
   }
@@ -69,7 +77,6 @@ function applySelection(
   if (isActive && live.restoringAdhocRef.current) return;
   savePreviewedHostId(projectId, next.lead);
   saveSelectedHostIds(projectId, next.lineup);
-  written.set(projectId, readSelection(projectId));
   if (!isActive) return;
   live.setPreviewedHostId(next.lead);
   live.setSelectedHostIds(next.lineup);
@@ -120,7 +127,6 @@ export function usePlaygroundClientInitialization({
   >(() => new Set());
   const comparisonSettled =
     projectId !== null && settledComparison.has(projectId);
-  const writtenRef = useRef(new Map<string, Selection>());
 
   const withSelection =
     (initializeComparison: boolean) =>
@@ -156,9 +162,13 @@ export function usePlaygroundClientInitialization({
       applySelection(
         pid,
         before,
-        { lead: result.hostId, lineup: own, ownHostIds: own },
+        {
+          lead: result.hostId,
+          lineup: own,
+          defaultHostId: result.hostId,
+          ownHostIds: own,
+        },
         live,
-        writtenRef.current,
       );
     },
   });
@@ -185,10 +195,10 @@ export function usePlaygroundClientInitialization({
         {
           lead: comparison.hostIds[0],
           lineup: comparison.hostIds,
+          defaultHostId: result.hostId,
           ownHostIds: [result.hostId, ...comparison.hostIds],
         },
         live,
-        writtenRef.current,
       );
     },
   });

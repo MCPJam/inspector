@@ -294,6 +294,23 @@ describe("usePlaygroundClientInitialization", () => {
     expect(loadSelectedHostIds("p1")).toEqual(["h-mine"]);
   });
 
+  it("selects the lineup when another tab's default write lands mid-request", async () => {
+    let resolve!: (value: unknown) => void;
+    mocks.ensure.mockReturnValue(new Promise((r) => (resolve = r)));
+    const live = liveTarget();
+    renderInit([MCPJAM], live);
+    await settle();
+    // Another tab's default flow, writing the storage this tab shares.
+    savePreviewedHostId("p1", "h-mcpjam");
+    saveSelectedHostIds("p1", ["h-mcpjam"]);
+
+    await act(async () => resolve(CREATED_LINEUP));
+
+    expect(loadPreviewedHostId("p1")).toBe("h-claude");
+    expect(loadSelectedHostIds("p1")).toEqual(LINEUP);
+    expect(live.setSelectedHostIds).toHaveBeenLastCalledWith(LINEUP);
+  });
+
   it("asks for a settled lineup once, however often loading flips", async () => {
     mocks.ensure.mockResolvedValue({
       ...CREATED_LINEUP,
