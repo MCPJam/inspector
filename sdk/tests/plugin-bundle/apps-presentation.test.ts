@@ -177,6 +177,50 @@ describe("presentation", () => {
     );
   });
 
+  it.each([
+    ["display name", { displayName: "[TODO: Plugin Name]" }],
+    ["icon", { logo: "[TODO: assets/icon.png]" }],
+  ])(
+    "ignores a placeholder %s in OpenAI's extension, and doesn't keep it",
+    async (_label, presentation) => {
+      const parsed = await parsePluginBundle(
+        minimalBundle(
+          {},
+          {
+            extensions: {
+              "com.openai": {
+                interface: { ...presentation, brandColor: "#000" },
+              },
+            },
+          }
+        )
+      );
+      expect(parsed.manifest.displayName).toBeUndefined();
+      expect(parsed.manifest.logo).toBeUndefined();
+      expect(parsed.manifest.extensions?.["com.openai"]).toEqual({
+        interface: { brandColor: "#000" },
+      });
+      expect(
+        parsed.warnings.map((issue) => issue.message).join("\n")
+      ).toContain(
+        `extensions.com.openai.interface.${Object.keys(presentation)[0]}`
+      );
+    }
+  );
+
+  it("reports a display name that isn't a string", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({}, { interface: { displayName: 42 } })
+    );
+    expect(parsed.manifest.displayName).toBeUndefined();
+    expect(parsed.warnings).toContainEqual(
+      expect.objectContaining({
+        code: "MANIFEST_INVALID_FIELD",
+        message: '"interface.displayName" must be a string; ignored',
+      })
+    );
+  });
+
   it("reads the Bits & Bolts Remote package end to end", async () => {
     const parsed = await parsePluginBundle(
       bundle(bitsAndBoltsRemoteFiles()),

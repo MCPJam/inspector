@@ -327,11 +327,19 @@ function applyOpenAiInterface(
     if (!isPlainRecord(value)) {
       issues.warn(
         "MANIFEST_INVALID_FIELD",
-        `"${label}" must be an object; its icons were ignored`
+        `"${label}" must be an object; ignored`
       );
       continue;
     }
-    if (typeof value.displayName === "string" && value.displayName.trim()) {
+    if (
+      value.displayName !== undefined &&
+      typeof value.displayName !== "string"
+    ) {
+      issues.warn(
+        "MANIFEST_INVALID_FIELD",
+        `"${label}.displayName" must be a string; ignored`
+      );
+    } else if (value.displayName?.trim()) {
       if (PLACEHOLDER.test(value.displayName)) {
         issues.warn(
           "MANIFEST_INVALID_FIELD",
@@ -579,11 +587,8 @@ export function normalizePluginManifest(
         `manifest field "extensions" must be an object; ignored`
       );
     } else {
-      // The onboarding skill is read raw and kept only when it names a loaded
-      // skill (`applyOnboardingSkill`), so the screen never sees it: a long
-      // skill path would otherwise report as a dropped secret.
       manifest.extensions = sanitizeUnknownRecord(
-        withoutOnboardingSkill(extensions as Record<string, unknown>),
+        storedExtensions(extensions as Record<string, unknown>),
         {
           issues,
           secretCode: "MANIFEST_SECRET_FIELD_OMITTED",
@@ -636,14 +641,35 @@ export function normalizePluginManifest(
   };
 }
 
-function withoutOnboardingSkill(
+/** The `interface` fields `applyOpenAiInterface` reads from the raw manifest. */
+const OPENAI_INTERFACE_FIELDS = new Set<string>([
+  "displayName",
+  ...OPENAI_INTERFACE_ICON_FIELDS,
+]);
+
+/**
+ * `extensions` as stored, without what is read from the raw manifest instead.
+ * The onboarding skill is kept only once `applyOnboardingSkill` validates it,
+ * and the secret screen would report a long skill path as a dropped secret.
+ * An interface field holding a placeholder was already reported and ignored,
+ * and the placeholder scan would otherwise make it fatal.
+ */
+function storedExtensions(
   extensions: Record<string, unknown>
 ): Record<string, unknown> {
   const openai = extensions[OPENAI_EXTENSION_NAMESPACE];
-  if (!isPlainRecord(openai) || !("onboardingSkill" in openai)) {
-    return extensions;
-  }
+  if (!isPlainRecord(openai)) return extensions;
   const { onboardingSkill: _declared, ...rest } = openai;
+  if (isPlainRecord(rest.interface)) {
+    rest.interface = Object.fromEntries(
+      Object.entries(rest.interface).filter(
+        ([key, value]) =>
+          !OPENAI_INTERFACE_FIELDS.has(key) ||
+          typeof value !== "string" ||
+          !PLACEHOLDER.test(value)
+      )
+    );
+  }
   return { ...extensions, [OPENAI_EXTENSION_NAMESPACE]: rest };
 }
 
