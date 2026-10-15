@@ -193,6 +193,15 @@ install`, every SDK and Inspector build, test and typecheck, and the dev loops
 `test:watch`) run for you. A new logger message, route or error class is
 catalogued on save; there is no file to commit.
 
+**Does my field arrive?** Telemetry forwards only fields that have a rule, so a
+new diagnostic field can be dropped without any error. Check it in the test
+that adds it: `expectTelemetryFields(sample, ["statusCode"])` from
+`mcpjam-inspector/shared/__tests__/explain-telemetry.ts` runs the sample
+through the real log-row or server-analytics builder and fails with each
+missing field's drop reason (for example, "no field rule: declare it in
+server/utils/log-events.ts"). `explainTelemetry(sample)` returns the same
+`{ forwarded, dropped }` for a look before you write the assertion.
+
 **Reload semantics**, which differ by process:
 
 | You edit                            | What happens                                         |

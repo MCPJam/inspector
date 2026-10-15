@@ -3,8 +3,12 @@ import { INTERNAL_TO_V1_CODE, V1_ERROR_CODES } from "@mcpjam/sdk/public-api";
 import catalog from "./telemetry-catalog.generated.json";
 
 type Fields = Record<string, unknown>;
-type Rule = { kind?: string; values?: readonly string[] };
-const rules: Record<string, Rule> = catalog.fields;
+export type StrictLogFieldRule = {
+  kind?: string;
+  values?: readonly string[];
+  max?: number;
+};
+const rules: Record<string, StrictLogFieldRule> = catalog.fields;
 const messages = new Set<string>(catalog.messages);
 const ERROR_CLASSES = [
   "Error",
@@ -22,6 +26,15 @@ const ENUMS: Record<string, readonly string[]> = {
   method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
   level: ["debug", "info", "warn", "error"],
 };
+
+/** The rule a context or payload field must meet to be copied into a row. */
+export function strictLogFieldRule(key: string): StrictLogFieldRule | undefined {
+  const values = ENUMS[key] ?? rules[key]?.values;
+  if (values) return { values };
+  if (rules[key]?.kind === "number")
+    return { kind: "number", max: key === "durationMs" ? 86400000 : 1000000000 };
+  return rules[key];
+}
 
 function approved(value: unknown, values: readonly string[]) {
   return typeof value === "string" && values.includes(value)
@@ -111,10 +124,9 @@ export function buildStrictLogRow(
 
 function copySafeLogContext(row: Fields, context: Fields, payload: Fields) {
   for (const [key, value] of Object.entries({ ...payload, ...context })) {
-    const rule = rules[key];
-    const values = ENUMS[key] ?? rule?.values;
-    if (values) {
-      const kept = approved(value, values);
+    const rule = strictLogFieldRule(key);
+    if (rule?.values) {
+      const kept = approved(value, rule.values);
       if (kept !== undefined) row[key] = kept;
     } else if (rule?.kind === "boolean" && typeof value === "boolean")
       row[key] = value;
@@ -123,7 +135,7 @@ function copySafeLogContext(row: Fields, context: Fields, payload: Fields) {
       typeof value === "number" &&
       Number.isFinite(value) &&
       value >= 0 &&
-      value <= (key === "durationMs" ? 86400000 : 1000000000)
+      value <= (rule.max ?? 0)
     )
       row[key] = value;
   }
