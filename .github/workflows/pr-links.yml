@@ -92,7 +92,13 @@ jobs:
               github.rest.issues.listComments,
               { owner, repo, issue_number, per_page: 100 },
             );
-            const existing = comments.find((c) => c.body.includes(MARKER));
+            // Author and leading marker both, so a human comment that quotes
+            // the marker is never the one overwritten.
+            const existing = comments.find(
+              (c) =>
+                c.user?.login === 'github-actions[bot]' &&
+                c.body?.startsWith(MARKER),
+            );
 
             if (!missing.length) {
               // Collapse to a one-liner rather than deleting, so the history of
