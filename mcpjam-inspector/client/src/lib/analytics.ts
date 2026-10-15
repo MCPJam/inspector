@@ -1,4 +1,6 @@
-import posthog from "posthog-js";
+import posthog, { type PostHog } from "posthog-js";
+import { currentTelemetryActor, currentTelemetryCaptureContext } from "./telemetry-context";
+import { withoutIdentifyingProperties } from "@/shared/telemetry-privacy";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import { standardEventProps } from "./PosthogUtils";
 
@@ -116,4 +118,19 @@ export function track(
     // contain sensitive product data.
     console.warn(`[analytics] Failed to capture ${event}`, error);
   }
+}
+
+/** Refresh the SDK person profile through the same guarded capture boundary. */
+export function refreshPermittedIdentity(
+  posthog: Pick<PostHog, "capture">,
+  actor: string,
+  properties: Record<string, string | null | undefined>,
+): void {
+  const context = currentTelemetryCaptureContext();
+  if (currentTelemetryActor() !== actor || context.policy.content !== "full") return;
+  posthog.capture("$set", {
+    $set: context.policy.identity === "full"
+      ? properties
+      : withoutIdentifyingProperties(properties),
+  });
 }

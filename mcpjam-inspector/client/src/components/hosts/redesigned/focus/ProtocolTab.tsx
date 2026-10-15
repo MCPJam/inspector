@@ -141,21 +141,21 @@ const TOOL_RESULT_AUTH_CHALLENGE_TRIGGER_LABELS: Record<
 const UNAUTHORIZED_CHALLENGE_DESCRIPTIONS: Record<AuthChallengeAction, string> =
   {
     prompt:
-      "A 401 shows a Connect card. After sign-in, the call runs again.",
+      "Show Connect and retry after sign-in.",
     notify:
-      "A 401 ends the call with a sign-in message. The call is not run again.",
-    passthrough: "A 401 is an ordinary error.",
+      "Show a sign-in message and stop the call.",
+    passthrough: "Treat the response as an ordinary error.",
   };
 
 const UNAUTHORIZED_TRIGGER_DESCRIPTIONS: Record<
   UnauthorizedChallengeTrigger,
   string
 > = {
-  any: "Every 401 response counts, whether or not it includes a WWW-Authenticate header.",
+  any: "Treat every sign-in-required response as a challenge, even without an authentication header.",
   "bearer-header":
-    "Only a 401 carrying WWW-Authenticate: Bearer counts. Any other 401 is an ordinary error.",
+    "Require a Bearer authentication challenge in the response header.",
   "resource-metadata":
-    "Only a 401 carrying WWW-Authenticate: Bearer with a resource_metadata parameter counts.",
+    "Require a Bearer authentication challenge with a resource metadata link.",
 };
 
 const TOOL_RESULT_CHALLENGE_DESCRIPTIONS: Record<AuthChallengeAction, string> =

@@ -4,6 +4,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { detectPlatform } from "@/lib/PosthogUtils";
 import { refreshServerFeatureFlagsForActor } from "@/lib/server-feature-flags";
+import { refreshPermittedIdentity } from "@/lib/analytics";
 import { captureContextKey } from "@/shared/telemetry-privacy";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActorKey } from "@/hooks/use-actor-key";
@@ -131,7 +132,7 @@ export function usePostHogIdentify() {
       if (previousIdentify?.actor === actorKey && previousIdentify.context !== contextKey) {
         // The relay may have dropped a queued identify during navigation. The
         // SDK caches it locally, so refresh properties once under this grant.
-        posthog.capture("$set", { $set: personProperties });
+        refreshPermittedIdentity(posthog, actorKey, personProperties);
       }
       lastIdentifyRef.current = { actor: actorKey, context: contextKey };
     } else if (lastIdentifyRef.current?.actor === actorKey) {

@@ -1309,7 +1309,7 @@ export function gateAuthChallenge(
       return {
         kind: "blocked",
         reason: "xaa",
-        hint: "Interactive sign-in is not available for this server. Check the server's XAA configuration.",
+        hint: "Interactive sign-in is not available for this server. Check the server's Cross-App Access (XAA) settings.",
       };
     default:
       return {
