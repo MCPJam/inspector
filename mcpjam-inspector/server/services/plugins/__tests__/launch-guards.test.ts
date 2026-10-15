@@ -6,6 +6,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -116,6 +117,43 @@ describe("checkPluginLaunch", () => {
         declared,
       ),
     ).toBeNull();
+  });
+
+  posixOnly("searches the PATH as the spawn does", async () => {
+    for (const file of ["root-server", "bin/path-server", "sub/sub-server"]) {
+      await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+      await writeFile(path.join(root, file), "#!/bin/sh\nexit 0\n");
+      await chmod(path.join(root, file), 0o755);
+    }
+    // A working directory reached through a symlink: `..` leaves where the
+    // link points, not where it sits.
+    const alias = path.join(dataDir, "alias");
+    await symlink(path.join(root, "sub"), alias);
+    const cases = [
+      { command: "path-server", PATH: "./bin" },
+      { command: "path-server", PATH: "/nowhere:bin" },
+      { command: "path-server", PATH: "." },
+      { command: "root-server", PATH: "/nowhere::/elsewhere" },
+      { command: "root-server", PATH: "" },
+      { command: "root-server", PATH: "/nowhere" },
+      { command: "./sub/sub-server", PATH: "/nowhere" },
+      { command: "path-server", PATH: "../bin", cwd: alias },
+      { command: "sub-server", PATH: ":", cwd: alias },
+    ];
+    for (const { command, PATH, cwd = root } of cases) {
+      const spawned = spawnSync(command, [], { cwd, env: { PATH } });
+      const refused = await checkPluginLaunch(
+        { command, env: { PATH }, workingDirectory: cwd },
+        { root, dataDir },
+        { remote: false, declaredCommand: command },
+      );
+      expect({ command, PATH, cwd, runs: refused === null }).toEqual({
+        command,
+        PATH,
+        cwd,
+        runs: spawned.status === 0,
+      });
+    }
   });
 
   it("holds a launch in a box to its paths alone", async () => {

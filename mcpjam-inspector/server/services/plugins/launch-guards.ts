@@ -82,15 +82,20 @@ export async function checkPluginLaunch(
   // Windows resolves commands through PATHEXT and .cmd shims; there the
   // spawn's own error names the command.
   if (process.platform === "win32") return null;
+  // Looked up as the spawn looks it up: from the directory the server runs
+  // in, where a relative PATH entry starts and an empty one points.
   const { command } = launch;
   if (command.includes("/")) {
-    return (await isExecutableFile(path.resolve(cwd, command)))
+    return (await isExecutableFile(path.resolve(real, command)))
       ? null
       : { reason: "command_not_executable", command: options.declaredCommand };
   }
-  const searchPath = launch.env.PATH ?? process.env.PATH ?? "";
-  for (const dir of searchPath.split(path.delimiter).filter(Boolean)) {
-    if (await isExecutableFile(path.join(dir, command))) return null;
+  // The server's environment adds to this process's. With no PATH in either,
+  // the spawn searches the system default, which only it knows.
+  const searchPath = launch.env.PATH ?? process.env.PATH;
+  if (searchPath === undefined) return null;
+  for (const dir of searchPath.split(path.delimiter)) {
+    if (await isExecutableFile(path.resolve(real, dir, command))) return null;
   }
   return { reason: "runtime_not_found", command };
 }
