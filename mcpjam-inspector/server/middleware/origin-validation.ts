@@ -25,10 +25,7 @@ import { logger as appLogger } from "../utils/logger.js";
  * so rejecting it only locks the app out of itself.
  */
 function ownUiOrigins(): string[] {
-  return [
-    `http://localhost:${SERVER_PORT}`,
-    `http://127.0.0.1:${SERVER_PORT}`,
-  ];
+  return [`http://localhost:${SERVER_PORT}`, `http://127.0.0.1:${SERVER_PORT}`];
 }
 
 /**
