@@ -137,9 +137,9 @@ function runAttempt<T>(attempt: Attempt<T>): Promise<void> {
     },
     (error: unknown) => {
       if (!attempt.isCurrent()) return;
-      const failure = classifyFailure(error);
       // Another caller satisfied the need meanwhile: nothing to report.
       if (!attempt.isNeeded()) return attempt.settle(IDLE);
+      const failure = classifyFailure(error);
       const next = afterFailure(failure, attempt.nextAttempt());
       if (typeof next === "number") attempt.retryIn(next);
       else attempt.settle(next);

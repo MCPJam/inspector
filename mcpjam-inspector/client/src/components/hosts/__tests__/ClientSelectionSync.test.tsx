@@ -233,6 +233,23 @@ describe("ClientSelectionSync", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  it("does not report a failure another caller's client made moot", async () => {
+    let fail: (error: Error) => void = () => {};
+    mocks.ensure.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        fail = reject;
+      }),
+    );
+    const { rerender } = renderConnect();
+    mocks.list.mockReturnValue({
+      hosts: [{ hostId: "h1", name: "MCPJam" }],
+      isLoading: false,
+    });
+    rerender(connect());
+    await act(async () => fail(new Error("network")));
+    expect(mocks.report).not.toHaveBeenCalled();
+  });
+
   it("ensures again when the list empties after a success it had seen", async () => {
     let succeed: (value: typeof ENSURED) => void = () => {};
     mocks.ensure.mockReturnValueOnce(
