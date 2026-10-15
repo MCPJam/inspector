@@ -149,7 +149,10 @@ describe("the chat notice's Sign in", () => {
     state.signInProjectIds = [];
     state.toastInfo.mockReset();
     state.ensure.mockReset();
-    state.ensure.mockResolvedValue({ environmentId: "env_1" });
+    state.ensure.mockResolvedValue({
+      environment: { environmentId: "env_1" },
+      created: true,
+    });
     resetShownPluginNotices();
   });
 

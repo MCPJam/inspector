@@ -208,6 +208,13 @@ describe("skippedPluginsForNotice", () => {
     const partial = row("p", {
       servers: [
         {
+          serverId: "srv_s",
+          name: "s",
+          componentKey: "s",
+          placement: "remote",
+          unavailable: "needs_setup",
+        },
+        {
           serverId: "srv_k",
           name: "k",
           componentKey: "k",
@@ -221,6 +228,7 @@ describe("skippedPluginsForNotice", () => {
       reason: "needs_auth",
       componentKey: "w",
     });
+    expect(skippedPluginsForNotice([partial])[0].reason).toBe("needs_auth");
     expect(
       skippedPluginsForNotice([partial, whole]).map((plugin) => plugin.signIn),
     ).toEqual([

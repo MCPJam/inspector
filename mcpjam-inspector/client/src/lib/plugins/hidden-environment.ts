@@ -131,7 +131,12 @@ export function skippedPluginsForNotice(
       displayName: plugin.displayName,
     };
     if (plugin.status === "active") {
-      const server = plugin.servers.find((candidate) => candidate.unavailable);
+      // The one signing in fixes, when there is one: a turn's report picks
+      // the same, and only that one gets a Sign in.
+      const server =
+        plugin.servers.find(
+          (candidate) => candidate.unavailable === "needs_auth",
+        ) ?? plugin.servers.find((candidate) => candidate.unavailable);
       const reason = server?.unavailable;
       return server && reason
         ? [
