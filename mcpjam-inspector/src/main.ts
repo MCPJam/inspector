@@ -592,7 +592,7 @@ async function startHonoServer(): Promise<number> {
     shutdownLocalBrowserFrames = shutdownLocalBrowserFrameSockets;
     killLocalBrowserFrames = killLocalBrowserFrameSockets;
 
-    server = serve(
+    const httpServer = serve(
       {
         fetch: honoApp.fetch,
         port,
@@ -603,15 +603,16 @@ async function startHonoServer(): Promise<number> {
           hosted: process.env.VITE_MCPJAM_HOSTED_MODE === "true",
           warn: (message) => log.warn(message),
         });
-        server?.once("close", cleanup);
+        httpServer.once("close", cleanup);
       },
     );
     registerBrowserController(`http://127.0.0.1:${port}`);
     // Attach the computer terminal WebSocket upgrade handler (mirror of
     // server/index.ts). Without this the Computer tab's Shell can't upgrade.
-    injectWebSocket(server);
-    // serve() leaves bind errors unhandled; this turns them into a rejection.
-    await once(server, "listening");
+    injectWebSocket(httpServer);
+    // serve() adds no error listener: bind first, then replace `server`.
+    await once(httpServer, "listening");
+    server = httpServer.on("error", (e) => log.error("Hono server error:", e));
 
     if (port !== DEFAULT_SERVER_PORT) {
       log.warn(
@@ -1221,7 +1222,6 @@ async function handleActivate(): Promise<void> {
     try {
       if (serverPort === 0) serverPort = await startHonoServer();
     } catch (error) {
-      log.error("Failed to restart server:", error);
       showStartupFailureDialog(error);
       return;
     }

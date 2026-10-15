@@ -8,10 +8,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 /**
  * Drives the real `main.ts` lifecycle against a real `@hono/node-server` bind
  * on a real port, with Electron and the side-effecting modules stubbed. The
- * desktop app's EADDRINUSE crash came from three paths: a second server start
- * when macOS emits `activate` during launch, a second instance that runs the
- * bootstrap after losing the single-instance lock, and a bind error that
- * nothing listened for.
+ * desktop app must never start a second server when macOS emits `activate`
+ * during launch, never bootstrap in an instance that lost the single-instance
+ * lock, and turn any server `error` into a dialog or a log line, not a crash.
  */
 const h = vi.hoisted(() => ({
   gotLock: true,
@@ -19,6 +18,7 @@ const h = vi.hoisted(() => ({
   windows: [] as object[],
   onCreateHonoApp: (): Promise<void> | void => undefined,
   createHonoApp: vi.fn(),
+  injectWebSocket: vi.fn((_server: NodeJS.EventEmitter) => undefined),
   dialog: vi.fn((_options: { message: string; detail: string }) => 2),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   userData: "",
@@ -167,7 +167,7 @@ beforeEach(async () => {
     await h.onCreateHonoApp();
     return {
       app: { fetch: () => new Response("ok") },
-      injectWebSocket: vi.fn(),
+      injectWebSocket: h.injectWebSocket,
     };
   });
   process.on("uncaughtException", uncaught);
@@ -205,8 +205,7 @@ it("shows the startup dialog when the port is taken between probe and bind", asy
 });
 
 it("starts one server when macOS emits activate during launch", async () => {
-  // Mid-bootstrap, as in the Sentry breadcrumbs: after the server modules
-  // loaded, before any window exists.
+  // Mid-bootstrap: after the server modules loaded, before any window exists.
   h.onCreateHonoApp = async () => {
     h.onCreateHonoApp = () => undefined;
     const { app } = await import("electron");
@@ -226,8 +225,23 @@ it("does not start a server in an instance that lost the single-instance lock", 
   await launch();
 
   await settle();
+  // Written synchronously by the bootstrap's first step, so its absence does
+  // not depend on how long the rest of the bootstrap would take.
+  expect(fs.existsSync(path.join(h.userData, ".last-launched-version"))).toBe(
+    false,
+  );
   expect(h.createHonoApp).not.toHaveBeenCalled();
   expect(h.windows).toHaveLength(0);
+});
+
+it("logs a server error after the bind instead of crashing", async () => {
+  await launch();
+  await bootstrapped();
+  const [server] = h.injectWebSocket.mock.calls[0];
+  const error = Object.assign(new Error("accept EMFILE"), { code: "EMFILE" });
+
+  expect(() => server.emit("error", error)).not.toThrow();
+  expect(h.log.error).toHaveBeenCalledWith("Hono server error:", error);
 });
 
 it("handles a port held by another process when the dock reopens the window", async () => {
