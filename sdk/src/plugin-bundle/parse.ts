@@ -493,6 +493,7 @@ export async function parsePluginBundle(
             serverKeys,
             contentHash: file.contentHash,
             issues: scoped,
+            maxApps: limits.maxMcpServers,
           });
     const reason = scoped.firstErrorMessage();
     issues.absorbDemoted(scoped);

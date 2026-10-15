@@ -53,6 +53,8 @@ interface AppConfigArgs {
   serverKeys: string[];
   contentHash: string;
   issues: PluginIssueCollector;
+  /** Most apps one keyed file may declare: one per possible bundle server. */
+  maxApps: number;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -74,7 +76,7 @@ function readAppId(
 /** OpenAI's keyed form: one registered app per server name. */
 function parseKeyedApps(
   apps: unknown,
-  { sourcePath, serverKeys, contentHash, issues }: AppConfigArgs
+  { sourcePath, serverKeys, contentHash, issues, maxApps }: AppConfigArgs
 ): ParsedPluginApp[] | null {
   if (!isPlainRecord(apps)) {
     issues.error("APP_INVALID_CONFIG", `"apps" must be an object`, {
@@ -82,8 +84,18 @@ function parseKeyedApps(
     });
     return null;
   }
+  const entries = Object.entries(apps);
+  // Checked before any entry, so an oversized file costs one issue.
+  if (entries.length > maxApps) {
+    issues.error(
+      "APP_INVALID_CONFIG",
+      `"apps" declares ${entries.length} apps; the limit is ${maxApps}`,
+      { path: sourcePath }
+    );
+    return null;
+  }
   const parsed: ParsedPluginApp[] = [];
-  for (const [appKey, entry] of Object.entries(apps)) {
+  for (const [appKey, entry] of entries) {
     const componentKey = `app:${sourcePath}#${appKey}`;
     const id = isPlainRecord(entry) ? readAppId(entry) : undefined;
     if (!isPlainRecord(entry) || id === undefined) {

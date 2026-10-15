@@ -123,6 +123,23 @@ describe("app configuration failures stay with the app file", () => {
       expect(parsed.warnings.every((w) => w.severity === "warning")).toBe(true);
     }
   );
+
+  it("refuses a keyed file with more apps than a bundle may have servers, in one issue", async () => {
+    const apps = Object.fromEntries(
+      Array.from({ length: 5000 }, (_, i) => [`app-${i}`, {}])
+    );
+    const parsed = await parsePluginBundle(
+      minimalBundle({
+        "big.app.json": keyed(apps),
+        "ok.app.json": JSON.stringify({ id: "com.example.ok" }),
+      })
+    );
+    expect(parsed.apps.map((app) => app.appId)).toEqual(["com.example.ok"]);
+    expect(parsed.skipped).toEqual([
+      expect.objectContaining({ kind: "app", key: "big.app.json" }),
+    ]);
+    expect(parsed.warnings.length).toBeLessThan(5);
+  });
 });
 
 describe("presentation", () => {
