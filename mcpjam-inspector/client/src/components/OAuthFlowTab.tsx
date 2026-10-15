@@ -700,8 +700,8 @@ export const OAuthFlowTab = ({
             return buildAdvanceResult(previousStep, after);
           }
         } else {
-          // The post-callback redemption can't interleave: its steps run back
-          // to back under isInitiatingAuth, which the guard above refuses.
+          // The code redemption can't interleave: it runs under isInitiatingAuth
+          // (refused above) and won't start while this step is in flight.
           await proceedToNextStep();
           return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
         }

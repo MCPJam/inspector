@@ -21,13 +21,15 @@ const CODE_REDEMPTION_STEPS = new Set<OAuthFlowStep>([
  *
  * Stops wherever the machine does not advance: a rejected code or a refused
  * issuer stays on its step with the error set, and a flow reset mid-way leaves
- * these steps altogether.
+ * these steps altogether. Does not start while a step is in flight: Continue
+ * and the agent stay live until the caller's timer fires, and if that step is
+ * the exchange, a second one would spend the single-use code again.
  */
 export async function redeemAuthorizationCode(
   machine: Pick<OAuthStateMachine, "proceedToNextStep"> | null,
   flowState: { readonly current: OAuthFlowState },
 ): Promise<void> {
-  if (!machine) return;
+  if (!machine || flowState.current.isInitiatingAuth) return;
   let step = flowState.current.currentStep;
   while (CODE_REDEMPTION_STEPS.has(step)) {
     await machine.proceedToNextStep();
