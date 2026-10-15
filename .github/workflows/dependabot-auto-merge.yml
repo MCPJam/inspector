@@ -52,8 +52,7 @@ permissions: {}
 jobs:
   decide:
     # Gate on the PR author, not `github.actor`, which is spoofable and is the
-    # human rather than the bot on a reopen — same reasoning as
-    # mintlify-triage.yml.
+    # human rather than the bot on a reopen.
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -231,10 +230,8 @@ jobs:
               --body "Held for human review: $REASON. See .github/workflows/dependabot-auto-merge.yml for what is approved on its own."
           fi
 
-      # A run that reaches no outcome must be loud. mintlify-triage.yml learned
-      # this the hard way: a step that soft-skips exits 0 and reports a green
-      # check having done nothing, which is strictly worse than a red X because
-      # nobody can tell it apart from a real decision.
+      # A soft-skipped step can exit successfully without making a decision.
+      # Assert the outcome so the check cannot silently report success.
       - name: Enforce an outcome
         # Not success(): a soft-skip exits 0. Not always(): `cancel-in-progress`
         # means a superseded run has legitimately reached no outcome.
