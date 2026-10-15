@@ -102,9 +102,9 @@ export function FindingsSummaryCard({
               </p>
             </div>
           ) : null}
-          {footnotes.map((note) => (
+          {footnotes.map((note, index) => (
             <p
-              key={note}
+              key={index}
               className="text-sm leading-relaxed text-muted-foreground"
             >
               {note}

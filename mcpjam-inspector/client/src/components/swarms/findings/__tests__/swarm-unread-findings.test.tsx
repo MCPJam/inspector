@@ -78,7 +78,9 @@ describe("unread swarm findings", () => {
       screen.queryByText("No session evidence available."),
     ).not.toBeInTheDocument();
     expect(
-      within(screen.getByRole("complementary")).getByText("Stalled"),
+      within(screen.getByRole("complementary")).getByText(
+        "The grader recorded this goal as missed. No session report is available.",
+      ),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Reconcile payouts/ }));
     expect(
@@ -91,7 +93,10 @@ describe("unread swarm findings", () => {
   });
 
   it.each([
-    ["passed", "Relieved"],
+    [
+      "passed",
+      "The grader recorded this goal as met. No session report is available.",
+    ],
     ["notEstablished", "No session evidence available."],
   ] as const)(
     "shows the %s goal detail without inventing a report",
@@ -119,12 +124,12 @@ describe("unread swarm findings", () => {
 
   it("shows unread coverage caveats alongside the recorded findings", () => {
     const wire = brokenWire();
-    wire.coverageNotes = ["budgetExhausted", "partialRead"];
+    wire.coverageNotes = ["budgetExhausted", "partialRead", "partialRead"];
     render(<SwarmFindingsTab {...props} journeyFindings={wire} />);
     const summary = within(screen.getByTestId("findings-summary-card"));
     expect(summary.getByText("Analysis budget exhausted")).toBeInTheDocument();
     expect(
-      summary.getByText("Only part of this wave was read"),
-    ).toBeInTheDocument();
+      summary.getAllByText("Only part of this wave was read"),
+    ).toHaveLength(2);
   });
 });

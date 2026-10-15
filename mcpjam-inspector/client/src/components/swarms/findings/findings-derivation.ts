@@ -388,9 +388,11 @@ export function deriveSwarmFindingsModelFromWire({
             lead?.reportExcerpt?.actual ??
             (disposition === "notRun"
               ? "No session launched for this goal, so nothing about the server was tested."
-              : lead?.verdictSeen === "passed" || lead?.verdictSeen === "failed"
-              ? SWARM_FINDING_DISPOSITION_LABELS[disposition]
-              : "No session evidence available."),
+              : lead?.verdictSeen === "passed"
+                ? "The grader recorded this goal as met. No session report is available."
+                : lead?.verdictSeen === "failed"
+                  ? "The grader recorded this goal as missed. No session report is available."
+                  : "No session evidence available."),
         },
         defaultStage: diagnosisStage ?? "value",
       };
