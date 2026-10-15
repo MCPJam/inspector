@@ -13,7 +13,6 @@ const testSessionToken =
   process.env.MCPJAM_SESSION_TOKEN ?? "playwright-local-access-credential";
 process.env.MCPJAM_SESSION_TOKEN = testSessionToken;
 const baseURL = deployedBaseUrl ?? "http://localhost:6274";
-
 // staging.mcpjam.com sits behind Cloudflare Access. Without a service token
 // every navigation lands on the Access login page instead of the app, and the
 // failures read as product bugs. Only sent when both halves are present, so a
@@ -63,7 +62,7 @@ export default defineConfig({
           launchOptions: { args: NO_PRODUCTION_BROWSER_ARGS },
         }
       : {}),
-    ...(cfAccessHeaders ? { extraHTTPHeaders: cfAccessHeaders } : {}),
+    extraHTTPHeaders: cfAccessHeaders,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

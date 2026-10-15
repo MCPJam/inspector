@@ -3,7 +3,10 @@ import { buildServerSentryConfig } from "../shared/sentry-config.js";
 import {
   withSentryBoundary,
 } from "../shared/strict-sentry.js";
-import { strictServerSentryOptions } from "./utils/strict-sentry-options.js";
+import {
+  serverBuildSurface,
+  strictServerSentryOptions,
+} from "./utils/strict-sentry-options.js";
 import { resolveAppVersion, resolveEnvironment } from "./utils/log-events.js";
 
 /**
@@ -34,6 +37,7 @@ export function initServerSentry(): void {
     ...buildServerSentryConfig({
       environment: resolveEnvironment(),
       release: resolveAppVersion() ?? undefined,
+      dist: serverBuildSurface(),
       deployment:
         process.env.VITE_MCPJAM_HOSTED_MODE === "true"
           ? "hosted"

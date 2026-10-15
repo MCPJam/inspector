@@ -203,8 +203,7 @@ export function captureContextKey(
 
 /**
  * Person properties that name a human. Never sent while identity is
- * `id_only`; the relay removes them from restricted events, and the client
- * clears them from a PostHog person once identity becomes restrictive.
+ * `id_only`; the relay removes them from restricted events.
  */
 export const IDENTIFYING_PERSON_PROPERTIES: readonly string[] = [
   "email",

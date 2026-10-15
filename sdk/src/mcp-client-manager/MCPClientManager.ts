@@ -211,6 +211,7 @@ import {
   defaultResultSchemaForMethod,
   runInputRequiredOperation,
   type ElicitationContentValidator,
+  type ElicitationFormSchemaSelector,
   type InputRequiredResult,
   type MrtrInputCollector,
   type MrtrLegSender,
@@ -371,6 +372,15 @@ export class MCPClientManager {
    * hosted PRs plug into.
    */
   private readonly mrtrInputCollectors = new Map<string, MrtrInputCollector>();
+  /** Extension keys a server's MRTR collector also answers (see
+   *  {@link setMrtrInputCollector}); such a key is never legacy-only. */
+  private readonly mrtrExtensionClaims = new Map<string, readonly string[]>();
+  /** The form schema a server's in-process MRTR answers are validated
+   *  against (see {@link setMrtrInputCollector}). */
+  private readonly mrtrFormSchemaSelectors = new Map<
+    string,
+    ElicitationFormSchemaSelector
+  >();
 
   /** MCPJam-owned MRTR round cap (see `mrtr-driver.ts`). */
   private readonly mrtrMaxRounds = DEFAULT_MAX_MRTR_ROUNDS;
@@ -844,6 +854,8 @@ export class MCPClientManager {
     // Purge the MRTR collector too; otherwise a re-registered server inherits
     // the previous owner's collector closure and stale `elicitation` capability.
     this.mrtrInputCollectors.delete(serverId);
+    this.mrtrExtensionClaims.delete(serverId);
+    this.mrtrFormSchemaSelectors.delete(serverId);
   }
 
   /**
@@ -1795,7 +1807,24 @@ export class MCPClientManager {
    * reject on abort (never return a synthetic decline) and returns
    * `ElicitResult`-shaped responses keyed by the server's request keys.
    */
-  setMrtrInputCollector(serverId: string, collect: MrtrInputCollector): void {
+  setMrtrInputCollector(
+    serverId: string,
+    collect: MrtrInputCollector,
+    options?: {
+      /** Extension keys this collector fulfils on a 2026-era connection
+       *  (e.g. `"openai/elicitation"` for forms whose schema rides in that
+       *  key's `_meta`). While the collector drives rounds, a legacy
+       *  handler's claim on the same key is kept on the modern wire instead
+       *  of withheld; with `supportsMrtr: false` these keys are withheld. */
+      extensionClaims?: readonly string[];
+      /** Picks the schema an answer `collect` returns is validated against
+       *  before the retry; defaults to the core `requestedSchema`. Set it
+       *  with an extension claim whose forms carry their schema elsewhere
+       *  (see `selectElicitationFormSchema`), or the empty core schema
+       *  accepts any answer. */
+      selectFormSchema?: ElicitationFormSchemaSelector;
+    }
+  ): void {
     // Intentionally NOT gated on prior registration: a 2026-07-28 server checks
     // the request's declared client capabilities before embedding an
     // elicitation, so a collector must be registrable BEFORE connect for
@@ -1804,11 +1833,19 @@ export class MCPClientManager {
     // collector cannot answer). Registering for an as-yet-unknown server is a
     // no-op until that server connects.
     this.mrtrInputCollectors.set(serverId, collect);
+    if (options?.extensionClaims?.length)
+      this.mrtrExtensionClaims.set(serverId, [...options.extensionClaims]);
+    else this.mrtrExtensionClaims.delete(serverId);
+    if (options?.selectFormSchema)
+      this.mrtrFormSchemaSelectors.set(serverId, options.selectFormSchema);
+    else this.mrtrFormSchemaSelectors.delete(serverId);
   }
 
   /** Removes a server's MRTR input collector. */
   clearMrtrInputCollector(serverId: string): void {
     this.mrtrInputCollectors.delete(serverId);
+    this.mrtrExtensionClaims.delete(serverId);
+    this.mrtrFormSchemaSelectors.delete(serverId);
   }
 
   /**
@@ -3727,7 +3764,11 @@ export class MCPClientManager {
 
       return (
         era === "modern"
-          ? this.withoutLegacyClaims(serverId, exactCapabilities)
+          ? this.withoutUnansweredClaims(
+              serverId,
+              exactCapabilities,
+              mrtrFulfils
+            )
           : exactCapabilities
       ) as ClientCapabilityOptions;
     }
@@ -3767,28 +3808,41 @@ export class MCPClientManager {
       delete (resolved as Record<string, unknown>).elicitation;
     }
     return era === "modern"
-      ? (this.withoutLegacyClaims(
+      ? (this.withoutUnansweredClaims(
           serverId,
-          resolved as Record<string, unknown>
+          resolved as Record<string, unknown>,
+          mrtrFulfils
         ) as ClientCapabilityOptions)
       : resolved;
   }
 
-  /** The `extensions` keys only a legacy server-to-client request handler on
-   *  this server answers (see {@link ExtensionRequestBinding.legacyClaim}). */
-  private legacyClaims(serverId: string): string[] {
-    return (this.extensionRequestHandlers.get(serverId) ?? []).flatMap(
+  /** The `extensions` keys nothing on this server answers on a 2026-era
+   *  connection: a legacy server-to-client handler's claim (see
+   *  {@link ExtensionRequestBinding.legacyClaim}) unless the MRTR collector
+   *  also answers it, and the collector's own claims while it drives no
+   *  rounds (`supportsMrtr: false`). */
+  private unansweredModernClaims(
+    serverId: string,
+    mrtrFulfils: boolean
+  ): string[] {
+    const modern = this.mrtrExtensionClaims.get(serverId) ?? [];
+    const legacy = (this.extensionRequestHandlers.get(serverId) ?? []).flatMap(
       (binding) => (binding.legacyClaim ? [binding.legacyClaim] : [])
     );
+    return mrtrFulfils
+      ? legacy.filter((claim) => !modern.includes(claim))
+      : [...legacy, ...modern];
   }
 
   /** A 2026-era connection has no server-to-client requests, so a claim only
-   *  such a request could honor is withheld there. Narrowing only. */
-  private withoutLegacyClaims(
+   *  such a request could honor is withheld there, as is a claim only an
+   *  MRTR collector that drives no rounds could honor. Narrowing only. */
+  private withoutUnansweredClaims(
     serverId: string,
-    capabilities: Record<string, unknown>
+    capabilities: Record<string, unknown>,
+    mrtrFulfils: boolean
   ): Record<string, unknown> {
-    const claims = this.legacyClaims(serverId);
+    const claims = this.unansweredModernClaims(serverId, mrtrFulfils);
     const extensions = capabilities.extensions;
     if (
       !claims.length ||
@@ -3853,7 +3907,8 @@ export class MCPClientManager {
     const narrowsForMrtr = config.supportsMrtr === false;
     // A legacy-only extension claim (a binding's `legacyClaim`) narrows on
     // the same pass, exact sets included: withholding is never a widening.
-    const narrowsLegacyClaims = this.legacyClaims(serverId).length > 0;
+    const narrowsLegacyClaims =
+      this.unansweredModernClaims(serverId, !narrowsForMrtr).length > 0;
     // An MRTR collector's `elicitation` is withheld from a connect-time set
     // that may become a 2025 `initialize` (see `buildCapabilities`); a
     // modern-classified connection restores it here, exact sets included.
@@ -4198,6 +4253,7 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
+      selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
       supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       validateResponse: (result) =>
         this.validateToolOutputSchema(serverId, callParams.name, result),
@@ -4230,6 +4286,7 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
+      selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
       supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
@@ -4268,6 +4325,7 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
+      selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
       supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
