@@ -56,6 +56,7 @@ import {
 import { pageToolBindingOf } from "./built-in-tools/page-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { logger } from "./logger";
+import { withoutEmptyTextBlocks } from "./empty-text-blocks";
 import {
   applyPrepareAdvertisedTools,
   gateToolsToAdvertisedSubset,
@@ -721,17 +722,12 @@ export function runDirectChatTurn(
     });
   };
 
-  // Cursor PR 4a review #2 / CodeRabbit "outside-diff": the original
-  // inline code at the chat-v2.ts call site caught synchronous
-  // `streamText` failures and removed the abort listener. The helper
-  // owns the listener now, so it must own that cleanup too — otherwise
-  // a sync throw (provider config error, ToolSet shape validation, …)
-  // leaks the listener and the SSE caller has no handle to call
-  // `cleanup()` against.
+  // A synchronous stream setup failure must release the abort listener because
+  // the SSE caller has no handle to clean it up before this function returns.
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-    model: llmModel,
+    model: withoutEmptyTextBlocks(llmModel),
     messages: messageHistory,
     // AI SDK 7 rejects system messages in `messages` by default. The history
     // carries them on purpose: MCP server instructions reach the model as
