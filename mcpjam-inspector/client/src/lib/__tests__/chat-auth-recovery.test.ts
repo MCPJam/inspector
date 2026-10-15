@@ -142,9 +142,9 @@ describe("chat sign-in recovery", () => {
     expect(
       settlePendingChatScopeStepUpAfterCallback("same", undefined, "wrong", "a")
         .kind,
-    ).toBe("failed");
+    ).toBe("ignored");
     expect(readPendingChatScopeStepUp({ continuationId: "a" })?.phase).toBe(
-      "cancelled",
+      "awaiting_oauth",
     );
   });
   it("ignores unrelated sign-ins instead of cancelling a different chat", () => {
@@ -285,4 +285,28 @@ it("persists missing-call cancellation before dispatch and refuses when storage 
   const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("full"); });
   expect(claimMissingCallCancellation("other-call")).toBe(false);
   spy.mockRestore();
+});
+
+it("preserves the new flow when the old callback fails, then resumes the new flow once", () => {
+  const value = start();
+  preparePendingChatAuthRequired(value);
+  setPendingChatScopeStepUpFlowDigest("same", "new-flow", "a");
+  const before = readPendingChatScopeStepUp({ continuationId: "a" });
+  expect(cancelPendingChatScopeStepUpForCallback("same", "state mismatch", "digest-a", "a")).toBe(false);
+  expect(settlePendingChatScopeStepUpAfterCallback("same", undefined, "digest-a", "a")).toEqual({ kind: "ignored" });
+  expect(readPendingChatScopeStepUp({ continuationId: "a" })).toEqual(before);
+  expect(capture).not.toHaveBeenCalled();
+  expect(settlePendingChatScopeStepUpAfterCallback("same", undefined, "new-flow", "a")).toEqual({ kind: "ready" });
+  expect(claimPendingChatScopeStepUp("chat-a", "a")).toBeDefined();
+  expect(claimPendingChatScopeStepUp("chat-a", "a")).toBeUndefined();
+});
+
+it("ignores a stale failure while a new flow is being prepared", () => {
+  const value = start();
+  preparePendingChatAuthRequired(value);
+  expect(cancelPendingChatScopeStepUpForCallback("same", "denied", "digest-a", "a")).toBe(false);
+  expect(readPendingChatScopeStepUp()?.phase).toBe("awaiting_oauth");
+  setPendingChatScopeStepUpFlowDigest("same", "new-flow", "a");
+  expect(cancelPendingChatScopeStepUpForCallback("same", "denied", "new-flow", "a")).toBe(true);
+  expect(readPendingChatScopeStepUp()?.phase).toBe("cancelled");
 });

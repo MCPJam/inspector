@@ -449,6 +449,16 @@ export function setPendingChatScopeStepUpCredentialBinding(
     ? writePending({ ...pending, credentialBinding: binding }).ok
     : false;
 }
+// A continuation can start a new flow after Back. Its old callback owns nothing.
+export function isStaleChatAuthCallback(
+  continuationId: string | undefined,
+  callbackDigest: string | undefined,
+): boolean {
+  if (!continuationId) return false;
+  const current = readPendingChatScopeStepUp({ continuationId }) ??
+    readChatAuthAttempts().find(item => item.continuationId === continuationId);
+  return !!current && current.flowDigest !== callbackDigest;
+}
 export type ChatCallbackSettlement =
   { kind: "ignored" | "ready" } | { kind: "failed"; message: string };
 export function settlePendingChatScopeStepUpAfterCallback(
@@ -457,6 +467,8 @@ export function settlePendingChatScopeStepUpAfterCallback(
   callbackDigest?: string,
   continuationId?: string,
 ): ChatCallbackSettlement {
+  if (isStaleChatAuthCallback(continuationId, callbackDigest))
+    return { kind: "ignored" };
   const attempts = readChatAuthAttempts();
   // Prefer the exact digest. A foreign callback must never borrow another flow.
   const exact = callbackDigest
@@ -634,6 +646,6 @@ export function cancelPendingChatScopeStepUpForCallback(
         (item) => callbackDigest && item.flowDigest === callbackDigest,
       );
   const id = continuationId ?? attempt?.continuationId;
-  if (!id) return false;
+  if (!id || !callbackDigest || isStaleChatAuthCallback(id, callbackDigest)) return false;
   return markPendingChatScopeStepUpCancelled(serverName, message, id);
 }

@@ -1,5 +1,5 @@
 import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
-import { cancelPendingChatScopeStepUpForCallback } from "@/lib/scope-step-up-pending";
+import { cancelPendingChatScopeStepUpForCallback, isStaleChatAuthCallback } from "@/lib/scope-step-up-pending";
 import { serverCheckQueue, isServerCheckQueueError } from "@/lib/server-check-queue";
 import { startDesktopOperation } from "@/lib/desktop-diagnostics";
 import { checkProjectOAuthAccess } from "@/lib/oauth/project-oauth-access";
@@ -3111,6 +3111,11 @@ export function useServerState({
         }
       };
       try {
+        if (hostedCallbackContext?.chatAuthContinuationId && isStaleChatAuthCallback(hostedCallbackContext.chatAuthContinuationId, await authorizationFlowDigest(state))) {
+          finishDiagnostic(true);
+          logger.info("Ignored stale chat OAuth callback");
+          return;
+        }
         assertProjectAccess();
         const result = isHostedProjectCallback
           ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
@@ -3542,20 +3547,7 @@ export function useServerState({
         hostedOAuthCallbackContext?.serverName ??
         localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
 
-      // A `?code=` in the URL is NOT proof the callback is ours. This effect
-      // runs on every route, so any other OAuth-shaped return lands here too —
-      // notably the GitHub App bind at `/settings/integrations/github/callback`,
-      // which this handler used to claim, fail, toast "No pending OAuth flow
-      // found", and then navigate away from, stripping GitHub's `code`/`state`
-      // out of the URL before the route that owned them could read them.
-      //
-      // The guard is DERIVED, not a path denylist: both completion paths read
-      // exactly this pending marker and throw "No pending OAuth flow found"
-      // when it is absent (`mcp-oauth.ts` — `handleOAuthCallback` and
-      // `completeHostedOAuthCallback`). So with no marker there is no MCP flow
-      // to complete and claiming the callback could only ever have failed. A
-      // path list would have to grow by hand for every future OAuth route and
-      // would silently break the one nobody remembered to add.
+      // Only claim callbacks belonging to a pending MCP flow.
       //
       // Deliberate consequence: a genuinely orphaned MCP callback (marker lost
       // to a cleared localStorage or another tab) no longer raises a toast. It
@@ -3654,31 +3646,38 @@ export function useServerState({
         : error;
       const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
 
-      if (hostedOAuthCallbackContext?.suppressErrorToast !== true) {
-        toast.error(`OAuth authorization failed: ${errorMessage}`);
-      }
-      const failedServerName = failPendingOAuthConnection(errorMessage);
-      void authorizationFlowDigest(state).then(digest => cancelPendingChatScopeStepUpForCallback(
-        failedServerName ?? undefined, errorMessage, digest, hostedOAuthCallbackContext?.chatAuthContinuationId));
-      cancelPendingDirectScopeStepUpReplay(failedServerName ?? undefined);
-      if (failedServerName) noteSignInCallbackFailed(failedServerName);
-      logger.warn("OAuth authorization failed before callback completion", {
-        serverName: failedServerName,
-        error,
-        errorDescription,
+      void authorizationFlowDigest(state).then(digest => {
+        if (isStaleChatAuthCallback(hostedOAuthCallbackContext?.chatAuthContinuationId, digest)) {
+          consumeOAuthCallbackParams(callbackAttempt);
+          navigateApp(resolveHostedOAuthReturnPath(hostedOAuthCallbackContext!), { replace: true });
+          return;
+        }
+        if (hostedOAuthCallbackContext?.suppressErrorToast !== true) {
+          toast.error(`OAuth authorization failed: ${errorMessage}`);
+        }
+        const failedServerName = failPendingOAuthConnection(errorMessage);
+        cancelPendingChatScopeStepUpForCallback(
+          failedServerName ?? undefined, errorMessage, digest, hostedOAuthCallbackContext?.chatAuthContinuationId);
+        cancelPendingDirectScopeStepUpReplay(failedServerName ?? undefined);
+        if (failedServerName) noteSignInCallbackFailed(failedServerName);
+        logger.warn("OAuth authorization failed before callback completion", {
+          serverName: failedServerName,
+          error,
+          errorDescription,
+        });
+        oauthCallbackHandledRef.current.add(attempt);
+        // Denied/failed authorizations return the user to where they started
+        // too: same org restore + router-aware navigation as the success path.
+        const markerOrganizationId = hostedOAuthCallbackContext?.organizationId;
+        if (markerOrganizationId) {
+          restoreActiveOrganizationId?.(markerOrganizationId);
+        }
+        const returnTarget = hostedOAuthCallbackContext?.returnPath
+          ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
+          : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
+        consumeOAuthCallbackParams(callbackAttempt);
+        navigateApp(returnTarget, { replace: true });
       });
-      oauthCallbackHandledRef.current.add(attempt);
-      // Denied/failed authorizations return the user to where they started
-      // too: same org restore + router-aware navigation as the success path.
-      const markerOrganizationId = hostedOAuthCallbackContext?.organizationId;
-      if (markerOrganizationId) {
-        restoreActiveOrganizationId?.(markerOrganizationId);
-      }
-      const returnTarget = hostedOAuthCallbackContext?.returnPath
-        ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
-        : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
-      consumeOAuthCallbackParams(callbackAttempt);
-      navigateApp(returnTarget, { replace: true });
     }
   }, [
     recoverProjectOAuth,
