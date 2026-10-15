@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { OUTPUTS, buildTelemetryCatalogs, loadCatalogCache } from "../generate-telemetry-catalogs.mjs";
 import { mountedRoutes } from "../telemetry-route-catalog.mjs";
 
 test("mount graph composes literal route prefixes and methods", () => {
@@ -15,12 +15,7 @@ test("mount graph composes literal route prefixes and methods", () => {
 });
 
 test("diagnostic names include unique sorted events and literal logger messages", () => {
-  const catalog = JSON.parse(
-    readFileSync(
-      new URL("../../mcpjam-inspector/shared/telemetry-catalog.generated.json", import.meta.url),
-      "utf8",
-    ),
-  );
+  const catalog = JSON.parse(buildTelemetryCatalogs({ cache: loadCatalogCache() })[OUTPUTS.inspector]);
   assert.deepEqual(catalog.events, [...new Set(catalog.events)].sort());
   assert.ok(catalog.events.every((name) => catalog.messages.includes(name)));
   assert.ok(catalog.messages.includes("[host-runtime-config] network error"));
