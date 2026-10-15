@@ -87,6 +87,18 @@ FROM deps AS production-deps
 RUN npm prune --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fund
 
 ################################################################################
+# Telemetry catalogs are gitignored build output. The generator reads every
+# first-party source file, so it runs once here on the whole tree (no .git in
+# the image, so it walks the folders). The piecewise build below copies only
+# the four JSON files and skips regenerating them.
+FROM deps AS telemetry-catalogs
+COPY scripts/generate-telemetry-catalogs.mjs scripts/telemetry-route-catalog.mjs scripts/telemetry-source-files.mjs ./scripts/
+COPY sdk/tsup.config.ts ./sdk/
+COPY sdk/src ./sdk/src
+COPY mcpjam-inspector ./mcpjam-inspector
+RUN node scripts/generate-telemetry-catalogs.mjs
+
+################################################################################
 # Build the inspector and its workspace dependencies.
 FROM deps AS server-build
 
@@ -143,6 +155,11 @@ COPY mcpjam-inspector/shared ./mcpjam-inspector/shared
 COPY sdk/src ./sdk/src
 COPY sdk/skills ./sdk/skills
 COPY sdk/scripts ./sdk/scripts
+# After the source COPYs, so a stale local catalog in the build context loses.
+COPY scripts/generate-telemetry-catalogs.mjs scripts/telemetry-route-catalog.mjs scripts/telemetry-source-files.mjs ./scripts/
+COPY --from=telemetry-catalogs /usr/src/app/sdk/src/internal/telemetry-catalog.generated.json ./sdk/src/internal/
+COPY --from=telemetry-catalogs /usr/src/app/mcpjam-inspector/shared/*telemetry-*.generated.json ./mcpjam-inspector/shared/
+ENV MCPJAM_TELEMETRY_CATALOGS_PREBUILT=1
 RUN npm run build -w @mcpjam/sdk
 
 COPY mcpjam-inspector/lib ./mcpjam-inspector/lib

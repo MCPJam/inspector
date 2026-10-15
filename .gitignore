@@ -13,6 +13,9 @@ node_modules
 docs/superpowers/
 *.bundled.ts
 mcpjam-inspector/server/utils/browser-harness/*.generated.ts
+# Built by scripts/generate-telemetry-catalogs.mjs before dev, test, typecheck and build.
+mcpjam-inspector/shared/*telemetry-*.generated.json
+sdk/src/internal/telemetry-catalog.generated.json
 cli/dist/
 sdk/dist/
 chat-ui/dist/

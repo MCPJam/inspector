@@ -1,19 +1,25 @@
 import { mountedRoutes } from "./telemetry-route-catalog.mjs";
-import { execFileSync } from "node:child_process";
+import { catalogSourceFiles } from "./telemetry-source-files.mjs";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
+// Workspace scripts call this from their own folder; every path below is repo-relative.
+process.chdir(fileURLToPath(new URL("..", import.meta.url)));
+const OUTPUT_FILES = [
+  "sdk/src/internal/telemetry-catalog.generated.json",
+  "mcpjam-inspector/shared/telemetry-catalog.generated.json",
+  "mcpjam-inspector/shared/browser-telemetry-catalog.generated.json",
+  "mcpjam-inspector/shared/browser-telemetry-source-files.generated.json",
+];
+// The Docker image generates once from the whole tree, then builds from partial copies of it.
+if (process.env.MCPJAM_TELEMETRY_CATALOGS_PREBUILT === "1") {
+  const missing = OUTPUT_FILES.filter((file) => !existsSync(file));
+  if (missing.length) throw new Error(`Prebuilt telemetry catalogs are missing: ${missing.join(", ")}`);
+  process.exit(0);
+}
 // First-party source participates; runtime text never adds a name.
-const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "sdk/src", "mcpjam-inspector"], {
-  encoding: "utf8",
-})
-  .trim()
-  .split("\n")
-  .filter(
-    (file) =>
-      /\.[cm]?tsx?$/.test(file) && existsSync(file) &&
-      !/(?:__tests__|\.test\.|\.generated\.|\/tests\/)/.test(file),
-  );
+const files = catalogSourceFiles();
 const catalogs = {
   sdk: { files: [], routes: [], errors: [], messages: [] },
   inspector: { files: [], routes: [], errors: [], messages: [] },
@@ -145,8 +151,6 @@ for (const [file, catalog] of Object.entries(outputs)) {
     catalog[key] = [...new Set(catalog[key])].sort();
   // Compact generated catalogs avoid thousands of mechanically repeated lines.
   const text = `${JSON.stringify(catalog)}\n`;
-  if (process.argv.includes("--check")) {
-    if (readFileSync(file, "utf8") !== text)
-      throw new Error(`Regenerate telemetry catalog: ${file}`);
-  } else writeFileSync(file, text);
+  // Unchanged bytes keep their mtime, so watchers do not reload for nothing.
+  if (!existsSync(file) || readFileSync(file, "utf8") !== text) writeFileSync(file, text);
 }
