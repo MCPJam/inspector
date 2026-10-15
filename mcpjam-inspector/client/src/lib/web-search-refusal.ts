@@ -7,6 +7,7 @@
  */
 import {
   recognizedAiRefusalCode,
+  isModelRefusalCode,
   type AiRefusalCode,
 } from "@/shared/ai-execution-refusal";
 import {
@@ -57,6 +58,16 @@ export function describeWebSearchRefusal(
         audience === "admin"
           ? "Choose the organization's search model in Organization → AI providers to turn web search on."
           : "Ask an organization admin to choose a search model in Organization → AI providers.",
+      remediation: described.remediation,
+    };
+  }
+  if (isModelRefusalCode(code)) {
+    return {
+      title: TITLE,
+      body:
+        audience === "admin"
+          ? "The organization's search model can't run this search. Choose another search model in Organization → AI providers."
+          : "The organization's search model can't run this search. Ask an organization admin to choose another search model.",
       remediation: described.remediation,
     };
   }

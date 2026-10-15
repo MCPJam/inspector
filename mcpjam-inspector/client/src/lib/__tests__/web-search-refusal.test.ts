@@ -73,11 +73,23 @@ describe("describeWebSearchRefusal", () => {
     );
   });
 
-  it("reads the model codes as the organization's model, never a pick", () => {
-    const described = describeWebSearchRefusal("capability_missing", "admin");
-    expect(described.title).toBe("Web search unavailable");
-    expect(described.remediation).toBe("configure_org_model_role");
-  });
+  it.each(["capability_missing", "capability_unknown", "invalid_model"] as const)(
+    "points %s at the search model for admins and members",
+    (code) => {
+      const admin = describeWebSearchRefusal(code, "admin");
+      expect(admin.title).toBe("Web search unavailable");
+      expect(admin.body).toContain("Choose another search model");
+      expect(admin.body).not.toContain("default model");
+      expect(admin.remediation).toBe("configure_org_model_role");
+      const member = describeWebSearchRefusal(code, "member");
+      expect(member.body).toContain("Ask an organization admin");
+      expect(member.body).toContain("search model");
+      expect(member.body).not.toContain("default model");
+      expect(describeWebSearchRefusal(code, "visitor").body).toBe(
+        "Web search isn't available in this chat.",
+      );
+    },
+  );
 });
 
 describe("webSearchPolicyNote", () => {
