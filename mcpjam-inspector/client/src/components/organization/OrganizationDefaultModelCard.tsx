@@ -16,6 +16,7 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import { Card, CardContent } from "@mcpjam/design-system/card";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import type { OrgAiModelKind } from "@/hooks/useOrgAiConfig";
 import type { EligibleProvider } from "./OrganizationDefaultModelEditor";
 import {
   ModelRow,
@@ -28,11 +29,12 @@ import {
 
 
 /**
- * The organization's default AI model: the one model background AI work
- * runs on while "Use your keys for all AI features" is on (insights and
- * findings, generation, typed decisions, simulated users). One row per kind
- * the backend supports, so an embedding or transcription model appears when
- * the backend serves one, with no change here.
+ * The organization's AI models: what background AI work runs on while "Use
+ * your keys for all AI features" is on. The default model serves insights
+ * and findings, generation, typed decisions and simulated users; the search
+ * model serves the built-in web search. One row per kind the backend
+ * supports, so an embedding or transcription model appears when the backend
+ * serves one, with no change here.
  *
  * Shows the saved model or a suggestion, without saving anything implicitly.
  * A model that can no longer run stays visible with the backend's reason.
@@ -74,11 +76,17 @@ export function OrganizationDefaultModelCard({
   const locked = !config.canEnable;
   const canChange = canManage && !locked;
   const requireOrgKeys = config.aiKeyPolicy.requireOrgKeys;
-  const eligibleIds = new Set(config.readiness.eligibleConnectionIds);
-  const eligibleProviders = providers?.filter(
-    (p): p is EligibleProvider =>
-      typeof p.id === "string" && eligibleIds.has(p.id),
-  );
+  // The backend owns eligibility: per kind when it reports it (a search
+  // model only on providers that can search), else every eligible one.
+  const eligibleProvidersFor = (kind: OrgAiModelKind) => {
+    const eligibleIds = new Set(
+      aiModels.connectionIds[kind] ?? config.readiness.eligibleConnectionIds,
+    );
+    return providers?.filter(
+      (p): p is EligibleProvider =>
+        typeof p.id === "string" && eligibleIds.has(p.id),
+    );
+  };
   const suggestions = canChange ? aiModels.suggestions : {};
   const access: DefaultModelRowAccess = { canManage, canChange, locked };
 
@@ -89,7 +97,9 @@ export function OrganizationDefaultModelCard({
     >
       <DefaultModelCardHeader
         title={
-          aiModels.kinds.length === 1 ? "Default AI model" : "Default AI models"
+          aiModels.kinds.length === 1
+            ? "Default AI model"
+            : "Organization AI models"
         }
         locked={locked}
         requireOrgKeys={requireOrgKeys}
@@ -123,7 +133,7 @@ export function OrganizationDefaultModelCard({
                     ? {
                         // The backend owns connection eligibility and validates
                         // the model's capability on Test and Save.
-                        eligibleProviders,
+                        eligibleProviders: eligibleProvidersFor(kind),
                       }
                     : null
                 }

@@ -10,20 +10,11 @@ import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 // WS_NO_BUFFER_UTIL is set -- the #4208 path `ws-native-fallback.test.ts` pins.
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
 import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
-import * as Sentry from "@sentry/electron/main";
+import { initDesktopSentry } from "./strict-sentry.js";
 import { recordUpdateShutdown } from "./ipc/update/update-shutdown.js";
 import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
 import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
 import {
-  buildElectronSentryConfig,
-  electronBuildSurface,
-  scrubSentryCredentials,
-  scrubServerSentryBreadcrumb,
-  scrubServerSentryEvent,
-} from "../shared/sentry-config.js";
-import {
-  crashReportingIntegrations,
-  dropUpdaterInstallSpawnRejection,
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
 import { retireConsoleOnStreamError } from "./log-console-safety.js";
@@ -36,51 +27,7 @@ const installationIdentity = initializeDesktopSentryIdentity(
   loadSentryInstallationId(app.getPath("userData")),
 );
 
-// `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
-// a packaged build, so the previous NODE_ENV check reported every shipped
-// desktop event as `environment: "dev"`.
-Sentry.init({
-  ...buildElectronSentryConfig({
-    environment: app.isPackaged ? "prod" : "dev",
-    release: app.getVersion(),
-    // Matches the `--dist` forge uploads `.vite/build` under. mac and Windows
-    // publish separately compiled main bundles under the same release, so
-    // without this they share one artifact namespace.
-    dist: electronBuildSurface(process.platform),
-    deployment: "self_hosted",
-  }),
-  ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
-  initialScope: {
-    user: { id: installationIdentity.id },
-    tags: { deployment: "self_hosted", actor_kind: installationIdentity.kind },
-  },
-  // Promotes crashed/oom from breadcrumbs to captured events — see
-  // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
-  // already on by default in @sentry/electron 7 and is left alone.
-  integrations: crashReportingIntegrations,
-  // Drops the ONE rejection the app cannot catch: Electron leaves
-  // `quitAndInstall`'s Squirrel spawn promise floating, so a collision with an
-  // in-flight Update.exe arrives as an unhandled rejection for something that
-  // quit cleanly and merely skipped an install (INSPECTOR-ELECTRON-WK). Every
-  // other rejection is left alone; see `dropUpdaterInstallSpawnRejection`.
-  //
-  // What survives is scrubbed like the standalone server's events: the
-  // embedded server runs in this process, so its request bodies and outgoing
-  // requests reach Sentry through this client (see `server/sentry.ts`).
-  //
-  // Last, every credential out of the whole event — the renderer's events
-  // arrive here over IPC too, so this is the one place they all pass
-  // (`shared/credential-urls.ts`; an event that cannot be shown clean is
-  // dropped).
-  beforeSend: (event) => {
-    const kept = dropUpdaterInstallSpawnRejection(event);
-    return kept === null
-      ? null
-      : scrubSentryCredentials(scrubServerSentryEvent(kept));
-  },
-  beforeSendTransaction: scrubSentryCredentials,
-  beforeBreadcrumb: scrubServerSentryBreadcrumb,
-});
+initDesktopSentry({ release: app.getVersion(), packaged: app.isPackaged, root: app.getAppPath() });
 
 const desktopDiagnostics = installDesktopDiagnostics();
 const desktopSentryIdentity = installDesktopSentryIdentity();

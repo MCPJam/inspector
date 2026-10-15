@@ -985,6 +985,7 @@ export function useAppState({
     handleConnect: serverState.handleConnect,
     handleDisconnect: serverState.handleDisconnect,
     handleRuntimeDisconnect: serverState.handleRuntimeDisconnect,
+    clearAutoOAuthEscalation: serverState.clearAutoOAuthEscalation,
     handleReconnect: serverState.handleReconnect,
     reconnectServerWithResult: serverState.reconnectServerWithResult,
     connectServerWithResult: serverState.connectServerWithResult,

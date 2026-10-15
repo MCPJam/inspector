@@ -1,3 +1,4 @@
+import type { LocalExecutionAttempt } from "../local-execution-record.js";
 /**
  * Every provider attempt on an organization's local runtime is authorized by
  * the backend first: each step of a tool loop and each retry, whatever the
@@ -133,7 +134,7 @@ function nextRequest(): LocalOrgAttemptRequest {
 }
 
 /** The model a turn builds from the answer it started with. */
-function turnModel(request: LocalOrgAttemptRequest | undefined) {
+function turnModel(request: LocalOrgAttemptRequest | undefined, attempts?: LocalExecutionAttempt[]) {
   return admitEachLocalOrgAttempt(
     buildOrgModelFromResolvedConfig(
       {
@@ -145,6 +146,7 @@ function turnModel(request: LocalOrgAttemptRequest | undefined) {
     ),
     request,
     "llama3",
+    attempts,
   );
 }
 
@@ -243,13 +245,15 @@ describe("admitEachLocalOrgAttempt", () => {
     const request = nextRequest();
     provider.script.push("tool-call", "text");
 
-    const { error, text, toolRuns } = await runTurn(turnModel(request), () => {
+    const attempts: LocalExecutionAttempt[] = [];
+    const { error, text, toolRuns } = await runTurn(turnModel(request, attempts), () => {
       // The key is rotated between the two steps.
       backend.apiKey = "key-2";
     });
 
     expect(error).toBeUndefined();
     expect(text).toBe("Done.");
+    expect(attempts.map(({ outcome }) => outcome)).toEqual(["ok", "ok"]);
     expect(toolRuns).toEqual(["lookup"]);
     expect(provider.calls).toEqual([{ apiKey: "key-1" }, { apiKey: "key-2" }]);
     // One admission per attempt, each asking the turn's own question.
@@ -279,13 +283,15 @@ describe("admitEachLocalOrgAttempt", () => {
     async ({ apply, code }) => {
       provider.script.push("tool-call", "text");
 
+      const attempts: LocalExecutionAttempt[] = [];
       const { error, text, toolRuns } = await runTurn(
-        turnModel(nextRequest()),
+        turnModel(nextRequest(), attempts),
         apply,
       );
 
       expect(toolRuns).toEqual(["lookup"]);
       expect(provider.calls).toHaveLength(1);
+      expect(attempts).toHaveLength(1);
       expect(resolveBodies).toHaveLength(2);
       expect(text).toBe("");
       expect(localOrgAttemptRefusal(error)?.code).toBe(code);

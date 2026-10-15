@@ -27,7 +27,6 @@ import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
-import { autoOAuthEscalation } from "@/lib/oauth/auto-oauth-escalation";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
@@ -189,7 +188,7 @@ import {
 import {
   resetTelemetryIdentity,
   setTelemetryActor,
-  setTelemetryCaptureContext,
+  setTelemetryCaptureContextAndContent,
   setTelemetryIdentity,
 } from "./lib/telemetry-context";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
@@ -3495,6 +3494,7 @@ export default function App() {
     handleConnect,
     handleDisconnect,
     handleRuntimeDisconnect,
+    clearAutoOAuthEscalation,
     handleReconnect,
     reconnectServerWithResult,
     reconnectServerForClientSwitch,
@@ -4061,17 +4061,12 @@ export default function App() {
       // exists. Start a fresh first-run attempt so the settings selected in the
       // inline authentication editor are applied before retrying. Reconnecting
       // the saved row directly would silently discard those edits.
-      autoOAuthEscalation.markFailed({
-        projectId: convexProjectId,
-        serverId: hostedServerIdsByName[serverName],
-        serverName,
-      });
+      clearAutoOAuthEscalation(serverName);
       openFirstRunServerConnection(draft);
     },
     [
-      convexProjectId,
+      clearAutoOAuthEscalation,
       firstRunConnectionState,
-      hostedServerIdsByName,
       openFirstRunServerConnection,
     ],
   );
@@ -4142,7 +4137,11 @@ export default function App() {
       suppressSuccessToast: true,
     })
       .then((result) => {
-        if (result.status === "connected") return;
+        // "superseded": a newer connect owns the outcome and will publish the
+        // terminal runtime row, so this is not a failure.
+        if (result.status === "connected" || result.status === "superseded") {
+          return;
+        }
         if (firstRunConnectionAttemptRef.current !== attemptId) return;
         firstRunOAuthReconnectServerRef.current = null;
         setFirstRunConnectionState({
@@ -4264,11 +4263,7 @@ export default function App() {
 
     if (server.connectionStatus === "failed") {
       if (server.lastError === OAUTH_AUTHORIZATION_CANCELLED_MESSAGE) {
-        autoOAuthEscalation.markFailed({
-          projectId: convexProjectId,
-          serverId: hostedServerIdsByName[firstRunConnectionState.serverName],
-          serverName: firstRunConnectionState.serverName,
-        });
+        clearAutoOAuthEscalation(firstRunConnectionState.serverName);
         firstRunOAuthReturnServerRef.current = null;
         firstRunAuthorizationRetryServerRef.current = null;
         firstRunOAuthReconnectServerRef.current = null;
@@ -4318,10 +4313,9 @@ export default function App() {
     }
   }, [
     appState.servers,
+    clearAutoOAuthEscalation,
     clearPendingDashboardOAuth,
-    convexProjectId,
     firstRunConnectionState,
-    hostedServerIdsByName,
     pendingDashboardOAuth,
   ]);
 
@@ -4705,11 +4699,8 @@ export default function App() {
   } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
     projectId: billingProjectId,
   });
-  // Telemetry privacy for what is in view: the same three organizations
-  // billing reads, plus the active project, resolved by the backend through
-  // this actor's own access (`telemetryPrivacy:getContext`). The most
-  // restrictive context wins; anything it cannot verify is masked and
-  // id-only.
+  // Resolve every visible context using this actor's access. Unverified
+  // contexts stay strict and id-only; the most restrictive answer wins.
   const telemetryOrganizationIds = [
     routeScopedOrganizationId,
     activeOrganizationId,
@@ -4718,25 +4709,27 @@ export default function App() {
   const telemetryProjectIds = [convexProjectId];
   const telemetryActor = isWorkOsLoading ? undefined : (actorKey ?? null);
   const telemetryPrivacy = useTelemetryPrivacyContext({
-    // Every surface asks: identity applies wherever analytics run, even
-    // where replay is off.
+    // Content and identity still need answers on surfaces with replay off.
     enabled: true,
     actor: telemetryActor,
+    sharedLink: isScenarioChatRoute,
     membershipKey: telemetryMembershipKey(loadedOrganizations),
     projectIds: telemetryProjectIds,
     organizationIds: telemetryOrganizationIds,
   });
-  // Every event captured from here on is stamped with these contexts
-  // (lib/telemetry-context.ts). Layout effect: in the same commit that
-  // renders the new context, before anything in it can be captured.
+  // Stamp the context and its fresh answer before passive capture effects run.
   useLayoutEffect(() => {
-    setTelemetryCaptureContext({
-      projectIds: telemetryProjectIds,
-      organizationIds: telemetryOrganizationIds,
-    });
+    setTelemetryCaptureContextAndContent(
+      {
+        projectIds: telemetryProjectIds,
+        organizationIds: telemetryOrganizationIds,
+        sharedLink: isScenarioChatRoute,
+      },
+      telemetryPrivacy.actor,
+      telemetryPrivacy.answered ? telemetryPrivacy.policy?.content : undefined,
+    );
   });
-  // Names follow an affirmative answer for THIS actor only; an answer for
-  // anyone else is ignored, and no answer means id-only.
+  // Identity answers belong to this actor; missing answers stay id-only.
   useLayoutEffect(() => {
     if (telemetryPrivacy.identity === undefined) {
       resetTelemetryIdentity();
@@ -4744,12 +4737,12 @@ export default function App() {
       setTelemetryIdentity(telemetryPrivacy.actor, telemetryPrivacy.identity);
     }
   }, [telemetryPrivacy.identity, telemetryPrivacy.actor]);
-  // Only the backend's own answer can permit recording: a query that fails
-  // or never answers leaves the level `pending`, which records nothing. Replay
-  // `off` is also remembered per person, so someone last answered `off` stays
-  // unrecorded while the next answer is slow, failing or not asked yet.
+  // Only fresh backend answers permit replay. Remembered off answers keep
+  // it stopped while the next answer is missing.
   const answeredRecording = telemetryPrivacy.answered
-    ? telemetryPrivacy.policy?.recording
+    ? telemetryPrivacy.policy?.content === "strict"
+      ? "off"
+      : telemetryPrivacy.policy?.recording
     : undefined;
   useEffect(() => {
     if (answeredRecording !== undefined) {
@@ -4759,10 +4752,7 @@ export default function App() {
   const telemetryRecording =
     answeredRecording ??
     (replayOffRemembered(telemetryActor) ? "off" : undefined);
-  // The session privacy level (lib/session-privacy.ts) for both recorders.
-  // Full replay needs the backend to have verified a non-private context and
-  // the destination to have finished loading; until it answers, nothing
-  // records, and after a navigation, recording carries on masked.
+  // Full replay waits for verified policy and the destination's data.
   useSessionPrivacy(
     resolveSessionPrivacy({
       surface: recordingSurface(),

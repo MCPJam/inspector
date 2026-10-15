@@ -32,6 +32,7 @@ export interface TelemetryPrivacyContextInput {
    * through an answer computed before it.
    */
   membershipKey: string;
+  sharedLink?: boolean;
   projectIds: ReadonlyArray<string | null | undefined>;
   organizationIds: ReadonlyArray<string | null | undefined>;
 }
@@ -78,6 +79,7 @@ export function telemetryMembershipKey(
         _id: string;
         myRole?: string;
         enterprisePrivacy?: boolean;
+        sessionReplayOff?: boolean;
       }>
     | undefined,
 ): string {
@@ -85,7 +87,7 @@ export function telemetryMembershipKey(
   return organizations
     .map(
       (org) =>
-        `${org._id}:${org.myRole ?? ""}:${org.enterprisePrivacy === true ? 1 : 0}`,
+        `${org._id}:${org.myRole ?? ""}:${org.enterprisePrivacy === true ? 1 : 0}:${org.sessionReplayOff === true ? 1 : 0}`,
     )
     .sort()
     .join(",");
@@ -145,10 +147,11 @@ export function useTelemetryPrivacyContext(
         args: {
           projectIds: projects ? projects.split(",") : [],
           organizationIds: organizations ? organizations.split(",") : [],
+          ...(input.sharedLink ? { shareLink: true } : {}),
         },
       },
     };
-  }, [subscribed, argsKey]);
+  }, [subscribed, argsKey, input.sharedLink]);
   const results = useQueries(queries) as Record<string, unknown>;
   const raw = subscribed ? results.policy : undefined;
   const lastIdentityRef = useRef<{
@@ -178,7 +181,7 @@ export function useTelemetryPrivacyContext(
   }
   const answered = !(raw instanceof Error) && isTelemetryPolicy(raw);
   const policy = answered
-    ? { recording: raw.recording, identity: raw.identity }
+    ? { recording: raw.recording, identity: raw.identity, content: raw.content }
     : { ...CONSERVATIVE_TELEMETRY_POLICY };
   lastIdentityRef.current = { key: subscriptionKey, identity: policy.identity };
   return {

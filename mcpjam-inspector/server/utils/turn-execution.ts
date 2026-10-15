@@ -37,6 +37,7 @@ export type HostedRuntime = {
   /** "/stream" (MCPJam) | "/stream/org" (org BYOK). Explicit so routing isn't hidden. */
   endpointPath: string;
   extraBodyFields?: Record<string, unknown>;
+  modelSelectionOrigin?: "backfill";
   extraHeaders?: Record<string, string>;
   harness?: RunAssistantTurnOptions["harness"];
   /** A harness turn's selection (the body forwards it too), typed. */
@@ -161,6 +162,7 @@ export async function runUnifiedAssistantTurn(
       extraBodyFields: runtime.extraBodyFields,
       harness: runtime.harness,
       modelSelection: runtime.modelSelection,
+      modelSelectionOrigin: runtime.modelSelectionOrigin,
     });
     // For `streamSink: "ui"`, `runAssistantTurn` returns BEFORE the SSE stream
     // drains — the transcript rolls forward asynchronously, so an eager slice

@@ -1212,3 +1212,10 @@ describe("organization AI-key policy refusals", () => {
     }
   });
 });
+
+it("classifies failed generation without blaming the user MCP server", () => {
+  const normalized = describeError(makeError("Generation failed. Please try again.", { code: "GENERATION_FAILED", status: 502 }));
+  expect(normalized.slug).toBe("generation/invalid_output");
+  expect(normalized.title).toBe("Generation failed");
+  expect(normalized.origin).toBe("ambiguous");
+});

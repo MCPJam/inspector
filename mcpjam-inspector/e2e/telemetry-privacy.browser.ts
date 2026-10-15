@@ -1,3 +1,4 @@
+import { recordRelayEgress } from "./relay-recorder";
 import { expect, test, type Page } from "@playwright/test";
 import { gunzipSync, inflateRawSync, inflateSync } from "node:zlib";
 import { writeFileSync } from "node:fs";
@@ -5,10 +6,7 @@ import {
   findSyntheticPii,
   SYNTHETIC_PII,
 } from "../shared/__tests__/fixtures/telemetry-pii";
-import {
-  CREDENTIAL_PATH_PREFIXES,
-  scrubSensitiveUrl,
-} from "../shared/credential-url";
+import { CREDENTIAL_PATH_PREFIXES } from "../shared/credential-url";
 import { TELEMETRY_CONTEXT_PROPERTY } from "../shared/telemetry-privacy";
 import {
   HARNESS_ACTOR_ID,
@@ -24,12 +22,11 @@ import {
  * field, under a private context and under a verified non-private one.
  *
  * Both transports are intercepted in the browser: PostHog's (the same-origin
- * `/tlm` relay) and Sentry's (its ingest host). The masked run must send
+ * `/tlm` relay) and Sentry's (its ingest host). The strict run must send
  * NONE of the synthetic personal data — DOM text, inputs, attributes, image
  * URLs, console output, network bodies, names or emails — while still
- * sending a useful recording: real layout, real interactions, and an error
- * that points at its replay. The full run is the positive control, so
- * "nothing was recorded" can never pass as "everything was masked".
+ * sending useful product counts and structured errors. The full run is the positive control, so
+ * "nothing was recorded" can never pass as a privacy guarantee.
  */
 
 const POSTHOG_REMOTE_CONFIG = {
@@ -42,7 +39,7 @@ const POSTHOG_REMOTE_CONFIG = {
   analytics: { endpoint: "/i/v0/e/" },
   elementsChainAsString: true,
   // A project configured as permissively as it can be: console and network
-  // capture on. The masked profile must override both.
+  // capture on. Strict policy must prevent either recorder from starting.
   sessionRecording: {
     endpoint: "/s/",
     consoleLogRecordingEnabled: true,
@@ -62,6 +59,7 @@ const POSTHOG_REMOTE_CONFIG = {
 };
 
 interface Captured {
+  ingress: Array<{ url: URL; headers: Record<string, string>; json: unknown }>;
   posthog: Array<{ url: URL; headers: Record<string, string>; json: unknown }>;
   sentry: Array<{ items: Array<{ header: any; payload: Buffer }> }>;
 }
@@ -154,7 +152,7 @@ function decodeRecording(payload: Buffer): unknown[] {
 // ── capture ──────────────────────────────────────────────────────────────
 
 async function intercept(page: Page): Promise<Captured> {
-  const captured: Captured = { posthog: [], sentry: [] };
+  const captured: Captured = { ingress: [], posthog: [], sentry: [] };
   await page.route("**/tlm/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -171,7 +169,7 @@ async function intercept(page: Page): Promise<Captured> {
       return route.fulfill({ json: POSTHOG_REMOTE_CONFIG });
     }
     if (/^\/tlm\/(?:e|i\/v0\/e|s)\/?$/.test(url.pathname)) {
-      captured.posthog.push({
+      captured.ingress.push({
         url,
         headers: request.headers(),
         json: decodePosthogBody(
@@ -179,6 +177,12 @@ async function intercept(page: Page): Promise<Captured> {
           url,
         ),
       });
+      await recordRelayEgress({ url: request.url(), method: request.method(), headers: request.headers(), body: request.postDataBuffer() }, async (context) => ({
+        recording: context.organizationIds.includes(HARNESS_PUBLIC_ORG) ? "full" : "off",
+        identity: context.organizationIds.includes(HARNESS_PUBLIC_ORG) ? "full" : "id_only",
+        content: context.organizationIds.includes(HARNESS_PUBLIC_ORG) ? "full" : "strict",
+        telemetryActorId: HARNESS_ACTOR_ID,
+      }), (vendor) => captured.posthog.push(vendor));
       return route.fulfill({ json: { status: 1 } });
     }
     return route.fulfill({ status: 404, body: "" });
@@ -263,6 +267,19 @@ async function collect(page: Page, captured: Captured) {
     .toBe(true);
 }
 
+async function collectStrict(captured: Captured) {
+  await expect
+    .poll(
+      () =>
+        sentryItems(captured, "event").length > 0 &&
+        captured.posthog
+          .flatMap((r) => posthogEvents(r.json))
+          .some((e) => e.event === "send_message"),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+}
+
 /** Everything the transports carried, as text, for the needle search. */
 function allPayloadText(captured: Captured): string {
   const posthog = captured.posthog.map((request) =>
@@ -293,80 +310,52 @@ function allPayloadText(captured: Captured): string {
 }
 
 test.describe("telemetry privacy in the browser", () => {
-  test("a private context sends masked, useful telemetry and no personal data", async ({
+  test("a private context sends useful strict diagnostics and no replay or personal data", async ({
     page,
   }) => {
     const captured = await intercept(page);
-    await page.goto("/?privacy=masked");
+    await page.goto("/?privacy=strict");
     await exercise(page);
-    await collect(page, captured);
+    await collectStrict(captured);
+    await page.waitForTimeout(3_000);
 
-    // ── nothing personal, anywhere ──
     const text = allPayloadText(captured);
-    // TELEMETRY_DUMP=<file> keeps the decoded payloads for inspection.
-    if (process.env.TELEMETRY_DUMP) {
+    if (process.env.TELEMETRY_DUMP)
       writeFileSync(process.env.TELEMETRY_DUMP, text);
-    }
     expect(findSyntheticPii(text)).toEqual([]);
     expect(text).not.toContain(HARNESS_RELAY_TOKEN);
-
-    // ── the relay can check every PostHog event ──
+    expect(snapshotEvents(captured)).toEqual([]);
+    expect(sentryItems(captured, "replay_recording")).toEqual([]);
+    expect(sentryItems(captured, "replay_event")).toEqual([]);
     const events = captured.posthog.flatMap((r) => posthogEvents(r.json));
-    expect(events.length).toBeGreaterThan(0);
-    for (const event of events) {
+    const product = events.find((e) => e.event === "send_message");
+    expect(product?.properties).toMatchObject({
+      location: "chat_tab",
+      multi_model_count: 2,
+    });
+    for (const event of captured.ingress.flatMap((request) => posthogEvents(request.json))) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
-        v: 1,
+        v: 2,
         o: [HARNESS_PRIVATE_ORG],
-        r: "masked",
+        r: "off",
         i: "id_only",
+        c: "strict",
       });
     }
-    for (const request of captured.posthog) {
+    for (const request of captured.ingress) {
       expect(request.headers.authorization).toBe(
         `Bearer ${HARNESS_RELAY_TOKEN}`,
       );
-      expect(request.url.search).not.toContain(HARNESS_RELAY_TOKEN);
+      expect(request.headers["x-mcpjam-telemetry-policy"]).toBe("strict");
     }
-
-    // ── a useful recording: layout and interaction ──
-    const replay = snapshotEvents(captured);
-    const full = replay.find((e) => e.type === 2);
-    const snapshot = JSON.stringify(full.data.node);
-    expect(snapshot).toContain('"tagName":"button"');
-    expect(snapshot).toContain("harness-card");
-    expect(snapshot).toMatch(/"textContent":"\*{4,}/);
-    expect(snapshot).toContain('"rr_width"');
-    expect(replay.some((e) => e.type === 3 && e.data.source === 2)).toBe(true);
-    // No console or network recording made it into the replay.
-    expect(replay.some((e) => e.type === 6)).toBe(false);
-
-    // ── identity: id-only in both products ──
-    const identify = events.find((e) => e.event === "$identify");
-    expect(identify?.$set?.email).toBeUndefined();
-    const errorEvent = JSON.parse(
+    const error = JSON.parse(
       sentryItems(captured, "event")[0].payload.toString("utf8"),
     );
-    expect(errorEvent.user).toEqual({ id: HARNESS_ACTOR_ID });
-
-    // ── an error points at its replay, in both products ──
-    const replayEvents = sentryItems(captured, "replay_event").map((item) =>
-      JSON.parse(item.payload.toString("utf8")),
-    );
-    expect(
-      replayEvents.some(
-        (replay) =>
-          replay.error_ids?.includes(errorEvent.event_id) ||
-          replay.replay_id === errorEvent.contexts?.replay?.replay_id ||
-          replay.replay_id === errorEvent.tags?.replayId,
-      ),
-    ).toBe(true);
-    const exception = events.find((e) => e.event === "$exception");
-    const sessions = new Set(
-      events
-        .filter((e) => e.event === "$snapshot")
-        .map((e) => e.properties.$session_id),
-    );
-    expect(sessions.has(exception?.properties.$session_id)).toBe(true);
+    expect(error.user).toEqual({ id: HARNESS_ACTOR_ID });
+    expect(error.exception.values[0]).toMatchObject({
+      type: "Error",
+      value: "Error",
+    });
   });
 
   test("an organization with replay off records nothing, while analytics and errors still arrive", async ({
@@ -384,7 +373,7 @@ test.describe("telemetry privacy in the browser", () => {
           sentryItems(captured, "event").length > 0 &&
           captured.posthog
             .flatMap((r) => posthogEvents(r.json))
-            .some((e) => e.event === "$exception"),
+            .some((e) => e.event === "send_message"),
         { timeout: 45_000, intervals: [500] },
       )
       .toBe(true);
@@ -401,11 +390,13 @@ test.describe("telemetry privacy in the browser", () => {
 
     const events = captured.posthog.flatMap((r) => posthogEvents(r.json));
     expect(events.length).toBeGreaterThan(0);
-    for (const event of events) {
+    for (const event of captured.ingress.flatMap((request) => posthogEvents(request.json))) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
         o: [HARNESS_PRIVATE_ORG],
+        v: 2,
         r: "off",
         i: "id_only",
+        c: "strict",
       });
     }
     const errorEvent = JSON.parse(
@@ -426,7 +417,7 @@ test.describe("telemetry privacy in the browser", () => {
           sentryItems(captured, "event").length > 0 &&
           captured.posthog
             .flatMap((r) => posthogEvents(r.json))
-            .some((e) => e.event === "$exception"),
+            .some((e) => e.event === "send_message"),
         { timeout: 45_000, intervals: [500] },
       )
       .toBe(true);
@@ -440,62 +431,60 @@ test.describe("telemetry privacy in the browser", () => {
     expect(sentryItems(captured, "replay_recording")).toEqual([]);
     expect(sentryItems(captured, "replay_event")).toEqual([]);
     expect(findSyntheticPii(allPayloadText(captured))).toEqual([]);
-    for (const event of captured.posthog.flatMap((r) =>
+    for (const event of captured.ingress.flatMap((r) =>
       posthogEvents(r.json),
     )) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
-        r: "masked",
+        r: "off",
+        c: "strict",
         i: "id_only",
       });
     }
   });
 
-  test("full → masked never sends the full buffer under a masked label", async ({
+  test("full → strict stops replay and keeps sanitized diagnostics", async ({
     page,
   }) => {
     const captured = await intercept(page);
     await page.goto("/?privacy=full");
-    await page.waitForFunction(() => (window as any).__harness?.ready === true);
-    await page.waitForTimeout(1_500);
-    // An interaction, so posthog-js ships this epoch's buffer rather than
-    // holding it, then unmasked text left unflushed as the page tightens.
-    await page.getByTestId("harness-button").click();
+    await exercise(page);
+    await collect(page, captured);
+    expect(JSON.stringify(snapshotEvents(captured))).toContain(
+      SYNTHETIC_PII.domText,
+    );
     await page.evaluate(() => (window as any).__harness.appendMarker());
-    // Long enough for posthog-js to compress the marker into its buffer,
-    // short of its flush timer: the stop then flushes that buffer
-    // synchronously, after the level has already turned masked.
     await page.waitForTimeout(400);
     await page.evaluate(() => (window as any).__harness.tighten());
     await page.waitForTimeout(500);
-    await page.getByTestId("harness-button").click();
-
-    const masked = () =>
-      captured.posthog
-        .flatMap((r) => posthogEvents(r.json))
-        .filter(
-          (e) =>
-            e.event === "$snapshot" &&
-            e.properties[TELEMETRY_CONTEXT_PROPERTY]?.r === "masked",
-        );
-    // The masked recorder's own fresh snapshot arrives: masking, not silence.
+    const after: Captured = { ingress: [], posthog: [], sentry: [] };
+    const posthogMark = captured.posthog.length;
+    const sentryMark = captured.sentry.length;
+    await page.evaluate(() => {
+      (window as any).__harness.capture();
+      (window as any).__harness.fail("failure after policy tightens");
+    });
     await expect
       .poll(
-        () =>
-          masked().some((e) =>
-            (e.properties.$snapshot_data as unknown[])
-              .map(inflateSnapshot)
-              .some((frame: any) => frame.type === 2),
-          ),
-        { timeout: 30_000, intervals: [500] },
+        () => {
+          after.posthog = captured.posthog.slice(posthogMark);
+          after.sentry = captured.sentry.slice(sentryMark);
+          return (
+            after.posthog.some((r) =>
+              posthogEvents(r.json).some((e) => e.event === "send_message"),
+            ) && sentryItems(after, "event").length > 0
+          );
+        },
+        { timeout: 30_000 },
       )
       .toBe(true);
-    const maskedText = JSON.stringify(
-      masked().map((e) =>
-        (e.properties.$snapshot_data as unknown[]).map(inflateSnapshot),
-      ),
-    );
-    expect(maskedText).not.toContain(HARNESS_UNMASKED_MARKER);
-    expect(maskedText).not.toContain(SYNTHETIC_PII.domText);
+    await page.waitForTimeout(3_000);
+    after.posthog = captured.posthog.slice(posthogMark);
+    after.sentry = captured.sentry.slice(sentryMark);
+    expect(snapshotEvents(after)).toEqual([]);
+    expect(sentryItems(after, "replay_recording")).toEqual([]);
+    expect(sentryItems(after, "replay_event")).toEqual([]);
+    expect(findSyntheticPii(allPayloadText(after))).toEqual([]);
+    expect(allPayloadText(after)).not.toContain(HARNESS_UNMASKED_MARKER);
   });
 
   test("a share-link page records no replay, even with a full answer for the viewer", async ({
@@ -510,7 +499,7 @@ test.describe("telemetry privacy in the browser", () => {
           sentryItems(captured, "event").length > 0 &&
           captured.posthog
             .flatMap((r) => posthogEvents(r.json))
-            .some((e) => e.event === "$exception"),
+            .some((e) => e.event === "send_message"),
         { timeout: 45_000, intervals: [500] },
       )
       .toBe(true);
@@ -519,9 +508,9 @@ test.describe("telemetry privacy in the browser", () => {
     expect(snapshotEvents(captured)).toEqual([]);
     expect(sentryItems(captured, "replay_recording")).toEqual([]);
     expect(sentryItems(captured, "replay_event")).toEqual([]);
-    // The viewer may be named (the backend granted it for them), but the
-    // page's own content stays out of every payload.
+    // Share contexts restrict both identity and content.
     const text = allPayloadText(captured);
+    expect(findSyntheticPii(text)).toEqual([]);
     for (const needle of [
       SYNTHETIC_PII.domText,
       SYNTHETIC_PII.serverName,
@@ -534,9 +523,12 @@ test.describe("telemetry privacy in the browser", () => {
     // Stamped off, so the relay drops any replay from this page as well.
     const events = captured.posthog.flatMap((r) => posthogEvents(r.json));
     expect(events.length).toBeGreaterThan(0);
-    for (const event of events) {
+    for (const event of captured.ingress.flatMap((request) => posthogEvents(request.json))) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
+        v: 2,
         r: "off",
+        i: "id_only",
+        c: "strict",
       });
     }
   });
@@ -545,9 +537,9 @@ test.describe("telemetry privacy in the browser", () => {
     page,
   }) => {
     const captured = await intercept(page);
-    await page.goto("/?privacy=masked");
+    await page.goto("/?privacy=strict");
     await exercise(page, { namedPage: false });
-    await collect(page, captured);
+    await collectStrict(captured);
     const before = snapshotEvents(captured).length;
     const path = `${CREDENTIAL_PATH_PREFIXES[0]}${HARNESS_RESULT_TOKEN}`;
     await page.evaluate(
@@ -559,16 +551,15 @@ test.describe("telemetry privacy in the browser", () => {
         () =>
           captured.posthog
             .flatMap((r) => posthogEvents(r.json))
-            .some((e) => e.event === "harness_navigated"),
+            .some((e) => e.event === "edit_message"),
         { timeout: 20_000 },
       )
       .toBe(true);
     const navigated = captured.posthog
       .flatMap((r) => posthogEvents(r.json))
-      .find((e) => e.event === "harness_navigated");
-    expect(navigated?.properties.$current_url).toContain(
-      scrubSensitiveUrl(path),
-    );
+      .find((e) => e.event === "edit_message");
+    expect(navigated?.properties.location).toBe("chat_tab");
+    expect(navigated?.properties.$current_url).toBeUndefined();
     expect(allPayloadText(captured)).not.toContain(HARNESS_RESULT_TOKEN);
     // Recording stopped on the credential page: nothing new after it.
     await page.waitForTimeout(3_000);
@@ -588,15 +579,16 @@ test.describe("telemetry privacy in the browser", () => {
     await collect(page, captured);
 
     const replay = JSON.stringify(snapshotEvents(captured));
-    // The same page, the same recorder, unmasked: the masked run's silence
-    // is masking, not a recorder that never ran.
+    // The same page sends visible content when its policy permits replay.
     expect(replay).toContain(SYNTHETIC_PII.domText);
     const events = captured.posthog.flatMap((r) => posthogEvents(r.json));
-    for (const event of events) {
+    for (const event of captured.ingress.flatMap((request) => posthogEvents(request.json))) {
       expect(event.properties[TELEMETRY_CONTEXT_PROPERTY]).toMatchObject({
         o: [HARNESS_PUBLIC_ORG],
+        v: 2,
         r: "full",
         i: "full",
+        c: "full",
       });
     }
     const identify = events.find((e) => e.event === "$identify");

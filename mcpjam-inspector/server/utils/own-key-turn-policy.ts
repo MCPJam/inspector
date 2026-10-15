@@ -18,6 +18,11 @@
  * A turn with no project, or a build with no backend to ask, runs as before.
  * A policy read that fails refuses the turn as retryable
  * `ai_key_policy_unavailable`.
+ *
+ * Within a turn an allowing answer is trusted for `OWN_KEY_POLICY_RECHECK_MS`
+ * from when it was READ, not when it arrived: a policy change is enforced on
+ * the next provider request after that window expires. A stream already
+ * running is not interrupted.
  */
 import { wrapLanguageModel, type LanguageModel } from "ai";
 import { isLegacySelection, type RequestedModelSelection } from "@mcpjam/sdk";
@@ -100,17 +105,67 @@ function ownKeyRefusals(
   ];
 }
 
-/** Re-read the policy before every retry and tool-loop provider request. */
-export function withOwnKeyTurnPolicy(model: LanguageModel, turn: OwnKeyTurn) {
+/**
+ * How long a turn trusts the policy answer it last read before a provider
+ * request reads it again. A self-hosted Inspector reads the policy from the
+ * backend's bearer-only route, which allows each user 60 reads a minute.
+ * Reading before every tool-loop step spent that budget on a single
+ * multi-model turn, and the next read's 429 refused the turn as
+ * `ai_key_policy_unavailable`.
+ */
+export const OWN_KEY_POLICY_RECHECK_MS = 15_000;
+
+/**
+ * Re-read the policy before a retry or tool-loop provider request once the
+ * last allowing answer is `OWN_KEY_POLICY_RECHECK_MS` old.
+ *
+ * The trusted answer belongs to this wrapped model, which is one turn: each
+ * model of a compare turn, and each concurrent turn, keeps its own, while all
+ * of them share the user's per-minute budget.
+ *
+ * `allowedAt` is the `performance.now()` taken just BEFORE the caller's own
+ * `ownKeyTurnRefusal` check let the turn run. A check that is already stale
+ * when the model is wrapped is read again before the first request.
+ */
+export function withOwnKeyTurnPolicy(
+  model: LanguageModel,
+  turn: OwnKeyTurn,
+  options: { allowedAt?: number } = {},
+) {
   if (typeof model === "string") {
     throw new Error("A local model must be an explicit provider model.");
   }
+  // `performance.now()`, not `Date.now()`: a wall-clock step back (NTP, a
+  // resumed VM) must not stretch how long an allowing answer is trusted.
+  let allowedAt = options.allowedAt;
+  // Parallel requests that find no fresh answer wait on one read, and all of
+  // them date its answer from when that read STARTED: a slow read must not
+  // stretch the window by its own latency.
+  let reading:
+    | Promise<{ refusal: WebRouteError | undefined; startedAt: number }>
+    | undefined;
   return wrapLanguageModel({
     model,
     middleware: {
       transformParams: async ({ params }) => {
-        const refusal = await ownKeyTurnRefusal(turn);
+        // A negative age means `allowedAt` came from another timebase (a
+        // `Date.now()` passed by mistake); treat it as stale, never as fresh.
+        const age =
+          allowedAt === undefined ? undefined : performance.now() - allowedAt;
+        if (age !== undefined && age >= 0 && age < OWN_KEY_POLICY_RECHECK_MS) {
+          return params;
+        }
+        if (!reading) {
+          const startedAt = performance.now();
+          reading = ownKeyTurnRefusal(turn)
+            .then((refusal) => ({ refusal, startedAt }))
+            .finally(() => {
+              reading = undefined;
+            });
+        }
+        const { refusal, startedAt } = await reading;
         if (refusal) throw refusal;
+        allowedAt = Math.max(allowedAt ?? startedAt, startedAt);
         return params;
       },
     },

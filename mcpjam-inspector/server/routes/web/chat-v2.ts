@@ -1137,6 +1137,7 @@ chatV2.post("/", async (c) => {
     const selected = resolveChatSelection({
       raw: rawBody.modelSelection,
       inherited: resolvedExecution.routingSelection,
+      inheritedOrigin: resolvedExecution.modelSelectionOrigin,
       model: modelDefinition,
       hostWins: isScenarioSession,
       allowLocal: false,
@@ -1155,8 +1156,7 @@ chatV2.post("/", async (c) => {
       model: modelDefinition,
     });
     const systemPrompt = resolvedExecution.systemPrompt;
-    // A picked selection owns its settings, including a cleared effort.
-    // Only a scenario forces host settings; other turns allow a body override.
+    // A picked selection owns its settings; scenarios force host settings.
     const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
     if (!bodyEffort.ok) {
       throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, bodyEffort.error);
@@ -2726,7 +2726,7 @@ chatV2.post("/", async (c) => {
           ...(modelToolExecutor ? { modelToolExecutor } : {}),
           selectedServerIds: effectiveServerIds,
           modelDefinition,
-          ...(routingSelection ? { routingSelection } : {}),
+          ...(routingSelection ? { routingSelection, routingSelectionOrigin: selected.origin } : {}),
           systemPrompt: effectiveSystemPrompt,
           temperature,
           ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
