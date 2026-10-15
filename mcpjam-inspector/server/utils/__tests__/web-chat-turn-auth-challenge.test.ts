@@ -3,6 +3,7 @@
  * to a 401, which of them can save the call, and which never offer a card.
  * The engines are mocked; the tool set they are handed is exercised directly.
  */
+import { UNAPPROVED_HISTORY_CALL_RESULT } from "../tool-approval-token.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseChallengeHeader } from "@mcpjam/sdk";
 import {
@@ -369,7 +370,7 @@ describe("hosted chat: mid-session sign-in wiring", () => {
           toolCallId: "call-1",
           toolName: "get_my_orders",
         }),
-      ).resolves.toContain("the user did not sign in");
+      ).resolves.toBe(UNAPPROVED_HISTORY_CALL_RESULT);
       expect(store.scrub).not.toHaveBeenCalled();
     });
 
