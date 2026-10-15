@@ -32,6 +32,10 @@ import {
   PLUGIN_SIGN_IN_UNAVAILABLE_MESSAGE,
   usePluginServerSignIn,
 } from "../usePluginServerSignIn";
+import {
+  hasOnboardingAfterSignIn,
+  requestOnboardingAfterSignIn,
+} from "@/lib/plugin-onboarding-intent";
 
 const binding = { pluginVersionId: "ver_mail", componentKey: "inbox" };
 const target = {
@@ -69,7 +73,12 @@ describe("usePluginServerSignIn", () => {
     state.start.mockResolvedValue({ success: true });
     const { result } = renderHook(() => usePluginServerSignIn("ws_1"));
 
-    await act(() => result.current.signIn(binding));
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await result.current.signIn(binding);
+    });
+    // Success with no server config: the page is leaving for sign-in.
+    expect(outcome).toBe("redirecting");
 
     expect(state.query).toHaveBeenCalledWith(expect.anything(), {
       projectId: "ws_1",
@@ -100,13 +109,66 @@ describe("usePluginServerSignIn", () => {
     );
   });
 
+  it("says when the flow finished without leaving, and passes where to land", async () => {
+    state.query.mockResolvedValue(target);
+    state.start.mockResolvedValue({
+      success: true,
+      serverConfig: { url: "https://mail.example.com/mcp" },
+    });
+    const { result } = renderHook(() => usePluginServerSignIn("ws_1"));
+
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await result.current.signIn(binding, {
+        returnPath: "/p/abcdefghijklmnop/playground",
+      });
+    });
+
+    expect(outcome).toBe("signed_in");
+    expect(state.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        returnPath: "/p/abcdefghijklmnop/playground",
+      }),
+    );
+  });
+
+  it("drops a Set up kept for an earlier sign-in, unless it is that Set up's own", async () => {
+    sessionStorage.clear();
+    state.query.mockResolvedValue(target);
+    state.start.mockResolvedValue({ success: true });
+    const { result } = renderHook(() => usePluginServerSignIn("ws_1"));
+    requestOnboardingAfterSignIn(
+      {
+        projectId: "ws_1",
+        serverIds: ["srv_mail"],
+        pluginId: "plg_mail",
+        pluginName: "Mail",
+        conversation: "new",
+      },
+      binding,
+    );
+
+    await act(async () => {
+      await result.current.signIn(binding, { keepsSetUp: true });
+    });
+    expect(hasOnboardingAfterSignIn("ws_1")).toBe(true);
+    await act(async () => {
+      await result.current.signIn(binding);
+    });
+    expect(hasOnboardingAfterSignIn("ws_1")).toBe(false);
+  });
+
   it("says why when the flow cannot start", async () => {
     state.query.mockResolvedValue(target);
     state.start.mockResolvedValue({ success: false, error: "No metadata" });
     const { result } = renderHook(() => usePluginServerSignIn("ws_1"));
 
-    await act(() => result.current.signIn(binding));
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await result.current.signIn(binding);
+    });
 
+    expect(outcome).toBe("failed");
     expect(state.toastError).toHaveBeenCalledWith("No metadata");
     expect(result.current.pendingKey).toBeNull();
   });

@@ -16,6 +16,10 @@ import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
 import { useProjectSecrets } from "@/hooks/useProjectSecrets";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { HOSTED_MODE } from "@/lib/config";
+import {
+  hasOnboardingAfterSignIn,
+  resumeOnboardingAfterSignIn,
+} from "@/lib/plugin-onboarding-intent";
 import type { HiddenEnvironmentRecovery } from "@/lib/hosted-runtime-context";
 import type {
   ActivePluginRow,
@@ -129,6 +133,7 @@ type Composed =
   | { key: string; status: "failed" };
 
 const EMPTY_SERVERS: ActivePluginServer[] = [];
+const NO_PLUGINS: ActivePluginRow[] = [];
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((id, index) => id === b[index]);
@@ -146,14 +151,35 @@ export function usePlaygroundHiddenEnvironment(
   // runnable rather than skipped. The composition takes the venue only when
   // such a plugin is there to run.
   const clientRunsHere = useLocalHarnessRunsHere({ projectId, harnessId });
-  const active = useActivePlugins(eligible && isMember ? projectId : null, {
-    runtimeVenue: hiddenEnvironmentVenue({
-      hostedMode: HOSTED_MODE,
-      clientRunsHere,
-      needsLocal: true,
-    }),
-  });
-  const plugins = active.plugins;
+  // A Set up that signed in first comes back here, after the redirect, and
+  // the first plugins read that answers makes it or drops it. So the plugins
+  // are also read until then; the chat itself uses them only when eligible.
+  const [settledFor, setSettledFor] = useState<string | null>(null);
+  const awaitingSignIn = useMemo(
+    () =>
+      !!projectId &&
+      settledFor !== projectId &&
+      hasOnboardingAfterSignIn(projectId),
+    [projectId, settledFor],
+  );
+  const readsPlugins = eligible && isMember;
+  const active = useActivePlugins(
+    readsPlugins || (awaitingSignIn && isMember) ? projectId : null,
+    {
+      runtimeVenue: hiddenEnvironmentVenue({
+        hostedMode: HOSTED_MODE,
+        clientRunsHere,
+        needsLocal: true,
+      }),
+    },
+  );
+  const { answered, plugins: read } = active;
+  useEffect(() => {
+    if (!projectId || !awaitingSignIn || !answered) return;
+    resumeOnboardingAfterSignIn(projectId, read);
+    setSettledFor(projectId);
+  }, [projectId, awaitingSignIn, answered, read]);
+  const plugins = readsPlugins ? active.plugins : NO_PLUGINS;
   const venue = hiddenEnvironmentVenue({
     hostedMode: HOSTED_MODE,
     clientRunsHere,

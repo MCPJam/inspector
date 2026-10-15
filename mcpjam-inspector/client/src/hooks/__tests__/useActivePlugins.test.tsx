@@ -118,6 +118,8 @@ describe("useActivePlugins", () => {
     expect(state.calls).toEqual([]);
     expect(hook.current.plugins).toEqual([]);
     expect(hook.current.isLoading).toBe(false);
+    // Not asked is not an answer of no plugins.
+    expect(hook.current.answered).toBe(false);
   });
 
   it("does not ask while the flag is still loading", () => {
@@ -167,6 +169,7 @@ describe("useActivePlugins", () => {
     const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
     expect(hook.current.isLoading).toBe(true);
     expect(hook.current.failed).toBe(false);
+    expect(hook.current.answered).toBe(false);
   });
 
   it("splits active plugins from skipped ones and lists only active servers", () => {
@@ -188,6 +191,7 @@ describe("useActivePlugins", () => {
       },
     ]);
     expect(hook.current.isLoading).toBe(false);
+    expect(hook.current.answered).toBe(true);
   });
 
   it("leaves out a server the member can't use yet", () => {
@@ -278,6 +282,7 @@ describe("useActivePlugins", () => {
     const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
     expect(hook.current.plugins).toEqual([]);
     expect(hook.current.activeServers).toEqual([]);
+    expect(hook.current.answered).toBe(true);
   });
 
   it("reads a backend without the function as no plugins instead of throwing", () => {
@@ -290,5 +295,6 @@ describe("useActivePlugins", () => {
     expect(hook.current.isLoading).toBe(false);
     // Distinguishable from "no plugins" for a caller that must not guess.
     expect(hook.current.failed).toBe(true);
+    expect(hook.current.answered).toBe(false);
   });
 });

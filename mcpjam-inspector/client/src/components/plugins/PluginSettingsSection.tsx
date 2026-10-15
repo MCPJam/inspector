@@ -6,8 +6,17 @@ import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics";
-import { navigateApp, routePaths } from "@/lib/app-navigation";
-import { usePluginOnboardingIntentStore } from "@/lib/plugin-onboarding-intent";
+import {
+  navigateApp,
+  routePaths,
+  scopeNavigationTarget,
+} from "@/lib/app-navigation";
+import {
+  cancelOnboardingAfterSignIn,
+  requestOnboardingAfterSignIn,
+  usePluginOnboardingIntentStore,
+} from "@/lib/plugin-onboarding-intent";
+import type { ActivePluginRow } from "@/lib/plugins/active-plugins-types";
 import {
   usePluginManagementActions,
   usePluginSetupStatus,
@@ -36,6 +45,25 @@ import {
   describePluginStatus,
   pluginStatusDotClass,
 } from "./plugin-status";
+
+/**
+ * A server of this plugin that is waiting on the member's sign-in, by
+ * component key. A plugin skipped whole for sign-in names the server its skip
+ * names, or its only server.
+ */
+function serverAwaitingSignIn(row: ActivePluginRow | undefined): string | null {
+  if (row?.status === "skipped" && row.reason === "needs_auth") {
+    const named = row.servers.find(
+      (server) => server.componentKey === row.componentKey,
+    );
+    const only = row.servers.length === 1 ? row.servers[0] : undefined;
+    return (named ?? only)?.componentKey ?? null;
+  }
+  return (
+    row?.servers.find((candidate) => candidate.unavailable === "needs_auth")
+      ?.componentKey ?? null
+  );
+}
 
 /**
  * A plugin's lifecycle, where its parts live: the Settings tab of one of its
@@ -113,6 +141,15 @@ export function PluginSettingsSection({
   const otherVersions = readyVersions.filter(
     (candidate) => candidate.pluginVersionId !== activeVersionId,
   );
+  // A server of the active version waiting on this member's sign-in: the
+  // plugins read's answer, else the setup status's. The Sign in button and
+  // Set up both go by it, so Set up never skips a sign-in the list asks for.
+  const needsAuth = (componentKey: string) =>
+    (row?.servers.find((server) => server.componentKey === componentKey)
+      ?.unavailable ??
+      setupStatus?.components.find(
+        (candidate) => candidate.componentKey === componentKey,
+      )?.readiness) === "needs_auth";
   const serverComponents = [...(version?.servers ?? [])].sort(
     (a, b) =>
       Number(b.materializedServerId === focusServerId) -
@@ -301,9 +338,7 @@ export function PluginSettingsSection({
               const isConfiguring =
                 configuringComponentId === component.componentId;
               const needsSignIn =
-                (row?.servers.find(
-                  (server) => server.componentKey === component.componentKey,
-                )?.unavailable ?? readiness) === "needs_auth" &&
+                needsAuth(component.componentKey) &&
                 signIn.available &&
                 !!activeVersionId;
               return (
@@ -408,19 +443,48 @@ export function PluginSettingsSection({
               type="button"
               size="sm"
               variant="outline"
-              disabled={pending}
+              disabled={pending || signIn.pendingKey !== null}
               onClick={() => {
-                // Same path as the import dialog's "Set up": the Playground
-                // runs the onboarding skill once one of these servers offers
-                // it, or the plugin if it has none.
-                usePluginOnboardingIntentStore.getState().request({
+                const request = {
                   projectId: projectId!,
                   serverIds: onboardingServerIds,
                   pluginId,
                   pluginName: label,
-                  conversation: "new",
-                });
-                navigateApp(routePaths.playground);
+                  conversation: "new" as const,
+                };
+                // Same path as the import dialog's "Set up": the Playground
+                // runs the onboarding skill once one of these servers offers
+                // it, or the plugin if it has none.
+                const start = () => {
+                  usePluginOnboardingIntentStore.getState().request(request);
+                  navigateApp(routePaths.playground);
+                };
+                // A server waiting on the member's sign-in never offers it,
+                // so sign in first. Back in the Playground, the first plugins
+                // read resumes it if that server reads as signed in and drops
+                // it if not. A sign-in that never left starts it here.
+                const componentKey =
+                  serverAwaitingSignIn(row) ??
+                  serverComponents.find((component) =>
+                    needsAuth(component.componentKey),
+                  )?.componentKey;
+                if (!componentKey || !signIn.available || !activeVersionId)
+                  return start();
+                const binding = {
+                  pluginVersionId: activeVersionId,
+                  componentKey,
+                };
+                requestOnboardingAfterSignIn(request, binding);
+                void signIn
+                  .signIn(binding, {
+                    returnPath: scopeNavigationTarget(routePaths.playground),
+                    keepsSetUp: true,
+                  })
+                  .then((outcome) => {
+                    if (outcome === "redirecting") return;
+                    cancelOnboardingAfterSignIn();
+                    if (outcome === "signed_in") start();
+                  });
               }}
               data-testid="plugin-onboarding-setup"
             >

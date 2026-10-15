@@ -85,6 +85,7 @@ import {
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
+import { markOnboardingSignInCompleted } from "@/lib/plugin-onboarding-intent";
 import {
   markPendingChatScopeStepUpCancelled,
   markPendingChatScopeStepUpReady,
@@ -3070,9 +3071,7 @@ export function useServerState({
           });
         localStorage.removeItem("mcp-oauth-return-hash");
         if (hostedCallbackContext) {
-          // The pending marker is written for local-mode project flows too —
-          // clear it whenever a marker-backed callback settles, not only on
-          // the hosted completion path.
+          // Local-mode project flows write the marker too; clear it here.
           clearHostedOAuthPendingState();
         }
         if (result.success) {
@@ -3086,6 +3085,7 @@ export function useServerState({
           return;
         }
         if (result.success && onlyStoresCredential(hostedCallbackContext)) {
+          markOnboardingSignInCompleted(hostedCallbackContext?.pluginSignIn);
           if (!HOSTED_MODE && result.serverName) {
             const existing =
               appStateServersRef.current[result.serverName] ??

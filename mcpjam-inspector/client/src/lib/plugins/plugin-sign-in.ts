@@ -46,18 +46,21 @@ export function pluginSignInFlowName(serverName: string): string {
 /**
  * Pin where the member started (project, organization, page, plugin
  * version and component), then leave for the authorization server.
- * Resolves only when the flow did not redirect: an error, or a flow that
- * finished without one.
+ * Resolves as soon as the redirect starts, with `success` and no
+ * `serverConfig`. It also resolves on an error, or with a `serverConfig`
+ * when the flow finished without leaving the page.
  */
 export async function startPluginServerSignIn(args: {
   target: PluginServerSignInTarget;
   projectId: string;
   organizationId: string | null;
   initiatingUserId: string | null;
+  /** Where the member lands after the callback. Default: where they are. */
+  returnPath?: string;
 }): Promise<OAuthResult> {
   const { target } = args;
   const serverName = pluginSignInFlowName(target.serverName);
-  const returnPath = captureCurrentReturnPath();
+  const returnPath = args.returnPath ?? captureCurrentReturnPath();
   clearHostedOAuthPendingState();
   writeHostedOAuthPendingMarker({
     surface: "project",

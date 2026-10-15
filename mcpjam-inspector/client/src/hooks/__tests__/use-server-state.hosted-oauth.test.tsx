@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useServerState } from "../use-server-state";
 import { writeHostedOAuthPendingMarker } from "@/lib/hosted-oauth-callback";
+import { requestOnboardingAfterSignIn } from "@/lib/plugin-onboarding-intent";
 import { markFirstRunServerChoiceStarted } from "@/lib/onboarding-state";
 import { FIRST_RUN_OAUTH_CANCELLED_EVENT } from "@/lib/first-run-oauth-return";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
@@ -535,6 +536,17 @@ describe("useServerState hosted OAuth callback guards", () => {
       returnPath: "/servers",
       pluginSignIn: { pluginVersionId: "ver_mail", componentKey: "inbox" },
     });
+    // A Set up kept for this sign-in resumes only once the callback marks it.
+    requestOnboardingAfterSignIn(
+      {
+        projectId: "ws_1",
+        serverIds: ["srv_plugin_mail"],
+        pluginId: "plg_mail",
+        pluginName: "Mail",
+        conversation: "new",
+      },
+      { pluginVersionId: "ver_mail", componentKey: "inbox" },
+    );
     localStorage.setItem("mcp-oauth-pending", "mail (plugin)");
     mockHandleOAuthCallback.mockResolvedValue({
       success: true,
@@ -565,6 +577,11 @@ describe("useServerState hosted OAuth callback guards", () => {
       ),
     ).toBe(false);
     expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+    expect(
+      JSON.parse(
+        sessionStorage.getItem("mcp-plugin-onboarding-resume") ?? "{}",
+      ),
+    ).toMatchObject({ completed: true });
   });
 
   it.each(["guest", "changed", "legacy", "membership"])(

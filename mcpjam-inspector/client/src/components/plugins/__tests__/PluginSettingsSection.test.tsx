@@ -4,7 +4,13 @@
  * Enable/Disable and Uninstall — admin-only lifecycle disabled with the
  * reason for members.
  */
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -21,6 +27,8 @@ const h = vi.hoisted(() => ({
   track: vi.fn(),
   toastError: vi.fn(),
   requestOnboarding: vi.fn(),
+  requestAfterSignIn: vi.fn(),
+  cancelAfterSignIn: vi.fn(),
   navigateApp: vi.fn(),
   signIn: {
     available: false,
@@ -69,10 +77,13 @@ vi.mock("@/lib/plugin-onboarding-intent", () => ({
   usePluginOnboardingIntentStore: {
     getState: () => ({ request: h.requestOnboarding }),
   },
+  requestOnboardingAfterSignIn: h.requestAfterSignIn,
+  cancelOnboardingAfterSignIn: h.cancelAfterSignIn,
 }));
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: h.navigateApp,
   routePaths: { playground: "/playground" },
+  scopeNavigationTarget: (to: string) => `/p/proj${to}`,
 }));
 
 import { PluginSettingsSection } from "../PluginSettingsSection";
@@ -358,6 +369,142 @@ describe("PluginSettingsSection", () => {
       conversation: "new",
     });
     expect(h.navigateApp).toHaveBeenCalledWith("/playground");
+  });
+
+  describe("when a server waits on the member's sign-in", () => {
+    const awaitingSignIn = () => {
+      h.version.value = {
+        ...baseVersion(),
+        onboarding: { componentId: "c_9", modelRef: "demo/onboarding" },
+      };
+      h.activeRows.value = [
+        {
+          ...(h.activeRows.value[0] as object),
+          servers: [
+            {
+              serverId: "s_1",
+              name: "api",
+              componentKey: "server:api",
+              placement: "remote",
+              unavailable: "needs_auth",
+            },
+          ],
+        },
+      ];
+      h.signIn.available = true;
+    };
+    const request = {
+      projectId: "p_1",
+      serverIds: ["s_1"],
+      pluginId: "pl_1",
+      pluginName: "Demo",
+      conversation: "new",
+    };
+
+    it("signs in first and returns to the Playground to resume", async () => {
+      awaitingSignIn();
+      h.signIn.signIn.mockResolvedValue("redirecting");
+      renderSection();
+      fireEvent.click(screen.getByTestId("plugin-onboarding-setup"));
+      const binding = { pluginVersionId: "pv_1", componentKey: "server:api" };
+      expect(h.requestAfterSignIn).toHaveBeenCalledWith(request, binding);
+      expect(h.signIn.signIn).toHaveBeenCalledWith(binding, {
+        returnPath: "/p/proj/playground",
+        keepsSetUp: true,
+      });
+      await Promise.resolve();
+      expect(h.cancelAfterSignIn).not.toHaveBeenCalled();
+      expect(h.requestOnboarding).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["before the plugins read answers", () => []],
+      ["when only the setup status reads it", () => [h.activeRows.value[0]]],
+    ])("signs in first %s, as the server's Sign in does", (_, rows) => {
+      h.version.value = {
+        ...baseVersion(),
+        onboarding: { componentId: "c_9", modelRef: "demo/onboarding" },
+      };
+      h.setupStatus.value = {
+        pluginVersionId: "pv_1",
+        status: "ready",
+        components: [
+          {
+            componentKey: "server:api",
+            placement: "remote",
+            authenticationPolicy: "on_install",
+            readiness: "needs_auth",
+          },
+        ],
+      };
+      h.activeRows.value = rows();
+      h.signIn.available = true;
+      h.signIn.signIn.mockResolvedValue("redirecting");
+      renderSection();
+      fireEvent.click(screen.getByTestId("plugin-onboarding-setup"));
+      expect(h.signIn.signIn).toHaveBeenCalledWith(
+        { pluginVersionId: "pv_1", componentKey: "server:api" },
+        expect.objectContaining({ keepsSetUp: true }),
+      );
+      expect(h.requestOnboarding).not.toHaveBeenCalled();
+    });
+
+    it("signs in to the server a whole-plugin skip names", () => {
+      awaitingSignIn();
+      const server = (key: string, serverId: string) => ({
+        serverId,
+        name: key,
+        componentKey: `server:${key}`,
+        placement: "remote",
+      });
+      h.activeRows.value = [
+        {
+          ...(h.activeRows.value[0] as object),
+          status: "skipped",
+          reason: "needs_auth",
+          componentKey: "server:mail",
+          servers: [server("api", "s_1"), server("mail", "s_2")],
+        },
+      ];
+      h.signIn.signIn.mockResolvedValue("redirecting");
+      renderSection();
+      fireEvent.click(screen.getByTestId("plugin-onboarding-setup"));
+      expect(h.signIn.signIn).toHaveBeenCalledWith(
+        { pluginVersionId: "pv_1", componentKey: "server:mail" },
+        expect.objectContaining({ keepsSetUp: true }),
+      );
+    });
+
+    it("starts at once when the sign-in finished without leaving", async () => {
+      awaitingSignIn();
+      h.signIn.signIn.mockResolvedValue("signed_in");
+      renderSection();
+      fireEvent.click(screen.getByTestId("plugin-onboarding-setup"));
+      await waitFor(() =>
+        expect(h.requestOnboarding).toHaveBeenCalledWith(request),
+      );
+      expect(h.cancelAfterSignIn).toHaveBeenCalled();
+      expect(h.navigateApp).toHaveBeenCalledWith("/playground");
+    });
+
+    it("keeps nothing for later when the sign-in failed", async () => {
+      awaitingSignIn();
+      h.signIn.signIn.mockResolvedValue("failed");
+      renderSection();
+      fireEvent.click(screen.getByTestId("plugin-onboarding-setup"));
+      await waitFor(() => expect(h.cancelAfterSignIn).toHaveBeenCalled());
+      expect(h.requestOnboarding).not.toHaveBeenCalled();
+      expect(h.navigateApp).not.toHaveBeenCalled();
+    });
+
+    it("goes straight to the Playground where signing in isn't available", () => {
+      awaitingSignIn();
+      h.signIn.available = false;
+      renderSection();
+      fireEvent.click(screen.getByTestId("plugin-onboarding-setup"));
+      expect(h.signIn.signIn).not.toHaveBeenCalled();
+      expect(h.requestOnboarding).toHaveBeenCalledWith(request);
+    });
   });
 
   it("offers onboarding for a plugin with no server, by plugin", () => {
