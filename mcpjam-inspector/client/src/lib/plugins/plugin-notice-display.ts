@@ -88,7 +88,7 @@ function placementCopy(plugin: PluginNoticePlugin): string {
 const PARTIAL_COPY: Record<string, string> = {
   needs_auth: "sign in to that server to use it",
   needs_setup: "finish that server's setup to use it",
-  unreachable: "that server isn't working right now",
+  unreachable: "that server didn't respond. Try again later",
 };
 
 function describeSkip(plugin: PluginNoticePlugin): string {

@@ -52,7 +52,7 @@ describe("describePluginNotice", () => {
       "Bits & Bolts ran without one of its servers: finish that server's setup to use it.",
     );
     expect(partial("unreachable")).toBe(
-      "Bits & Bolts ran without one of its servers: that server isn't working right now.",
+      "Bits & Bolts ran without one of its servers: that server didn't respond. Try again later.",
     );
   });
 
