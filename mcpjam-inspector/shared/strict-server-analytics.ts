@@ -67,6 +67,22 @@ const booleans = new Set([
   "$process_person_profile",
 ]);
 
+export type ServerAnalyticsFieldRule =
+  | { values: readonly string[] }
+  | { kind: "boolean" }
+  | { kind: "number"; max: number };
+
+/** The rule a property must meet to be forwarded, if it has one. */
+export function serverAnalyticsFieldRule(
+  key: string,
+): ServerAnalyticsFieldRule | undefined {
+  // Own keys only: a property named `toString` or `constructor` has no rule.
+  if (Object.hasOwn(enums, key)) return { values: enums[key] };
+  if (booleans.has(key)) return { kind: "boolean" };
+  if (numbers.has(key)) return { kind: "number", max: 86400000 };
+  return undefined;
+}
+
 /** Only source-declared events and content-free scalar fields cross this boundary. */
 export function rebuildServerAnalytics(
   event: string,
@@ -76,21 +92,24 @@ export function rebuildServerAnalytics(
   const distinctId = telemetryActorId(actorId);
   if (
     !distinctId ||
-    ANALYTICS_EVENTS[event as ServerAnalyticsEventName]?.source !== "server"
+    !Object.hasOwn(ANALYTICS_EVENTS, event) ||
+    ANALYTICS_EVENTS[event as ServerAnalyticsEventName].source !== "server"
   )
     return null;
   const properties: Record<string, string | boolean | number> = {};
   for (const [key, value] of Object.entries(input)) {
-    if (typeof value === "string" && enums[key]?.includes(value))
-      properties[key] = value;
-    else if (booleans.has(key) && typeof value === "boolean")
-      properties[key] = value;
-    else if (
-      numbers.has(key) &&
+    const rule = serverAnalyticsFieldRule(key);
+    if (!rule) continue;
+    if ("values" in rule) {
+      if (typeof value === "string" && rule.values.includes(value))
+        properties[key] = value;
+    } else if (rule.kind === "boolean") {
+      if (typeof value === "boolean") properties[key] = value;
+    } else if (
       typeof value === "number" &&
       Number.isFinite(value) &&
       value >= 0 &&
-      value <= 86400000
+      value <= rule.max
     )
       properties[key] = value;
   }

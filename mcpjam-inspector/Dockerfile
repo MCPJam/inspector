@@ -139,6 +139,9 @@ COPY mcpjam-inspector/lib/tsconfig.json mcpjam-inspector/lib/tsup.config.ts ./mc
 COPY mcpjam-inspector/server/tsconfig.json mcpjam-inspector/server/tsup.config.ts ./mcpjam-inspector/server/
 COPY mcpjam-inspector/bin ./mcpjam-inspector/bin
 COPY mcpjam-inspector/shared ./mcpjam-inspector/shared
+# Telemetry catalogs are build outputs. The SDK build writes the SDK catalog
+# here (no server or client yet); `build:server`'s pre-hook writes all four.
+COPY scripts/generate-telemetry-catalogs.mjs scripts/telemetry-route-catalog.mjs ./scripts/
 
 COPY sdk/src ./sdk/src
 COPY sdk/skills ./sdk/skills
