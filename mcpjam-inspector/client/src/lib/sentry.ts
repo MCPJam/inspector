@@ -2,6 +2,7 @@ import { rebuildSentryFrameLocations } from "../../../shared/strict-sentry";
 import {
   strictSentryRequired,
   blockSentryReplay,
+  browserSentryEnvironment,
   browserSentryOptions,
   withStrictSentryTransport,
 } from "./strict-sentry-boundary";
@@ -38,14 +39,12 @@ import {
 /**
  * Resolve the config the browser bundle inits with.
  *
- * `import.meta.env.PROD` rather than `process.env.NODE_ENV`: the renderer has
- * no `process`, and the packaged desktop app never sets NODE_ENV — the old
- * NODE_ENV check made every desktop and hosted event report `environment:
- * "dev"`.
+ * The environment is the strict boundary's, so full and rebuilt events from
+ * one deployment land in the same Sentry environment.
  */
 export function resolveClientSentryConfig() {
   return buildClientSentryConfig({
-    environment: import.meta.env.PROD ? "prod" : "dev",
+    environment: browserSentryEnvironment(),
     release: __APP_VERSION__,
     // Paired with the `dist` every upload site passes. Without it the builds
     // that share this `release` are indistinguishable to Sentry.
