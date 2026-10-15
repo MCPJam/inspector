@@ -84,6 +84,20 @@ describe("ReasoningPart", () => {
     expect(screen.getByText("Thinking…")).toHaveClass("reasoning-shimmer-text");
   });
 
+  it("shows the Thinking header for a streaming block with no text yet", () => {
+    render(<ReasoningPart text="" state="streaming" displayMode="collapsed" />);
+
+    expect(screen.getByText("Thinking…")).toHaveClass("reasoning-shimmer-text");
+  });
+
+  it("renders nothing for an empty block once it is done", () => {
+    const { container } = render(
+      <ReasoningPart text="" state="done" displayMode="collapsed" />,
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
   it("stops shimmering once reasoning is done", () => {
     // A shimmer on a finished label would advertise work that is no longer
     // happening.

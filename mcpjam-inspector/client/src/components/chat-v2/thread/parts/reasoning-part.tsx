@@ -38,7 +38,11 @@ export function ReasoningPart({
     setIsExpanded(displayMode !== "collapsed");
   }, [displayMode]);
 
-  if (isRedacted || isHidden) return null;
+  // While reasoning streams, a collapsible block shows its "Thinking…" header
+  // even before any text: a provider that sends no summary streams an empty
+  // block, and it may already hide the thread's own thinking indicator.
+  const showsEmptyHeader = isRedacted && isCollapsible && state === "streaming";
+  if ((isRedacted && !showsEmptyHeader) || isHidden) return null;
 
   if (!isCollapsible) {
     return (
@@ -73,7 +77,7 @@ export function ReasoningPart({
           />
         </span>
       </button>
-      {isExpanded ? (
+      {isExpanded && !isRedacted ? (
         <pre
           id={contentId}
           className="mt-3 whitespace-pre-wrap break-words text-[12px]"
