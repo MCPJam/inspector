@@ -106,16 +106,23 @@ function describeSkip(plugin: PluginNoticePlugin): string {
   return `${noticeLabel(plugin)} was skipped: ${reason}.`;
 }
 
+/** The plugins a skipped notice names: up to two, or the first of more. */
+function namedPlugins(
+  plugins: readonly PluginNoticePlugin[],
+): readonly PluginNoticePlugin[] {
+  return plugins.length <= 2 ? plugins : plugins.slice(0, 1);
+}
+
 /** The plain line a notice reads as. */
 export function describePluginNotice(data: PluginNoticeData): string {
   if (data.kind === "unavailable") return PLUGINS_UNAVAILABLE_MESSAGE;
   if (data.kind === "off") return OFF_COPY[data.reason];
-  const [first, second, ...rest] = data.plugins;
-  if (!first) return PLUGINS_UNAVAILABLE_MESSAGE;
-  if (!second) return describeSkip(first);
-  if (rest.length === 0)
-    return `${describeSkip(first)} ${describeSkip(second)}`;
-  return `${describeSkip(first)} ${data.plugins.length - 1} more plugins were skipped; see Logs for details.`;
+  const named = namedPlugins(data.plugins);
+  if (named.length === 0) return PLUGINS_UNAVAILABLE_MESSAGE;
+  const text = named.map(describeSkip).join(" ");
+  return named.length === data.plugins.length
+    ? text
+    : `${text} ${data.plugins.length - 1} more plugins were skipped; see Logs for details.`;
 }
 
 /** Chat id + what the notice says (sorted `pluginId:reason` pairs for skips). */
@@ -159,15 +166,19 @@ export function registerPluginNoticeSignIn(handler: PluginSignIn): () => void {
   };
 }
 
+/**
+ * One button signs in to one server, so it is offered only when exactly one
+ * plugin in the notice needs a sign-in and the text names that plugin.
+ */
 function signInAction(data: PluginNoticeData) {
   const handler = signInHandler;
-  const binding =
-    data.kind === "skipped"
-      ? data.plugins.find((plugin) => plugin.signIn)?.signIn
-      : undefined;
-  return handler && binding
-    ? { action: { label: "Sign in", onClick: () => handler(binding) } }
-    : undefined;
+  if (!handler || data.kind !== "skipped") return undefined;
+  const needing = data.plugins.filter((plugin) => plugin.signIn);
+  const [plugin] = needing;
+  const binding = plugin?.signIn;
+  if (needing.length !== 1 || !binding) return undefined;
+  if (!namedPlugins(data.plugins).includes(plugin)) return undefined;
+  return { action: { label: "Sign in", onClick: () => handler(binding) } };
 }
 
 // Page-lifetime, so a remounted Playground does not repeat a notice the chat

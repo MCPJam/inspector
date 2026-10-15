@@ -293,6 +293,47 @@ describe("a notice's Sign in", () => {
     unregister();
   });
 
+  it("offers Sign in only for the one named plugin that needs it", () => {
+    const plugin = (name: string, signIn?: typeof binding) => ({
+      ...bitsNeedsAuth.plugins[0],
+      pluginId: `plg_${name}`,
+      name,
+      displayName: name,
+      ...(signIn ? { signIn } : {}),
+    });
+    const other = { ...binding, componentKey: "other" };
+    const signIn = vi.fn();
+    const unregister = registerPluginNoticeSignIn(signIn);
+    const actionFor = (chat: string, plugins: PluginNoticeData) => {
+      showPluginNotice(chat, plugins);
+      return toastInfo.mock.calls.at(-1)?.[1]?.action;
+    };
+
+    // Third of three: the text names only the first.
+    expect(
+      actionFor("chat-1", {
+        kind: "skipped",
+        plugins: [plugin("a"), plugin("b"), plugin("c", binding)],
+      }),
+    ).toBeUndefined();
+    // Two to sign in to: one button cannot cover both.
+    expect(
+      actionFor("chat-2", {
+        kind: "skipped",
+        plugins: [plugin("a", binding), plugin("b", other)],
+      }),
+    ).toBeUndefined();
+    // Second of two is named, and the only one that needs it.
+    const action = actionFor("chat-3", {
+      kind: "skipped",
+      plugins: [plugin("a"), plugin("b", other)],
+    });
+    expect(action?.label).toBe("Sign in");
+    action.onClick();
+    expect(signIn).toHaveBeenCalledWith(other);
+    unregister();
+  });
+
   it("keeps a newer registration when an older one unregisters", () => {
     const older = vi.fn();
     const newer = vi.fn();
