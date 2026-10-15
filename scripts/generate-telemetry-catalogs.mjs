@@ -4,9 +4,13 @@
  * messages, codes) the strict telemetry builders may forward. Everything here
  * comes from first-party source; runtime text never adds a name.
  *
+ * They are build outputs, not committed files. Every entry point that reads
+ * them (SDK build/test/typecheck, Inspector dev, build, test and typecheck,
+ * Electron, Docker, `npm install`) runs this first, and dev loops run
+ * `--watch`, so nobody runs it by hand.
+ *
  *   node scripts/generate-telemetry-catalogs.mjs           write what changed
  *   node scripts/generate-telemetry-catalogs.mjs --watch   keep them current
- *   node scripts/generate-telemetry-catalogs.mjs --check   fail when stale
  *
  * Without the Inspector server and client (the Docker SDK step), only the SDK
  * catalog is written; it is identical in both modes. Files are rewritten only
@@ -295,21 +299,9 @@ export function setup(project) {
   });
 }
 
-export function checkTelemetryCatalogs({ root = ROOT } = {}) {
-  const stale = Object.entries(buildTelemetryCatalogs({ root, cache: loadCatalogCache(root) })).filter(([file, text]) => {
-    try {
-      return readFileSync(join(root, file), "utf8") !== text;
-    } catch {
-      return true;
-    }
-  });
-  if (stale.length) throw new Error(`Regenerate telemetry catalog: ${stale.map(([file]) => file).join(", ")}`);
-}
-
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  if (process.argv.includes("--check")) checkTelemetryCatalogs();
   // Not awaited: the watcher imports this module, which must finish evaluating first.
-  else if (process.argv.includes("--watch")) import("./telemetry-catalog-watch.mjs").then((watcher) => watcher.watchTelemetryCatalogs());
+  if (process.argv.includes("--watch")) import("./telemetry-catalog-watch.mjs").then((watcher) => watcher.watchTelemetryCatalogs());
   else {
     const started = performance.now();
     const written = writeTelemetryCatalogs();

@@ -84,10 +84,8 @@ jobs:
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
-      - name: Verify telemetry catalogs
-        run: |
-          npm run telemetry:check
-          node --test scripts/__tests__/telemetry-route-catalog.test.mjs scripts/__tests__/telemetry-catalogs.test.mjs
+      - name: Test telemetry catalog generation
+        run: node --test scripts/__tests__/telemetry-route-catalog.test.mjs scripts/__tests__/telemetry-catalogs.test.mjs
 
       - name: Verify source-map packing and upload paths
         run: node --test .github/scripts/sdk-sourcemaps.test.mjs .github/scripts/docker-sourcemaps.test.mjs
