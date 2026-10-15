@@ -164,6 +164,19 @@ describe("presentation", () => {
     expect(precedence.manifest.displayName).toBe("MCPJam");
   });
 
+  it("ignores a placeholder display name in the interface block", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({}, { interface: { displayName: "[TODO: Plugin Name]" } })
+    );
+    expect(parsed.manifest.displayName).toBeUndefined();
+    expect(parsed.warnings).toContainEqual(
+      expect.objectContaining({
+        code: "MANIFEST_INVALID_FIELD",
+        message: expect.stringContaining("interface.displayName"),
+      })
+    );
+  });
+
   it("reads the Bits & Bolts Remote package end to end", async () => {
     const parsed = await parsePluginBundle(
       bundle(bitsAndBoltsRemoteFiles()),

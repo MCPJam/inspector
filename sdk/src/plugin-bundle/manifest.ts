@@ -132,7 +132,8 @@ const HANDLED_FIELDS = new Set<string>([
   "author",
   "keywords",
   "extensions",
-  // OpenAI's plugin presentation block. Only its icons are read.
+  // OpenAI's plugin presentation block. Only its display name and icons are
+  // read.
   "interface",
   ...STRING_FIELDS,
   ...URL_FIELDS,
@@ -309,9 +310,10 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * icon `interface.logo` / `logoDark` (light and dark) and
  * `interface.composerIcon` — from the top-level `interface` block and from
  * `extensions["com.openai"].interface` (which wins when both are present).
- * Each icon must be a bundle-relative path to a file in the bundle; anything
- * else is reported and ignored, never fatal, so a plugin with a bad icon
- * still imports. The `com.mcpjam` namespace applies afterwards and overrides
+ * Each icon must be a bundle-relative path to a file in the bundle, and a
+ * display name must not be an unresolved `[TODO: ...]` placeholder; anything
+ * else is reported and ignored, never fatal, so a plugin with bad
+ * presentation still imports. The `com.mcpjam` namespace applies afterwards and overrides
  * `displayName` and `logo`.
  */
 function applyOpenAiInterface(
@@ -330,7 +332,14 @@ function applyOpenAiInterface(
       continue;
     }
     if (typeof value.displayName === "string" && value.displayName.trim()) {
-      manifest.displayName = value.displayName;
+      if (PLACEHOLDER.test(value.displayName)) {
+        issues.warn(
+          "MANIFEST_INVALID_FIELD",
+          `"${label}.displayName" is an unresolved placeholder; ignored`
+        );
+      } else {
+        manifest.displayName = value.displayName;
+      }
     }
     for (const key of OPENAI_INTERFACE_ICON_FIELDS) {
       const ref = value[key];
