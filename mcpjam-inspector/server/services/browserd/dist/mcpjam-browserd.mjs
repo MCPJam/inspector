@@ -11117,8 +11117,32 @@ var EXCLUDED_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
   "singletoncookie",
   "singletonsock"
 ]);
+var PRIVATE_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
+  "login data",
+  "login data for account",
+  "web data",
+  "account web data",
+  "history",
+  "visited links",
+  "top sites",
+  "shortcuts",
+  "network action predictor",
+  "sessions",
+  "extensions",
+  "extension state",
+  "extension rules",
+  "extension scripts",
+  "local extension settings",
+  "sync extension settings",
+  "managed extension settings"
+]);
+var SQLITE_COMPANION_SUFFIX = /-(journal|wal|shm)$/;
+function isExcludedProfileSegment(segment) {
+  const lower = segment.toLowerCase();
+  return EXCLUDED_PROFILE_SEGMENTS.has(lower) || PRIVATE_PROFILE_SEGMENTS.has(lower.replace(SQLITE_COMPANION_SUFFIX, ""));
+}
 function isExcludedProfilePath(path) {
-  return path.split(/[\\/]+/).some((segment) => EXCLUDED_PROFILE_SEGMENTS.has(segment.toLowerCase()));
+  return path.split(/[\\/]+/).some(isExcludedProfileSegment);
 }
 function assertSafeArchivePath(path) {
   const normalized = path.replaceAll("\\", "/");

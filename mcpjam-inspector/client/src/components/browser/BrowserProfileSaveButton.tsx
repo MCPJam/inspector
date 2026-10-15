@@ -5,6 +5,13 @@ import { toast } from "@/lib/toast";
 import { saveBrowserProfile } from "@/lib/browser-profiles/client";
 import { useBrowserProfileArchivesAvailable } from "@/lib/browser-profiles/availability";
 
+// The archive carries live cookies, so the user decides with that in view.
+// What it leaves out mirrors the exclusions in browserd's profile-archive.ts.
+const SAVE_PROFILE_PROMPT = [
+  "Name this browser profile.",
+  "It keeps you signed in to the sites this browser visited, so any chat that uses it acts as you on those sites. Saved passwords, autofill and history are left out. The profile stays stored until you delete it in Settings.",
+].join("\n\n");
+
 export interface BrowserProfileArchiveResult {
   archive: Blob;
   savedFrom?: string;
@@ -24,7 +31,7 @@ export function BrowserProfileSaveButton({
   const available = useBrowserProfileArchivesAvailable();
 
   const onSave = async () => {
-    const name = window.prompt("Name this browser profile", "My browser");
+    const name = window.prompt(SAVE_PROFILE_PROMPT, "My browser");
     if (!name?.trim()) return;
     setSaving(true);
     try {

@@ -10,6 +10,28 @@ import {
 
 const temporaryDirectories: string[] = [];
 
+// Reads the archive itself rather than an import of it: import applies the
+// same exclusions, so a round-trip would pass even if the files were shipped.
+function tarEntryNames(tarball: Buffer): string[] {
+  const names: string[] = [];
+  let offset = 0;
+  while (offset + 512 <= tarball.byteLength) {
+    const header = tarball.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const field = (start: number, length: number) =>
+      header
+        .subarray(start, start + length)
+        .toString("utf8")
+        .replace(/\0.*$/, "");
+    const prefix = field(345, 155);
+    const name = field(0, 100);
+    names.push(prefix ? `${prefix}/${name}` : name);
+    const size = Number.parseInt(field(124, 12), 8);
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  return names;
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories
@@ -42,6 +64,56 @@ describe("browser profile archives", () => {
       readFile(join(target, "Default", "Cache", "discarded")),
     ).rejects.toThrow();
     await expect(readFile(join(target, "SingletonLock"))).rejects.toThrow();
+  });
+
+  it("leaves passwords, autofill, history and extensions out of the archive but keeps cookies", async () => {
+    const source = await mkdtemp(join(tmpdir(), "mcpjam-profile-private-"));
+    temporaryDirectories.push(source);
+    const profile = join(source, "Default");
+    await mkdir(join(profile, "Local Storage", "leveldb"), { recursive: true });
+    await mkdir(join(profile, "Extensions", "abc"), { recursive: true });
+    await mkdir(join(profile, "Local Extension Settings", "abc"), {
+      recursive: true,
+    });
+    await mkdir(join(profile, "Sessions"), { recursive: true });
+    const kept = [
+      "Cookies",
+      "Cookies-journal",
+      "Preferences",
+      "Local Storage/leveldb/000003.log",
+    ];
+    const dropped = [
+      "Login Data",
+      "Login Data-journal",
+      "Login Data For Account",
+      "Login Data For Account-wal",
+      "Web Data",
+      "Web Data-journal",
+      "Account Web Data",
+      "History",
+      "History-journal",
+      "Visited Links",
+      "Top Sites",
+      "Shortcuts",
+      "Network Action Predictor",
+      "Sessions/Session_1",
+      "Extensions/abc/manifest.json",
+      "Local Extension Settings/abc/000003.log",
+    ];
+    for (const path of [...kept, ...dropped]) {
+      await writeFile(join(profile, ...path.split("/")), path);
+    }
+
+    const archived = tarEntryNames(
+      gunzipSync(await exportBrowserProfileArchive(source)),
+    );
+
+    for (const path of kept) expect(archived).toContain(`Default/${path}`);
+    for (const path of dropped) {
+      expect(archived).not.toContain(`Default/${path}`);
+    }
+    expect(archived).not.toContain("Default/Extensions");
+    expect(archived).not.toContain("Default/Sessions");
   });
 
   it("refuses a gzip bomb without allocating its expansion", async () => {

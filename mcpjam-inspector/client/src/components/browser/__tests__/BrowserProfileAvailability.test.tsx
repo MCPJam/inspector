@@ -81,3 +81,21 @@ describe("saved browser profiles on a server that cannot save or load them", () 
     expect(screen.queryByTestId("browser-profiles-unavailable")).toBeNull();
   });
 });
+
+describe("saving a browser profile", () => {
+  beforeEach(() => {
+    availability.available = true;
+  });
+
+  it("warns that the profile keeps signed-in sessions before saving", async () => {
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
+
+    await userEvent.click(renderSave());
+
+    expect(prompt).toHaveBeenCalledOnce();
+    const [message] = prompt.mock.calls[0];
+    expect(message).toMatch(/keeps you signed in to the sites/);
+    expect(message).toMatch(/passwords, autofill and history are left out/);
+    prompt.mockRestore();
+  });
+});
