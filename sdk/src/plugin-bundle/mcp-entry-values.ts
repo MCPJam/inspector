@@ -22,8 +22,13 @@ export function isLoopbackHost(hostname: string): boolean {
   return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(hostname);
 }
 
-/** Userinfo, a fragment (even `https:@h/#`) or anything `URL` would rewrite. */
+/**
+ * Userinfo, a fragment (even `https:@h/#`) or anything `URL` would rewrite,
+ * including a host that does not follow exactly two slashes (`https:h`,
+ * `https:/h`, `https:///h` all read as `https://h`).
+ */
 export const isUnsafeRawUrl = (raw: string): boolean =>
+  !/^[^:/?#]+:\/\/[^\\/?#]/.test(raw) ||
   /^[^:]*:[\\/]*[^\\/?#]*@|[#\\\s]/.test(raw) ||
   [...raw].some((char) => char < " " || char === "\u007f");
 

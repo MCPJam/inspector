@@ -346,6 +346,18 @@ describe("invalid declarations skip only their entry", () => {
       { type: "oauth", tokenUrl: "https:@a.example.com/t" },
     ],
     [
+      "an endpoint with no slashes after the scheme",
+      { type: "oauth", tokenUrl: "https:a.example.com/t" },
+    ],
+    [
+      "an endpoint with one slash after the scheme",
+      { type: "oauth", tokenUrl: "https:/a.example.com/t" },
+    ],
+    [
+      "an endpoint with three slashes after the scheme",
+      { type: "oauth", resource: "https:///a.example.com/mcp" },
+    ],
+    [
       "an endpoint with an empty fragment",
       { type: "oauth", tokenUrl: "https://a.example.com/t#" },
     ],

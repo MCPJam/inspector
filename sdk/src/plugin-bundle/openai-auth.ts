@@ -163,7 +163,7 @@ function readEndpoint(field: string, value: unknown, ctx: ReadContext): string {
   ) {
     // Not echoed: an endpoint with userinfo carries a credential.
     throw new InvalidAuth(
-      `auth.${field} must be an absolute HTTPS (or loopback HTTP) URL without credentials, a fragment, whitespace or backslashes`
+      `auth.${field} must be an absolute https:// URL (or a loopback http:// one) without credentials, a fragment, whitespace or backslashes`
     );
   }
   if (url.protocol === "http:") {
