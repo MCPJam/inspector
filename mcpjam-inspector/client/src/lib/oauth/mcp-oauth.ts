@@ -2747,10 +2747,8 @@ export async function initiateOAuth(
       registrationMode: requestedRegistrationMode,
       registrationStrategy,
     });
-    // This redirect-recovery record contains public OAuth metadata only.
-    // Custom headers and client credentials may contain secrets and must be
-    // recovered from their protected sources instead of browser storage.
-    writeStoredOAuthConfig(options.serverName, oauthConfig);
+    // Initiation replaces stale settings; only partial updates merge them.
+    localStorage.setItem(`mcp-oauth-config-${options.serverName}`, serializeStoredOAuthConfig(oauthConfig));
 
     // Store custom client id if provided, so it can be retrieved during callback.
     // Client secrets are stored in the encrypted backend server-secret table.
@@ -3583,7 +3581,7 @@ export async function handleOAuthCallback(
       }
       oauthConfig = {
         ...oauthConfig,
-        customHeaders: await recoverLocalOAuthHeaders(serverName, serverUrl, oauthConfig),
+        customHeaders: HOSTED_MODE ? undefined : await recoverLocalOAuthHeaders(serverName, serverUrl, oauthConfig),
       };
       // Get stored client credentials if any
       const storedClientInfo = readStoredClientInformation(serverName);

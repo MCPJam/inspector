@@ -1169,6 +1169,7 @@ describe("mcp-oauth", () => {
         "redirectToAuthorization"
       ).mockResolvedValue(undefined);
 
+      localStorage.setItem("mcp-oauth-config-hosted", JSON.stringify({ scopes: ["old-scope"], resourceUrl: "https://example.com/old" }));
       const result = await oauthModule.initiateOAuth({
         serverName: "hosted",
         serverUrl: "https://example.com/mcp",
@@ -1198,6 +1199,9 @@ describe("mcp-oauth", () => {
           )
         )
       ).toMatchObject({ hasCustomHeaders: true });
+      const stored = JSON.parse(localStorage.getItem("mcp-oauth-config-hosted") ?? "{}");
+      expect(stored.scopes).toBeUndefined();
+      expect(stored.resourceUrl).toBe("https://example.com");
       for (let i = 0; i < localStorage.length; i += 1) {
         const key = localStorage.key(i);
         expect(key ? localStorage.getItem(key) : "").not.toContain(
