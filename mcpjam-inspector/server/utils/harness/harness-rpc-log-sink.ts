@@ -19,6 +19,7 @@ import {
   truncateRpcPayload,
   type TruncatedRpcPayload,
 } from "../../../shared/rpc-log-truncation.js";
+import { getServiceCredential } from "../../services/service-credential.js";
 
 /** Stable per-PROCESS id. The reader excludes its own instance so bus-delivered
  *  (same-instance) frames aren't also pulled from Convex — the dedup that lets
@@ -57,7 +58,7 @@ function convexBase(): string | null {
   return process.env.CONVEX_HTTP_URL?.trim() || null;
 }
 function serviceToken(): string | null {
-  return process.env.INSPECTOR_SERVICE_TOKEN?.trim() || null;
+  return getServiceCredential();
 }
 
 /** The sink only operates when this inspector can reach Convex with the service

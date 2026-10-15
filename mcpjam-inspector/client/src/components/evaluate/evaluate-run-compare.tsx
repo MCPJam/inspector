@@ -10,7 +10,7 @@ import { evalSurfaceRowHoverClass } from "../evals/eval-surface-chrome";
 import { formatRelativeTime, formatRunId } from "../evals/helpers";
 import { RunContextChip } from "../evals/run-context-chip";
 import { toPercent } from "../evals/suite-overview-presentation";
-import type { EvalSuiteRun } from "../evals/types";
+import type { EvalSuiteRunListItem } from "../evals/types";
 
 export function EvaluateRunCompare({
   thisRun,
@@ -20,8 +20,8 @@ export function EvaluateRunCompare({
   onSelect,
   onCancel,
 }: {
-  thisRun: EvalSuiteRun;
-  otherRuns: readonly EvalSuiteRun[];
+  thisRun: EvalSuiteRunListItem;
+  otherRuns: readonly EvalSuiteRunListItem[];
   defaultOtherRunId: string | null;
   hostNamesById: Map<string, string | null>;
   onSelect: (baseRunId: string) => void;
@@ -62,9 +62,7 @@ export function EvaluateRunCompare({
           {otherRuns.map((run) => {
             const selected = run._id === selectedId;
             const passRate = run.summary?.passRate;
-            const when = formatRelativeTime(
-              run.completedAt ?? run.createdAt,
-            );
+            const when = formatRelativeTime(run.completedAt ?? run.createdAt);
             return (
               <li key={run._id}>
                 <button
@@ -102,12 +100,7 @@ export function EvaluateRunCompare({
       )}
 
       <div className="flex items-center justify-end gap-2 border-t border-border/30 px-5 py-3">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onCancel}
-        >
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
           Cancel
         </Button>
         <Button

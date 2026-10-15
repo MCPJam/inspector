@@ -88,11 +88,23 @@ vi.mock("@/components/computer/ComputerStatusChip", () => ({
   ComputerStatusChip: () => <div data-testid="computer-status-chip" />,
 }));
 
-vi.mock("@/components/computer/ComputerTerminalPane", () => ({
-  ComputerTerminalPane: ({ cwd }: { cwd?: string }) => (
-    <div data-testid="cloud-terminal-pane" data-cwd={cwd ?? ""} />
-  ),
-}));
+vi.mock("@/components/computer/ComputerTerminalPane", async () => {
+  const { useState } = await import("react");
+  return {
+    // Like the real pane, cwd only applies at CONNECT time: `data-connected-cwd`
+    // is the dir the terminal opened in, which only a remount can change.
+    ComputerTerminalPane: ({ cwd }: { cwd?: string }) => {
+      const [connectedCwd] = useState(cwd ?? "");
+      return (
+        <div
+          data-testid="cloud-terminal-pane"
+          data-cwd={cwd ?? ""}
+          data-connected-cwd={connectedCwd}
+        />
+      );
+    },
+  };
+});
 
 // The bare terminal the LOCAL body mounts (xterm won't run under jsdom).
 vi.mock("@/components/computer/ComputerTerminal", () => ({
@@ -274,7 +286,7 @@ describe("PlaygroundRightRail — cloud engine body", () => {
   });
 });
 
-describe("PlaygroundRightRail — which machine ran the turn", () => {
+describe("PlaygroundRightRail — harness hosts and the Shell", () => {
   const harnessHost = {
     harness: "claude-code",
     computer: { workdir: "/home/user" },
@@ -290,31 +302,14 @@ describe("PlaygroundRightRail — which machine ran the turn", () => {
       />,
     );
 
-  it("opens the terminal in the streamed workdir when the turn ran on the personal computer", () => {
+  it("offers no Shell for a harness host: it runs on a throwaway box, not the personal computer", () => {
+    // Even with the machine flag on and a computer in the saved config.
     harnessStream.workdir = "/home/user/claude-code-abc";
     renderHarnessRail();
-    expect(screen.getByTestId("cloud-terminal-pane")).toHaveAttribute(
-      "data-cwd",
-      "/home/user/claude-code-abc",
-    );
-    expect(
-      screen.queryByTestId("shell-rail-disposable-notice"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("says the last turn ran on a disposable computer, and does not point this terminal at a path from the other machine", () => {
-    harnessStream.workdir = "/home/user/claude-code-abc";
-    harnessStream.disposable = true;
-    renderHarnessRail();
-    expect(
-      screen.getByTestId("shell-rail-disposable-notice"),
-    ).toHaveTextContent(/disposable computer/i);
-    expect(screen.getByTestId("cloud-terminal-pane")).toHaveAttribute(
-      "data-cwd",
-      "",
-    );
-    // Asked about the conversation on screen, not about the host.
-    expect(harnessStream.askedFor.at(-1)).toBe("chat-1");
+    expect(screen.getByTestId("logger-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("cloud-terminal-pane")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("rail-engine-chip")).not.toBeInTheDocument();
+    expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
   });
 
   it("says nothing on a host that runs no harness", () => {

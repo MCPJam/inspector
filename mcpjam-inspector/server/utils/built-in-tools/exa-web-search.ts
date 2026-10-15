@@ -21,6 +21,7 @@ import {
 } from "@/shared/mcpjam-agent-model";
 import type { FailureCapture, FailureFacts } from "../agent-failure-capture.js";
 import { reportRouteFailure } from "../route-error-report.js";
+import { getServiceCredential } from "../../services/service-credential.js";
 
 export const WEB_SEARCH_TOOL_NAME = "web_search";
 
@@ -219,7 +220,7 @@ export function buildExaWebSearchTool(
       // own login — but hosted keeps sending it for the checks that do read
       // it. Self-hosted installs have none, and send the claim without it.
       const serviceToken = opts.billingFeature
-        ? process.env.INSPECTOR_SERVICE_TOKEN?.trim() || undefined
+        ? (getServiceCredential() ?? undefined)
         : undefined;
 
       const search = async (): Promise<ExaWebSearchToolResult> => {

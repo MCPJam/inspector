@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -625,6 +625,58 @@ test("an explicit --timeout still beats the per-command default", () => {
 test("the per-command default beats the program's own commander default", () => {
   const leaf = programWithTimeout(["send"]);
   assert.equal(getGlobalOptions(leaf, 300_000).timeout, 300_000);
+});
+
+test("a hosted eval request gets longer than the 30s probe default", async () => {
+  // The number itself is not the point; inheriting the program's 30s is. That
+  // default was written for one MCP probe against a local server, and a hosted
+  // eval call is several round trips bounded by someone else's server. CI hit
+  // it on `eval run --file` and failed with a bare TIMEOUT.
+  const source = await readFile(
+    new URL("../src/commands/eval.ts", import.meta.url),
+    "utf8",
+  );
+  const declared = /const EVAL_REQUEST_TIMEOUT_MS = ([0-9_]+);/.exec(source);
+  assert.ok(declared, "eval.ts must declare EVAL_REQUEST_TIMEOUT_MS");
+  assert.ok(
+    Number(declared[1].replace(/_/g, "")) > 30_000,
+    "the hosted-eval default must exceed the program's probe default",
+  );
+  // Every hosted eval command must route through the helper. A
+  // declared-but-unused constant would leave them all on 30s while reading as
+  // fixed, which is how this shipped broken the first time.
+  assert.ok(
+    source.includes(
+      "return getGlobalOptions(command, EVAL_REQUEST_TIMEOUT_MS);",
+    ),
+    "evalGlobalOptions must apply the hosted-eval default",
+  );
+  assert.ok(
+    (source.match(/evalGlobalOptions\(command\)/g)?.length ?? 0) > 10,
+    "the eval commands must use the helper",
+  );
+  // No subcommand may reach for the probe default by writing the obvious
+  // thing. The helper's own body is the single permitted mention.
+  assert.equal(source.match(/getGlobalOptions\(command/g)?.length, 1);
+
+  // A scan of THIS file cannot see a default re-read in another one, which is
+  // how `eval list` kept the 30s default through `runCloudOp` even after the
+  // helper landed. Every delegating helper must be handed the default too.
+  assert.ok(
+    /runCloudOp\([^;]*defaultTimeoutMs: EVAL_REQUEST_TIMEOUT_MS/s.test(source),
+    "runCloudOp calls must pass the hosted-eval default",
+  );
+});
+
+test("runCloudOp honours a per-command default, and an explicit flag still wins", () => {
+  // `runCloudOp` resolves the global options a SECOND time, independently of
+  // whatever its caller computed. Before it accepted a default, a command that
+  // had raised its own timeout silently got 30s here.
+  assert.equal(getGlobalOptions(timeoutCommand([]), 120_000).timeout, 120_000);
+  assert.equal(
+    getGlobalOptions(timeoutCommand(["--timeout", "5000"]), 120_000).timeout,
+    5_000,
+  );
 });
 
 test("the program default still applies when a command asks for none", () => {

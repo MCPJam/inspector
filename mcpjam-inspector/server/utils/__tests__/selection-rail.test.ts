@@ -28,10 +28,13 @@ import {
 import {
   decideTurnRail,
   forwardableSelection,
+  harnessTurnRail,
   readRoutingSelection,
   readSelectionOrigin,
   readStoredLegacySelection,
   routingSelectionForModel,
+  resolveChatSelection,
+  streamSelectionFields,
   todayTurnRail,
   withSelectionRouting,
 } from "../selection-rail.js";
@@ -286,5 +289,154 @@ describe("withSelectionRouting / forwardableSelection", () => {
     expect(forwardableSelection(all.local)).toBeUndefined();
     expect(forwardableSelection(all.legacy)).toBeUndefined();
     expect(forwardableSelection(undefined)).toBeUndefined();
+  });
+});
+
+describe("harnessTurnRail — one decision for both chat routes", () => {
+  const orgSel = selections("anthropic/claude-sonnet-4.5").org;
+  const anthropicRow = {
+    id: "claude-sonnet-4-5",
+    provider: "anthropic",
+    hosted: false,
+  };
+  const rail = (
+    harness: string | undefined,
+    overrides: Partial<Parameters<typeof harnessTurnRail>[0]> = {},
+  ) =>
+    harnessTurnRail({
+      harness,
+      model: anthropicRow,
+      selection: orgSel,
+      mcpjamProvided: false,
+      stepUpResume: false,
+      ...overrides,
+    });
+
+  it("an org connection on the harness's vendor runs the harness on the org's key", () => {
+    expect(rail("claude-code")).toEqual({
+      externalAccount: false,
+      orgSelection: orgSel,
+      orgStepUpResume: false,
+      usesFreePath: true,
+      modelSource: "byok",
+    });
+  });
+
+  it("a step-up resume on that turn leaves the free path and stays the org's spend", () => {
+    expect(rail("claude-code", { stepUpResume: true })).toMatchObject({
+      orgStepUpResume: true,
+      usesFreePath: false,
+      modelSource: "byok",
+    });
+  });
+
+  it("an org connection on another vendor is not an org-key harness turn", () => {
+    expect(rail("codex")).toMatchObject({
+      orgSelection: undefined,
+      usesFreePath: false,
+      modelSource: "mcpjam",
+    });
+  });
+
+  it("an org selection without an org connection is not narrowed", () => {
+    const { connectionRef: _dropped, ...unbound } = orgSel;
+    expect(
+      rail("claude-code", { selection: unbound as RequestedModelSelection }),
+    ).toMatchObject({ orgSelection: undefined, modelSource: "mcpjam" });
+  });
+
+  it("an external-account harness pays on the customer's account, whatever the selection", () => {
+    expect(rail("cursor")).toEqual({
+      externalAccount: true,
+      orgSelection: undefined,
+      orgStepUpResume: false,
+      usesFreePath: true,
+      modelSource: "external-account",
+    });
+  });
+
+  it("without a harness only an MCPJam-provided model takes the free path", () => {
+    expect(rail(undefined).usesFreePath).toBe(false);
+    expect(rail(undefined, { mcpjamProvided: true })).toMatchObject({
+      usesFreePath: true,
+      modelSource: "mcpjam",
+    });
+  });
+});
+
+
+describe("explicit chat selections", () => {
+  const model = { id: "openai/gpt-5-mini", provider: "openai" };
+  const inherited = selections(model.id).org;
+  const resolve = (raw: unknown, overrides = {}) => resolveChatSelection({
+    raw, inherited, model, hostWins: false, allowLocal: true, ...overrides,
+  });
+  it.each([undefined, null])("preserves absent-selection compatibility: %s", (raw) => {
+    expect(resolve(raw)).toEqual({ ok: true, selection: inherited });
+  });
+  it.each([{}, false, "openai/gpt-5-mini", { ...inherited, apiKey: "forbidden" },
+    { ...inherited, modelId: "other/model" }])("refuses explicit invalid/mismatched input: %j", (raw) => {
+    expect(resolve(raw).ok).toBe(false);
+  });
+  it("a scenario ignores even malformed visitor input", () => {
+    expect(resolve({}, { hostWins: true })).toEqual({ ok: true, selection: inherited });
+  });
+  it.each(["local", "legacy"] as const)("web refuses explicit %s, MCP retains it", (source) => {
+    const raw = source === "local"
+      ? { ...selections(model.id).local, connectionRef: { kind: "localProvider", providerKey: "openai" } }
+      : selections(model.id).legacy;
+    expect(resolve(raw, { allowLocal: false }).ok).toBe(false);
+    expect(resolve(raw)).toEqual({ ok: true, selection: raw, requestSelection: raw });
+  });
+  it("the explicit object overrides the host without rebinding its connection", () => {
+    const raw = { ...inherited, connectionRef: { kind: "orgProvider", id: "other" } };
+    expect(resolve(raw)).toEqual({ ok: true, selection: raw, requestSelection: raw });
+  });
+});
+
+describe("native selection identity and stream fields", () => {
+  const org = (modelId: string, nativeModelId?: string): RequestedModelSelection => ({
+    modelId, source: "org", connectionRef: { kind: "orgProvider", id: "conn-1" },
+    ...(nativeModelId ? { nativeModelId } : {}), fallback: none,
+  });
+  it.each([
+    ["anthropic/claude-sonnet-4.5", "claude-sonnet-4-5", "anthropic"],
+    ["ollama/llama3", "llama3", "ollama"],
+    ["custom/my-model", "deployment", "custom"],
+    ["azure/my-deployment", "my-deployment", "azure"],
+  ])("matches %s by its native id and preserves the canonical selection", (canonical, native, provider) => {
+    const selection = org(canonical, native);
+    expect(routingSelectionForModel(selection, { id: native, provider })).toBe(selection);
+    expect(streamSelectionFields(selection, { id: native, provider }, "/stream/org")).toEqual({
+      model: native, modelSelection: selection, nativeModelId: undefined,
+    });
+  });
+  it("refuses contradictory provider, native id and connection evidence", () => {
+    const selection = org("anthropic/claude-sonnet-4.5", "claude-sonnet-4-5");
+    for (const model of [
+      { id: "claude-sonnet-4-5", provider: "openai" },
+      { id: selection.modelId, nativeModelId: "other" },
+      { id: selection.modelId, orgProvider: { providerKey: "anthropic", id: "other" } },
+    ]) expect(routingSelectionForModel(selection, model)).toBeUndefined();
+  });
+  it("refuses a different custom connection even when model ids match", () => {
+    const selection = {
+      ...selections("custom/my-model").local,
+      connectionRef: { kind: "localProvider" as const, providerKey: "custom", customProviderName: "selected" },
+    };
+    expect(routingSelectionForModel(selection, { id: selection.modelId, provider: "custom", customProviderName: "other" })).toBeUndefined();
+  });
+  it("does not use a native alias to replace another canonical row", () => {
+    const selection = org("anthropic/selected", "anthropic/other");
+    expect(routingSelectionForModel(selection, { id: "anthropic/other", provider: "anthropic" })).toBeUndefined();
+  });
+  it("normalizes a hosted alias and keeps no-fallback, refusing a source mismatch", () => {
+    const selection = selections("openai/gpt-5-mini").hosted;
+    expect(streamSelectionFields(selection, { id: "gpt-5-mini", provider: "openai" }, "/stream")).toEqual({
+      model: selection.modelId, modelSelection: selection, nativeModelId: undefined,
+    });
+    expect(() => streamSelectionFields(selection, { id: selection.modelId }, "/stream/org")).toThrow();
+    expect(() => streamSelectionFields(selection, { id: "other/model" }, "/stream")).toThrow();
+    expect(() => streamSelectionFields(selections(selection.modelId).local, { id: selection.modelId }, "/stream")).toThrow();
   });
 });

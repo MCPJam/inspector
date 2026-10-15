@@ -19,7 +19,16 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { JourneyRunCostEstimateHint } from "@/components/evals/run-cost-estimate-hint";
-import { JudgesSection } from "@/components/evals/judges-section";
+import {
+  aiLaunchRefusalOf,
+  type AiLaunchProblem,
+} from "@/lib/ai-launch-problems";
+import { AiLaunchProblemsList } from "@/components/shared/ai-launch-problems-list";
+import {
+  JUDGE_CREDITS_COST_NOTE,
+  JUDGE_ORG_PROVIDER_COST_NOTE,
+  JudgesSection,
+} from "@/components/evals/judges-section";
 import { areAllChecksValid } from "@/components/evals/checks-section";
 import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
 import { useAvailableModels } from "@/hooks/use-available-models";
@@ -281,6 +290,9 @@ function JourneyBlock({
 
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  // The org's AI key policy refused the launch: every dependency that can't
+  // run on the organization's providers, listed together.
+  const [launchProblems, setLaunchProblems] = useState<AiLaunchProblem[]>([]);
   const runSessions = useRunSessionsContext();
 
   const typedRuns = runs as JourneyRun[];
@@ -341,6 +353,7 @@ function JourneyBlock({
   const onRun = async () => {
     if (launching) return;
     setLaunchError(null);
+    setLaunchProblems([]);
     setLaunching(true);
     try {
       const result = await onLaunch(journey._id);
@@ -351,7 +364,15 @@ function JourneyBlock({
       // plus the actions that clear it. Repeating it inline under the goal
       // would say the same thing twice with nothing to act on.
       if (e instanceof LaunchJourneyRunError && e.limitDialogRaised) return;
-      setLaunchError(e instanceof Error ? e.message : "Failed to start run");
+      // A refusal under the organization's AI key policy. Until swarms run
+      // on organization keys, the simulated user arrives here as
+      // `org_runtime_unsupported`, whose reason names no fix.
+      const refusal = aiLaunchRefusalOf(e);
+      setLaunchProblems(refusal?.problems ?? []);
+      setLaunchError(
+        refusal?.message ??
+          (e instanceof Error ? e.message : "Failed to start run"),
+      );
     } finally {
       setLaunching(false);
     }
@@ -452,9 +473,10 @@ function JourneyBlock({
       </div>
 
       {launchError ? (
-        <p className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-600 dark:text-red-400">
-          {launchError}
-        </p>
+        <div className="mt-2 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+          <p>{launchError}</p>
+          <AiLaunchProblemsList problems={launchProblems} />
+        </div>
       ) : null}
 
       {/* One result cell per execution TARGET (env or host) — latest outcome +
@@ -600,9 +622,12 @@ function JourneyGradingEditor({
   projectId: string;
 }) {
   const updateJourney = useMutation("journeys:updateJourney" as any);
-  const { availableModels, modelSelectionsSupported } = useAvailableModels({
-    projectId,
-  });
+  const {
+    availableModels,
+    modelSelectionsSupported,
+    requireOrgKeys,
+    onManageOrgProviders,
+  } = useAvailableModels({ projectId });
   const [open, setOpen] = useState(false);
   const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
   const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
@@ -685,7 +710,13 @@ function JourneyGradingEditor({
             onChange={setJudgeConfig}
             availableModels={availableModels}
             saveModelSelections={modelSelectionsSupported}
-            bareAutoGradeBlurb="The goal completion judge grades every session against this goal, and its verdict decides whether the session passed. Uses credits."
+            bareAutoGradeBlurb={`Describe the goal each session should complete. ${
+              requireOrgKeys
+                ? JUDGE_ORG_PROVIDER_COST_NOTE
+                : JUDGE_CREDITS_COST_NOTE
+            }`}
+            requireOrgKeys={requireOrgKeys}
+            onManageOrgProviders={onManageOrgProviders}
             bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
           />
           <div className="mt-3 border-t border-border/40 pt-3">

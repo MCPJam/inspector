@@ -124,6 +124,21 @@ describe("resolveElicitationGate", () => {
   const ON = { elicitation: {} };
   const OFF = { roots: {} };
 
+  it("stays off on a server without the service credential (hosted-only)", () => {
+    const args = {
+      hostAuthoritative: false,
+      hostClientCapabilities: undefined,
+      bodyClientCapabilities: ON,
+      clientVersion: 1,
+    };
+    expect(
+      resolveElicitationGate({ ...args, serviceCredentialAvailable: false })
+        .enabled,
+    ).toBe(false);
+    process.env.INSPECTOR_SERVICE_TOKEN = "";
+    expect(resolveElicitationGate(args).enabled).toBe(false);
+  });
+
   it("enables a direct turn from the body when the client speaks v1", () => {
     const gate = resolveElicitationGate({
       hostAuthoritative: false,

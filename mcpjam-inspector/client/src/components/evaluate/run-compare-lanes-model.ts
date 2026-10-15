@@ -24,7 +24,7 @@ import {
   formatDurationMs,
 } from "../evals/metric-strip-data";
 import type { RunMetrics, RunMetricsByRun } from "../evals/run-metrics";
-import type { EvalSuite, EvalSuiteRun } from "../evals/types";
+import type { EvalSuite, EvalSuiteRunListItem } from "../evals/types";
 import { launchRuns } from "./run-results-matrix-model";
 import {
   deltaOf,
@@ -53,7 +53,7 @@ export type RunCompareCell = {
 
 export type RunCompareRow = {
   runId: string;
-  run: EvalSuiteRun;
+  run: EvalSuiteRunListItem;
   /** `"#12"`. */
   label: string;
   createdAt: number;
@@ -79,7 +79,7 @@ export type RunCompareRow = {
 export type RunCompareLane = {
   key: string;
   /** The lane's newest run — feed it to `RunContextChip` for the visible label. */
-  run: EvalSuiteRun;
+  run: EvalSuiteRunListItem;
   /** `RunContextChip`'s `modelSuffix` for {@link run}: only what differs. */
   modelSuffix: string;
   /** Screen-reader label only; the visible one is the chip. */
@@ -136,17 +136,20 @@ export function resolveSuitePassThreshold(
  * or for a non-default selection its `targetKey`, so Sonnet at Low and at
  * High are two lanes.
  */
-export function runCompareLaneKey(run: EvalSuiteRun): string {
+export function runCompareLaneKey(run: EvalSuiteRunListItem): string {
   return run.configSnapshot?.environmentRef
     ? runContextKey(run)
     : pairingKey(run);
 }
 
-function runModelId(run: EvalSuiteRun): string | null {
+function runModelId(run: EvalSuiteRunListItem): string | null {
   return run.effectiveModelId ?? run.client?.modelId ?? null;
 }
 
-function runModelTail(run: EvalSuiteRun, modelSuffix = ""): string | null {
+function runModelTail(
+  run: EvalSuiteRunListItem,
+  modelSuffix = "",
+): string | null {
   const modelId = runModelId(run);
   return modelId ? `${compactModelIdTail(modelId)}${modelSuffix}` : null;
 }
@@ -156,7 +159,7 @@ function runModelTail(run: EvalSuiteRun, modelSuffix = ""): string | null {
  * selection; `""` for a lone or default target.
  */
 function runModelSuffix(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   siblingKeys: readonly string[],
 ): string {
   const key = runTargetKey(run);
@@ -164,7 +167,7 @@ function runModelSuffix(
 }
 
 function laneLabel(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   hostNamesById: ReadonlyMap<string, string | null> | undefined,
   modelSuffix = "",
 ): string {
@@ -173,16 +176,16 @@ function laneLabel(
   return tail ? `${name} · ${tail}` : name;
 }
 
-function runLabel(run: EvalSuiteRun): string {
+function runLabel(run: EvalSuiteRunListItem): string {
   return run.runNumber != null ? `#${run.runNumber}` : run._id.slice(0, 8);
 }
 
 /** `grading` is still happening — treating it as settled reports a verdict that does not exist. */
-function isSettled(run: EvalSuiteRun): boolean {
+function isSettled(run: EvalSuiteRunListItem): boolean {
   return !["pending", "running", "grading"].includes(run.status);
 }
 
-function runCompareStatus(run: EvalSuiteRun): RunCompareStatus {
+function runCompareStatus(run: EvalSuiteRunListItem): RunCompareStatus {
   if (!isSettled(run)) return "running";
   const result = run.result;
   if (result === "passed" || result === "failed" || result === "inconclusive")
@@ -214,7 +217,7 @@ function runCompareStatus(run: EvalSuiteRun): RunCompareStatus {
  *   - `cancelled` / `timed_out` — the summary is partial. Work a run never
  *     finished can neither clear a bar nor miss it.
  */
-function isDecided(run: EvalSuiteRun): boolean {
+function isDecided(run: EvalSuiteRunListItem): boolean {
   if (!isSettled(run)) return false;
   const status = runCompareStatus(run);
   return (
@@ -246,7 +249,7 @@ type RowMeasurements = {
 };
 
 function measureRun(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   runMetrics: RunMetrics | undefined,
 ): RowMeasurements {
   const settled = isSettled(run);
@@ -298,8 +301,8 @@ export function buildRunCompareLanes({
   hostNamesById,
   passThreshold,
 }: {
-  currentRun: EvalSuiteRun;
-  runs: readonly EvalSuiteRun[];
+  currentRun: EvalSuiteRunListItem;
+  runs: readonly EvalSuiteRunListItem[];
   /** One metrics object per run — see `evals/run-metrics.ts`. */
   metricsByRun: RunMetricsByRun;
   hostNamesById?: ReadonlyMap<string, string | null>;
@@ -312,7 +315,7 @@ export function buildRunCompareLanes({
     launchRuns(currentRun, all).map((run) => run._id),
   );
 
-  const grouped = new Map<string, EvalSuiteRun[]>();
+  const grouped = new Map<string, EvalSuiteRunListItem[]>();
   for (const run of all) {
     const key = runCompareLaneKey(run);
     const bucket = grouped.get(key);

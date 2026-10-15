@@ -387,7 +387,7 @@ drafts are stable across retries when they are not.
 | Endpoint | What it does |
 | --- | --- |
 | `GET .../goals/{goalId}/runs` | That goal's runs, newest first |
-| `POST .../goals/{goalId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key` |
+| `POST .../goals/{goalId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key`. Optional `expectedSponsored` is how many conversations you expect MCPJam to sponsor; a different actual split is a `409` (`details.code: swarm_funding_changed`) and nothing is created. The response can report `funding` (`sponsored`, `credits`, `total`) |
 | `GET .../goal-runs/{runId}` | The full run: counts, per-target breakdown, per-session `attempts` |
 | `GET .../goal-runs/{runId}/sessions` | The chat sessions the run produced (summaries, not transcripts) |
 | `POST .../goal-runs/{runId}/cancel` | Stop a run. Idempotent — a second cancel is `200` with `alreadyCanceled: true`, not a `409` |

@@ -5,7 +5,8 @@
 //   "WRITE <path>"     -> tool_use Write {file_path, content}
 //   "COUNT"            -> text: number of user turns seen in this request (continuity probe)
 //   "BGAGENT"          -> tool_use Agent {run_in_background: true} with a "BGSUB" prompt
-//   "BGSUB …"          -> text: the background subagent's own answer
+//   "BGSUB …"          -> tool_use Bash: the background subagent's one step
+//                         (its tool result then ends it, like any other)
 //   "<task-notification>" (a background task reported back) -> text: BGREPORT
 //   "BGSHELL <cmd>"    -> tool_use Bash {command, run_in_background: true}
 //   anything else      -> text echo
@@ -180,7 +181,7 @@ const server = http.createServer((req, res) => {
         return sse(res, textEvents(id, "BGREPORT: the background agent reported back", inputTokens));
       }
       if (t.includes("BGSUB")) {
-        return sse(res, textEvents(id, "SUBAGENT PLAN READY", inputTokens));
+        return sse(res, toolEvents(id, "Bash", { command: "echo subagent-step", description: "subagent step" }, inputTokens));
       }
       const bg = /^(BGAGENT|BGSHELL)\b\s*(.*)$/s.exec(t.split("\n").filter((l) => /^(BGAGENT|BGSHELL)\b/.test(l)).pop() ?? "");
       if (bg) {

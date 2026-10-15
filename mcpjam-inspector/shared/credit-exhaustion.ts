@@ -147,6 +147,10 @@ export function isCreditExhaustion(value: unknown): boolean {
     }
     if (!item || typeof item !== "object" || seen.has(item)) return;
     seen.add(item);
+    // Provider balances belong to the customer's API account. Their wording
+    // can include "insufficient credits", but MCPJam credits cannot fix them.
+    const code = (item as Record<string, unknown>).code;
+    if (typeof code === "string" && /^provider_/.test(code)) excluded = true;
     // Billing also uses this code for plan quotas (e.g. Eval iteration count).
     // Those have their own upgrade dialog and cannot be lifted by credit.
     for (const key of ["gateKey", "limit"]) {

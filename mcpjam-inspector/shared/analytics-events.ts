@@ -468,6 +468,12 @@ export const ANALYTICS_EVENTS = {
   save_tool_button_clicked: { source: "client" },
   saved_request_item_loaded: { source: "client" },
   server_card_clicked: { source: "client" },
+  // How a connect, reconnect or OAuth completion ended — one per attempt, from
+  // `lib/connect-outcome-telemetry.ts`. Props: outcome (success | failure |
+  // timeout | cancelled), flow (connect | reconnect | background), hosted,
+  // transport, error_slug?, http_status?, duration_ms?. Never a server
+  // name, URL or error text.
+  server_connect_outcome: { source: "client" },
   server_detail_modal_closed: { source: "client" },
   server_detail_modal_connect_clicked: { source: "client" },
   server_detail_modal_disconnect_clicked: { source: "client" },
@@ -544,8 +550,9 @@ export const ANALYTICS_EVENTS = {
 
   // --- Home: shared Slack Connect channel card ---
   // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),
-  // state (none | provisioning | invite_sent | pending_admin_approval |
-  // active | invite_declined | invite_expired | error).
+  // state (none | automatic_invite_pending | provisioning | invite_sent |
+  // pending_admin_approval | active | invite_declined | invite_expired |
+  // error).
   home_shared_slack_card_viewed: { source: "client" },
   home_shared_slack_provision_clicked: { source: "client" },
   home_shared_slack_invite_opened: { source: "client" },

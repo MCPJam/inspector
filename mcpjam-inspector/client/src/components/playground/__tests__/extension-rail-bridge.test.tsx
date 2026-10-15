@@ -6,7 +6,13 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ExtensionRailBridge } from "../extension-rail-bridge";
+import {
+  ExtensionRailBridge,
+  MIN_USABLE_RIGHT_RAIL_SIZE,
+  readRightRailSize,
+  revealRightRailPanel,
+  writeRightRailSize,
+} from "../extension-rail-bridge";
 import {
   dismissRail,
   ExtensionWorkspaceProvider,
@@ -153,5 +159,38 @@ describe("ExtensionRailBridge — a model App's fullscreen stays recoverable", (
     collapse.focus();
     rerender(view({ visible: false, narrow: false, overlay: false }));
     expect(collapse).toHaveFocus();
+  });
+});
+
+describe("right rail width — a revealed App is never a sliver", () => {
+  afterEach(() => window.localStorage.clear());
+  const panel = (size: number, collapsed = false) => ({
+    isCollapsed: () => collapsed,
+    getSize: () => size,
+    resize: vi.fn(),
+  });
+
+  it("never remembers or restores a width too narrow to use", () => {
+    writeRightRailSize(4);
+    expect(window.localStorage.getItem("mcpjam.playground.rightRailSize")).toBe(
+      null,
+    );
+    window.localStorage.setItem("mcpjam.playground.rightRailSize", "4");
+    expect(readRightRailSize()).toBe(30);
+    writeRightRailSize(22);
+    expect(readRightRailSize()).toBe(22);
+  });
+
+  it("widens a rail that is open but dragged down to a sliver", () => {
+    const sliver = panel(4);
+    revealRightRailPanel(sliver, 30);
+    expect(sliver.resize).toHaveBeenCalledWith(30);
+    const collapsed = panel(0, true);
+    revealRightRailPanel(collapsed, 4);
+    expect(collapsed.resize).toHaveBeenCalledWith(MIN_USABLE_RIGHT_RAIL_SIZE);
+    const usable = panel(25);
+    revealRightRailPanel(usable, 30);
+    expect(usable.resize).not.toHaveBeenCalled();
+    expect(() => revealRightRailPanel(null, 30)).not.toThrow();
   });
 });

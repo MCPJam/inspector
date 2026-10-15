@@ -13,6 +13,7 @@ import {
 } from "./chat-v2-plugin-forms.js";
 import { createModelFormDispatch, createModelFormExecutor } from "../../services/plugin-host/model-forms.js";
 import { admitPluginWorkspace, assertPluginWorkspaceRuntime } from "../../services/plugin-host/admission.js";
+import { pluginChatRefusal } from "./chat-v2-plugin-refusal.js";
 import { parsePluginWorkspaceDescriptor } from "@/shared/plugin-workspace";
 import {
   globalOwnerAdmission,
@@ -40,12 +41,12 @@ import {
 import { webmcpPageToolsMode } from "../../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
+import { ranTurnSelection } from "../../utils/session-model-selection.js";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
 import {
   decideTurnRail,
-  readRoutingSelection,
-  routingSelectionForModel,
+  resolveChatSelection,
   withSelectionRouting,
 } from "../../utils/selection-rail.js";
 import {
@@ -94,11 +95,15 @@ import {
 } from "../../utils/chat-v2-orchestration.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
 import {
-  hostSelectionForTurn,
   parseChatReasoningEffort,
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
+import {
+  checkAgentLoopGuard,
+  refuseAgentLoop,
+} from "../../utils/agent-loop-guard.js";
+import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
@@ -177,6 +182,7 @@ import {
   buildLiveEffectiveCapabilities,
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
+  withLiveProjectSkills,
   type EffectiveCapabilitySet,
 } from "../../services/environments/effective-capabilities.js";
 import { applyPluginVersionOverride } from "../../services/environments/plugin-override.js";
@@ -891,6 +897,26 @@ chatV2.post("/", async (c) => {
       // precedence can't leak them from the body).
       precedence: isScenarioSession ? "host-wins" : "override-wins",
     });
+
+    // A continuation whose step budget is already spent is refused here,
+    // before any MCP server is connected (see `utils/agent-loop-guard.ts`).
+    // Every non-harness engine behind this route runs with the default
+    // per-message ceiling. A harness counts its own steps from the last user
+    // message, and an explicit MRTR / scope step-up continuation is a
+    // one-shot answer the user gave, not an automatic resume — neither is
+    // checked.
+    const explicitContinuation =
+      rawBody.mrtrResume !== undefined ||
+      rawBody.scopeStepUpResume !== undefined ||
+      rawBody.scopeStepUpCancel !== undefined;
+    if (!resolvedExecution.harness && !explicitContinuation) {
+      const loopVerdict = checkAgentLoopGuard({
+        messages,
+        maxSteps: DEFAULT_TURN_MAX_STEPS,
+      });
+      if (loopVerdict) return refuseAgentLoop(c, loopVerdict, "chat_v2");
+    }
+
     // What this turn will RECORD about the configuration it ran with. Computed
     // from the POST-narrowing spec (plugin overrides filtered `environmentSpec`
     // above), so it reflects what actually ran rather than what the environment
@@ -1108,39 +1134,46 @@ chatV2.post("/", async (c) => {
     // hosted-list routing, byte for byte. A non-hosted selection stamps
     // `hosted: false` so the harness gate, skill gating and the dispatch in
     // `streamWebChatTurn` all agree with the rail.
-    const routingSelection =
-      (isScenarioSession
-        ? undefined
-        : routingSelectionForModel(
-            readRoutingSelection(rawBody.modelSelection),
-            modelDefinition,
-          )) ??
-      routingSelectionForModel(
-        resolvedExecution.routingSelection,
-        modelDefinition,
-      );
+    const selected = resolveChatSelection({
+      raw: rawBody.modelSelection,
+      inherited: resolvedExecution.routingSelection,
+      inheritedOrigin: resolvedExecution.modelSelectionOrigin,
+      model: modelDefinition,
+      hostWins: isScenarioSession,
+      allowLocal: false,
+    });
+    if (!selected.ok) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, selected.error);
+    }
+    let routingSelection = selected.selection;
+    const selectedTemperature = routingSelection?.source === "legacy"
+      ? undefined : routingSelection?.settings?.temperature;
+    const temperature = (selected.requestSelection ? body.temperature : undefined) ??
+      selectedTemperature ?? resolvedExecution.temperature;
     modelDefinition = withSelectionRouting(modelDefinition, routingSelection);
     const turnRail = decideTurnRail({
       selection: routingSelection,
       model: modelDefinition,
     });
     const systemPrompt = resolvedExecution.systemPrompt;
-    const temperature = resolvedExecution.temperature;
-    // Reasoning effort: the body's top-level field, else the selected host's
-    // saved effort — the latter only when the host's selection is for THIS
-    // turn's model. A scenario turn (share link) takes the host's alone.
+    // A picked selection owns its settings; scenarios force host settings.
     const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
     if (!bodyEffort.ok) {
       throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, bodyEffort.error);
     }
     const reasoningEffort = resolveChatReasoningEffort({
       bodyEffort: bodyEffort.effort,
-      hostSelection: hostSelectionForTurn(
-        resolvedExecution.modelSelection,
-        String(modelDefinition.id),
-      ),
+      hostSelection:
+        routingSelection?.source === "legacy" ? undefined : routingSelection,
+      requestSelection: selected.requestSelection,
       hostWins: isScenarioSession,
     });
+    if (routingSelection) {
+      routingSelection = ranTurnSelection({
+        selection: routingSelection, model: modelDefinition, reasoningEffort,
+        ...(reasoningEffort === undefined ? { temperature } : {}),
+      });
+    }
     const requireToolApproval = resolvedExecution.requireToolApproval;
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
@@ -1213,6 +1246,9 @@ chatV2.post("/", async (c) => {
           // stamp) then runs the turn on the org's key — emulated, silently.
           hosted: modelDefinition.hosted,
         },
+        // The saved selection: an org connection on the harness's own vendor
+        // runs the real runtime on the organization's key.
+        ...(routingSelection ? { selection: routingSelection } : {}),
         // The HOST's own configured id, kept separate from the resolved model
         // above. Only the external-account rule reads it, and only that rule
         // should: it asks whether this HOST carries the runtime's sentinel, a
@@ -1302,8 +1338,40 @@ chatV2.post("/", async (c) => {
     // `runtimeSkillsOverride`. Wiring both would double-deliver — an
     // environment-scoped `loadSkill` alongside a project-wide one, with the
     // model free to pull skills the environment deliberately excluded.
+    //
+    // ONE exception, and it is not an environment the member chose: the
+    // Playground's HIDDEN environment (`includeProjectSkills`, sent only for
+    // an ad-hoc composition of the chat's client and its plugins while the
+    // environments UI is hidden). Its turns are client turns that also carry
+    // plugins, so the project's pool is delivered beside the environment's own
+    // union, exactly as a client turn delivers it. It widens nothing: the pool
+    // is read with the caller's own bearer, which a client turn does anyway.
+    // A harness turn never takes this gate (its skills are written to the box,
+    // not offered as tools); it gets the same union from the harness itself,
+    // through `includeProjectSkills` on the persist context below — this same
+    // verified value, never the body's.
+    //
+    // The body only ASKS. It is honored only when the resolved spec says the
+    // row is ad-hoc: a named environment chose its skills, and a request must
+    // not be able to add the project's pool to it. A backend too old to say
+    // (`environmentOrigin` absent) is treated as named.
+    const requestedProjectSkills =
+      executionTarget.kind === "environment" &&
+      (rawBody as Record<string, unknown>).includeProjectSkills === true;
+    const includeProjectSkills =
+      requestedProjectSkills && environmentSpec?.environmentOrigin === "adhoc";
+    if (requestedProjectSkills && !includeProjectSkills) {
+      logger.warn(
+        "[chat-v2] includeProjectSkills ignored: not an ad-hoc environment",
+        {
+          environmentId: environmentSpec?.environmentRef.environmentId ?? null,
+          projectId: hostedBody.projectId ?? null,
+          environmentOrigin: environmentSpec?.environmentOrigin ?? null,
+        },
+      );
+    }
     const cloudSkillsEnabled =
-      !environmentServers &&
+      (!environmentServers || includeProjectSkills) &&
       shouldEnableCloudSkillTools({
         isGuest: Boolean(c.get("guestId")),
         harness: resolvedExecution.harness,
@@ -1312,6 +1380,9 @@ chatV2.post("/", async (c) => {
         // bare-id harness turn would be mis-detected as emulated and get the
         // emulated skill tools on top of adapter-delivered skills.
         provider: modelDefinition.provider,
+        hosted: modelDefinition.hosted,
+        // A harness on the org's own key runs the real runtime too.
+        ...(routingSelection ? { selection: routingSelection } : {}),
         hasProjectId: Boolean(hostedBody.projectId),
       });
 
@@ -2220,6 +2291,7 @@ chatV2.post("/", async (c) => {
         ...(playgroundEnvironmentId
           ? { projectEnvironmentId: playgroundEnvironmentId }
           : {}),
+        harness: resolvedExecution.harness,
         signal: c.req.raw.signal as AbortSignal | undefined,
       });
       if (!acquired.ok) {
@@ -2233,7 +2305,7 @@ chatV2.post("/", async (c) => {
           playgroundBoxReason,
           acquired.refusal,
         );
-        throw new WebRouteError(
+        const refusalError = new WebRouteError(
           described.status,
           described.status === 429
             ? ErrorCode.RATE_LIMITED
@@ -2250,6 +2322,15 @@ chatV2.post("/", async (c) => {
             ...(described.code ? { code: described.code } : {}),
           },
         );
+        const retryAfterMs =
+          described.status === 429 || described.status === 503
+            ? acquired.refusal.retryAfterMs
+            : undefined;
+        throw retryAfterMs !== undefined
+          ? refusalError.withHeaders({
+              "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))),
+            })
+          : refusalError;
       }
       scenarioBox = acquired.box;
       // The model's own `bash` rides the same machine as the harness's Shell:
@@ -2490,6 +2571,14 @@ chatV2.post("/", async (c) => {
       // own route (mcpjam-agent.ts) and never lands here.
       const origin = isScenarioSession ? "scenario" : "playground";
       const isDirectChat = !isScenarioSession;
+      // The turn's servers minus the ones a plugin contributed, for the
+      // trace's host config (see where it is built below).
+      const pluginServerIdSet = new Set(
+        effectiveCapabilities?.pluginServerIds ?? [],
+      );
+      const hostConfigServerIds = effectiveServerIds.filter(
+        (serverId) => !pluginServerIdSet.has(serverId),
+      );
 
       // Server twin of the client's `send_message` — fires even when the
       // browser can't reach PostHog. Identity: guests always resolve (the
@@ -2552,6 +2641,9 @@ chatV2.post("/", async (c) => {
               environment_capability_problems: (
                 effectiveCapabilities?.problems ?? []
               ).map((problem) => problem.code),
+              // The Playground's hidden environment (a client turn carrying
+              // its project's plugins), not one a member chose.
+              ...(includeProjectSkills ? { environment_hidden: true } : {}),
             }
           : {}),
         // Environment-BACKED SCENARIO turn (live-follow). A deliberately
@@ -2634,7 +2726,7 @@ chatV2.post("/", async (c) => {
           ...(modelToolExecutor ? { modelToolExecutor } : {}),
           selectedServerIds: effectiveServerIds,
           modelDefinition,
-          ...(routingSelection ? { routingSelection } : {}),
+          ...(routingSelection ? { routingSelection, routingSelectionOrigin: selected.origin } : {}),
           systemPrompt: effectiveSystemPrompt,
           temperature,
           ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
@@ -2711,7 +2803,7 @@ chatV2.post("/", async (c) => {
           // laziness as before — a body is fetched for the skill the model
           // loads, not for the catalog — but delivered through the one merged
           // surface instead of a parallel branch of the orchestrator.
-          ...(liveProjectCapabilities
+          ...(liveProjectCapabilities && !effectiveCapabilities
             ? {
                 effectiveCapabilities: liveProjectCapabilities,
                 liveSkillSurface: true,
@@ -2727,7 +2819,21 @@ chatV2.post("/", async (c) => {
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
-          ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+          // A hidden environment adds the project's pool after its own union,
+          // and is a LIVE surface like the client turn it stands in for: its
+          // servers are connected now, not captured, so their skills compose
+          // too.
+          ...(effectiveCapabilities && liveProjectCapabilities
+            ? {
+                effectiveCapabilities: withLiveProjectSkills(
+                  effectiveCapabilities,
+                  liveProjectCapabilities,
+                ),
+                liveSkillSurface: true,
+              }
+            : effectiveCapabilities
+              ? { effectiveCapabilities }
+              : {}),
         },
         persist: {
           executionTarget: toResumeExecutionTarget(executionTarget),
@@ -2754,6 +2860,13 @@ chatV2.post("/", async (c) => {
           // Presence (even empty) is what makes it authoritative downstream.
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
+            : {}),
+          // The Playground's hidden environment on a harness: the harness adds
+          // the project's live pool to the environment's own skills, as the
+          // plain client turn this stands in for would deliver it. Explicit,
+          // so a named environment's turn keeps exactly its own set.
+          ...(includeProjectSkills && resolvedExecution.harness
+            ? { includeProjectSkills: true }
             : {}),
           ...(turnProvenance ? { turnProvenance } : {}),
           // WHAT THIS TURN ACTUALLY ADVERTISED from the page. Written down
@@ -2831,7 +2944,10 @@ chatV2.post("/", async (c) => {
                     resolvedExecution.modelVisibleMcpToolResults,
                   mcpToolResultImageRendering:
                     resolvedExecution.mcpToolResultImageRendering,
-                  selectedServerIds: effectiveServerIds,
+                  // Plugin servers stay out: ingestion's server-scope check
+                  // refuses a plugin id in a host config (lifecycle bypass),
+                  // and would drop the trace's whole host config with it.
+                  selectedServerIds: hostConfigServerIds,
                 })
             : null,
           selectedServerNames: effectiveServerNames,
@@ -2915,6 +3031,15 @@ chatV2.post("/", async (c) => {
         rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
       );
     }
+    const pluginRefusal = pluginChatRefusal(error);
+    if (pluginRefusal)
+      return webError(
+        c,
+        pluginRefusal.status,
+        pluginRefusal.code,
+        pluginRefusal.message,
+        pluginRefusal.details,
+      );
     // `webErrorFromRoute`, not `webError` — this call dropped
     // `routeError.normalized`, so the envelope carried no `origin` and no
     // `x-mcpjam-error-origin` header. This is the ORG-AWARE hosted chat path,

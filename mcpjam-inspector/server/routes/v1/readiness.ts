@@ -119,6 +119,15 @@ const startOpenAISchema = z.strictObject({
 });
 
 /**
+ * Muse: the replay guard only. No observation opt-in — Muse has no catalogue
+ * for a model to grade against — so the strict schema refuses the key here,
+ * with a 400 that names it, rather than at the backend.
+ */
+const startMuseSchema = z.strictObject({
+  idempotencyKey: startFields.idempotencyKey,
+});
+
+/**
  * The run row as the public API renders it.
  *
  * The projection itself is shared with the web surface; what `/api/v1` adds is
@@ -228,6 +237,14 @@ readiness.post(
   },
 );
 
+readiness.post(
+  "/projects/:projectId/servers/:serverId/readiness-runs/muse",
+  async (c) => {
+    const body = parseWithSchema(startMuseSchema, await readBody(c));
+    return startRun(c, "muse", undefined, body);
+  },
+);
+
 /**
  * Read the body, treating an ACTUALLY empty one as `{}`.
  *
@@ -292,7 +309,7 @@ readiness.get("/projects/:projectId/readiness-runs", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "readinessKind must be claude or openai",
+      "readinessKind must be claude, openai or muse",
     );
   }
   const serverId = c.req.query("serverId");

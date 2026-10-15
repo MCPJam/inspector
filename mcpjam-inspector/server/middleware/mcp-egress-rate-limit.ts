@@ -5,6 +5,7 @@ import { HOSTED_MODE } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { serverCheckScope } from "../utils/server-check-scope.js";
 import { abortableSleep } from "../utils/run-supervisor/backoff.js";
+import { getServiceCredential } from "../services/service-credential.js";
 
 const decisionSchema = z.object({
   state: z.enum([
@@ -31,7 +32,7 @@ function coordinatorFor(
   metadata?: { requestId: string; intent?: "manual" | "automatic" },
 ): CheckCoordinator {
   const url = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   const requestId = metadata?.requestId ?? randomUUID();
   const guestId = c.get("guestId");
   const userId = c.get("workosUserId");

@@ -10,11 +10,22 @@ import {
 } from "@mcpjam/sdk/internal/plugin-host";
 import {
   parsePluginModelContext,
-  pluginContextAttachments,
+  type PluginContextRemoveAllResult,
   type PluginContextSnapshot,
   type PluginModelContext,
 } from "../../../shared/plugin-model-context.js";
 import { PluginInvocationError } from "./invocation.js";
+import {
+  contextRemovalSnapshot,
+  decideContextRemoveAll,
+  NO_CONTEXT_REMOVALS,
+  persistedRemovalCursorSchema,
+  PLUGIN_CONTEXT_REMOVAL_WINDOW,
+  recordContextRemoveAll,
+  recordContextUserAttach,
+  type PluginContextRemovalCursor,
+  type PluginContextRemoveAll,
+} from "./context-removal.js";
 
 type Cursor = {
   operationId: string;
@@ -26,17 +37,10 @@ export type PluginContextUpdate = {
   operationId: string;
   sequence: number;
   params: unknown;
+  /** The person was using the App when it sent this (see `held` below). */
+  attach?: "user";
 };
-export type PluginContextRemoval = {
-  operationId: string;
-  updateId: string;
-  index: number;
-};
-/** Removal receipts kept for idempotent retries. Older receipts are compacted
- * away: a retry of a compacted removal is refused as stale (its updateId no
- * longer matches), never applied twice, so the window bounds storage without
- * ever stopping context. */
-export const PLUGIN_CONTEXT_REMOVAL_WINDOW = 256;
+export { PLUGIN_CONTEXT_REMOVAL_WINDOW, type PluginContextRemoveAll };
 const safeCount = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const persistedContextSchema = z
   .object({
@@ -60,6 +64,9 @@ const persistedContextSchema = z
     removals: z
       .array(z.tuple([z.string().min(1).max(128), z.string().max(160)]))
       .max(PLUGIN_CONTEXT_REMOVAL_WINDOW),
+    held: z.literal(true).optional(),
+    // Absent in context saved before remove-all existed: no removals yet.
+    removal: persistedRemovalCursorSchema.optional(),
   })
   .strict();
 
@@ -69,6 +76,18 @@ export class PluginContextWorkspace {
   private readonly cursors = new Map<string, Cursor>();
   private readonly revisions = new Map<string, number>();
   private readonly removals = new Map<string, Map<string, string>>();
+  /**
+   * Instances whose context the person removed. The spec has the host send
+   * the App `null` and leaves the rest to the App, and some Apps post their
+   * view again at once (Bits & Bolts redraws, its camera settles, and it
+   * re-sends). A removal stays removed: until the person uses the App again
+   * (an update marked `attach: "user"`), its updates are refused.
+   */
+  private readonly held = new Set<string>();
+  private readonly removalCursors = new Map<
+    string,
+    PluginContextRemovalCursor
+  >();
   constructor(workspaceId: string) {
     this.state = createPluginSession(workspaceId);
   }
@@ -117,6 +136,10 @@ export class PluginContextWorkspace {
           }
         : null,
       removals: [...(this.removals.get(instanceId) ?? [])],
+      ...(this.held.has(instanceId) ? { held: true } : {}),
+      ...(this.removal(instanceId).cursor
+        ? { removal: this.removal(instanceId) }
+        : {}),
     });
     if (Buffer.byteLength(json, "utf8") > PLUGIN_INSTANCE_CONTEXT_BYTES)
       throw new PluginInvocationError("INSTANCE_CONTEXT_TOO_LARGE");
@@ -164,6 +187,13 @@ export class PluginContextWorkspace {
     if (saved.cursor) this.cursors.set(instanceId, saved.cursor);
     this.revisions.set(instanceId, saved.revision);
     this.removals.set(instanceId, new Map(saved.removals));
+    if (saved.held) this.held.add(instanceId);
+    else this.held.delete(instanceId);
+    this.removalCursors.set(instanceId, saved.removal ?? NO_CONTEXT_REMOVALS);
+  }
+
+  private removal(instanceId: string) {
+    return this.removalCursors.get(instanceId) ?? NO_CONTEXT_REMOVALS;
   }
 
   /** Mutations prepare on a separate core session; failed storage never leaks optimism. */
@@ -212,6 +242,8 @@ export class PluginContextWorkspace {
       request.sequence !== (receipt?.sequence ?? 0) + 1
     )
       throw new PluginInvocationError("INSTANCE_CONTEXT_SEQUENCE_DENIED");
+    if (this.held.has(instanceId) && request.attach !== "user")
+      throw new PluginInvocationError("INSTANCE_CONTEXT_HELD");
     const updateId = randomUUID();
     const transition = reducePluginSession(this.state, {
       type: "context",
@@ -225,6 +257,12 @@ export class PluginContextWorkspace {
     if (transition.rejection)
       throw new PluginInvocationError(transition.rejection);
     this.state = transition.state;
+    this.held.delete(instanceId);
+    if (request.attach === "user")
+      this.removalCursors.set(
+        instanceId,
+        recordContextUserAttach(this.removal(instanceId)),
+      );
     this.revisions.set(instanceId, (this.revisions.get(instanceId) ?? 0) + 1);
     this.cursors.set(instanceId, {
       operationId: request.operationId,
@@ -257,61 +295,61 @@ export class PluginContextWorkspace {
                 : {}),
             }) as NonNullable<PluginContextSnapshot["state"]>)
           : null,
+      ...contextRemovalSnapshot(
+        this.held.has(instanceId),
+        this.removal(instanceId),
+      ),
     };
   }
 
-  /** An explicit composer action removes one current visible block, never app-supplied replacement data. */
-  remove(
+  /**
+   * The person removed this App's context from the chat: clear all of it
+   * (visible blocks, assistant-only blocks and structured content) and hold
+   * the App until they use it again. A retry with the same operation is
+   * decided by its basis (`decideContextRemoveAll`); only an applied removal
+   * changes anything.
+   */
+  removeAll(
     instanceId: string,
     generation: number,
-    request: PluginContextRemoval,
-  ) {
-    const snapshot = this.snapshot(instanceId, generation);
-    const fingerprint = JSON.stringify([request.updateId, request.index]);
+    request: PluginContextRemoveAll,
+  ): PluginContextRemoveAllResult {
+    this.snapshot(instanceId, generation);
     const receipts = this.removals.get(instanceId) ?? new Map<string, string>();
-    const previous = receipts.get(request.operationId);
-    if (previous) {
-      if (previous !== fingerprint)
-        throw new PluginInvocationError("INSTANCE_CONTEXT_DUPLICATE_MISMATCH");
-      // A retry cannot resurrect the earlier snapshot after a later app update.
-      return snapshot;
-    }
-    if (!request.operationId || request.operationId.length > 128)
-      throw new PluginInvocationError("INSTANCE_CONTEXT_REMOVAL_INVALID");
-    if (
-      !snapshot.state ||
-      snapshot.state.updateId !== request.updateId ||
-      !Number.isSafeInteger(request.index) ||
-      !pluginContextAttachments(snapshot).some(
-        (item) => item.index === request.index,
-      )
-    )
-      throw new PluginInvocationError("INSTANCE_CONTEXT_REMOVAL_STALE");
-    const current = this.state.instances[instanceId].context!;
+    const decision = decideContextRemoveAll({
+      request,
+      receipt: receipts.get(request.operationId),
+      held: this.held.has(instanceId),
+      removal: this.removal(instanceId),
+    });
+    if (decision !== "apply")
+      return {
+        outcome: decision,
+        snapshot: this.snapshot(instanceId, generation),
+      };
     const transition = reducePluginSession(this.state, {
       type: "context",
       instanceId,
       generation,
       updateId: randomUUID(),
-      content: current.content.filter((_, index) => index !== request.index),
-      structuredContent:
-        request.index === current.content.length
-          ? undefined
-          : current.structuredContent,
-      metadata: current.metadata,
+      content: [],
+      structuredContent: undefined,
+      metadata: undefined,
     });
     if (transition.rejection)
       throw new PluginInvocationError(transition.rejection);
     this.state = transition.state;
-    this.revisions.set(instanceId, snapshot.revision + 1);
-    receipts.set(request.operationId, fingerprint);
-    // Compact: keep the most recent window in insertion order.
-    for (const key of receipts.keys()) {
-      if (receipts.size <= PLUGIN_CONTEXT_REMOVAL_WINDOW) break;
-      receipts.delete(key);
-    }
+    this.revisions.set(instanceId, (this.revisions.get(instanceId) ?? 0) + 1);
+    this.removalCursors.set(
+      instanceId,
+      recordContextRemoveAll(receipts, request, this.removal(instanceId)),
+    );
     this.removals.set(instanceId, receipts);
-    return this.snapshot(instanceId, generation);
+    this.held.add(instanceId);
+    return {
+      outcome: "applied",
+      snapshot: this.snapshot(instanceId, generation),
+    };
   }
 
   contexts(threadId: string): PluginModelContext[] {
@@ -334,6 +372,8 @@ export class PluginContextWorkspace {
     this.cursors.delete(instanceId);
     this.revisions.delete(instanceId);
     this.removals.delete(instanceId);
+    this.held.delete(instanceId);
+    this.removalCursors.delete(instanceId);
     const instance = this.state.instances[instanceId];
     if (instance?.lifecycle === "closed") {
       // The enclosing owner revoked/removed this UUID lease before release.

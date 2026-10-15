@@ -23,20 +23,54 @@
  * the guest credit wall fires. The shell is a top-of-funnel surface, and
  * noindex gives up whatever organic search would have sent it. That is the
  * trade being made, not free cleanup.
+ *
+ * Credential pages also get `Referrer-Policy: no-referrer`. A page whose URL
+ * is a bearer credential — a share link, an OAuth callback still holding its
+ * `?code=` — must not hand that URL to whatever it loads or links to. The
+ * global `strict-origin-when-cross-origin` already trims cross-origin
+ * referers to the origin, but same-origin requests still carry the full URL
+ * (the PostHog relay at `/tlm` among them, which is how share tokens reached
+ * PostHog), and a downgrade or an older browser sends it everywhere. This
+ * middleware runs after `securityHeadersMiddleware` in both entries, so its
+ * value replaces the global one on exactly those pages.
  */
 
 import type { Context, Next } from "hono";
 import { CANIUSE_LANDING_HOSTS, SCORE_LANDING_HOSTS } from "../config.js";
+import {
+  isReplayBlockedLocation,
+  matchCredentialPath,
+} from "../../shared/credential-urls.js";
 
 /**
- * Paths where the URL is itself the credential, so the host exemption must not
- * reach them. score.mcpjam.com is exempt as a host, and `/results/<token>` is
+ * Whether the URL is itself the credential, so the host exemption must not
+ * reach it. score.mcpjam.com is exempt as a host, and `/results/<token>` is
  * exactly what it serves — deep links pass its root redirect untouched (see
  * SCORE_LANDING_HOSTS in config). Without this the score domain would hand out
  * link-token pages with no indexing directive at all, which is weaker than
  * what app.mcpjam.com gives them.
+ *
+ * Every path-secret route in the credential registry
+ * (`shared/credential-urls.ts`), not a list of our own: a list here would
+ * miss the next share route the way it missed `/conformance/shared/<token>`.
  */
-const LINK_TOKEN_PREFIXES = ["/results/", "/bench/results/"];
+function isLinkTokenPath(path: string): boolean {
+  return matchCredentialPath(path) !== null;
+}
+
+/**
+ * Whether this request's URL carries a credential anywhere the registry
+ * knows of: a path secret, a callback route, or a secret query key on any
+ * path. The fragment never reaches the server, so the query is all there is
+ * beyond the path.
+ */
+function isCredentialPage(c: Context): boolean {
+  const url = new URL(c.req.url);
+  return isReplayBlockedLocation({
+    pathname: url.pathname,
+    search: url.search,
+  });
+}
 
 /**
  * Host header without its port, lowercased — the same read the vanity-domain
@@ -52,7 +86,8 @@ function requestHost(c: Context): string {
 
 /**
  * Indexing directive middleware.
- * Marks responses noindex except on the vanity domains built to rank.
+ * Marks responses noindex except on the vanity domains built to rank, and
+ * credential pages no-referrer.
  */
 export async function indexingHeadersMiddleware(
   c: Context,
@@ -61,12 +96,13 @@ export async function indexingHeadersMiddleware(
   const host = requestHost(c);
   const isLandingHost =
     CANIUSE_LANDING_HOSTS.has(host) || SCORE_LANDING_HOSTS.has(host);
-  const isLinkTokenPath = LINK_TOKEN_PREFIXES.some((prefix) =>
-    c.req.path.startsWith(prefix),
-  );
-
-  if (!isLandingHost || isLinkTokenPath) {
+  if (!isLandingHost || isLinkTokenPath(c.req.path)) {
     c.header("X-Robots-Tag", "noindex");
+  }
+
+  if (isCredentialPage(c)) {
+    // Replaces the global value securityHeadersMiddleware set before us.
+    c.header("Referrer-Policy", "no-referrer");
   }
 
   return next();

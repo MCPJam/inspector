@@ -5,8 +5,12 @@
  */
 import { APICallError } from "ai";
 import { describe, expect, it } from "vitest";
+import { McpjamLeaseError } from "../src/mcpjam-model-lease.js";
 import {
   classifyInferenceError,
+  isTerminalRefusal,
+  orgPolicyRefusalCode,
+  orgPolicyRefusalMessage,
   refusalMessage,
 } from "../src/suite-file-run/inference.js";
 
@@ -176,5 +180,107 @@ describe("refusalMessage", () => {
     });
     expect(refusalMessage(error)).toBe("invalid x-api-key");
     expect(refusalMessage(new Error("plain"))).toBe("plain");
+  });
+});
+
+describe("classifyInferenceError — the organization AI-key policy", () => {
+  it("reads the proxy's 409 policy refusal as orgPolicy, not credentials", () => {
+    expect(
+      classifyInferenceError(
+        refused(409, {
+          ok: false,
+          code: "org_keys_required",
+          error:
+            "This organization requires its own provider keys for AI features.",
+        }),
+        "mcpjam"
+      )
+    ).toBe("orgPolicy");
+  });
+
+  it("reads a 403 policy refusal as orgPolicy, not credentials", () => {
+    expect(
+      classifyInferenceError(
+        refused(403, {
+          error: { code: "FORBIDDEN", details: { code: "org_keys_required" } },
+        }),
+        "mcpjam"
+      )
+    ).toBe("orgPolicy");
+  });
+
+  it("reads the policy's transient refusals as unavailable", () => {
+    expect(
+      classifyInferenceError(
+        refused(409, { ok: false, code: "provider_unavailable", error: "x" }),
+        "mcpjam"
+      )
+    ).toBe("unavailable");
+  });
+
+  it("stops the run, with a sentence that names the fix", () => {
+    expect(isTerminalRefusal("orgPolicy")).toBe(true);
+    const message = orgPolicyRefusalMessage("mcpjam/anthropic/claude-haiku-4.5");
+    expect(message).toMatch(/requires its own provider keys/);
+    expect(message).toMatch(/Choose a model from an organization provider/);
+    expect(message).not.toMatch(/credential|rotate/i);
+  });
+
+  it("never suggests running on a key the request brings", () => {
+    expect(
+      orgPolicyRefusalMessage("mcpjam/anthropic/claude-haiku-4.5")
+    ).not.toMatch(/run with your organization's provider key/);
+  });
+
+  it("reads the policy code from the proxy's body and from a lease refusal", () => {
+    expect(
+      orgPolicyRefusalCode(
+        refused(409, { ok: false, code: "provider_auth_failed", error: "x" })
+      )
+    ).toBe("provider_auth_failed");
+    expect(
+      orgPolicyRefusalCode(
+        refused(403, {
+          error: { code: "FORBIDDEN", details: { code: "org_keys_required" } },
+        })
+      )
+    ).toBe("org_keys_required");
+    expect(
+      orgPolicyRefusalCode(
+        new McpjamLeaseError("refused", {
+          code: "CREDENTIAL_MISSING",
+          status: 409,
+        })
+      )
+    ).toBe("credential_missing");
+    expect(orgPolicyRefusalCode(refused(401, "invalid x-api-key"))).toBe(
+      undefined
+    );
+  });
+
+  it("does not say MCPJam refused its own model when the organization's provider rejected the key", () => {
+    const message = orgPolicyRefusalMessage("gpt-4o", "provider_auth_failed");
+    expect(message).toMatch(/^gpt-4o did not run\./);
+    expect(message).toMatch(/rejected its API key/);
+    expect(message).toMatch(/Ask an organization admin to update the key/);
+    expect(message).not.toMatch(/MCPJam-provided|MCPJam refused/);
+  });
+
+  it("gives each policy code its own reason and next step", () => {
+    const messages = [
+      "org_keys_required",
+      "org_model_unconfigured",
+      "org_runtime_unsupported",
+      "ai_scope_unresolved",
+      "provider_auth_failed",
+      "credential_missing",
+    ].map((code) => orgPolicyRefusalMessage("gpt-4o", code));
+    expect(new Set(messages).size).toBe(messages.length);
+    for (const message of messages) {
+      expect(message).toMatch(/^gpt-4o did not run\. \S/);
+      expect(message).not.toMatch(/MCPJam refused/);
+    }
+    expect(messages[0]).toMatch(/Choose a model from an organization provider/);
+    expect(messages[5]).toMatch(/reconnect it/);
   });
 });

@@ -22,6 +22,69 @@ const CLOUDFLARE_502 = `<!DOCTYPE html>
 </html>`;
 
 describe("formatErrorMessage — opaque upstream payloads", () => {
+  it("keeps BYOK credit errors and their non-retryable status", () => {
+    const error = {
+      message:
+        "Your Anthropic API account has insufficient credits. Add credits in Anthropic or use another API key.",
+      code: "provider_error",
+      statusCode: 400,
+      isRetryable: false,
+      details: "Your credit balance is too low to access the Anthropic API.",
+    };
+    expect(formatErrorMessage(new Error(JSON.stringify(error)))).toMatchObject(
+      error,
+    );
+  });
+
+  it.each([false, true])(
+    "summarizes an unexplained empty response and keeps its diagnostics (structured: %s)",
+    (structured) => {
+      const message =
+        "Backend step returned no content (stream error or empty response) — the model emitted no text, no reasoning and no tool call (finishReason: none reported). The provider ended the stream without a usable finish reason.";
+      const formatted = formatErrorMessage(
+        new Error(
+          structured
+            ? JSON.stringify({ message, code: "provider_empty_response" })
+            : message,
+        ),
+      );
+      expect(formatted).toMatchObject({
+        message: "The model returned no response. Please try again.",
+        isRetryable: true,
+      });
+      expect(formatted?.details).toContain(message);
+    },
+  );
+
+  it.each([false, true])(
+    "summarizes the bare hosted-turn sentinel (structured: %s)",
+    (structured) => {
+      const message =
+        "Backend step returned no content (stream error or empty response)";
+      const formatted = formatErrorMessage(
+        new Error(
+          structured
+            ? JSON.stringify({ message, code: "provider_empty_response" })
+            : message,
+        ),
+      );
+      expect(formatted).toMatchObject({
+        message: "The model returned no response. Please try again.",
+        code: "provider_empty_response",
+        isRetryable: true,
+      });
+      expect(formatted?.details).toContain(message);
+    },
+  );
+
+  it.each(["length", "content-filter"])(
+    "keeps the specific %s explanation",
+    (reason) => {
+      const message = `Backend step returned no content (stream error or empty response) — the model emitted no text, no reasoning and no tool call (finishReason: ${reason}). Specific explanation.`;
+      expect(formatErrorMessage(new Error(message))?.message).toBe(message);
+    },
+  );
+
   it("summarizes an HTML error page instead of rendering it", () => {
     const formatted = formatErrorMessage(new Error(CLOUDFLARE_502));
 

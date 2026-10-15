@@ -63,6 +63,21 @@ describe("release critical path", () => {
     }
   });
 
+  it("points production's hosted computers at the released commit's template only after the webapp deploys", () => {
+    const { jobs } = workflow("release");
+    const job = jobs["roll-out-hosted-template"];
+    expect(job.needs).toEqual(expect.arrayContaining(["preflight", "deploy-webapp"]));
+    expect(String(job.if)).toContain("needs.deploy-webapp.result == 'success'");
+    const script = job.steps.map((step: any) => step.with?.script ?? "").join("\n");
+    expect(script).toContain('event_type: "inspector_release_shipped"');
+    expect(script).toContain("sha: context.sha");
+    // And main's bake inputs reach the backend's staging build.
+    const notify = workflow("hosted-bake-notify");
+    expect(notify.on.push.branches).toEqual(["main"]);
+    expect(notify.on.push.paths).toContain("mcpjam-inspector/harness-bake.lock.json");
+    expect(JSON.stringify(notify.jobs)).toContain("inspector_bake_moved");
+  });
+
   it("runs every Ubuntu release job on RELEASE_RUNNER when it is set", () => {
     const { jobs } = workflow("release");
     const ubuntu = Object.entries(jobs).filter(([, job]: [string, any]) => typeof job["runs-on"] === "string");

@@ -1383,6 +1383,7 @@ export function AppRegistration({
     serverName: row.server.name,
     ...(pluginIcons ? { icons: pluginIcons } : {}),
     ...(serverIcons ? { serverIcons } : {}),
+    toolName: row.declaration.toolName,
   });
   const messagesAllowed = !!handle.messageEnabled && !!sendMessage;
   useEffect(() => {
@@ -1445,10 +1446,25 @@ export function AppRegistration({
       presentationCallbacks.current.onDisplayModeChange(mode),
     [],
   );
+  const openAIDisplayModes = negotiatedCapabilities.displayModes;
   const setSupportedModes = useCallback(
-    (modes: ("inline" | "fullscreen" | "pip")[] | undefined) =>
-      presentationCallbacks.current.onAppSupportedDisplayModesChange(modes),
-    [],
+    (modes: ("inline" | "fullscreen" | "pip")[] | undefined) => {
+      // Entrypoints open fullscreen; an App that declares it can't is refused.
+      if (openAIDisplayModes && modes && !modes.includes("fullscreen"))
+        logExtensionEvent({
+          serverId: row.server.serverId,
+          serverName: row.server.name,
+          label: "display-mode",
+          level: "error",
+          message: `${row.declaration.title} can't open: its App says it doesn't support full screen (availableDisplayModes at initialization), and entrypoints always open full screen. Add "fullscreen" to the App's availableDisplayModes.`,
+          detail: {
+            tool: row.declaration.toolName,
+            availableDisplayModes: modes,
+          },
+        });
+      presentationCallbacks.current.onAppSupportedDisplayModesChange(modes);
+    },
+    [openAIDisplayModes, row.server, row.declaration],
   );
   const params = useMemo<MCPAppsRendererProps>(
     () => ({
@@ -1516,6 +1532,7 @@ export function AppRegistration({
           handle,
           row.server.serverId,
           row.declaration.kind === "global" ? "global" : "thread",
+          { openAIDisplayModes },
         ),
         host,
         handle,

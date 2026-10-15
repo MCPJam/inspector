@@ -1,0 +1,123 @@
+name: Visual regression (advisory)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: visual-readiness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  visual:
+    name: Visual pipeline (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24.14.0"
+      # pull_request runs this workflow from the merge ref but checks out the PR
+      # head, so a branch cut before the pipeline landed has no scripts to run.
+      - name: Check branch includes the visual pipeline
+        id: pipeline
+        run: |
+          if [ -f mcpjam-inspector/scripts/visual/select.mjs ]; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+            echo 'Visual capture skipped: rebase on main to pick up the visual pipeline.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Test visual contracts
+        if: steps.pipeline.outputs.present == 'true'
+        run: node --test mcpjam-inspector/scripts/visual/*.test.mjs
+      - name: Select visual coverage
+        id: selection
+        if: steps.pipeline.outputs.present == 'true'
+        run: node mcpjam-inspector/scripts/visual/select.mjs
+      - name: Determine credential eligibility
+        id: eligibility
+        env:
+          CAPTURE: ${{ steps.selection.outputs.capture }}
+          TRUSTED: >-
+            ${{ github.actor != 'dependabot[bot]' &&
+            (github.event_name != 'pull_request' ||
+             (github.event.pull_request.head.repo.full_name == github.repository &&
+              github.event.pull_request.user.login != 'dependabot[bot]')) }}
+        run: |
+          if [ "$CAPTURE" = true ] && [ "$TRUSTED" = true ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo 'Visual capture intentionally skipped: no rendering changes, or maintainer action required for fork/Dependabot.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Install dependencies
+        if: steps.eligibility.outputs.run == 'true'
+        run: npm ci --legacy-peer-deps
+      - name: Install matching Chromium
+        if: steps.eligibility.outputs.run == 'true'
+        working-directory: mcpjam-inspector
+        run: npx playwright install --with-deps chromium
+      - name: Build application workspace dependencies
+        if: steps.eligibility.outputs.run == 'true'
+        run: npm run build -w @mcpjam/sdk
+      - name: Build, capture, and validate application screens
+        if: steps.eligibility.outputs.run == 'true'
+        run: npm run test:visual:app -w @mcpjam/inspector
+      - name: Publish to Chromatic
+        if: >-
+          steps.eligibility.outputs.run == 'true' &&
+          github.actor != 'dependabot[bot]' &&
+          (github.event_name != 'pull_request' ||
+           (github.event.pull_request.head.repo.full_name == github.repository &&
+            github.event.pull_request.user.login != 'dependabot[bot]'))
+        working-directory: mcpjam-inspector
+        env:
+          CHROMATIC_PROJECT_TOKEN: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
+          CHROMATIC_BRANCH: ${{ github.head_ref || github.ref_name }}
+          CHROMATIC_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CHROMATIC_SLUG: ${{ github.repository }}
+        run: |
+          test -n "$CHROMATIC_PROJECT_TOKEN" || { echo 'Missing CHROMATIC_PROJECT_TOKEN'; exit 1; }
+          test "$(git rev-parse HEAD)" = "$CHROMATIC_SHA"
+          npm run visual:app:upload -- --branch-name "$CHROMATIC_BRANCH" --repository-slug "$CHROMATIC_SLUG"
+      - name: Verify staging login and refresh
+        if: >-
+          steps.eligibility.outputs.run == 'true' &&
+          github.actor != 'dependabot[bot]' &&
+          (github.event_name != 'pull_request' ||
+           (github.event.pull_request.head.repo.full_name == github.repository &&
+            github.event.pull_request.user.login != 'dependabot[bot]'))
+        working-directory: mcpjam-inspector
+        env:
+          VISUAL_TEST_EMAIL: ${{ secrets.VISUAL_TEST_EMAIL }}
+          VISUAL_TEST_PASSWORD: ${{ secrets.VISUAL_TEST_PASSWORD }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: npx playwright test --config playwright.visual-auth.config.ts
+      - name: Summarize coverage
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          ELIGIBLE: ${{ steps.eligibility.outputs.run }}
+        run: |
+          {
+            echo '### Visual pipeline'
+            echo "Pipeline result: $RESULT. Capture eligible: $ELIGIBLE."
+            echo 'Expected coverage: 26 application snapshots (13 screens, two themes) plus staging login/refresh.'
+            echo 'Chromatic UI Tests owns visual-diff review; this job owns pipeline health.'
+            echo 'Snapshots use the PR application build with synthetic guest and signed-in hosted data.'
+          } >> "$GITHUB_STEP_SUMMARY"

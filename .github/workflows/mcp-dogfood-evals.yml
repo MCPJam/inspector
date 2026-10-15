@@ -27,8 +27,8 @@ name: MCP dogfood evals
 on:
   workflow_call:
     inputs:
-      server:
-        description: Saved server to target, overriding the suite file's own
+      suite_file:
+        description: Suite file to sync and run; its own target decides the server
         required: true
         type: string
       iterations:
@@ -50,8 +50,8 @@ on:
     - cron: "0 9 * * *"
   workflow_dispatch:
     inputs:
-      server:
-        description: Saved server to target (blank uses the suite file's own)
+      suite_file:
+        description: Suite file to sync and run (blank runs the staging suite)
         required: false
         type: string
       iterations:
@@ -67,22 +67,29 @@ permissions:
   contents: read
 
 env:
-  MCPJAM_PROJECT: MCPJam MCP dogfood
-  SUITE_FILE: .mcpjam/evals/mcpjam-mcp.yaml
+  # The project ID, not its name. Two projects are named "MCPJam MCP dogfood"
+  # — the live one and the retired copy in the org this moved out of — and a
+  # name-based lookup refuses an ambiguous match outright:
+  #   Project name "MCPJam MCP dogfood" is ambiguous. Use one of these IDs: ...
+  # A name is also not stable: anyone can create a third. The ID is.
+  MCPJAM_PROJECT: v9792k32kvw1s9h2xxrqcyjk958ft6k3
+  # The staging suite, which is what the promotion gate evaluates. The
+  # production monitor passes the other file explicitly.
+  DEFAULT_SUITE_FILE: .mcpjam/evals/mcpjam-mcp.yaml
+  PRODUCTION_SUITE_FILE: .mcpjam/evals/mcpjam-mcp-production.yaml
   CLI_VERSION: 5.10.3
 
 jobs:
   # The CLI lane. Syncs the suite file, runs it, gates the result, and reports a
   # verdict its caller can branch on. This is what the promotion gate calls.
   run-suite:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Not cancel-in-progress: abandoning a `--wait` orphans a run that is
     # already being paid for. Keyed per target so a promotion gate never queues
     # behind an unrelated dispatch.
     concurrency:
-      group: mcp-dogfood-evals-${{ inputs.server || 'suite-default' }}
+      group: mcp-dogfood-evals-${{ inputs.suite_file || 'staging' }}
       cancel-in-progress: false
     outputs:
       run-id: ${{ steps.run.outputs.run_id }}
@@ -110,24 +117,36 @@ jobs:
         id: run
         env:
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
-          TARGET_SERVER: ${{ inputs.server }}
+          SUITE_FILE: ${{ inputs.suite_file }}
           CASE: ${{ inputs.case }}
           ITERATIONS: ${{ inputs.iterations }}
         run: |
           set +e
+          # A schedule monitors what is already live; every other trigger gates
+          # the candidate. Production drift and promotion safety are different
+          # questions, and each keeps its own suite and its own run history —
+          # a trend line only means something within one target.
+          if [ -n "$SUITE_FILE" ]; then file="$SUITE_FILE"
+          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then file="$PRODUCTION_SUITE_FILE"
+          else file="$DEFAULT_SUITE_FILE"; fi
+          echo "Suite file: $file"
           args=(cloud eval run
-            --file "$SUITE_FILE"
+            --file "$file"
             --project "$MCPJAM_PROJECT"
             --wait
-            --notes "dogfood @ ${GITHUB_SHA} (${GITHUB_EVENT_NAME}${TARGET_SERVER:+ -> $TARGET_SERVER})"
+            --notes "dogfood @ ${GITHUB_SHA} (${GITHUB_EVENT_NAME}, $file)"
             --out "$RUNNER_TEMP/eval-report.json"
             --format json)
-          # Overriding the saved selection is what lets one suite file gate the
-          # staging candidate and monitor production, without a second copy of
-          # the cases drifting away from the first.
-          [ -n "$TARGET_SERVER" ] && args+=(--server "$TARGET_SERVER")
+          # Deliberately NO --server. A file-owned suite always carries an
+          # environment, and overriding its servers is refused outright
+          # (ENVIRONMENT_SERVERS_NOT_OVERRIDABLE). The file's own target is the
+          # only thing that decides which server runs.
           [ -n "$CASE" ] && args+=(--case "$CASE")
           [ -n "$ITERATIONS" ] && args+=(--iterations "$ITERATIONS")
+          # `--notes` is NOT part of the idempotency key, so an unchanged file
+          # and knobs returns the EXISTING run — which silently re-reports a
+          # stale verdict after an infrastructure fix. Key on the attempt.
+          args+=(--idempotency-key "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(printf '%s' "$file" | tr -c 'a-zA-Z0-9' -)")
 
           npx -y "@mcpjam/cli@$CLI_VERSION" "${args[@]}" > "$RUNNER_TEMP/eval-result.json"
           code=$?
@@ -164,7 +183,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: mcp-dogfood-evals-${{ inputs.server || 'suite-default' }}-${{ github.run_attempt }}
+          name: mcp-dogfood-evals-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/eval-report.json
             ${{ runner.temp }}/eval-result.json
@@ -212,13 +231,15 @@ jobs:
           GATE_CODE: ${{ steps.gate.outputs.code }}
           RUN_ID: ${{ steps.run.outputs.run_id }}
           VERDICT: ${{ steps.verdict.outputs.verdict }}
-          TARGET_SERVER: ${{ inputs.server }}
+          SUITE_FILE: ${{ inputs.suite_file }}
         run: |
           {
             echo "## MCP dogfood evals — $VERDICT"
             echo
-            target="${TARGET_SERVER:-the saved server in the suite file}"
-            echo "Target: \`$target\`"
+            if [ -n "$SUITE_FILE" ]; then shown="$SUITE_FILE"
+            elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then shown="$PRODUCTION_SUITE_FILE"
+            else shown="$DEFAULT_SUITE_FILE"; fi
+            echo "Suite file: \`$shown\`"
             echo
             if [ -n "$RUN_ID" ]; then
               echo "Run \`$RUN_ID\`, in the **$MCPJAM_PROJECT** project — open it from Evaluate → Runs."
@@ -258,23 +279,3 @@ jobs:
           fi
           echo "::error::Eval verdict: $VERDICT. See the job summary."
           exit 1
-
-  # The customer's own YAML, nightly, against production. A monitor, not a gate.
-  nightly-action:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    concurrency:
-      group: mcp-dogfood-evals-nightly
-      cancel-in-progress: false
-    steps:
-      - uses: MCPJam/inspector/actions/evals@evals-v1
-        with:
-          api-key: ${{ secrets.MCPJAM_API_KEY }}
-          project: MCPJam MCP dogfood
-          suite: mcpjam-mcp dogfood
-          gate: true
-          min-pass-rate-percent: 80
-          # The action's own default is 5.7.1. Pin the version the CLI lane
-          # uses, so one vocabulary and one exit contract cover both jobs.
-          cli-version: "5.10.3"

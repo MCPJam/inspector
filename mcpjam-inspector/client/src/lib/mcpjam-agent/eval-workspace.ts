@@ -711,8 +711,11 @@ export async function followAuthoringJob(
         status = await readAuthoringJob(jobId);
         failures = 0;
       } catch (error) {
+        // Only a 4xx is a refusal. An unreadable 2xx body (a read cut short
+        // by sleep or a network switch) is as transient as a 5xx.
         if (
           error instanceof AuthoringRequestError &&
+          error.status >= 400 &&
           error.status < 500 &&
           ![408, 429].includes(error.status)
         )

@@ -137,9 +137,15 @@ function Workspace({
       <output data-testid="references">
         {JSON.stringify(workspace.references)}
       </output>
-      {workspace.attachments.map((item) => (
-        <ContextAttachmentChip key={item.id} {...item} />
-      ))}
+      {groupContextAttachments(workspace.attachments).map((entry) =>
+        entry.kind === "group" ? (
+          <ContextGroupChip
+            key={entry.group.id}
+            group={entry.group}
+            items={entry.items}
+          />
+        ) : null,
+      )}
       <div hidden={hidden}>
         {show && (
           <OwnedModelApp
@@ -219,11 +225,21 @@ describe("a later send and Remove all", () => {
           snapshot: { revision, sequence: body.sequence, state: server },
         });
       }
-      if (url.endsWith("/model/context/remove")) {
-        const content = server!.content.filter((_, i) => i !== body.index);
-        server = content.length ? { updateId: `${updateId}-${revision}`.slice(0, 36), content } : null;
+      if (url.endsWith("/model/context/remove-all")) {
+        expect(body.basis).toBe(0);
+        server = null;
         revision++;
-        return reply({ revision, sequence: 1, state: server });
+        return reply({
+          outcome: "applied",
+          snapshot: {
+            revision,
+            sequence: 1,
+            state: null,
+            held: true,
+            cursor: 1,
+            removedAt: 1,
+          },
+        });
       }
       if (url.endsWith("/model/close")) return reply({ closed: true });
       throw new Error("Unexpected API path");
@@ -260,6 +276,61 @@ describe("a later send and Remove all", () => {
   });
 });
 
+describe("a stale Remove all on a model App", () => {
+  it("shows the person's newer context but keeps it out of the next turn", async () => {
+    let revision = 0;
+    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      if (url.endsWith("/model/open")) return reply(handle);
+      if (url.endsWith("/model/call"))
+        return reply({ status: "completed", result: { content: [] } });
+      if (url.endsWith("/model/context")) {
+        revision++;
+        return reply({
+          _meta: { "openai/modelContext": { updateId } },
+          snapshot: {
+            revision,
+            sequence: body.sequence,
+            state: { updateId, content: body.params.content },
+          },
+        });
+      }
+      if (url.endsWith("/model/context/remove-all"))
+        // The removal never landed; the person attached again first.
+        return reply({
+          outcome: "stale",
+          snapshot: {
+            revision: revision + 1,
+            sequence: 2,
+            state: {
+              updateId,
+              content: [{ type: "text", text: "Newer pick" }],
+            },
+            cursor: 1,
+            attachedAt: 1,
+          },
+        });
+      if (url.endsWith("/model/close")) return reply({ closed: true });
+      throw new Error("Unexpected API path");
+    });
+    render(<GroupedWorkspace />);
+    await waitFor(() => expect(mocks.host).not.toBeNull());
+    await act(async () => {
+      await mocks.host!.services.updateModelContext!(params);
+    });
+    expect(screen.getByTestId("references")).toHaveTextContent(token);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove all Parts context" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Parts context, 1 item" }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("references")).toHaveTextContent("[]");
+  });
+});
+
 describe("inline App and composer composition", () => {
   it("publishes/removes real context with stable ownership and no repeated load effect", async () => {
     let finishRemoval!: (response: Response) => void;
@@ -287,9 +358,8 @@ describe("inline App and composer composition", () => {
           },
         });
       }
-      if (url.endsWith("/model/context/remove")) {
-        expect(body.updateId).toBe(updateId);
-        expect(body.index).toBe(0);
+      if (url.endsWith("/model/context/remove-all")) {
+        expect(body).toMatchObject({ operationId: expect.any(String) });
         return new Promise<Response>((resolve) => {
           finishRemoval = resolve;
         });
@@ -304,7 +374,7 @@ describe("inline App and composer composition", () => {
       await update(params);
     });
     expect(
-      screen.getByRole("button", { name: "Remove Triangle" }),
+      screen.getByRole("button", { name: "Remove all Parts context" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("references")).toHaveTextContent(token);
     expect(screen.getByTestId("guest-context")).toHaveTextContent(updateId);
@@ -315,18 +385,34 @@ describe("inline App and composer composition", () => {
     expect(mocks.host!.services.updateModelContext).toBe(ownedUpdate);
     expect(mocks.sourceEffects).toBe(1);
     expect(mocks.mounted).toBe(1);
-    fireEvent.click(screen.getByRole("button", { name: "Remove Triangle" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove all Parts context" }),
+    );
     await waitFor(() => expect(finishRemoval).toBeTypeOf("function"));
+    // Unconfirmed: the chip, the App's view and the next turn all drop it.
     expect(
-      screen.getByRole("button", { name: "Remove Triangle" }),
-    ).toBeDisabled();
-    expect(screen.getByTestId("guest-context")).toHaveTextContent(updateId);
+      screen.queryByRole("button", { name: "Remove all Parts context" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("references")).toHaveTextContent("[]");
+    expect(screen.getByTestId("guest-context")).toHaveTextContent("null");
     await act(async () => {
-      finishRemoval(reply({ revision: 2, sequence: 1, state: null }));
+      finishRemoval(
+        reply({
+          outcome: "applied",
+          snapshot: {
+            revision: 2,
+            sequence: 1,
+            state: null,
+            held: true,
+            cursor: 1,
+            removedAt: 1,
+          },
+        }),
+      );
     });
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Remove Triangle" }),
+        screen.queryByRole("button", { name: "Remove all Parts context" }),
       ).not.toBeInTheDocument(),
     );
     expect(screen.getByTestId("guest-context")).toHaveTextContent("null");
@@ -338,42 +424,85 @@ describe("inline App and composer composition", () => {
       content: [],
       structuredContent: { fixture: true, value: 42 },
     };
+    // The App re-sending context on its own right after Remove all (Bits &
+    // Bolts redraws and re-posts) is refused: the removal stays removed.
+    const contextPosts = () =>
+      mocks.fetch.mock.calls.filter(([url]) =>
+        String(url).endsWith("/model/context"),
+      ).length;
+    const posted = contextPosts();
+    await act(async () => {
+      await expect(update(structured)).rejects.toThrow(
+        "Use the App to attach it again",
+      );
+    });
+    expect(contextPosts()).toBe(posted);
+    expect(screen.getByTestId("guest-context")).toHaveTextContent("null");
+    expect(
+      screen.queryByRole("button", { name: "Remove all Parts context" }),
+    ).not.toBeInTheDocument();
+    // The person clicks into the App (focus moves into its frame) and it
+    // attaches again.
+    const frame = document.createElement("iframe");
+    frame.title = "MCP App: fixture.part";
+    document.body.append(frame);
+    frame.focus();
     await act(async () => {
       await update(structured);
     });
+    frame.remove();
+    expect(mocks.fetch.mock.lastCall![1].body).toContain('"attach":"user"');
     expect(
-      screen.getByRole("button", { name: "Remove App context" }),
+      screen.getByRole("button", { name: "Remove all Parts context" }),
     ).toBeInTheDocument();
     const previousRemoval = finishRemoval;
-    fireEvent.click(screen.getByRole("button", { name: "Remove App context" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove all Parts context" }),
+    );
     await waitFor(() => expect(finishRemoval).not.toBe(previousRemoval));
     await act(async () => {
-      finishRemoval(reply({ revision: 4, sequence: 2, state: null }));
+      finishRemoval(
+        reply({
+          outcome: "applied",
+          snapshot: {
+            revision: 4,
+            sequence: 2,
+            state: null,
+            held: true,
+            cursor: 3,
+            removedAt: 3,
+            attachedAt: 2,
+          },
+        }),
+      );
     });
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Remove App context" }),
+        screen.queryByRole("button", { name: "Remove all Parts context" }),
       ).not.toBeInTheDocument(),
     );
     expect(screen.getByTestId("guest-context")).toHaveTextContent("null");
     expect(mocks.sourceEffects).toBe(1);
     // Keep the old leaf mounted deliberately: scope change must fence it before
     // passive cleanup, and returning cannot revive its former publications.
+    document.body.append(frame);
+    frame.focus();
     await act(async () => {
       await update(params);
     });
+    frame.remove();
     expect(
-      screen.getByRole("button", { name: "Remove Triangle" }),
+      screen.getByRole("button", { name: "Remove all Parts context" }),
     ).toBeInTheDocument();
     view.rerender(<Workspace workspaceId="new-workspace" />);
     expect(screen.getByTestId("references")).toHaveTextContent("[]");
     expect(
-      screen.queryByRole("button", { name: "Remove Triangle" }),
+      screen.queryByRole("button", { name: "Remove all Parts context" }),
     ).not.toBeInTheDocument();
     view.rerender(<Workspace />);
     expect(screen.getByTestId("references")).toHaveTextContent("[]");
     expect(
-      screen.queryByRole("button", { name: "Remove Triangle" }),
+      screen.queryByRole("button", { name: "Remove all Parts context" }),
     ).not.toBeInTheDocument();
     expect(mocks.sourceEffects).toBe(1);
     view.rerender(<Workspace show={false} />);
@@ -447,17 +576,13 @@ describe("the client's Model context toggle", () => {
       await mocks.host!.services.updateModelContext!(params);
     });
     expect(screen.getByTestId("references")).toHaveTextContent(token);
-    expect(
-      screen.getByRole("button", { name: "Remove Triangle" }),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Triangle")).toBeInTheDocument();
     // The host turns Model context off. The very next send must not carry the
     // App's reference (the server would refuse the whole turn), with no
     // effect or network round-trip in between.
     view.rerender(<ToggledWorkspace contextEnabled={false} />);
     expect(screen.getByTestId("references")).toHaveTextContent("[]");
-    expect(
-      screen.queryByRole("button", { name: "Remove Triangle" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Triangle")).not.toBeInTheDocument();
     // The App itself keeps running.
     expect(mocks.mounted).toBe(1);
     expect(

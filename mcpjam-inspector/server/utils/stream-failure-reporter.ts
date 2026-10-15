@@ -7,6 +7,7 @@ import {
   type RouteFailureReport,
 } from "./route-error-report.js";
 import { getRequestLogger, getSystemLogger } from "./request-logger.js";
+import { bindSentryIdentity } from "./sentry-request-identity.js";
 
 /**
  * The classification/emission seam for failures HTTP status cannot see —
@@ -59,6 +60,7 @@ export type StreamFailureReporter = ((
    * the outcome on its request.
    */
   onCaptured?: () => void;
+  classify?: (event: StreamFailureEvent) => RouteFailureReport;
 };
 
 function classify(e: StreamFailureEvent): RouteFailureReport {
@@ -89,6 +91,10 @@ function toPayload(e: StreamFailureEvent, report: RouteFailureReport) {
     origin: report.origin,
     ...(report.normalized.slug ? { slug: report.normalized.slug } : {}),
     ...(e.errorCode ? { errorCode: e.errorCode } : {}),
+    ...(e.errorCode === "agent_billing_rejected" &&
+    e.context?.reason === "payment_not_confirmed"
+      ? { reason: "payment_not_confirmed" }
+      : {}),
     errorMessage: rawMessage.slice(0, 500),
     ...(e.rpcMethod ? { rpcMethod: e.rpcMethod } : {}),
   };
@@ -99,7 +105,7 @@ export function createRequestStreamFailureReporter(
   component: string,
 ): StreamFailureReporter {
   const log = getRequestLogger(c, component);
-  const reporter = (e: StreamFailureEvent) => {
+  const reporter = bindSentryIdentity((e: StreamFailureEvent) => {
     const report = classify(e);
     // The request's explicit capture outcome. A stream answers 200 before it
     // fails, so the request-log backstop cannot see these failures — and must
@@ -107,9 +113,10 @@ export function createRequestStreamFailureReporter(
     if (report.captured) markRequestFailureCaptured(c);
     log.event("route.operation.failed", toPayload(e, report));
     return report;
-  };
+  });
   return Object.assign(reporter, {
     onCaptured: () => markRequestFailureCaptured(c),
+    classify: bindSentryIdentity(classify),
   });
 }
 
@@ -148,7 +155,7 @@ export function oncePerTurn(
     if (emitted) {
       // Still a capture decision, so a request-scoped reporter's record of
       // the outcome must not be skipped along with the typed event.
-      const report = classify(e);
+      const report = (reporter.classify ?? classify)(e);
       if (report.captured) reporter.onCaptured?.();
       return report;
     }

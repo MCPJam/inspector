@@ -1,4 +1,4 @@
-import type { EvalSuiteRun } from "@/components/evals/types";
+import type { EvalSuiteRunListItem } from "@/components/evals/types";
 
 /**
  * WHERE A RUN CAME FROM — one resolver, one table, every surface.
@@ -36,7 +36,7 @@ import type { EvalSuiteRun } from "@/components/evals/types";
  */
 
 /** The DECLARED launcher on a run row. */
-export type RunLauncher = NonNullable<EvalSuiteRun["launcher"]>;
+export type RunLauncher = NonNullable<EvalSuiteRunListItem["launcher"]>;
 
 /** Everything a run's origin can resolve to. Mirrors the backend's `RUN_ORIGINS`. */
 export type RunOrigin =
@@ -82,9 +82,9 @@ const LAUNCHER_KINDS = new Set(["cli", "mcp", "github_action"]);
 
 /** The shape every reader here needs, so a caller can pass a narrow row. */
 export type RunOriginInput = {
-  source?: EvalSuiteRun["source"] | null;
-  launcher?: EvalSuiteRun["launcher"] | null;
-  attribution?: EvalSuiteRun["attribution"] | null;
+  source?: EvalSuiteRunListItem["source"] | null;
+  launcher?: EvalSuiteRunListItem["launcher"] | null;
+  attribution?: EvalSuiteRunListItem["attribution"] | null;
   /**
    * The SUITE's creation provenance, for a run row that predates
    * `testSuiteRun.source`. Same fallback every other reader uses (see

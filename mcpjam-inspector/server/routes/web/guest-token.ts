@@ -1,7 +1,11 @@
 import { Hono } from "hono";
-import { timingSafeEqual } from "crypto";
 import { fetchGuestSession } from "../../utils/guest-session-source.js";
 import { ErrorCode, webError } from "./errors.js";
+import {
+  constantTimeTokenEquals,
+  getServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+} from "../../services/service-credential.js";
 
 /**
  * POST /api/web/guest-token
@@ -84,19 +88,13 @@ function localDevServiceTokenAllowed(): boolean {
   );
 }
 
-function timingSafeStringEqual(a: string, b: string): boolean {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-}
-
 // Accepted service tokens: the configured secret always, plus the local-dev
 // sentinel only when explicitly opted in (see localDevServiceTokenAllowed).
 function acceptedServiceTokens(): string[] {
   const accepted: string[] = [];
-  if (process.env.INSPECTOR_SERVICE_TOKEN) {
-    accepted.push(process.env.INSPECTOR_SERVICE_TOKEN);
+  const configured = getServiceCredential();
+  if (configured) {
+    accepted.push(configured);
   }
   if (localDevServiceTokenAllowed()) {
     accepted.push(LOCAL_DEV_SERVICE_TOKEN);
@@ -104,15 +102,21 @@ function acceptedServiceTokens(): string[] {
   return accepted;
 }
 
+// The same SHA-256 + timingSafeEqual compare as the internal-service
+// middleware: no length branch to leak the secret's length through. Every
+// candidate is compared, so which one matched is not timed either.
 function serviceTokenMatches(provided: string | undefined): boolean {
-  if (!provided) return false;
-  return acceptedServiceTokens().some((expected) =>
-    timingSafeStringEqual(provided, expected)
-  );
+  const presented = provided?.trim();
+  if (!presented) return false;
+  let matched = false;
+  for (const expected of acceptedServiceTokens()) {
+    matched = constantTimeTokenEquals(presented, expected) || matched;
+  }
+  return matched;
 }
 
 guestToken.post("/", async (c) => {
-  if (!serviceTokenMatches(c.req.header("x-inspector-service-token"))) {
+  if (!serviceTokenMatches(c.req.header(INSPECTOR_SERVICE_TOKEN_HEADER))) {
     return webError(c, 401, ErrorCode.UNAUTHORIZED, "Invalid service token");
   }
 

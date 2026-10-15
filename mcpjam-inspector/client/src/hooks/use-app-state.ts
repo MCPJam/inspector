@@ -34,9 +34,11 @@ import {
   HOSTED_OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/hosted-oauth-callback";
 import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
+import { hasPendingOAuthCallback } from "@/lib/oauth-callback-inbox";
 import { useProjectQueries, shouldQueryProjectId } from "./useProjects";
 import { HOSTED_MODE } from "@/lib/config";
 import { OAUTH_AUTHORIZATION_CANCELLED_MESSAGE } from "@/lib/hosted-oauth-resume";
+import { connectOutcomeTracker } from "@/lib/connect-outcome-telemetry";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 export type { ServerWithName } from "@/state/app-types";
@@ -80,15 +82,15 @@ function hasHostedOAuthCallbackParams(): boolean {
   // /oauth/callback?code=…. Without this path scope a WorkOS sign-in is
   // misread as an in-flight MCP OAuth callback, resurfacing a stale
   // "Finishing OAuth sign-in for X…" gate from leftover localStorage markers.
-  const pathname = window.location.pathname;
-  if (
-    pathname !== "/oauth/callback" &&
-    !pathname.startsWith("/oauth/callback/")
-  ) {
-    return false;
-  }
-  const params = new URLSearchParams(window.location.search);
-  return params.has("code") || params.has("error");
+  // The inbox applies that scope.
+  //
+  // Read from the inbox, NOT `window.location.search`: `main.tsx` moved the
+  // answer out of the address bar before telemetry started, leaving only
+  // `?oauth_pending=1`. Reading the URL here would see no `code` and drop the
+  // org pin below mid-completion — the exact flip this function exists to
+  // prevent. The inbox answers for as long as the callback route is showing,
+  // which is as long as the `?code=` used to.
+  return hasPendingOAuthCallback();
 }
 
 // Reads the organizationId from an in-flight project-surface OAuth marker.
@@ -170,8 +172,7 @@ function isHistoryRestore(event: PageTransitionEvent): boolean {
   if (event.persisted) return true;
 
   const navigationEntry = performance.getEntriesByType?.("navigation").at(0) as
-    | PerformanceNavigationTiming
-    | undefined;
+    PerformanceNavigationTiming | undefined;
   return navigationEntry?.type === "back_forward";
 }
 
@@ -214,7 +215,13 @@ export function useAppState({
   validOrganizations: Array<{ _id: string; myRole?: string }>;
   requestSignIn?: (returnPath?: string) => void | Promise<void>;
 }) {
-  const oauthCallbackLocation = `${window.location.pathname}${window.location.search}`;
+  // Re-keys the callback effects below. The address bar alone no longer
+  // changes when the callback is consumed (it reads `?oauth_pending=1` until
+  // the route is restored), so whether the inbox still holds an answer is part
+  // of the key.
+  const oauthCallbackLocation = `${window.location.pathname}${
+    window.location.search
+  }|${hasHostedOAuthCallbackParams() ? "pending" : "idle"}`;
 
   useEffect(() => {
     if (!window.electronAPI?.diagnostics) return;
@@ -225,8 +232,8 @@ export function useAppState({
         auth: isWorkOsLoading
           ? "loading"
           : currentUserId
-          ? "signed_in"
-          : "guest",
+            ? "signed_in"
+            : "guest",
         version: __APP_VERSION__,
       });
     report();
@@ -285,8 +292,8 @@ export function useAppState({
   const activeOrganizationId = isPendingOAuthMarkerOrgValid
     ? pendingOAuthMarkerOrgId
     : isStoredActiveOrganizationValid
-    ? storedActiveOrganizationId
-    : fallbackActiveOrganizationId;
+      ? storedActiveOrganizationId
+      : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
       setActiveOrganizationSelection({
@@ -544,11 +551,14 @@ export function useAppState({
         pendingServer?.connectionStatus === "connecting" ||
         pendingServer?.connectionStatus === "oauth-flow"
       ) {
-        dispatch({
-          type: "CONNECT_FAILURE",
+        const cancelled = {
+          type: "CONNECT_FAILURE" as const,
           name: pendingOAuth.serverName,
           error: OAUTH_AUTHORIZATION_CANCELLED_MESSAGE,
-        });
+        };
+        dispatch(cancelled);
+        // Outside `useServerState`'s wrapped dispatch, so record it here.
+        connectOutcomeTracker.observe(cancelled);
       }
     };
 

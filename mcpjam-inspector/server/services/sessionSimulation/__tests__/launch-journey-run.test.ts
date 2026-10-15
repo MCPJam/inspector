@@ -112,6 +112,137 @@ describe("launchJourneyRun", () => {
     expect(startRunMock).toHaveBeenCalledTimes(1);
   });
 
+  it("passes expectedSponsored to the create and returns the funding it reports", async () => {
+    createRunMock.mockResolvedValue(
+      created({ funding: { sponsored: 1, credits: 0, total: 1 } }),
+    );
+
+    const result = await launchJourneyRun(DEPS, {
+      ...INPUT,
+      expectedSponsored: 1,
+    });
+    await settle();
+
+    expect(createRunMock.mock.calls[0]![2]).toMatchObject({
+      expectedSponsored: 1,
+    });
+    expect(result).toEqual({
+      runId: "run_1",
+      funding: { sponsored: 1, credits: 0, total: 1 },
+    });
+  });
+
+  it("omits expectedSponsored when the caller did not supply one", async () => {
+    createRunMock.mockResolvedValue(created());
+
+    await launchJourneyRun(DEPS, INPUT);
+    await settle();
+
+    expect(createRunMock.mock.calls[0]![2]).not.toHaveProperty(
+      "expectedSponsored",
+    );
+  });
+
+  it("hands the runner the per-conversation funding the backend allocated", async () => {
+    const sessions = [{ targetId: "t1", sessionIdx: 0, funding: "starter" }];
+    createRunMock.mockResolvedValue(created({ sessions }));
+
+    await launchJourneyRun(DEPS, INPUT);
+    await settle();
+
+    expect(startRunMock.mock.calls[0]![0]).toMatchObject({
+      sessionFunding: sessions,
+    });
+  });
+
+  it("surfaces a funding mismatch as a typed 409 with its details, before any runner starts", async () => {
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        409,
+        JSON.stringify({
+          code: "swarm_funding_changed",
+          message: "changed",
+          details: {
+            expectedSponsored: 5,
+            actualSponsored: 3,
+            totalConversations: 15,
+          },
+        }),
+        "swarm-agent failed (409)",
+      ),
+    );
+
+    const error = await launchJourneyRun(DEPS, {
+      ...INPUT,
+      expectedSponsored: 5,
+    }).catch((e) => e);
+
+    expect(error).toMatchObject({
+      status: 409,
+      code: "CONFLICT",
+      details: {
+        code: "swarm_funding_changed",
+        expectedSponsored: 5,
+        actualSponsored: 3,
+        totalConversations: 15,
+      },
+    });
+    await settle();
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
+  it("answers the AI key policy's launch refusal with every problem, before any runner starts", async () => {
+    // The backend's create route wraps the ConvexError data under `error`.
+    const problems = [
+      {
+        dependency: "persona",
+        label: "The simulated user",
+        code: "org_runtime_unsupported",
+        reason:
+          "The simulated user can't run on this organization's providers yet.",
+      },
+      {
+        dependency: "judge",
+        label: "The judge",
+        code: "org_keys_required",
+        reason:
+          "The judge has no model chosen. Choose a judge model from an organization provider.",
+      },
+    ];
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        400,
+        JSON.stringify({
+          ok: false,
+          code: "invalid_request",
+          error: {
+            code: "org_keys_required",
+            message: `This organization requires its own provider keys for AI features, and this launch has 2 dependencies that can't run on them: ${problems
+              .map((problem) => problem.reason)
+              .join(" ")} ${"x".repeat(300)}`,
+            problems,
+          },
+        }),
+        "swarm-agent failed (400)",
+      ),
+    );
+
+    const error = await launchJourneyRun(DEPS, INPUT).catch((e) => e);
+
+    expect(error).toMatchObject({
+      status: 403,
+      message:
+        "This organization requires its own provider keys for AI features, and this launch has dependencies that can't run on them.",
+      details: {
+        code: "org_keys_required",
+        remediation: "choose_org_model",
+        problems,
+      },
+    });
+    await settle();
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
   it("hands the runner a THUNK, not a captured token", async () => {
     // The run outlives the JWT that authorized it — a delegated token lives
     // about two hours and a wide fan-out runs longer. A captured string here

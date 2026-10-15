@@ -31,7 +31,21 @@ export const SESSIONS_FEED_QUERIES = {
    * contract mid-subscription.
    */
   searchProjectSessions: "sessionsFeed:searchProjectSessions",
+  /**
+   * Relevance-ordered search over what was SAID in each session — the
+   * `chatSessionTranscripts` side table, joined back to the parent row for
+   * the same authorization. Same args and DTO as the title search, plus a
+   * `matchPreview` per row.
+   */
+  searchProjectSessionTranscripts:
+    "sessionsFeed:searchProjectSessionTranscripts",
 } as const;
+
+/**
+ * Which search backs the box. Named after the public API's `scope` param
+ * (`/v1/sessions?scope=`) so the UI, CLI and SDK say the same thing.
+ */
+export type SessionSearchScope = "transcripts" | "titles";
 
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +118,13 @@ export interface SessionFeedItem {
   goalScore?: SessionGoalScore;
   criteria?: SessionCriteria;
   parentRef: SessionFeedParentRef | null;
+  /**
+   * Transcript search only: a window of the conversation around the first
+   * query term. Absent on every other query. `null` means the row matched
+   * (the index stems and tokenizes) but the term never appears literally, so
+   * there is no honest window to show.
+   */
+  matchPreview?: string | null;
 }
 
 /** Product name per persistence bucket, as rendered on the row badge. */

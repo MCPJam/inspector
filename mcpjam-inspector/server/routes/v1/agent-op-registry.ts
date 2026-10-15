@@ -57,6 +57,7 @@ import {
   expandComposeModelChoices,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
@@ -1529,6 +1530,27 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
+    ],
+  },
+  {
+    operation: startMuseReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against Meta's Muse connector guidelines`,
+      buttonLabel: "Run it",
+      kind: "start",
+      // Free: Muse has no model pass at all.
+      confirmSeverity: () => "none",
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `start_muse_readiness_run` is the same receipt-and-poll shape, graded against Meta's Muse connector guidelines. It takes no `submissionMode` and has no AI observations. Muse reviews every submission by hand, so a `ready` grade is a passed preflight, never an approval.",
     ],
   },
   { operation: getReadinessRunOperation, tier: "direct" },

@@ -27,7 +27,7 @@ import type {
 } from "@/hooks/useProjectEnvironments";
 import { isNamedEnvironment } from "@/lib/environment-label";
 import {
-  harnessModelRefusalReason,
+  harnessChoiceRefusalReason,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import type { HarnessModelPurpose } from "@/shared/harness-model-support";
@@ -259,8 +259,10 @@ export function expandModelChoices(
   }
   for (const target of dedupeModelTargets(resolved.explicitTargets)) {
     const { modelId } = target;
-    const reason = harnessModelRefusalReason(
-      modelId,
+    // The saved selection says whose key the choice runs on: a local key never
+    // runs on a brokered harness, an org connection only on its own vendor.
+    const reason = harnessChoiceRefusalReason(
+      { modelId, selection: target.selection },
       options?.harness,
       options?.purpose ?? "eval",
     );

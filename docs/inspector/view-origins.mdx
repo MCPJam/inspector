@@ -72,3 +72,11 @@ MCPJam **derives** the origin it serves your view from rather than routing on wh
 MCPJam mounts a view by writing its HTML into a blank document, the same way Claude does. A document written that way **without a doctype is parsed in quirks mode**, where the box model and percentage heights differ from what you probably tested against.
 
 Start your resource HTML with `<!DOCTYPE html>`. The readiness report flags this as `claude.apps.design.doctype`.
+
+## Opaque-origin mode
+
+When the active client's **Same-origin app iframe** setting is off (for example, the Copilot preset), the inspector mounts the view with `srcdoc` and no `allow-same-origin`. The view runs in an **opaque origin** — it has no URL of its own, `localStorage`/`sessionStorage`/`indexedDB` throw, cookies are inaccessible, and outbound fetches send `Origin: null` instead of a real origin.
+
+In this mode the **View origin** chip in the Sandbox Stack shows `about:srcdoc` rather than a URL. There is no origin to allowlist with a third-party API — if your app relies on a real origin for CORS, OAuth redirects, or referrer-restricted keys, it will not work on hosts that mount apps this way.
+
+If the app reloads itself while running in opaque mode, the proxy stops relaying messages for it and the Sandbox Stack shows **channel closed**.

@@ -374,7 +374,7 @@ describe("fresh request runtime admission", () => {
     expect(f.connect).not.toHaveBeenCalled();
     await live.release();
   });
-  it("reuses the authorized connection within its window but reads admission and bypasses metadata on every fence", async () => {
+  it("reuses the authorized connection within its window, and its listing within one request, but reads admission on every resolution", async () => {
     const live = await runtime();
     const first = await live.resolve("app", new AbortController().signal);
     f.list.mockResolvedValueOnce({
@@ -384,25 +384,117 @@ describe("fresh request runtime admission", () => {
     expect(f.connect).toHaveBeenCalledOnce();
     expect(f.connect.mock.calls[0][3].lazyConnect).toBe(true);
     expect(f.initialize).toHaveBeenCalledOnce();
+    // One request lists once; its second resolution re-reads every backend
+    // fact and stands on that listing.
+    expect(f.list).toHaveBeenCalledOnce();
+    // Admission; the cold resolution's read before and after its catalog;
+    // the warm resolution's single read. Never skipped.
+    expect(f.query).toHaveBeenCalledTimes(4);
+    expect(next.revision).toBe(first.revision);
+    expect(next.manager).toBe(first.manager);
+    expect(f.disconnect).not.toHaveBeenCalled();
+    await live.release();
+    // A later request for the same binding reuses the same live session, and
+    // lists again: it sees the changed declaration.
+    const later = await runtime();
+    const reused = await later.resolve("app", new AbortController().signal);
+    expect(reused.manager).toBe(first.manager);
+    expect(reused.revision).not.toBe(first.revision);
     expect(f.list).toHaveBeenCalledTimes(2);
     expect(
       f.list.mock.calls.every((call) => call[2].cacheMode === "bypass"),
     ).toBe(true);
-    // Admission plus two batched reads per resolution, never skipped.
-    expect(f.query).toHaveBeenCalledTimes(5);
-    expect(next.revision).not.toBe(first.revision);
-    expect(next.manager).toBe(first.manager);
-    expect(f.disconnect).not.toHaveBeenCalled();
-    await live.release();
-    // A later request for the same binding reuses the same live session.
-    const later = await runtime();
-    const reused = await later.resolve("app", new AbortController().signal);
-    expect(reused.manager).toBe(first.manager);
+    // Its own admission and one read: the connection is warm.
+    expect(f.query).toHaveBeenCalledTimes(6);
     expect(f.connect).toHaveBeenCalledOnce();
     expect(f.initialize).toHaveBeenCalledOnce();
     await later.release();
     expect(f.disconnect).not.toHaveBeenCalled();
   });
+  it("lists again for a tool this request has not listed", async () => {
+    f.list.mockResolvedValue({
+      tools: [tool, { name: "inspect", inputSchema: { type: "object" } }],
+    });
+    const live = await runtime();
+    await live.resolve("app", new AbortController().signal);
+    await live.resolve("inspect", new AbortController().signal);
+    expect(f.list).toHaveBeenCalledOnce();
+    f.list.mockResolvedValue({
+      tools: [{ name: "late", inputSchema: { type: "object" } }],
+    });
+    await expect(
+      live.resolve("late", new AbortController().signal),
+    ).resolves.toMatchObject({ tool: { name: "late" } });
+    expect(f.list).toHaveBeenCalledTimes(2);
+    await live.release();
+  });
+  it("re-authorizes a connection in active use ahead of its window, off the request's path", async () => {
+    const start = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+    const first = await runtime();
+    const opened = await first.resolve("app", new AbortController().signal);
+    await first.release();
+    expect(f.connect).toHaveBeenCalledOnce();
+    // Before half the window: nothing to refresh.
+    clock.mockReturnValue(start + 20_000);
+    const early = await runtime();
+    await early.resolve("app", new AbortController().signal);
+    await early.release();
+    expect(f.connect).toHaveBeenCalledOnce();
+    // Past half the window: the request answers on the current
+    // authorization while a full one runs beside it.
+    clock.mockReturnValue(start + 35_000);
+    const slow = deferred<void>();
+    const connect = f.connect.getMockImplementation()!;
+    f.connect.mockImplementationOnce(async (...args) => {
+      await slow.promise;
+      return connect(...args);
+    });
+    const busy = await runtime();
+    const used = await busy.resolve("app", new AbortController().signal);
+    expect(used.manager).toBe(opened.manager);
+    await busy.release();
+    expect(f.connect).toHaveBeenCalledTimes(2);
+    slow.resolve();
+    // Its unused lazy manager is released; the live session is kept.
+    await vi.waitFor(() => expect(f.disconnect).toHaveBeenCalledOnce());
+    // 64 s after the first authorization (29 s after the refresh began): no
+    // inline authorization, the same session.
+    clock.mockReturnValue(start + 64_000);
+    const later = await runtime();
+    const reused = await later.resolve("app", new AbortController().signal);
+    expect(reused.manager).toBe(opened.manager);
+    expect(f.connect).toHaveBeenCalledTimes(2);
+    expect(f.initialize).toHaveBeenCalledOnce();
+    await later.release();
+  });
+  it.each(["changed target", "refused"])(
+    "ends the window when a background re-authorization finds the target %s",
+    async (outcome) => {
+      const start = Date.now();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+      const first = await runtime();
+      const opened = await first.resolve("app", new AbortController().signal);
+      await first.release();
+      clock.mockReturnValue(start + 35_000);
+      if (outcome === "refused")
+        f.connect.mockRejectedValueOnce(new Error("credential revoked"));
+      else target = { ...target, url: "https://moved.invalid/mcp" };
+      const busy = await runtime();
+      // This request still answers within the current window.
+      expect(
+        (await busy.resolve("app", new AbortController().signal)).manager,
+      ).toBe(opened.manager);
+      await busy.release();
+      await vi.waitFor(() => expect(f.connect).toHaveBeenCalledTimes(2));
+      // The next request authorizes in full at once (well inside 60 s).
+      clock.mockReturnValue(start + 36_000);
+      const next = await runtime();
+      await next.resolve("app", new AbortController().signal).catch(() => {});
+      expect(f.connect).toHaveBeenCalledTimes(3);
+      await next.release();
+    },
+  );
   it("re-runs full target authorization after the window and keeps an unchanged session", async () => {
     const live = await runtime();
     const first = await live.resolve("app", new AbortController().signal);
@@ -1435,6 +1527,18 @@ describe("a pending form and the client's current capability toggles", () => {
     toggles({ forms: true });
     await expect(form.deliver!(accept)).resolves.toEqual(accept);
     expect(live.diagnostics()).toEqual([]);
+    form.release();
+    await live.release();
+  });
+
+  it("lists again after a form step: a person could act before the next resolution", async () => {
+    const { live, form } = await shown();
+    expect(f.list).toHaveBeenCalledOnce();
+    await live.resolve("app", new AbortController().signal);
+    expect(f.list).toHaveBeenCalledTimes(2);
+    // With no form step since, the next resolution stands on that listing.
+    await live.resolve("app", new AbortController().signal);
+    expect(f.list).toHaveBeenCalledTimes(2);
     form.release();
     await live.release();
   });

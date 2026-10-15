@@ -36,6 +36,7 @@ const RESOURCE_METADATA_URL = `${ORIGIN}/.well-known/oauth-protected-resource/mc
 const HELD_TOOLS = [
   "start_claude_readiness_run",
   "start_openai_readiness_run",
+  "start_muse_readiness_run",
   "get_readiness_run",
   "list_readiness_runs",
   "cancel_readiness_run",

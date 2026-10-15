@@ -9,7 +9,11 @@ import {
   runClientIdentity,
   snapshotTestModels,
 } from "../evals/helpers";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "../evals/types";
 import {
   iterationTargetKey,
   modelIdFromTargetKey,
@@ -18,7 +22,10 @@ import {
   targetKeyLabels,
 } from "@/lib/eval-target-key";
 
-export function launchRuns(run: EvalSuiteRun, runs: readonly EvalSuiteRun[]) {
+export function launchRuns<TRun extends EvalSuiteRunListItem>(
+  run: TRun,
+  runs: readonly TRun[],
+) {
   return [
     run,
     ...runs.filter(
@@ -80,14 +87,14 @@ export function matrixCaseKey(iteration: EvalIteration): string {
   );
 }
 
-export function buildRunResultsMatrix({
+export function buildRunResultsMatrix<TRun extends EvalSuiteRunListItem>({
   run,
   runs,
   iterations,
   hostNamesById,
 }: {
-  run: EvalSuiteRun;
-  runs: readonly EvalSuiteRun[];
+  run: TRun;
+  runs: readonly TRun[];
   iterations: readonly EvalIteration[];
   hostNamesById: ReadonlyMap<string, string | null>;
 }) {
@@ -120,7 +127,10 @@ export function buildRunResultsMatrix({
     // is the case list for a QUEUED run and still the case list for one in
     // flight — a case the recorder has not reached yet belongs on screen as an
     // empty cell, not missing until its first iteration lands.
-    const snapshotTests = targetRun.configSnapshot?.tests ?? [];
+    const snapshotTests =
+      "tests" in (targetRun.configSnapshot ?? {})
+        ? (targetRun as unknown as EvalSuiteRun).configSnapshot.tests
+        : [];
     for (const test of snapshotTests) {
       // Key onto the recorded iteration when this case HAS started, so it does
       // not also render as a second, title-keyed row.

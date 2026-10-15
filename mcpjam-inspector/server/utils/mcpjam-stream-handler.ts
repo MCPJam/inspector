@@ -1,3 +1,5 @@
+import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
+import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 /**
  * MCPJam Stream Handler
@@ -25,13 +27,18 @@ import type {
   ToolResultPart,
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
   Harness,
   ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
+import {
+  isAiPolicyRecognizedDenialCode,
+  orgPolicyRefusalSlug,
+  type BackendStreamFailureContext,
+} from "./org-policy-stream-refusal.js";
 import {
   describeAsSlug,
   describeError,
@@ -90,6 +97,10 @@ import {
 } from "./mrtr-hosted-chat.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
+import {
+  DEFAULT_TURN_MAX_STEPS,
+  STEP_LIMIT_REFUSAL_MESSAGE,
+} from "@/shared/turn-step-budget";
 import {
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
@@ -352,8 +363,9 @@ import {
 } from "./model-request-payload";
 import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
+import { serviceCredentialHeaders } from "../services/service-credential.js";
 
-const DEFAULT_MAX_STEPS = 30;
+const DEFAULT_MAX_STEPS = DEFAULT_TURN_MAX_STEPS;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
 const STEP_LOG_THRESHOLD = 20;
 const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
@@ -690,10 +702,16 @@ export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
   code?: string,
+  context?: BackendStreamFailureContext,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
+
+  // The organization's AI-key policy refused the request. Before every status
+  // rule below: see {@link orgPolicyRefusalSlug}.
+  const orgPolicySlug = orgPolicyRefusalSlug(code, context);
+  if (orgPolicySlug) return describeAsSlug(orgPolicySlug, detail);
 
   // Before the status branches: a body that names MCPJam settles ownership no
   // matter which upstream status was mirrored onto it. The slug still comes
@@ -759,10 +777,17 @@ export function describeStreamErrorChunkFailure(
   status: number | undefined,
   rawText: string,
   code?: string,
+  context?: BackendStreamFailureContext,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
+
+  // A mid-stream policy refusal (the org's provider rejecting its key, or
+  // throttling) carries the UPSTREAM status, which read alone would blame the
+  // user's key or page us. Its code settles it.
+  const orgPolicySlug = orgPolicyRefusalSlug(code, context);
+  if (orgPolicySlug) return describeAsSlug(orgPolicySlug, detail);
 
   if (code === "platform_free_budget_exhausted")
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
@@ -895,6 +920,14 @@ export interface MCPJamHandlerOptions {
    * selection's saved effort.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The turn's saved selection, forwarded on every hosted step and read by
+   * `runHarnessTurn`: an org selection runs the harness on the organization's own
+   * provider key (its canonical id is the turn's model, its connection is
+   * what the lease is minted for). Absent ⇒ the hosted path, unchanged.
+   */
+  modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
   tools: ToolSet;
   /**
    * MCPJam's own server-executed built-in tools (e.g. web_search) as a subset
@@ -1003,6 +1036,15 @@ export interface MCPJamHandlerOptions {
    * environment delivers no skills, which is not the same as "ask the project".
    */
   runtimeSkillsOverride?: RuntimeSkill[];
+  /**
+   * The Playground's HIDDEN environment, harness side: deliver the project's
+   * live skill pool BESIDE `runtimeSkillsOverride` instead of skipping it.
+   * Selects the `live_plus` skill source explicitly — a turn that merely
+   * carries an environment's override and capability set never gets it. Only
+   * the web chat route sets it, and only for an environment target that asked
+   * for the project's skills.
+   */
+  includeProjectSkills?: boolean;
   /**
    * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
    * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
@@ -2065,6 +2107,7 @@ export function parseStreamErrorChunkText(errorText: string): {
   message: string;
   code?: string;
   statusCode?: number;
+  isRetryable?: boolean;
   details?: string;
 } {
   try {
@@ -2072,6 +2115,7 @@ export function parseStreamErrorChunkText(errorText: string): {
       code?: unknown;
       message?: unknown;
       statusCode?: unknown;
+      isRetryable?: unknown;
       details?: unknown;
     };
     if (body && typeof body === "object") {
@@ -2084,6 +2128,9 @@ export function parseStreamErrorChunkText(errorText: string): {
         ...(typeof body.code === "string" ? { code: body.code } : {}),
         ...(typeof body.statusCode === "number"
           ? { statusCode: body.statusCode }
+          : {}),
+        ...(typeof body.isRetryable === "boolean"
+          ? { isRetryable: body.isRetryable }
           : {}),
         ...(typeof body.details === "string" ? { details: body.details } : {}),
       };
@@ -2303,6 +2350,9 @@ async function processStream(
   // supplied. Chat / synthetic omit (handler still writes the UI
   // chunk + trace event unchanged).
   onToolCall?: (event: MCPJamToolCallEvent) => void,
+  // The backend path this stream came from, so an error chunk's code can be
+  // read per route (`credential_missing` on `/stream/org`).
+  dispatchPath?: string,
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
@@ -2658,6 +2708,7 @@ async function processStream(
             parsed.statusCode,
             errorText,
             parsed.code,
+            dispatchPath !== undefined ? { endpointPath: dispatchPath } : undefined,
           );
           throw Object.assign(new Error(parsed.message), {
             normalized,
@@ -2675,7 +2726,9 @@ async function processStream(
               : {}),
             ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
               ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
-              : {}),
+              : parsed.code
+                ? { clientErrorText: JSON.stringify(parsed) }
+                : {}),
           });
         }
 
@@ -3686,15 +3739,13 @@ async function processOneStep(ctx: StepContext): Promise<{
     clientIp,
     onLiveTextDelta,
   } = ctx;
-  // Hash the originating IP for the per-IP daily spend cap. Hashing here
-  // (server-side) keeps the raw IP off the wire to Convex. If no hash can be
-  // produced, omit the header so Convex uses its cookie-only guest fallback
-  // instead of pooling unrelated guests in a shared unknown-IP bucket.
+  // Hash IPs server-side; absent hashes keep the per-cookie guest fallback.
   const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
   const convexHeaders: Record<string, string> = {
     "content-type": "application/json",
     ...(authHeader ? { authorization: authHeader } : {}),
     ...(extraHeaders ?? {}),
+    ...inspectorAiRequestHeaders("stream"),
   };
   for (const header of Object.keys(convexHeaders)) {
     if (header.toLowerCase() === GUEST_IP_HASH_HEADER) {
@@ -3705,10 +3756,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // Sponsored study inference must come through the trusted execution path
   // that resolves the study's model and tools. This proof is required even
   // when there is no client IP to forward. The viewer bearer remains intact.
-  const scenarioServiceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-  if (scenarioId && scenarioServiceToken) {
-    convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
-  }
+  if (scenarioId) Object.assign(convexHeaders, serviceCredentialHeaders());
   // A platform-billing claim rides the user's own sign-in: Convex authorizes
   // it on the bearer above, so a self-hosted install with no service token
   // sends it as is. When this deployment does have the token (hosted), it is
@@ -3716,10 +3764,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // it with an IP hash and other backend checks still read it.
   const billingFeature = extraBodyFields?.billingFeature;
   if (billingFeature !== undefined) {
-    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-    if (serviceToken) {
-      convexHeaders["x-inspector-service-token"] = serviceToken;
-    }
+    Object.assign(convexHeaders, serviceCredentialHeaders());
   }
   // A claimed turn goes to the PLATFORM route and NEVER falls back to the
   // ordinary one. Falling back is the whole failure being fixed: the ordinary
@@ -3919,6 +3964,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       res.status,
       errorText,
       parsed.code,
+      { endpointPath: dispatchPath },
     );
     // `isJsonDenial` proves only that the body was JSON — NOT that it was the
     // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
@@ -3928,8 +3974,13 @@ async function processOneStep(ctx: StepContext): Promise<{
     // happen to carry a code would silence exactly the failures worth paging
     // on. Only the codes below are user-owned refusals from a backend that is
     // working correctly, so only they skip the boundary.
+    //
+    // The organization AI-key policy's refusals are recognized at any status
+    // (they arrive as 403/422/503): the org's own configuration, or its own
+    // provider, said no (see `org-policy-stream-refusal.ts`).
     const isRecognizedDenial =
-      isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "");
+      (isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "")) ||
+      isAiPolicyRecognizedDenialCode(parsed.code);
     // Through the reporter, not a bare capture call: reportRouteFailure runs
     // the same maybeCaptureOriginError decision (source becomes the identical
     // `route:mcp.chat-v2.backend-stream` Sentry tag), then a free-form Axiom
@@ -4036,6 +4087,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     onLiveTextDelta,
     abortSignal,
     onToolCall,
+    dispatchPath,
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -4890,13 +4942,17 @@ export async function runChatEngineLoop(
     progressivePlan,
     discoveryState,
   } = options;
-  // The turn's effort rides every per-step hosted body as the top-level field
-  // (which the backend prefers over a forwarded selection's). Set last so a
-  // caller-supplied extra field cannot contradict the typed one.
-  const extraBodyFields: Record<string, unknown> | undefined =
-    options.reasoningEffort !== undefined
-      ? { ...(callerExtraBodyFields ?? {}), reasoningEffort: options.reasoningEffort }
-      : callerExtraBodyFields;
+  // Typed settings and origin are authoritative on every step.
+  const extraBodyFields = {
+    ...callerExtraBodyFields,
+    ...(options.reasoningEffort !== undefined ? { reasoningEffort: options.reasoningEffort } : {}),
+    ...streamSelectionFields(
+      options.modelSelection ?? callerExtraBodyFields?.modelSelection,
+      { id: modelId, provider },
+      endpointPath ?? "/stream",
+      options.modelSelectionOrigin,
+    ),
+  };
   // One typed route.operation.failed per turn, whatever combination of the
   // three failure sites fires; the system fallback covers eval/swarm runs
   // that have no request context. Later failures in the same turn still get
@@ -5147,6 +5203,41 @@ export async function runChatEngineLoop(
 
       if (aborted) {
         // Already aborted before we even started — bail silently.
+        return;
+      }
+
+      // A resumed request whose user message has already spent its step
+      // budget can run no model call — the loop below would not enter. It
+      // used to end in a SUCCESSFUL finish (`length`, from `hitStepCap`) that
+      // changed nothing in the browser's last step, which therefore still
+      // looked resumable, so the browser posted it again every few seconds
+      // for as long as the tab stayed open, each time persisting an empty
+      // turn. An error ends that: the browser never auto-resends after one.
+      //
+      // Only for browser-sent history, where the browser drives the loop. An
+      // explicit MRTR / scope step-up continuation is exempt: it answers a
+      // suspended call the user acted on, not an automatic resume. So is an
+      // answered approval: `handlePendingApprovals` runs the approved call
+      // without a model call, even on the step budget's last step. The hosted
+      // routes refuse this case before connecting anything
+      // (`agent-loop-guard.ts`); this is the engine's backstop for any caller
+      // that reaches it anyway.
+      if (
+        options.clientSuppliedHistory === true &&
+        !(scopeStepUpResume ?? mrtrResume) &&
+        !hasUnresolvedApprovalResponses(messageHistory) &&
+        hitStepCap()
+      ) {
+        logger.warn(
+          "[mcpjam-stream-handler] continuation refused: step budget already spent",
+          {
+            effectiveSteps: effectiveSteps(),
+            maxSteps: resolvedMaxSteps,
+            modelId,
+            turnId: traceTurn.turnId,
+          },
+        );
+        emitError(safeWriter, STEP_LIMIT_REFUSAL_MESSAGE);
         return;
       }
 
@@ -5551,11 +5642,21 @@ export async function runChatEngineLoop(
         });
         emitError(safeWriter, attachedClientErrorText(error) ?? errorText);
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
-        // Site (3) — outer agentic-loop catch. No structured body,
-        // no stepIndex.
+        // Site (3) — outer agentic-loop catch. Mid-stream provider errors
+        // retain their envelope; parser/transport failures may be plain text.
         const loopInfra = attachedInfraEvidence(error);
+        const streamFailure = parseStreamErrorChunkText(
+          attachedClientErrorText(error) ?? errorText,
+        );
         safelyEmitEngineError(onEngineError, {
           message: errorText,
+          ...(streamFailure.statusCode !== undefined
+            ? { httpStatus: streamFailure.statusCode }
+            : {}),
+          ...(streamFailure.isRetryable !== undefined
+            ? { isRetryable: streamFailure.isRetryable }
+            : {}),
+          ...(streamFailure.details ? { details: streamFailure.details } : {}),
           ...(loopFailureCode ? { code: loopFailureCode } : {}),
           ...(loopInfra ? { infra: loopInfra } : {}),
           rawText: errorText,
@@ -5668,6 +5769,20 @@ export async function runChatEngineLoop(
         } finally {
           await onFinishEngine(context.writer);
         }
+      },
+      // The engine's own catch writes a described error. Anything that
+      // escapes it would reach the chat as the SDK's bare "An error
+      // occurred.", which says nothing about what failed.
+      onError: (error) => {
+        logger.error(
+          "[mcpjam-stream-handler] Error escaped the chat stream",
+          error,
+        );
+        const detail =
+          error instanceof Error && error.message.trim()
+            ? ` (${error.message.trim().slice(0, 200)})`
+            : "";
+        return `MCPJam hit an unexpected error while writing this reply, so it stopped. Send your message again to retry.${detail}`;
       },
     });
     const response = createUIMessageStreamResponse({ stream });

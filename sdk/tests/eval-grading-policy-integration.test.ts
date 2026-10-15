@@ -23,7 +23,7 @@ import {
   type SuiteFileLoadSuccess,
 } from "../src/suite-file-loader.js";
 import {
-  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
   resolveGradingPolicyFromHostedSuite,
 } from "../src/contract/grading-policy.js";
 import type { PlatformEvalSuiteSettings } from "../src/platform/types.js";
@@ -354,7 +354,7 @@ describe("hosted settings reach the canonical policy", () => {
     expect(
       read.policy.passCriterion.scope === "suiteWide" &&
         read.policy.passCriterion.thresholdPercent
-    ).toBe(LEGACY_SUITE_WIDE_THRESHOLD_PERCENT);
+    ).toBe(DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT);
   });
 });
 
@@ -516,7 +516,7 @@ describe("a reported run names which producer decided it", () => {
   it("falls back to the threshold every legacy producer spells", () => {
     expect(
       gradingPolicyForReportedRun({ producer: "hosted" }).passCriterion
-    ).toMatchObject({ thresholdPercent: LEGACY_SUITE_WIDE_THRESHOLD_PERCENT });
+    ).toMatchObject({ thresholdPercent: DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT });
   });
 
   it("a run-scoped policy refuses every settings edit", () => {

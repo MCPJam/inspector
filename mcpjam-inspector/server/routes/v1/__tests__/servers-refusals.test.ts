@@ -93,6 +93,14 @@ async function expectNoConvexFraming(response: Response) {
   expect(text).not.toContain("authorization.ts");
 }
 
+function mintedRequestId(response: Response): string {
+  const requestId = response.headers.get("x-request-id");
+  expect(requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  expect(requestId).not.toBe(REQUEST_ID);
+  if (!requestId) throw new Error("Missing request ID");
+  return requestId;
+}
+
 describe("POST /v1/projects/:projectId/servers refusals", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -179,11 +187,12 @@ describe("POST /v1/projects/:projectId/servers refusals", () => {
     const response = await createInOtherProject();
 
     expect(response.status).toBe(500);
+    const requestId = mintedRequestId(response);
     await expectNoConvexFraming(response);
     const body = await response.json();
     expect(body.code).toBe("INTERNAL_ERROR");
-    expect(body.message).toContain(REQUEST_ID);
-    expect(body.details).toEqual({ requestId: REQUEST_ID });
+    expect(body.message).toContain(requestId);
+    expect(body.details).toEqual({ requestId });
   });
 });
 
@@ -262,10 +271,11 @@ describe("PATCH and DELETE /v1/projects/:projectId/servers/:serverId refusals", 
     const response = await deleteServer("proj-mine", "srv-1");
 
     expect(response.status).toBe(500);
+    const requestId = mintedRequestId(response);
     await expectNoConvexFraming(response);
     const body = await response.json();
     expect(body.code).toBe("INTERNAL_ERROR");
-    expect(body.details).toEqual({ requestId: REQUEST_ID });
+    expect(body.details).toEqual({ requestId });
   });
 
   it("keeps the opaque 500 when the visibility lookup fails too", async () => {
@@ -277,8 +287,9 @@ describe("PATCH and DELETE /v1/projects/:projectId/servers/:serverId refusals", 
     const response = await patchServer("proj-mine", "srv-1");
 
     expect(response.status).toBe(500);
+    const requestId = mintedRequestId(response);
     await expectNoConvexFraming(response);
-    expect((await response.json()).details).toEqual({ requestId: REQUEST_ID });
+    expect((await response.json()).details).toEqual({ requestId });
   });
 
   it("does not look the server up for a refusal the backend already classified", async () => {

@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useAuth as useWorkOSAuth } from "@workos-inc/authkit-react";
 import { isLoginRequiredError } from "@/lib/auth/login-required-error";
 import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
@@ -10,6 +16,7 @@ import {
   getOrCreateGuestSessionOrThrow,
   markGuestActivated,
   getGuestSessionRefusal,
+  subscribeGuestSessionChanges,
 } from "@/lib/guest-session";
 import { shouldSkipGuestSession } from "@/lib/vanity-landing-hosts";
 import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
@@ -166,6 +173,13 @@ export function useUnifiedConvexAuth() {
   // rather than at module load: it is a Set lookup, and a module-level
   // constant would freeze the hostname before a test could stub it.
   const skipGuest = shouldSkipGuestSession();
+  // Refusal expiry must restart guest bootstrap: Convex stops fetching after
+  // a null token, so merely hiding the refusal banner cannot reconnect it.
+  const guestRefusal = useSyncExternalStore(
+    subscribeGuestSessionChanges,
+    getGuestSessionRefusal,
+    () => null,
+  );
   // Bumped when the user presses Retry on the session-refresh banner. It feeds
   // both the memo below (new `fetchAccessToken` identity → Convex re-runs
   // `setAuth`) and the guest bootstrap effect (a fully-lapsed guest has
@@ -268,7 +282,7 @@ export function useUnifiedConvexAuth() {
     return () => {
       cancelled = true;
     };
-  }, [skipGuest, workos.isLoading, workos.user, retryNonce]);
+  }, [skipGuest, workos.isLoading, workos.user, retryNonce, guestRefusal]);
 
   // Convex keys its auth configuration on these callbacks.
   // Changing one replaces authentication, even when the token is still valid.

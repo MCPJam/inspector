@@ -23,3 +23,9 @@ it("supplies the analytics environment to hosted Vite builds", () => {
   );
   expect(previewWorkflow.match(/VITE_ENVIRONMENT=preview/g)).toHaveLength(3);
 });
+
+it("supplies the Meticulous recording token to the Vite Docker build", () => {
+  const docker = readFileSync("Dockerfile", "utf8");
+  expect(docker).toMatch(/^ARG METICULOUS_RECORDING_TOKEN$/m);
+  expect(docker).toMatch(/export METICULOUS_RECORDING_TOKEN/);
+});

@@ -4,7 +4,7 @@ import {
   buildAggregateMetricStripData,
   buildSuiteMetricStripData,
 } from "./metric-strip-data";
-import type { EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalIteration, EvalSuiteRunListItem } from "./types";
 
 /**
  * Suite header health band. Thin wrapper around the shared MetricStrip fed by
@@ -16,7 +16,7 @@ export function SuiteMetricStrip({
   aggregate = false,
   showCost = true,
 }: {
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   allIterations: EvalIteration[];
   /**
    * Fold the runs into a single point-in-time aggregate (no trend) instead of a

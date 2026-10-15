@@ -322,11 +322,10 @@ updates:
       typescript-security:
         applies-to: security-updates
         patterns: ["typescript"]
-      # Vitest 3 -> 5 moves with @vitest/*, jest-dom 7 and jsdom 30: the
-      # inspector's vitest.workspace.ts is no longer read (it needs
-      # `test.projects`), vitest stops being hoisted (design-system: `vitest:
-      # not found`) and jest-dom 7 does not load in the client tests. The
-      # GHSA-82fw-gwwq-j7x9 fix (vitest 4.1.11) arrives via vitest-security.
+      # Vitest 4 -> 5 moves with @vitest/*, jest-dom 7 and jsdom 30, and
+      # jest-dom 7 does not load in the client tests. The repo is on 4.1.11
+      # (the GHSA-82fw-gwwq-j7x9 fix), with the inspector on `test.projects`
+      # and vitest pinned at the root so it stays hoisted for jest-dom.
       # DELETE once every workspace is on Vitest 5.
       vitest:
         applies-to: version-updates

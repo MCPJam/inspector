@@ -53,12 +53,14 @@ import computers from "./computers.js";
 import skills from "./skills.js";
 import serverSkills from "./server-skills.js";
 import caniuse from "./caniuse.js";
+import capabilitiesRoute from "./capabilities.js";
 import mrtrContinuation from "./mrtr-continuation.js";
 import registryWeb from "./registry.js";
 import browserProfiles from "./browser-profiles.js";
 import clientFlags from "./flags.js";
 import webmcpInspector from "../mcp/webmcp-inspector.js";
 import { HOSTED_MODE } from "../../config.js";
+import { requireServiceCredentialRoute } from "../../middleware/require-service-credential.js";
 import { fetchGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -290,6 +292,10 @@ web.route("/guest-session", guestSession);
 // cookie, and the claim itself is reachable by a signed-out guest who is about
 // to authorize a server. The signed-in user's id is read opportunistically when
 // the session middleware already resolved one.
+web.use(
+  "/server-connections/*",
+  requireServiceCredentialRoute("Server connection handoff"),
+);
 web.route("/server-connections", serverConnectionsWeb);
 // Service-token-gated guest minting for the platform MCP worker (anonymous
 // /mcp sessions). Gated inside the router by `x-inspector-service-token`;
@@ -316,17 +322,25 @@ web.route("/server-skills", serverSkills);
 // middleware: anonymous visitors need flags too. The router verifies a bearer
 // itself when one is sent and evaluates only the checked-in allowlist.
 web.route("/flags", clientFlags);
+// Which credential-backed features this server has (names only). No bearer
+// middleware: the client reads it before sign-in to decide what to offer.
+web.route("/capabilities", capabilitiesRoute);
 // Public caniuse.dev correction reports. No bearer auth: the vanity compare
 // surface is intentionally anonymous.
+// The public-site relays below store through the backend's service-token
+// routes, so a self-hosted server (no credential) answers hosted-only.
+web.use("/caniuse/*", requireServiceCredentialRoute("caniuse reports"));
 web.route("/caniuse", caniuse);
 // score.mcpjam.com run storage. Deliberately NOT under `bearerAuthMiddleware`:
 // a result link has to open for a visitor with no session at all, and the
 // secret token in the URL is the credential. Submission is per-IP rate
 // limited inside the router.
+web.use("/score/*", requireServiceCredentialRoute("Score result storage"));
 web.route("/score", score);
 // Connector Bench relay for the same chrome-less site. Everything durable is
 // the backend's; this fronts `/internal/v1/bench/*` and degrades cleanly while
 // those routes are still behind `BENCHMARK_RUNS_ENABLED`.
+web.use("/bench/*", requireServiceCredentialRoute("Connector Bench runs"));
 web.route("/bench", bench);
 // Shared conformance run (HMAC token in the path). Same no-session contract
 // as `/score`: the token is the credential, and the backend only returns the

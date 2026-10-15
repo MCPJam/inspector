@@ -246,11 +246,10 @@ describe("durable thread App ownership", () => {
         opened.token,
         identity,
         {
-          kind: "remove",
+          kind: "remove-all",
           request: {
             operationId: "file-remove",
-            updateId: updated.snapshot.state!.updateId,
-            index: 0,
+            basis: updated.snapshot.cursor ?? 0,
           },
         },
         signal(),
@@ -318,21 +317,38 @@ describe("durable thread App ownership", () => {
       open.token,
       identity,
       {
-        kind: "remove",
-        request: {
-          operationId: "remove",
-          updateId: first.snapshot.state!.updateId,
-          index: 0,
-        },
+        kind: "remove-all",
+        request: { operationId: "remove", basis: first.snapshot.cursor ?? 0 },
       },
       signal(),
       authorize,
       s.port,
     );
-    expect(removed.snapshot.state).toBeNull();
+    expect(removed.result).toMatchObject({ outcome: "applied" });
+    expect(removed.snapshot).toMatchObject({
+      state: null,
+      held: true,
+      cursor: 1,
+      removedAt: 1,
+    });
     await registry.getPersistent(open.token, identity, signal(), s.port);
-    expect(registry.contextSnapshot(open.token, identity).state).toBeNull();
+    expect(registry.contextSnapshot(open.token, identity)).toEqual(
+      removed.snapshot,
+    );
     expect(authorize).toHaveBeenCalledTimes(4);
+    // A lost acknowledgement retried from a third process is decided by the
+    // persisted cursor and writes nothing.
+    const version = s.rows.get(open.token)?.contextVersion;
+    const retried = await new PluginInstanceRegistry().changeContextPersistent(
+      open.token,
+      identity,
+      { kind: "remove-all", request: { operationId: "retry", basis: 0 } },
+      signal(),
+      authorize,
+      s.port,
+    );
+    expect(retried.result).toMatchObject({ outcome: "in-effect" });
+    expect(s.rows.get(open.token)?.contextVersion).toBe(version);
     await cold.closePersistent(open.token, identity, signal(), s.port);
     expect(() => cold.contextSnapshot(open.token, identity)).toThrow();
   });
@@ -512,7 +528,25 @@ describe("durable thread App ownership", () => {
     expect(f.ports.execute).not.toHaveBeenCalled();
     expect(f.ports.approve).not.toHaveBeenCalled();
   });
-  it.each([0, 1, 3])(
+  it.each([1, 2])(
+    "accepts a coordinated authorization with %i ownership fences (warm, cold)",
+    async (count) => {
+      const f = await ownedInvocation();
+      f.ports.authorizeInstance = vi.fn(
+        async (_owner, _origin, _params, _signal, together) => {
+          for (let i = 0; i < count; i++) await together(async () => i);
+          return f.authorization;
+        },
+      );
+      await f.invoke();
+      expect(f.ports.execute).toHaveBeenCalledOnce();
+      // Each fenced read is one durable control read beside admission.
+      expect(f.read.mock.calls.length).toBe(
+        vi.mocked(f.ports.authorizeInstance!).mock.calls.length * count,
+      );
+    },
+  );
+  it.each([0, 3])(
     "refuses a coordinated adapter with %i ownership fences",
     async (count) => {
       const f = await ownedInvocation();
@@ -528,6 +562,155 @@ describe("durable thread App ownership", () => {
       expect(f.ports.execute).not.toHaveBeenCalled();
     },
   );
+  // The route resolves once before the invoker starts, through the same
+  // fence; the invoker's first authorization may stand on it.
+  const fencedInvoke = (
+    f: Awaited<ReturnType<typeof ownedInvocation>>,
+    fence: ReturnType<PluginInstanceRegistry["fence"]>,
+    reads: (call: number) => number,
+    operation = "fenced-operation",
+  ) => {
+    let calls = 0;
+    f.ports.authorizeInstance = vi.fn(
+      async (_owner, _origin, _params, _signal, together) => {
+        for (let i = 0, n = reads(calls++); i < n; i++)
+          await together(async () => i);
+        return f.authorization;
+      },
+    );
+    return f.registry.invoke(
+      f.opened.token,
+      identity,
+      f.ports,
+      operation,
+      { name: "fixture-read", arguments: {} },
+      signal(),
+      "app",
+      fence,
+    );
+  };
+  it("lets only the first authorization stand on a complete route fence", async () => {
+    const f = await ownedInvocation();
+    const fence = f.registry.fence(f.opened.token, identity, signal());
+    await fence.read(async () => "before-catalog");
+    await fence.read(async () => "after-catalog");
+    const fenceReads = f.read.mock.calls.length;
+    await fencedInvoke(f, fence, (call) => (call === 0 ? 0 : 2));
+    expect(f.ports.execute).toHaveBeenCalledOnce();
+    // Every later authorization still made both durable reads.
+    const calls = vi.mocked(f.ports.authorizeInstance!).mock.calls.length;
+    expect(calls).toBeGreaterThan(1);
+    expect(f.read.mock.calls.length - fenceReads).toBe((calls - 1) * 2);
+  });
+  it("lets a one-read route fence (a warm resolution) serve the first authorization", async () => {
+    const f = await ownedInvocation();
+    const fence = f.registry.fence(f.opened.token, identity, signal());
+    await fence.read(async () => "before-catalog");
+    const fenceReads = f.read.mock.calls.length;
+    await fencedInvoke(f, fence, (call) => (call === 0 ? 0 : 1));
+    expect(f.ports.execute).toHaveBeenCalledOnce();
+    const calls = vi.mocked(f.ports.authorizeInstance!).mock.calls.length;
+    expect(f.read.mock.calls.length - fenceReads).toBe(calls - 1);
+  });
+  it("stands the route's first fenced read on the request's own control read, once", async () => {
+    const f = await ownedInvocation();
+    const queries: string[] = [];
+    const { instance, fence } = await f.registry.readFenced(
+      f.opened.token,
+      identity,
+      signal(),
+    );
+    expect(instance.owner).toEqual(f.opened.instance.owner);
+    // readFenced made the control read; the first fenced read adds only the
+    // admission query beside it, the second makes both legs again.
+    expect(f.read).toHaveBeenCalledTimes(1);
+    await fence.read(async () => queries.push("first"));
+    expect(f.read).toHaveBeenCalledTimes(1);
+    await fence.read(async () => queries.push("second"));
+    expect(f.read).toHaveBeenCalledTimes(2);
+    expect(queries).toEqual(["first", "second"]);
+    // A plain fence never skips its control leg.
+    const plain = f.registry.fence(f.opened.token, identity, signal());
+    await plain.read(async () => "plain");
+    expect(f.read).toHaveBeenCalledTimes(3);
+  });
+  it("refuses a closed App at the primed first read without a second control read", async () => {
+    const f = await ownedInvocation();
+    const { fence } = await f.registry.readFenced(
+      f.opened.token,
+      identity,
+      signal(),
+    );
+    await f.registry.closePersistent(
+      f.opened.token,
+      identity,
+      signal(),
+      f.s.port,
+    );
+    const query = vi.fn(async () => "never");
+    await expect(fence.read(query)).rejects.toThrow("INSTANCE_UNAVAILABLE");
+    expect(query).not.toHaveBeenCalled();
+  });
+  it.each([0])(
+    "refuses to stand on a route fence with %i reads",
+    async (count) => {
+      const f = await ownedInvocation();
+      const fence = f.registry.fence(f.opened.token, identity, signal());
+      for (let i = 0; i < count; i++) await fence.read(async () => i);
+      await expect(
+        fencedInvoke(f, fence, (call) => (call === 0 ? 0 : 2)),
+      ).rejects.toThrow("INSTANCE_AUTHORIZATION_INVALID");
+      expect(f.ports.execute).not.toHaveBeenCalled();
+    },
+  );
+  it("never lets a fence serve a second authorization, a second call or another App", async () => {
+    const f = await ownedInvocation();
+    const complete = async () => {
+      const fence = f.registry.fence(f.opened.token, identity, signal());
+      await fence.read(async () => 1);
+      await fence.read(async () => 2);
+      return fence;
+    };
+    // Only the first authorization of the call.
+    await expect(fencedInvoke(f, await complete(), () => 0)).rejects.toThrow(
+      "INSTANCE_AUTHORIZATION_INVALID",
+    );
+    expect(f.ports.execute).not.toHaveBeenCalled();
+    // Only one call.
+    const once = await complete();
+    await fencedInvoke(f, once, (call) => (call === 0 ? 0 : 2), "first");
+    expect(f.ports.execute).toHaveBeenCalledOnce();
+    await expect(
+      fencedInvoke(f, once, (call) => (call === 0 ? 0 : 2), "second"),
+    ).rejects.toThrow("INSTANCE_AUTHORIZATION_INVALID");
+    expect(f.ports.execute).toHaveBeenCalledOnce();
+    // Only its own App.
+    const other = await f.registry.openActivationPersistent(
+      identity,
+      {
+        ...binding,
+        activation: {
+          ...binding.activation,
+          selector: { kind: "thread", threadId: "other-thread" },
+        },
+      },
+      signal(),
+      f.s.port,
+    );
+    const foreign = f.registry.fence(other.token, identity, signal());
+    expect(() =>
+      f.registry.invoke(
+        f.opened.token,
+        identity,
+        f.ports,
+        "foreign",
+        { name: "fixture-read", arguments: {} },
+        signal(),
+        "app",
+        foreign,
+      ),
+    ).toThrow("INSTANCE_AUTHORIZATION_INVALID");
+  });
   it("coalesces launch and recovers original operation and owner in a new registry", async () => {
     const s = store(),
       registry = new PluginInstanceRegistry();

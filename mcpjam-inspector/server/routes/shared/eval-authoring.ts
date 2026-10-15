@@ -32,6 +32,7 @@ import {
 
 import { NO_READ_ONLY_TOOLS_MESSAGE } from "../../../shared/eval-generation-errors.js";
 import { readOnlyGenerationSnapshot } from "../../services/eval-generation-coverage.js";
+import { serviceCredentialHeaders } from "../../services/service-credential.js";
 
 const startSchema = z
   .object({
@@ -230,8 +231,10 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
-            "x-inspector-service-token":
-              process.env.INSPECTOR_SERVICE_TOKEN ?? "",
+            // Omitted, never sent empty, when this server holds no credential:
+            // the backend then authors on the user's own sign-in (and treats
+            // the snapshot as untrusted input).
+            ...serviceCredentialHeaders(),
           },
           body: JSON.stringify({
             ...source,

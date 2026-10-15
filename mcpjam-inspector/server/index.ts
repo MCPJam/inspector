@@ -12,7 +12,9 @@ import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
+import { scrubCredentialUrl } from "../shared/credential-urls.js";
 import { logger as appLogger } from "./utils/logger";
+import { reportServiceCredentialAtBoot } from "./services/service-credential-boot";
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
@@ -27,6 +29,7 @@ import {
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env";
+import { startTelemetryCanary } from "./utils/telemetry-canary.js";
 import { initServerSentry } from "./sentry.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
@@ -65,6 +68,7 @@ import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runti
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
+import { sentryRequestIdentityMiddleware } from "./utils/sentry-request-identity.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
 import {
@@ -325,7 +329,6 @@ function getInspectorFrontendUrlOptions() {
 try {
   fixPath();
 } catch {}
-
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
@@ -340,7 +343,7 @@ logGuestAuthorityOnce(appLogger);
 // once `loadInspectorEnv` has run. Deliberately a call, not an import side
 // effect — an import would be hoisted above the env load.
 initServerSentry();
-
+startTelemetryCanary();
 // Generate session token for API authentication
 generateSessionToken();
 setXaaIdpLogger(appLogger);
@@ -371,6 +374,10 @@ if (!HOSTED_MODE) {
 // `isComputersDataPlaneConfigured()`, which is only truthful once the
 // credential bootstrap has resolved.
 const computersStartup = initComputersStartup();
+// Which credential-backed capabilities this process has (names only), and the
+// hosted-mode refusal to run half-configured. Mirror of the call in
+// server/app.ts::createHonoApp.
+reportServiceCredentialAtBoot(HOSTED_MODE);
 const app = new Hono().onError((err, c) => {
   // Last-resort handler: an exception escaped every route and every router's
   // own `onError`. Declared `mcpjam_internal` — if our routers could not name
@@ -383,7 +390,7 @@ const app = new Hono().onError((err, c) => {
   const { normalized, origin } = reportRouteFailure("Unhandled error", err, {
     source: "app.onError",
     hop: "mcpjam_internal",
-    context: { path: c.req.path, method: c.req.method },
+    context: { path: scrubCredentialUrl(c.req.path), method: c.req.method },
   });
 
   // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
@@ -511,7 +518,9 @@ app.use("*", sessionAuthMiddleware);
 const enableHttpLogs =
   process.env.NODE_ENV !== "production" || process.env.VERBOSE_LOGS === "true";
 if (enableHttpLogs) {
-  // Use custom print function to scrub session tokens from logged URLs
+  // Custom print function: every credential the registry knows (session and
+  // link tokens in the query, share tokens in the path, OAuth codes) is
+  // scrubbed from the request line before it is logged.
   app.use(
     "*",
     logger((message) => {
@@ -535,6 +544,7 @@ app.use("*", cors(CORS_OPTIONS));
 app.use("/api/web/*", webBodyLimit());
 
 // Typed event logging context (matches app.ts)
+app.use("/api/*", sentryRequestIdentityMiddleware);
 app.use("/api/*", requestLogContextMiddleware);
 
 // API Routes

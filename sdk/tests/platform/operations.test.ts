@@ -2401,6 +2401,7 @@ describe("operation catalog consistency", () => {
     check_host_compatibility: { server: "s" },
     start_claude_readiness_run: { server: "s" },
     start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
+    start_muse_readiness_run: { server: "s" },
     get_readiness_run: { run: "r" },
     list_readiness_runs: {},
     cancel_readiness_run: { run: "r" },
@@ -2749,6 +2750,7 @@ describe("operation catalog consistency", () => {
       // the opt-in — spends the organization's credits.
       "start_claude_readiness_run",
       "start_openai_readiness_run",
+      "start_muse_readiness_run",
       "start_conformance_run",
       // Stops one. A write because it changes the row, spending nothing.
       "cancel_readiness_run",

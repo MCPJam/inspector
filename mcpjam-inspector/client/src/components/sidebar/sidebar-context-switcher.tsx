@@ -10,7 +10,7 @@ import {
   Plus,
   Settings,
 } from "lucide-react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import {
   Avatar,
   AvatarFallback,
@@ -98,7 +98,7 @@ export function SidebarContextSwitcher({
 }: SidebarContextSwitcherProps) {
   const { isMobile } = useSidebar();
   const { isAuthenticated } = useConvexAuth();
-  const { user, signIn } = useAuth();
+  const { user, signIn } = useInspectorAuth();
   const navigate = useAppNavigate();
   const { sortedOrganizations, canCreateOrganization } = useOrganizationQueries(
     { isAuthenticated },

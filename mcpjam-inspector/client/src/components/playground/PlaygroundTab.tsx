@@ -27,6 +27,7 @@ import { ExtensionWorkspaceProvider } from "@/components/host-workspace/Extensio
 import {
   ExtensionRailBridge,
   readRightRailSize,
+  revealRightRailPanel,
   writeRightRailSize,
 } from "./extension-rail-bridge";
 import {
@@ -367,8 +368,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const [rightRailSize, setRightRailSize] = useState(readRightRailSize);
   const openRightRail = useCallback(() => {
     setIsRightRailVisible(true);
-    const panel = rightPanelRef.current;
-    if (panel?.isCollapsed?.()) panel.resize(rightRailSize);
+    revealRightRailPanel(rightPanelRef.current, rightRailSize);
   }, [rightRailSize]);
   // In a narrow window a selected App expands the rail over the chat, the
   // same way the browser panel expands, without moving the App.

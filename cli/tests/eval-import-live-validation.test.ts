@@ -1574,7 +1574,7 @@ describe("eval run --file --allow-approximated", () => {
     }
   });
 
-  test("the approvals change the run's idempotency key, and flag order does not", async () => {
+  test("each file invocation gets a fresh key and approval flag order is normalized", async () => {
     const fixture = await startFixture();
     try {
       await withSuiteFile(APPROVAL_SUITE, async (file) => {
@@ -1610,13 +1610,24 @@ describe("eval run --file --allow-approximated", () => {
           (body) => (body as { idempotencyKey: string }).idempotencyKey
         );
         assert.equal(keys.length, 4);
-        // Approving something is a different run from not approving it.
-        assert.notEqual(keys[0], keys[1]);
-        // …but the ORDER the flags were typed in is not a property of the run.
-        assert.equal(keys[1], keys[2]);
-        // The reason is part of the decision, so a different reason is a
-        // different run rather than a dedupe onto the first one's receipt.
-        assert.notEqual(keys[1], keys[3]);
+        assert.equal(new Set(keys).size, 4);
+        const approvals = fixture.runBodies.map(
+          (body) =>
+            (body as { importApprovals?: unknown }).importApprovals ?? null
+        );
+        // The request semantics are independent of the order CLI flags were
+        // typed in, even though each invocation has its own retry key.
+        const canonicalApprovals = (value: unknown) =>
+          Array.isArray(value)
+            ? [...value].sort((left, right) =>
+                String(left.testCaseId).localeCompare(String(right.testCaseId))
+              )
+            : value;
+        assert.deepEqual(
+          canonicalApprovals(approvals[1]),
+          canonicalApprovals(approvals[2])
+        );
+        assert.notDeepEqual(approvals[1], approvals[3]);
       });
     } finally {
       await fixture.close();
@@ -1940,6 +1951,45 @@ describe("the preflight checks what the run will actually execute", () => {
         );
         assert.doesNotMatch(run.stdout + run.stderr, /does not resolve/);
         assert.equal(run.result.exitCode, 0, run.stdout + run.stderr);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("--server refuses a file-owned environment before syncing anything", async () => {
+    const fixture = await startFixture({
+      servers: [
+        { id: "srv_billing", name: "billing" },
+        { id: "srv_alt", name: "alternate" },
+      ],
+      toolsByServer: {
+        billing: ["render_refund", "render_gone"],
+        alternate: ["render_refund", "render_gone"],
+      },
+      environments: { production: ["billing"] },
+    });
+    try {
+      const fileWithEnvironment = IMPORTED_WITH_TOOL_CALLS.replace(
+        "target:\n  servers:\n    - name: billing\n",
+        "target:\n  servers:\n    - name: billing\n  environment: production\n"
+      );
+      await withSuiteFile(fileWithEnvironment, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--server", "alternate"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+
+        assert.equal(run.result.exitCode, 2, run.stdout + run.stderr);
+        assert.match(
+          run.stdout + run.stderr,
+          /environment.*production.*--server cannot override.*separate suite file/s
+        );
+        assert.deepEqual(fixture.fromFileBodies, []);
+        assert.deepEqual(fixture.batchBodies, []);
+        assert.deepEqual(fixture.updateBodies, []);
+        assert.deepEqual(fixture.runBodies, []);
       });
     } finally {
       await fixture.close();

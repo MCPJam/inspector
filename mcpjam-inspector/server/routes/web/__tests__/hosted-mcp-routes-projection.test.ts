@@ -502,7 +502,7 @@ describe("hosted failures this server wrote", () => {
       const payload = (await res.json()) as any;
       expect(JSON.stringify(payload)).not.toMatch(MARKER);
       expect(payload.message).toBe(
-        `The authorization server for "Fixture" rejected MCPJam's access request (HTTP 401) — check the server's XAA client credentials and issuer in its auth settings.`,
+        `The authorization server for "Fixture" rejected MCPJam's access request (HTTP 401). Check the server's auth settings.`,
       );
       expect(payload.details.reason).toBe("xaa_authorization_rejected");
     },

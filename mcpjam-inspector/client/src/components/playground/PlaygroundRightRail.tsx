@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Cloud,
   FileText,
-  FolderTree,
   Globe,
   Laptop,
   Loader2,
@@ -65,7 +64,10 @@ import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
-import { ComparisonBrowser } from "@/components/browser/ComparisonBrowser";
+import {
+  ComparisonBrowser,
+  LocalBrowserUnavailable,
+} from "@/components/browser/ComparisonBrowser";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -156,7 +158,10 @@ function RightRailTabbed({
   railRef.current = rail;
   const computersEnabled = useComputersEnabledState();
   const browsersEnabled = useBrowserEnabledState();
-  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
+  // No Shell for a harness client: it runs on a throwaway per-conversation box,
+  // not the personal computer this tab would open.
+  const shellAvailable =
+    computersEnabled === true && !!hostConfig?.computer && !hostConfig?.harness;
   // Which engine serves this project's computer work. The rail is an INDICATOR
   // only — switching lives on the Computer tab, which owns the consent gate.
   //
@@ -413,10 +418,7 @@ function RightRailTabbed({
               Loading conversation…
             </p>
           ) : isLocalBrowser && browserEngine.localAvailable === false ? (
-            <p className="p-4 text-sm text-muted-foreground">
-              Browser is unavailable on this machine. Check Browser settings or
-              choose Cloud for a new chat.
-            </p>
+            <LocalBrowserUnavailable engine={browserEngine} />
           ) : isLocalBrowser ? (
             <LocalBrowserBody
               key={`${projectId}:${browserSessionId}:local`}
@@ -749,9 +751,6 @@ function CloudShellBody({
   hostConfig: HostConfigDtoV2 | null;
   hostId: string | null;
 }) {
-  // Bumped to remount (and thus reconnect) the terminal into the latest harness
-  // workdir on demand — cwd only applies at connect time.
-  const [reloadKey, setReloadKey] = useState(0);
   // One controller for the rail so the terminal session survives Logs ⇄ Shell
   // toggles (both bodies stay mounted; we only show/hide).
   const ct = useComputerTerminal({ projectId, isAuthenticated });
@@ -810,24 +809,8 @@ function CloudShellBody({
             )}
             Open terminal
           </Button>
-        ) : ct.terminalOpen && harnessCwd ? (
-          // cwd is applied at connect time; remount to reconnect into the
-          // latest harness workdir (e.g. after a new turn ran).
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setReloadKey((k) => k + 1)}
-            title={`Reconnect in ${harnessCwd}`}
-          >
-            <FolderTree className="mr-1.5 h-3.5 w-3.5" />
-            Reload in harness dir
-          </Button>
         ) : null}
       </div>
-      {/* Key on reloadKey ONLY (explicit reconnect) — NOT on cwd, so a newer
-          harness workdir streaming in mid-session doesn't yank the user's open
-          terminal. Reopening the terminal already picks up the latest cwd
-          (ComputerTerminal remounts when terminalOpen flips). */}
       {isHarnessHost && ranOnDisposable ? (
         <p
           data-testid="shell-rail-disposable-notice"
@@ -838,8 +821,13 @@ function CloudShellBody({
           the turn's files aren't here.
         </p>
       ) : null}
+      {/* The Shell is there to watch where the harness works, so it FOLLOWS
+          the harness's workdir: cwd only applies at connect time, and keying
+          the pane on it reconnects the terminal there as soon as the dir is
+          known or a new harness session moves it. Within a conversation the
+          dir is stable, so an open terminal is not disturbed between turns. */}
       <ComputerTerminalPane
-        key={reloadKey}
+        key={harnessCwd ?? ""}
         controller={ct}
         className="px-3 pb-3"
         {...(harnessCwd ? { cwd: harnessCwd } : {})}

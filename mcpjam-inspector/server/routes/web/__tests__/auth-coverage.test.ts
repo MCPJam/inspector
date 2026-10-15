@@ -84,6 +84,10 @@ const PUBLIC_SUCCESS_ROUTES = new Map<string, string>([
     "feature-flag values for the checked-in client allowlist only; anonymous visitors need them before sign-in, and a bearer, when sent, is verified",
   ],
   [
+    "GET /api/web/capabilities",
+    "feature names and one boolean — what the boot log prints — so the client can decide what to offer before sign-in; never a value",
+  ],
+  [
     "POST /api/web/guest-session/revoke",
     "revokes the CALLER'S own guest, identified only by its cookie; on a loopback Inspector a caller with no guest cookie gets a local no-op that touches nothing",
   ],
@@ -239,12 +243,17 @@ async function probeResponses(
 }
 
 describe("/api/web — credential-less requests", () => {
-  // Without both secrets a local build relays /api-keys to the hosted app
-  // ahead of bearer auth, so the sweep would read production's answers and
-  // never exercise this server's own refusal.
+  // The sweep is about the HOSTED surface, so it runs as a hosted server does:
+  // holding the service credential (and the WorkOS admin key). Without it, the hosted-only families
+  // (`/score`, `/bench`, `/caniuse`, `/server-connections`) answer the shared
+  // hosted-only refusal to everyone before auth runs — asserted in the suite
+  // below — and the sweep would test that gate instead of their auth.
   beforeAll(() => {
-    vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
-    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "auth-coverage-service-token");
+    // With both of MCPJam's secrets, key management is served here rather
+    // than relayed to the hosted app — the relay would otherwise forward the
+    // sweep's anonymous probes to a real network origin.
+    vi.stubEnv("WORKOS_API_KEY", "sk_auth_coverage_admin");
   });
   afterAll(() => {
     vi.unstubAllEnvs();
@@ -349,5 +358,33 @@ describe("/api/web — credential-less requests", () => {
       (key) => !keys.has(key),
     );
     expect(stale).toEqual([]);
+  });
+});
+
+describe("/api/web — hosted-only families on a server without the credential", () => {
+  beforeAll(() => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["GET", "/api/web/score/runs/probe"],
+    ["GET", "/api/web/bench/results/probe"],
+    ["POST", "/api/web/caniuse/subscribe"],
+    ["POST", "/api/web/server-connections/claim"],
+  ])("%s %s answers the shared hosted-only refusal", async (method, path) => {
+    const app = createWebTestApp().app;
+    const response = await app.request(path, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(method === "GET" ? {} : { body: "{}" }),
+    });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      code: "FEATURE_NOT_SUPPORTED",
+      details: { reason: "FEATURE_REQUIRES_HOSTED" },
+    });
   });
 });

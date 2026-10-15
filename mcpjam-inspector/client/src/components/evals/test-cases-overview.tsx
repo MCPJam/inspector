@@ -34,7 +34,7 @@ import {
   getEffectiveSuiteServers,
   suiteHasRunnableServers,
 } from "./helpers";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRunListItem } from "./types";
 import { isModelFree } from "@/shared/steps";
 import {
   getDefaultTestCaseModelValue,
@@ -81,7 +81,7 @@ interface TestCasesOverviewProps {
    * minimal callers don't need it; the matrix only renders when host
    * attachments exist, which implies runs.
    */
-  runs?: EvalSuiteRun[];
+  runs?: EvalSuiteRunListItem[];
   runsViewMode: SuiteOverviewView;
   onViewModeChange: (value: SuiteOverviewView) => void;
   onTestCaseClick: (testCaseId: string) => void;
@@ -107,6 +107,8 @@ interface TestCasesOverviewProps {
   /** True while a suite rerun or run replay is in progress (disables per-case Run). */
   blockTestCaseRuns?: boolean;
   runTestCaseDisabledReason?: string | null;
+  /** Why this case's own Run is off: every model it runs is out of credits. */
+  runTestCaseOutOfCreditsReason?: (testCase: EvalCase) => string | null;
   /** Required for server connection gating when set; when omitted, server gating is skipped. */
   connectedServerNames?: Set<string>;
   /** Playground / contexts where switching to the runs table is not offered. */
@@ -192,6 +194,7 @@ export function TestCasesOverview({
   runningTestCaseId = null,
   blockTestCaseRuns = false,
   runTestCaseDisabledReason = null,
+  runTestCaseOutOfCreditsReason,
   connectedServerNames,
   isDirectGuest = false,
   onGenerateTestCases,
@@ -824,10 +827,13 @@ export function TestCasesOverview({
                   // connection error if the server is actually missing.
                   const serverGateBlocked =
                     !isDirectGuest && missingServers.length > 0;
+                  const caseOutOfCreditsReason =
+                    runTestCaseOutOfCreditsReason?.(testCase) ?? null;
                   const runDisabled =
                     !onRunTestCase ||
                     blockTestCaseRuns ||
                     Boolean(runTestCaseDisabledReason) ||
+                    Boolean(caseOutOfCreditsReason) ||
                     isAnotherCaseRunning ||
                     isProbeCase ||
                     !hasModels ||
@@ -835,7 +841,7 @@ export function TestCasesOverview({
                     isThisCaseRunning;
                   const disconnectedRunTooltip = serverGateBlocked
                     ? "Connect and run."
-                    : runTestCaseDisabledReason;
+                    : (runTestCaseDisabledReason ?? caseOutOfCreditsReason);
 
                   const lastRunResult = lastRunIteration
                     ? computeIterationResult(lastRunIteration)
@@ -965,8 +971,15 @@ export function TestCasesOverview({
                     </div>
                   );
 
+                  // Disabled with a reason, the wrapper takes focus so keyboard
+                  // users can reach the tooltip (the button cannot).
                   const runButton = (
-                    <span className="inline-flex shrink-0">
+                    <span
+                      className="inline-flex shrink-0 rounded-md outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                      tabIndex={
+                        runDisabled && disconnectedRunTooltip ? 0 : undefined
+                      }
+                    >
                       <Button
                         type="button"
                         variant="ghost"

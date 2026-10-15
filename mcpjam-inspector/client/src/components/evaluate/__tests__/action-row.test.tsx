@@ -15,7 +15,7 @@ const mount = (readOnly = false, isActive = false) => {
   const onUpdate = vi.fn();
   render(<ActionRow action={{ step, ordinal: 1, checks: [] } as never} total={1} status={undefined}
     isActive={isActive} readOnly={readOnly} availableTools={[]} suiteServers={["srv"]}
-    promptAriaLabel="Prompt" onUpdate={onUpdate} onMove={vi.fn()} onRemove={vi.fn()} canRemove defaultOpen>{null}</ActionRow>);
+    promptAriaLabel="Prompt" onUpdate={onUpdate} onMove={vi.fn()} onRemove={vi.fn()} canRemove>{null}</ActionRow>);
   return onUpdate;
 };
 
@@ -24,7 +24,9 @@ describe("pinned tool field updates", () => {
     mount(false, true);
     const row = screen.getByTestId("spine-action-row");
     expect(row).not.toHaveClass("ring-1", "ring-ring", "ring-border");
-    expect(screen.getByRole("button", { name: "Edit step 1" })).toHaveClass("hover:bg-muted/50");
+    expect(screen.getByRole("heading", { name: "Call tool" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit step 1" })).toBeNull();
+    expect(fields.paper).toBe(true);
   });
   it("ignores mount-time normalization in a frozen view", () => {
     const onUpdate = mount(true);
@@ -35,6 +37,11 @@ describe("pinned tool field updates", () => {
     const onUpdate = mount();
     act(() => fields.onChange({ serverName: "srv", toolName: "view", arguments: {} }));
     expect(onUpdate).toHaveBeenCalledWith({ ...step, renderTimeoutMs: undefined });
+  });
+  it("does not write a saved call again when its visible fields normalize", () => {
+    const onUpdate = mount();
+    act(() => fields.onChange({ serverName: "srv", toolName: "view", arguments: {}, renderTimeoutMs: 1000 }));
+    expect(onUpdate).not.toHaveBeenCalled();
   });
   it("clears the old id when the author selects another server", () => {
     const onUpdate = mount();

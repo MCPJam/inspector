@@ -46,6 +46,7 @@ import {
 import { resolveUserByExternalId } from "../services/identity.js";
 import { checkSessionRevocation } from "../services/revoked-session-cache.js";
 import { logger } from "../utils/logger.js";
+import { scrubCredentialUrl } from "../../shared/credential-urls.js";
 
 export type OptionalActorDeps = {
   verify: typeof verifyAuthKitToken;
@@ -92,7 +93,9 @@ export function resolveOptionalActor(deps: OptionalActorDeps = defaultDeps) {
         logger.info("Did not resolve an optional actor for this session", {
           event: "auth.optional_actor_session_refused",
           reason: servable.reason,
-          path: c.req.path,
+          // Scrubbed: a credential route carries its secret in the path, and
+          // this row ships to Axiom.
+          path: scrubCredentialUrl(c.req.path),
         });
       }
     } catch (error) {
@@ -108,7 +111,7 @@ export function resolveOptionalActor(deps: OptionalActorDeps = defaultDeps) {
       // which is where anyone would look for it.
       logger.info("Could not resolve an optional actor from the bearer", {
         event: "auth.optional_actor_unresolved",
-        path: c.req.path,
+        path: scrubCredentialUrl(c.req.path),
       });
     }
 

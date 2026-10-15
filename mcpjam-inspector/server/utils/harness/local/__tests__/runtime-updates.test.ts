@@ -46,6 +46,7 @@ import {
   setRevocationFetchForTests,
   setRevocationKeysForTests,
 } from "../runtime-revocation.js";
+import * as runtimeHealth from "../runtime-health.js";
 import { LAUNCH_FAILURE_THRESHOLD } from "../runtime-health.js";
 import { collectRuntimeGarbage, writeLivenessRecord } from "../runtime-gc.js";
 import { PREVIOUS_SUFFIX, reserveRuntimeUse } from "../runtime-lifecycle.js";
@@ -371,10 +372,21 @@ describe("rollback after a bad activation", () => {
     for (let i = 0; i < LAUNCH_FAILURE_THRESHOLD; i += 1) {
       await noteRuntimeLaunch({ harnessId: "claude-code", status: onNew, outcome: { ok: false, reason: "x" } });
     }
+    // The probe is held until all three callers have read the unhealthy mark.
+    // A fixed delay raced their tree verification on a loaded runner: a late
+    // caller read the mark after the failed probe had restarted its clock, and
+    // backed off instead of sharing the probe.
+    const readHealth = runtimeHealth.readRuntimeHealth;
+    let healthReads = 0;
+    vi.spyOn(runtimeHealth, "readRuntimeHealth").mockImplementation(async (versionRoot) => {
+      const record = await readHealth(versionRoot);
+      healthReads += 1;
+      return record;
+    });
     let probes = 0;
     setRuntimeProbeForTests(async () => {
       probes += 1;
-      await new Promise((r) => setTimeout(r, 20));
+      await vi.waitFor(() => expect(healthReads).toBe(3), { timeout: 10_000 });
       return { ok: false, message: "bridge exited 1" };
     });
     try {

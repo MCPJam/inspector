@@ -2,6 +2,8 @@ import { useInitialRenderOutcome } from "./use-initial-render-outcome";
 import { WidgetFullscreenPlacementContext } from "./widget-fullscreen-placement";
 import {
   negotiateResourceDisplayModes,
+  openAIDisplayModes,
+  pickOpenAIDisplayMode,
   type ResourceDisplayHints,
 } from "@mcpjam/sdk/widget-runtime";
 /**
@@ -517,6 +519,7 @@ function mapLogToLifecycle(
     "debug/bridge-connect-skipped": "bridge-connect-skipped",
     "debug/app-initialized": "app-initialized",
     "debug/view-mounted": "view-mounted",
+    "debug/view-channel-closed": "view-channel-closed",
   };
   const kind = kindByMethod[method];
   if (!kind) return null;
@@ -524,11 +527,14 @@ function mapLogToLifecycle(
   if (method === "debug/view-mounted") {
     // No -ready/-error suffix to read: the mount mode IS the status. A srcdoc
     // mount means the view has no real URL, which is the degraded outcome
-    // this event exists to make visible.
-    status = details.mode === "url" ? "ok" : "error";
+    // this event exists to make visible. `opaque` has no URL either, but on
+    // purpose: the client models a host whose app iframe is not same-origin.
+    status =
+      details.mode === "url" || details.mode === "opaque" ? "ok" : "error";
   } else if (
     method.endsWith("-error") ||
-    method === "debug/widget-content-invalid-mimetype"
+    method === "debug/widget-content-invalid-mimetype" ||
+    method === "debug/view-channel-closed"
   ) {
     status = "error";
   } else if (
@@ -1136,14 +1142,45 @@ export function MCPAppsRendererSurface({
   ]);
   const hostAvailableDisplayModesRef = useRef(hostAvailableDisplayModes);
   hostAvailableDisplayModesRef.current = hostAvailableDisplayModes;
+  // A host that fixes the mode (an entrypoint) shows the App in it whatever
+  // the resource or App declares, as long as the client allows that mode at
+  // all; negotiation applies everywhere else.
+  const fixedDisplayMode = host.surface.fixedDisplayMode;
+  const fixedDisplayModeRef = useRef(fixedDisplayMode);
+  fixedDisplayModeRef.current = fixedDisplayMode;
+  const openAIRules = host.surface.openAIDisplayModes === true;
+  const openAIRulesRef = useRef(openAIRules);
+  openAIRulesRef.current = openAIRules;
+  const displayModesFor = useCallback(
+    (
+      hostModes: readonly DisplayMode[],
+      hints: ResourceDisplayHints | undefined,
+      appModes?: readonly string[]
+    ): DisplayMode[] => {
+      const fixed = fixedDisplayModeRef.current;
+      if (openAIRulesRef.current)
+        return openAIDisplayModes(hostModes, hints, appModes, fixed);
+      return fixed && hostModes.includes(fixed)
+        ? [fixed]
+        : negotiateResourceDisplayModes([...hostModes], hints, appModes);
+    },
+    []
+  );
   const effectiveAvailableDisplayModes = useMemo(
     () =>
-      negotiateResourceDisplayModes(
+      displayModesFor(
         hostAvailableDisplayModes as DisplayMode[],
         resourceDisplayHints,
         appSupportedDisplayModes
       ),
-    [hostAvailableDisplayModes, resourceDisplayHints, appSupportedDisplayModes]
+    [
+      displayModesFor,
+      fixedDisplayMode,
+      openAIRules,
+      hostAvailableDisplayModes,
+      resourceDisplayHints,
+      appSupportedDisplayModes,
+    ]
   );
   const advertisedAvailableDisplayModes = effectiveAvailableDisplayModes;
 
@@ -1370,7 +1407,7 @@ export function MCPAppsRendererSurface({
   // Sandbox Stack "View origin" chip.
   const [viewMount, setViewMount] = useState<{
     mountId?: CspMountId;
-    mode: "url" | "srcdoc" | "srcdoc-fallback";
+    mode: "url" | "srcdoc" | "srcdoc-fallback" | "opaque";
     url: string;
   } | null>(null);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
@@ -2012,8 +2049,8 @@ export function MCPAppsRendererSurface({
       // doesn't reload (and wipe) this iframe — see the fetch-effect guard.
       hasRenderedLiveRef.current = true;
       liveRenderIdentityRef.current = liveRenderIdentityKey;
-      const allowed = negotiateResourceDisplayModes(
-        hostAvailableDisplayModesRef.current,
+      const allowed = displayModesFor(
+        hostAvailableDisplayModesRef.current as DisplayMode[],
         resourceHints
       );
       if (allowed.length === 0) {
@@ -2021,11 +2058,20 @@ export function MCPAppsRendererSurface({
         return false;
       }
       setResourceDisplayHints(resourceHints);
+      // OpenAI rules always pick a starting mode; otherwise only an explicit
+      // preference moves the App off the host's mode.
+      const initialMode = openAIRulesRef.current
+        ? pickOpenAIDisplayMode(allowed, resourceHints)
+        : resourceHints?.preferredDisplayMode;
       if (
-        resourceHints?.preferredDisplayMode &&
-        allowed.includes(resourceHints.preferredDisplayMode)
+        initialMode &&
+        allowed.includes(initialMode) &&
+        !(
+          openAIRulesRef.current &&
+          initialMode === effectiveDisplayModeRef.current
+        )
       ) {
-        setDisplayMode(resourceHints.preferredDisplayMode);
+        setDisplayMode(initialMode);
       }
       setWidgetHtml(html);
       setWidgetCsp(csp);
@@ -2793,6 +2839,16 @@ export function MCPAppsRendererSurface({
     () => profileSandbox?.browserStorage,
     [activeMcpProfileKey]
   );
+  const sameOriginAppIframe = useMemo(
+    () => profileSandbox?.sameOriginAppIframe,
+    [activeMcpProfileKey]
+  );
+  // How the proxy mounts the view. A client whose app iframe is not
+  // same-origin gets the opaque srcdoc mount for every app, `ui.domain` or
+  // not: no such client has been seen to honor it. Everything else uses the
+  // build-time default.
+  const viewMountMode =
+    sameOriginAppIframe === false ? "opaque" : host.surface.viewMountMode;
   // Hosted-mode clamp for cspDirectives. The resolver's
   // `hostedClampExtraDeny` strips MCPJam app/API origins from the
   // widget-declared CSP (`restrictTo` + resource declaration), but
@@ -2828,7 +2884,7 @@ export function MCPAppsRendererSurface({
       // from the iframe; `https:` (and friends) covers them just as
       // effectively as naming `https://app.mcpjam.com` directly.
       // Templates that need broad access should list specific origins
-      // (e.g. Claude lists `https://esm.sh`, `https://assets.claude.ai`).
+      // (e.g. Claude lists `https://assets.claude.ai`).
       if (token === "*") return true;
       if (/^(https?|wss?):$/i.test(token)) return true;
       // Other scheme-only tokens (data:, blob:, about:, filesystem:,
@@ -3387,17 +3443,34 @@ export function MCPAppsRendererSurface({
             // up the new intersection and the post-init `setHostContext`
             // effect will publish `host-context-changed` with the updated
             // `availableDisplayModes` (matrix-gated by hostContextChanged).
-            const negotiated = negotiateResourceDisplayModes(
-              hostAvailableDisplayModesRef.current,
+            const negotiated = displayModesFor(
+              hostAvailableDisplayModesRef.current as DisplayMode[],
               resourceDisplayHintsRef.current,
               declaredAppModes
             );
             if (negotiated.length === 0) {
-              setLoadError("This App has no supported display mode");
+              const fixed = fixedDisplayModeRef.current;
+              setLoadError(
+                openAIRulesRef.current && fixed === "fullscreen"
+                  ? "This App can't open here because it doesn't support full screen. Add full screen support to the App, then open it again."
+                  : "This App has no supported display mode"
+              );
               void b.close();
               return;
             }
             setAppSupportedDisplayModes(declaredAppModes);
+            // OpenAI rules: an App that can't stay in its starting mode moves
+            // to the mode it would have started in among what it allows.
+            if (
+              openAIRulesRef.current &&
+              !negotiated.includes(effectiveDisplayModeRef.current)
+            ) {
+              const next = pickOpenAIDisplayMode(
+                negotiated,
+                resourceDisplayHintsRef.current
+              );
+              if (next) setDisplayModeRef.current(next);
+            }
             // If the guest re-initialized (e.g. an SDK-based app completing
             // its own handshake after the openai-compat shim already
             // initialized), bump reinitCount so the delivery effects re-send
@@ -4155,10 +4228,15 @@ export function MCPAppsRendererSurface({
 
     // Where the proxy mounted the view. `url` is the view's real document URL
     // when it was written into a blank frame; "about:srcdoc" on the srcdoc
-    // paths, which have no origin to allowlist.
+    // and opaque paths, which have no origin to allowlist.
     if (data.type === "mcpjam:view-mode") {
       const mode = data.mode;
-      if (mode === "url" || mode === "srcdoc" || mode === "srcdoc-fallback") {
+      if (
+        mode === "url" ||
+        mode === "srcdoc" ||
+        mode === "srcdoc-fallback" ||
+        mode === "opaque"
+      ) {
         const url = typeof data.url === "string" ? data.url : "";
         const mountId = normalizeCspMountId(data.mountId);
         setViewMount({ mountId, mode, url });
@@ -4168,6 +4246,16 @@ export function MCPAppsRendererSurface({
           url,
         });
       }
+      return;
+    }
+
+    // An opaque view navigated or reloaded itself, so the proxy stopped
+    // relaying for it. Without this the view just goes quiet.
+    if (data.type === "mcpjam:view-channel-closed") {
+      logWidgetDebug("ui-to-host", "debug/view-channel-closed", {
+        mountId: normalizeCspMountId(data.mountId),
+        reason: typeof data.reason === "string" ? data.reason : undefined,
+      });
       return;
     }
 
@@ -4581,7 +4669,7 @@ export function MCPAppsRendererSurface({
       title={`MCP App: ${toolName}`}
       hostedMode={host.surface.hostedMode}
       sandboxOrigin={host.surface.sandboxOrigin}
-      mountMode={host.surface.viewMountMode}
+      mountMode={viewMountMode}
       viewOriginLabel={viewOriginLabel}
       viewSubdomainsEnabled={host.surface.viewSubdomainsEnabled}
       className={`bg-transparent overflow-hidden ${
@@ -4787,6 +4875,7 @@ export function MCPAppsRendererSurface({
         widgetCspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
         widgetClientContext={cspClientContext}
         widgetBrowserStorage={effectiveSandbox.browserStorage}
+        widgetMountMode={viewMountMode}
         widgetToolResult={earlyEffectiveMcpAppsCapabilities.toolResult}
         hostContextRef={hostContextRef}
         serverId={serverId}

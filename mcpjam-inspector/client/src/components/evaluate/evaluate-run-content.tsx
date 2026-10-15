@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "../evals/types";
 /**
  * The Evaluate run body: what broke, and what to do about it.
  *
@@ -20,10 +21,7 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 
 import { compactModelIdTail } from "@/lib/environment-label";
-import {
-  runTargetKey,
-  targetKeySuffix,
-} from "@/lib/eval-target-key";
+import { runTargetKey, targetKeySuffix } from "@/lib/eval-target-key";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
@@ -64,7 +62,10 @@ import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 export function EvaluateRunContent(
   props: Parameters<typeof SingleRunContent>[0],
 ) {
-  const targets = launchRuns(props.run, props.siblingRuns ?? []);
+  const targets = launchRuns<EvalSuiteRunListItem>(
+    props.run,
+    props.siblingRuns ?? [],
+  );
   return targets.length > 1 ? (
     <CombinedRunContent {...props} runs={targets} />
   ) : (
@@ -94,7 +95,7 @@ export function SingleRunContent({
   iterations: readonly EvalIteration[];
   /** Every iteration in the suite, so the previous run's fractions are known. */
   allIterations?: readonly EvalIteration[];
-  siblingRuns?: readonly EvalSuiteRun[];
+  siblingRuns?: readonly EvalSuiteRunListItem[];
   hostNamesById?: ReadonlyMap<string, string | null>;
   previousRunId?: string | null;
   decisionSummaryEnabled: boolean;

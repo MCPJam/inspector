@@ -1,3 +1,4 @@
+import { buildLegacyLogRow, buildStrictLogRow } from "../../shared/strict-log.js";
 import * as Sentry from "@sentry/node";
 import { Axiom } from "@axiomhq/js";
 import { resolveEnvironment } from "./log-events.js";
@@ -8,8 +9,28 @@ import type {
   RequestLogContext,
   SystemLogContext,
 } from "./log-events.js";
-import { scrubLogPayload } from "./log-scrubber.js";
+import { HOSTED_MODE } from "../config.js";
 import { isOriginCaptureHandled } from "./error-capture-stamp.js";
+import { sentryIdentityMetadata } from "./sentry-request-identity.js";
+
+function withIdentityCapture(capture: () => void): void {
+  if (isTrackingDisabled()) return;
+  const identity = sentryIdentityMetadata();
+  if (!("user" in identity)) {
+    capture();
+    return;
+  }
+  // Sentry merges users from several scopes. Strip ambient identity AFTER
+  // that merge so an old email or another request's user cannot survive.
+  Sentry.withScope((scope) => {
+    scope.addEventProcessor((event) => ({
+      ...event,
+      user: identity.user?.id ? { id: identity.user.id } : undefined,
+      tags: { ...event.tags, ...identity.tags },
+    }));
+    capture();
+  });
+}
 
 const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
@@ -42,14 +63,15 @@ function getAxiom(): Axiom | null {
   if (isTrackingDisabled()) return null;
   if (axiomClient === undefined) {
     axiomClient =
-      process.env.AXIOM_TOKEN && process.env.AXIOM_DATASET
+      process.env.AXIOM_TOKEN && dataset()
         ? new Axiom({ token: process.env.AXIOM_TOKEN })
         : null;
   }
   return axiomClient;
 }
 
-const dataset = () => process.env.AXIOM_DATASET ?? "";
+const dataset = () =>
+  process.env.AXIOM_CLEAN_DATASET || process.env.AXIOM_DATASET || "inspector-logs";
 
 /**
  * Same resolver the typed-event path uses.
@@ -75,33 +97,22 @@ const environment = () => resolveEnvironment();
  */
 type SentryOptions = { error?: unknown; sentry?: boolean };
 
+/**
+ * Every free-form row goes through the same scrubber as `logger.event`.
+ * Before, only typed events did, and the free-form path is where the raw
+ * context lives: an MCP server's URL and name, a sandbox's stderr, `debug`'s
+ * arbitrary arguments.
+ */
 function ingestToAxiom(
   level: "info" | "warn" | "error" | "debug",
   message: string,
   context?: Record<string, unknown>,
+  error?: unknown,
 ) {
   const axiom = getAxiom();
   if (!axiom) return;
-  axiom.ingest(dataset(), [
-    { ...context, level, message, environment: environment() },
-  ]);
-}
-
-/**
- * Read a loggable string off an arbitrary thrown value.
- *
- * `error.message` and `String(error)` both run a Proxy `get`/`toString` trap
- * and can therefore throw. This is the CENTRAL logger: a throw here escapes
- * into whatever catch block was reporting a failure, losing the original
- * diagnostic and replacing the route's response with a secondary failure from
- * the logging code. Diagnostics must never escalate the thing they describe.
- */
-function safeErrorText(error: unknown): string {
-  try {
-    return error instanceof Error ? error.message : String(error);
-  } catch {
-    return "[unreadable error value]";
-  }
+  const row = buildLegacyLogRow(message, { ...context, level, environment: environment() }, error);
+  if (level !== "debug" || row.event !== "log.unknown") axiom.ingest(dataset(), [row]);
 }
 
 /**
@@ -133,13 +144,20 @@ export function captureOriginErrorToSentry(
     fingerprint?: string[];
   },
 ): void {
-  Sentry.captureException(error, options);
+  const identity = sentryIdentityMetadata();
+  withIdentityCapture(() =>
+    Sentry.captureException(error, {
+      ...options,
+      ...identity,
+      tags: { ...options.tags, ...identity.tags },
+    }),
+  );
 }
 
 /**
  * Centralized logger that sends errors to Sentry and only logs to console
  * in dev mode or when verbose mode is enabled (--verbose flag or VERBOSE_LOGS=true).
- * Sends info/warn/error logs to Axiom when AXIOM_TOKEN and AXIOM_DATASET are set.
+ * Sends logs with AXIOM_TOKEN to AXIOM_CLEAN_DATASET, then AXIOM_DATASET, or inspector-logs.
  */
 export const logger = {
   /**
@@ -162,15 +180,16 @@ export const logger = {
     // without this check every declined user-fault error would be re-captured
     // here — rebuilding the noise the origin policy exists to remove.
     if (!isOriginCaptureHandled(error)) {
-      Sentry.captureException(error ?? new Error(message), {
-        extra: { message, ...context },
-      });
+      // The final Sentry transport reconstructs approved diagnostics.
+      withIdentityCapture(() =>
+        Sentry.captureException(error ?? new Error(message), {
+          extra: { message, ...context },
+          ...sentryIdentityMetadata(),
+        }),
+      );
     }
 
-    ingestToAxiom("error", message, {
-      ...context,
-      error: safeErrorText(error),
-    });
+    ingestToAxiom("error", message, context, error);
 
     if (shouldLog()) {
       console.error(message, error);
@@ -217,6 +236,9 @@ export const logger = {
 
   /**
    * Log debug info. Always sends to Axiom. Only prints to console in dev/verbose mode. Does not send to Sentry.
+   *
+   * Axiom gets the SHAPE of `args`, not their values: these are whatever the
+   * caller had in hand, and that is routinely a request or a tool result.
    */
   debug(message: string, ...args: unknown[]) {
     ingestToAxiom("debug", message, args.length ? { args } : undefined);
@@ -251,90 +273,42 @@ export const logger = {
   },
 };
 
-/**
- * Internal emit shared by `logger.event` and `logger.systemEvent`.
- *
- * - `timestamp` is set at emit time; this is the event-observation time and
- *   is what Axiom indexes as `_time`. Request-start time is recoverable from
- *   `timestamp - durationMs` for HTTP events.
- * - Sentry is opt-in via `options.sentry === true`; the caller that owns the
- *   error decides whether to forward it.
- * - `options.error` is ALSO serialized into the Axiom payload, independent
- *   of the Sentry opt-in: Error instances become `error: {name, message,
- *   stack}`, anything else is stringified (with a non-throwing fallback for
- *   values whose coercion throws). Message/stack are length-capped, and the
- *   result goes through `scrubLogPayload` like every other field — upstream
- *   error strings can quote URLs with embedded credentials. Before this,
- *   the error object reached only Sentry and every failure event landed in
- *   Axiom with no cause — a 502 investigation couldn't name the underlying
- *   ECONNRESET without leaving the log pipeline.
- * - `*.failed` events route their console echo to stderr.
- */
-const MAX_ERROR_MESSAGE_CHARS = 2000;
-const MAX_ERROR_STACK_CHARS = 4000;
-
-/**
- * Bounded, non-throwing serialization of an emit-time error for the Axiom
- * payload. Length caps keep pathological upstream errors (an MCP server can
- * return an arbitrarily large body quoted into the message) from bloating
- * ingestion; the try/catch keeps a rejection reason with a throwing
- * `toString` (e.g. `Object.create(null)`) from turning the logging of a
- * failure into a new crash — this runs inside the process-level
- * `unhandledRejection` handler. Secret scrubbing is NOT this function's job:
- * the returned value flows through `scrubLogPayload` with the rest of the
- * payload.
- */
-function serializeEmitError(error: unknown): unknown {
-  try {
-    if (error instanceof Error) {
-      return {
-        name: error.name,
-        message: error.message.slice(0, MAX_ERROR_MESSAGE_CHARS),
-        ...(error.stack
-          ? { stack: error.stack.slice(0, MAX_ERROR_STACK_CHARS) }
-          : {}),
-      };
-    }
-    return String(error).slice(0, MAX_ERROR_MESSAGE_CHARS);
-  } catch {
-    return "[unserializable error]";
-  }
-}
-
+/** Typed events share the reconstructed vendor boundary with free-form logs. */
 function emit(
   eventName: LogEventName,
   base: RequestLogContext | SystemLogContext,
   payload: Record<string, unknown>,
   options?: SentryOptions,
 ): void {
-  const fullPayload = scrubLogPayload({
-    ...base,
-    ...payload,
-    ...(options?.error !== undefined
-      ? { error: serializeEmitError(options.error) }
-      : {}),
-    event: eventName,
-    timestamp: new Date().toISOString(),
-  }) as Record<string, unknown>;
+  const fullPayload = buildStrictLogRow(eventName, { ...base }, payload, options?.error);
 
   const axiom = getAxiom();
   if (axiom) {
     axiom.ingest(dataset(), [fullPayload]);
   }
 
+  if (HOSTED_MODE && eventName === "telemetry_canary" && !isTrackingDisabled()) {
+    process.stdout.write(`${JSON.stringify(fullPayload)}\n`);
+  }
+
   if (options?.sentry === true) {
     if (options.error instanceof Error) {
-      Sentry.captureException(options.error, { extra: fullPayload });
+      withIdentityCapture(() =>
+        Sentry.captureException(options.error, {
+          extra: fullPayload,
+          ...sentryIdentityMetadata(),
+        }),
+      );
     } else {
-      Sentry.captureMessage(eventName, {
-        level: "error",
-        extra: {
-          ...fullPayload,
-          ...(options.error !== undefined
-            ? { rawError: String(options.error) }
-            : {}),
-        },
-      });
+      withIdentityCapture(() =>
+        Sentry.captureMessage(eventName, {
+          level: "error",
+          ...sentryIdentityMetadata(),
+          extra: {
+            ...fullPayload,
+          },
+        }),
+      );
     }
   }
 

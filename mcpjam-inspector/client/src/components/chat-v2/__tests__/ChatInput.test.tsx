@@ -6,6 +6,7 @@ import {
   createEvent,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ChatInput } from "../chat-input";
 import { useState } from "react";
 import { act } from "@testing-library/react";
@@ -528,6 +529,27 @@ describe("ChatInput", () => {
       );
       expect(submitButton).toBeDefined();
       expect(submitButton).toBeDisabled();
+    });
+
+    it("says why Send is off when the model is out of credits", async () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Hello"
+          submitDisabled={true}
+          submitDisabledReason="Out of MCPJam credits · resets in 3h"
+        />
+      );
+
+      const submitButton = screen.getByRole("button", { name: "Send message" });
+      expect(submitButton).toBeDisabled();
+      // The disabled button gets no hover or focus; its wrapper carries the
+      // tooltip, and keyboard users can reach it.
+      expect(submitButton.parentElement).toHaveAttribute("tabindex", "0");
+      await userEvent.setup().hover(submitButton.parentElement!);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Out of MCPJam credits · resets in 3h"
+      );
     });
 
     it("does not request form submit on Enter when submitDisabled is true", () => {
@@ -1509,6 +1531,59 @@ describe("ChatInput", () => {
     });
   });
 
+  describe("plugin servers (normal chat)", () => {
+    const pluginServers = [
+      { serverId: "srv_bits", name: "bits-cad", pluginLabel: "Bits & Bolts" },
+    ];
+
+    it("shows a plugin's server as on, labelled with the plugin, and not toggleable", () => {
+      const onServerToggle = vi.fn();
+      const onDisconnectServer = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          pluginServers={pluginServers}
+          onServerToggle={onServerToggle}
+          onDisconnectServer={onDisconnectServer}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      const row = screen.getByTestId("composer-plugin-server-row");
+      expect(row).toHaveTextContent("bits-cad");
+      expect(row).toHaveTextContent("Bits & Bolts");
+      const toggle = screen.getByRole("switch", {
+        name: "bits-cad is added by Bits & Bolts",
+      });
+      expect(toggle).toBeChecked();
+      expect(toggle).toBeDisabled();
+
+      fireEvent.click(toggle);
+      expect(onServerToggle).not.toHaveBeenCalled();
+      expect(onDisconnectServer).not.toHaveBeenCalled();
+    });
+
+    it("lists no plugin rows in environment mode", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={[
+            { serverId: "srv_a", name: "bart", enabled: true, source: null },
+          ]}
+          onEnvironmentServerToggle={vi.fn()}
+          pluginServers={pluginServers}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(
+        screen.queryByTestId("composer-plugin-server-row")
+      ).not.toBeInTheDocument();
+    });
+  });
+
   describe("environment servers (environment mode)", () => {
     const environmentServers = [
       { serverId: "srv_a", name: "bart", enabled: true, source: "host_or_group" },
@@ -1986,7 +2061,7 @@ describe("ChatInput", () => {
     });
   });
   describe("App context chips", () => {
-    it("shows one Context chip per App with a removable row per block", async () => {
+    it("shows one Context chip per App, removed as a group", async () => {
       const removeAll = vi.fn();
       const removeRow = vi.fn();
       const parts = {
@@ -2034,8 +2109,11 @@ describe("ChatInput", () => {
       expect(await screen.findByText("Current view")).toBeInTheDocument();
       expect(screen.getByText("Inspecting in mm.")).toBeInTheDocument();
       expect(screen.getByText("mcp://parts/joystick")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Remove Current view" }));
-      expect(removeRow).toHaveBeenCalledTimes(1);
+      // Rows have no × of their own, even when one is supplied.
+      expect(
+        screen.queryByRole("button", { name: "Remove Current view" }),
+      ).toBeNull();
+      expect(removeRow).not.toHaveBeenCalled();
       fireEvent.click(
         screen.getByRole("button", { name: "Remove all Parts context" })
       );

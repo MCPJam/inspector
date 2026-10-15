@@ -774,3 +774,24 @@ describe("translateConvexWriteError — the generic structured branch", () => {
     expect(warn.mock.calls[0]![0]).toContain("unrecognized");
   });
 });
+
+it("preserves generation failures and request IDs without paging twice", async () => {
+  const app = new Hono();
+  app.onError(v1OnError);
+  app.get("/generation", () => {
+    throw new WebRouteError(
+      502,
+      ErrorCode.GENERATION_FAILED,
+      "Generation failed. Please try again.",
+      { requestId: "generation-request" },
+    );
+  });
+  const response = await app.request("/generation");
+  expect(response.status).toBe(502);
+  expect(await response.json()).toMatchObject({
+      code: "GENERATION_FAILED",
+      message: "Generation failed. Please try again.",
+      details: { requestId: "generation-request" },
+  });
+  expect(captureException).not.toHaveBeenCalled();
+});

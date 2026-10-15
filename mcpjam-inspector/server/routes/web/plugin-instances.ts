@@ -52,7 +52,7 @@ import { PluginModelContextError } from "../../../shared/plugin-model-context.js
 
 import { pluginMentionRoutes } from "./plugin-mentions.js";
 import {
-  isPluginMentionTool,
+  pluginMentionSearchTool,
   PluginMentionError,
 } from "../../../shared/plugin-mentions.js";
 import path from "node:path";
@@ -85,6 +85,7 @@ import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
 import { isAbortError } from "../../../shared/abort-errors.js";
 import {
   PluginActivationError,
+  pluginEntrypointDiagnostics,
   pluginEntrypointKinds,
   pluginEntrypointPlan,
   pluginEntrypointTitle,
@@ -144,6 +145,7 @@ import {
   withPluginRequestTimings,
 } from "../../services/plugin-host/timing.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
+import { PLUGIN_APP_UI_MAX_BYTES } from "../../../shared/plugin-app-ui-limits.js";
 
 const id = z.string().min(1).max(256);
 const scopeSchema = z.strictObject({
@@ -478,10 +480,10 @@ instances.post("/discover", (c) =>
       });
       // Whether this server offers @ mention search, so the composer need
       // not probe every server for a mention tool.
-      const mentionTools =
+      const mention =
         catalog.extensions?.capabilities.mentions === false
-          ? []
-          : catalog.tools.filter(isPluginMentionTool);
+          ? { diagnostics: [] }
+          : pluginMentionSearchTool(catalog, body.serverId);
       // The installed plugin that owns this server, so the client can show
       // that plugin's manifest icons (its project plugin list carries them).
       // Display only: never authority.
@@ -489,18 +491,22 @@ instances.post("/discover", (c) =>
         catalog.serverIdentity?.kind === "plugin"
           ? catalog.serverIdentity.pluginId
           : undefined;
+      const diagnostics = [
+        ...pluginEntrypointDiagnostics(catalog.tools, body.serverId),
+        ...mention.diagnostics,
+      ];
       return c.json({
         entries,
+        ...(diagnostics.length ? { diagnostics } : {}),
         ...(icons.serverIcons.length ? { serverIcons: icons.serverIcons } : {}),
         ...(pluginId ? { pluginId } : {}),
-        mentions:
-          mentionTools.length === 1
-            ? {
-                available: true,
-                toolName: mentionTools[0].name,
-                title: mentionTools[0].title ?? mentionTools[0].name,
-              }
-            : { available: false },
+        mentions: mention.tool
+          ? {
+              available: true,
+              toolName: mention.tool.name,
+              title: mention.tool.title ?? mention.tool.name,
+            }
+          : { available: false },
       });
     } finally {
       await runtime.release();
@@ -1167,7 +1173,7 @@ instances.post("/activation/open", (c) =>
       const widgetContent = widgetResourceContent(content, listingMeta);
       if (
         !widgetContent.mimeTypeValid ||
-        Buffer.byteLength(widgetContent.html) > 1024 * 1024
+        Buffer.byteLength(widgetContent.html) > PLUGIN_APP_UI_MAX_BYTES
       )
         throw new PluginInvocationError("INSTANCE_UI_UNAVAILABLE");
       const opened = await pluginInstances.openActivationPersistent(
@@ -1296,7 +1302,10 @@ async function invoke(
   origin: "entrypoint" | "app" | "quick-action",
 ) {
   const { admission, bearer, actor } = await admitted(c, body);
-  const instance = await pluginInstances.getPersistent(
+  // The instance's durable control, read once for this phase: the fence's
+  // first read (the route's first resolution, below) stands on it for its
+  // control leg and adds only the admission and host read.
+  const { instance, fence } = await pluginInstances.readFenced(
     body.instanceToken,
     actor,
     c.req.raw.signal,
@@ -1329,38 +1338,42 @@ async function invoke(
     { hostId: instance.hostId, serverId: instance.owner.serverId },
     instance,
   );
+  const resolveActivation: typeof runtime.resolve =
+    origin === "quick-action"
+      ? async (name, signal, read) => {
+          const resolved = await resolvePluginActivation(
+            runtime,
+            instance.activation.sourceToolName!,
+            instance.activation.selector,
+            signal,
+            read,
+          );
+          if (
+            resolved.plan.params.name !== name ||
+            resolved.resourceUri !== instance.resourceUri ||
+            resolved.presentation !== instance.activation.presentation ||
+            pluginBindingDigest(resolved.plan.params.arguments) !==
+              pluginBindingDigest(params.arguments)
+          )
+            throw denied();
+          return resolved;
+        }
+      : runtime.resolve;
+  // The first resolution makes the instance's fenced read (durable control
+  // beside admission), so the invoker's first authorization can reuse it.
   // Await the complete dispatch/delivery before releasing its request-owned manager.
   return await invokePluginRequest(c, {
     actor,
     owner: instance.owner,
     admission,
     runtime,
-    resolve:
-      origin === "quick-action"
-        ? async (name, signal, read) => {
-            const resolved = await resolvePluginActivation(
-              runtime,
-              instance.activation.sourceToolName!,
-              instance.activation.selector,
-              signal,
-              read,
-            );
-            if (
-              resolved.plan.params.name !== name ||
-              resolved.resourceUri !== instance.resourceUri ||
-              resolved.presentation !== instance.activation.presentation ||
-              pluginBindingDigest(resolved.plan.params.arguments) !==
-                pluginBindingDigest(params.arguments)
-            )
-              throw denied();
-            return resolved;
-          }
-        : runtime.resolve,
+    resolve: resolveActivation,
     origin,
     invocationId,
     params,
     approval: body.approval,
     resume: body.resume,
+    firstRead: fence.read,
     assertLive: () => {
       pluginInstances.get(body.instanceToken, actor);
     },
@@ -1464,6 +1477,7 @@ async function invoke(
           pluginInstances.signal(body.instanceToken, actor),
         ]),
         origin,
+        fence,
       ),
   });
 }

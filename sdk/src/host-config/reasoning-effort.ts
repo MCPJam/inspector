@@ -429,8 +429,21 @@ function canonicalSelection(selection: ModelSelection): ModelSelection {
  * already have"). {@link selectionKey} deliberately ignores settings — it is
  * the picker row / cache key, and an effort must not split a row — so it can
  * NOT tell that two selections differ only by effort.
+ *
+ * A stored legacy selection (what a host config DTO carries for a model id
+ * outside the hosted catalog) has no settings and no `fallback`; it keys as
+ * the backend's stored form, in its key order.
  */
-export function selectionConfigKey(selection: ModelSelection): string {
+export function selectionConfigKey(selection: RequestedModelSelection): string {
+  if (selection.source === "legacy") {
+    return JSON.stringify({
+      source: selection.source,
+      modelId: selection.modelId,
+      ...(selection.provider !== undefined
+        ? { provider: selection.provider }
+        : {}),
+    });
+  }
   return JSON.stringify(canonicalSelection(selection));
 }
 

@@ -182,6 +182,8 @@ export interface DriveHostedEvalTurnParams {
   /** Host harness selector (resolvedExecution.harness). When set (claude-code |
    *  codex) the turn runs that real runtime; absent ⇒ emulated (today's path). */
   harness?: Harness;
+  /** The case's saved selection, read by the harness turn only. */
+  modelSelection?: RunAssistantTurnOptions["modelSelection"];
   /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
    *  runAssistantTurn ONLY for harness turns. Automated runs do not yet have
    *  an interactive approval flow; a gated call can fail during streaming.
@@ -807,6 +809,9 @@ export async function driveHostedEvalTurn(
       ...(params.harness
         ? {
             harness: params.harness,
+            ...(params.modelSelection
+              ? { modelSelection: params.modelSelection }
+              : {}),
             ...(params.harnessExecutionTarget ? { harnessExecutionTarget: params.harnessExecutionTarget } : {}),
             ...(params.requireToolApproval !== undefined
               ? { requireToolApproval: params.requireToolApproval }

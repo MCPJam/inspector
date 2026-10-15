@@ -23,6 +23,7 @@ import {
   PLAYGROUND_CAPACITY_POLICY,
   withCapacityRetry,
 } from "../run-supervisor/capacity-retry.js";
+import { getServiceCredential } from "../../services/service-credential.js";
 
 export type ComputerStatus =
   | "requested"
@@ -177,7 +178,7 @@ export function resetServiceTokenRejectedForTests(): void {
 
 function getServiceToken(): string | null {
   if (serviceTokenRejected) return null;
-  return process.env.INSPECTOR_SERVICE_TOKEN?.trim() || null;
+  return getServiceCredential();
 }
 
 /**
@@ -728,6 +729,8 @@ export async function provisionPlaygroundTerminalSandbox(args: {
   projectId: string;
   chatSessionId: string;
   projectEnvironmentId?: string;
+  /** The turn's harness id; the backend gates the box on that harness's flag. */
+  harness?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<ControlPlaneResult<PlaygroundTerminalSandbox>> {
@@ -754,6 +757,7 @@ export async function provisionPlaygroundTerminalSandbox(args: {
           ...(args.projectEnvironmentId
             ? { projectEnvironmentId: args.projectEnvironmentId }
             : {}),
+          ...(args.harness ? { harness: args.harness } : {}),
         },
         signal,
       ),

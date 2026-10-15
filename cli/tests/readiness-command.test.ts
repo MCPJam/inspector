@@ -48,10 +48,34 @@ function resolve(program: Command, path: string[]): Command | undefined {
   return current;
 }
 
-test("the readiness group advertises both publishers under check", () => {
+test("the readiness group advertises every publisher under check and start", () => {
   const program = buildProgram();
-  assert.ok(resolve(program, ["readiness", "check", "claude"]));
-  assert.ok(resolve(program, ["readiness", "check", "openai"]));
+  for (const publisher of ["claude", "openai", "muse"]) {
+    assert.ok(resolve(program, ["readiness", "check", publisher]));
+    assert.ok(resolve(program, ["readiness", "start", publisher]));
+  }
+});
+
+test("muse start offers no AI observations, which Muse does not have", () => {
+  const start = resolve(buildProgram(), ["readiness", "start", "muse"]);
+  assert.ok(start);
+  assert.equal(
+    start.options.some((option) => option.long === "--ai-observations"),
+    false,
+  );
+});
+
+test("an unreadable muse submission profile is a usage error, not a crash", async () => {
+  const error = await runExpectingError([
+    "readiness",
+    "check",
+    "muse",
+    "https://unreachable.invalid/mcp",
+    "--submission-profile",
+    "/nonexistent/profile.json",
+  ]);
+  assert.ok(error);
+  assert.match(error.message, /Cannot read --submission-profile/);
 });
 
 test("openai refuses to run without a declared submission mode", async () => {

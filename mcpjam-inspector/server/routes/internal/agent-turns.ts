@@ -2,10 +2,14 @@ import { Hono } from "hono";
 import { internalServiceAuthMiddleware } from "../../middleware/internal-service-auth.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import {
+  getServiceCredential,
+  serviceCredentialHeaders,
+} from "../../services/service-credential.js";
 
 async function backend(path: string, body: unknown) {
   const origin = process.env.CONVEX_HTTP_URL;
-  const token = process.env.INSPECTOR_SERVICE_TOKEN;
+  const token = getServiceCredential();
   if (!origin || !token)
     throw new Error("Durable agent worker is not configured.");
   const response = await fetch(`${origin}/internal/v1/agent-turns/${path}`, {
@@ -37,7 +41,7 @@ export async function runDurableAgentPass() {
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${bearer}`,
-              "x-inspector-service-token": process.env.INSPECTOR_SERVICE_TOKEN!,
+              ...serviceCredentialHeaders(),
               "x-mcpjam-agent-job": job._id,
               "x-mcpjam-agent-lease": token,
             },

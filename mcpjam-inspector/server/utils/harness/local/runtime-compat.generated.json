@@ -4,38 +4,38 @@
   "harnesses": {
     "claude-code": {
       "conformance": {
-        "version": "published-claude-code-1.0.3-e6cf005d1c94",
-        "evidence": "https://github.com/MCPJam/inspector/actions/runs/37510041014"
+        "version": "published-claude-code-1.0.4-d485100534d0",
+        "evidence": "https://github.com/MCPJam/inspector/actions/runs/38324753081"
       },
       "targets": {
         "darwin-arm64": {
           "desired": {
-            "packVersion": "1.0.3",
-            "treeDigest": "sha256:89f07f4bf47378e0c82d319e75c2e0f156638a21c0c33ebd7b02b3c809845433"
+            "packVersion": "1.0.4",
+            "treeDigest": "sha256:5611ae8b02e0f325e5a9624bacf36a583172641fd55d6473f1cb30a3956d4a40"
           }
         },
         "darwin-x64": {
           "desired": {
-            "packVersion": "1.0.3",
-            "treeDigest": "sha256:39b21a925afa11ad556263a7049e060e1bf3a6cc093128ff2aea214ba2ce854c"
+            "packVersion": "1.0.4",
+            "treeDigest": "sha256:e551ee37091ac7edb2d7bf6f40dc3aea15fa5e39a5119e9f8e00dd14b0de7526"
           }
         },
         "linux-arm64": {
           "desired": {
-            "packVersion": "1.0.3",
-            "treeDigest": "sha256:508538201ffee784ff583041be6e9a483f5769db1e4b46bacbc440839cc40616"
+            "packVersion": "1.0.4",
+            "treeDigest": "sha256:6ba6505bb2a053e35dbb50b05cf46b2a61bdee51be02935ded19091bbe220610"
           }
         },
         "linux-x64": {
           "desired": {
-            "packVersion": "1.0.3",
-            "treeDigest": "sha256:facdd4eecbe6f3453d6464631284ffe5a9c9b6f8e3b0e3fa29ef27da34ede1ea"
+            "packVersion": "1.0.4",
+            "treeDigest": "sha256:34acb460678b6cb366513f1fb539f91ae5113f63058d6c5af65fa2f42a7a8091"
           }
         },
         "win32-x64": {
           "desired": {
-            "packVersion": "1.0.3",
-            "treeDigest": "sha256:b3665706066bbfaa2647b8dc8a18a8bbdcdec87c0f1035f0132707777d24e406"
+            "packVersion": "1.0.4",
+            "treeDigest": "sha256:a5cbfeefa8d33dd276d5203863bb2da93bca1c84728ce890861d7c13449ef3a3"
           }
         }
       }

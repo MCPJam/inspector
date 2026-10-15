@@ -1,3 +1,4 @@
+import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -297,6 +298,7 @@ export function useEnsureDbUser() {
       // this browser (e.g. as a guest) — get_distinct_id() would return the
       // post-identify id instead of the original anonymous one. Best-effort:
       // an absent/throwing posthog instance must never block ensureUser.
+      let promotionGuestId: string | null = null;
       let posthogAnonDistinctId: string | undefined;
       if (isWorkOsAuth) {
         // Each getter is tried independently — a throw from $device_id
@@ -330,6 +332,7 @@ export function useEnsureDbUser() {
         }
 
         if (guestId && isGuestActivated(guestId)) {
+          promotionGuestId = guestId;
           try {
             guestProofJwt = await getGuestPromotionProof();
           } catch {
@@ -360,6 +363,10 @@ export function useEnsureDbUser() {
         ...(guestProofJwt ? { guestProofJwt } : {}),
         ...(posthogAnonDistinctId ? { posthogAnonDistinctId } : {}),
       };
+      const finishTransition =
+        guestProofJwt && promotionGuestId
+          ? guestTabRecovery.begin(promotionGuestId)
+          : undefined;
       let ensurePromise = inFlightEnsureRef.current?.promise;
       if (inFlightEnsureRef.current?.identityKey !== identityKey) {
         ensurePromise = ensureUserWithRetry(ensureUser, ensureArgs, () => {
@@ -380,6 +387,7 @@ export function useEnsureDbUser() {
       try {
         await ensurePromise;
       } catch (err) {
+        finishTransition?.(false);
         if (!cancelled) {
           // eslint-disable-next-line no-console
           console.error("[auth] ensureUser failed", err);
@@ -396,7 +404,10 @@ export function useEnsureDbUser() {
         return;
       }
 
-      if (cancelled || activeEnsureIdentityRef.current !== identityKey) return;
+      if (cancelled || activeEnsureIdentityRef.current !== identityKey) {
+        finishTransition?.(false);
+        return;
+      }
 
       lastEnsuredIdentityRef.current = identityKey;
       setEnsuredIdentityKey(identityKey);
@@ -414,6 +425,7 @@ export function useEnsureDbUser() {
         }
       }
 
+      finishTransition?.(true);
       setIsEnsuringUser(false);
     };
 

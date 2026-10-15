@@ -61,17 +61,17 @@
     "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {
-    "@ai-sdk/react": "^4.0.131",
+    "@ai-sdk/react": "^4.0.140",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "ai": "7.0.128",
+    "ai": "7.0.137",
     "jsdom": "^27.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "tsup": "^8.3.5",
     "typescript": "^5",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   }
 }

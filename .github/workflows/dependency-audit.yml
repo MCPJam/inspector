@@ -1,13 +1,15 @@
 name: Dependency Audit
 
 on:
+  # Run on every PR regardless of its base branch, like lint.yml and test.yml.
+  # `branches` filters on the PR's BASE, so a stacked PR never matched `main`
+  # and was never audited; once it was retargeted to `main`, nothing re-ran it
+  # and the required check never reported.
   pull_request:
-    # See the note in lint.yml: `branches` filters on the PR's BASE, so a
-    # stacked PR never matches `main` and is never audited.
-    branches:
-      - main
-  push:
-    branches: [main]
+  # The merge queue tests the merged result before it lands on main; without
+  # this trigger the queue's required checks never report and entries time out.
+  # No `push: main`, for the reason in test.yml.
+  merge_group:
   schedule:
     # Dependabot only reacts to new advisories against what we already have.
     # A weekly run means the audit has a recorded cadence of its own, rather
@@ -19,7 +21,7 @@ permissions:
   contents: read
 
 # A new push to a PR supersedes its in-flight audit. Every other event gets a
-# group of its own (run_id), so main pushes and the weekly run never cancel or
+# group of its own (run_id), so queue runs and the weekly run never cancel or
 # queue behind each other.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
@@ -30,7 +32,10 @@ env:
 
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    # Blacksmith, not GitHub's shared 60-job pool; this job holds no secret or
+    # write token. TEST_RUNNER=ubuntu-latest moves it back during an outage.
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    timeout-minutes: 15
     name: Dependency Audit
 
     steps:

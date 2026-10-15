@@ -419,14 +419,47 @@ function convertMcpjamDataPart(part: {
   return text ? { type: "text", text } : undefined;
 }
 
+/**
+ * AI SDK 7 turns every UI file part (an attached image, an App message's
+ * screenshot) into `data: { type: "url", url: new URL(...) }`. A `URL` object
+ * survives neither `structuredClone` (the live trace copies each request,
+ * which failed the whole turn) nor JSON (it reaches the backend as a string
+ * inside a shape its schema doesn't accept as a URL). The bare URL string is
+ * the AI SDK 6 shape both sides read: AI SDK 7 parses a string `data` as a URL
+ * first, so a `data:` URL still becomes inline bytes with its media type.
+ */
+function wireSafeFileData(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    let changed = false;
+    const content = (message.content as unknown[]).map((part) => {
+      if (!part || typeof part !== "object") return part;
+      const record = part as Record<string, unknown>;
+      const data = record.data as { type?: unknown; url?: unknown } | undefined;
+      if (
+        (record.type !== "file" && record.type !== "reasoning-file") ||
+        !data ||
+        data.type !== "url" ||
+        !(data.url instanceof URL)
+      )
+        return part;
+      changed = true;
+      return { ...record, data: data.url.href };
+    });
+    return changed ? ({ ...message, content } as ModelMessage) : message;
+  });
+}
+
 export async function convertToMcpjamModelMessages(
   messages: Parameters<typeof convertToModelMessages>[0],
   options: McpToolResultModelOutputOptions = {},
 ): Promise<ModelMessage[]> {
   return mapMcpImageToolOutputs(
-    (await convertToModelMessages(messages, {
-      convertDataPart: convertMcpjamDataPart as never,
-    })) as ModelMessage[],
+    wireSafeFileData(
+      (await convertToModelMessages(messages, {
+        convertDataPart: convertMcpjamDataPart as never,
+      })) as ModelMessage[],
+    ),
     options,
   );
 }

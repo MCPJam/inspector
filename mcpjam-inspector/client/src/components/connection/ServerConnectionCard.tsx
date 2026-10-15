@@ -42,6 +42,8 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
 import {
+  SERVER_CARD_CLASS_NAME,
+  SERVER_CARD_INTERACTIVE_CLASS_NAME,
   UNKNOWN_CONNECTION_STATUS,
   getConnectionStatusMeta,
   isConnectionStatus,
@@ -604,10 +606,8 @@ export function ServerConnectionCard({
   return (
     <>
       <Card
-        className={`group h-full rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-all duration-200 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none ${
-          isDetailModalEnabled
-            ? "cursor-pointer hover:border-border hover:shadow-md hover:border-primary/40"
-            : ""
+        className={`${SERVER_CARD_CLASS_NAME} ${
+          isDetailModalEnabled ? SERVER_CARD_INTERACTIVE_CLASS_NAME : ""
         }`}
         onContextMenu={handleCardContextMenu}
         onClick={isDetailModalEnabled ? handleCardClick : undefined}

@@ -5,7 +5,7 @@ import {
   composerMissingServerGroup,
   describeSkippedModelCells,
   isAdhocUnavailable,
-  lacksEvalServerSource,
+  lacksServerSource,
   resolveComposerEnvironments,
   type EnsureAdhocEnvironmentsFn,
 } from "../resolve-stacks";
@@ -341,9 +341,9 @@ describe("resolveComposerEnvironments — requireServerAttachment (evals)", () =
   });
 
   it("gates submit on the same rule", () => {
-    expect(lacksEvalServerSource({})).toBe(true);
-    expect(lacksEvalServerSource({ serverAttachmentId: "g" })).toBe(false);
-    expect(lacksEvalServerSource({ pluginVersionIds: ["pv"] })).toBe(false);
+    expect(lacksServerSource({})).toBe(true);
+    expect(lacksServerSource({ serverAttachmentId: "g" })).toBe(false);
+    expect(lacksServerSource({ pluginVersionIds: ["pv"] })).toBe(false);
     expect(
       composerMissingServerGroup(composeState({ hostIds: ["h1"] }), []),
     ).toBe(true);
@@ -1177,6 +1177,50 @@ describe("expandModelChoices — harness × model support", () => {
       },
     );
     expect(skipped[0]?.reason).toBe("not verified for codex 0.160.0");
+  });
+
+  it("reads whose key a saved choice runs on: the org's own vendor runs, a local key or another vendor's connection is skipped", () => {
+    const fallback = { provider: "none", model: "none" } as const;
+    const orgAnthropic = {
+      modelId: "anthropic/claude-sonnet-4.5",
+      source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "orgprov_a" },
+      fallback,
+    };
+    const orgOpenAi = {
+      modelId: "openai/gpt-5-mini",
+      source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "orgprov_o" },
+      fallback,
+    };
+    const localAnthropic = {
+      modelId: "anthropic/claude-sonnet-4.5",
+      source: "local" as const,
+      connectionRef: {
+        kind: "localProvider" as const,
+        providerKey: "anthropic",
+      },
+      nativeModelId: "claude-sonnet-4-5",
+      fallback,
+    };
+    const { cells, skipped } = expandModelChoices(
+      {
+        includeClientDefaults: false,
+        explicitTargets: [
+          { modelId: orgAnthropic.modelId, selection: orgAnthropic },
+          { modelId: orgOpenAi.modelId, selection: orgOpenAi },
+          { modelId: localAnthropic.modelId, selection: localAnthropic },
+        ],
+      },
+      { clientId: "h-claude", harness: { harnessId: "claude-code" } },
+    );
+    expect(cells).toEqual([
+      { modelId: orgAnthropic.modelId, modelSelection: orgAnthropic },
+    ]);
+    expect(skipped.map((cell) => cell.reason)).toEqual([
+      expect.stringContaining("your organization's Anthropic key"),
+      expect.stringContaining("your organization's Anthropic key"),
+    ]);
   });
 });
 

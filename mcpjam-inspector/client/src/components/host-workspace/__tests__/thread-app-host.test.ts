@@ -94,6 +94,41 @@ describe("owned App display contract", () => {
   });
 });
 
+describe("who decides an owned App's display mode", () => {
+  it.each(["global", "thread"] as const)(
+    "a %s entrypoint fixes fullscreen, so an App's own declaration can't refuse it",
+    (kind) => {
+      const owned = createThreadAppHost(host, handle, "server", kind);
+      expect(owned.surface.fixedDisplayMode).toBe("fullscreen");
+    },
+  );
+  it("a model App keeps negotiating its modes", () => {
+    const owned = createThreadAppHost(host, handle, "server", "model");
+    expect(owned.surface.fixedDisplayMode).toBeUndefined();
+  });
+  it("applies OpenAI's display-mode rules only when the Display modes toggle is on", () => {
+    for (const kind of ["model", "global", "thread"] as const) {
+      expect(
+        createThreadAppHost(host, handle, "server", kind).surface
+          .openAIDisplayModes,
+      ).toBeUndefined();
+      expect(
+        createThreadAppHost(host, handle, "server", kind, {
+          openAIDisplayModes: true,
+        }).surface.openAIDisplayModes,
+      ).toBe(true);
+    }
+  });
+  it("lets the rules pick a model App's starting mode instead of forcing inline", () => {
+    const ruled = createThreadAppHost(host, handle, "server", "model", {
+      openAIDisplayModes: true,
+    });
+    expect(ruled.environment.draftHostContext?.displayMode).toBe("pip");
+    const plain = createThreadAppHost(host, handle, "server", "model");
+    expect(plain.environment.draftHostContext?.displayMode).toBe("inline");
+  });
+});
+
 describe("a model App in the chat", () => {
   it("keeps the client's chat display modes and request policy, so it can leave fullscreen", () => {
     const client = {

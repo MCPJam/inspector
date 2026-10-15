@@ -1,3 +1,4 @@
+import { useSelectedRun } from "./use-selected-run";
 import { useMemo } from "react";
 import { Code2, Loader2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -6,7 +7,7 @@ import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { TestCaseIterationsTable } from "./test-case-iterations-table";
-import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalCase, EvalIteration, EvalSuiteRunListItem } from "./types";
 import { iterationTargetKey, targetKeySuffix } from "@/lib/eval-target-key";
 
 interface TestCaseDetailViewProps {
@@ -17,7 +18,7 @@ interface TestCaseDetailViewProps {
   serverNames?: string[];
   suiteName?: string;
   onNavigateToSuite?: () => void;
-  runs?: EvalSuiteRun[];
+  runs?: EvalSuiteRunListItem[];
   onOpenExportCase?: () => void;
 }
 
@@ -39,13 +40,17 @@ export function TestCaseDetailView({
 
   useRunInsights(latestCompletedRun, { autoRequest: true });
 
+  const latestFullRun = useSelectedRun(
+    latestCompletedRun?.suiteId ?? "",
+    latestCompletedRun?._id ?? null,
+  ).run;
   const latestCaseInsight = useMemo(
     () =>
-      findRunInsightForCase(latestCompletedRun, {
+      findRunInsightForCase(latestFullRun, {
         caseKey: testCase.caseKey,
         testCaseId: testCase._id,
       }),
-    [latestCompletedRun, testCase.caseKey, testCase._id],
+    [latestFullRun, testCase.caseKey, testCase._id],
   );
 
   // Model breakdown

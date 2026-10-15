@@ -38,15 +38,19 @@ bounded by the same per-member and per-organization box limits as any other.
 
 | Surface | Claude Code | Codex | Cursor |
 |---|---|---|---|
-| Playground, one column | Your personal computer (created on first use) | Same | Disposable per-conversation box, carrying your key |
+| Playground, one column | Disposable per-conversation box | Same | Same, carrying your key |
 | Playground compare | Disposable box per column | Same | Same |
 | Evals and swarms | Disposable box on the default template | Same | Same |
 | User Testing | Disposable scenario box | Same | Not available: Cursor signs in with a personal account, and participants can't use it |
 | Hosted chat API (v1) | Disposable box | Same | Same |
 
-User Testing never runs on a persistent machine. Secrets reach only disposable
-boxes, through an environment's grant; in the Playground, when you have not
-chosen an environment, a hidden one carries just your Cursor key.
+A cloud run never uses a persistent machine. A conversation's box is deleted
+after 30 idle minutes (4 hours at most), so its files don't carry over to a
+later session. Its network is web-only: HTTP and HTTPS work (package installs,
+git over HTTPS, APIs), while SSH, email, database ports and other non-web
+traffic are blocked. Secrets reach only disposable boxes, through an
+environment's grant; in the Playground, when you have not chosen an
+environment, a hidden one carries just your Cursor key.
 
 ## Failure modes
 

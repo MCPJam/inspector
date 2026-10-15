@@ -1,4 +1,5 @@
 import { UIMessage } from "ai";
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "./types";
 import type {
   McpToolResultImageRenderingPolicy,
@@ -63,6 +64,7 @@ export interface ChatV2Request {
   oauthAccessToken?: string;
   clientCapabilities?: Record<string, unknown>;
   model?: ModelDefinition;
+  modelSelection?: RequestedModelSelection;
   modelId?: string;
   systemPrompt?: string;
   temperature?: number;

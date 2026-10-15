@@ -33,9 +33,47 @@ export function generateLiveTraceTurnId(): string {
 
 export function cloneTraceValue<T>(value: T): T {
   if (typeof structuredClone === "function") {
-    return structuredClone(value);
+    try {
+      return structuredClone(value);
+    } catch {
+      // A value structuredClone refuses (a `URL` in a file part, a function)
+      // must never fail the turn the trace describes.
+      return structuredClone(toTraceCloneable(value)) as T;
+    }
   }
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/** Copy with every `URL` as its string and functions dropped. */
+function toTraceCloneable(
+  value: unknown,
+  seen = new WeakMap<object, unknown>(),
+): unknown {
+  if (value instanceof URL) return value.href;
+  if (typeof value === "function" || typeof value === "symbol")
+    return undefined;
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    ArrayBuffer.isView(value) ||
+    value instanceof ArrayBuffer ||
+    value instanceof Date
+  )
+    return value;
+  if (seen.has(value)) return seen.get(value);
+  if (Array.isArray(value)) {
+    const copy: unknown[] = [];
+    seen.set(value, copy);
+    for (const item of value) copy.push(toTraceCloneable(item, seen));
+    return copy;
+  }
+  const copy: Record<string, unknown> = {};
+  seen.set(value, copy);
+  for (const [key, item] of Object.entries(value)) {
+    const next = toTraceCloneable(item, seen);
+    if (next !== undefined) copy[key] = next;
+  }
+  return copy;
 }
 
 export function getPromptIndex(messageHistory: ModelMessage[]): number {

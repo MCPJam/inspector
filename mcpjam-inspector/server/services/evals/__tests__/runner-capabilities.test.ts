@@ -15,7 +15,10 @@
  *     absent, which is exactly what those refusals prevent.
  */
 import { describe, expect, it } from "vitest";
-import { runnerCapabilities } from "../runner-capabilities";
+import {
+  runnerCapabilities,
+  swarmSponsorshipCapabilities,
+} from "../runner-capabilities";
 
 describe("runnerCapabilities", () => {
   it("declares harness execution, always", () => {
@@ -72,5 +75,20 @@ describe("runnerCapabilities", () => {
         MCPJAM_BROWSER_SECRET_PLACEHOLDERS: "1",
       } as NodeJS.ProcessEnv),
     ).toContain("browser-materialized-secrets");
+  });
+});
+
+describe("swarmSponsorshipCapabilities", () => {
+  it("does not advertise sponsorship without a nonblank service credential", () => {
+    for (const env of [{}, { INSPECTOR_SERVICE_TOKEN: " \t\n" }]) {
+      expect(swarmSponsorshipCapabilities(env)).toEqual([]);
+    }
+  });
+
+  it("reads the supplied credential at call time", () => {
+    const env = { INSPECTOR_SERVICE_TOKEN: " svc-token\n" };
+    expect(swarmSponsorshipCapabilities(env)).toEqual(["swarm-sponsorship-v1"]);
+    env.INSPECTOR_SERVICE_TOKEN = "";
+    expect(swarmSponsorshipCapabilities(env)).toEqual([]);
   });
 });

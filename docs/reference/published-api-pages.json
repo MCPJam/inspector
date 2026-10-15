@@ -64,6 +64,7 @@
   "/api-reference/directory-readiness/read-one-readiness-run",
   "/api-reference/directory-readiness/start-a-claude-directory-readiness-run",
   "/api-reference/directory-readiness/start-an-openai-plugin-directory-readiness-run",
+  "/api-reference/directory-readiness/start-a-muse-connector-readiness-run",
   "/api-reference/environments/archive-an-environment",
   "/api-reference/environments/check-what-this-deployments-environment-surface-supports",
   "/api-reference/environments/create-an-environment",

@@ -230,13 +230,23 @@ export function Thread({
 
   useEffect(() => {
     const liveToolCallIds = getMessageToolCallIds(messages);
+    // Avoid even scheduling a no-op state update for every streamed chunk.
+    // Synchronous chat subscriptions can keep those lower-priority updates
+    // pending through a buffered burst and exhaust React's update-depth limit.
+    if (
+      !appToolInvocations.some(
+        (invocation) => !liveToolCallIds.has(invocation.parentToolCallId)
+      )
+    ) {
+      return;
+    }
     setAppToolInvocations((current) => {
       const next = current.filter((invocation) =>
         liveToolCallIds.has(invocation.parentToolCallId)
       );
       return next.length === current.length ? current : next;
     });
-  }, [messages]);
+  }, [messages, appToolInvocations]);
 
   const handleRequestPip = (toolCallId: string) => {
     setPipWidgetId(toolCallId);

@@ -14,6 +14,12 @@ import { withDeadline } from "../../utils/run-supervisor/deadline";
 import type { JourneyManagerFactory } from "./swarm-runner";
 import { abortable, probeReadOnlyTools } from "./target-discovery";
 import { runSwarmSetupTurn, SwarmSetupError } from "./swarm-setup-turn";
+import type { SponsoredPlatformFailure } from "../../../shared/swarm-sponsorship";
+import {
+  isStandingXaaFailure,
+  xaaAuthorizationServerStatusOf,
+  xaaConnectFailureReasonOf,
+} from "../../../shared/xaa-connect-failure";
 export async function prepareTargetGrounding(args: {
   runId: string;
   projectId: string;
@@ -26,6 +32,8 @@ export async function prepareTargetGrounding(args: {
   convexHttpUrl: string;
   bearer: string;
   signal: AbortSignal;
+  /** The target has sponsored conversations (setup and grounding are sponsored). */
+  sponsored?: boolean;
 }) {
   if (!args.target.targetId || args.signal.aborted) return;
   const identity = {
@@ -43,6 +51,7 @@ export async function prepareTargetGrounding(args: {
         args.bearer,
         body,
         args.signal,
+        args.sponsored,
       );
     } catch {
       logger.warn(
@@ -53,23 +62,43 @@ export async function prepareTargetGrounding(args: {
   };
   if (args.setupWrites) {
     const setupArgs = { ...args, authHeader: `Bearer ${args.bearer}` };
+    let platformFailure: SponsoredPlatformFailure | undefined;
+    let cause: unknown;
     try {
       setup = await runSwarmSetupTurn(setupArgs);
     } catch (error) {
       if (!(error instanceof SwarmSetupError)) throw error;
       setup = error.partial;
-      if (!args.signal.aborted && setup.writeCallsDispatched === 0) {
+      platformFailure = error.platformFailure;
+      cause = error.cause;
+      // A refused server sign-in is not retried: a second setup turn signs in
+      // again, and an authorization server that refused (or throttled) the
+      // first request refuses the second the same way. A sign-in that may
+      // clear on the next try (a timeout, say) keeps its retry.
+      if (
+        !args.signal.aborted &&
+        !error.platformFailure &&
+        !isStandingXaaFailure(
+          xaaConnectFailureReasonOf(cause),
+          xaaAuthorizationServerStatusOf(cause),
+        ) &&
+        setup.writeCallsDispatched === 0
+      ) {
         try {
           setup = await runSwarmSetupTurn({ ...setupArgs, retried: true });
+          cause = undefined;
         } catch (retryError) {
           if (!(retryError instanceof SwarmSetupError)) throw retryError;
           setup = retryError.partial;
+          platformFailure = retryError.platformFailure;
+          cause = retryError.cause;
         }
       }
     }
     await report({ ...identity, setup });
     if (args.signal.aborted) return;
-    if (!mayRunAfterSetup(setup)) throw new SwarmSetupError(setup);
+    if (!mayRunAfterSetup(setup))
+      throw new SwarmSetupError(setup, platformFailure, cause);
   }
   const deadline = withDeadline(
     args.signal,
