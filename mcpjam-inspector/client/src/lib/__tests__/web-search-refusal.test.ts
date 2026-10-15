@@ -59,11 +59,37 @@ describe("describeWebSearchRefusal", () => {
     });
   });
 
-  it("reads the model codes as the organization's model, never a pick", () => {
-    const described = describeWebSearchRefusal("capability_missing", "admin");
-    expect(described.title).toBe("Web search unavailable");
-    expect(described.remediation).toBe("configure_org_model_role");
+  it("asks for the organization's search model when none is set", () => {
+    expect(
+      describeWebSearchRefusal("org_model_unconfigured", "admin"),
+    ).toMatchObject({
+      title: "Web search needs a search model",
+      body: "Choose the organization's search model in Organization → AI providers to turn web search on.",
+    });
+    expect(
+      describeWebSearchRefusal("org_model_unconfigured", "member").body,
+    ).toBe(
+      "Ask an organization admin to choose a search model in Organization → AI providers.",
+    );
   });
+
+  it.each(["capability_missing", "capability_unknown", "invalid_model"] as const)(
+    "points %s at the search model for admins and members",
+    (code) => {
+      const admin = describeWebSearchRefusal(code, "admin");
+      expect(admin.title).toBe("Web search unavailable");
+      expect(admin.body).toContain("Choose another search model");
+      expect(admin.body).not.toContain("default model");
+      expect(admin.remediation).toBe("configure_org_model_role");
+      const member = describeWebSearchRefusal(code, "member");
+      expect(member.body).toContain("Ask an organization admin");
+      expect(member.body).toContain("search model");
+      expect(member.body).not.toContain("default model");
+      expect(describeWebSearchRefusal(code, "visitor").body).toBe(
+        "Web search isn't available in this chat.",
+      );
+    },
+  );
 });
 
 describe("webSearchPolicyNote", () => {
@@ -76,8 +102,11 @@ describe("webSearchPolicyNote", () => {
     expect(webSearchPolicyNote(readiness("unsupported"))).toBe(
       "Off while your organization requires its own AI keys. Web search can't run on them yet.",
     );
-    expect(webSearchPolicyNote(readiness("unconfigured"))).toContain(
-      "Organization → AI providers",
+    expect(webSearchPolicyNote(readiness("unconfigured"))).toBe(
+      "Needs a search model. Choose one in Organization → AI providers.",
+    );
+    expect(webSearchPolicyNote(readiness("invalid_credentials"))).toContain(
+      "Check Organization → AI providers",
     );
   });
 
