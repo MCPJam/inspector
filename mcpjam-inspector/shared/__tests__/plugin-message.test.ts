@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   parsePluginMessage,
+  pluginMessageDraft,
+  pluginMessageDraftIntentSchema,
   pluginMessageIntentSchema,
   pluginMessageParts,
-  pluginMessageTarget,
+  pluginMessageSendMode,
 } from "../plugin-message";
 
 const params = {
@@ -42,8 +44,19 @@ describe("complete app message admission and encoding", () => {
     expect(JSON.stringify(pluginMessageParts(params))).not.toContain(
       "presentation",
     );
-    expect(pluginMessageTarget(copy)).toBe("new");
-    expect(pluginMessageTarget({ ...copy, _meta: undefined })).toBe("active");
+    expect(pluginMessageSendMode(copy)).toEqual({ target: "new", send: true });
+    expect(pluginMessageSendMode({ ...copy, _meta: undefined })).toEqual({
+      target: "active",
+      send: true,
+    });
+    expect(
+      pluginMessageSendMode(
+        parsePluginMessage({
+          ...params,
+          _meta: { "openai/message": { send: false } },
+        }),
+      ),
+    ).toEqual({ target: "active", send: false });
   });
   it("shares the context codec for supplied embedded text and image resources", () => {
     const value = {
@@ -102,7 +115,6 @@ describe("complete app message admission and encoding", () => {
   it.each([
     { ...params, role: "assistant" },
     { ...params, content: [] },
-    { ...params, _meta: { "openai/message": { send: false } } },
     { ...params, _meta: { "openai/message": { target: "third" } } },
     {
       ...params,
@@ -184,6 +196,101 @@ describe("complete app message admission and encoding", () => {
             },
           ],
         },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+const draftParams = (
+  content: unknown[],
+  target: "active" | "new" = "active",
+) => ({
+  role: "user" as const,
+  content,
+  _meta: { "openai/message": { target, send: false } },
+});
+
+describe("editable drafts (send: false)", () => {
+  it("never lets a draft reach the send path, or a send reach the draft path", () => {
+    const intent = {
+      instanceToken: "x".repeat(43),
+      operationId: crypto.randomUUID(),
+      sourceThreadId: "old",
+    };
+    const draft = {
+      ...intent,
+      params: draftParams([{ type: "text", text: "Hi" }]),
+    };
+    expect(pluginMessageIntentSchema.safeParse(draft).success).toBe(false);
+    expect(pluginMessageDraftIntentSchema.parse(draft)).toEqual(draft);
+    expect(
+      pluginMessageDraftIntentSchema.safeParse({ ...intent, params }).success,
+    ).toBe(false);
+  });
+  it("puts untitled text in the editable input, images in attachments and keeps other blocks whole as items", () => {
+    const draft = pluginMessageDraft(
+      draftParams([
+        { type: "text", text: "Help me design a bracket." },
+        { type: "image", mimeType: "image/png", data: "AQID" },
+        {
+          type: "text",
+          text: "Spec",
+          _meta: { "openai/title": "Bracket spec" },
+        },
+        {
+          type: "resource_link",
+          uri: "file:///synthetic/part",
+          name: "part.stl",
+          title: "Hex bolt",
+        },
+        {
+          type: "resource",
+          resource: { uri: "fixture://notes", text: "embedded" },
+        },
+        {
+          type: "resource",
+          resource: {
+            uri: "fixture://img",
+            mimeType: "image/png",
+            blob: "AQID",
+          },
+        },
+        { type: "text", text: "Thanks." },
+      ]),
+    );
+    expect(draft.text).toBe("Help me design a bracket.\n\nThanks.");
+    expect(draft.images).toEqual([{ mimeType: "image/png", data: "AQID" }]);
+    expect(draft.items.map((item) => item.title)).toEqual([
+      "Bracket spec",
+      "Hex bolt",
+      "fixture://notes",
+      "fixture://img",
+    ]);
+    expect(draft.items[0].part).toEqual({
+      type: "data-plugin-message-text",
+      data: { title: "Bracket spec", text: "Spec" },
+    });
+    expect(JSON.stringify(draft.items[1].part)).toContain(
+      "file:///synthetic/part",
+    );
+    expect(draft.items[2].part).toEqual({ type: "text", text: "embedded" });
+    expect(draft.items[3].part).toMatchObject({
+      type: "file",
+      mediaType: "image/png",
+    });
+  });
+  it("refuses the whole draft when any block is unsupported", () => {
+    const value = draftParams([
+      { type: "text", text: "kept?" },
+      { type: "audio", mimeType: "audio/wav", data: "AQID" },
+    ]);
+    expect(() => pluginMessageDraft(value)).toThrow();
+    expect(
+      pluginMessageDraftIntentSchema.safeParse({
+        instanceToken: "x".repeat(43),
+        operationId: crypto.randomUUID(),
+        sourceThreadId: "old",
+        params: value,
       }).success,
     ).toBe(false);
   });

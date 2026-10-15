@@ -545,6 +545,16 @@ describe("seedHostTemplate", () => {
   // the fallback seed output so any accidental drift — a changed default, a
   // dropped field — fails CI and must be re-blessed deliberately. `appVersion`
   // is pinned so the snapshot is deterministic.
+  it("reports a Codex desktop build new enough for Apps that gate on OpenAI's documented minimum", () => {
+    const version = (
+      seedHostTemplate("codex", { appVersion: "0.0.0-test" }).mcpProfile?.apps
+        ?.uiInitialize?.hostInfo as { version?: string } | undefined
+    )?.version;
+    expect(
+      version?.localeCompare("26.928.20710", undefined, { numeric: true })
+    ).toBeGreaterThanOrEqual(0);
+  });
+
   it("seed output matches the committed golden snapshot", () => {
     const golden: Record<string, unknown> = {};
     for (const id of ALL_IDS) {
