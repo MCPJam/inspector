@@ -908,11 +908,13 @@ export async function gatherOpenAIReadinessEvidence(
           discovery,
           trigger.pointer
         );
-        auth = { ...auth, ...rediscovered };
+        if (rediscovered.prm && rediscovered.prm.discoveredVia !== "not-found") {
+          auth = { ...auth, ...rediscovered };
+        }
         lazyAuthProbe.rediscovery = {
           trigger: trigger.trigger,
           source: trigger.source,
-          prmFound: rediscovered.prm?.discoveredVia !== "not-found",
+          prmFound: !!rediscovered.prm && rediscovered.prm.discoveredVia !== "not-found",
           ...(rediscovered.prm?.url ? { prmUrl: rediscovered.prm.url } : {}),
           ...(rediscovered.prm?.discoveredVia
             ? { discoveredVia: rediscovered.prm.discoveredVia }

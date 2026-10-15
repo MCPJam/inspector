@@ -3114,7 +3114,11 @@ export default function App() {
         return;
       if (errorMessage && callbackContext.serverName) {
         void authorizationFlowDigest(state).then(digest => cancelPendingChatScopeStepUpForCallback(
-          callbackContext.serverName, errorMessage, digest, callbackContext.chatAuthContinuationId));
+          callbackContext.serverName, errorMessage, digest, callbackContext.chatAuthContinuationId))
+          .catch((error: unknown) => {
+            // Without a verified digest, do not cancel a different pending flow.
+            console.debug("Could not settle the failed sign-in callback", error);
+          });
       }
       if (callbackContext.serverName) {
         writeHostedOAuthResumeMarker({

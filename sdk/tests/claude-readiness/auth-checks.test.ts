@@ -361,6 +361,14 @@ describe("a server that answers anonymously and publishes PRM", () => {
     expect(badge(output, "claude.auth.mode").detail).toBeDefined();
   });
 
+  it.each(["tool-error", "rpc-error"] as const)("does not grade invalid probe arguments as an auth defect (%s)", (outcome) => {
+    const output = runClaudeAuthChecks({ ...LAZY, lazyAuthProbe: {
+      attempted: true, protocolVersion: "2025-06-18", eraNote: "test",
+      protectedCall: { toolName: "read_order", selectedBy: "named", schemes: { schemes: [], source: "unresolved" }, outcome, invalidArguments: true },
+    } }, STAMP);
+    expect(byId(output, "claude.auth.unauthenticated-challenge").status).toBe("not-evaluated");
+  });
+
   it("leaves its 401 contract unevaluated until a protected call is driven", () => {
     const output = runClaudeAuthChecks(LAZY, STAMP);
     const challenge = byId(output, "claude.auth.unauthenticated-challenge");

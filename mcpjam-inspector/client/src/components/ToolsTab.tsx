@@ -1000,8 +1000,9 @@ export function ToolsTab({
   };
 
   const dismissConfirmedReplay = () => {
+    const pending = confirmReplay;
     setConfirmReplay(null);
-    clearPendingDirectScopeStepUpReplay();
+    if (pending) clearPendingDirectScopeStepUpReplay(pending);
   };
 
   const executeTool = async () => {

@@ -204,7 +204,8 @@ export function runOpenAIAuthChecks(
   const anonymousInitialize =
     unauth !== undefined && unauth.status >= 200 && unauth.status < 300;
   const publishesPrm = prm !== undefined && prm.discoveredVia !== "not-found";
-  const authless = anonymousInitialize && !publishesPrm;
+  const observedChallenge = context.lazyAuthProbe?.protectedCall?.challenge !== undefined;
+  const authless = anonymousInitialize && !publishesPrm && !observedChallenge;
   const lazyShaped = anonymousInitialize && publishesPrm;
 
   if (!unauth || unauth.status === 0) {

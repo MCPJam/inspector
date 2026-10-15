@@ -2321,7 +2321,6 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     localStorage.setItem(OAUTH_PENDING_STORAGE_KEY, this.serverName);
     // Store the current route to restore after OAuth callback.
     const returnTarget = captureCurrentReturnPath();
-    ((globalThis as unknown as { __qaLog?: (...a: unknown[]) => void }).__qaLog ?? console.info)("[qa-oauth-return] saving before sign-in", { returnTarget, href: window.location.href, server: this.serverName }); // QA-BB260-TEMP
     if (returnTarget) {
       // Key name is retained for in-flight migration compatibility; values are
       // now path targets.
@@ -2965,16 +2964,13 @@ export async function initiateOAuth(
         const preRedirectTrace = emitTraceFromState(getState());
         saveOAuthTraceToSession(options.serverName, preRedirectTrace);
         assertCurrent();
-        try {
-          await options.onAuthorizationRedirect?.({
+        // A failed flow binding must stop navigation so the call remains recoverable.
+        await options.onAuthorizationRedirect?.({
             state:
               typeof getState().state === "string"
                 ? (getState().state as string)
                 : undefined,
-          });
-        } catch {
-          // A failed bookkeeping hook must never block the sign-in itself.
-        }
+        });
         assertCurrent();
         await provider.redirectToAuthorization(
           new URL(redirectedAuthorizationUrl)

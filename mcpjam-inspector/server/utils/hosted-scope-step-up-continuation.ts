@@ -3,6 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { ModelMessage, ToolSet, UIMessageChunk } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
+  parseToolResultAuthChallenge,
+  type AuthChallengeSignal,
+} from "@mcpjam/sdk";
+import {
   SCOPE_STEP_UP_LIVE_TTL_MS,
   SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
   SCOPE_STEP_UP_VERSION,
@@ -30,10 +34,6 @@ import type {
 } from "./mrtr-hosted-chat.js";
 import { scopeStepUpInfoFromToolError } from "./insufficient-scope-step-up.js";
 import {
-  parseToolResultAuthChallenge,
-  type AuthChallengeSignal,
-} from "@mcpjam/sdk";
-import {
   AUTH_CHALLENGE_REASON,
   authChallengeCancelledText,
 } from "@/shared/auth-challenge";
@@ -41,26 +41,31 @@ import {
   authChallengeInfoFromToolError,
   emitRepeatedSignInNotice,
 } from "./auth-challenge-chat.js";
-import { logger } from "./logger.js";
+import { isHostedAuthChallengeContinuationId } from "./hosted-auth-challenge-continuation.js";
+import {
+  checkRecordedCredentialBinding,
+  checkResumeCredentialBinding,
+  HostedCredentialBinding,
+  isCredentialBinding,
+} from "./hosted-credential-binding.js";
 
-/**
- * Which credential a saved call used, and so how a sign-in may settle it
- *:
- *
- *   - `none`: the call used no credential (a tokenless first sign-in). The
- *     sign-in creates a personal connection, and the resume may bind to it.
- *   - `owned`: the initiating user's own credential. Reauthorized in place;
- *     the resume must land on that very credential.
- *   - `shared`: a project credential, or one the user does not own. Never
- *     replaced: the user signs in with their own account and runs the tool
- *     again, so the saved call is never replayed across credentials.
- */
-export type HostedCredentialBinding =
-  | { kind: "none" }
-  | { kind: "owned"; credentialId: string }
-  | { kind: "shared"; credentialId?: string };
 
-type HostedScopeStepUpState = {
+export {
+  cancelHostedContinuationForNewMessage,
+  createHostedAuthChallengeContinuation,
+  HOSTED_AUTH_CHALLENGE_CONTINUATION_PREFIX,
+  hostedAuthChallengeContinuationId,
+  isHostedAuthChallengeContinuationId,
+  settleHostedAuthChallengeHistoryCall,
+} from "./hosted-auth-challenge-continuation.js";
+export {
+  checkRecordedCredentialBinding,
+  checkResumeCredentialBinding,
+  resolveHostedCredentialBinding,
+  type HostedCredentialBinding,
+} from "./hosted-credential-binding.js";
+
+export type HostedScopeStepUpState = {
   v: 1;
   /** Absent: a 403 step-up. */
   reason?: typeof AUTH_CHALLENGE_REASON;
@@ -75,88 +80,6 @@ type HostedScopeStepUpState = {
   toolInput: unknown;
   inputHash: string;
 };
-
-/**
- * A sign-in continuation's id carries its reason, so a cancel (which never
- * reads the saved state) can still answer with sign-in copy. The id stays
- * opaque to the browser, and a forged prefix names no continuation: the store
- * refuses it, so the copy is only ever chosen for a real sign-in.
- */
-export const HOSTED_AUTH_CHALLENGE_CONTINUATION_PREFIX = "authz-";
-
-export function isHostedAuthChallengeContinuationId(id: string): boolean {
-  return id.startsWith(HOSTED_AUTH_CHALLENGE_CONTINUATION_PREFIX);
-}
-
-/**
- * The id is derived from the suspended call rather than drawn at random, so a
- * later turn that resends the call unresolved can find its continuation
- * without the browser naming it (history settlement). The store still
- * owns the row: only its owner can cancel or claim it, under the binding
- * fingerprint, so a derivable id grants nothing.
- */
-export function hostedAuthChallengeContinuationId(input: {
-  authPrincipal: string;
-  chatSessionId: string;
-  toolCallId: string;
-}): string {
-  const digest = createHash("sha256")
-    .update(
-      [
-        "mcpjam/auth-challenge-continuation/v1",
-        input.authPrincipal,
-        input.chatSessionId,
-        input.toolCallId,
-      ].join("\u0000"),
-    )
-    .digest("base64url");
-  return `${HOSTED_AUTH_CHALLENGE_CONTINUATION_PREFIX}${digest}`;
-}
-
-/**
- * History settlement on the hosted engine: cancel the pending sign-in
- * continuation a resent, still-unresolved call belongs to. True when there
- * was one to cancel, so the caller answers the call with the cancel copy; a
- * call this conversation never suspended for sign-in (or one already
- * terminal) keeps its default handling.
- */
-export async function settleHostedAuthChallengeHistoryCall(input: {
-  bearer: string;
-  authPrincipal: string;
-  chatSessionId: string;
-  toolCallId: string;
-}): Promise<boolean> {
-  const continuationId = hostedAuthChallengeContinuationId(input);
-  const cancelled = await cancelContinuation(input.bearer, {
-    continuationId,
-    reason: "the user continued without signing in",
-  });
-  if (!cancelled.ok) return false;
-  await scrubContinuation(input.bearer, { continuationId });
-  return true;
-}
-
-/**
- * A cancel the client spliced into the user's next message. Cancels
- * the continuation when the store still holds it waiting; never fails, so an
- * unknown or expired continuation cannot cost the user their message. The
- * copy follows the id: a sign-in id answers with sign-in copy.
- */
-export async function cancelHostedContinuationForNewMessage(input: {
-  bearer: string;
-  continuationId: string;
-}): Promise<{ cancelled: boolean; isSignIn: boolean }> {
-  const isSignIn = isHostedAuthChallengeContinuationId(input.continuationId);
-  const cancelled = await cancelContinuation(input.bearer, {
-    continuationId: input.continuationId,
-    reason: "the user sent a new message instead of signing in",
-  });
-  if (!cancelled.ok) return { cancelled: false, isSignIn };
-  await scrubContinuation(input.bearer, {
-    continuationId: input.continuationId,
-  });
-  return { cancelled: true, isSignIn };
-}
 
 /** The terminal reason of a sign-in whose replay was refused again. */
 export const HOSTED_AUTH_CHALLENGE_REPEATED_REASON =
@@ -173,22 +96,6 @@ export function signedInWithAnotherCredentialText(
     : `Not run: the user signed in to MCP server "${serverName}" with a different account than "${toolName}" used, so it was not retried. Run it again if the user asks.`;
 }
 
-function isCredentialBinding(value: unknown): value is HostedCredentialBinding {
-  if (!value || typeof value !== "object") return false;
-  const binding = value as { kind?: unknown; credentialId?: unknown };
-  if (binding.kind === "none") return true;
-  if (binding.kind === "owned") {
-    return (
-      typeof binding.credentialId === "string" && binding.credentialId !== ""
-    );
-  }
-  return (
-    binding.kind === "shared" &&
-    (binding.credentialId === undefined ||
-      typeof binding.credentialId === "string")
-  );
-}
-
 function stableJson(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value) ?? "null";
@@ -203,11 +110,11 @@ function stableJson(value: unknown): string {
     .join(",")}}`;
 }
 
-function hashInput(value: unknown): string {
+export function hashInput(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("base64url");
 }
 
-function encodeState(state: HostedScopeStepUpState): string {
+export function encodeState(state: HostedScopeStepUpState): string {
   return JSON.stringify(state);
 }
 
@@ -245,7 +152,7 @@ function decodeState(value: unknown): HostedScopeStepUpState {
   return state;
 }
 
-function readProtectedResourceUrl(
+export function readProtectedResourceUrl(
   manager: Pick<MCPClientManager, "getServerConfig">,
   serverId: string
 ): string | undefined {
@@ -312,213 +219,6 @@ function buildErrorToolResult(
       },
     ],
   } as unknown as ModelMessage;
-}
-
-/**
- * Whether a resumed call may run on the credential the rebuilt connection
- * resolves to.
- *
- * - The call used a credential: only that same credential. A sign-in that
- *   produced another one (an account switch at the authorization server, or a
- *   personal connection made beside a shared one) is not a reauthorization of
- *   the call's credential, and the client cancels instead of resuming.
- * - The call used none (a tokenless first sign-in): the first binding is
- *   allowed. The continuation is already pinned to this server
- *   (`claimed.state.serverId`) and, through the binding fingerprint's auth
- *   principal, to the user who started it, so the credential the rebuilt
- *   connection resolves to is the one that user just authorized.
- */
-export function checkResumeCredentialBinding(
-  recordedConnectionId: string | undefined,
-  resolvedConnectionId: string | undefined,
-): { ok: true; firstBinding: boolean } | { ok: false } {
-  if (!recordedConnectionId) return { ok: true, firstBinding: true };
-  return resolvedConnectionId === recordedConnectionId
-    ? { ok: true, firstBinding: false }
-    : { ok: false };
-}
-
-/**
- * The resume check for a continuation that recorded its credential binding
- *. A shared credential is never resumed: the sign-in made a personal
- * connection, and replaying onto it would run the call on another account.
- */
-export function checkRecordedCredentialBinding(
-  recorded: HostedCredentialBinding,
-  resolvedConnectionId: string | undefined,
-): { ok: true; firstBinding: boolean } | { ok: false } {
-  switch (recorded.kind) {
-    case "none":
-      return checkResumeCredentialBinding(undefined, resolvedConnectionId);
-    case "owned":
-      return checkResumeCredentialBinding(
-        recorded.credentialId,
-        resolvedConnectionId,
-      );
-    case "shared":
-      return { ok: false };
-  }
-}
-
-/**
- * Whether the initiating user owns this credential, from the same listing the
- * client reads (`/web/oauth/connections`): a personal row, and not the
- * project's shared one. Anything else, including a failed lookup, is not
- * theirs; a credential that cannot be proven owned is never replaced.
- */
-async function ownsHostedCredential(input: {
-  bearer: string;
-  projectId: string;
-  serverId: string;
-  connectionId: string;
-  abortSignal?: AbortSignal;
-}): Promise<boolean> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) return false;
-  try {
-    const response = await fetch(`${convexUrl}/web/oauth/connections`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: input.bearer.startsWith("Bearer ")
-          ? input.bearer
-          : `Bearer ${input.bearer}`,
-      },
-      body: JSON.stringify({
-        projectId: input.projectId,
-        serverId: input.serverId,
-      }),
-      signal: input.abortSignal
-        ? AbortSignal.any([input.abortSignal, AbortSignal.timeout(5_000)])
-        : AbortSignal.timeout(5_000),
-    });
-    if (!response.ok) return false;
-    const body = (await response.json()) as {
-      connections?: Array<{ connectionId?: unknown }>;
-      shared?: unknown;
-    };
-    return (
-      body.shared !== true &&
-      Array.isArray(body.connections) &&
-      body.connections.some(
-        (connection) => connection?.connectionId === input.connectionId,
-      )
-    );
-  } catch (error) {
-    logger.warn("[auth-challenge] credential ownership lookup failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return false;
-  }
-}
-
-export async function resolveHostedCredentialBinding(input: {
-  bearer: string;
-  projectId: string;
-  serverId: string;
-  connectionId?: string;
-  abortSignal?: AbortSignal;
-  ownsCredential?: (connectionId: string) => Promise<boolean>;
-}): Promise<HostedCredentialBinding> {
-  // Hosted chat stamps attribution on every call made with a live OAuth
-  // credential, so a call without one used none.
-  if (!input.connectionId) return { kind: "none" };
-  const connectionId = input.connectionId;
-  const owned = input.ownsCredential
-    ? await input.ownsCredential(connectionId).catch(() => false)
-    : await ownsHostedCredential({ ...input, connectionId });
-  return owned
-    ? { kind: "owned", credentialId: connectionId }
-    : { kind: "shared", credentialId: connectionId };
-}
-
-/**
- * Save a call that a mid-session sign-in suspended. The same durable
- * store, binding fingerprint and single-claim rules as a step-up, plus the
- * reason and the credential binding the resume is checked against.
- */
-export async function createHostedAuthChallengeContinuation(input: {
-  bearer: string;
-  authPrincipal: string;
-  projectId: string;
-  chatSessionId: string;
-  manager: MCPClientManager;
-  serverId: string;
-  serverName?: string;
-  connectionId?: string;
-  toolCallId: string;
-  toolName: string;
-  toolInput: unknown;
-  abortSignal?: AbortSignal;
-  /** Test seam; defaults to the backend's connection listing. */
-  ownsCredential?: (connectionId: string) => Promise<boolean>;
-}): Promise<{
-  continuationId: string;
-  expiresAt: number;
-  credentialBinding: HostedCredentialBinding;
-}> {
-  const continuationId = hostedAuthChallengeContinuationId({
-    authPrincipal: input.authPrincipal,
-    chatSessionId: input.chatSessionId,
-    toolCallId: input.toolCallId,
-  });
-  const negotiatedEra = resolveMrtrNegotiatedEra(input.manager, input.serverId);
-  const bindingFingerprint = computeMrtrBindingFingerprintFromManager(
-    input.manager,
-    {
-      serverId: input.serverId,
-      negotiatedEra,
-      authPrincipal: input.authPrincipal,
-    },
-  );
-  const resourceUrl = readProtectedResourceUrl(input.manager, input.serverId);
-  const credentialBinding = await resolveHostedCredentialBinding({
-    bearer: input.bearer,
-    projectId: input.projectId,
-    serverId: input.serverId,
-    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
-    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-    ...(input.ownsCredential ? { ownsCredential: input.ownsCredential } : {}),
-  });
-  const state: HostedScopeStepUpState = {
-    v: 1,
-    reason: AUTH_CHALLENGE_REASON,
-    serverId: input.serverId,
-    ...(input.serverName ? { serverName: input.serverName } : {}),
-    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
-    credentialBinding,
-    ...(resourceUrl ? { resourceUrl } : {}),
-    toolCallId: input.toolCallId,
-    toolName: input.toolName,
-    toolInput: input.toolInput,
-    inputHash: hashInput(input.toolInput),
-  };
-  const created = await createContinuation(
-    input.bearer,
-    {
-      continuationId,
-      projectId: input.projectId,
-      chatSessionId: input.chatSessionId,
-      serverId: input.serverId,
-      operationId: input.toolCallId,
-      operationMethod: "tools/call",
-      negotiatedEra,
-      bindingFingerprint,
-      resumeState: encodeState(state),
-      round: 0,
-      maxRounds: 1,
-      ttlMs: SCOPE_STEP_UP_LIVE_TTL_MS,
-    },
-    input.abortSignal,
-  );
-  if (!created.ok) {
-    throw new Error(`auth_challenge_continuation_create_failed:${created.error}`);
-  }
-  if (created.idempotent && created.status !== "awaiting_input") {
-    // This call already suspended once and settled; it is not offered again.
-    throw new Error(`auth_challenge_continuation_${created.status}`);
-  }
-  return { continuationId, expiresAt: created.expiresAt, credentialBinding };
 }
 
 export async function createHostedScopeStepUpContinuation(input: {

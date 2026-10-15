@@ -38,37 +38,6 @@ function changed() {
   listeners.forEach((listener) => listener());
 }
 
-// QA-BB260-TEMP: trace every touch of the saved chat call.
-function qaPending(
-  action: string,
-  value?: unknown,
-  extra?: Record<string, unknown>,
-): void {
-  const v = value as Partial<PendingChatScopeStepUp> | undefined;
-  // Flat JSON so nothing hides behind the console's "…".
-  (
-    (globalThis as unknown as { __qaLog?: (...a: unknown[]) => void })
-      .__qaLog ?? console.info
-  )(
-    `[qa-pending] ${action} ` +
-      JSON.stringify({
-        ...(v
-          ? {
-              phase: v.phase,
-              serverName: v.serverName,
-              chatSessionId: v.chatSessionId,
-              continuationId: v.event?.continuationId,
-              createdAt: v.createdAt
-                ? new Date(v.createdAt).toLocaleTimeString()
-                : undefined,
-              flowDigest: v.flowDigest?.slice(0, 8),
-            }
-          : { pending: "none" }),
-        ...(extra ?? {}),
-      }),
-  );
-}
-
 /** A mid-session sign-in that can resume: it carries its continuation. */
 export type ResumableAuthRequiredEvent = AuthRequiredEvent & {
   continuationId: string;
@@ -294,7 +263,6 @@ export function readPendingChatScopeStepUp(
   return entries.length === 1 ? entries[0] : undefined;
 }
 function writePending(value: PendingChatScopeStepUp): PendingWriteResult {
-  qaPending("write", value);
   const entries = readAll().filter(
     (item) => item.event.continuationId !== value.event.continuationId,
   );

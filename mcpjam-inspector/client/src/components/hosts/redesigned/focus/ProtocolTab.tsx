@@ -151,7 +151,7 @@ const UNAUTHORIZED_TRIGGER_DESCRIPTIONS: Record<
   UnauthorizedChallengeTrigger,
   string
 > = {
-  any: "Every 401 counts, with or without a WWW-Authenticate header. The MCP spec falls back to well-known discovery when the header is missing.",
+  any: "Every 401 response counts, whether or not it includes a WWW-Authenticate header.",
   "bearer-header":
     "Only a 401 carrying WWW-Authenticate: Bearer counts. Any other 401 is an ordinary error.",
   "resource-metadata":

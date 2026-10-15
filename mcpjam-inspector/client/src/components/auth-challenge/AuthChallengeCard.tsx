@@ -246,7 +246,7 @@ export function authChallengeConnectMessage(
     case "failed":
       return `Sign-in could not start: ${result.message}`;
     case "permanent":
-      return "This server still asked for sign-in after you signed in, so the call was not retried.";
+      return "This server still asked for sign-in after you signed in, so the call was not retried. Check with the server admin about your access.";
     case "refused":
       return "Click Connect to sign in.";
     default:

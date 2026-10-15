@@ -744,16 +744,16 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         });
         await waitForUiCommit();
 
+        // A sign-in challenge is reported as such; a command never signs in.
+        const authorizationRequired =
+          authorizationRequiredCommandErrorFromSignal(
+            outcome.response && "authChallenge" in outcome.response
+              ? outcome.response.authChallenge
+              : undefined,
+            selection.serverName,
+          );
+        if (authorizationRequired) throw authorizationRequired;
         if (!outcome.ok) {
-          // A sign-in challenge is reported as such; a command never signs in.
-          const authorizationRequired =
-            authorizationRequiredCommandErrorFromSignal(
-              outcome.response && "authChallenge" in outcome.response
-                ? outcome.response.authChallenge
-                : undefined,
-              selection.serverName,
-            );
-          if (authorizationRequired) throw authorizationRequired;
           throw createInspectorCommandClientError(
             "execution_failed",
             outcome.error,

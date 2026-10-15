@@ -168,7 +168,7 @@ export function setPendingDirectScopeStepUpReplayFlowDigest(
 ): void {
   const pending = readStored();
   if (expected && (!pending || !sameGeneration(pending, expected)))
-    throw new Error("The pending authorization call changed.");
+    throw new Error("The pending call changed. Run it again.");
   if (
     !pending ||
     pending.phase !== "awaiting_oauth" ||
@@ -190,7 +190,7 @@ export function setPendingDirectScopeStepUpReplayCredentialBinding(
 ): void {
   const pending = readStored();
   if (expected && (!pending || !sameGeneration(pending, expected)))
-    throw new Error("The pending authorization call changed.");
+    throw new Error("The pending call changed. Run it again.");
   if (!pending || pending.descriptor.serverName !== serverName) return;
   write({ ...pending, credentialBinding: binding });
 }

@@ -277,6 +277,18 @@ describe("auth", () => {
     }
   });
 
+  it("grades a protected-call challenge even when anonymous initialize publishes no PRM", () => {
+    const findings = runOpenAIAuthChecks(authEvidence({ unauthenticated: { status: 200 }, prm: { discoveredVia: "not-found" } }), STAMP, {
+      lazyAuthProbe: { attempted: true, protocolVersion: "2025-06-18", eraNote: "test",
+        protectedCall: { toolName: "read_order", selectedBy: "named", schemes: { schemes: [], source: "unresolved" }, outcome: "unauthorized",
+          challenge: { source: "http_401", facets: { challengeHeader: "bearer", hasResourceMetadata: false, hasScope: false, hasErrorParams: false } },
+        },
+      },
+    });
+    expect(byId(findings, "openai.auth.prm-discoverable").status).toBe("violated");
+    expect(byId(findings, "openai.auth.runtime-challenge").status).not.toBe("not-applicable");
+  });
+
   it("grades the OAuth surface of a server that answers anonymously AND publishes PRM", () => {
     // Anonymous access with OAuth available: the lazy-authentication shape.
     // Reading every 2xx as authless graded this whole surface not-applicable.

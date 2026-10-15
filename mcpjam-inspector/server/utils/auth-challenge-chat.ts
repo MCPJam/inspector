@@ -279,7 +279,7 @@ export function emitAuthRequiredChunk(
       type: AUTH_REQUIRED_DATA_PART_TYPE,
       data: event,
       transient: true,
-    } as unknown as UIMessageChunk);
+    } satisfies UIMessageChunk);
     return true;
   } catch (error) {
     logger.warn("[auth-challenge] auth_required stream write failed", {
@@ -299,7 +299,7 @@ export function emitAuthChallengeNoticeChunk(
       type: AUTH_CHALLENGE_NOTICE_DATA_PART_TYPE,
       data: event,
       transient: true,
-    } as unknown as UIMessageChunk);
+    } satisfies UIMessageChunk);
   } catch (error) {
     logger.warn("[auth-challenge] notice stream write failed", { error });
   }

@@ -1,4 +1,4 @@
-import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelMessage, ToolModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessageChunk } from "ai";
 import { hasUnresolvedToolCalls } from "@/shared/http-tool-calls";
 import {
@@ -13,6 +13,7 @@ import {
   type ChunkWriter,
 } from "./chat-stream-chunks.js";
 import { logger } from "./logger.js";
+
 
 /**
  * Answers an inherited, unresolved tool call that a mid-session sign-in
@@ -53,10 +54,10 @@ export async function settleSuspendedHistoryToolCalls(input: {
 }): Promise<ModelMessage[]> {
   const resolved = new Set<string>();
   for (const message of input.messageHistory) {
-    if (message?.role !== "tool" || !Array.isArray((message as any).content)) {
+    if (message?.role !== "tool" || !Array.isArray(message.content)) {
       continue;
     }
-    for (const part of (message as any).content) {
+    for (const part of message.content) {
       if (part?.type === "tool-result" && typeof part.toolCallId === "string") {
         resolved.add(part.toolCallId);
       }
@@ -67,12 +68,12 @@ export async function settleSuspendedHistoryToolCalls(input: {
   for (const [index, message] of input.messageHistory.entries()) {
     if (
       message?.role !== "assistant" ||
-      !Array.isArray((message as any).content)
+      !Array.isArray(message.content)
     ) {
       continue;
     }
-    const content: unknown[] = [];
-    for (const part of (message as any).content) {
+    const content: ToolModelMessage["content"] = [];
+    for (const part of message.content) {
       if (
         part?.type !== "tool-call" ||
         typeof part.toolCallId !== "string" ||
@@ -88,7 +89,7 @@ export async function settleSuspendedHistoryToolCalls(input: {
       });
       if (text === undefined) continue;
       resolved.add(part.toolCallId);
-      const output = { type: "error-text", value: text };
+      const output = { type: "error-text" as const, value: text };
       content.push({
         type: "tool-result",
         toolCallId: part.toolCallId,
@@ -107,7 +108,7 @@ export async function settleSuspendedHistoryToolCalls(input: {
     if (content.length > 0) {
       answers.push({
         index,
-        message: { role: "tool", content } as unknown as ModelMessage,
+        message: { role: "tool", content },
       });
     }
   }
@@ -122,15 +123,16 @@ function readToolOutput(
   message: ModelMessage,
   toolCallId: string,
 ): unknown {
-  if (message.role !== "tool" || !Array.isArray((message as any).content)) {
+  if (message.role !== "tool" || !Array.isArray(message.content)) {
     return undefined;
   }
-  const part = (message as any).content.find(
-    (candidate: any) =>
+  const part = message.content.find(
+    (candidate) =>
       candidate?.type === "tool-result" &&
       candidate.toolCallId === toolCallId,
   );
-  return part?.result ?? part?.output;
+  if (part?.type !== "tool-result") return undefined;
+  return ("result" in part ? part.result : undefined) ?? part.output;
 }
 
 /**

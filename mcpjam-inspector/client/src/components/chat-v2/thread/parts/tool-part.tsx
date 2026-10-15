@@ -188,7 +188,7 @@ export function ToolPart({
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const recoveryFailures = useChatAuthRecoveryFailures();
-  const recoveryFailed = recoveryFailures.some(item => item.toolCallId === toolCallId && (!chatSessionId || item.chatSessionId === chatSessionId));
+  const recoveryFailed = toolCallId !== undefined && recoveryFailures.some(item => item.toolCallId === toolCallId && (!chatSessionId || item.chatSessionId === chatSessionId));
   const state = (recoveryFailed && !["output-available", "output-error", "output-denied"].includes(part.state ?? "")
     ? "output-error" : part.state) as ToolState | undefined;
   // The agent started browsing, so the browser gets its panel. Here because

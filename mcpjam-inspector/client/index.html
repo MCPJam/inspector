@@ -12,37 +12,6 @@
       rel="stylesheet"
     />
     <title>MCPJam Inspector</title>
-    <!-- QA-BB260-TEMP: log every route change; stack trace when it lands on /servers -->
-    <script>
-      (function () {
-        // QA-BB260-TEMP: logs that survive the OAuth page reloads.
-        function redactQaFlow(value) {
-          return String(value).replace(/([?&](?:code|state|access_token|refresh_token|id_token)=)[^&\s"'\)]+/gi, "$1[redacted]");
-        }
-        window.__qaLog = function () {
-          var parts = Array.prototype.map.call(arguments, function (a) {
-            if (typeof a === "string") return a;
-            try { return JSON.stringify(a); } catch (e) { return String(a); }
-          });
-          var line = new Date().toLocaleTimeString() + " " + redactQaFlow(parts.join(" "));
-          console.info(line);
-          try {
-            var all = JSON.parse(localStorage.getItem("qa-bb260-log") || "[]");
-            all.push(line);
-            localStorage.setItem("qa-bb260-log", JSON.stringify(all.slice(-400).map(redactQaFlow)));
-          } catch (e) {}
-        };
-        window.__qaLog("[qa-oauth-return] page load", location.href, "saved return =", localStorage.getItem("mcp-oauth-return-hash"));
-        ["pushState", "replaceState"].forEach(function (name) {
-          var original = history[name];
-          history[name] = function (state, title, url) {
-            var to = url == null ? location.href : String(url);
-            window.__qaLog("[qa-oauth-return] " + name + " → " + to + " (from " + location.pathname + location.search + ")");
-            return original.apply(this, arguments);
-          };
-        });
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>

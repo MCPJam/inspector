@@ -3612,7 +3612,6 @@ export function useServerState({
         const returnTarget = hostedOAuthCallbackContext?.returnPath
           ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
           : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
-        ((globalThis as unknown as { __qaLog?: (...a: unknown[]) => void }).__qaLog ?? console.info)("[qa-oauth-return] callback done, going back", { savedHash, markerReturnPath: hostedOAuthCallbackContext?.returnPath, markerSurface: hostedOAuthCallbackContext?.surface, pathnameNow: window.location.pathname, returnTarget }); // QA-BB260-TEMP
         navigateApp(returnTarget, { replace: true });
       };
 
@@ -3646,6 +3645,7 @@ export function useServerState({
         : error;
       const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
 
+      oauthCallbackHandledRef.current.add(attempt);
       void authorizationFlowDigest(state).then(digest => {
         if (isStaleChatAuthCallback(hostedOAuthCallbackContext?.chatAuthContinuationId, digest)) {
           consumeOAuthCallbackParams(callbackAttempt);
@@ -3665,7 +3665,6 @@ export function useServerState({
           error,
           errorDescription,
         });
-        oauthCallbackHandledRef.current.add(attempt);
         // Denied/failed authorizations return the user to where they started
         // too: same org restore + router-aware navigation as the success path.
         const markerOrganizationId = hostedOAuthCallbackContext?.organizationId;
@@ -3677,6 +3676,9 @@ export function useServerState({
           : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
         consumeOAuthCallbackParams(callbackAttempt);
         navigateApp(returnTarget, { replace: true });
+      }).catch((error: unknown) => {
+        logger.warn("Could not settle the failed sign-in callback", { error });
+        toast.error("Could not finish sign-in. Please try again.");
       });
     }
   }, [

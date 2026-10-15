@@ -5,31 +5,6 @@ import {
 } from "../../shared/plugin-model-context.js";
 import { modelWorkloadFor } from "./model-workload.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
-/**
- * Shared web-chat streaming turn.
- *
- * Encapsulates the streaming/persistence/provider-branching body that both
- * `web/chat-v2` and `web/mcpjam-agent` share. Extracted verbatim from
- * `web/chat-v2.ts` (commit history) so behavior is identical for the original
- * caller — see `feedback_mechanical_commit_framing` for why this lives in its
- * own commit.
- *
- * The caller is responsible for:
- *   - Parsing the inbound body.
- *   - Constructing the MCPClientManager (`createAuthorizedManager` for
- *     project-server chats, ad-hoc for self-hosted agent surfaces).
- *   - Pre-building the `hostConfig` payload (only direct-chat callers do;
- *     other callers omit it).
- *
- * This helper owns:
- *   - `prepareChatV2` (with the Anthropic-tool-name 400 catch).
- *   - The `isMCPJam` / org-BYOK / local-runtime branch.
- *   - Constructing `onConversationComplete` → `persistChatSessionToConvex`
- *     with optional tool-snapshot capture, gated on `manager.hasServer`.
- *   - `cleanupStream` → `manager.disconnectAllServers()`.
- *   - Throwing/propagating errors; the caller is expected to catch and run
- *     its own OAuth-error enrichment if applicable.
- */
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
@@ -59,6 +34,7 @@ import type { UIMessage } from "@ai-sdk/react";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { directChatEffort } from "./chat-reasoning-effort.js";
 import type {
+  AuthChallengePolicy,
   Harness,
   MCPClientManager,
   RequestedModelSelection,
@@ -126,6 +102,10 @@ import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import {
+  bridgeHarnessRpcLogsToCollector,
+  startCrossInstanceRpcLogPoll,
+} from "./../routes/web/hosted-rpc-logs.js";
+import {
   emitInsufficientScopeChunk,
   type ElicitationChunkWriter,
   type HostedElicitationBridge,
@@ -136,36 +116,14 @@ import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import {
   buildHostedScopeStepUpCancellation,
   buildHostedScopeStepUpResume,
-  cancelHostedContinuationForNewMessage,
-  createHostedAuthChallengeContinuation,
   createHostedScopeStepUpContinuation,
-  settleHostedAuthChallengeHistoryCall,
 } from "./hosted-scope-step-up-continuation.js";
-import type { AuthChallengePolicy } from "@mcpjam/sdk";
-import { authChallengeCancelledText } from "@/shared/auth-challenge";
+import { endsWithNewUserMessage } from "./direct-chat-scope-step-up.js";
 import {
-  endsWithNewUserMessage,
-  type SettleSuspendedToolCall,
-} from "./direct-chat-scope-step-up.js";
-import {
-  toolReadOnlyHint,
-  type AuthChallengeChatObserver,
-} from "./auth-challenge-chat.js";
-import {
-  challengedToolSecuritySchemes,
-  connectionEffectiveAuth,
-} from "./connection-effective-auth.js";
-import {
-  SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
-  SCOPE_STEP_UP_VERSION,
   type ScopeStepUpCancelRequest,
   type ScopeStepUpResumeRequest,
 } from "@/shared/scope-step-up";
 import type { ChatRewind } from "@/shared/chat-v2";
-import {
-  bridgeHarnessRpcLogsToCollector,
-  startCrossInstanceRpcLogPoll,
-} from "./../routes/web/hosted-rpc-logs.js";
 import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
@@ -176,6 +134,35 @@ import {
   resolveWebAuthorizedHarnessStrategy,
   type HarnessMcpProxyStrategy,
 } from "./harness/harness-proxy-strategy.js";
+import { buildWebChatAuthChallenge } from "./web-chat-auth-challenge.js";
+
+
+/**
+ * Shared web-chat streaming turn.
+ *
+ * Encapsulates the streaming/persistence/provider-branching body that both
+ * `web/chat-v2` and `web/mcpjam-agent` share. Extracted verbatim from
+ * `web/chat-v2.ts` (commit history) so behavior is identical for the original
+ * caller — see `feedback_mechanical_commit_framing` for why this lives in its
+ * own commit.
+ *
+ * The caller is responsible for:
+ *   - Parsing the inbound body.
+ *   - Constructing the MCPClientManager (`createAuthorizedManager` for
+ *     project-server chats, ad-hoc for self-hosted agent surfaces).
+ *   - Pre-building the `hostConfig` payload (only direct-chat callers do;
+ *     other callers omit it).
+ *
+ * This helper owns:
+ *   - `prepareChatV2` (with the Anthropic-tool-name 400 catch).
+ *   - The `isMCPJam` / org-BYOK / local-runtime branch.
+ *   - Constructing `onConversationComplete` → `persistChatSessionToConvex`
+ *     with optional tool-snapshot capture, gated on `manager.hasServer`.
+ *   - `cleanupStream` → `manager.disconnectAllServers()`.
+ *   - Throwing/propagating errors; the caller is expected to catch and run
+ *     its own OAuth-error enrichment if applicable.
+ */
+
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
 
@@ -706,7 +693,7 @@ function emitSandboxNotices(
         type: SANDBOX_NOTICE_DATA_PART_TYPE,
         data: { reason },
         transient: true,
-      } as unknown as UIMessageChunk);
+      } satisfies UIMessageChunk);
       // Re-checked AFTER the write: this is the call that may have discovered
       // the stream was gone, and the chunk that discovered it did not land.
       if (closed()) break;
@@ -740,7 +727,7 @@ function emitHistoryNotice(
         ...(chatSessionId ? { chatSessionId } : {}),
       },
       transient: true,
-    } as unknown as UIMessageChunk);
+    } satisfies UIMessageChunk);
   } catch (error) {
     logger.warn("[chat] history notice stream write failed", { error });
   }
@@ -1113,119 +1100,12 @@ export async function streamWebChatTurn(
         }
       : undefined;
 
-  // Mid-session sign-in. Never on a harness turn (its MCP tools run out of
-  // process and must not start sign-in); scenario and share-link visitors
-  // get the host's model-facing behavior but never a Connect card. A call is
-  // saved for replay only where a step-up could be (a chat session and the
-  // continuation store); otherwise the card is display-only.
-  const scopeStepUpRuntime = runtime.scopeStepUp;
-  const hostedChatSession = persist.chatSessionId;
-  const authChallengeObserver: AuthChallengeChatObserver | undefined =
-    runtime.authChallenge && !persist.harness
-      ? {
-          ...(runtime.authChallenge.policy
-            ? { policy: runtime.authChallenge.policy }
-            : {}),
-          interactive: persist.sourceType !== "scenario",
-          effectiveAuthFor: (serverId) =>
-            connectionEffectiveAuth(manager, serverId),
-          securitySchemesFor: (serverId, toolName) =>
-            challengedToolSecuritySchemes(manager, serverId, toolName),
-          readOnlyFor: (serverId, toolName) =>
-            toolReadOnlyHint(manager, serverId, toolName),
-          serverNameFor: (serverId) => scopeStepUpServerNamesById[serverId],
-          connectionIdFor: (toolName, toolInput, toolCallId) =>
-            toolConnectionAttribution(
-              preparedTools[toolName],
-              toolInput,
-              toolCallId,
-            )?.connectionId,
-          ...(scopeStepUpRuntime && hostedChatSession
-            ? {
-                createContinuation: (saved) =>
-                  createHostedAuthChallengeContinuation({
-                    bearer: scopeStepUpRuntime.bearer,
-                    authPrincipal: scopeStepUpRuntime.authPrincipal,
-                    projectId: persist.projectId,
-                    chatSessionId: hostedChatSession,
-                    manager,
-                    serverId: saved.serverId,
-                    ...(saved.serverName
-                      ? { serverName: saved.serverName }
-                      : {}),
-                    ...(saved.connectionId
-                      ? { connectionId: saved.connectionId }
-                      : {}),
-                    toolCallId: saved.toolCallId,
-                    toolName: saved.toolName,
-                    toolInput: saved.toolInput,
-                    ...(runtime.abortSignal
-                      ? { abortSignal: runtime.abortSignal }
-                      : {}),
-                  }),
-              }
-            : {}),
-          onSuspend: (toolCallId) => {
-            suspendedScopeStepUpToolCallId = toolCallId;
-          },
-        }
-      : undefined;
-
-  // A call a sign-in suspended can come back unresolved: the user sent
-  // another message instead of signing in. Its continuation is cancelled and
-  // the call answered with the cancel copy rather than as an unapproved one
-  //. The id is derived from the call, so no browser input is trusted.
-  const settleSuspendedHistoryToolCall: SettleSuspendedToolCall | undefined =
-    authChallengeObserver && scopeStepUpRuntime && hostedChatSession
-      ? async ({ toolCallId, toolName }) => {
-          const serverId = (
-            preparedTools[toolName] as { _serverId?: unknown } | undefined
-          )?._serverId;
-          if (splicedScopeStepUpCancel?.toolCallId === toolCallId) {
-            // Answered whether or not the store still holds it waiting.
-            const { cancelled, isSignIn } =
-              await cancelHostedContinuationForNewMessage({
-                bearer: scopeStepUpRuntime.bearer,
-                continuationId: splicedScopeStepUpCancel.continuationId,
-              });
-            if (cancelled && typeof serverId === "string") {
-              scopeChallengeWriter?.write({
-                type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
-                data: {
-                  version: SCOPE_STEP_UP_VERSION,
-                  continuationId: splicedScopeStepUpCancel.continuationId,
-                  serverId,
-                  operation: { method: "tools/call", operation: toolName },
-                  outcome: "cancelled",
-                },
-                transient: true,
-              } as unknown as UIMessageChunk);
-            }
-            return isSignIn
-              ? authChallengeCancelledText(
-                  typeof serverId === "string"
-                    ? scopeStepUpServerNamesById[serverId] ?? serverId
-                    : "unknown",
-                  toolName,
-                )
-              : "Authorization was not completed, so the tool was not retried.";
-          }
-          // Only an MCP tool can have been suspended for sign-in.
-          if (typeof serverId !== "string") return undefined;
-          const settled = await settleHostedAuthChallengeHistoryCall({
-            bearer: scopeStepUpRuntime.bearer,
-            authPrincipal: scopeStepUpRuntime.authPrincipal,
-            chatSessionId: hostedChatSession,
-            toolCallId,
-          });
-          return settled
-            ? authChallengeCancelledText(
-                scopeStepUpServerNamesById[serverId] ?? serverId,
-                toolName,
-              )
-            : undefined;
-        }
-      : undefined;
+  const { authChallengeObserver, settleSuspendedHistoryToolCall } = buildWebChatAuthChallenge({
+    manager, persist, runtime, preparedTools, scopeStepUpServerNamesById,
+    splicedScopeStepUpCancel,
+    getWriter: () => scopeChallengeWriter,
+    onSuspend: (toolCallId) => { suspendedScopeStepUpToolCallId = toolCallId; },
+  });
 
   /**
    * Observe in-process tool-call failures from every ToolSet-driven engine to

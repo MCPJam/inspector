@@ -834,6 +834,13 @@ function gradeProtectedCallChallenge(
     facets: signal?.facets,
   };
 
+  if (call.invalidArguments) {
+    const reason = "the protected call rejected the probe inputs, so its sign-in behavior was not evaluated";
+    return [
+      notEvaluated(CHALLENGE_PRESENT, stamp, reason, details),
+      notEvaluated(CHALLENGE_NAMES_METADATA, stamp, reason, details),
+    ];
+  }
   if (call.outcome === "unreachable" || call.outcome === "succeeded") {
     const reason =
       call.outcome === "unreachable"

@@ -2610,15 +2610,7 @@ export function useChatSession(
         projectId: hostedProjectId,
       });
       if (!server) {
-        (
-          (globalThis as unknown as { __qaLog?: (...a: unknown[]) => void })
-            .__qaLog ?? console.info
-        )("[qa-pending] card: NO SERVER resolved, card not shown/saved", {
-          toolCallId: event.toolCallId,
-          serverId: event.serverId,
-          serverName: event.serverName,
-          hostedProjectId,
-        }); // QA-BB260-TEMP
+
         recordChatAuthRecoveryFailure("server_missing", {
           continuationId: event.continuationId,
           toolCallId: event.toolCallId,
@@ -2634,17 +2626,7 @@ export function useChatSession(
         event.action === "prompt" &&
         typeof event.continuationId === "string" &&
         Boolean(sessionId);
-      (
-        (globalThis as unknown as { __qaLog?: (...a: unknown[]) => void })
-          .__qaLog ?? console.info
-      )("[qa-pending] card", {
-        toolCallId: event.toolCallId,
-        server: server.name,
-        sessionId,
-        action: event.action,
-        continuationId: event.continuationId,
-        resumable,
-      }); // QA-BB260-TEMP
+
       if (
         resumable &&
         sessionId &&
@@ -2771,14 +2753,7 @@ export function useChatSession(
           const pending = readPendingChatScopeStepUp({
             continuationId: event.continuationId,
           });
-          (
-            (globalThis as unknown as { __qaLog?: (...a: unknown[]) => void })
-              .__qaLog ?? console.info
-          )("[qa-pending] finished-part from server", {
-            finished: event.continuationId,
-            outcome: event.outcome,
-            saved: pending?.event.continuationId,
-          }); // QA-BB260-TEMP
+
           if (pending?.event.continuationId === event.continuationId) {
             if (
               event.outcome === "completed" ||
@@ -4713,30 +4688,6 @@ export function useChatSession(
       projectId: hostedProjectId,
       phases: ["ready", "cancelled"],
     })[0];
-    // QA-BB260-TEMP: say why a ready/cancelled saved call is not resumed (deduped).
-    if (
-      pending &&
-      (pending.phase === "ready" || pending.phase === "cancelled")
-    ) {
-      const qaWhy =
-        pending.chatSessionId !== sessionId
-          ? `other chat (saved=${pending.chatSessionId} this=${sessionId})`
-          : !hasChatToolCall(messagesRef.current, pending.event.toolCallId)
-            ? "tool call not in messages yet"
-            : status !== "ready"
-              ? `status=${status}`
-              : "passes first gate";
-      const qaKey = `${pending.event.continuationId}|${pending.phase}|${qaWhy}`;
-      const qaSeen = ((globalThis as { __qaSeen?: Set<string> }).__qaSeen ??=
-        new Set<string>());
-      if (!qaSeen.has(qaKey)) {
-        qaSeen.add(qaKey);
-        (
-          (globalThis as unknown as { __qaLog?: (...a: unknown[]) => void })
-            .__qaLog ?? console.info
-        )("[qa-pending] resume-check", { phase: pending.phase, why: qaWhy });
-      }
-    }
     if (
       !pending ||
       (pending.phase !== "ready" && pending.phase !== "cancelled") ||
@@ -4765,18 +4716,6 @@ export function useChatSession(
         projectId: hostedProjectId,
       });
       if (!server || server.connectionStatus !== "connected") {
-        const qaSeen = ((globalThis as { __qaSeen?: Set<string> }).__qaSeen ??=
-          new Set<string>()); // QA-BB260-TEMP
-        const qaKey = `${pending.event.continuationId}|server:${server ? server.connectionStatus : "none"}`;
-        if (!qaSeen.has(qaKey)) {
-          qaSeen.add(qaKey);
-          (
-            (globalThis as unknown as { __qaLog?: (...a: unknown[]) => void })
-              .__qaLog ?? console.info
-          )("[qa-pending] resume-check: server not connected yet", {
-            status: server?.connectionStatus ?? "no server",
-          });
-        }
         const timeout = window.setTimeout(() => {
           recordChatAuthRecoveryFailure("server_missing", {
             ...pendingRecoveryContext(pending),
@@ -4854,13 +4793,7 @@ export function useChatSession(
       wasCancelled ? "cancel" : "resume",
       pendingRecoveryContext(claimed),
     );
-    (
-      (globalThis as unknown as { __qaLog?: (...a: unknown[]) => void })
-        .__qaLog ?? console.info
-    )("[qa-pending] resume: sending", {
-      continuationId: claimed.event.continuationId,
-      wasCancelled,
-    }); // QA-BB260-TEMP
+
     void baseSendMessage(undefined, {
       body: {
         ...(wasCancelled
@@ -4879,25 +4812,14 @@ export function useChatSession(
       },
     })
       .then(() => {
-        (
-          (globalThis as unknown as { __qaLog?: (...a: unknown[]) => void })
-            .__qaLog ?? console.info
-        )("[qa-pending] resume: sendMessage resolved", {
-          continuationId: claimed.event.continuationId,
-        }); // QA-BB260-TEMP
+
         completedRecoveryRef.current.set(claimed.event.continuationId, {
           pending: claimed,
           cancelled: wasCancelled,
         });
       })
-      .catch((qaError: unknown) => {
-        (
-          (globalThis as unknown as { __qaLog?: (...a: unknown[]) => void })
-            .__qaLog ?? console.info
-        )("[qa-pending] resume: sendMessage rejected", {
-          continuationId: claimed.event.continuationId,
-          error: String(qaError),
-        }); // QA-BB260-TEMP
+      .catch(() => {
+
         recordChatAuthRecoveryFailure(
           wasCancelled ? "cancel_failed" : "resume_failed",
           pendingRecoveryContext(claimed),

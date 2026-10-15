@@ -447,8 +447,7 @@ export function extractInsufficientScopeChallenge(
     // A challenge with no scope and no metadata pointer is still a step-up
     // request: the authorization flow falls back to discovery's scope
     // selection (the requested scopes, then `scopes_supported`), as the MCP
-    // authorization spec and Claude do. It used to be dropped here, which left
-    // a bare `Bearer error="insufficient_scope"` with no way forward.
+    // authorization spec and Claude do.
     return { requiredScope, resourceMetadataUrl, errorDescription };
   });
 }

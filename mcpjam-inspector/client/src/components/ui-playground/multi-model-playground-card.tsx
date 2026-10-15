@@ -606,7 +606,7 @@ export function MultiModelPlaygroundCard({
           detail.session.chatSessionId !== recoveryColumn.chatSessionId ||
           (recoveryColumn.hasMessages && !detail.session.messagesBlobUrl)
         )
-          throw new Error("Comparison history unavailable");
+          throw new Error("Comparison history could not be loaded. Reload to try again.");
         await recoveryLoaderRef.current(
           {
             ...detail.session,

@@ -331,6 +331,25 @@ describe("ToolsTab mid-session sign-in", () => {
     expect(document.body.textContent).toContain(failed ? "replayed-orders-failure" : "replayed-orders");
   });
 
+  it("does not dismiss a newer call when the old confirmation is visible", async () => {
+    const pending = {
+      version: 1, phase: "ready", requestId: "old-call", generation: 1,
+      operation: { resourceUrl: "https://orders.example/mcp", method: "tools/call", operation: "cancel_order" },
+      descriptor: { kind: "tool", surface: "tools", serverName: "orders", toolName: "cancel_order", parameters: { id: "42" } },
+      returnPath: "/", createdAt: Date.now(), expiresAt: Date.now() + 60000,
+      reason: "authorization_required", requiresConfirmation: true,
+    };
+    const key = "mcp-scope-step-up-replay-v1";
+    sessionStorage.setItem(key, JSON.stringify(pending));
+    render(<ToolsTab serverConfig={serverConfig} serverName="orders" server={server} />);
+    await screen.findByRole("button", { name: "Run again" });
+    const newer = { ...pending, requestId: "new-call", generation: 2 };
+    sessionStorage.setItem(key, JSON.stringify(newer));
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(newer);
+    expect(mockExecuteToolApi).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])("restores a second flow and bounds refusal (refuses=%s)", async (refuses) => {
     const oauthServer = { ...server, useOAuth: true };
     sessionStorage.setItem("mcp-scope-step-up-replay-v1", JSON.stringify({

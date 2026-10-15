@@ -4,6 +4,27 @@ import type {
   ToolSecuritySchemeResolution,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/state/app-types";
+import {
+  AUTH_CHALLENGE_DISMISSED_MESSAGE,
+  connectAuthChallenge,
+  clearAuthChallengeCards,
+  dismissAuthChallenge,
+  presentAuthChallenge,
+  presentWidgetAuthChallenge,
+  registerAuthChallengeHostProfile,
+  settleSignInCallback,
+  useAuthChallengeCardStore,
+  type AuthChallengeCard,
+} from "../auth-challenge-lifecycle";
+import {
+  claimPendingDirectScopeStepUpReplay,
+  peekPendingDirectScopeStepUpReplay,
+  type DirectScopeStepUpReplayDescriptor,
+} from "../scope-step-up-replay";
+import { registerScopeStepUpHostBridge } from "../scope-step-up";
+import { authorizationFlowDigest } from "../oauth/flow-digest";
+import { persistRequestedScopes } from "../oauth/requested-scopes";
+
 
 const {
   clearOAuthDataMock,
@@ -33,26 +54,6 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 }));
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 
-import {
-  AUTH_CHALLENGE_DISMISSED_MESSAGE,
-  connectAuthChallenge,
-  clearAuthChallengeCards,
-  dismissAuthChallenge,
-  presentAuthChallenge,
-  presentWidgetAuthChallenge,
-  registerAuthChallengeHostProfile,
-  settleSignInCallback,
-  useAuthChallengeCardStore,
-  type AuthChallengeCard,
-} from "../auth-challenge-lifecycle";
-import {
-  claimPendingDirectScopeStepUpReplay,
-  peekPendingDirectScopeStepUpReplay,
-  type DirectScopeStepUpReplayDescriptor,
-} from "../scope-step-up-replay";
-import { registerScopeStepUpHostBridge } from "../scope-step-up";
-import { authorizationFlowDigest } from "../oauth/flow-digest";
-import { persistRequestedScopes } from "../oauth/requested-scopes";
 
 const PRM = "https://orders.example/.well-known/oauth-protected-resource/mcp";
 const OPERATION = { method: "tools/call" as const, operation: "list_orders" };
@@ -386,6 +387,21 @@ describe("auth challenge lifecycle", () => {
         await settleSignInCallback("orders", { state: "flow-other" }),
       ).toMatch(/not retried/);
       expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("awaiting_oauth");
+    });
+
+    it("reports failed replay storage without rejecting a successful sign-in", async () => {
+      const card = await presentCard();
+      await connectAuthChallenge(card, server, { isTrusted: true });
+      const original = Storage.prototype.setItem;
+      const save = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+        if (key === "mcp-scope-step-up-replay-v1") throw new Error("storage unavailable");
+        return original.call(this, key, value);
+      });
+      try {
+        await expect(settleSignInCallback("orders", { state: "flow-1" }))
+          .resolves.toContain("MCPJam couldn’t continue this call");
+        expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("awaiting_oauth");
+      } finally { save.mockRestore(); }
     });
 
     it("replays after its own callback", async () => {

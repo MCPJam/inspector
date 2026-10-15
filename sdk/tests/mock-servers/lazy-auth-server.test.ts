@@ -34,7 +34,7 @@ const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) {
-    await cleanup().catch(() => {});
+    await cleanup();
   }
   await Promise.all(started.splice(0).map((server) => server.close()));
 });

@@ -479,7 +479,7 @@ export function driveScopeStepUp(
       );
     if (options?.continuationId && !saved)
       return Promise.reject(
-        new Error("Could not save the pending authorization call."),
+        new Error("Could not save the pending call. Try again."),
       );
     if (!options?.continuationId)
       setPendingDirectScopeStepUpReplayCredentialBinding(server.name, binding, options?.directReplay);
@@ -506,7 +506,7 @@ export function driveScopeStepUp(
             options.continuationId,
           );
         if (options?.continuationId && !saved)
-          throw new Error("Could not save the pending authorization flow.");
+          throw new Error("Could not save the pending sign-in. Try again.");
         if (!options?.continuationId)
           setPendingDirectScopeStepUpReplayFlowDigest(server.name, digest, options?.directReplay);
       },

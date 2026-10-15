@@ -526,6 +526,25 @@ describe("OpenAI: the runtime challenge, observed", () => {
     expect(schemes.details?.inheritsServerDefault).toEqual(["get_my_orders"]);
   });
 
+  it("keeps discovered PRM when later challenge rediscovery fails", async () => {
+    const server = await startLazyServer({ refusal: "bearer-401", prmAt: "well-known" });
+    let metadataReads = 0;
+    const fetchFn: typeof fetch = (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("oauth-protected-resource") || url.endsWith(POINTER_PATH)) {
+        metadataReads++;
+        if (metadataReads > 1) return Promise.resolve(new Response("not found", { status: 404 }));
+      }
+      return fetch(input, init);
+    };
+    const evidence = await gatherOpenAIReadinessEvidence({
+      target: server.url, mode: "mcp-only", fetchFn,
+      lazyAuthProbe: { enabled: true }, now: NOW,
+    });
+    expect(evidence.lazyAuthProbe?.rediscovery?.prmFound).toBe(false);
+    expect(byId(gradeOpenAIReadiness(evidence).findings, "openai.auth.prm-discoverable").status).toBe("satisfied");
+  });
+
   it("says a 401 is not the tool-level trigger ChatGPT documents", async () => {
     const server = await startLazyServer({ refusal: "bearer-401" });
     const evidence = await gatherOpenAIReadinessEvidence({

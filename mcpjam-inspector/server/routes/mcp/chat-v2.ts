@@ -29,6 +29,7 @@ import {
 import { webmcpPageToolsMode } from "../../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
+import type { UIMessageChunk } from "ai";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -37,13 +38,13 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
+import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools.js";
 import {
   listCloudRuntimeSkills,
   skillsFailureFrom,
 } from "../../utils/computers/cloud-skill-tools.js";
-import { buildLiveEffectiveCapabilities } from "../../services/environments/effective-capabilities.js";
 import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
-import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools.js";
+import { buildLiveEffectiveCapabilities } from "../../services/environments/effective-capabilities.js";
 import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
@@ -54,7 +55,6 @@ import {
   releaseBoxWhenStreamEnds,
 } from "../../utils/harness/playground-box.js";
 import type { HarnessBox } from "../../utils/harness/harness-box.js";
-import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import {
   decideTurnRail,
@@ -96,8 +96,13 @@ import {
   warnIfChatAbortSignalMissing,
 } from "../../utils/mcpjam-stream-handler";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
-import { TaskCreatedSink } from "@mcpjam/sdk";
-import type { UIMessageChunk } from "ai";
+import {
+  describeAsSlug,
+  describeError,
+  parseToolResultAuthChallenge,
+  readXaaEnterprisePolicy,
+  TaskCreatedSink,
+} from "@mcpjam/sdk";
 import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
 import {
   handleHostedOrgChatModel,
@@ -148,11 +153,6 @@ import {
   formatProviderOverloadError,
   isProviderOverloadError,
 } from "../../utils/provider-error-normalization";
-import {
-  describeError,
-  describeAsSlug,
-  readXaaEnterprisePolicy,
-} from "@mcpjam/sdk";
 import {
   reportRouteFailure,
   reportRouteFailureForResponse,
@@ -241,7 +241,6 @@ import {
   challengedToolSecuritySchemes,
   connectionEffectiveAuth,
 } from "../../utils/connection-effective-auth.js";
-import { parseToolResultAuthChallenge } from "@mcpjam/sdk";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
 import { ranTurnSelection } from "../../utils/session-model-selection";
 import type {
@@ -254,6 +253,7 @@ import {
   resumeScopeStepUpBeforeDirectTurn,
   type SettleSuspendedToolCall,
 } from "../../utils/direct-chat-scope-step-up.js";
+
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -584,7 +584,7 @@ export function buildLocalScopeStepUpResume(input: {
           outcome: "completed",
         },
         transient: true,
-      } as unknown as UIMessageChunk);
+      } satisfies UIMessageChunk);
       return { kind: "complete", toolResultMessage: resultMessage };
     },
   };
@@ -618,7 +618,7 @@ export function buildLocalScopeStepUpCancellation(input: {
             outcome: "cancelled",
           },
           transient: true,
-        } as unknown as UIMessageChunk);
+        } satisfies UIMessageChunk);
         if (cancelled.reason === AUTH_CHALLENGE_REASON) {
           return {
             kind: "recover",
@@ -691,7 +691,7 @@ export function buildLocalSuspendedCallSettlement(input: {
             outcome: "cancelled",
           },
           transient: true,
-        } as unknown as UIMessageChunk);
+        } satisfies UIMessageChunk);
       }
       // A step-up the store still knows keeps its own copy; anything else the
       // client cancelled was a sign-in it was showing.

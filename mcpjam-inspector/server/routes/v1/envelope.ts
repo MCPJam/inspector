@@ -269,6 +269,7 @@ export function mapErrorToV1(
   ) {
     return {
       code: "AUTH_REQUIRED",
+      captured: routeError.captured === true,
       message: routeError.message,
       details: routeError.details,
       headers: routeError.headers,

@@ -1,8 +1,46 @@
-import {
-  CHAT_AUTH_RECOVERY_MESSAGE,
-  recordChatAuthRecoveryFailure,
-} from "@/lib/chat-auth-recovery";
 import type { PendingWriteResult } from "@/lib/scope-step-up-pending";
+import { create } from "zustand";
+import {
+  authChallengePolicyFrom,
+  decideAuthChallengeAction,
+  describeAuthChallengeDecision,
+  type AuthChallengeSignal,
+  type ToolSecuritySchemeResolution,
+} from "@mcpjam/sdk/browser";
+import {
+  applyToolCallAuthChallenge,
+  type AuthChallengeAttempt,
+  type ToolCallStepUpOperation,
+} from "@/state/oauth-orchestrator";
+import type { ServerWithName } from "@/state/app-types";
+import { type DirectScopeStepUpReplayDescriptor } from "@/lib/scope-step-up-replay";
+import { SCOPE_STEP_UP_LIVE_TTL_MS } from "@/shared/scope-step-up";
+import { track } from "@/lib/analytics";
+import { connectAuthChallenge } from "./auth-challenge-connect";
+import {
+  isAuthChallengeDismissed,
+  rememberDismissed,
+} from "./auth-challenge-dismissal";
+
+
+export {
+  authorizationRequiredCommandError,
+  authorizationRequiredCommandErrorFromSignal,
+  clearChatAuthChallengeCard,
+  presentChatAuthRequired,
+  presentWidgetAuthChallenge,
+  useAuthChallengeNoticeStore,
+} from "./auth-challenge-chat";
+export {
+  connectAuthChallenge,
+  noteSignInCallbackFailed,
+  settleSignInCallback,
+  type AuthChallengeConnectResult,
+} from "./auth-challenge-connect";
+export {
+  clearAuthChallengeDismissed,
+  isAuthChallengeDismissed,
+} from "./auth-challenge-dismissal";
 /**
  * Shared sign-in challenge lifecycle for Tools, Playground, Resources and Prompts.
  * - PRESENTING HAS NO SIDE EFFECTS. {@link presentAuthChallenge} decides
@@ -18,56 +56,6 @@ import type { PendingWriteResult } from "@/lib/scope-step-up-pending";
  * (`scope-step-up.ts`).
  */
 
-import { create } from "zustand";
-import {
-  authChallengePolicyFrom,
-  decideAuthChallengeAction,
-  describeAuthChallengeDecision,
-  type AuthChallengeSignal,
-  type ToolSecuritySchemeResolution,
-} from "@mcpjam/sdk/browser";
-import {
-  type AuthChallengeAttempt,
-  applyToolCallAuthChallenge,
-  hasAuthChallengeAwaitingCallback,
-  markAuthChallengeSignedIn,
-  type ToolCallStepUpOperation,
-} from "@/state/oauth-orchestrator";
-import type { ServerWithName } from "@/state/app-types";
-import {
-  clearPendingDirectScopeStepUpReplay,
-  type PendingDirectScopeStepUpReplay,
-  savePendingDirectScopeStepUpReplay,
-  setPendingDirectScopeStepUpReplayCredentialBinding,
-  setPendingDirectScopeStepUpReplayFlowDigest,
-  settlePendingDirectScopeStepUpReplayAfterCallback,
-  type DirectScopeStepUpReplayDescriptor,
-} from "@/lib/scope-step-up-replay";
-import {
-  setPendingChatScopeStepUpCredentialBinding,
-  setPendingChatScopeStepUpFlowDigest,
-  settlePendingChatScopeStepUpAfterCallback,
-} from "@/lib/scope-step-up-pending";
-import {
-  connectionIntentForBinding,
-  type StepUpCredentialBinding,
-} from "@/lib/scope-step-up-credential";
-import {
-  getScopeStepUpHostBridge,
-  whenChatTurnsSettle,
-} from "@/lib/scope-step-up";
-import type {
-  AuthChallengeNoticeEvent,
-  AuthRequiredEvent,
-} from "@/shared/auth-challenge";
-import { SCOPE_STEP_UP_LIVE_TTL_MS } from "@/shared/scope-step-up";
-import { track } from "@/lib/analytics";
-import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
-import { authChallengeFromError } from "@/lib/apis/insufficient-scope";
-import {
-  createInspectorCommandClientError,
-  type InspectorCommandClientError,
-} from "@/lib/inspector-command-handlers";
 
 export type AuthChallengeSurface =
   "tools" | "playground" | "resources" | "prompts" | "chat" | "widget";
@@ -135,7 +123,7 @@ export function registerAuthChallengeHostProfile(
   };
 }
 
-const HOST_LABEL = "The selected host";
+export const HOST_LABEL = "The selected host";
 
 // ---------------------------------------------------------------------------
 // Cards
@@ -200,58 +188,6 @@ export function mcpServerOrigin(server: ServerWithName | undefined): string {
   }
 }
 
-function cardKey(serverName: string, origin: string): string {
-  return `${serverName}\u0000${origin}`;
-}
-
-// ---------------------------------------------------------------------------
-// "Not now", remembered for the session
-// ---------------------------------------------------------------------------
-
-const DISMISSED_KEY = "mcp-auth-challenge-dismissed-v1";
-
-function readDismissed(): string[] {
-  try {
-    const raw = sessionStorage.getItem(DISMISSED_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed)
-      ? parsed.filter((entry): entry is string => typeof entry === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-export function isAuthChallengeDismissed(
-  serverName: string,
-  origin: string,
-): boolean {
-  return readDismissed().includes(cardKey(serverName, origin));
-}
-
-function rememberDismissed(serverName: string, origin: string): void {
-  try {
-    const entries = new Set(readDismissed());
-    entries.add(cardKey(serverName, origin));
-    sessionStorage.setItem(DISMISSED_KEY, JSON.stringify([...entries]));
-  } catch {
-    // Best-effort: the card may show again, never a redirect without a click.
-  }
-}
-
-/** Forget "Not now" for a server: the user signed in some other way. */
-export function clearAuthChallengeDismissed(serverName: string): void {
-  try {
-    const prefix = `${serverName}\u0000`;
-    const entries = readDismissed().filter(
-      (entry) => !entry.startsWith(prefix),
-    );
-    sessionStorage.setItem(DISMISSED_KEY, JSON.stringify(entries));
-  } catch {
-    // Best-effort.
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Present
 // ---------------------------------------------------------------------------
@@ -270,7 +206,7 @@ export function authChallengeErrorMessage(serverName: string): string {
  * Decide what a sign-in challenge on one call becomes. No side effects beyond
  * showing a card: nothing is saved and nothing navigates.
  */
-function callAttempt(
+export function callAttempt(
   server: ServerWithName,
   surface: string,
   callId: string,
@@ -390,195 +326,6 @@ export async function presentAuthChallenge(input: {
   return { kind: "card", card };
 }
 
-// ---------------------------------------------------------------------------
-// Connect / Not now
-// ---------------------------------------------------------------------------
-
-export type AuthChallengeConnectResult =
-  /** The click was not a trusted user gesture; nothing happened. */
-  | { kind: "refused" }
-  /** The card expired; the user signs in and runs the call again. */
-  | { kind: "expired" }
-  | { kind: "blocked"; hint: string }
-  | { kind: "permanent" }
-  | { kind: "started" }
-  | { kind: "waiting"; message: string }
-  | { kind: "failed"; message: string };
-
-/**
- * Start the sign-in for a card. Requires a trusted click (`event.isTrusted`):
- * only the user may send the browser to an authorization server.
- */
-export async function connectAuthChallenge(
-  card: AuthChallengeCard,
-  server: ServerWithName | undefined,
-  gesture: { isTrusted: boolean },
-): Promise<AuthChallengeConnectResult> {
-  if (!gesture.isTrusted || !server) return { kind: "refused" };
-  const expired = card.expiresAt <= Date.now();
-
-  track("auth_challenge_connect_clicked", {
-    location: card.surface,
-    source: card.signal.source,
-    action: card.action,
-  });
-
-  if (card.onConnect) {
-    const prepared = card.onConnect();
-    if (!prepared.ok && prepared.reason === "loading")
-      return {
-        kind: "waiting",
-        message: "Chats are still restoring. Please try Connect again in a moment.",
-      };
-    if (!prepared.ok)
-      return {
-        kind: "failed",
-        message:
-          prepared.reason === "storage"
-            ? "MCPJam couldn’t save this call for sign-in. Please try again."
-            : CHAT_AUTH_RECOVERY_MESSAGE,
-      };
-  }
-
-  // The binding is resolved before anything is saved: a hosted credential
-  // that is not this user's is never replaced, and its call is not replayed.
-  const bridge = getScopeStepUpHostBridge();
-  let binding: StepUpCredentialBinding = card.connectionId
-    ? { kind: "owned", credentialId: card.connectionId }
-    : { kind: "none" };
-  if (card.connectionId && bridge?.resolveCredentialBinding) {
-    try {
-      binding = await bridge.resolveCredentialBinding(
-        server,
-        card.connectionId,
-      );
-    } catch {
-      binding = { kind: "shared", credentialId: card.connectionId };
-    }
-  }
-
-  // Saved before the redirect, so the callback has something to settle. A
-  // call that may change something asks "Run again?" instead of replaying.
-  const savedReplay = Boolean(
-    card.replay && card.action === "prompt" && !expired,
-  );
-  // A sign-in that never redirected has no callback to settle the saved call,
-  // which would otherwise wait for an unrelated later sign-in.
-  let pendingReplay: PendingDirectScopeStepUpReplay | undefined;
-  const dropSavedReplay = () => {
-    if (pendingReplay) clearPendingDirectScopeStepUpReplay(pendingReplay);
-  };
-  if (savedReplay && card.replay) {
-    try {
-      pendingReplay = savePendingDirectScopeStepUpReplay({
-        operation: {
-          resourceUrl: String(
-            (server.config as { url?: unknown })?.url ?? server.name,
-          ),
-          method: card.operation.method,
-          operation: card.operation.operation,
-        },
-        descriptor: card.replay,
-        reason: "authorization_required",
-        requiresConfirmation: !card.readOnly,
-      });
-      setPendingDirectScopeStepUpReplayCredentialBinding(server.name, binding, pendingReplay);
-    } catch {
-      dropSavedReplay();
-      recordChatAuthRecoveryFailure("save_failed", {
-        toolCallId: card.attempt?.callId,
-        projectId: card.attempt?.projectId,
-        serverName: server.name,
-        storageOutcome: "failed",
-      });
-      return { kind: "failed", message: "MCPJam couldn’t save this call for sign-in. Please try again." };
-    }
-  }
-  // The chat marker (moved to `awaiting_oauth` by `onConnect`) records the
-  // same binding, so its callback settles onto the right credential too.
-  const bound =
-    !card.continuationId ||
-    setPendingChatScopeStepUpCredentialBinding(
-      server.name,
-      binding,
-      card.continuationId,
-    );
-  if (card.continuationId && !bound)
-    return { kind: "failed", message: CHAT_AUTH_RECOVERY_MESSAGE };
-  // A chat redirect waits for the streaming turn to end and persist: leaving
-  // mid-stream would lose the transcript holding the suspended tool call.
-  if (card.surface === "chat") await whenChatTurnsSettle();
-
-  const connectionIntent = connectionIntentForBinding(binding);
-  try {
-    // A hosted grant has no tokens in the browser. The failed call's own
-    // credential proves one exists; otherwise the shell is asked.
-    const existingGrant =
-      binding.kind !== "none" ||
-      (await bridge?.hasExistingGrant?.(server).catch(() => false)) === true;
-    const outcome = await applyToolCallAuthChallenge(server, card.signal, {
-      operation: card.operation,
-      attempt: card.attempt,
-      confirmed: true,
-      existingGrant,
-      beforeRedirect: () =>
-        card.continuationId
-          ? bridge?.prepareRedirect?.(
-              server,
-              connectionIntent,
-              card.continuationId,
-            )
-          : bridge?.prepareRedirect?.(server, connectionIntent),
-      onAuthorizationFlow: ({ digest }) => {
-        if (savedReplay)
-          setPendingDirectScopeStepUpReplayFlowDigest(server.name, digest, pendingReplay);
-        const saved =
-          !card.continuationId ||
-          setPendingChatScopeStepUpFlowDigest(
-            server.name,
-            digest,
-            card.continuationId,
-          );
-        if (card.continuationId && !saved)
-          throw new Error(CHAT_AUTH_RECOVERY_MESSAGE);
-      },
-    });
-    if (
-      outcome.kind !== "started" ||
-      outcome.reauthorization.kind !== "redirect"
-    ) {
-      dropSavedReplay();
-    }
-    if (outcome.kind === "blocked") {
-      return { kind: "blocked", hint: outcome.hint };
-    }
-    if (outcome.kind === "permanent") return { kind: "permanent" };
-    if (outcome.kind === "pendingConnect") return { kind: "refused" };
-    const reauthorization = outcome.reauthorization;
-    if (reauthorization.kind === "error") {
-      track("auth_challenge_failed", {
-        location: card.surface,
-        source: card.signal.source,
-        stage: "start",
-      });
-      return { kind: "failed", message: reauthorization.error };
-    }
-    useAuthChallengeCardStore.getState().remove(card.key);
-    return expired ? { kind: "expired" } : { kind: "started" };
-  } catch (error) {
-    dropSavedReplay();
-    track("auth_challenge_failed", {
-      location: card.surface,
-      source: card.signal.source,
-      stage: "start",
-    });
-    return {
-      kind: "failed",
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
 /** "Not now": hide the card and do not offer it again this session. */
 export function dismissAuthChallenge(card: AuthChallengeCard): void {
   rememberDismissed(card.serverName, card.serverOrigin);
@@ -609,283 +356,4 @@ export function clearAuthChallengeCards(
     )
       remove(card.key);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Callback
-// ---------------------------------------------------------------------------
-
-/**
- * Settle everything waiting on a completed OAuth callback for `serverName`:
- * the one-attempt ledger, the saved chat call and the saved direct call, each
- * bound to the callback's `state` and to the credential it produced. Returns
- * a message when the saved direct call was NOT replayed.
- */
-export async function settleSignInCallback(
-  serverName: string,
-  callback: {
-    state?: string | null;
-    credentialId?: string;
-    continuationId?: string;
-  },
-): Promise<string | undefined> {
-  // Compared by digest: the saved calls recorded the flow's digest, never its
-  // `state`.
-  const digest = await authorizationFlowDigest(callback.state);
-  // Bookkeeping never blocks the callback that completed the sign-in.
-  let completed = 0;
-  try {
-    completed = markAuthChallengeSignedIn(serverName, digest);
-  } catch {
-    completed = 0;
-  }
-  if (completed > 0) {
-    clearAuthChallengeDismissed(serverName);
-    track("auth_challenge_completed", { location: "oauth_callback" });
-  }
-  const chatSettlement = settlePendingChatScopeStepUpAfterCallback(
-    serverName,
-    callback.credentialId,
-    digest,
-    callback.continuationId,
-  );
-  const directMessage = settlePendingDirectScopeStepUpReplayAfterCallback(
-    serverName,
-    callback.credentialId,
-    digest,
-  );
-  return chatSettlement.kind === "failed"
-    ? chatSettlement.message
-    : directMessage;
-}
-
-/** A callback for `serverName` failed; record it if a sign-in was waiting. */
-export function noteSignInCallbackFailed(serverName: string): void {
-  try {
-    if (!hasAuthChallengeAwaitingCallback(serverName)) return;
-  } catch {
-    return;
-  }
-  track("auth_challenge_failed", {
-    location: "oauth_callback",
-    stage: "callback",
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Chat
-// ---------------------------------------------------------------------------
-
-/** Developer-only notices for chat tool calls, keyed by tool call id. */
-interface AuthChallengeNoticeState {
-  notices: Record<string, AuthChallengeNoticeEvent>;
-  add: (event: AuthChallengeNoticeEvent) => void;
-}
-
-export const useAuthChallengeNoticeStore = create<AuthChallengeNoticeState>(
-  (set) => ({
-    notices: {},
-    add: (event) =>
-      set((state) => ({
-        notices: { ...state.notices, [event.toolCallId]: event },
-      })),
-  }),
-);
-
-/**
- * Show the Connect card for a chat `data-auth-required` part. The SERVER
- * already applied the host's policy and the auth-method gate; this checks the
- * gate again (defense in depth), the repeat-after-sign-in ledger and "Not
- * now", and never starts anything.
- */
-export async function presentChatAuthRequired(input: {
-  server: ServerWithName | undefined;
-  event: AuthRequiredEvent;
-  projectId?: string | null;
-  chatSessionId?: string;
-  onConnect?: () => PendingWriteResult;
-  continuationId?: string;
-}): Promise<AuthChallengePresentation> {
-  const { server, event } = input;
-  if (!server) return { kind: "ignored" };
-  const signal: AuthChallengeSignal = {
-    source: event.source,
-    ...(event.requiredScope ? { requiredScope: event.requiredScope } : {}),
-    ...(event.resourceMetadataUrl
-      ? { resourceMetadataUrl: event.resourceMetadataUrl }
-      : {}),
-    ...(event.errorDescription
-      ? { errorDescription: event.errorDescription }
-      : {}),
-    effectiveAuth: event.effectiveAuth,
-    facets: {
-      challengeHeader: "none",
-      hasResourceMetadata: Boolean(event.resourceMetadataUrl),
-      hasScope: Boolean(event.requiredScope),
-      hasErrorParams: false,
-    },
-  };
-  const attempt = callAttempt(
-    server,
-    "chat",
-    event.continuationId ?? event.toolCallId,
-    input.projectId,
-    input.chatSessionId,
-  );
-  const outcome = await applyToolCallAuthChallenge(server, signal, {
-    attempt,
-    operation: event.operation,
-    confirmed: false,
-  });
-  if (outcome.kind === "blocked") {
-    return { kind: "notice", reason: "blocked", message: outcome.hint };
-  }
-  if (outcome.kind === "permanent") {
-    return {
-      kind: "notice",
-      reason: "permanent",
-      message: AUTH_CHALLENGE_PERMANENT_MESSAGE,
-    };
-  }
-  const origin = mcpServerOrigin(server);
-  if (isAuthChallengeDismissed(server.name, origin)) {
-    return {
-      kind: "notice",
-      reason: "dismissed",
-      message: AUTH_CHALLENGE_DISMISSED_MESSAGE,
-    };
-  }
-  const card: AuthChallengeCard = {
-    key: JSON.stringify(attempt),
-    attempt,
-    serverName: server.name,
-    serverOrigin: origin,
-    surface: "chat",
-    operation: event.operation,
-    signal,
-    action: event.continuationId ? event.action : "notify",
-    readOnly: event.readOnly,
-    explanation:
-      event.action === "prompt" && event.continuationId
-        ? `${HOST_LABEL} shows a sign-in prompt for this challenge and retries the call after sign-in.`
-        : `${HOST_LABEL} tells the user to sign in, but does not retry the call.`,
-    expiresAt: event.expiresAt,
-    toolCallId: event.toolCallId,
-    server,
-    ...(event.connectionId ? { connectionId: event.connectionId } : {}),
-    ...(input.onConnect ? { onConnect: input.onConnect } : {}),
-    ...(input.continuationId ? { continuationId: input.continuationId } : {}),
-  };
-  useAuthChallengeCardStore.getState().show(card);
-  track("auth_challenge_card_shown", {
-    location: "chat",
-    source: signal.source,
-    action: card.action,
-  });
-  return { kind: "card", card };
-}
-
-/** Drop the chat card for one tool call (the call was cancelled or ran). */
-export function clearChatAuthChallengeCard(toolCallId: string): void {
-  const { cards, remove } = useAuthChallengeCardStore.getState();
-  for (const card of Object.values(cards)) {
-    if (card.toolCallId === toolCallId) remove(card.key);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Widgets
-// ---------------------------------------------------------------------------
-
-/**
- * A widget's own `callTool` hit a sign-in challenge. The Connect card shows
- * in host chrome under the widget, never inside the iframe, and the call is
- * not replayed into the iframe: the widget already received its error (or
- * the challenged result) and can call again after sign-in.
- */
-export function presentWidgetAuthChallenge(input: {
-  server: ServerWithName | undefined;
-  signal: AuthChallengeSignal | undefined;
-  toolName: string;
-  /** The tool call whose widget made the call; the card renders under it. */
-  toolCallId?: string;
-  schemes?: ToolSecuritySchemeResolution;
-}): void {
-  const { server, signal, toolCallId } = input;
-  if (!server || !signal || !toolCallId) return;
-  void presentAuthChallenge({
-    server,
-    signal,
-    surface: "chat",
-    operation: { method: "tools/call", operation: input.toolName },
-    readOnly: false,
-    ...(input.schemes ? { schemes: input.schemes } : {}),
-  }).then((presentation) => {
-    if (presentation.kind === "notice") {
-      useAuthChallengeNoticeStore.getState().add({
-        version: 1,
-        kind: "auth_challenge_notice",
-        serverId: server.name,
-        serverName: server.name,
-        toolCallId,
-        operation: { method: "tools/call", operation: input.toolName },
-        source:
-          signal.source === "tool_result_meta"
-            ? "tool_result_meta"
-            : "http_401",
-        action: "passthrough",
-        reason: "honored",
-        ...(signal.effectiveAuth
-          ? { effectiveAuth: signal.effectiveAuth }
-          : {}),
-        explanation: presentation.message,
-      });
-      return;
-    }
-    if (presentation.kind !== "card") return;
-    // Under the widget's own tool call, without a replay.
-    useAuthChallengeCardStore.getState().show({
-      ...presentation.card,
-      action: "notify",
-      toolCallId,
-      server,
-    });
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Machine-driven calls
-// ---------------------------------------------------------------------------
-
-/**
- * The typed error an inspector command or agent-driven call returns when the
- * server asked the user to sign in. Commands never sign in and never show a
- * Connect card: only the user, on screen, can start a sign-in.
- */
-export function authorizationRequiredCommandError(
-  error: unknown,
-  serverName: string,
-): InspectorCommandClientError | undefined {
-  return authorizationRequiredCommandErrorFromSignal(
-    authChallengeFromError(error),
-    serverName,
-  );
-}
-
-/** {@link authorizationRequiredCommandError} for a challenge already in hand. */
-export function authorizationRequiredCommandErrorFromSignal(
-  signal: AuthChallengeSignal | undefined,
-  serverName: string,
-): InspectorCommandClientError | undefined {
-  if (!signal || signal.source === "http_403_insufficient_scope") {
-    return undefined;
-  }
-  return createInspectorCommandClientError(
-    "authorization_required",
-    `${serverName} asked the user to sign in before this call can run. Commands do not sign in: ask the user to run it on screen in MCPJam and click Connect.`,
-    {
-      source: signal.source,
-      ...(signal.requiredScope ? { requiredScope: signal.requiredScope } : {}),
-    },
-  );
 }

@@ -469,6 +469,17 @@ describe("mcp-oauth", () => {
     ).mockResolvedValue(undefined);
   });
 
+  it("stays on the call when its flow binding cannot be saved", async () => {
+    const { MCPOAuthProvider, initiateOAuth } = await import("../mcp-oauth");
+    const redirect = vi.spyOn(MCPOAuthProvider.prototype, "redirectToAuthorization");
+    const { buildOAuthRequest } = await import("../oauth-request");
+    const request = buildOAuthRequest({ serverName: "example", serverUrl: "https://example.com/mcp" }, { intent: "connect" });
+    request.onAuthorizationRedirect = () => { throw new Error("flow storage unavailable"); };
+    const result = await initiateOAuth(request);
+    expect(result).toMatchObject({ success: false, error: "flow storage unavailable" });
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
   it("does not redirect after the initiating connect is canceled", async () => {
     let current = true;
     mockRunOAuthStateMachine.mockImplementationOnce(async (config: any) => {
