@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@ai-sdk/anthropic", () => ({ createAnthropic: vi.fn() }));
 vi.mock("@ai-sdk/azure", () => ({ createAzure: vi.fn() }));
 vi.mock("@ai-sdk/deepseek", () => ({ createDeepSeek: vi.fn() }));
-vi.mock("@ai-sdk/google", () => ({ createGoogleGenerativeAI: vi.fn() }));
+vi.mock("@ai-sdk/google", () => ({ createGoogle: vi.fn() }));
 vi.mock("@ai-sdk/mistral", () => ({ createMistral: vi.fn() }));
 vi.mock("@ai-sdk/openai", () => ({ createOpenAI: vi.fn() }));
 vi.mock("@ai-sdk/xai", () => ({ createXai: vi.fn() }));

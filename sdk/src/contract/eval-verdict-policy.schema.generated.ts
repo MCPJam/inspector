@@ -395,6 +395,7 @@ export const evalVerdictPolicyJsonSchema: Record<string, unknown> = {
             properties: {
               model: { type: "string", minLength: 1, maxLength: 200 },
               provider: { type: "string", minLength: 1, maxLength: 200 },
+              selectionKey: { type: "string", minLength: 1, maxLength: 2000 },
             },
             required: ["model"],
             additionalProperties: false,

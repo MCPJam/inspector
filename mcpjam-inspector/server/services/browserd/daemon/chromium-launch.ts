@@ -38,8 +38,8 @@ import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
  * imported: the daemon is bundled standalone, and pulling in the local
  * inspector's module would drag its Playwright-facing dependencies into the
  * sandbox artifact. The two must agree — both read the documented
- * `document.modelContext`, falling back to the `navigator` alias Chromium 151
- * still carries.
+ * `document.modelContext`, falling back to the `navigator` alias that Chromium
+ * 151 still carried and 153 no longer defines.
  */
 const PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
 

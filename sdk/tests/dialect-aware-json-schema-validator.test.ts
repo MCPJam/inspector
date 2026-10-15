@@ -166,3 +166,20 @@ describe("DialectAwareJsonSchemaValidator (ajv-only behavior)", () => {
     expect(validate({ when: "not-a-date" }).valid).toBe(false);
   });
 });
+
+describe("decimal settings increments", () => {
+  it.each([DRAFT_07, DRAFT_2020_12])(
+    "uses decimal divisibility for %s",
+    ($schema) => {
+      const validate = new DialectAwareJsonSchemaValidator().getValidator({
+        $schema,
+        type: "object",
+        properties: { value: { type: "number", multipleOf: 0.1 } },
+      });
+      expect(validate({ value: 0.3 }).valid).toBe(true);
+      expect(validate({ value: -0.3 }).valid).toBe(true);
+      expect(validate({ value: 0.31 }).valid).toBe(false);
+      expect(validate({ value: 0.30000000000000004 }).valid).toBe(false);
+    }
+  );
+});

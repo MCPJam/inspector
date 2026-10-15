@@ -2,9 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIMessageChunk } from "ai";
 
 const mutation = vi.fn();
+const action = vi.fn();
+let creationFetch: typeof fetch | undefined;
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: class {
+    constructor(_url: string, options?: { fetch?: typeof fetch }) {
+      creationFetch = options?.fetch;
+    }
     setAuth = vi.fn();
+    action = (...args: unknown[]) => action(...args);
     mutation = (...args: unknown[]) => mutation(...args);
   },
 }));
@@ -20,7 +26,9 @@ type Captured = { type: string; data: any; transient?: boolean };
 function makeWriter() {
   const chunks: Captured[] = [];
   return {
-    writer: { write: (c: UIMessageChunk) => chunks.push(c as unknown as Captured) },
+    writer: {
+      write: (c: UIMessageChunk) => chunks.push(c as unknown as Captured),
+    },
     chunks,
     events: () => chunks.map((c) => c.data),
   };
@@ -78,7 +86,9 @@ function makeBridge(overrides: Partial<any> = {}) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  creationFetch = undefined;
   mutation.mockReset().mockResolvedValue({ ok: true });
+  action.mockReset().mockResolvedValue({ ok: true });
   process.env.CONVEX_URL = "https://convex.test";
   process.env.CONVEX_HTTP_URL = "https://convex-http.test";
   process.env.INSPECTOR_SERVICE_TOKEN = "svc-token";
@@ -113,6 +123,21 @@ describe("hostDeclaresElicitation", () => {
 describe("resolveElicitationGate", () => {
   const ON = { elicitation: {} };
   const OFF = { roots: {} };
+
+  it("stays off on a server without the service credential (hosted-only)", () => {
+    const args = {
+      hostAuthoritative: false,
+      hostClientCapabilities: undefined,
+      bodyClientCapabilities: ON,
+      clientVersion: 1,
+    };
+    expect(
+      resolveElicitationGate({ ...args, serviceCredentialAvailable: false })
+        .enabled,
+    ).toBe(false);
+    process.env.INSPECTOR_SERVICE_TOKEN = "";
+    expect(resolveElicitationGate(args).enabled).toBe(false);
+  });
 
   it("enables a direct turn from the body when the client speaks v1", () => {
     const gate = resolveElicitationGate({
@@ -211,6 +236,122 @@ describe("resolveElicitationGate", () => {
 });
 
 describe("HostedElicitationBridge", () => {
+  it("joins abort and repeated disposal through one pending cancellation", async () => {
+    let release!: (value: unknown) => void;
+    const cancellation = new Promise((resolve) => {
+      release = resolve;
+    });
+    const { calls } = stubFetch({
+      "/elicitations/poll": [pollPending],
+      "/elicitations/cancel": [cancellation],
+    });
+    const stop = new AbortController();
+    const bridge = makeBridge({ abortSignal: stop.signal });
+    bridge.attachStreamWriter(makeWriter().writer);
+    const answer = bridge.callback(formRequest());
+    await vi.advanceTimersByTimeAsync(0);
+    stop.abort();
+    const first = bridge.dispose(),
+      second = bridge.dispose();
+    expect(second).toBe(first);
+    let settled = false;
+    void first.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      calls.filter((call) => call.path === "/elicitations/cancel"),
+    ).toHaveLength(1);
+    expect(settled).toBe(false);
+    release({ ok: true });
+    await first;
+    expect(settled).toBe(true);
+    await expect(answer).resolves.toEqual({ action: "cancel" });
+  });
+  it.each([false, true])(
+    "binds the original source through inline/private creation (%s) and releases after delivery",
+    async (large) => {
+      stubFetch({ "/elicitations/poll": [pollAnswered] });
+      const token = "A".repeat(43),
+        release = vi.fn();
+      const bindPluginForm = vi.fn(async () => ({ token, release }));
+      const { writer, events } = makeWriter();
+      const bridge = makeBridge({
+        pluginWorkspaceId: "workspace",
+        bindPluginForm,
+      });
+      bridge.attachStreamWriter(writer);
+      const schema = {
+        type: "object",
+        properties: {},
+        ...(large ? { description: "π".repeat(20000) } : {}),
+      };
+      const pending = bridge.callback(formRequest({ schema }));
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(await pending).toMatchObject({ action: "accept" });
+      const input = (large ? action : mutation).mock.calls[0][1];
+      expect(input.pluginFormSourceToken).toBe(token);
+      expect(bindPluginForm).toHaveBeenCalledWith({
+        rendezvousId: input.rendezvousId,
+        serverId: "srv-1",
+        schema,
+        expiresAt: expect.any(Number),
+      });
+      expect(
+        events().find((event) => event.kind === "request")
+          .pluginFormSourceToken,
+      ).toBe(token);
+      expect(release).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("refuses a form with no admitted source before creating a parent", async () => {
+    const bridge = makeBridge({
+      pluginWorkspaceId: "workspace",
+      bindPluginForm: async () => {
+        throw new Error("No admitted invocation");
+      },
+    });
+    expect(await bridge.callback(formRequest())).toEqual({ action: "cancel" });
+    expect(mutation).not.toHaveBeenCalled();
+    expect(action).not.toHaveBeenCalled();
+  });
+  it("releases the source on failed creation and withdraws a late create after disposal", async () => {
+    const { calls } = stubFetch({});
+    const release = vi.fn();
+    let finish: (value: unknown) => void = () => {};
+    mutation.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const bridge = makeBridge({
+      pluginWorkspaceId: "workspace",
+      bindPluginForm: async () => ({ token: "A".repeat(43), release }),
+    });
+    const pending = bridge.callback(formRequest());
+    await vi.advanceTimersByTimeAsync(0);
+    const closing = bridge.dispose();
+    expect(bridge.dispose()).toBe(closing);
+    let closed = false;
+    void closing.then(() => {
+      closed = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(closed).toBe(false);
+    finish({ ok: true });
+    await closing;
+    expect(await pending).toEqual({ action: "cancel" });
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(calls.map((call) => call.path)).toContain("/elicitations/cancel");
+    const failed = makeBridge({
+      pluginWorkspaceId: "workspace",
+      bindPluginForm: async () => ({ token: "B".repeat(43), release }),
+    });
+    mutation.mockRejectedValueOnce(new Error("Storage unavailable"));
+    expect(await failed.callback(formRequest())).toEqual({ action: "cancel" });
+    expect(release).toHaveBeenCalledTimes(2);
+  });
   it("cancels immediately when no writer is attached, without touching Convex", async () => {
     // The pre-writer window is connect/tools-list inside prepareChatV2, which
     // BLOCKS stream creation — buffering here would deadlock until TTL.
@@ -235,6 +376,106 @@ describe("HostedElicitationBridge", () => {
     await expect(bridge.callback(formRequest())).resolves.toEqual({
       action: "cancel",
     });
+  });
+
+  it("stores large owned schemas through the authenticated action and emits only a marker", async () => {
+    stubFetch({ "/elicitations/poll": [pollAnswered] });
+    const { writer, events } = makeWriter();
+    const bridge = makeBridge({ pluginWorkspaceId: "workspace" });
+    bridge.attachStreamWriter(writer);
+    const schema = {
+      type: "object",
+      description: "π".repeat(20000),
+      properties: {},
+    };
+    const pending = bridge.callback(formRequest({ schema }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(pending).resolves.toMatchObject({ action: "accept" });
+    expect(action).toHaveBeenCalledWith(
+      "pluginFormSchemas:create",
+      expect.objectContaining({
+        projectId: "proj-1",
+        pluginWorkspaceId: "workspace",
+        requestedSchemaJson: JSON.stringify(schema),
+      }),
+    );
+    expect(mutation).not.toHaveBeenCalled();
+    const event = events().find((value) => value.kind === "request");
+    expect(event).toMatchObject({
+      hasPrivateSchema: true,
+      formDialect: "openai",
+    });
+    expect(event).not.toHaveProperty("requestedSchema");
+    expect(event).not.toHaveProperty("requestedSchemaBlobId");
+  });
+  it.each(["ordinary", "unusual"])(
+    "uses private JSON only when a small owned schema needs it: %s",
+    async (kind) => {
+      stubFetch({ "/elicitations/poll": [pollAnswered] });
+      const { writer, events } = makeWriter();
+      const bridge = makeBridge({ pluginWorkspaceId: "workspace" });
+      bridge.attachStreamWriter(writer);
+      const schema = {
+        type: "object",
+        properties: {
+          [kind === "ordinary" ? "branch" : 'branch"\\\nπ\0']: {
+            type: "string",
+          },
+        },
+      };
+      const pending = bridge.callback(formRequest({ schema }));
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(pending).resolves.toMatchObject({ action: "accept" });
+      if (kind === "ordinary") {
+        expect(action).not.toHaveBeenCalled();
+        expect(mutation).toHaveBeenCalledWith(
+          "elicitations:createElicitation",
+          expect.objectContaining({ requestedSchema: schema }),
+        );
+      } else {
+        expect(mutation).not.toHaveBeenCalled();
+        expect(action).toHaveBeenCalledWith(
+          "pluginFormSchemas:create",
+          expect.objectContaining({
+            requestedSchemaJson: JSON.stringify(schema),
+          }),
+        );
+        expect(action.mock.calls[0][1]).not.toHaveProperty("requestedSchema");
+        expect(
+          events().find((value) => value.kind === "request"),
+        ).toMatchObject({ hasPrivateSchema: true });
+      }
+    },
+  );
+  it("keeps the ordinary mutation path even for an oversized ordinary request", async () => {
+    stubFetch({ "/elicitations/poll": [pollAnswered] });
+    const { writer } = makeWriter();
+    const bridge = makeBridge();
+    bridge.attachStreamWriter(writer);
+    const pending = bridge.callback(
+      formRequest({ schema: { description: "π".repeat(20000) } }),
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    await pending;
+    expect(action).not.toHaveBeenCalled();
+    expect(mutation).toHaveBeenCalledWith(
+      "elicitations:createElicitation",
+      expect.any(Object),
+    );
+  });
+  it("cancels without a pending dialog when private schema creation fails", async () => {
+    stubFetch({});
+    const { writer, events } = makeWriter();
+    const bridge = makeBridge({ pluginWorkspaceId: "workspace" });
+    bridge.attachStreamWriter(writer);
+    action.mockRejectedValueOnce(new Error("Private form schema unavailable"));
+    await expect(
+      bridge.callback(
+        formRequest({ schema: { description: "π".repeat(20000) } }),
+      ),
+    ).resolves.toEqual({ action: "cancel" });
+    expect(events()).toEqual([]);
+    expect(mutation).not.toHaveBeenCalled();
   });
 
   it("emits the request part, then resolves the answered content", async () => {
@@ -294,8 +535,9 @@ describe("HostedElicitationBridge", () => {
     void bridge.callback(formRequest());
     await vi.advanceTimersByTimeAsync(6000);
 
-    expect(calls.filter((c) => c.path === "/elicitations/poll").length)
-      .toBeGreaterThan(1);
+    expect(
+      calls.filter((c) => c.path === "/elicitations/poll").length,
+    ).toBeGreaterThan(1);
     expect(calls.some((c) => c.path === "/elicitations/ack")).toBe(false);
   });
 
@@ -362,7 +604,11 @@ describe("HostedElicitationBridge", () => {
   });
 
   it.each([
-    ["decline", { status: "answered", action: "decline" }, { action: "decline" }],
+    [
+      "decline",
+      { status: "answered", action: "decline" },
+      { action: "decline" },
+    ],
     ["expired", { status: "expired" }, { action: "cancel" }],
     ["cancelled", { status: "cancelled" }, { action: "cancel" }],
   ])("resolves %s terminal states", async (_label, elicitation, expected) => {
@@ -422,6 +668,89 @@ describe("HostedElicitationBridge", () => {
 
     await expect(promise).resolves.toEqual({ action: "cancel" });
   });
+
+  it.each([
+    [false, "headers"],
+    [false, "body"],
+    [true, "headers"],
+    [true, "body"],
+  ] as const)(
+    "bounds creation through %s private storage and stalled %s during owner close",
+    async (privateSchema, stage) => {
+      let creationSignal: AbortSignal | undefined;
+      const cancellations: Array<{ signal: AbortSignal; body: any }> = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init: any) => {
+          if (new URL(url).pathname === "/elicitations/cancel") {
+            cancellations.push({
+              signal: init.signal,
+              body: JSON.parse(init.body),
+            });
+            return { ok: true, json: async () => ({ ok: true }) };
+          }
+          creationSignal = init.signal;
+          const stall = () =>
+            new Promise((_resolve, reject) => {
+              init.signal.addEventListener(
+                "abort",
+                () => reject(init.signal.reason),
+                { once: true },
+              );
+            });
+          if (stage === "headers") return stall();
+          return { ok: true, json: stall };
+        }),
+      );
+      (privateSchema ? action : mutation).mockImplementationOnce(async () => {
+        const response = await creationFetch!(
+          "https://convex.test/api/create",
+          { method: "POST" },
+        );
+        return response.json();
+      });
+      const stop = new AbortController(),
+        release = vi.fn();
+      const { writer, events } = makeWriter();
+      const bridge = makeBridge({
+        abortSignal: stop.signal,
+        pluginWorkspaceId: "workspace",
+        bindPluginForm: async () => ({ token: "A".repeat(43), release }),
+      });
+      bridge.attachStreamWriter(writer);
+      const answer = bridge.callback(
+        formRequest({
+          schema: {
+            type: "object",
+            properties: {},
+            ...(privateSchema ? { description: "π".repeat(25000) } : {}),
+          },
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(creationSignal?.aborted).toBe(false);
+      stop.abort();
+      const closing = bridge.dispose();
+      let closed = false;
+      void closing.then(() => {
+        closed = true;
+      });
+      await vi.advanceTimersByTimeAsync(9999);
+      expect(closed).toBe(false);
+      expect(creationSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await closing;
+      await expect(answer).resolves.toEqual({ action: "cancel" });
+      expect(creationSignal?.aborted).toBe(true);
+      expect(cancellations).toHaveLength(1);
+      expect(cancellations[0].signal.aborted).toBe(false);
+      expect(cancellations[0].body.rendezvousId).toBe(
+        (privateSchema ? action : mutation).mock.calls[0][1].rendezvousId,
+      );
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(events()).toEqual([]);
+    },
+  );
 
   it("bounds a stalled Convex call instead of hanging the tool forever", async () => {
     // Without a deadline the poll never returns: the TTL check only runs
@@ -499,7 +828,11 @@ describe("HostedElicitationBridge", () => {
       serverId: "srv-1",
       toolCallId: "call-9",
       elicitations: [
-        { url: "https://example.com/auth", elicitationId: "e1", message: "Connect" },
+        {
+          url: "https://example.com/auth",
+          elicitationId: "e1",
+          message: "Connect",
+        },
       ],
     });
 
@@ -535,7 +868,10 @@ describe("HostedElicitationBridge", () => {
     });
 
     expect(events()).toContainEqual(
-      expect.objectContaining({ kind: "url_required", toolCallId: "byok-call" }),
+      expect.objectContaining({
+        kind: "url_required",
+        toolCallId: "byok-call",
+      }),
     );
   });
 

@@ -31,6 +31,39 @@ describe("swarmTargetModelDefinition", () => {
     expect(definition.hosted).toBe(false);
   });
 
+  it("a STORED legacy selection is never hosted (own key only), even with a hosted snapshot flag", () => {
+    const definition = swarmTargetModelDefinition({
+      modelId: "anthropic/claude-haiku-4.5",
+      hosted: true,
+      resolvedSelection: {
+        source: "legacy",
+        modelId: "anthropic/claude-haiku-4.5",
+      },
+    });
+    expect(definition.id).toBe("anthropic/claude-haiku-4.5");
+    expect(definition.hosted).toBe(false);
+    // ...and it is never forwarded to the backend.
+    expect(
+      swarmTargetBackendSelection({
+        modelId: "anthropic/claude-haiku-4.5",
+        resolvedSelection: {
+          source: "legacy",
+          modelId: "anthropic/claude-haiku-4.5",
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("a legacy selection for another model leaves the pinned routing alone", () => {
+    expect(
+      swarmTargetModelDefinition({
+        modelId: "anthropic/claude-haiku-4.5",
+        hosted: true,
+        resolvedSelection: { source: "legacy", modelId: "llama3" },
+      }).hosted,
+    ).toBe(true);
+  });
+
   it("a hosted selection is marked hosted", () => {
     expect(
       swarmTargetModelDefinition({

@@ -118,6 +118,15 @@ vi.mock("../../computers/convex-secrets-client.js", () => ({
   convexMarkSecretsDelivered: vi.fn(async () => ({ marked: 0 })),
 }));
 
+// A box binding makes the turn ask the box's own scope; these cases exercise
+// the member readers, which is what a backend without the route answers.
+vi.mock("../../computers/control-plane-client.js", () => ({
+  getBoxCredentialAvailability: vi.fn(async () => ({
+    ok: false,
+    status: 404,
+  })),
+}));
+
 vi.mock("../resolve-sandbox.js", () => ({
   resolveHarnessSandbox: vi.fn(async () => ({
     computerId: "computer-1",
@@ -479,6 +488,28 @@ describe("runHarnessTurn — external-account BROKERED credential", () => {
       | undefined;
     expect(sessionEnv).not.toHaveProperty("CURSOR_API_KEY");
     expect(sessionEnv).toHaveProperty("STRIPE_API_KEY", OTHER_SECRET.value);
+  });
+
+  it("refuses a NON-MEMBER participant before planning any credential", async () => {
+    // The project's brokered key must never reach a participant's box: their
+    // agent has a shell and could exchange it for a reusable vendor token.
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        scenarioParticipant: true,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toContain("isn't available to participants");
+    // Names neither the credential nor where the project sets it.
+    expect(err.message).not.toContain("CURSOR_API_KEY");
+    expect(err.message).not.toMatch(/Project Settings/i);
+    expect(registryState.createHarness).not.toHaveBeenCalled();
+    expect(startHarnessModelBroker).not.toHaveBeenCalled();
   });
 
   it("refuses a brokered-only credential on a PERSISTENT computer", async () => {

@@ -8,6 +8,18 @@
 import type { EvalIteration } from "../evals/types";
 import { computeIterationResult } from "../evals/pass-criteria";
 import type { AffectedIterationRow } from "@/components/shared/actionable-insights/affected-iterations-list";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import { iterationReasoningEffort } from "../evals/run-metrics";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
+
+/** The iteration's model with the effort it ran at ("gpt-5.4-nano · High"). */
+function modelWithEffort(iteration: EvalIteration): string | null {
+  const model = iteration.testCaseSnapshot?.model ?? null;
+  const effort = iterationReasoningEffort(iteration);
+  return model && effort
+    ? `${model} · ${reasoningEffortLabel(effort as ModelReasoningEffort)}`
+    : model;
+}
 
 export function affectedRowFor(
   iteration: EvalIteration,
@@ -18,7 +30,7 @@ export function affectedRowFor(
     caseTitle: iteration.testCaseSnapshot?.title ?? "Untitled case",
     iterationNumber: iteration.iterationNumber ?? null,
     client: clientLabel ?? null,
-    model: iteration.testCaseSnapshot?.model ?? null,
+    model: modelWithEffort(iteration),
     result: computeIterationResult(iteration),
     canOpen: Boolean(iteration.testCaseId),
   };

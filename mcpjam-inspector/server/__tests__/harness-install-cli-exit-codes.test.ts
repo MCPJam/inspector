@@ -60,6 +60,13 @@ describe("the harness subcommand reports its answer in the exit code", () => {
     expect(run(["harness"]).code).toBe(2);
   });
 
+  it("exits 2 on a malformed --harness option, before loading anything", () => {
+    const { code, output } = run(["harness", "status", "--harness"]);
+    expect(code).toBe(2);
+    expect(output).toContain("[--harness <id>]");
+    expect(run(["harness", "install", "--bogus"]).code).toBe(2);
+  });
+
   it("reports 'not installed' as a non-zero exit, however it got there", () => {
     // Branches on whether `dist/` exists, because BOTH states are real and
     // this suite runs in both: from source before a build (where the CLI

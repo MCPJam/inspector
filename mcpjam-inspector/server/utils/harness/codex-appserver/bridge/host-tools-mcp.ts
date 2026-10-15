@@ -16,6 +16,45 @@
  * and without mocking a transport.
  */
 import { appendFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
+
+/**
+ * The relay call, over plain `node:http` with NO client timeout.
+ *
+ * Not the global `fetch`: undici gives it a 300 s headers timeout, and the
+ * relay answers a gated tool only after the human decides. A decision made
+ * after five minutes then landed on a call Codex had already recorded as
+ * failed — and the host still ran the tool. The waits that should bound this
+ * are Codex's own `tool_timeout_sec` and the host's approval TTL, both longer.
+ */
+export const relayFetch: typeof fetch = ((
+  input: string | URL,
+  init?: { method?: string; headers?: Record<string, string>; body?: string },
+) =>
+  new Promise((resolve, reject) => {
+    const req = httpRequest(
+      String(input),
+      { method: init?.method ?? "GET", headers: init?.headers ?? {} },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("error", reject);
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          const status = res.statusCode ?? 0;
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            json: async () => JSON.parse(text) as unknown,
+            text: async () => text,
+          } as Response);
+        });
+      },
+    );
+    req.on("error", reject);
+    if (init?.body !== undefined) req.write(init.body);
+    req.end();
+  })) as typeof fetch;
 
 /** The MCP protocol version to answer with when the client names none. */
 const FALLBACK_PROTOCOL_VERSION = "2025-06-18";
@@ -43,7 +82,7 @@ export function createHostToolMcpServer(options: {
   relayCredential: string | undefined;
   fetchImpl?: typeof fetch;
 }): HostToolMcpServer {
-  const doFetch = options.fetchImpl ?? fetch;
+  const doFetch = options.fetchImpl ?? relayFetch;
 
   async function relay(
     path: string,

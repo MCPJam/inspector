@@ -30,6 +30,7 @@
   "exclude": [
     "node_modules",
     "dist",
-    "utils/browser-harness/host-page.ts"
+    "utils/browser-harness/host-page.ts",
+    "utils/browser-harness/host-workspace.tsx"
   ]
 }

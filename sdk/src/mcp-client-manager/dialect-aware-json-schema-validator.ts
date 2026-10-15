@@ -15,6 +15,7 @@ import {
   AjvJsonSchemaValidator,
   addFormats,
 } from "@modelcontextprotocol/client/validators/ajv";
+import { isNumericMultipleOf } from "./json-number.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   DialectDispatchingJsonSchemaValidator,
@@ -22,6 +23,15 @@ import {
 } from "./dialect-dispatch-json-schema-validator.js";
 
 export type { DialectAwareJsonSchemaValidatorOptions };
+
+// Canonical decimal arithmetic accepts 0.3 / 0.1 and rejects near-multiples without an epsilon.
+const decimalMultipleOf = {
+  keyword: "multipleOf",
+  type: "number" as const,
+  schemaType: "number" as const,
+  errors: false,
+  validate: (step: number, value: number) => isNumericMultipleOf(value, step),
+};
 
 export class DialectAwareJsonSchemaValidator extends DialectDispatchingJsonSchemaValidator {
   constructor(options?: DialectAwareJsonSchemaValidatorOptions) {
@@ -34,6 +44,8 @@ export class DialectAwareJsonSchemaValidator extends DialectDispatchingJsonSchem
             validateSchema: false,
             allErrors: true,
           });
+          engine.removeKeyword("multipleOf");
+          engine.addKeyword({ ...decimalMultipleOf });
           addFormats(engine);
           return new AjvJsonSchemaValidator(engine);
         },
@@ -44,6 +56,8 @@ export class DialectAwareJsonSchemaValidator extends DialectDispatchingJsonSchem
             validateSchema: false,
             allErrors: true,
           });
+          engine.removeKeyword("multipleOf");
+          engine.addKeyword({ ...decimalMultipleOf });
           addFormats(engine);
           return new AjvJsonSchemaValidator(engine);
         },

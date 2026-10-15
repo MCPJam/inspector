@@ -37,18 +37,17 @@ vi.mock("@/lib/mcpjam-agent/eval-scope", async (original) => ({
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
-
-// Only the network poll is doubled; the store it writes into is real.
+vi.mock("@/hooks/use-is-member-actor", () => ({ useIsMemberActor: () => true }));
 // An imported draft opens in the step editor, which renders the model picker.
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
+// Keep the generation store real while bypassing the authoring poll.
 vi.mock("@/lib/mcpjam-agent/eval-workspace", async (original) => ({
   ...(await original<object>()),
   followAuthoringJob: vi.fn(async () => undefined),
 }));
-// Generation runs the shared authoring job, so starting one is a request, not
-// a call into the suite bridge.
+// Generation starts an authoring request, not a call into the suite bridge.
 vi.mock("@/lib/apis/eval-authoring-api", async (original) => ({
   ...(await original<object>()),
   authoringRequest: vi.fn(async () => ({ jobId: "job-1" })),
@@ -365,7 +364,7 @@ describe("SuiteDetailOverview", () => {
     await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(onRerun).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "suite-1" }),
-      { iterationOverride: 5 },
+      { iterationOverride: 5, throwOnFailure: true },
     );
   });
 

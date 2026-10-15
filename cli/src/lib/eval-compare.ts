@@ -280,7 +280,10 @@ export function flakyInputFrom(
       // a fabricated flake.
       .filter(
         (iteration) =>
-          iteration.result === "passed" || iteration.result === "failed"
+          // An infra-failed trial (`infraError`) is stored `failed` but
+          // measured nothing; counting it would fabricate a flake.
+          !iteration.infraError &&
+          (iteration.result === "passed" || iteration.result === "failed")
       )
       .map((iteration) => ({
         // Falls back to the iteration's own id, never a shared literal: a

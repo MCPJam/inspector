@@ -23,6 +23,7 @@ import {
   PLAYGROUND_CAPACITY_POLICY,
   withCapacityRetry,
 } from "../run-supervisor/capacity-retry.js";
+import { getServiceCredential } from "../../services/service-credential.js";
 
 export type ComputerStatus =
   | "requested"
@@ -177,7 +178,7 @@ export function resetServiceTokenRejectedForTests(): void {
 
 function getServiceToken(): string | null {
   if (serviceTokenRejected) return null;
-  return process.env.INSPECTOR_SERVICE_TOKEN?.trim() || null;
+  return getServiceCredential();
 }
 
 /**
@@ -206,6 +207,14 @@ async function postJson<T>(
   headers: Record<string, string>,
   body: Record<string, unknown>,
   signal?: AbortSignal,
+  options?: {
+    /**
+     * A network failure is EXPECTED and retried by the caller (a heartbeat
+     * beat), so log it at warn: `logger.error` pages, and an outage would
+     * page once per active box per beat.
+     */
+    quietNetworkErrors?: boolean;
+  },
 ): Promise<ControlPlaneResult<T>> {
   const base = getConvexHttpUrl();
   if (!base) {
@@ -220,7 +229,13 @@ async function postJson<T>(
       signal,
     });
   } catch (err) {
-    logger.error(`[computers] ${path} network error`, err);
+    if (options?.quietNetworkErrors) {
+      logger.warn(`[computers] ${path} network error`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } else {
+      logger.error(`[computers] ${path} network error`, err);
+    }
     return { ok: false, status: 0, error: "network error" };
   }
   let payload: unknown = null;
@@ -290,6 +305,9 @@ export interface EvalSandbox {
   runtimeKind?: RuntimeKind;
   /** What the live box advertises (`["bash","browser"]` for a desktop). */
   capabilities?: string[];
+  /** Where the box's harness and shell start. Absent from an older control
+   * plane; the harness then falls back to the box home. */
+  workdir?: string;
 }
 
 /**
@@ -326,20 +344,29 @@ export interface EvalSandbox {
  * Every other failure (409, auth, a malformed body) is returned untouched on
  * the first attempt: only capacity is worth waiting on.
  */
-export async function provisionEvalSandbox(args: {
-  bearer: string;
-  runId: string;
-  iterationId?: string;
-  runtimeKind?: RuntimeKind;
-  signal?: AbortSignal;
-  /**
-   * Shorter aggregate wait than the policy's default. The caller knows what is
-   * LEFT of the iteration's clock; this function only knows the policy, and a
-   * capacity wait that outlives the iteration it is blocking is pure waste.
-   */
-  timeoutMs?: number;
-  onWait?: (info: { delayMs: number; resource?: string }) => void;
-}): Promise<ControlPlaneResult<EvalSandbox>> {
+export async function provisionEvalSandbox(
+  args: (
+    | { runId: string; iterationId?: string }
+    /**
+     * A SINGLE-CASE run has no suite run: the body names the iteration alone,
+     * and the control plane authorizes the iteration itself. Terminal only —
+     * a quick run boots a box for a harness, never a desktop.
+     */
+    | { runId?: undefined; iterationId: string; runtimeKind?: "terminal" }
+  ) & {
+    bearer: string;
+    runtimeKind?: RuntimeKind;
+    signal?: AbortSignal;
+    /**
+     * Shorter aggregate wait than the policy's default. The caller knows what
+     * is LEFT of the iteration's clock; this function only knows the policy,
+     * and a capacity wait that outlives the iteration it is blocking is pure
+     * waste.
+     */
+    timeoutMs?: number;
+    onWait?: (info: { delayMs: number; resource?: string }) => void;
+  },
+): Promise<ControlPlaneResult<EvalSandbox>> {
   type Result = ControlPlaneResult<EvalSandbox>;
   const atCapacity = (result: Result): boolean =>
     !result.ok && result.status === 503 && result.code === "at_capacity";
@@ -353,7 +380,9 @@ export async function provisionEvalSandbox(args: {
         "/evals/sandbox/provision",
         bearerHeader(args.bearer),
         {
-          runId: args.runId,
+          // Byte-identical to every suite-run request: `runId` first, and
+          // absent only for a single-case iteration.
+          ...(args.runId ? { runId: args.runId } : {}),
           ...(args.iterationId ? { iterationId: args.iterationId } : {}),
           ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
         },
@@ -610,6 +639,149 @@ export async function provisionPlaygroundSandbox(args: {
   return outOfTime();
 }
 
+/** One required credential, as the box's own scope answers about it. */
+export type BoxCredentialStatus =
+  | { status: "available" }
+  | { status: "unselected" }
+  | { status: "misbound"; hosts: string[] }
+  | { status: "absent" };
+
+export interface BoxCredentialAvailabilityAnswer {
+  /** The box's grant names no usable environment, so nothing is granted. */
+  environmentMissing: boolean;
+  credentials: Record<string, BoxCredentialStatus>;
+}
+
+/**
+ * Which of these credentials does THIS box carry, and are they usable?
+ *
+ * Authorized by the box's own scope (a scenario participant may ask about their
+ * own conversation's box; so may a Playground owner or a run's launcher), which
+ * is the point: the member-only secret readers a Cursor pre-flight used before
+ * fail for everyone who is not a project member. The answer is statuses and, for
+ * a mis-bound row, the hosts it binds — never a row id, a secret id or a value.
+ *
+ * `404` means the backend predates the route; the caller falls back to the
+ * member readers it used before.
+ */
+export async function getBoxCredentialAvailability(args: {
+  bearer: string;
+  sandboxRowId: string;
+  required: Readonly<
+    Record<string, { hosts: readonly string[]; header: string; template: string }>
+  >;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<BoxCredentialAvailabilityAnswer>> {
+  return postJson<BoxCredentialAvailabilityAnswer>(
+    "/web/harness/box-credentials",
+    bearerHeader(args.bearer),
+    {
+      sandboxRowId: args.sandboxRowId,
+      required: Object.fromEntries(
+        Object.entries(args.required).map(([name, binding]) => [
+          name,
+          {
+            hosts: [...binding.hosts],
+            header: binding.header,
+            template: binding.template,
+          },
+        ]),
+      ),
+    },
+    args.signal,
+  );
+}
+
+/** The Playground conversation's disposable shell. */
+export interface PlaygroundTerminalSandbox {
+  sandboxId: string;
+  sandboxRowId: string;
+  /** Working directory the box starts in (backend-resolved). */
+  workdir?: string;
+}
+
+/**
+ * Provision (or re-obtain) the DISPOSABLE shell for one Playground
+ * conversation — the fallback for a turn that cannot run on the member's
+ * personal computer (a harness that needs a secret, or a compare column that
+ * needs a machine of its own).
+ *
+ * User-bearer auth, member-only. One box per conversation: a repeat call for
+ * the same `chatSessionId` returns the same box, so the shell's files carry
+ * across the conversation's turns. `projectEnvironmentId` names the project
+ * environment whose secrets the box holds; the backend validates it against
+ * the project and records it, so changing it between turns retires the box.
+ *
+ * Failure statuses the caller must distinguish:
+ *   403 — not a member, or the conversation belongs to another member.
+ *   409 — the environment is unavailable, or its image can't boot. Terminal
+ *         until the environment is fixed.
+ *   429 — the member already holds the maximum number of live Playground
+ *         computers, all busy (`code: "user_terminal_cap"`). Not retried: an
+ *         idle one would already have been evicted to make room.
+ *   503 — at capacity, or a sibling call is still booting. RETRIED here, on
+ *         the same policy and loop as the conversation desktop
+ *         ({@link provisionPlaygroundSandbox}), so a full pool or a box still
+ *         starting up is a wait rather than a failed turn.
+ */
+export async function provisionPlaygroundTerminalSandbox(args: {
+  bearer: string;
+  projectId: string;
+  chatSessionId: string;
+  projectEnvironmentId?: string;
+  /** The turn's harness id; the backend gates the box on that harness's flag. */
+  harness?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<ControlPlaneResult<PlaygroundTerminalSandbox>> {
+  type Result = ControlPlaneResult<PlaygroundTerminalSandbox>;
+  const atCapacity = (result: Result): boolean =>
+    !result.ok && result.status === 503 && result.code === "at_capacity";
+  const outOfTime = (
+    extra: Partial<Extract<Result, { ok: false }>> = {},
+  ): Result => ({
+    ok: false,
+    status: 503,
+    error: "Playground computer capacity did not become available in time",
+    code: "at_capacity",
+    ...extra,
+  });
+  const outcome = await withCapacityRetry<Result>(
+    (_attempt, signal) =>
+      postJson<PlaygroundTerminalSandbox>(
+        "/playground/sandbox/terminal/provision",
+        bearerHeader(args.bearer),
+        {
+          projectId: args.projectId,
+          chatSessionId: args.chatSessionId,
+          ...(args.projectEnvironmentId
+            ? { projectEnvironmentId: args.projectEnvironmentId }
+            : {}),
+          ...(args.harness ? { harness: args.harness } : {}),
+        },
+        signal,
+      ),
+    {
+      ...PLAYGROUND_CAPACITY_POLICY,
+      totalBudgetMs: args.timeoutMs ?? PLAYGROUND_CAPACITY_POLICY.totalBudgetMs,
+      shouldRetry: atCapacity,
+      retryAfterMsOf: (result) =>
+        !result.ok && typeof result.retryAfterMs === "number"
+          ? result.retryAfterMs
+          : undefined,
+      ...(args.signal ? { signal: args.signal } : {}),
+    },
+  );
+  if (outcome.kind === "settled") return outcome.result;
+  if (outcome.reason === "aborted") {
+    return { ok: false, status: 499, error: "cancelled" };
+  }
+  if (outcome.reason === "budget_before_delay" && outcome.plannedDelayMs) {
+    return outOfTime({ retryAfterMs: outcome.plannedDelayMs });
+  }
+  return outOfTime();
+}
+
 /**
  * Provision (or re-obtain) the ephemeral sandbox for ONE journey attempt —
  * user-bearer auth, the launching member's token.
@@ -820,6 +992,53 @@ export async function releaseSandbox(args: {
       error: result.error,
     });
   }
+}
+
+/**
+ * What a turn heartbeat learned from one touch.
+ *   - `touched` — the box is live and its idle clock restarted.
+ *   - `gone`    — the box is released, reaping, past its scope's lifetime
+ *     ceiling, or not this one (404/409), or the control plane predates the
+ *     route (also a 404). Stop beating.
+ *   - `failed`  — anything else (network, 5xx, no credential). Keep beating:
+ *     one missed touch costs nothing while the next lands inside the TTL.
+ */
+export type TouchSandboxOutcome = "touched" | "gone" | "failed";
+
+/**
+ * Restart an ephemeral box's idle clock (service-token auth). The reaper judges
+ * eval, scenario and playground boxes idle by the row's `lastUsedAt` alone, so
+ * a harness turn that runs longer than the scope's TTL without touching the row
+ * can lose its box mid-turn. Bound to the box: the control plane checks the
+ * vendor id against the row, so a stale binding never revives another box.
+ */
+export async function touchSandbox(args: {
+  sandboxRowId: string;
+  sandboxId: string;
+  /**
+   * The holder's turn is OVER: its last touch. The control plane records the
+   * end, which lets the Playground's per-member cap evict this idle box rather
+   * than refuse a new conversation. An older control plane ignores the field.
+   */
+  ended?: boolean;
+  signal?: AbortSignal;
+}): Promise<TouchSandboxOutcome> {
+  const headers = authHeaders();
+  if (!headers) return "failed";
+  const result = await postJson(
+    "/computers/sandbox/touch",
+    headers,
+    {
+      sandboxRowId: args.sandboxRowId,
+      sandboxId: args.sandboxId,
+      ...(args.ended ? { ended: true } : {}),
+    },
+    args.signal,
+    { quietNetworkErrors: true },
+  );
+  if (result.ok) return "touched";
+  if (result.status === 404 || result.status === 409) return "gone";
+  return "failed";
 }
 
 /** @deprecated Renamed {@link releaseSandbox} — release is scope-agnostic now.

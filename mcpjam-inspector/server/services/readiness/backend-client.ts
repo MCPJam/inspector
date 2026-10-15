@@ -1,3 +1,4 @@
+import { DIRECTORY_OBSERVATION_STATUSES } from "@mcpjam/sdk";
 /**
  * The inspector's half of the readiness lease protocol.
  *
@@ -24,6 +25,7 @@ import {
   isEntityNotFound,
 } from "../internal-backend.js";
 import { backendFailureText } from "../../utils/backend-failure-text.js";
+import { isOrgKeyPolicyRefusalCode } from "../../../shared/ai-execution-refusal.js";
 import {
   ReadinessLeaseLostError,
   type ObservationBrokerAnswer,
@@ -42,12 +44,10 @@ const OBSERVATIONS_PATH = "/internal/v1/claude-readiness/observations";
  * A closed check rather than `typeof === "string"`, because the value lands on
  * the run row and a surface branches on it.
  */
-const BROKER_STATUSES: ObservationBrokerAnswer["status"][] = [
-  "completed",
-  "billing-blocked",
-  "provider-failed",
-  "invalid-output",
-];
+const BROKER_STATUSES = DIRECTORY_OBSERVATION_STATUSES.filter(
+  (status): status is ObservationBrokerAnswer["status"] =>
+    status !== "not-requested" && status !== "pending",
+);
 
 /** Per-call budget. Generous for the report, tight for the heartbeat. */
 const HEARTBEAT_TIMEOUT_MS = 10_000;
@@ -176,6 +176,7 @@ export async function requestManagedObservations(
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as {
         error?: unknown;
+        code?: unknown;
       } | null;
       const detail = backendFailureText({
         source: "readiness-observations",
@@ -183,6 +184,20 @@ export async function requestManagedObservations(
         detail: body?.error,
         fallback: `HTTP ${response.status}`,
       });
+      // The organization requires its own provider keys and cannot serve this
+      // pass: a configuration state ("Not analyzed"), not a provider outage.
+      // Read off the code, never the prose.
+      if (
+        typeof body?.code === "string" &&
+        isOrgKeyPolicyRefusalCode(body.code)
+      ) {
+        return {
+          status: "ai-unavailable",
+          reason: "ai_unavailable",
+          refusalCode: body.code.trim().toLowerCase(),
+          detail: `the organization's AI configuration could not run the observation pass (${body.code.trim().toLowerCase()}): ${detail}`,
+        };
+      }
       return {
         status: "provider-failed",
         reason: "provider_error",
@@ -193,7 +208,7 @@ export async function requestManagedObservations(
     const body = (await response.json().catch(() => null)) as
       | (ObservationBrokerAnswer & { ok?: boolean })
       | null;
-    // CONSTRAINED TO THE FOUR STATUSES THIS BUILD KNOWS, not merely to
+    // Constrained to the statuses this build knows, not merely to
     // "a string". The value is copied onto the run row as
     // `llmObservationStatus`, so a backend deployed ahead of this build could
     // otherwise persist a status the SDK never defined — the exact drift the
@@ -210,6 +225,7 @@ export async function requestManagedObservations(
       status: body.status,
       reason: body.reason,
       detail: body.detail,
+      refusalCode: body.refusalCode,
       envelope: body.envelope,
     };
   } finally {

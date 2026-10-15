@@ -21,6 +21,7 @@ import type {
 
 import type { ComponentType, ReactNode } from "react";
 import type {
+  AppBridge,
   McpUiHostCapabilities,
   McpUiHostContext,
   McpUiResourceCsp,
@@ -230,6 +231,23 @@ export interface WidgetSurfaceInfo {
    * input because `minimalMode` is per-instance).
    */
   playgroundCspMode: CspMode;
+  /**
+   * The one display mode the host presents this App in, chosen by the host
+   * rather than negotiated: a plugin extension entrypoint opens `fullscreen`,
+   * the way ChatGPT presents every entrypoint. A resource's or App's
+   * display-mode declaration cannot select another mode here, so it never
+   * refuses the App either. Absent: modes are negotiated as usual.
+   */
+  fixedDisplayMode?: DisplayMode;
+  /**
+   * Apply OpenAI's display-mode rules (ChatGPT and Codex with the Display
+   * modes extension on): omitted resource modes mean every host mode, a
+   * preference picks the starting mode without narrowing, a resource that
+   * declares both inline and fullscreen starts fullscreen, and a fixed mode
+   * the initialized App says it cannot show refuses the App. Absent: modes are
+   * negotiated as before.
+   */
+  openAIDisplayModes?: boolean;
 }
 
 // --- Instrumentation ---------------------------------------------------------
@@ -299,7 +317,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-error"
     | "bridge-connect-skipped"
     | "app-initialized"
-    | "view-mounted";
+    | "view-mounted"
+    | "view-channel-closed";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;
@@ -329,9 +348,11 @@ export interface WidgetSandboxApplied {
    * How the proxy mounted the view. `"url"` means it was written into a blank
    * same-origin frame and runs at the proxy's URL; the srcdoc values mean it
    * has no URL of its own (`"srcdoc"` was asked for, `"srcdoc-fallback"` was
-   * forced because the frame's document was unreachable).
+   * forced because the frame's document was unreachable). `"opaque"` is the
+   * intended srcdoc mount of a client whose app iframe is not same-origin
+   * (e.g. Claude's no-`stable-origin` mode): no URL and an opaque origin, by design.
    */
-  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback" | "opaque";
   /** Id of the currently displayed inner iframe mount. */
   mountId?: CspMountId;
   /** The view's document URL as reported by the proxy. */
@@ -581,6 +602,12 @@ export interface WidgetHostProfileSandbox {
    * field missing here silently disappears before reaching the renderer.
    */
   browserStorage?: BrowserStoragePolicy;
+  /**
+   * Probe-measured: whether the app iframe shares the sandbox page's origin.
+   * `false` makes the proxy mount the view in an opaque origin (srcdoc, no
+   * `allow-same-origin`), `ui.domain` or not. Absent or `true` = same-origin.
+   */
+  sameOriginAppIframe?: boolean;
 }
 
 /**
@@ -683,6 +710,7 @@ export interface FetchWidgetContentRequest {
 }
 
 export interface FetchWidgetContentResponse {
+  resourceDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
   html: string;
   csp?: McpUiResourceCsp;
   permissions?: McpUiResourcePermissions;
@@ -728,6 +756,13 @@ export type ListResourcesResult = {
  * HOSTED_MODE / web-managed guard before calling the raw api.
  */
 export interface WidgetHostServices {
+  /** Host-admitted plugin navigation, never arbitrary external navigation. */
+  openAppLink?: (url: string) => Promise<void>;
+  sendMessage?: (params: unknown) => Promise<Record<string, unknown>>;
+  updateModelContext?: (
+    params: unknown
+  ) => Promise<{ _meta?: Record<string, unknown> }>;
+
   fetchWidgetContent: (
     req: FetchWidgetContentRequest
   ) => Promise<FetchWidgetContentResponse>;
@@ -738,6 +773,13 @@ export interface WidgetHostServices {
     uri: string,
     opts?: { forceHosted?: boolean }
   ) => Promise<any>;
+  /** Complete instance-bound resource callback; legacy services remain compatible. */
+  readResourceV2?: import("@mcpjam/sdk/widget-runtime").HostBridgeCallbacks["onReadResourceV2"];
+  /** Trusted fixed-lifetime extensions, installed before connect and released on close. */
+  configureAppBridge?: (
+    bridge: AppBridge,
+    capabilities: ConstructorParameters<typeof AppBridge>[2]
+  ) => void | (() => void);
   listResources: (
     serverId: string,
     cursor?: string,

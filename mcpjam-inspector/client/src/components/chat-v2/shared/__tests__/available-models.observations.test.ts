@@ -319,6 +319,10 @@ describe("judge model rows (purpose: judge)", () => {
         currentModelId: "openai/gpt-5-mini",
         managedDefaultModelId: "openai/gpt-5-mini",
       })
-    ).toEqual({ models: [row("openai/gpt-5-mini")], currentIneligible: false });
+    ).toEqual({
+      models: [row("openai/gpt-5-mini")],
+      currentIneligible: false,
+      current: row("openai/gpt-5-mini"),
+    });
   });
 });

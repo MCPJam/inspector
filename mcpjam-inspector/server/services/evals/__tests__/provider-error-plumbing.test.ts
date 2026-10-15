@@ -71,6 +71,11 @@ const PROVIDER_DIED: StepEngineOutcome = {
   errorSource: "model",
   errorCode: "billing_limit_reached",
   errorHttpStatus: 429,
+  errorInfra: {
+    source: "backend_model",
+    code: "billing_limit_reached",
+    httpStatus: 429,
+  },
 };
 
 const ONE_PROMPT: TestStep[] = [
@@ -108,6 +113,8 @@ describe("a classified provider failure reaches the runner", () => {
     // Diagnostics ride along; they are never the basis for the classification.
     expect(result.errorCode).toBe("billing_limit_reached");
     expect(result.errorHttpStatus).toBe(429);
+    // The infra evidence survives the executor hop untouched.
+    expect(result.errorInfra).toEqual(PROVIDER_DIED.errorInfra);
   });
 
   it("carries the same attribution off a widget FOLLOW-UP turn", async () => {
@@ -141,6 +148,7 @@ describe("a classified provider failure reaches the runner", () => {
     expect(result.iterationError).toBe("credit balance too low");
     expect(result.errorSource).toBe("model");
     expect(result.errorHttpStatus).toBe(429);
+    expect(result.errorInfra).toEqual(PROVIDER_DIED.errorInfra);
   });
 
   it("says nothing when the engine classified nothing", async () => {
@@ -155,6 +163,7 @@ describe("a classified provider failure reaches the runner", () => {
     expect(result.iterationError).toBe("something went wrong");
     expect(result.errorSource).toBeUndefined();
     expect(result.errorCode).toBeUndefined();
+    expect(result.errorInfra).toBeUndefined();
   });
 
   it("says nothing about a turn that did not fail", async () => {
@@ -179,6 +188,11 @@ describe("the hosted bridge does not drop what the engine classified", () => {
       errorSource: "model",
       errorCode: "billing_limit_reached",
       errorHttpStatus: 429,
+      errorInfra: {
+        source: "backend_model",
+        code: "billing_limit_reached",
+        httpStatus: 429,
+      },
     });
 
     const handlers = buildHostedStepHandlers({
@@ -208,5 +222,10 @@ describe("the hosted bridge does not drop what the engine classified", () => {
     expect(outcome.errorSource).toBe("model");
     expect(outcome.errorCode).toBe("billing_limit_reached");
     expect(outcome.errorHttpStatus).toBe(429);
+    expect(outcome.errorInfra).toEqual({
+      source: "backend_model",
+      code: "billing_limit_reached",
+      httpStatus: 429,
+    });
   });
 });

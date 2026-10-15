@@ -28,11 +28,12 @@ export function LocalHarnessComposerNotice({
   onSetup?: () => void;
 }) {
   const { phase, runtimeStatus, statusFetchFailed } = controller;
+  const name = controller.harnessName ?? "Claude Code";
 
   if ((phase === "needs-consent" || phase === "needs-workspace") && onSetup) {
     return (
       <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs" role="status">
-        <span>Set up Claude Code on this machine. It can run commands in your workspace for chats, evals and swarms.</span>
+        <span>Set up {name} on this machine. It can run commands in your workspace for chats, evals and swarms.</span>
         <Button size="sm" type="button" variant="outline" onClick={onSetup}>Set up</Button>
       </div>
     );
@@ -52,7 +53,7 @@ export function LocalHarnessComposerNotice({
         <span>
           {percent === undefined
             ? "Verifying…"
-            : `Setting up Claude Code · ${percent}%`}
+            : `Setting up ${name} · ${percent}%`}
         </span>
         {/* A failed status READ is not a failed install: the download is very
             likely still going, and telling the user it failed sends them to
@@ -75,7 +76,7 @@ export function LocalHarnessComposerNotice({
         aria-live="polite"
       >
         <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-        Preparing Claude Code on this machine…
+        Preparing {name} on this machine…
       </div>
     );
   }
@@ -91,7 +92,7 @@ export function LocalHarnessComposerNotice({
           <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
           {phase === "interrupted"
             ? "Setup was interrupted. Retry to continue."
-            : (controller.reason ?? "Claude Code setup didn't finish.")}
+            : (controller.reason ?? `${name} setup didn't finish.`)}
         </span>
         {/* Explicit, always. Nothing retries a 200 MB download on a poll, a
             reload or a remount. */}
@@ -119,7 +120,7 @@ export function LocalHarnessComposerNotice({
         aria-live="polite"
       >
         {controller.reason ??
-          "This Inspector can't run Claude Code on this machine."}
+          `This Inspector can't run ${name} on this machine.`}
       </div>
     );
   }
@@ -134,7 +135,7 @@ export function LocalHarnessComposerNotice({
       >
         <span>
           {controller.reason ??
-            "Sign in to run Claude Code on this machine."}
+            `Sign in to run ${name} on this machine.`}
         </span>
       </div>
     );

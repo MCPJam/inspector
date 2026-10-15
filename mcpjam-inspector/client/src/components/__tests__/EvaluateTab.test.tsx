@@ -66,7 +66,10 @@ vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({ hosts: [], isLoading: false }),
 }));
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useAction: () => vi.fn(),
   useConvexAuth: () => ({
     isAuthenticated: mocks.isAuthenticated,
@@ -1009,6 +1012,17 @@ describe("EvaluateTab", () => {
         { replace: true },
       ),
     );
+  });
+
+  it("rejects a case sheet launch when the quota guard refuses it", async () => {
+    mocks.evalIterationQuota = { used: 25, allowed: 25, resetsAt: Date.UTC(2026, 5, 2), windowKind: "day" };
+    render(<EvaluateTab projectId="ws-1" />);
+    const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0] as any;
+    await act(async () => {
+      await expect(props.onRerun(props.suite, { caseIds: ["case-a"], throwOnFailure: true }))
+        .rejects.toThrow("Eval iteration limit reached.");
+    });
+    expect(mocks.handleRerun).not.toHaveBeenCalled();
   });
 
   it("passes eval iteration limit disabled state into the suite view", () => {

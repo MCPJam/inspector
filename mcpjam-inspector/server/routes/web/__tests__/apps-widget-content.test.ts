@@ -99,7 +99,7 @@ function mockResource(opts: {
   });
   if (opts.listResourcesRejects) {
     managerState.listResources.mockRejectedValue(
-      new Error("Method not found: resources/list")
+      new Error("Method not found: resources/list"),
     );
   } else {
     managerState.listResources.mockResolvedValue({
@@ -115,7 +115,7 @@ function mockResource(opts: {
 
 async function postWidgetContent(
   app: Hono,
-  cspMode: "permissive" | "widget-declared" = "widget-declared"
+  cspMode: "permissive" | "widget-declared" = "widget-declared",
 ) {
   return app.request("/api/web/apps/mcp-apps/widget-content", {
     method: "POST",
@@ -441,6 +441,23 @@ describe("hosted /widget-content — malformed declarations", () => {
     expect(body.csp).toEqual({ connectDomains: ["https://mcpjam.com"] });
   });
 
+  it("forwards checked resource display hints before initialization", async () => {
+    mockResource({
+      contentMeta: {
+        "openai/ui": {
+          preferredDisplayMode: "fullscreen",
+          availableDisplayModes: ["inline", "fullscreen"],
+        },
+      },
+    });
+    const response = await postWidgetContent(makeApp());
+    expect(response.status).toBe(200);
+    expect((await response.json()).resourceDisplayHints).toEqual({
+      preferredDisplayMode: "fullscreen",
+      availableDisplayModes: ["inline", "fullscreen"],
+    });
+  });
+
   it("ignores a non-boolean prefersBorder", async () => {
     mockResource({ contentMeta: { ui: { prefersBorder: "yes" } } });
     const res = await postWidgetContent(makeApp());
@@ -541,7 +558,7 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
         return {
           resources: [{ uri: RESOURCE_URI, _meta: { ui: { csp: ESM_CSP } } }],
         };
-      }
+      },
     );
 
     const res = await postWidgetContent(makeApp(), "permissive");
@@ -637,7 +654,7 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
         return {
           resources: [{ uri: RESOURCE_URI, _meta: { ui: { csp: ESM_CSP } } }],
         };
-      }
+      },
     );
 
     const res = await postWidgetContent(makeApp(), "permissive");

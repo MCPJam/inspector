@@ -11,9 +11,56 @@ export const MCP_IMAGE_MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 export const MCP_LINKED_RESOURCE_MAX_READS = 16;
 export const MCP_PRESERVE_RAW_RESULT_FOR_UI = "_mcpjamPreserveRawResultForUi";
 
+/**
+ * An image the model sees, as a tool-result content part: AI SDK 7's
+ * canonical `file` part with inline base64 data.
+ *
+ * Not the older `media` part. AI SDK 7 removed it: a `media` part fails its
+ * `ModelMessage` schema and the whole model call throws "Invalid prompt".
+ * Persisted traces still hold `media` (and `image-data`) parts, so read
+ * image parts with {@link readModelOutputImage}, never by `type`.
+ */
+export type McpModelOutputImagePart = {
+  type: "file";
+  mediaType: string;
+  data: { type: "data"; data: string };
+};
+
 export type McpModelOutputContentPart =
-  | { type: "text"; text: string }
-  | { type: "media"; data: string; mediaType: string };
+  { type: "text"; text: string } | McpModelOutputImagePart;
+
+/**
+ * The base64 image a model-output content part carries, in every shape a
+ * tool-result image has been written in: AI SDK 7's `file` part (what this
+ * module emits), and the `image-data`, `file-data`, and `media` parts that
+ * earlier versions emitted and stored traces still hold. Undefined for
+ * anything else, including a `file` part that points at a URL or reference.
+ */
+export function readModelOutputImage(
+  part: unknown
+): { data: string; mediaType: string } | undefined {
+  if (!part || typeof part !== "object" || Array.isArray(part)) {
+    return undefined;
+  }
+  const record = part as Record<string, unknown>;
+  if (typeof record.mediaType !== "string") return undefined;
+  if (!record.mediaType.startsWith("image/")) return undefined;
+  if (record.type === "file") {
+    const data = record.data as Record<string, unknown> | undefined;
+    return data && data.type === "data" && typeof data.data === "string"
+      ? { data: data.data, mediaType: record.mediaType }
+      : undefined;
+  }
+  if (
+    (record.type === "image-data" ||
+      record.type === "file-data" ||
+      record.type === "media") &&
+    typeof record.data === "string"
+  ) {
+    return { data: record.data, mediaType: record.mediaType };
+  }
+  return undefined;
+}
 
 export type McpModelOutputContent = {
   type: "content";
@@ -244,9 +291,9 @@ function mapImageData(
   budget.imageCount += 1;
 
   return {
-    type: "media",
-    data: validated.normalized,
+    type: "file",
     mediaType: mimeType,
+    data: { type: "data", data: validated.normalized },
   };
 }
 

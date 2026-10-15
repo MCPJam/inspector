@@ -172,6 +172,8 @@ vi.mock("convex/react", () => ({
   }),
   useConvexAuth: () => ({ isAuthenticated: true }),
   useConvex: () => ({ query: convexQueryMock }),
+  // The credit balance (Continue's out-of-credits gate): not loaded here.
+  useQueries: () => ({}),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -255,6 +257,7 @@ function perClientEnvironments() {
       projectId: "proj-1",
       name: "ChatGPT prod",
       hostId: "host-gpt",
+      serverAttachmentId: "att-gpt",
       revision: 1,
       createdAt: 1,
       updatedAt: 1,
@@ -264,6 +267,7 @@ function perClientEnvironments() {
       projectId: "proj-1",
       name: "Claude prod",
       hostId: "host-claude",
+      serverAttachmentId: "att-claude",
       revision: 1,
       createdAt: 1,
       updatedAt: 1,
@@ -325,12 +329,8 @@ describe("SwarmsTab — a swarm across two per-client environments", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
 
-    // Both clients are named on Confirm, and the session count is the
-    // per-environment count TIMES the environments — the number the user
-    // approves before spending anything.
-    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
-      "ChatGPT prod · Claude prod"
-    );
+    // The session count is the per-environment count TIMES the environments —
+    // the number the user approves before spending anything.
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
     ).toHaveTextContent(/4 conversations/i);

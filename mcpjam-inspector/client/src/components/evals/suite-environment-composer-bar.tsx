@@ -57,7 +57,7 @@ import {
 import { useHostList } from "@/hooks/useClients";
 import { ServerPicker } from "@/components/hosts/server-picker";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import {
   useModelMatrixCapability,
   useProjectEnvironments,
@@ -235,14 +235,15 @@ function EnvironmentModeBar({
     ? 0
     : attachedIds.length - attachedEnvironments.length;
   const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
+  // The image slot rides `sandbox-images-enabled`, not `computers-enabled`.
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const modelMatrix = useModelMatrixCapability(projectId);
   const modelsEnabled = modelMatrix === true;
   const seeded = useMemo<EnvironmentComposerState>(() => {
     if (attachedIds.length > 0) {
       return composerStateFromEnvironments(attachedEnvironments, {
         skillsEnabled,
-        computersEnabled,
+        computersEnabled: sandboxImagesEnabled,
         modelsEnabled,
       });
     }
@@ -260,15 +261,15 @@ function EnvironmentModeBar({
         skillSelection: null,
         computerEnvironmentId:
           suite.environment?.computerEnvironmentId ?? null,
-        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
+        modelSelection: { includeClientDefaults: true, explicitTargets: [] },
       },
       customized: false,
     };
   }, [
     attachedEnvironments,
     attachedIds.length,
-    computersEnabled,
     modelsEnabled,
+    sandboxImagesEnabled,
     skillsEnabled,
     suite.environment?.computerEnvironmentId,
     suite.hostAttachments,
@@ -290,7 +291,7 @@ function EnvironmentModeBar({
   const collapsesByHost =
     environmentsExceedOneStack(attachedEnvironments, {
       skillsEnabled,
-      computersEnabled,
+      computersEnabled: sandboxImagesEnabled,
       modelsEnabled,
     }) ||
     (seeded.customized && environmentsCarryPluginPins(attachedEnvironments)) ||
@@ -558,7 +559,7 @@ function LegacyModeBar({
    * here (there is no suite-level skills axis), so they stay hidden until the
    * suite is in environment mode.
    */
-  const computersEnabled = useComputersEnabled();
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const handleSandboxImageChange = useCallback(
     async (next: string | null) => {
       try {
@@ -660,7 +661,10 @@ function LegacyModeBar({
         )}
       </div>
 
-      {computersEnabled && !omitComputers && editable && suite.projectId ? (
+      {sandboxImagesEnabled &&
+      !omitComputers &&
+      editable &&
+      suite.projectId ? (
         <div className="shrink-0">
           <SandboxImagePill
             projectId={suite.projectId}

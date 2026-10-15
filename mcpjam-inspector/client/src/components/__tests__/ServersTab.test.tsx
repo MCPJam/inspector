@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import {
   render as rtlRender,
   screen,
@@ -152,11 +152,12 @@ const mockUseRegistryServers = vi.fn();
 const mockUseProjectBillingGate = vi.fn();
 const mockMoveServerToProject = vi.fn();
 
+const mockEnabledFlags = new Set<string>();
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
-  useFeatureFlagEnabled: () => false,
+  useFeatureFlagEnabled: (flag: string) => mockEnabledFlags.has(flag),
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
@@ -186,14 +187,18 @@ vi.mock("@/lib/billing-gates", async (importOriginal) => {
   };
 });
 
-vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({
-    isAuthenticated: mockIsAuthenticated,
-  }),
-  useQuery: (...args: unknown[]) => mockUseQuery(...args),
-  useMutation: () => vi.fn(),
-  useAction: () => vi.fn(),
-}));
+// Soft reads (`useSoftQuery`, e.g. the active-plugins read) go through
+// `useQueries`; `withUseQueries` answers them from the same `mockUseQuery`.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
+    useConvexAuth: () => ({
+      isAuthenticated: mockIsAuthenticated,
+    }),
+    useQuery: (...args: unknown[]) => mockUseQuery(...args),
+    useMutation: () => vi.fn(),
+    useAction: () => vi.fn(),
+  })
+);
 
 vi.mock("@/hooks/useRegistryServers", async (importOriginal) => {
   const actual = await importOriginal<
@@ -319,12 +324,14 @@ vi.mock("../connection/ServerDetailModal", () => ({
   ServerDetailModal: ({
     isOpen,
     server,
+    plugin,
     defaultTab,
     onSubmit,
     onClose,
   }: {
     isOpen: boolean;
     server: ServerWithName;
+    plugin?: { pluginId: string; serverName: string };
     defaultTab: string;
     onSubmit: (
       formData: ServerFormData,
@@ -332,7 +339,12 @@ vi.mock("../connection/ServerDetailModal", () => ({
     ) => Promise<ServerUpdateResult>;
     onClose: () => void;
   }) =>
-    isOpen ? (
+    isOpen && plugin ? (
+      <div role="dialog" data-testid="plugin-server-modal">
+        {plugin.serverName}
+        <button onClick={onClose}>Close Modal</button>
+      </div>
+    ) : isOpen ? (
       <div role="dialog">
         <div data-testid="modal-server-name">{server.name}</div>
         <div data-testid="modal-connection-status">
@@ -1698,5 +1710,177 @@ describe("ServersTab shared detail modal", () => {
         projectId: "jh7abc123def456ghi789jk",
       });
     });
+  });
+});
+
+describe("ServersTab installed plugins", () => {
+  const server = createServer();
+  const projectServers = { [server.name]: server };
+  const projects = {
+    "project-1": {
+      ...createProject(projectServers),
+      sharedProjectId: "convex-project-1",
+    },
+  };
+  const props = {
+    projectServers,
+    onConnect: vi.fn(),
+    onDisconnect: vi.fn(),
+    onReconnect: vi.fn().mockResolvedValue(undefined),
+    onUpdate: vi.fn(),
+    onRemove: vi.fn(),
+    onSaveServerConfig: vi.fn().mockResolvedValue(true),
+    projects,
+    activeProjectId: "project-1",
+    organizationId: "org-1",
+    isBillingContextPending: false,
+    isLoadingProjects: false,
+  };
+  const plugin = {
+    pluginId: "pl_bits",
+    projectId: "convex-project-1",
+    name: "bits-and-bolts",
+    displayName: "Bits & Bolts",
+    enabled: true,
+    activeVersionId: "pv_1",
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    mockEnabledFlags.clear();
+    mockEnabledFlags.add("plugins-enabled");
+    mockIsAuthenticated = true;
+    mockViewProjectServers = undefined;
+    mockUseProjectBillingGate.mockImplementation(() => ({
+      decision: null,
+      isLoading: false,
+      isDenied: false,
+      denialMessage: null,
+    }));
+    mockUseQuery.mockImplementation((name: unknown, args: unknown) => {
+      if (args === "skip") return undefined;
+      switch (name) {
+        case "plugins:listProjectPlugins":
+          return [plugin];
+        case "plugins:getPluginVersion":
+          return {
+            pluginVersionId: "pv_1",
+            servers: [
+              {
+                componentId: "c_1",
+                componentKey: "server:cad",
+                declaredName: "cad",
+                placement: "remote",
+                authenticationPolicy: "on_install",
+                materializedServerId: "s_cad",
+              },
+            ],
+            skills: [],
+          };
+        case "plugins:resolveActivePlugins":
+          return {
+            enabled: true,
+            plugins: [
+              {
+                pluginId: "pl_bits",
+                pluginVersionId: "pv_1",
+                name: "bits-and-bolts",
+                displayName: "Bits & Bolts",
+                status: "active",
+                servers: [],
+                skills: [],
+              },
+            ],
+          };
+        default:
+          return undefined;
+      }
+    });
+  });
+
+  afterAll(() => {
+    mockEnabledFlags.clear();
+    mockUseQuery.mockImplementation(() => undefined);
+  });
+
+  it("renders a plugin's server as a server card beside the project's own", () => {
+    render(<ServersTab {...props} />);
+
+    const card = screen.getByTestId("plugin-server-card");
+    expect(card).toHaveTextContent("cad");
+    expect(card).toHaveTextContent("from Bits & Bolts");
+    expect(screen.getByTestId("plugin-server-status")).toHaveTextContent(
+      "Active"
+    );
+    // The plugin group card is gone.
+    expect(screen.queryByTestId("plugins-section")).toBeNull();
+
+    fireEvent.click(card);
+    expect(screen.getByTestId("plugin-server-modal")).toHaveTextContent("cad");
+  });
+
+  it("opens the first server's Settings from a plugin permalink", () => {
+    render(<ServersTab {...props} routePluginId="pl_bits" />);
+    expect(screen.getByTestId("plugin-server-modal")).toHaveTextContent("cad");
+  });
+
+  it("says a permalinked plugin that is gone is not available", () => {
+    render(<ServersTab {...props} routePluginId="pl_gone" />);
+    expect(
+      screen.getByTestId("plugin-permalink-unavailable")
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("plugin-server-modal")).toBeNull();
+  });
+
+  it("keeps an installed plugin with no active version reachable, even with no other servers", () => {
+    const installOnly = { ...plugin, activeVersionId: undefined };
+    mockUseQuery.mockImplementation((name: unknown, args: unknown) => {
+      if (args === "skip") return undefined;
+      switch (name) {
+        case "plugins:listProjectPlugins":
+          return [installOnly];
+        case "plugins:resolveActivePlugins":
+          return {
+            enabled: true,
+            plugins: [
+              {
+                pluginId: "pl_bits",
+                pluginVersionId: null,
+                name: "bits-and-bolts",
+                displayName: "Bits & Bolts",
+                status: "skipped",
+                reason: "no_active_version",
+                servers: [],
+                skills: [],
+              },
+            ],
+          };
+        default:
+          return undefined;
+      }
+    });
+    render(<ServersTab {...props} projectServers={{}} />);
+
+    expect(screen.queryByTestId("plugin-server-card")).toBeNull();
+    const card = screen.getByTestId("plugin-card");
+    expect(card).toHaveTextContent("Bits & Bolts");
+    expect(screen.getByTestId("plugin-server-status")).toHaveTextContent(
+      "Not activated"
+    );
+
+    // Its Settings: where a version is activated or the plugin uninstalled.
+    fireEvent.click(card);
+    expect(screen.getByTestId("plugin-server-modal")).toHaveTextContent(
+      "Bits & Bolts"
+    );
+  });
+
+  it("shows no plugin cards outside the plugins rollout", () => {
+    mockEnabledFlags.clear();
+    render(<ServersTab {...props} />);
+    expect(screen.queryByTestId("plugin-server-card")).toBeNull();
   });
 });

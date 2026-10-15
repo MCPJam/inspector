@@ -8,6 +8,11 @@
  * one is a docs-breaking change.
  */
 
+import {
+  ORG_POLICY_ERROR_ORIGINS,
+  orgPolicyCatalogEntries,
+} from "./org-policy-catalog.js";
+
 /**
  * Who has to act — NOT a blame label.
  *
@@ -62,6 +67,9 @@ export type ErrorCatalogEntry = {
   origin?: ErrorOrigin;
 };
 
+const ORG_KEYS_CREDIT_GUIDANCE =
+  "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do, unless your organization uses its own keys for all AI features. Then they run on the organization's default AI model and its providers bill the tokens; MCPJam's fixed product fees still use credits.";
+
 const DOCS_BASE = "/troubleshooting/error-codes";
 
 /**
@@ -72,6 +80,7 @@ const DOCS_BASE = "/troubleshooting/error-codes";
  * A slug missing from this table fails the catalog test.
  */
 const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
+  "generation/invalid_output": "ambiguous",
   // --- The server answered, and the answer was the problem -----------------
   // This is a server-side error only when the wire evidence identifies the
   // server as the failing boundary. Keep protocol codes that can also be
@@ -133,6 +142,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // behaviour, so it belongs to the server being inspected — not to the
   // user's provider settings, which is what `provider/quota` claims.
   "server/rate_limited": "user_server",
+  // The MCP server under test answered with an HTTP error status. Recognized
+  // only from an MCP transport error, so the answer is the server's own.
+  "server/http_error": "user_server",
   // "Enable the required client capability in the connection's Client
   // settings" — a toggle the user owns.
   "jsonrpc/missing_required_client_capability": "user_config",
@@ -147,6 +159,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // `ambiguous` would be defensible from the wire alone — but the wire is not
   // all we have here, because MCPJam chose the pin, so the boundary is known.
   "sdk/protocol_version_pin_unsupported": "user_config",
+
+  // The organization AI-key policy's refusals (org-policy-catalog.ts).
+  ...ORG_POLICY_ERROR_ORIGINS,
 
   // --- Ours ----------------------------------------------------------------
   "sdk/not_yet_supported_in_stateless": "mcpjam",
@@ -624,7 +639,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "A corporate proxy or SSO portal intercepted the request.",
     ],
     [
-      "Allow MCPJam's egress addresses, or the address you connect from, on the server's firewall.",
+      "Allow MCPJam's egress addresses (docs.mcpjam.com/hosted/network), or the address you connect from, on the server's firewall.",
       "Open the server URL in a browser from the same network to see what answers.",
     ],
     "proxy-rejected",
@@ -834,10 +849,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the daily allowance to reset.",
-      // Named precisely because the generic advice costs people an afternoon:
-      // a swarm's generation and persona-driver calls are platform-billed and
-      // have no BYOK path, so adding a key does nothing for them.
-      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+      ORG_KEYS_CREDIT_GUIDANCE,
     ],
     "out-of-mcpjam-credits",
     "warning",
@@ -852,7 +864,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the billing period to renew.",
-      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+      ORG_KEYS_CREDIT_GUIDANCE,
     ],
     "out-of-mcpjam-credits",
     "warning",
@@ -867,7 +879,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Try a cheaper model or a shorter conversation.",
       "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
-      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+      ORG_KEYS_CREDIT_GUIDANCE,
     ],
     "out-of-mcpjam-credits",
     "warning",
@@ -908,7 +920,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
       "Wait for the allowance to reset.",
-      "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do.",
+      ORG_KEYS_CREDIT_GUIDANCE,
     ],
     "out-of-mcpjam-credits",
     "warning",
@@ -947,6 +959,21 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     "server-rate-limited",
     "warning",
   ),
+  "server/http_error": entry(
+    "server/http_error",
+    "MCP server returned an HTTP error",
+    "The MCP server answered the request with an HTTP error status.",
+    [
+      "404: the URL points at the wrong endpoint path (for example, a missing `/mcp`).",
+      "405: the endpoint does not accept MCP requests (POST).",
+      "5xx: the server hit an error of its own while handling the request.",
+    ],
+    [
+      "Check the server URL, including the MCP endpoint path.",
+      "Check the server's logs for the failed request.",
+    ],
+    "server-http-error",
+  ),
 
   "provider/empty_response": entry(
     "provider/empty_response",
@@ -955,6 +982,17 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ["The model request ended without usable content."],
     ["Rerun the affected cases. If this recurs, report it with the run details."],
     "model-empty-response",
+  ),
+
+  // --- Organization AI-key policy (org-policy-catalog.ts) ---
+  ...orgPolicyCatalogEntries(entry),
+
+  "generation/invalid_output": entry(
+    "generation/invalid_output", "Generation failed",
+    "Generation failed. Please try again.",
+    ["The generation response did not match the required format."],
+    ["Try generation again. If it keeps failing, contact support with the request ID."],
+    "generation-failed",
   ),
 
   // --- Internal / unknown ---

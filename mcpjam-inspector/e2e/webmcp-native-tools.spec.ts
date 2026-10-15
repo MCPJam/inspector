@@ -15,7 +15,8 @@
  * fails, because a silent skip there would mean the only real-browser test of
  * this feature quietly stopped running.
  */
-import { expect, test, type CDPSession, type Page } from "@playwright/test";
+import type { CDPSession, Page } from "@playwright/test";
+import { expect, test } from "./app-test";
 
 test.use({ launchOptions: { args: ["--enable-features=WebMCP"] } });
 
@@ -273,13 +274,18 @@ test("a browser agent discovers MCPJam's tools, navigates, and reads the screen 
   // reports what the user currently sees, so its answer and the browser's own
   // URL have to agree — if the agent were talking to a stale registration,
   // this is where it would show.
-  const snapshot = readResult(await agent.invoke("ui_snapshot_app", {})) as {
-    ok: boolean;
-    data: { path: string; activeTab: string };
-  };
-  expect(snapshot.ok).toBe(true);
-  expect(snapshot.data.activeTab).toBe("oauth-flow");
-  expect(new URL(page.url()).pathname).toBe(snapshot.data.path);
+  // Project hydration can canonicalize the URL while surface snapshots are
+  // collected. Re-observe until the exact path and screen agree; a stale
+  // registration that keeps returning the wrong path still fails.
+  await expect(async () => {
+    const snapshot = readResult(await agent.invoke("ui_snapshot_app", {})) as {
+      ok: boolean;
+      data: { path: string; activeTab: string };
+    };
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.data.activeTab).toBe("oauth-flow");
+    expect(new URL(page.url()).pathname).toBe(snapshot.data.path);
+  }).toPass({ timeout: 15_000 });
 
   // 6. A MALFORMED CALL gets a usable answer rather than a hang or a crash.
   const rejected = await agent.invoke("ui_navigate", {

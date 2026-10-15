@@ -7,7 +7,9 @@ import { HostPicker } from "@/components/hosts/HostPicker";
 import { ServerPicker } from "@/components/hosts/server-picker";
 import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
 import { SandboxImagePicker } from "@/components/computer/SandboxImagePicker";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
+import { ProjectEnvironmentPluginsPicker } from "./ProjectEnvironmentPluginsPicker";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -36,6 +38,7 @@ type EnvironmentDraft = {
   hostId: string | null;
   serverAttachmentId: string | null;
   skillSelection: ProjectEnvironmentSkillSelection | null;
+  pluginVersionIds: string[];
   /**
    * The environment's CREDENTIAL GRANT. Deliberately NOT flag-gated like skills
    * and sandbox images: there is no `secrets-enabled` flag, and a picker that
@@ -57,6 +60,7 @@ function draftFromEnvironment(env: ProjectEnvironmentView): EnvironmentDraft {
     hostId: env.hostId,
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
+    pluginVersionIds: env.pluginVersionIds ?? [],
     secretSelection: env.secretSelection ?? null,
     computerEnvironmentId: env.computerEnvironmentId ?? null,
   };
@@ -101,8 +105,8 @@ export function ProjectEnvironmentEditor({
   const updateEnvironment = useUpdateProjectEnvironment();
   // Double gate: the editor already sits behind `project-environments-enabled`
   // (the route); the sandbox-image section additionally requires
-  // `computers-enabled` and the skills section `skills-enabled` (both
-  // fail-closed) — so environments can launch before hosted skills/computers.
+  // `sandbox-images-enabled` and the skills section `skills-enabled` (both
+  // fail-closed) — so environments can launch before hosted skills/images.
   //
   // These flags are load-bearing for the WRITE path, not just visibility: while
   // a picker is hidden its field must be treated as if it weren't part of this
@@ -111,9 +115,14 @@ export function ProjectEnvironmentEditor({
   // API/CLI. Draft divergence alone is NOT a sufficient guard, because a flag
   // can flip false after an edit and leave a diverged value behind a vanished
   // control.
-  const computersEnabled = useComputersEnabled();
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const skillsEnabled = useSkillsEnabled();
-  const sandboxImages = useSandboxImages(computersEnabled ? projectId : null);
+  const pluginsEnabled = usePluginsEnabled();
+  const samePlugins = (a: string[], b: string[]) =>
+    [...a].sort().join("\0") === [...b].sort().join("\0");
+  const sandboxImages = useSandboxImages(
+    sandboxImagesEnabled ? projectId : null,
+  );
 
   const [draft, setDraft] = useState<EnvironmentDraft>(() =>
     environment
@@ -124,6 +133,7 @@ export function ProjectEnvironmentEditor({
           hostId: null,
           serverAttachmentId: null,
           skillSelection: null,
+          pluginVersionIds: [],
           secretSelection: null,
           computerEnvironmentId: null,
           ...initialDraft,
@@ -155,11 +165,16 @@ export function ProjectEnvironmentEditor({
           draft.skillSelection,
           environment.skillSelection ?? null,
         )) ||
+      (pluginsEnabled &&
+        !samePlugins(
+          draft.pluginVersionIds,
+          environment.pluginVersionIds ?? [],
+        )) ||
       !sameSecretSelection(
         draft.secretSelection,
         environment.secretSelection ?? null,
       ) ||
-      (computersEnabled &&
+      (sandboxImagesEnabled &&
         draft.computerEnvironmentId !==
           (environment.computerEnvironmentId ?? null))
     : trimmedName.length > 0 ||
@@ -167,8 +182,9 @@ export function ProjectEnvironmentEditor({
       draft.hostId !== null ||
       draft.serverAttachmentId !== null ||
       (skillsEnabled && draft.skillSelection !== null) ||
+      (pluginsEnabled && draft.pluginVersionIds.length > 0) ||
       draft.secretSelection !== null ||
-      (computersEnabled && draft.computerEnvironmentId !== null);
+      (sandboxImagesEnabled && draft.computerEnvironmentId !== null);
 
   // Reactivity observed someone else's edit while this draft diverged.
   const stale =
@@ -201,6 +217,7 @@ export function ProjectEnvironmentEditor({
             hostId: null,
             serverAttachmentId: null,
             skillSelection: null,
+            pluginVersionIds: [],
             // Dropped along with the rest: a grant naming the previous
             // project's secrets would be rejected at save, and holding it
             // would let a form submit ids the new project cannot resolve.
@@ -236,16 +253,19 @@ export function ProjectEnvironmentEditor({
             ? { serverAttachmentId: draft.serverAttachmentId }
             : {}),
           // Gated on the LIVE flags, not just the draft: PostHog can flip
-          // `skills-enabled` / `computers-enabled` false after the user made a
+          // `skills-enabled` / `sandbox-images-enabled` false after the user made a
           // pick, which unmounts the picker but leaves the draft value —
           // shipping it then would contradict the fail-closed contract.
           ...(skillsEnabled && draft.skillSelection
             ? { skillSelection: draft.skillSelection }
             : {}),
+          ...(pluginsEnabled && draft.pluginVersionIds.length
+            ? { pluginVersionIds: draft.pluginVersionIds }
+            : {}),
           ...(draft.secretSelection
             ? { secretSelection: draft.secretSelection }
             : {}),
-          ...(computersEnabled && draft.computerEnvironmentId
+          ...(sandboxImagesEnabled && draft.computerEnvironmentId
             ? { computerEnvironmentId: draft.computerEnvironmentId }
             : {}),
         });
@@ -287,6 +307,14 @@ export function ProjectEnvironmentEditor({
         )
           ? { skillSelection: draft.skillSelection }
           : {}),
+        ...(pluginsEnabled &&
+        !samePlugins(draft.pluginVersionIds, environment.pluginVersionIds ?? [])
+          ? {
+              pluginVersionIds: draft.pluginVersionIds.length
+                ? draft.pluginVersionIds
+                : null,
+            }
+          : {}),
         // NOT flag-gated, unlike the two fields around it — the picker is
         // always rendered, so the "hidden picker must omit the field" rule has
         // nothing to protect against here. Still tri-state: unchanged omits,
@@ -298,7 +326,7 @@ export function ProjectEnvironmentEditor({
         )
           ? { secretSelection: draft.secretSelection }
           : {}),
-        ...(computersEnabled &&
+        ...(sandboxImagesEnabled &&
         draft.computerEnvironmentId !==
           (environment.computerEnvironmentId ?? null)
           ? { computerEnvironmentId: draft.computerEnvironmentId }
@@ -426,6 +454,17 @@ export function ProjectEnvironmentEditor({
         </div>
       </div>
 
+      {pluginsEnabled ? (
+        <ProjectEnvironmentPluginsPicker
+          projectId={projectId}
+          value={draft.pluginVersionIds}
+          onChange={(pluginVersionIds) =>
+            setDraft((d) => ({ ...d, pluginVersionIds }))
+          }
+          disabled={readOnly}
+        />
+      ) : null}
+
       {skillsEnabled ? (
         <div className="space-y-1.5">
           <Label className="text-xs">Skills</Label>
@@ -452,7 +491,7 @@ export function ProjectEnvironmentEditor({
         />
       </div>
 
-      {computersEnabled ? (
+      {sandboxImagesEnabled ? (
         <div className="space-y-1.5">
           <Label
             htmlFor="project-environment-sandbox-image"

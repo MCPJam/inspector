@@ -9,8 +9,17 @@ function Slider({
   value,
   min = 0,
   max = 100,
+  thumbProps,
+  children,
   ...props
-}: React.ComponentProps<typeof SliderPrimitive.Root>) {
+}: React.ComponentProps<typeof SliderPrimitive.Root> & {
+  /**
+   * Spread onto every thumb (the element with `role="slider"`): its
+   * `aria-label` / `aria-valuetext`, a test id. Radix does not carry the
+   * root's label to the thumb.
+   */
+  thumbProps?: React.ComponentProps<typeof SliderPrimitive.Thumb>;
+}) {
   const _values = React.useMemo(
     () =>
       Array.isArray(value)
@@ -47,11 +56,17 @@ function Slider({
           )}
         />
       </SliderPrimitive.Track>
+      {/* Decorations over the track and under the thumbs (step marks). */}
+      {children}
       {Array.from({ length: _values.length }, (_, index) => (
         <SliderPrimitive.Thumb
           data-slot="slider-thumb"
           key={index}
-          className="border-primary bg-background ring-ring/50 block size-4 shrink-0 rounded-full border shadow-sm transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
+          {...thumbProps}
+          className={cn(
+            "border-primary bg-background ring-ring/50 block size-4 shrink-0 rounded-full border shadow-sm transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50",
+            thumbProps?.className,
+          )}
         />
       ))}
     </SliderPrimitive.Root>

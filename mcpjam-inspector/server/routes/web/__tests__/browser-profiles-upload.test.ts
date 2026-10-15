@@ -315,10 +315,13 @@ describe("POST /api/web/browser-profiles/upload", () => {
 
     const res = await upload(makeApp(), new Uint8Array([1, 2, 3]));
 
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({
       code: "FEATURE_NOT_SUPPORTED",
-      message: "Saving browser profiles isn't available on this server.",
+      details: {
+        reason: "FEATURE_REQUIRES_HOSTED",
+        feature: "Saving browser profiles",
+      },
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(streamedBytes).toBeNull();

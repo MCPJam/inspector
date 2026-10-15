@@ -79,6 +79,11 @@ import {
   type McpToolOptionsInput,
 } from "../mcp-tool-options.js";
 import { scopeStepUpInfoFromToolError } from "../insufficient-scope-step-up.js";
+import {
+  wrapModelToolsets,
+  type ModelToolExecutor,
+} from "../model-tool-executor.js";
+import type { ToolSet } from "ai";
 import type { HarnessScopeStepUpEvent } from "./harness-scope-step-up.js";
 import type { RuntimePluginVersion } from "../../services/environments/effective-capabilities.js";
 
@@ -138,6 +143,15 @@ export async function projectSelectedMcpServersAsHostTools(args: {
    * does. Omitted ⇒ the raw result is simply not retained.
    */
   onRawResult?: (args: { toolCallId: string; raw: unknown }) => void;
+  /**
+   * The per-call executor the emulated engine wraps every MCP tool with
+   * (`wrapModelToolsets`): OpenAI plugin forms and owned model Apps. Applied
+   * INNERMOST, around the manager's own `execute`, so it only ever runs a
+   * call the policy gate and the harness's approval already let through, and
+   * the raw result it returns (an App marker included) is what `onRawResult`
+   * hands the UI. Omitted ⇒ the manager's tool is used as is.
+   */
+  executor?: ModelToolExecutor;
   /**
    * The HOST-DERIVED tool-construction inputs, resolved by the caller.
    *
@@ -212,12 +226,21 @@ export async function projectSelectedMcpServersAsHostTools(args: {
     // …and reuse it under the HOST's options, not the SDK's defaults. The
     // no-options overload is kept for a default turn so those tools stay
     // byte-identical to what this projection produced before.
+    //
+    // A per-call executor wraps the manager's tools with the emulated
+    // engine's own wrapper (`wrapModelToolsets`; before the merge on an
+    // account-routed server, as the emulated engine does), so it only runs a
+    // call the policy gate and the harness's own approval let through, and
+    // its raw result is what `onRawResult` keeps.
     const group = (args.connectionsByServerId ?? getManagerConnections(args.manager as MCPClientManager))?.[serverId];
     const serverTools = group?.length
       ? mergeConnectionToolsets(
-          await (args.manager as MCPClientManager).getToolsForAiSdkByServer(
-            group.map((c) => c.key),
-            toolOptions,
+          wrapModelToolsets(
+            await (args.manager as MCPClientManager).getToolsForAiSdkByServer(
+              group.map((c) => c.key),
+              toolOptions,
+            ),
+            args.executor,
           ),
           { [serverId]: group },
           { snapshot: new Map(group.map((c) => [c.connectionId, c.key])) },
@@ -225,6 +248,7 @@ export async function projectSelectedMcpServersAsHostTools(args: {
       : toolOptions
       ? await args.manager.getToolsForAiSdk([serverId], toolOptions)
       : await args.manager.getToolsForAiSdk([serverId]);
+    const perToolExecutor = group?.length ? undefined : args.executor;
     const snapshot = args.toolPolicy?.[serverId];
     for (const [toolName, tool] of Object.entries(serverTools)) {
       // Layered inward-out, and the order is load-bearing:
@@ -235,13 +259,28 @@ export async function projectSelectedMcpServersAsHostTools(args: {
       //  - the policy gate is OUTERMOST, so a denied call short-circuits to that
       //    envelope without entering the observer (a blocked call reaches no
       //    server and so can raise no scope challenge).
+      //  - a per-call executor sits INSIDE the projection (its result, App
+      //    marker included, is the raw one), and the scope observer inside
+      //    it: the executor reports a dispatched error as an unknown outcome,
+      //    and the observer must still see the server's own challenge.
       // With no layer in force the manager's own tool object is passed through
       // by IDENTITY, keeping exactly one execution path for an MCP call.
+      let inner: unknown = tool;
+      if (perToolExecutor) {
+        if (args.onScopeStepUpChallenge)
+          inner = withScopeStepUpObserver({
+            tool: inner,
+            serverId,
+            toolName,
+            onChallenge: args.onScopeStepUpChallenge,
+          });
+        inner = withExecutor(serverId, toolName, inner, perToolExecutor);
+      }
       let projected: unknown = withModelOutputProjection({
-        tool,
+        tool: inner,
         ...(args.onRawResult ? { onRawResult: args.onRawResult } : {}),
       });
-      if (args.onScopeStepUpChallenge) {
+      if (args.onScopeStepUpChallenge && !perToolExecutor) {
         projected = withScopeStepUpObserver({
           tool: projected,
           serverId,
@@ -355,6 +394,19 @@ function unwrapToolResultOutput(modelOutput: unknown, raw: unknown): unknown {
     return envelope.value;
   }
   return modelOutput;
+}
+
+/** One manager tool through the emulated engine's own per-call wrapper. */
+function withExecutor(
+  serverId: string,
+  toolName: string,
+  tool: unknown,
+  executor: ModelToolExecutor,
+): unknown {
+  return wrapModelToolsets(
+    { [serverId]: { [toolName]: tool } as unknown as ToolSet },
+    executor,
+  )[serverId]![toolName];
 }
 
 /**

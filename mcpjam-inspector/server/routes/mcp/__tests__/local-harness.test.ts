@@ -1,9 +1,11 @@
-const accountRollout = vi.hoisted(() => vi.fn(async () => true));
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const accountRollout = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
+const offConsent = vi.hoisted(() => ({ acknowledge: vi.fn(async () => ({})), read: vi.fn(async () => null as any), member: vi.fn(async () => ({})) }));
+vi.mock("../../../utils/harness/local/authorization.js", async importOriginal => ({ ...await importOriginal<typeof import("../../../utils/harness/local/authorization.js")>(), readLocalHarnessAuthorization: offConsent.read, acknowledgeLocalHarnessAutoApprove: offConsent.acknowledge, updateAuthorizedWorkspace: vi.fn(async () => {}) }));
 vi.mock("../../../utils/harness/local/readiness.js", async importOriginal => ({
-  ...await importOriginal<typeof import("../../../utils/harness/local/readiness.js")>(), localHarnessAccountEnabled: accountRollout,
+  ...await importOriginal<typeof import("../../../utils/harness/local/readiness.js")>(), localHarnessAccountEnabled: accountRollout, verifyLocalHarnessMember: offConsent.member,
 }));
 import { Hono } from "hono";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The local-harness control routes' CONTRACTS.
@@ -137,7 +139,7 @@ vi.mock("../../../middleware/require-verified-auth.js", () => ({
     next(),
 }));
 vi.mock("../../../middleware/origin-validation.js", () => ({
-  isAllowedRequestOrigin: () => true,
+  isAllowedRequestOrigin: (origin: string | undefined) => Boolean(origin?.startsWith("http://localhost")),
 }));
 
 import localHarness from "../local-harness.js";
@@ -159,6 +161,9 @@ const READY_STATUS = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  offConsent.read.mockResolvedValue(null);
+  offConsent.member.mockResolvedValue({});
+  offConsent.acknowledge.mockResolvedValue({});
   verifyAuthKitTokenMock.mockResolvedValue({ sub: "user_1" });
   readRuntimeInstallStatusMock.mockResolvedValue(READY_STATUS);
   readVerifiedRuntimeStatusMock.mockResolvedValue(READY_STATUS);
@@ -561,5 +566,127 @@ describe("POST /consent/grant", () => {
     );
     expect(response.status).toBe(409);
     expect(grantLocalHarnessConsentMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("each local harness is addressed by its own id", () => {
+  it("reports availability, rollout and the runtime for the harness asked about", async () => {
+    const response = await createApp().request(
+      "/api/mcp/local-harness/availability?harnessId=codex",
+      { headers: AUTH },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ harnessId: "codex" });
+    expect(readRuntimeInstallStatusMock).toHaveBeenCalledWith({ harnessId: "codex" });
+  });
+
+  it("keeps Claude Code as the meaning of a request that names no harness", async () => {
+    const response = await createApp().request(
+      "/api/mcp/local-harness/availability",
+      { headers: AUTH },
+    );
+    expect(await response.json()).toMatchObject({ harnessId: "claude-code" });
+    expect(readRuntimeInstallStatusMock).toHaveBeenCalledWith({ harnessId: "claude-code" });
+  });
+
+  it("refuses a harness this build has no local runtime for, rather than defaulting", async () => {
+    for (const [path, init] of [
+      ["/api/mcp/local-harness/availability?harnessId=cursor", { headers: AUTH }],
+      ["/api/mcp/local-harness/runtime/install", { method: "POST", headers: AUTH, body: JSON.stringify({ harnessId: "__proto__" }) }],
+    ] as const) {
+      const response = await createApp().request(path, init);
+      expect(response.status).toBe(400);
+    }
+    expect(startRuntimeInstallMock).not.toHaveBeenCalled();
+  });
+
+  it("installs the named harness's pack and points its poll at that harness", async () => {
+    startRuntimeInstallMock.mockResolvedValue({
+      kind: "started",
+      attemptId: "att_codex",
+      status: { state: "downloading", packVersion: "1.0.0", percent: 0 },
+    });
+    const response = await createApp().request(
+      "/api/mcp/local-harness/runtime/install",
+      { method: "POST", headers: AUTH, body: JSON.stringify({ harnessId: "codex" }) },
+    );
+    expect(response.status).toBe(202);
+    expect(startRuntimeInstallMock).toHaveBeenCalledWith(expect.objectContaining({ harnessId: "codex" }));
+    expect(response.headers.get("Location")).toBe("/api/mcp/local-harness/runtime/status?harnessId=codex");
+  });
+
+  it("binds consent to the harness it was given for, never to Claude Code by default", async () => {
+    const response = await createApp().request(
+      "/api/mcp/local-harness/consent/grant",
+      {
+        method: "POST",
+        headers: AUTH,
+        body: JSON.stringify({ harnessId: "codex", projectId: "project-1", workspaceGrantId: "ws_1" }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(grantLocalHarnessConsentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ harnessId: "codex" }),
+      expect.anything(),
+    );
+    expect(await response.json()).toMatchObject({ target: { harnessId: "codex" } });
+  });
+
+  it("checks the named harness's own rollout before any install or consent", async () => {
+    accountRollout.mockImplementation(async (...args: unknown[]) => args[2] !== "codex");
+    const response = await createApp().request(
+      "/api/mcp/local-harness/runtime/install",
+      { method: "POST", headers: AUTH, body: JSON.stringify({ harnessId: "codex" }) },
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining("Local Codex") });
+    accountRollout.mockImplementation(async () => true);
+  });
+
+  it("gates a POST on the harness its body names, whatever the query says", async () => {
+    // The gate and the handler must read one id: a query naming a harness
+    // that IS rolled out cannot carry a body acting on one that is not.
+    accountRollout.mockImplementation(async (...args: unknown[]) => args[2] !== "codex");
+    try {
+      for (const path of ["runtime/install", "consent/grant", "workspace-grant"]) {
+        const response = await createApp().request(
+          `/api/mcp/local-harness/${path}?harnessId=claude-code`,
+          { method: "POST", headers: AUTH, body: JSON.stringify({ harnessId: "codex" }) },
+        );
+        expect(response.status, path).toBe(403);
+        expect(accountRollout).toHaveBeenLastCalledWith(expect.anything(), undefined, "codex");
+      }
+    } finally {
+      accountRollout.mockImplementation(async () => true);
+    }
+  });
+});
+
+describe("local Off consent", () => {
+  const request = (body: unknown, origin = "http://localhost:6274") => createApp().request("/api/mcp/local-harness/consent/auto-approve", { method: "POST", headers: { ...AUTH, Origin: origin }, body: JSON.stringify(body) });
+  it("records consent using only the verified actor and machine", async () => {
+    const response = await request({ projectId: "project", harnessId: "claude-code", userId: "other", machineId: "other" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ autoApproveAcknowledged: true });
+    expect(offConsent.acknowledge).toHaveBeenCalledExactlyOnceWith({ userId: "authkit:user_1", machineId: "mach_1", projectId: "project", harnessId: "claude-code" });
+    expect(grantLocalHarnessConsentMock).not.toHaveBeenCalled();
+    expect(startRuntimeInstallMock).not.toHaveBeenCalled();
+  });
+  it.each([{}, { projectId: "p", harnessId: "cursor" }])("rejects unsupported consent input %j", async body => {
+    expect((await request(body)).status).toBe(400);
+    expect(offConsent.acknowledge).not.toHaveBeenCalled();
+  });
+  it("rejects a foreign origin and unauthorized membership", async () => {
+    expect((await request({ projectId: "project", harnessId: "claude-code" }, "https://example.com")).status).toBe(403);
+    expect(offConsent.acknowledge).not.toHaveBeenCalled();
+    offConsent.member.mockRejectedValueOnce(new Error("Project membership is required"));
+    expect((await request({ projectId: "project", harnessId: "claude-code" })).status).toBe(409);
+    expect(offConsent.acknowledge).not.toHaveBeenCalled();
+  });
+  it("returns project and harness scoped acknowledgement on availability", async () => {
+    offConsent.read.mockResolvedValue({ autoApproveAcknowledgedAt: "2026-10-04T00:00:00.000Z" });
+    const response = await createApp().request("/api/mcp/local-harness/availability?projectId=project&harnessId=claude-code", { headers: AUTH });
+    expect(await response.json()).toMatchObject({ autoApproveAcknowledged: true });
+    expect(offConsent.read).toHaveBeenCalledWith("authkit:user_1", "mach_1", "project", "claude-code");
   });
 });

@@ -13,6 +13,7 @@ vi.mock("../PosthogUtils", () => ({
   isCredentialBearingPath: () => false,
 }));
 
+import { TypeValidationError } from "ai";
 import { reportChatFailure } from "../chat-error-reporting";
 
 beforeEach(() => {
@@ -53,7 +54,52 @@ describe("reportChatFailure", () => {
     const [error, options] = reportCaught.mock.calls[0]!;
     expect((error as Error).message).not.toContain("Failed to fetch");
     // The real message is still recoverable for debugging.
-    expect(options.extra.rawMessage).toBe("Failed to fetch");
+    expect(options.extra).not.toHaveProperty("rawMessage");
+    expect(options.extra).not.toHaveProperty("provider");
+  });
+
+  it("reports a stream chunk the AI SDK rejected as its own issue, without the chunk's values", () => {
+    // The 2026-10-05 P1, verbatim: mid-stream after a 200, so the catalog
+    // could only call it ambiguous and nothing reached #mcpjam-alerts.
+    const chunk = {
+      type: "custom",
+      kind: "anthropic.message_start",
+      providerMetadata: { anthropic: { id: "msg_1", secret: "model output" } },
+    };
+    const error = new TypeValidationError({
+      value: chunk,
+      cause: new Error("invalid_union"),
+    });
+
+    const sent = reportChatFailure(error, {
+      ok: true,
+      status: 200,
+      requestId: "req_p1",
+    });
+
+    expect(sent).toBe(true);
+    const [reported, options] = reportCaught.mock.calls[0]!;
+    // Not `chat_stream_error`: a new cause there never opens a new issue.
+    expect((reported as Error).message).toBe("chat_stream_protocol_error");
+    expect(options.source).toBe("chat_stream_protocol_error");
+    expect(options.extra).toEqual({
+      chunkType: "custom",
+      fieldCount: 3,
+      origin: "mcpjam",
+      requestId: "req_p1",
+    });
+    expect(JSON.stringify(options)).not.toContain("model output");
+  });
+
+  it("does not report a stream protocol error off the capture surfaces", () => {
+    isErrorCaptureSurface.mockReturnValue(false);
+    const error = new TypeValidationError({
+      value: { type: "custom" },
+      cause: new Error("invalid_union"),
+    });
+
+    expect(reportChatFailure(error, { ok: true, status: 200 })).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
   });
 
   it("does not report an unattributable mid-stream failure", () => {
@@ -86,7 +132,10 @@ describe("reportChatFailure", () => {
     // failure this exists to catch. The STATUS closes that gap, the same way
     // the server's `describeBackendStreamFailure` does.
     expect(
-      reportChatFailure(new Error("<html>502</html>"), { ok: false, status: 502 }),
+      reportChatFailure(new Error("<html>502</html>"), {
+        ok: false,
+        status: 502,
+      }),
     ).toBe(true);
     expect(reportCaught.mock.calls[0]![1].extra.origin).toBe("mcpjam");
   });
@@ -133,18 +182,21 @@ describe("reportChatFailure", () => {
     // `reportCaught`'s Sentry leg is ungated, so the gate has to be here.
     isErrorCaptureSurface.mockReturnValue(false);
 
-    expect(reportChatFailure(new Error("boom"), { ok: false, status: 502 })).toBe(
-      false,
-    );
+    expect(
+      reportChatFailure(new Error("boom"), { ok: false, status: 502 }),
+    ).toBe(false);
     expect(reportCaught).not.toHaveBeenCalled();
   });
 
   it("truncates a huge upstream body instead of shipping it whole", () => {
-    reportChatFailure(new Error("x".repeat(50_000)), { ok: false, status: 502 });
+    reportChatFailure(new Error("x".repeat(50_000)), {
+      ok: false,
+      status: 502,
+    });
 
-
-    const rawMessage = reportCaught.mock.calls[0]![1].extra.rawMessage as string;
-    expect(rawMessage.length).toBeLessThanOrEqual(1000);
+    expect(reportCaught.mock.calls[0]![1].extra).not.toHaveProperty(
+      "rawMessage",
+    );
   });
 
   it("does not report a failure the catalog blames on the user", () => {
@@ -184,8 +236,12 @@ describe("reportChatFailure", () => {
       { ok: false, status: 502 },
     );
 
-    const rawMessage = reportCaught.mock.calls[0]![1].extra.rawMessage as string;
-    expect(rawMessage).not.toContain("sk-abcdefghijklmnop");
+    expect(JSON.stringify(reportCaught.mock.calls[0]![1])).not.toContain(
+      "sk-abcdefghijklmnop",
+    );
+    expect(reportCaught.mock.calls[0]![1].extra).not.toHaveProperty(
+      "rawMessage",
+    );
   });
 
   it("does not copy the original stack, which would smuggle the message back", () => {
@@ -235,5 +291,80 @@ describe("reportChatFailure", () => {
         origin: "not-an-origin",
       }),
     ).toBe(true);
+  });
+});
+
+describe("reportChatFailure — Ask MCPJam mode", () => {
+  const agent = (extra: Record<string, unknown> = {}) => ({
+    agent: { source: "stream_error", ...extra },
+  });
+
+  it("reports from every install: no surface gate, no origin gate", () => {
+    // The gates that kept a week of self-hosted agent failures out of Sentry.
+    isErrorCaptureSurface.mockReturnValue(false);
+    const sent = reportChatFailure(
+      new Error("connect ECONNREFUSED"),
+      { ok: true, status: 200 },
+      agent(),
+    );
+
+    expect(sent).toBe(true);
+    const [, options] = reportCaught.mock.calls[0]!;
+    expect(options.tags).toMatchObject({
+      surface: "mcpjam_agent",
+      page_class: "incident",
+    });
+    expect(options.level).toBe("error");
+    expect(options.fingerprint).toEqual(
+      expect.arrayContaining(["mcpjam_agent", "stream_error"]),
+    );
+  });
+
+  it("keeps the synthetic message, which the ignore-list cannot swallow", () => {
+    reportChatFailure(
+      new Error("Failed to fetch"),
+      null,
+      agent({
+        source: "fetch_rejected",
+        pageClass: "routine",
+      }),
+    );
+
+    const [error, options] = reportCaught.mock.calls[0]!;
+    expect((error as Error).message).not.toContain("Failed to fetch");
+    expect(options.tags.page_class).toBe("routine");
+    expect(options.level).toBe("warning");
+  });
+
+  it("still drops the user pressing Stop", () => {
+    const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
+    expect(reportChatFailure(abort, null, agent())).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("skips a browser that knows it is offline", () => {
+    const spy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      expect(
+        reportChatFailure(new Error("Failed to fetch"), null, agent()),
+      ).toBe(false);
+      expect(reportCaught).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("classifies a refused request by the code the server sent", () => {
+    reportChatFailure(
+      new Error('{"code":"agent_turn_limit"}'),
+      { ok: false, status: 429 },
+      agent({ source: "request_failed", code: "agent_turn_limit" }),
+    );
+    const [, options] = reportCaught.mock.calls[0]!;
+    expect(options.tags.page_class).toBe("routine");
+    expect(options.extra).toMatchObject({
+      httpStatus: 429,
+      code: "agent_turn_limit",
+    });
   });
 });

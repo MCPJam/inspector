@@ -23,12 +23,15 @@ env:
 jobs:
   checks:
     name: Typecheck and auth smoke tests
-    runs-on: ubuntu-latest
+    # Blacksmith, not GitHub's shared 60-job pool; this job holds no secret or
+    # write token. TEST_RUNNER=ubuntu-latest moves it back during an outage.
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Matches the Node major Railway builds Soundcheck with.
           node-version: "22"

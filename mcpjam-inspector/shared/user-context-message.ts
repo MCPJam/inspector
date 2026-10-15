@@ -2,10 +2,11 @@
  * Context the user adds to a conversation from the chat UI, sent to the model
  * as a USER message (MJ-009).
  *
- * Four kinds of content join a conversation without the user typing them: a
+ * Context joins a conversation without the user typing it: a
  * skill picked in the composer, a tool run by hand in the Playground, the
- * state an app's widget reports, and the example assistant turns an MCP prompt
- * carries. The user chose each of them, so each travels on the user's side of
+ * state an app's widget reports, a resource selected from mention search, and
+ * the example assistant turns an MCP prompt carries. The user chose each of
+ * them, so each travels on the user's side of
  * the conversation, as one or more text parts whose first line names what the
  * content is:
  *
@@ -20,6 +21,13 @@
  * format: changing one leaves every earlier block rendered as plain text.
  */
 import { generateId, type UIMessage } from "ai";
+import {
+  PLUGIN_MENTION_PART,
+  PLUGIN_MENTION_CONTEXT_LABEL,
+  pluginMentionModelText,
+  parsePluginMentionSelections,
+  type PluginMentionSelection,
+} from "./plugin-mentions.js";
 
 export type UserContextKind =
   | "skill"
@@ -27,7 +35,8 @@ export type UserContextKind =
   | "widget-state"
   | "tool-run"
   | "prompt-example"
-  | "event";
+  | "event"
+  | "mention";
 
 /**
  * `event` is the one kind the user did not add by hand: an MCP event a
@@ -42,6 +51,7 @@ export const USER_CONTEXT_LABELS: Readonly<Record<UserContextKind, string>> = {
   "tool-run": "Tool run by the user",
   "prompt-example": "Prompt example — assistant",
   event: "Event delivered by an MCP server",
+  mention: PLUGIN_MENTION_CONTEXT_LABEL,
 };
 
 const USER_CONTEXT_KINDS = Object.keys(
@@ -143,6 +153,17 @@ export function getUserContextBlocks(
   if (!Array.isArray(parts) || parts.length === 0) return null;
   const blocks: UserContextBlock[] = [];
   for (const part of parts) {
+    if (isRecord(part) && part.type === PLUGIN_MENTION_PART) {
+      try {
+        const data = part.data as PluginMentionSelection;
+        const block = parseUserContextText(pluginMentionModelText(data));
+        if (!block) return null;
+        blocks.push(block);
+        continue;
+      } catch {
+        return null;
+      }
+    }
     if (!isRecord(part) || part.type !== "text") return null;
     const block =
       parseUserContextText(part.text) ?? parseEventTurnText(part.text);
@@ -216,6 +237,20 @@ function textMessage(id: string, texts: string[]): UIMessage {
   };
 }
 
+/** Store actual selected resource links, so restore/card/model conversion share one shape. */
+export function buildMentionContextMessages(
+  selections: readonly PluginMentionSelection[],
+): UIMessage[] {
+  return parsePluginMentionSelections(selections).map((selection) => {
+    pluginMentionModelText(selection);
+    return {
+      id: `mention-${generateId()}`,
+      role: "user",
+      parts: [{ type: PLUGIN_MENTION_PART, data: structuredClone(selection) }],
+    };
+  });
+}
+
 /**
  * What an app or a tool returned stays data in the user's message: the user
  * chose to share it, not to say it.
@@ -253,7 +288,9 @@ export function buildSkillContextMessages(
       renderUserContextText({
         kind: "skill",
         subject: skill.name,
-        body: `\n${skill.toolOutput ?? `# Skill: ${skill.name}\n\n${skill.content}`}`,
+        body: `\n${
+          skill.toolOutput ?? `# Skill: ${skill.name}\n\n${skill.content}`
+        }`,
       }),
     ];
     for (const file of skill.selectedFiles ?? []) {
@@ -297,7 +334,10 @@ export function widgetStateContextText(
     body:
       state === null
         ? `${widget} cleared its state.`
-        : `${widget} reported this state. ${APP_DATA_NOTE}:\n\n${fenced(toJson(state), "json")}`,
+        : `${widget} reported this state. ${APP_DATA_NOTE}:\n\n${fenced(
+            toJson(state),
+            "json",
+          )}`,
   });
 }
 
@@ -427,7 +467,9 @@ function toolResultForModel(
 export function toolRunContextText(input: ToolRunContextInput): string {
   const toolName = oneLine(input.toolName);
   const lines = [
-    `The user ran the tool ${JSON.stringify(toolName)} from the Playground with these arguments:`,
+    `The user ran the tool ${JSON.stringify(
+      toolName,
+    )} from the Playground with these arguments:`,
     "",
     fenced(toJson(input.params ?? {}), "json"),
     "",

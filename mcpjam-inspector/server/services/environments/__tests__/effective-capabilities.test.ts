@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   allEffectiveSkills,
+  buildLiveEffectiveCapabilities,
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
+  withLiveProjectSkills,
+  type RuntimeStandaloneSkill,
 } from "../effective-capabilities";
 import type { PluginRuntimeAttribution } from "../plugin-attribution";
 import type { ResolvedEnvironmentRuntime } from "../runtime";
@@ -349,5 +352,97 @@ describe("resolveEffectiveCapabilities — degraded attribution", () => {
       attribution()
     );
     expect(set.pluginVersions[0].bundleHash).toBeNull();
+  });
+});
+
+describe("withLiveProjectSkills — the Playground's hidden environment", () => {
+  function live(name: string, skillId = `sk_${name}`): RuntimeStandaloneSkill {
+    return {
+      ref: name,
+      skillId,
+      name,
+      description: `${name} skill`,
+      content: async () => `${name} body`,
+      aggregateHash: `agg_${name}`,
+      channels: [],
+      files: [],
+    };
+  }
+
+  const pluginSpec = () =>
+    spec({
+      skills: [
+        {
+          skillId: "sk_plugin",
+          name: "triage",
+          description: "Plugin skill",
+          content: "plugin body",
+          aggregateHash: "agg_plugin",
+          channels: ["plugin"],
+          files: [],
+          provenance: { modelRef: "alpha/triage" },
+        },
+        {
+          skillId: "sk_host",
+          name: "release-notes",
+          description: "Host-channel skill",
+          content: "host body",
+          aggregateHash: "agg_host",
+          channels: ["host"],
+          files: [],
+        },
+      ],
+      pluginVersions: [PLUGIN_A],
+    });
+
+  it("adds the project's skills after the environment's own", () => {
+    const set = resolveEffectiveCapabilities(pluginSpec(), attribution());
+    const merged = withLiveProjectSkills(
+      set,
+      buildLiveEffectiveCapabilities({
+        standaloneSkills: [live("onboarding"), live("glossary")],
+      })
+    );
+    expect(merged.standaloneSkills.map((skill) => skill.ref)).toEqual([
+      "release-notes",
+      "onboarding",
+      "glossary",
+    ]);
+    // Plugin skills, servers and versions are the environment's, untouched.
+    expect(merged.pluginSkills).toEqual(set.pluginSkills);
+    expect(merged.pluginVersions).toEqual(set.pluginVersions);
+    expect(merged.effectiveServerIds).toEqual(set.effectiveServerIds);
+    expect(merged.problems).toEqual(set.problems);
+  });
+
+  it("does not add a skill the client already delivered on the host channel", () => {
+    const set = resolveEffectiveCapabilities(pluginSpec(), attribution());
+    const merged = withLiveProjectSkills(
+      set,
+      buildLiveEffectiveCapabilities({
+        standaloneSkills: [live("release-notes", "sk_host")],
+      })
+    );
+    expect(merged).toBe(set);
+  });
+
+  it("keeps the environment's entry on a ref collision and reports it", () => {
+    const set = resolveEffectiveCapabilities(pluginSpec(), attribution());
+    const merged = withLiveProjectSkills(
+      set,
+      buildLiveEffectiveCapabilities({
+        standaloneSkills: [live("release-notes", "sk_other")],
+      })
+    );
+    expect(merged.standaloneSkills.map((skill) => skill.skillId)).toEqual([
+      "sk_host",
+    ]);
+    expect(merged.problems.slice(set.problems.length)).toEqual([
+      expect.objectContaining({
+        code: "skill_ref_collision",
+        ref: "release-notes",
+        skillId: "sk_other",
+      }),
+    ]);
   });
 });

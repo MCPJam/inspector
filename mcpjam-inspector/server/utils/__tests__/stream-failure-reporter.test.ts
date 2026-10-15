@@ -15,6 +15,7 @@ vi.mock("../request-logger.js", () => ({
 }));
 
 import { reportRouteFailure } from "../route-error-report.js";
+import { buildStrictLogRow } from "../../../shared/strict-log.js";
 import {
   createRequestStreamFailureReporter,
   createSystemStreamFailureReporter,
@@ -36,6 +37,23 @@ beforeEach(() => {
 });
 
 describe("stream failure reporter", () => {
+  it.each([
+    ["agent_billing_rejected", "payment_not_confirmed", true],
+    ["agent_billing_rejected", "PRIVATE_SENTINEL", false],
+    ["unknown", "payment_not_confirmed", false],
+  ])("preserves only the exact payment refusal for %s / %s", (errorCode, reason, expected) => {
+    const event = failure({ errorCode, context: { reason, raw: "PRIVATE_SENTINEL" } });
+    createSystemStreamFailureReporter("chat")(event);
+    const [name, payload] = systemEvent.mock.calls[0];
+    const row = buildStrictLogRow(name, {}, payload);
+    if (expected) expect(row).toMatchObject({ errorCode, reason });
+    else expect(row).not.toHaveProperty("reason");
+    expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
+
+    createRequestStreamFailureReporter({} as never, "chat")(event);
+    const [requestName, requestPayload] = requestEvent.mock.calls[0];
+    expect(buildStrictLogRow(requestName, {}, requestPayload).reason).toBe(row.reason);
+  });
   it("classifies first, then emits the typed event with the EFFECTIVE origin", () => {
     const report = createRequestStreamFailureReporter({} as never, "chat")(
       failure(),
@@ -106,5 +124,64 @@ describe("stream failure reporter", () => {
     const payload = requestEvent.mock.calls[0][1];
     expect("errorCode" in payload).toBe(false);
     expect("rpcMethod" in payload).toBe(false);
+  });
+});
+
+describe("stream failure reporter — capture outcome", () => {
+  const ALWAYS = {
+    always: true,
+    tags: { surface: "mcpjam_agent", page_class: "incident" },
+  };
+  const capturedReport = {
+    normalized: { slug: "internal/unknown" },
+    origin: "ambiguous",
+    captured: true,
+  };
+
+  it("forwards the event's capture policy into the classification", () => {
+    createSystemStreamFailureReporter("chat")(failure({ capture: ALWAYS }));
+    expect(reportRouteFailure).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ capture: ALWAYS }),
+    );
+  });
+
+  it("records a capture on the request, so the request-log backstop skips it", () => {
+    vi.mocked(reportRouteFailure).mockReturnValueOnce(capturedReport as never);
+    const set = vi.fn();
+    createRequestStreamFailureReporter({ set } as never, "chat")(
+      failure({ capture: ALWAYS }),
+    );
+    expect(set).toHaveBeenCalledWith("failureCaptured", true);
+  });
+
+  it("records nothing for a failure that was not captured", () => {
+    const set = vi.fn();
+    createRequestStreamFailureReporter({ set } as never, "chat")(failure());
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("covers a SECOND failure in a turn: policy forwarded, outcome recorded", () => {
+    // `oncePerTurn` classifies later failures directly rather than through
+    // the reporter, so both the policy and the request's record of the
+    // outcome must survive that shortcut.
+    const set = vi.fn();
+    const turn = oncePerTurn(
+      createRequestStreamFailureReporter({ set } as never, "chat"),
+    );
+    turn(failure());
+    vi.mocked(reportRouteFailure).mockReturnValueOnce(capturedReport as never);
+    const second = turn(failure({ capture: ALWAYS }));
+
+    expect(second.captured).toBe(true);
+    expect(reportRouteFailure).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ capture: ALWAYS }),
+    );
+    expect(set).toHaveBeenCalledWith("failureCaptured", true);
+    // Still one typed event per turn.
+    expect(requestEvent).toHaveBeenCalledTimes(1);
   });
 });

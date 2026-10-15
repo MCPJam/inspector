@@ -12,7 +12,9 @@ import {
   type XaaEnterprisePolicy,
 } from "@mcpjam/sdk/browser";
 
-type GetAccessTokenFn = () => Promise<string | undefined | null>;
+type GetAccessTokenFn = (options?: {
+  forceRefresh?: boolean;
+}) => Promise<string | undefined | null>;
 
 export interface ApiContext {
   projectId: string | null;
@@ -118,6 +120,46 @@ let pendingSessionBearer: Promise<string | null> | null = null;
 
 export function resetTokenCache() {
   cachedBearerToken = null;
+}
+
+/** How long renewing a refused session bearer may take. */
+const SESSION_BEARER_RENEW_TIMEOUT_MS = 10_000;
+
+/**
+ * A signed-in actor's bearer was refused as expired: drop the cached one and
+ * ask AuthKit for a freshly refreshed token. Null for guests (their own retry
+ * lives in `authFetch`), on failure, or when nothing answers in time.
+ */
+export async function renewSessionBearer(): Promise<string | null> {
+  if (shouldPreferGuestBearer()) return null;
+  const getAccessToken = apiContext.getAccessToken;
+  if (!getAccessToken) return null;
+  const revision = apiContextRevision;
+  resetTokenCache();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const token = await Promise.race([
+      getAccessToken({ forceRefresh: true }),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(
+          () => resolve(null),
+          SESSION_BEARER_RENEW_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    // A different actor now: never hand its predecessor a token.
+    if (!token || revision !== apiContextRevision) return null;
+    cachedBearerToken = {
+      token,
+      expiresAt: Date.now() + TOKEN_CACHE_TTL_MS,
+      kind: "session",
+    };
+    return token;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function notifyApiContextChanged() {

@@ -8,7 +8,10 @@ vi.mock("../../swarm-agent", () => ({ reportTargetGrounding: mocks.report }));
 vi.mock("../swarm-setup-turn", () => ({
   runSwarmSetupTurn: mocks.setup,
   SwarmSetupError: class extends Error {
-    constructor(public partial: unknown) {
+    constructor(
+      public partial: unknown,
+      public platformFailure?: unknown,
+    ) {
       super("setup failed");
     }
   },
@@ -89,6 +92,37 @@ describe("target preparation", () => {
     expect(mocks.setup).toHaveBeenCalledTimes(1);
     expect(mocks.probe).not.toHaveBeenCalled();
     expect(mocks.report.mock.calls[0][2].setup).toBe(partial);
+  });
+  it("marks setup and grounding sponsored only when the target has sponsored conversations", async () => {
+    await prepareTargetGrounding({ ...args(), sponsored: true });
+    expect(mocks.setup.mock.calls[0][0].sponsored).toBe(true);
+    expect(mocks.report.mock.calls.every((call) => call[4] === true)).toBe(
+      true,
+    );
+
+    mocks.setup.mockClear();
+    mocks.report.mockClear();
+    await prepareTargetGrounding(args());
+    expect(mocks.setup.mock.calls[0][0].sponsored).toBeFalsy();
+    expect(mocks.report.mock.calls.every((call) => !call[4])).toBe(true);
+  });
+  it("never retries a setup the platform refused, and carries the platform failure to the caller", async () => {
+    const platformFailure = {
+      code: "platform_capacity" as const,
+      message: "capacity",
+    };
+    mocks.setup.mockRejectedValue(
+      new SwarmSetupError(
+        { ...empty, status: "failed", readiness: "unavailable" },
+        platformFailure,
+      ),
+    );
+    const error = await prepareTargetGrounding({
+      ...args(),
+      sponsored: true,
+    }).catch((e) => e);
+    expect(mocks.setup).toHaveBeenCalledTimes(1);
+    expect(error).toMatchObject({ platformFailure });
   });
   it("retries once before any write and proceeds after recovery", async () => {
     mocks.setup

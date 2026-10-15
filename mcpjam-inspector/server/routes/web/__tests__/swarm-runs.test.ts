@@ -1,8 +1,13 @@
-vi.mock("../../../utils/harness/local/run-resources.js", () => ({ shouldUseLocalHarness: vi.fn(async () => true) }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  shouldUseLocalHarness: vi.fn(async () => true),
+  // Claude Code is eligible, as `shouldUseLocalHarness` above says.
+  eligibleUnattendedLocalHarnesses: vi.fn(async (_bearer: string, _project: string, harnesses: Array<string | undefined> = []) =>
+    [...new Set(harnesses)].filter((harness) => harness === "claude-code")),
+}));
 vi.mock("../../../utils/harness/local/readiness.js", () => ({ ensureLocalHarnessTarget: vi.fn(async () => ({ target: {} })) }));
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWebTestApp, postJson, expectJson } from "./helpers/test-app.js";
 import { SwarmAgentError } from "../../../services/swarm-agent.js";
 import { ErrorCode, WebRouteError } from "../errors.js";
@@ -165,6 +170,84 @@ describe("web routes — swarm single-host launch", () => {
       "host-1",
       "host-2",
     ]);
+  });
+
+  it("forwards expectedSponsored to the create and returns the funding the backend reports", async () => {
+    createJourneyRunMock.mockResolvedValue({
+      runId: "run-1",
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      snapshot: snapshot(1),
+      funding: { sponsored: 2, credits: 0, total: 2 },
+      sessions: [
+        { targetId: "t0", sessionIdx: 0, funding: "starter" },
+        { targetId: "t0", sessionIdx: 1, funding: "starter" },
+      ],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/journeys/journey-1/runs",
+      { projectId: "proj-1", launchKey: "lk-fund", expectedSponsored: 2 },
+      token
+    );
+    const { status, data } = await expectJson<any>(response);
+
+    expect(status).toBe(202);
+    expect(data.funding).toEqual({ sponsored: 2, credits: 0, total: 2 });
+    expect(createJourneyRunMock.mock.calls[0]![2]).toMatchObject({
+      expectedSponsored: 2,
+    });
+    await flushMacrotasks();
+    expect(startJourneyRunMock.mock.calls[0]![0].sessionFunding).toHaveLength(2);
+  });
+
+  it("rejects a malformed expectedSponsored before creating anything", async () => {
+    for (const expectedSponsored of [-1, 1.5, "2"]) {
+      const response = await postJson(
+        app,
+        "/api/web/swarm/journeys/journey-1/runs",
+        { projectId: "proj-1", launchKey: "lk-bad", expectedSponsored },
+        token
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(createJourneyRunMock).not.toHaveBeenCalled();
+  });
+
+  it("answers a funding mismatch with a typed 409 and starts no runner", async () => {
+    createJourneyRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        409,
+        JSON.stringify({
+          code: "swarm_funding_changed",
+          details: {
+            expectedSponsored: 5,
+            actualSponsored: 0,
+            totalConversations: 5,
+          },
+        }),
+        "swarm-agent create failed (409)"
+      )
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/journeys/journey-1/runs",
+      { projectId: "proj-1", launchKey: "lk-409", expectedSponsored: 5 },
+      token
+    );
+    const { status, data } = await expectJson<any>(response);
+
+    expect(status).toBe(409);
+    expect(data.details).toEqual({
+      code: "swarm_funding_changed",
+      expectedSponsored: 5,
+      actualSponsored: 0,
+      totalConversations: 5,
+    });
+    await flushMacrotasks();
+    expect(startJourneyRunMock).not.toHaveBeenCalled();
   });
 
   it("does not create an orphaned run if background authorization fails", async () => {
@@ -421,5 +504,347 @@ describe("web routes — swarm single-host launch", () => {
     expect(source).not.toMatch(/resolveEnvironmentForLaunch/);
     expect(source).not.toMatch(/resolveEnvironmentForRuntime/);
     expect(source).not.toMatch(/services\/environments/);
+  });
+});
+
+describe("web routes — swarm funding preview", () => {
+  const { app, token } = createWebTestApp();
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+  });
+
+  const BODY = {
+    projectId: "proj-1",
+    runs: [{ journeyRefId: "journey-1", sessionsPerTarget: 3 }],
+  };
+
+  it("proxies the backend preview with the runner capability this server asserts", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockImplementation(async () =>
+      Response.json({
+        supported: true,
+        remaining: 490,
+        granted: 500,
+        runs: [{ sponsored: 4, credits: 2, total: 6, targets: [] }],
+      })
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      BODY,
+      token
+    );
+    const { status, data } = await expectJson<any>(response);
+
+    expect(status).toBe(200);
+    expect(data).toMatchObject({
+      supported: true,
+      remaining: 490,
+      runs: [{ sponsored: 4, credits: 2, total: 6 }],
+    });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe(
+      "https://test-deployment.convex.site/journey-execution/funding-preview"
+    );
+    const sent = JSON.parse((init as RequestInit).body as string);
+    // Asserted by this process; a caller cannot claim the capability.
+    expect(sent.runnerCapabilities).toContain("swarm-sponsorship-v1");
+    expect(sent.runs).toEqual(BODY.runs);
+  });
+
+  // The wizard launches every run as part of a swarm wave, which the launch
+  // turns into `kind: "swarm"`. A preview that leaves the kind out is resolved by
+  // the backend from the session count, so a one-conversation goal previews as
+  // user testing (never sponsored) and then launches as a swarm (sponsored): the
+  // split the person was shown is refused at launch, every time.
+  it("forwards the kind a launch will use instead of stripping it", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockImplementation(async () =>
+      Response.json({
+        supported: true,
+        remaining: 500,
+        granted: 500,
+        runs: [{ sponsored: 1, credits: 0, total: 1, targets: [] }],
+      })
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      {
+        projectId: "proj-1",
+        runs: [
+          { journeyRefId: "journey-1", kind: "swarm" },
+          { journeyRefId: "journey-2", kind: "user_testing" },
+        ],
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).runs).toEqual([
+      { journeyRefId: "journey-1", kind: "swarm" },
+      { journeyRefId: "journey-2", kind: "user_testing" },
+    ]);
+  });
+
+  it("refuses a kind a launch does not take, without asking the backend", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      {
+        projectId: "proj-1",
+        runs: [{ journeyRefId: "journey-1", kind: "sponsored" }],
+      },
+      token
+    );
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a capability the caller tries to supply", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      { ...BODY, runnerCapabilities: ["swarm-sponsorship-v1"] },
+      token
+    );
+    const { data } = await expectJson<any>(response);
+
+    expect(data).toMatchObject({ supported: false, remaining: 0, runs: [] });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("answers supported:false without asking the backend when the server has no service token", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      BODY,
+      token
+    );
+    const { status, data } = await expectJson<any>(response);
+
+    expect(status).toBe(200);
+    expect(data.supported).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reads the allowance alone when there are no runs to preview", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockImplementation(async () =>
+      Response.json({ supported: true, remaining: 7, granted: 500, runs: [] })
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      { projectId: "proj-1", runs: [] },
+      token
+    );
+    const { status, data } = await expectJson<any>(response);
+
+    expect(status).toBe(200);
+    expect(data).toMatchObject({ supported: true, remaining: 7, granted: 500 });
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).runs).toEqual([]);
+  });
+
+  // The backend rejects an out-of-range iterations count with a 400 and the
+  // reason as a plain `error` string. That is the caller's request to fix, so it
+  // stays a 400 with the reason (the Inspector does not repeat the bound, which
+  // would drift from the backend's), not a 500 from an unhandled rethrow.
+  it("answers a request the backend refused as a 400 with its reason, not a 500", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            code: "invalid_request",
+            error: "sessionsPerTarget must be between 1 and 5",
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      {
+        projectId: "proj-1",
+        runs: [{ journeyRefId: "journey-1", sessionsPerTarget: 99 }],
+      },
+      token,
+    );
+    const { status, data } = await expectJson<any>(response);
+
+    expect(status).toBe(400);
+    expect(JSON.stringify(data)).toContain(
+      "sessionsPerTarget must be between 1 and 5",
+    );
+    // Never the deployment URL the upstream error message carries.
+    expect(JSON.stringify(data)).not.toContain("convex.site");
+  });
+
+  // Every 4xx is the backend refusing the REQUEST. Rethrown as is, a 403
+  // surfaced as an upstream-auth failure whose message names the deployment, and
+  // a 409 as a 500 that pages the on-call for a conflict the caller can read.
+  it.each([
+    [403, "forbidden", "You are not a member of this project's organization."],
+    [409, "conflict", "The preview conflicts with this project's state."],
+    [422, "unprocessable", "These runs cannot be previewed together."],
+  ])(
+    "keeps a backend %s at that status with its plain sentence, never the deployment URL",
+    async (status, code, error) => {
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+      fetchMock.mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ok: false,
+              code,
+              error,
+              internalNote: "backend-only-detail",
+            }),
+            { status, headers: { "content-type": "application/json" } },
+          ),
+      );
+
+      const response = await postJson(
+        app,
+        "/api/web/swarm/funding-preview",
+        BODY,
+        token,
+      );
+      const { status: got, data } = await expectJson<any>(response);
+
+      expect(got).toBe(status);
+      expect(JSON.stringify(data)).toContain(error);
+      expect(JSON.stringify(data)).not.toContain("convex.site");
+      // Only the sentence is forwarded, never the envelope the backend sent.
+      expect(JSON.stringify(data)).not.toContain("backend-only-detail");
+    },
+  );
+
+  it("still fails a backend 5xx as a server error", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockImplementation(
+      async () => new Response("upstream exploded", { status: 503 }),
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      BODY,
+      token,
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(500);
+  });
+
+  // A backend body is not trusted to be a sentence. The reason passes only when
+  // it is one short plain line, by the same rule a launch refusal's reason is
+  // held to; anything else is replaced by a sentence of ours. A form feed and the
+  // Unicode separators break a line on screen as surely as a newline does.
+  describe("a refused preview whose reason is not one plain sentence", () => {
+    const FALLBACK = "could not be previewed for this request";
+    const refuse = async (body: BodyInit) => {
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+      fetchMock.mockImplementation(
+        async () => new Response(body, { status: 400 }),
+      );
+      const response = await postJson(
+        app,
+        "/api/web/swarm/funding-preview",
+        BODY,
+        token,
+      );
+      return expectJson<any>(response);
+    };
+
+    it.each([
+      ["markup", "<html>bad gateway</html>"],
+      ["a newline", "first\nsecond"],
+      ["a carriage return", "first\rsecond"],
+      ["a form feed", "first\fsecond"],
+      ["a vertical tab", "first\vsecond"],
+      ["a next-line character", "first\u0085second"],
+      ["a Unicode line separator", "first second"],
+      ["a Unicode paragraph separator", "first second"],
+      ["more than a sentence", "x".repeat(301)],
+      ["nothing but spaces", "   "],
+    ])("says our own sentence for %s", async (_label, reason) => {
+      const { status, data } = await refuse(JSON.stringify({ error: reason }));
+
+      expect(status).toBe(400);
+      expect(JSON.stringify(data)).toContain(FALLBACK);
+      expect(JSON.stringify(data)).not.toContain("first");
+      expect(JSON.stringify(data)).not.toContain("bad gateway");
+      expect(JSON.stringify(data)).not.toContain("xxxxxxxx");
+    });
+
+    it.each([
+      ["a body that is not JSON", "Bad Request"],
+      ["a body with no reason", JSON.stringify({ ok: false })],
+      ["a reason that is not a string", JSON.stringify({ error: { a: 1 } })],
+    ])("says our own sentence for %s", async (_label, body) => {
+      const { status, data } = await refuse(body);
+
+      expect(status).toBe(400);
+      expect(JSON.stringify(data)).toContain(FALLBACK);
+    });
+  });
+
+  it("still fails a backend server error as a server error", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    fetchMock.mockImplementation(
+      async () => new Response("boom", { status: 502 }),
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/funding-preview",
+      BODY,
+      token,
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(500);
+  });
+
+  it("validates the body", async () => {
+    for (const body of [
+      { runs: [{ journeyRefId: "j" }] },
+      { projectId: "proj-1" },
+      { projectId: "proj-1", runs: [{ sessionsPerTarget: 1 }] },
+    ]) {
+      const response = await postJson(
+        app,
+        "/api/web/swarm/funding-preview",
+        body,
+        token
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

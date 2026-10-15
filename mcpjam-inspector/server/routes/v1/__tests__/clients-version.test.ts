@@ -7,7 +7,9 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: vi
     .fn()
-    .mockImplementation(() => ({ setAuth: vi.fn(), query })),
+    .mockImplementation(function () {
+      return { setAuth: vi.fn(), query };
+    }),
 }));
 import clients from "../clients.js";
 afterEach(() => {

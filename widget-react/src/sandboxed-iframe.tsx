@@ -308,9 +308,11 @@ interface SandboxedIframeProps {
    * restores the legacy `iframe.srcdoc` mount, where the view has no URL of
    * its own. Supplied by the host (`host.surface.viewMountMode`); build-time
    * only, so it exists to exercise the srcdoc branch rather than to switch
-   * behaviour at runtime.
+   * behaviour at runtime. `"opaque"` is per client: a srcdoc mount without
+   * `allow-same-origin`, so the view runs in an opaque origin
+   * (the renderer picks it from the client's `sameOriginAppIframe: false`).
    */
-  mountMode?: "write" | "srcdoc";
+  mountMode?: "write" | "srcdoc" | "opaque";
   /**
    * Per-server label for a dedicated view origin, and whether this deploy
    * serves one. Supplied by the host; without both the view renders on the
@@ -318,6 +320,13 @@ interface SandboxedIframeProps {
    */
   viewOriginLabel?: string;
   viewSubdomainsEnabled?: boolean;
+  /**
+   * Changing this reloads the guest document (the resource is sent to the
+   * proxy again) even when the payload is unchanged. The renderer bumps it
+   * for every new AppBridge: a guest initializes once per document, so a
+   * bridge that replaced another one never hears `ui/initialize` otherwise.
+   */
+  reloadKey?: number | string;
 }
 
 /**
@@ -356,6 +365,7 @@ export const SandboxedIframe = forwardRef<
     mountMode,
     viewOriginLabel,
     viewSubdomainsEnabled,
+    reloadKey,
   },
   ref
 ) {
@@ -435,6 +445,13 @@ export const SandboxedIframe = forwardRef<
       // real document URL, which the Sandbox Stack panel surfaces so a
       // developer can allowlist it with a referrer-restricted third party.
       if (event.data?.type === "mcpjam:view-mode") {
+        onMessageRef.current(event);
+        return;
+      }
+
+      // The opaque view navigated or reloaded itself, so the proxy stopped
+      // relaying for it (not JSON-RPC).
+      if (event.data?.type === "mcpjam:view-channel-closed") {
         onMessageRef.current(event);
         return;
       }
@@ -545,6 +562,7 @@ export const SandboxedIframe = forwardRef<
         // Part of the render recipe: it decides how the proxy mounts the HTML,
         // so a change must re-send rather than leave the previous mount up.
         mountMode: mountMode ?? null,
+        reloadKey: reloadKey ?? null,
       }),
     [
       csp,
@@ -559,6 +577,7 @@ export const SandboxedIframe = forwardRef<
       sandboxAttrs,
       recordMode,
       mountMode,
+      reloadKey,
     ]
   );
 
@@ -585,11 +604,11 @@ export const SandboxedIframe = forwardRef<
           sandboxAttrs,
           // `allowFeatures` is intentionally NOT forwarded to the proxy:
           // it applies to the OUTER iframe only. The inner iframe gets the
-          // 4 spec permissions (via `permissions`) and nothing else, matching
-          // real claude.ai's outer-grants-fullscreen / inner-trims-to-spec
-          // pattern. Centralizing the outer/inner split here means the proxy
-          // can't accidentally widen the inner grant by reading a stale
-          // field.
+          // 4 spec permissions (via `permissions`) and nothing else — the
+          // proxy itself adds `fullscreen *` on the opaque mount, as
+          // Claude's opaque mode does. Centralizing the outer/inner split here means
+          // the proxy can't accidentally widen the inner grant by reading a
+          // stale field.
           cspDirectives,
           cspSubtypePolicy,
           clientContext,

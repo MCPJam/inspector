@@ -18,9 +18,11 @@ export {
   MCP_IMAGE_MAX_TOTAL_BYTES,
   MCP_LINKED_RESOURCE_MAX_READS,
   mcpCallToolResultToModelOutput,
+  readModelOutputImage,
   mcpCallToolResultToModelOutputWithLinkedResources,
   type McpModelOutputContent,
   type McpModelOutputContentPart,
+  type McpModelOutputImagePart,
   type McpModelOutputOptions,
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,
@@ -57,9 +59,7 @@ export type {
 } from "./directory-readiness/observations.js";
 
 /**
- * The reuse guard's VOCABULARY, so a client can explain a refused adaptation
- * ("that apps result graded a different server") without holding the adapters
- * themselves — those read raw tool `_meta` a browser has no business seeing.
+ * The reuse guard's VOCABULARY, so a client can explain a refused adaptation ("that apps result graded a different server") without holding the adapters themselves — those read raw tool `_meta` a browser has no business seeing.
  */
 export {
   EVIDENCE_REUSE_REFUSALS,
@@ -304,6 +304,62 @@ export type {
   OpenAIPluginPackageEvidence,
 } from "./openai-readiness/package/reader.js";
 
+/**
+ * Muse (Meta) connector readiness — the RENDERING surface only, named for the
+ * same reason as Claude's and OpenAI's: a wildcard would make anything added
+ * to the barrel public browser API with no reviewer looking. A client renders
+ * lanes, findings and the classification sheet, and validates the submission
+ * form; it does not run the checks.
+ */
+export {
+  MUSE_READINESS_ENGINE_VERSION,
+  MUSE_READINESS_LANES,
+  MUSE_READINESS_STAGES,
+  MUSE_STAGE_LANES,
+  isDispositiveMuseFinding,
+  isMuseReadinessResult,
+  rollUpMuseStage,
+} from "./muse-readiness/types.js";
+export type {
+  MuseLaneCoverage,
+  MuseLaneStatus,
+  MuseReadinessFinding,
+  MuseReadinessLane,
+  MuseReadinessLaneResult,
+  MuseReadinessResult,
+  MuseReadinessRunContext,
+  MuseReadinessStage,
+} from "./muse-readiness/types.js";
+export {
+  MUSE_PLATFORM_BASE_URL,
+  MUSE_POLICY_MANIFEST,
+  MUSE_POLICY_PAGES,
+  MUSE_POLICY_SNAPSHOT_DATE,
+  isMusePolicyCorpusVerified,
+} from "./muse-readiness/manifest.js";
+export type {
+  MusePolicyPage,
+  MusePolicySourceRef,
+} from "./muse-readiness/manifest.js";
+export {
+  MUSE_ATTESTATIONS,
+  MUSE_AUTH_METHODS,
+  MUSE_CREDENTIAL_ENVIRONMENTS,
+  MUSE_DOCUMENTATION_TOPICS,
+  MUSE_TOOL_CLASSES,
+} from "./muse-readiness/profile.js";
+export type { MuseToolClass } from "./muse-readiness/profile.js";
+export {
+  museSubmissionProfileSchema,
+  parseMuseSubmissionProfile,
+} from "./muse-readiness/submission-profile.js";
+export type {
+  MuseSubmissionProfile,
+  MuseSubmissionProfileParse,
+} from "./muse-readiness/submission-profile.js";
+export { formatMuseClassificationSheet } from "./muse-readiness/classification.js";
+export type { MuseClassificationRow } from "./muse-readiness/classification.js";
+
 export { redactForTelemetry } from "./telemetry-redaction.js";
 /**
  * @deprecated Renamed to `redactForTelemetry`. Kept as an alias so external
@@ -325,6 +381,7 @@ export {
   describeError,
   describeAsSlug,
   mcpjamLimitSlugForMessage,
+  orgPolicySlugForCode,
   isNormalizedError,
   originOf,
   ERROR_CATALOG,
@@ -341,6 +398,24 @@ export type {
   ErrorCatalogEntry,
   ErrorCatalogSlug,
 } from "./error-describer/index.js";
+
+// The organization AI-key policy's refusal codes and how each is handled.
+// Pure, browser-safe; the inspector and the CLI derive their tables from it.
+export {
+  AI_CONFIGURATION_REFUSAL_CODES,
+  AI_EXECUTION_REFUSAL_CODES,
+  AI_REFUSAL_CODES,
+  AI_RETRYABLE_REFUSAL_CODES,
+  AI_REUSED_REFUSAL_CODES,
+  aiRefusalClass,
+  isAiExecutionRefusalCode,
+  recognizedAiRefusalCode,
+} from "./ai-refusal-codes.js";
+export type {
+  AiExecutionRefusalCode,
+  AiRefusalClass,
+  AiRefusalCode,
+} from "./ai-refusal-codes.js";
 
 export type {
   BaseServerConfig,
@@ -970,7 +1045,13 @@ export {
   reasoningEffortProviderOptions,
   selectionConfigKey,
   selectionIfMatches,
+  isDefaultSelection,
+  comparisonKey,
+  executionVariantSelectionKey,
+  selectionDistinguishers,
+  defaultReasoningEffort,
   supportedReasoningEfforts,
+  harnessReasoningEfforts,
 } from "./host-config/index.js";
 export type {
   ReasoningEffortProviderOptions,
@@ -1123,3 +1204,5 @@ export type {
   SkillIdentityFrontmatter,
 } from "./mcp-client-manager/skills-ext-types.js";
 export { modelRejectsTemperature } from "./model-sampling-support.js";
+
+export { aiRequestHeaders } from "./ai-request-headers.js";

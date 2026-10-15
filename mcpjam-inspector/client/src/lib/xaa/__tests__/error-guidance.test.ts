@@ -235,10 +235,9 @@ describe("getXAAErrorGuidance", () => {
     });
 
     it("extracts the OAuth error code even when error_description is also present", () => {
-      // When the AS returns both `error` and `error_description`, the state
-      // machine's extractErrorMessage prefers the description, so stateError
-      // won't contain the raw code. We must still surface specific guidance
-      // by reading the `error` field out of the proxy-wrapped body.
+      // The state machine composes stateError from the body, so its wording
+      // is not a contract. Specific guidance comes from reading the `error`
+      // field out of the proxy-wrapped body, not from matching the message.
       const guidance = getXAAErrorGuidance({
         step: "jwt_bearer_request",
         stateError:

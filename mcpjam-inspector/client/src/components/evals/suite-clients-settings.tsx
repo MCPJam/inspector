@@ -10,12 +10,18 @@ import {
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
-import type { ModelSelection } from "@/components/environment-composer/environment-stack";
+import {
+  emptyModelSelection,
+  type ModelSelection,
+} from "@/components/environment-composer/environment-stack";
+import { dedupeModelTargets } from "@/lib/model-target";
+import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
+import { environmentsForModelCell } from "@/lib/reasoning-effort-selection";
 import { EvalTargetMatrix } from "../evaluate/eval-target-matrix";
 import { seedRunMatrix } from "../evaluate/suite-run-matrix";
 import {
-  adhocSkillSelection,
   chooseTemplate,
+  composeAdhocStack,
   environmentComposition,
   lacksServerSource,
   sharedServerGroup,
@@ -45,6 +51,8 @@ export type SuiteClientsDerivation = {
   overrides: {
     hostId?: string;
     modelId?: string | null;
+    /** The picked model's saved selection (source, connection, effort). */
+    modelSelection?: SavedModelSelection;
     serverAttachmentId?: string;
   };
   /** The attached environment this one takes the place of (schedule pin). */
@@ -113,6 +121,12 @@ export function planSuiteClients(
     lossless?: boolean;
     /** The setup the person picked to copy when the candidates differ. */
     sourceEnvironmentId?: string;
+    /**
+     * The deployment stores model selections: a new cell carries the picked
+     * model's selection (source, connection AND effort) instead of the bare
+     * id, and an environment is reused only while its effort is unchanged.
+     */
+    modelSelections?: boolean;
   } = {},
 ): SuiteClientsPlanItem[] {
   const group = options.group ?? null;
@@ -150,14 +164,26 @@ export function planSuiteClients(
   for (const [hostId, selection] of Object.entries(selections)) {
     const sourceHost = sourceHosts[hostId] ?? hostId;
     const onSource = attached.filter((row) => row.hostId === sourceHost);
-    const models = [
+    // One cell per comparisonKey: two efforts of one model are two
+    // environments. Without stored selections a target is its bare id.
+    const targets = [
       ...(selection.includeClientDefaults ? [undefined] : []),
-      ...new Set(selection.explicitModelIds),
+      ...dedupeModelTargets(
+        options.modelSelections
+          ? selection.explicitTargets
+          : selection.explicitTargets.map(({ modelId }) => ({ modelId })),
+      ),
     ];
-    for (const modelId of models) {
-      const matches = attached.filter(
-        (row) => row.hostId === hostId && row.modelId === modelId,
-      );
+    for (const target of targets) {
+      const modelId = target?.modelId;
+      const picked = target?.selection;
+      const pickedSelection = options.modelSelections ? picked : undefined;
+      const matches = environmentsForModelCell(attached, {
+        hostId,
+        modelId,
+        picked,
+        efforts: options.modelSelections === true,
+      });
       if (matches.length) {
         for (const row of matches) {
           if (group === null || row.serverAttachmentId === group) {
@@ -174,7 +200,20 @@ export function planSuiteClients(
               },
             });
           } else {
-            push({ stack: deriveStack(row, { hostId, modelId, group }) });
+            push({
+              stack: deriveStack(row, {
+                hostId,
+                modelId,
+                group,
+                // Keep the environment's own selection (source, connection,
+                // effort) instead of dropping it to a bare id.
+                modelSelection:
+                  options.modelSelections &&
+                  row.modelSelection?.modelId === modelId
+                    ? row.modelSelection
+                    : undefined,
+              }),
+            });
           }
         }
         continue;
@@ -216,6 +255,7 @@ export function planSuiteClients(
             overrides: {
               hostId,
               modelId: modelId ?? null,
+              ...(pickedSelection ? { modelSelection: pickedSelection } : {}),
               ...(group !== null ? { serverAttachmentId: group } : {}),
             },
           },
@@ -225,7 +265,7 @@ export function planSuiteClients(
       push({
         stack: deriveStack(
           choice.kind === "template" ? choice.composition : {},
-          { hostId, modelId, group },
+          { hostId, modelId, group, modelSelection: pickedSelection },
         ),
       });
     }
@@ -265,7 +305,12 @@ export function planSuiteClients(
  */
 function deriveStack(
   template: EnvironmentComposition,
-  cell: { hostId: string; modelId: string | undefined; group: string | null },
+  cell: {
+    hostId: string;
+    modelId: string | undefined;
+    group: string | null;
+    modelSelection?: SavedModelSelection;
+  },
 ): Stack {
   const composition = environmentComposition(template);
   const reason = unpreservableReason(composition);
@@ -280,16 +325,7 @@ function deriveStack(
       "Pick a server group for this suite first. Without one, its runs connect no servers.",
     );
   }
-  const skillSelection = adhocSkillSelection(composition);
-  return {
-    hostId: cell.hostId,
-    ...(cell.modelId !== undefined ? { modelId: cell.modelId } : {}),
-    serverAttachmentId,
-    ...(skillSelection ? { skillSelection } : {}),
-    ...(composition.computerEnvironmentId
-      ? { computerEnvironmentId: composition.computerEnvironmentId }
-      : {}),
-  };
+  return composeAdhocStack({ ...composition, serverAttachmentId }, cell);
 }
 
 /** What sets one candidate setup apart, for the "which to copy" choice. */
@@ -325,7 +361,9 @@ export function SuiteClientsSettings({
 }) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, modelSelectionsSupported } = useAvailableModels({
+    projectId,
+  });
   const environments = useProjectEnvironments(projectId, {
     includeAdhoc: true,
   });
@@ -422,6 +460,7 @@ export function SuiteClientsSettings({
           sourceHosts: options.sourceHosts,
           lossless,
           sourceEnvironmentId: options.sourceEnvironmentId,
+          modelSelections: modelSelectionsSupported,
         });
       } catch (error) {
         if (error instanceof AmbiguousSuiteTemplateError) {
@@ -552,10 +591,8 @@ export function SuiteClientsSettings({
                 selections[id] ??
                   (ids.length === previousIds.length
                     ? selections[previousIds[index]]
-                    : undefined) ?? {
-                    includeClientDefaults: true,
-                    explicitModelIds: [],
-                  },
+                    : undefined) ??
+                  emptyModelSelection(),
               ]),
             ),
             {

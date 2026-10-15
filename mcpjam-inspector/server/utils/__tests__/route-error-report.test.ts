@@ -7,10 +7,12 @@ vi.mock("@sentry/node", () => ({
 
 const mockIngest = vi.fn();
 vi.mock("@axiomhq/js", () => ({
-  Axiom: vi.fn().mockImplementation(() => ({
-    ingest: mockIngest,
-    flush: vi.fn().mockResolvedValue(undefined),
-  })),
+  Axiom: vi.fn().mockImplementation(function () {
+    return {
+      ingest: mockIngest,
+      flush: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 import * as Sentry from "@sentry/node";
@@ -100,10 +102,7 @@ describe("reportRouteFailure", () => {
     expect(captureException).not.toHaveBeenCalled();
   });
 
-  it("keeps the Axiom row for a declined failure, with the verdict on it", () => {
-    // Not paging is not the same as not recording. The `origin`/`slug`/
-    // `captured` fields are what make "should this bucket page?" answerable
-    // from data rather than from argument.
+  it("keeps a closed diagnostic row for a declined failure", () => {
     reportRouteFailure("Error fetching resources", deadServerError(), {
       source: "mcp.resources.list",
       hop: "user_server_hop",
@@ -115,16 +114,17 @@ describe("reportRouteFailure", () => {
       [
         expect.objectContaining({
           level: "error",
-          message: "Error fetching resources",
-          source: "mcp.resources.list",
-          hop: "user_server_hop",
+          event: "log.unknown",
           origin: "user_config",
-          slug: "transport/econnrefused",
-          captured: false,
-          serverId: "srv_1",
+          route: "unknown_route",
+          errorClass: "Error",
         }),
       ],
     );
+    const serialized = JSON.stringify(mockIngest.mock.calls);
+    expect(serialized).not.toContain("Error fetching resources");
+    expect(serialized).not.toContain("srv_1");
+    expect(serialized).not.toContain("127.0.0.1");
   });
 
   it("does not page for a declined PRIMITIVE throw", () => {
@@ -149,17 +149,16 @@ describe("reportRouteFailure", () => {
     expect(captureException).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a primitive throw's text in the Axiom row", () => {
-    // Wrapping must not cost the diagnostic. `String(value)` is preserved as
-    // the wrapper's message, so the row reads identically to the raw throw.
+  it("keeps primitive throw diagnostics without forwarding their text", () => {
     reportRouteFailure("Error listing tasks", "server exploded", {
       source: "mcp.tasks.list",
       hop: "user_server_hop",
     });
 
     expect(mockIngest).toHaveBeenCalledWith(expect.anything(), [
-      expect.objectContaining({ error: "server exploded" }),
+      expect.objectContaining({ event: "log.unknown", errorClass: "Error" }),
     ]);
+    expect(JSON.stringify(mockIngest.mock.calls)).not.toContain("server exploded");
   });
 
   it("survives a null rejection", () => {
@@ -397,5 +396,136 @@ describe("readRequestJson", () => {
     const c = { req: { json: () => Promise.resolve({ serverId: "srv_1" }) } };
 
     await expect(readRequestJson(c)).resolves.toEqual({ serverId: "srv_1" });
+  });
+});
+
+describe("reportRouteFailure — a surface's capture policy", () => {
+  // Ask MCPJam captures every failure, whatever its origin: a week of every
+  // self-hosted turn failing reached Sentry from nowhere, because each one was
+  // (correctly, for the Playground) classified as somebody else's. The policy
+  // changes what Sentry hears and NOTHING else — origin, hop and the Axiom row
+  // are exactly what they would have been.
+  const ALWAYS = {
+    always: true,
+    tags: { surface: "mcpjam_agent", page_class: "incident" },
+    fingerprint: ["mcpjam_agent", "test-site"],
+    level: "error" as const,
+  };
+
+  function axiomRows() {
+    return mockIngest.mock.calls.flatMap((call) => call[1] as unknown[]) as {
+      origin?: string;
+      hop?: string;
+      captured?: boolean;
+      source?: string;
+    }[];
+  }
+
+  it("captures a user_config failure on a user-server hop", () => {
+    const report = reportRouteFailure("agent failed", deadServerError(), {
+      source: "agent.test",
+      hop: "user_server_hop",
+      capture: ALWAYS,
+    });
+
+    expect(report.captured).toBe(true);
+    expect(captureException).toHaveBeenCalledTimes(1);
+    const [, context] = captureException.mock.calls[0] as [
+      unknown,
+      { tags: Record<string, string>; fingerprint?: string[]; level?: string },
+    ];
+    expect(context.tags).toMatchObject({
+      surface: "mcpjam_agent",
+      page_class: "incident",
+      capture_policy: "always",
+      error_origin: "user_config",
+    });
+    expect(context.fingerprint).toEqual(["mcpjam_agent", "test-site"]);
+    expect(context.level).toBe("error");
+  });
+
+  it("captures a deliberate 4xx, which the origin policy declines", () => {
+    const refusal = Object.assign(new Error("Daily limit reached"), {
+      status: 429,
+    });
+    const report = reportRouteFailure("agent refused", refusal, {
+      source: "agent.test",
+      hop: "mcpjam_internal",
+      capture: { ...ALWAYS, level: "warning" as const },
+    });
+
+    expect(report.captured).toBe(true);
+    expect(
+      (captureException.mock.calls[0]![1] as { level?: string }).level,
+    ).toBe("warning");
+  });
+
+  it("keeps the same safe diagnostic row across capture policies", () => {
+    const withPolicy = reportRouteFailure("agent failed", deadServerError(), {
+      source: "agent.test",
+      hop: "user_server_hop",
+      capture: ALWAYS,
+    });
+    const rowWithPolicy = axiomRows()[0];
+    mockIngest.mockClear();
+    const without = reportRouteFailure("agent failed", deadServerError(), {
+      source: "agent.test",
+      hop: "user_server_hop",
+    });
+    const rowWithout = axiomRows()[0];
+
+    expect(withPolicy.origin).toBe(without.origin);
+    expect(withPolicy.normalized.slug).toBe(without.normalized.slug);
+    expect(rowWithPolicy?.origin).toBe(rowWithout?.origin);
+    expect(rowWithPolicy?.event).toBe("log.unknown");
+    expect(rowWithPolicy?.fingerprint).toBe(rowWithout?.fingerprint);
+    expect(rowWithPolicy).not.toHaveProperty("hop");
+    expect(rowWithPolicy).not.toHaveProperty("captured");
+    expect(withPolicy.captured).toBe(true);
+    expect(without.captured).toBe(false);
+  });
+
+  it("reports the outcome explicitly, false for a decline", () => {
+    const declined = reportRouteFailure("not ours", deadServerError(), {
+      source: "agent.test",
+      hop: "user_server_hop",
+    });
+    expect(declined.captured).toBe(false);
+  });
+
+  it("never captures the same error twice, whichever policy asks second", () => {
+    const error = deadServerError();
+    const first = reportRouteFailure("first", error, {
+      source: "agent.test",
+      hop: "user_server_hop",
+      capture: ALWAYS,
+    });
+    const second = reportRouteFailure("second", error, {
+      source: "agent.test",
+      hop: "user_server_hop",
+      capture: ALWAYS,
+    });
+
+    expect(first.captured).toBe(true);
+    expect(second.captured).toBe(false);
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not capture an error an earlier decision already declined", () => {
+    // The stamp means "decided", not "captured": a later always-policy must
+    // not reopen a decline — the request-log backstop, which reads the
+    // RECORDED outcome instead, is what covers that case.
+    const error = deadServerError();
+    reportRouteFailure("declined", error, {
+      source: "playground.test",
+      hop: "user_server_hop",
+    });
+    const later = reportRouteFailure("agent", error, {
+      source: "agent.test",
+      hop: "user_server_hop",
+      capture: ALWAYS,
+    });
+    expect(later.captured).toBe(false);
+    expect(captureException).not.toHaveBeenCalled();
   });
 });

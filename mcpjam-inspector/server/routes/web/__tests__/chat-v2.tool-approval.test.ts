@@ -27,10 +27,12 @@ const {
 }));
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+    };
+  }),
 }));
 
 // The caller's own MCP server: one tool, built the way the SDK builds it —
@@ -42,30 +44,32 @@ vi.mock("@mcpjam/sdk", async () => {
   return {
     ...actual,
     isMCPAuthError: vi.fn().mockReturnValue(false),
-    MCPClientManager: vi.fn().mockImplementation(() => ({
-      disconnectAllServers: vi.fn(),
-      hasServer: (id: string) => id === "server-1",
-      listTools: vi.fn().mockResolvedValue({ tools: [] }),
-      readResource: vi.fn().mockResolvedValue({ contents: [] }),
-      getAllToolsMetadata: vi.fn().mockReturnValue({}),
-      getToolsForAiSdk: vi.fn(
-        async (serverIds: string[], options?: { needsApproval?: boolean }) =>
-          serverIds.includes("server-1")
-            ? {
-                search_docs: {
-                  description: "Search the docs",
-                  inputSchema: jsonSchema({
-                    type: "object",
-                    properties: { q: { type: "string" } },
-                  }),
-                  execute: mcpToolExecuteMock,
-                  _serverId: "server-1",
-                  ...(options?.needsApproval ? { needsApproval: true } : {}),
-                },
-              }
-            : {},
-      ),
-    })),
+    MCPClientManager: vi.fn().mockImplementation(function () {
+      return {
+        disconnectAllServers: vi.fn(),
+        hasServer: (id: string) => id === "server-1",
+        listTools: vi.fn().mockResolvedValue({ tools: [] }),
+        readResource: vi.fn().mockResolvedValue({ contents: [] }),
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        getToolsForAiSdk: vi.fn(
+          async (serverIds: string[], options?: { needsApproval?: boolean }) =>
+            serverIds.includes("server-1")
+              ? {
+                  search_docs: {
+                    description: "Search the docs",
+                    inputSchema: jsonSchema({
+                      type: "object",
+                      properties: { q: { type: "string" } },
+                    }),
+                    execute: mcpToolExecuteMock,
+                    _serverId: "server-1",
+                    ...(options?.needsApproval ? { needsApproval: true } : {}),
+                  },
+                }
+              : {},
+        ),
+      };
+    }),
   };
 });
 

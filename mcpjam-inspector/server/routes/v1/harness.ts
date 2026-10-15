@@ -22,6 +22,7 @@
 import { Hono } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
+import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 
@@ -56,9 +57,14 @@ harness.get("/harness/:harnessId/builtin-tools", async (c) => {
 
 // GET /v1/harness/:harnessId/capabilities
 harness.get("/harness/:harnessId/capabilities", async (c) => {
-  const adapter = readAdapter(c.req.param("harnessId"));
+  // Where THIS Inspector would run the harness's turns: reported so the editor
+  // can say "this machine". The capabilities are the same in either venue.
+  const harnessId = c.req.param("harnessId");
+  const localExecution = isLocalHarnessVenue(harnessId);
+  const adapter = readAdapter(harnessId);
   return v1Resource(c, {
     harnessId: adapter.id,
+    ...(localExecution ? { localExecution: true } : {}),
     // Absent for a harness with one transport; the client only needs it to
     // explain WHY a capability is or is not there.
     ...(adapter.transport ? { transport: adapter.transport } : {}),

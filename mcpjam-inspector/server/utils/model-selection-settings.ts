@@ -10,7 +10,9 @@
  *
  * PRECEDENCE, per setting, highest first:
  *
- *   1. per-run override  (the eval case's `advancedConfig`)
+ *   1. per-run override  (the eval case's `advancedConfig` TEMPERATURE only;
+ *      `advancedConfig` carries no effort, and a stored
+ *      `advancedConfig.reasoningEffort` is refused by the eval runner)
  *   2. saved selection   (`selection.settings`)
  *   3. host defaults     (the host config's `temperature`)
  *
@@ -32,8 +34,9 @@
  *    the effective temperature as the top-level field, which the backend
  *    prefers over the selection's, so the two can never disagree.
  *  - `orgCloud`: backend `/stream/org`. Applies the selection's temperature
- *    (top-level first, as on `/stream`) but not a reasoning effort, so an
- *    effort is refused on this route.
+ *    (top-level first, as on `/stream`) and its reasoning effort (mapped per
+ *    org provider; the backend refuses one it cannot map), so an effort is
+ *    kept for it to apply, as on `hosted`.
  *  - `org`: an org selection before its runtime is known (the org config
  *    decides cloud vs local at call time). Temperature is resolved now; the
  *    effort is checked on the concrete rail by the caller that learns it.
@@ -78,7 +81,11 @@ export type ResolveEffectiveModelSettingsInput = {
   /** The model the call runs (its provider and temperature support). */
   modelDefinition: Pick<ModelDefinition, "id" | "provider"> &
     Partial<ModelDefinition>;
-  /** Precedence 1: this run's own settings (eval `advancedConfig`). */
+  /**
+   * Precedence 1: this run's own settings. The eval runner passes only a
+   * `temperature` here (from `advancedConfig`); `reasoningEffort` exists for
+   * per-request carriers such as a chat turn's top-level field.
+   */
   override?: { temperature?: number; reasoningEffort?: ModelReasoningEffort };
   /** Precedence 2: the saved selection. */
   selection?: Pick<ModelSelection, "modelId" | "settings">;
@@ -132,12 +139,6 @@ export function resolveEffectiveModelSettings(
   let providerOptions: DirectProviderOptions | undefined;
 
   if (effort) {
-    if (route === "orgCloud") {
-      return refuse(
-        `reasoning effort "${effort.value}" cannot be applied on an organization cloud connection; remove it from the saved model or run the connection on the local runtime`,
-        { setting: "reasoningEffort", route, modelId },
-      );
-    }
     if (route === "direct") {
       const options = reasoningEffortProviderOptions({
         providerKey: String(modelDefinition.provider),

@@ -1,4 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import {
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
+import { WidgetHostProvider } from "./widget-host-context";
+import type { WidgetHost } from "./widget-host";
+import { WidgetWorkspaceContext } from "./widget-workspace-context";
 import { createPortal } from "react-dom";
 import {
   MCPAppsRendererSurface,
@@ -7,6 +16,7 @@ import {
 import {
   getRenderableSurfaceEntries,
   useWidgetSurfaceStore,
+  useWidgetSurfaceStoreApi,
   type WidgetSurfaceId,
 } from "./widget-surface-store";
 export { WidgetSurfaceHostProvider } from "./widget-surface-context";
@@ -24,12 +34,14 @@ function WidgetSurfacePortal({
   parkingElement,
   props,
   surfaceId,
+  host,
 }: {
   anchorElement: HTMLDivElement | null;
   initialToolCallId: string;
   parkingElement: HTMLDivElement | null;
   props: MCPAppsRendererProps;
   surfaceId: WidgetSurfaceId;
+  host?: WidgetHost;
 }) {
   const [container] = useState(() => createSurfaceContainer(surfaceId));
   const targetElement = anchorElement ?? parkingElement;
@@ -47,12 +59,19 @@ function WidgetSurfacePortal({
     };
   }, [container]);
 
-  return createPortal(
+  const renderer = (
     <MCPAppsRendererSurface
       {...props}
       persistentSurfaceInitialToolCallId={initialToolCallId}
       persistentSurfaceId={surfaceId}
-    />,
+    />
+  );
+  return createPortal(
+    host ? (
+      <WidgetHostProvider value={host}>{renderer}</WidgetHostProvider>
+    ) : (
+      renderer
+    ),
     container,
     surfaceId
   );
@@ -63,6 +82,8 @@ export function WidgetSurfaceHost({
 }: {
   chatSessionId?: string;
 }) {
+  const workspace = useContext(WidgetWorkspaceContext);
+  const surfaceStore = useWidgetSurfaceStoreApi();
   const [parkingElement, setParkingElement] = useState<HTMLDivElement | null>(
     null
   );
@@ -74,9 +95,12 @@ export function WidgetSurfaceHost({
 
   useEffect(() => {
     return () => {
-      useWidgetSurfaceStore.getState().clearChatSession(chatSessionId);
+      surfaceStore.getState().clearChatSession(chatSessionId);
     };
-  }, [chatSessionId]);
+  }, [chatSessionId, surfaceStore]);
+
+  // A workspace owns the permanent render parents; Thread owns registrations only.
+  if (workspace) return null;
 
   return (
     <>
@@ -91,16 +115,19 @@ export function WidgetSurfaceHost({
           width: 0,
         }}
       />
-      {entries.map(({ surfaceId, anchorElement, initialToolCallId, props }) => (
-        <WidgetSurfacePortal
-          key={surfaceId}
-          anchorElement={anchorElement}
-          initialToolCallId={initialToolCallId}
-          parkingElement={parkingElement}
-          props={props}
-          surfaceId={surfaceId}
-        />
-      ))}
+      {entries.map(
+        ({ surfaceId, anchorElement, initialToolCallId, props, host }) => (
+          <WidgetSurfacePortal
+            key={surfaceId}
+            anchorElement={anchorElement}
+            initialToolCallId={initialToolCallId}
+            parkingElement={parkingElement}
+            props={props}
+            host={host}
+            surfaceId={surfaceId}
+          />
+        )
+      )}
     </>
   );
 }

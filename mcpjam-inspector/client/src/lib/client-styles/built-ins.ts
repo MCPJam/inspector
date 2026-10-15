@@ -353,6 +353,30 @@ export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
   },
 };
 
+/**
+ * Content types OpenAI's App hosts accept, per the plugin extensions spec's
+ * Supported Content table: `ui/update-model-context` takes text, images,
+ * resource links, embedded resources and structured content; `ui/message`
+ * takes the same minus structured content. The matrix's generic default is
+ * text-only, which undersells what ChatGPT and Codex accept.
+ */
+const OPENAI_APP_HOST_CAPABILITIES_REPLACEMENT: HostStyleDefinition["mcp"]["hostCapabilitiesReplacement"] =
+  {
+    updateModelContext: {
+      text: {},
+      image: {},
+      resourceLink: {},
+      resource: {},
+      structuredContent: {},
+    },
+    message: {
+      text: {},
+      image: {},
+      resourceLink: {},
+      resource: {},
+    },
+  };
+
 export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   id: "chatgpt",
   mcp: {
@@ -360,6 +384,7 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
     platform: CHATGPT_PLATFORM,
     fontCss: CHATGPT_FONT_CSS,
     mcpAppsCapabilities: MCP_APPS_CHATGPT_SURFACE,
+    hostCapabilitiesReplacement: OPENAI_APP_HOST_CAPABILITIES_REPLACEMENT,
     resolveStyleVariables: getChatGPTStyleVariables,
     // Real ChatGPT exposes the OpenAI Apps SDK `window.openai` surface
     // to widget HTML; emulating it here keeps existing Apps SDK widgets
@@ -645,6 +670,8 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
       // baseline allowlist, so it proves nothing either way.
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     },
+    // Same OpenAI app runtime as ChatGPT, so the same accepted content types.
+    hostCapabilitiesReplacement: OPENAI_APP_HOST_CAPABILITIES_REPLACEMENT,
     resolveStyleVariables: getChatGPTStyleVariables,
     // Codex is a CLI (no widget rendering surface), so the `window.openai`
     // shim is moot in practice. Keep it off so the inspector's emulated

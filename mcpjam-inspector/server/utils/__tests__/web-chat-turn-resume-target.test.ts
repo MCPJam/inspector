@@ -296,3 +296,36 @@ describe("browser Playground turn records its execution target", () => {
     expect(resumeConfig.selectedServers).toEqual([]);
   });
 });
+
+describe("resumeConfig reasoning effort pin", () => {
+  it("records the effort the turn ran at", async () => {
+    const config = await persistedResumeConfigWithPrepare({
+      reasoningEffort: "high",
+    });
+    expect(config.reasoningEffort).toBe("high");
+  });
+
+  it("writes nothing for a turn with no effort", async () => {
+    const config = await persistedResumeConfigWithPrepare({});
+    expect("reasoningEffort" in config).toBe(false);
+  });
+});
+
+async function persistedResumeConfigWithPrepare(
+  prepareOverrides: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const base = args({});
+  await streamWebChatTurn({
+    ...base,
+    prepare: { ...base.prepare, ...prepareOverrides },
+  } as never);
+  const opts = handlers.mcpjamFree.mock.calls.at(-1)?.[0] as
+    | { onConversationComplete?: PersistCallback }
+    | undefined;
+  const before = persistMock.mock.calls.length;
+  await opts!.onConversationComplete!([], { turnId: "t1" });
+  expect(persistMock.mock.calls.length).toBe(before + 1);
+  return resumeConfigOf(
+    persistMock.mock.calls.at(-1)![0] as Record<string, unknown>,
+  );
+}

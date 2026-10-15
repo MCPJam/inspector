@@ -8,11 +8,13 @@ import { isSignOutInProgress } from "@/lib/auth/sign-out-latch";
  * - `transient` — the token fetch failed its whole retry ladder (network down,
  *   upstream timeout). The session itself is probably fine, so retrying in
  *   place can genuinely recover.
+ * - `manual` — guest startup received a non-transient rejection. Keep Retry
+ *   available if the underlying problem is resolved, without automatic retries.
  * - `signed_out` — WorkOS rejected the refresh outright. authkit has wiped the
  *   session and latched to its ERROR state; retrying can only re-throw, so the
  *   only way forward is signing in again.
  */
-export type SessionRefreshFailureKind = "transient" | "signed_out";
+export type SessionRefreshFailureKind = "transient" | "manual" | "signed_out";
 
 interface SessionRefreshState {
   status: "idle" | "failed" | "retrying";
@@ -27,6 +29,12 @@ interface SessionRefreshState {
   queriesPaused: boolean;
   /** Only the current Convex auth configuration may release the recovery gate. */
   authConfirmed: boolean;
+  /**
+   * Bumped every time the server accepts a token for this tab. A call that
+   * was refused for missing identity waits for the next bump before its one
+   * retry (`lib/auth/sign-in-retry.ts`).
+   */
+  authEpoch: number;
   recoveryId: string | null;
   recoveryAt: number;
   pauseQueries: () => void;
@@ -43,6 +51,7 @@ export const useSessionRefreshStore = create<SessionRefreshState>(
     retryNonce: 0,
     queriesPaused: false,
     authConfirmed: false,
+    authEpoch: 0,
     recoveryId: null,
     recoveryAt: 0,
     pauseQueries: () => set({ queriesPaused: true }),

@@ -293,6 +293,68 @@ describe("transcriptToUIMessages", () => {
     }
   });
 
+  it.each(["valid", "malformed"])(
+    "keeps %s owned App control in hydrated raw output without catalog fallback",
+    (kind) => {
+      const control =
+        kind === "valid"
+          ? {
+              instanceToken: "A".repeat(43),
+              projectId: "disposable-project",
+              workspaceId: "disposable-thread",
+              hostId: "chatgpt",
+              serverId: "saved-id",
+            }
+          : { instanceToken: "invalid" };
+      const result = {
+        content: [{ type: "text", text: "Opened library" }],
+        structuredContent: { ready: true },
+        _meta: { "mcpjam/model-app": control },
+      };
+      const output = { type: "json", value: { content: result.content } };
+      const transcript = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolName: "cad.library",
+              toolCallId: "owned-call",
+              args: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "owned-call",
+              result,
+              output,
+            },
+          ],
+        },
+      ];
+      const hydrated = transcriptToUIMessages(transcript)[0].parts[0] as any;
+      expect(hydrated.output).toEqual(result);
+      expect(hydratedToolResultOutput({ result, output })).toEqual(result);
+      // Selection neither invents a token nor changes persisted data.
+      expect(transcript[1].content[0].result).toBe(result);
+    },
+  );
+
+  it("retains failed owned model output instead of mounting its stale raw result", () => {
+    const result = {
+      _meta: { "mcpjam/model-app": { instanceToken: "A".repeat(43) } },
+    };
+    const output = {
+      type: "error-text",
+      value: "INSTANCE_BINDING_UNAVAILABLE",
+    };
+    expect(hydratedToolResultOutput({ result, output })).toEqual(output);
+  });
+
   it("merged tool history converts with convertToModelMessages", async () => {
     const transcript = [
       { role: "user", content: "search for cats" },
@@ -637,5 +699,45 @@ describe("transcriptToUIMessages", () => {
     expect(messages[0].parts).toEqual([
       { type: "text", text: "Simple string response" },
     ]);
+  });
+});
+
+describe("persisted supplied App image", () => {
+  const image = "data:image/png;base64,AAAA";
+  it("restores the actual model file/data shape as a UI file/url part", () => {
+    const messages = transcriptToUIMessages([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Image prompt" },
+          { type: "file", mediaType: "image/png", data: image },
+        ],
+      },
+    ]);
+    expect(messages[0].parts).toEqual([
+      { type: "text", text: "Image prompt" },
+      { type: "file", mediaType: "image/png", url: image },
+    ]);
+  });
+  it.each([
+    { mediaType: "image/png", data: "https://example.invalid/private.png" },
+    { mediaType: "image/jpeg", data: image },
+    { mediaType: "image/png", data: "data:image/png;base64,%%%" },
+    { mediaType: "image/png", data: { 0: 1, 1: 2 } },
+    {
+      mediaType: "image/png",
+      data: "data:image/png;base64," + "AAAA".repeat(100000),
+    },
+  ])("refuses unqualified stored image representations %#", (part) => {
+    const messages = transcriptToUIMessages([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Image prompt" },
+          { type: "file", ...part },
+        ],
+      },
+    ]);
+    expect(messages[0].parts).toEqual([{ type: "text", text: "Image prompt" }]);
   });
 });

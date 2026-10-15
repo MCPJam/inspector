@@ -16,6 +16,8 @@ export interface FileAttachment {
   file: File;
   /** Optional preview URL for image thumbnails (created via URL.createObjectURL) */
   previewUrl?: string;
+  /** Saved resource provenance; a browser filename or URL never grants access. */
+  resource?: { serverId: string; resourceUri: string };
 }
 
 /**

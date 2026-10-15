@@ -96,7 +96,7 @@ export function useHarnessCapabilities(harnessId: string | null): {
   // previous harness's state. That render is enough to do damage: the Behavior
   // tab enables the approval switch off `supportsNativeToolApproval`, so
   // switching a host from Claude Code to Codex would briefly show the switch
-  // live and let an approval setting be saved that the exec transport refuses
+  // live and let an approval setting be saved that the adapter refuses
   // pre-flight. Reporting `undefined` for the mismatched frame falls back to the
   // static map, which is the honest answer while the real one is in flight.
   const matched =

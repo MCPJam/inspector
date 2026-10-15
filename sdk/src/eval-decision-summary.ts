@@ -305,8 +305,11 @@ export function buildEvalDecisionSummaryFromIterations(
     iterationWalkComplete: boolean;
   }
 ): EvalDecisionSummary {
-  const failedRows = iterations.filter((iteration) => iteration.result === "failed");
-  const total = input.total ?? iterations.length;
+  // A trial MCPJam's own infrastructure failed (`infraError`) is stored
+  // `failed` but measured nothing: it is no case and no failure here.
+  const measured = iterations.filter((iteration) => !iteration.infraError);
+  const failedRows = measured.filter((iteration) => iteration.result === "failed");
+  const total = input.total ?? measured.length;
   const failed = input.failed ?? failedRows.length;
   const passed = input.passed ?? Math.max(total - failed, 0);
   return buildEvalDecisionSummary({
@@ -314,7 +317,7 @@ export function buildEvalDecisionSummaryFromIterations(
     passed,
     failed,
     iterationWalkComplete: input.iterationWalkComplete,
-    cases: iterations.map((iteration) => ({
+    cases: measured.map((iteration) => ({
       id: iteration.id,
       title: iteration.title ?? iteration.id,
       iterationNumber: iteration.iterationNumber,

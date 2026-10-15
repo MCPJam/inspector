@@ -12,7 +12,7 @@ import {
   jsonSchema,
   tool as defineTool,
   type Tool,
-  type ToolCallOptions,
+  type ToolExecutionOptions,
   type ToolSet,
 } from "ai";
 import { assertCallToolResult } from "./result-guards.js";
@@ -24,6 +24,13 @@ import {
   mcpCallToolResultToModelOutputWithLinkedResources,
 } from "./model-output.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
+
+/**
+ * AI SDK 7's tool context type (`Context` from provider-utils, not re-exported
+ * by `ai`). MCP tools declare no context schema.
+ */
+type McpToolContext = Record<string, unknown>;
+type McpToolExecutionOptions = ToolExecutionOptions<McpToolContext>;
 
 /**
  * Normalizes a schema to a valid JSON Schema object.
@@ -71,7 +78,7 @@ export function ensureJsonSchemaObject(schema: unknown): JSONSchema7 {
 export type CallToolExecutor = (params: {
   name: string;
   args: unknown;
-  options?: ToolCallOptions;
+  options?: McpToolExecutionOptions;
 }) => Promise<CallToolResult>;
 
 /**
@@ -299,7 +306,10 @@ export async function convertMCPToolsToVercelTools(
     }
 
     // Create the execute function that delegates to the provided callTool
-    const execute = async (args: unknown, options?: ToolCallOptions) => {
+    const execute = async (
+      args: unknown,
+      options?: McpToolExecutionOptions
+    ) => {
       options?.abortSignal?.throwIfAborted();
       const result = await callTool({ name, args, options });
       return assertCallToolResult(result, `Tool "${name}" result`);
@@ -374,7 +384,7 @@ export async function convertMCPToolsToVercelTools(
       if (!(name in overrides)) {
         continue;
       }
-      vercelTool = defineTool<unknown, CallToolResult>({
+      vercelTool = defineTool<unknown, CallToolResult, McpToolContext>({
         description,
         inputSchema: overrides[name].inputSchema,
         execute,

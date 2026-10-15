@@ -93,6 +93,12 @@ export type SuiteCapabilities = {
   };
   features: {
     computers: SuiteFeatureGate;
+    /**
+     * Custom images and image pins. Absent on a backend older than the
+     * `computers-enabled` / `sandbox-images-enabled` split — that backend
+     * gated image pins on `computers`, so read this with that fallback.
+     */
+    "sandbox-images"?: SuiteFeatureGate;
     environments: SuiteFeatureGate;
     skills: SuiteFeatureGate;
     "claude-code-harness": SuiteFeatureGate;

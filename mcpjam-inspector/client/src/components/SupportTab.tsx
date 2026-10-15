@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { BookOpen, ExternalLink, LogIn, MessageSquare } from "lucide-react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { DiscordIcon } from "@/components/ui/discord-icon";
 import { GitHubIcon } from "@/components/ui/github-icon";
 import { Button } from "@mcpjam/design-system/button";
@@ -44,7 +44,7 @@ const supportLinks = [
  */
 function SendFeedbackRow() {
   const isMember = useIsMemberActor();
-  const { signIn } = useAuth();
+  const { signIn } = useInspectorAuth();
   const [open, setOpen] = useState(false);
   return (
     <section

@@ -1,15 +1,14 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const rootDir = process.cwd();
-const expectedMcpV2PackageVersion = "2.0.0";
-const expectedMcpV2Packages = [
-  "@modelcontextprotocol/client",
-  "@modelcontextprotocol/node",
-  "@modelcontextprotocol/server",
-];
+const expectedMcpV2PackageVersions = {
+  "@modelcontextprotocol/client": "2.2.0",
+  "@modelcontextprotocol/node": "2.0.0",
+  "@modelcontextprotocol/server": "2.2.0",
+};
 const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 const packageSpecs = {
@@ -88,6 +87,7 @@ try {
   }
 
   if (packageSpecs.inspector.publish) {
+    await assertPackedServerBytes(installDir);
     await smokeInspectorStartup(installDir);
   }
 } finally {
@@ -133,7 +133,9 @@ function readExpectedMcpV2Versions(packages) {
       readFileSync(path.join(rootDir, pkg.dir, "package.json"), "utf8"),
     );
 
-    for (const packageName of expectedMcpV2Packages) {
+    for (const [packageName, expectedMcpV2PackageVersion] of Object.entries(
+      expectedMcpV2PackageVersions,
+    )) {
       for (const [section, runtime] of [
         ["dependencies", true],
         ["peerDependencies", false],
@@ -262,6 +264,21 @@ function collectDependencyVersions(node, packageName, versions = []) {
   }
 
   return versions;
+}
+
+/** The tarball holds the server bytes whose maps `build:server` verified, and no maps. */
+async function assertPackedServerBytes(installDir) {
+  const { verifyServerSourcemaps } = await import(
+    path.join(rootDir, "mcpjam-inspector", "scripts", "server-sourcemaps.mjs")
+  );
+  const built = path.join(rootDir, "mcpjam-inspector", "dist", "server");
+  const packed = path.join(installDir, "node_modules", "@mcpjam", "inspector", "dist", "server");
+  for (const { file, debugId } of verifyServerSourcemaps(built)) {
+    if (!readFileSync(path.join(packed, file)).equals(readFileSync(path.join(built, file))))
+      throw new Error(`packed dist/server/${file} is not the verified build`);
+    if (existsSync(path.join(packed, `${file}.map`))) throw new Error(`the tarball ships ${file}.map`);
+    console.log(`Packed dist/server/${file} carries debug ID ${debugId}, verified against its map.`);
+  }
 }
 
 async function smokeInspectorStartup(installDir) {

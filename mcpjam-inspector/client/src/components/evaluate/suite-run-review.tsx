@@ -1,5 +1,11 @@
 import { DEFAULTS } from "../evals/constants";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { convexErrMessage } from "@/lib/convex-error";
+import {
+  aiLaunchRefusalOf,
+  type AiLaunchProblem,
+} from "@/lib/ai-launch-problems";
+import { AiLaunchProblemsList } from "@/components/shared/ai-launch-problems-list";
 import { Loader2, Play, Settings2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -13,13 +19,27 @@ import {
 import { compactModelIdTail } from "@/lib/environment-label";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { ConfiguredSuiteRunReview } from "./suite-run-matrix";
-import type { EvalCase, EvalSuite } from "../evals/types";
+import {
+  hasBlockingPreflight,
+  RunPreflightNotices,
+  scopePreflightToEnvironments,
+  scopePreflightToHosts,
+  type RunPreflightState,
+} from "./suite-run-preflight";
+import type { CaseRunLaunchOptions, EvalCase, EvalSuite } from "../evals/types";
+import {
+  savedCaseTargets,
+  startCaseReview,
+} from "./case-workspace/case-launch-preview";
+import type { CaseLaunchTarget } from "./case-workspace/pending-case-launches";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
 
 type ReviewEnvironment = Pick<
   ProjectEnvironmentView,
   | "environmentId"
   | "hostId"
   | "modelId"
+  | "modelSelection"
   | "name"
   | "serverAttachmentId"
   | "skillSelection"
@@ -30,15 +50,26 @@ export type SuiteRunReviewProps = {
   projectId?: string | null;
   suite: EvalSuite;
   cases: readonly EvalCase[];
+  /** A provided title, including an empty one, identifies a case-scoped sheet. */
+  caseTitle?: string;
+  initialIterations?: number;
   environments?: readonly ReviewEnvironment[];
   hostNamesById: ReadonlyMap<string, string | null>;
   onClose: () => void;
   onStart: (
     suite: EvalSuite,
-    options: { iterationOverride: number; ephemeralEnvironment?: boolean },
+    options: CaseRunLaunchOptions & { iterationOverride: number },
   ) => unknown;
+  /**
+   * Persists the case draft as it stood when Start was clicked, before any
+   * launch preparation; `false` refuses the launch. Preparing a matrix run
+   * takes several round trips, so saving afterwards would overwrite an edit
+   * made in between.
+   */
+  saveBeforeRun?: () => Promise<boolean>;
   onEditSettings?: () => void;
   disabledReason?: string | null;
+  preflight?: RunPreflightState;
 };
 
 export function suiteReviewTargets(
@@ -58,7 +89,11 @@ export function suiteReviewTargets(
             `Client …${environment.hostId.slice(-6)}`)
           : `Environment …${id.slice(-6)}`,
         model: environment?.modelId
-          ? compactModelIdTail(environment.modelId)
+          ? `${compactModelIdTail(environment.modelId)}${
+              environment.modelSelection?.settings?.reasoningEffort
+                ? ` · ${reasoningEffortLabel(environment.modelSelection.settings.reasoningEffort)}`
+                : ""
+            }`
           : "Client default",
         detail: environment?.name,
       };
@@ -117,6 +152,30 @@ export function selectReviewTargets(
   return filtered;
 }
 
+const REMEMBERED_ITERATIONS_PREFIX = "mcpjam:suite-run-iterations";
+
+function readRememberedIterations(suiteId: string): number | null {
+  try {
+    const value = Number(
+      localStorage.getItem(`${REMEMBERED_ITERATIONS_PREFIX}:${suiteId}`),
+    );
+    return Number.isInteger(value) && value >= 1 && value <= 10 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberIterations(suiteId: string, count: number) {
+  try {
+    localStorage.setItem(
+      `${REMEMBERED_ITERATIONS_PREFIX}:${suiteId}`,
+      String(count),
+    );
+  } catch {
+    // Storage can be blocked; the sheet then falls back to the suite default.
+  }
+}
+
 export function SuiteRunReview(props: SuiteRunReviewProps) {
   const projectId = props.projectId ?? props.suite.projectId;
   return projectId ? (
@@ -127,36 +186,61 @@ export function SuiteRunReview(props: SuiteRunReviewProps) {
 }
 
 export function SuiteRunReviewContent({
+  projectId,
   suite,
   cases,
+  caseTitle,
+  initialIterations,
   environments = [],
   hostNamesById,
   onClose,
   onStart,
+  saveBeforeRun,
   onEditSettings,
-  disabledReason,
+  disabledReason: blockedReason,
+  preflight,
   matrix,
 }: SuiteRunReviewProps & {
-  matrix?: { count: number; render: (disabled: boolean) => ReactNode };
+  matrix?: {
+    targets?: CaseLaunchTarget[];
+    count: number;
+    render: (disabled: boolean) => ReactNode;
+    /** Changes whenever the matrix selection does. */
+    signature?: string;
+  };
 }) {
+  const isCaseRun = caseTitle !== undefined;
   const targets = suiteReviewTargets(suite, environments, hostNamesById);
   const [selected, setSelected] = useState(() =>
     targets.map((target) => target.id),
   );
-  // Preserve configured repetitions and respect the suite's minimum.
+  // Case overrides keep their count; suite setup starts at its own minimum.
   const [iterations, setIterations] = useState(() =>
     String(
       Math.min(
         10,
         Math.max(
-          suite.verdictPolicyDefaults?.repetitions ?? DEFAULTS.RUNS_PER_TEST,
-          suite.minIterations ?? 1,
+          initialIterations ??
+            readRememberedIterations(suite._id) ??
+            suite.verdictPolicyDefaults?.repetitions ??
+            DEFAULTS.RUNS_PER_TEST,
+          isCaseRun ? 1 : (suite.minIterations ?? 1),
         ),
       ),
     ),
   );
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The backend's launch refusal under the org's AI key policy lists every
+  // dependency that can't run on the organization's providers.
+  const [launchProblems, setLaunchProblems] = useState<AiLaunchProblem[]>([]);
+  const [connecting, setConnecting] = useState(false);
+  // A failed start's reason is about that setup; a different one gets a
+  // fresh try.
+  useEffect(() => {
+    setError(null);
+    setLaunchProblems([]);
+  }, [iterations, selected, matrix?.signature]);
   const lock = useRef(false);
   const count = Number(iterations);
   const validCount = Number.isInteger(count) && count >= 1 && count <= 10;
@@ -164,6 +248,24 @@ export function SuiteRunReviewContent({
     selected.includes(target.id),
   );
   const selectionCount = matrix?.count ?? activeTargets.length;
+  // Without the matrix, the clients or environments are picked here, so only
+  // theirs count.
+  const selectedIds = activeTargets.map((target) => target.id);
+  const scopedPreflight =
+    !preflight || matrix
+      ? preflight
+      : suite.environmentIds?.length
+        ? scopePreflightToEnvironments(preflight, selectedIds)
+        : suite.hostAttachments?.length
+          ? scopePreflightToHosts(preflight, suite, selectedIds)
+          : preflight;
+  // The notices say which server; this only has to stop the launch.
+  const disabledReason =
+    blockedReason ??
+    scopedPreflight?.outOfCreditsReason ??
+    (hasBlockingPreflight(scopedPreflight)
+      ? "Fix the setup problem above before running."
+      : null);
   const variantsPerTarget =
     matrix || suite.environmentIds?.length
       ? cases.length
@@ -172,6 +274,7 @@ export function SuiteRunReviewContent({
   const start = async () => {
     if (
       lock.current ||
+      connecting ||
       !validCount ||
       !selectionCount ||
       disabledReason ||
@@ -179,8 +282,41 @@ export function SuiteRunReviewContent({
     )
       return;
     lock.current = true;
+    if (isCaseRun) {
+      try {
+        const selectedSuite = matrix
+          ? suite
+          : selectReviewTargets(suite, selectedIds);
+        await startCaseReview(
+          {
+            projectId,
+            suite: selectedSuite,
+            cases,
+            onClose,
+            onStart,
+            saveBeforeRun,
+          },
+          matrix?.targets ??
+            savedCaseTargets({
+              suite: selectedSuite,
+              cases,
+              environments,
+              hostNamesById,
+            }),
+          count,
+        );
+      } catch (failure) {
+        setError(
+          convexErrMessage(failure, "Could not prepare this run. Try again."),
+        );
+      } finally {
+        lock.current = false;
+      }
+      return;
+    }
     setStarting(true);
     setError(null);
+    setLaunchProblems([]);
     try {
       await onStart(
         matrix
@@ -189,14 +325,21 @@ export function SuiteRunReviewContent({
               suite,
               activeTargets.map((target) => target.id),
             ),
-        { iterationOverride: count },
+        // Failures come back here to show inline, not as a toast behind it.
+        { iterationOverride: count, throwOnFailure: true },
       );
+      if (!isCaseRun) rememberIterations(suite._id, count);
       onClose();
     } catch (failure) {
+      // A refusal under the organization's AI key policy shows the backend's
+      // full list of problems under one headline. Anything else: a ConvexError
+      // keeps its reason in `data`; its message is the raw
+      // "[CONVEX M(…)] Server Error".
+      const refusal = aiLaunchRefusalOf(failure);
+      setLaunchProblems(refusal?.problems ?? []);
       setError(
-        failure instanceof Error
-          ? failure.message
-          : "Could not start this run. Try again.",
+        refusal?.message ??
+          convexErrMessage(failure, "Could not start this run. Try again."),
       );
     } finally {
       lock.current = false;
@@ -222,8 +365,13 @@ export function SuiteRunReviewContent({
       >
         <SheetHeader className="border-b border-border px-6 py-4 pr-12">
           <SheetTitle className="break-words text-lg tracking-tight">
-            Setup Run · {suite.name}
+            {isCaseRun ? "Setup Run" : `Setup Run · ${suite.name}`}
           </SheetTitle>
+          {isCaseRun && (
+            <p className="text-sm text-muted-foreground">
+              {caseTitle || "Untitled test case"}
+            </p>
+          )}
         </SheetHeader>
         <div className="flex-1 space-y-5 overflow-y-auto p-6">
           <RunIterationControl
@@ -242,7 +390,9 @@ export function SuiteRunReviewContent({
                 </span>
               </h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Each client/model combination runs the whole suite.
+                {isCaseRun
+                  ? "Each client/model combination runs this test case."
+                  : "Each client/model combination runs the whole suite."}
               </p>
               <div className="mt-3 overflow-hidden rounded-lg border border-border">
                 {targets.map((target) => (
@@ -287,6 +437,21 @@ export function SuiteRunReviewContent({
               )}
             </section>
           )}
+          {scopedPreflight && (
+            <RunPreflightNotices
+              preflight={scopedPreflight}
+              disabled={starting}
+              onConnectingChange={setConnecting}
+              onEditSettings={
+                onEditSettings
+                  ? () => {
+                      onClose();
+                      onEditSettings();
+                    }
+                  : undefined
+              }
+            />
+          )}
           {onEditSettings && (
             <Button
               variant="secondary"
@@ -309,7 +474,7 @@ export function SuiteRunReviewContent({
                 <strong className="font-semibold tabular-nums text-foreground">
                   {cases.length}
                 </strong>{" "}
-                cases ×{" "}
+                {cases.length === 1 ? "case" : "cases"} ×{" "}
                 <strong className="font-semibold tabular-nums text-foreground">
                   {validCount ? count : "—"}
                 </strong>{" "}
@@ -334,14 +499,18 @@ export function SuiteRunReviewContent({
             </p>
           </div>
           {(error || (!starting && disabledReason)) && (
-            <p role="alert" className="text-xs text-destructive">
-              {error ?? disabledReason}
-            </p>
+            <div role="alert" className="text-xs text-destructive">
+              <p>{error ?? disabledReason}</p>
+              {error ? (
+                <AiLaunchProblemsList problems={launchProblems} />
+              ) : null}
+            </div>
           )}
           <Button
             className="w-full"
             disabled={
               starting ||
+              connecting ||
               !validCount ||
               !selectionCount ||
               !cases.length ||
@@ -354,7 +523,11 @@ export function SuiteRunReviewContent({
             ) : (
               <Play className="size-4" />
             )}
-            {starting ? "Starting run…" : "Start run"}
+            {starting
+              ? "Starting run…"
+              : isCaseRun
+                ? "Run test case"
+                : "Start run"}
           </Button>
         </div>
       </SheetContent>

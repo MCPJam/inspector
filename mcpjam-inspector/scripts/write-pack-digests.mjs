@@ -1,5 +1,6 @@
 /**
- * Write `pack-digests.generated.ts` from a pack build's own output.
+ * Pin a pack build's output in `runtime-compat.generated.json` (the record
+ * `pack-digests.generated.ts` and `compatibility.ts` read).
  *
  * The missing link in the release. `local-harness-pack.yml` builds a pack per
  * target and collects `{"<target>": "sha256:…"}`, and every Inspector build
@@ -12,32 +13,39 @@
  * Run BEFORE the Inspector artifacts are built, so the digests are compiled
  * into them:
  *
- *   node scripts/write-pack-digests.mjs --version 3.4.0 \
+ *   node scripts/write-pack-digests.mjs --harness claude-code --version 1.0.0 \
  *     --digests '{"darwin-arm64":"sha256:…","linux-x64":"sha256:…"}'
+ *
+ * `--harness` names the one harness whose entries (digests, records and
+ * expected pack version) are rewritten; every other harness's entries are
+ * carried over untouched, because each harness's pack is released on its own.
+ * It defaults to `claude-code` for the commands already in runbooks.
+ *
+ * `--permit-previous` keeps the pack this pin replaces selectable as the
+ * target's ONE permitted previous pack. Pass it only once conformance has passed
+ * for this build's Inspector layer against both packs (the publication
+ * pipeline's pin, applied by prepare-release, does exactly that); without it the previous pack is no
+ * longer selectable at all.
+ *
+ * `--conformance <stamp>` and `--evidence <url>` record the conformance run
+ * the pin rests on, replacing the stamp that used to be typed into
+ * `compatibility.ts` by hand.
  *
  * `--check` instead of writing compares and exits non-zero on any difference,
  * which is how a workflow asserts the checked-in table matches the packs a
  * release is about to publish.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  PACK_TABLE_TARGETS,
+  RUNTIME_COMPAT_PATH,
+  rewriteHarnessPackTables,
+} from "./local-harness-pack-tables.mjs";
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const inspectorRoot = join(scriptDir, "..");
-const GENERATED = join(
-  inspectorRoot,
-  "server/utils/harness/local/pack-digests.generated.ts",
-);
+const GENERATED = RUNTIME_COMPAT_PATH;
 
 /** The targets a pack is built for. Must match `LocalPackTarget`. */
-const TARGETS = [
-  "darwin-arm64",
-  "darwin-x64",
-  "linux-x64",
-  "linux-arm64",
-  "win32-x64",
-];
+const TARGETS = PACK_TABLE_TARGETS;
 
 function fail(message) {
   console.error(`write-pack-digests: ${message}`);
@@ -89,12 +97,30 @@ if (args.check !== undefined && args.check !== true) {
 }
 const checkOnly = args.check === true;
 
+const harnessId = stringArg("harness") ?? "claude-code";
+if (!/^[a-z][a-z0-9-]{0,63}$/.test(harnessId)) {
+  fail(`--harness ${JSON.stringify(harnessId)} is not a harness id`);
+}
+
 const version = stringArg("version") ?? "";
 if (version.length === 0) fail("--version is required");
 // The version reaches an asset URL and a directory name, so it is checked
 // rather than trusted: this runs in a workflow whose input a person types.
-if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(version)) {
-  fail(`--version ${JSON.stringify(version)} is not a release version`);
+if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version)) {
+  fail(`--version ${JSON.stringify(version)} is not a pack semver`);
+}
+
+for (const flag of ["permit-previous"]) {
+  if (args[flag] !== undefined && args[flag] !== true) fail(`--${flag} takes no value`);
+}
+const permitPrevious = args["permit-previous"] === true;
+const conformance = stringArg("conformance");
+if (conformance !== null && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(conformance)) {
+  fail(`--conformance ${JSON.stringify(conformance)} is not a conformance stamp`);
+}
+const evidence = stringArg("evidence");
+if (evidence !== null && !/^https:\/\/github\.com\/[^\s]+$/.test(evidence)) {
+  fail("--evidence must be a https://github.com/... run URL");
 }
 
 let digests;
@@ -120,55 +146,26 @@ for (const [target, digest] of Object.entries(digests)) {
 if (entries.length === 0) fail("--digests named no targets");
 entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 
-const treeDigests = entries
-  .map(
-    ([target, digest]) =>
-      `    ${JSON.stringify(target)}: ${JSON.stringify(digest)},`,
-  )
-  .join("\n");
-const records = entries
-  .map(
-    ([target, digest]) =>
-      `    ${JSON.stringify(target)}: {\n` +
-      `      packVersion: ${JSON.stringify(version)},\n` +
-      `      treeDigest: ${JSON.stringify(digest)},\n` +
-      `    },`,
-  )
-  .join("\n");
-
-/**
- * Rewrite one `export const … = { … };` block.
- *
- * Fails rather than no-ops when the pattern does not match: a silent miss here
- * would leave a release's digest table empty while every step reported
- * success, which is the failure mode this whole script exists to remove.
- */
-function replaceBlock(text, pattern, replacement, what) {
-  if (!pattern.test(text)) {
-    fail(`could not find ${what} in the generated file; its shape moved`);
-  }
-  return text.replace(pattern, replacement);
-}
-
 const source = readFileSync(GENERATED, "utf8");
-let next = replaceBlock(
-  source,
-  /(export const PACK_TREE_DIGESTS[\s\S]*?= \{\n)([\s\S]*?)(^\};$)/m,
-  `$1  "claude-code": {\n${treeDigests}\n  },\n  codex: {},\n$3`,
-  "PACK_TREE_DIGESTS",
-);
-next = replaceBlock(
-  next,
-  /(export const PACK_RECORDS[\s\S]*?= \{\n)([\s\S]*?)(^\};$)/m,
-  `$1  "claude-code": {\n${records}\n  },\n  codex: {},\n$3`,
-  "PACK_RECORDS",
-);
-next = replaceBlock(
-  next,
-  /^export const EXPECTED_PACK_VERSION = .*$/m,
-  `export const EXPECTED_PACK_VERSION = ${JSON.stringify(version)};`,
-  "EXPECTED_PACK_VERSION",
-);
+let next;
+try {
+  next = rewriteHarnessPackTables(
+    source,
+    harnessId,
+    version,
+    Object.fromEntries(entries),
+    {
+      permitPrevious,
+      ...(conformance !== null ? { conformance } : {}),
+      ...(evidence !== null ? { evidence } : {}),
+    },
+  );
+} catch (error) {
+  // A silent miss here would leave a release's digest table empty while every
+  // step reported success, which is the failure mode this script exists to
+  // remove.
+  fail(error instanceof Error ? error.message : String(error));
+}
 
 if (checkOnly) {
   if (next !== source) {
@@ -176,7 +173,7 @@ if (checkOnly) {
       "write-pack-digests: the checked-in digest table does not match the " +
         "packs this build produced.\n" +
         "Regenerate it and commit the result:\n" +
-        `  node scripts/write-pack-digests.mjs --version ${version} \\\n` +
+        `  node scripts/write-pack-digests.mjs --harness ${harnessId} --version ${version} \\\n` +
         `    --digests '${JSON.stringify(Object.fromEntries(entries))}'`,
     );
     process.exit(1);
@@ -185,6 +182,6 @@ if (checkOnly) {
 } else {
   writeFileSync(GENERATED, next);
   console.log(
-    `write-pack-digests: wrote ${entries.length} target(s) at version ${version}`,
+    `write-pack-digests: wrote ${entries.length} ${harnessId} target(s) at version ${version}`,
   );
 }

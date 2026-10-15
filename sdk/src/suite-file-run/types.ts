@@ -152,9 +152,16 @@ export type SuiteFileToolPolicyBlock = {
   classification: ToolSafetyClassification;
 };
 
-/** What a provider or the platform said when it refused a call. */
+/**
+ * What a provider or the platform said when it refused a call.
+ *
+ * `orgPolicy`: the organization requires its own provider keys (or its AI
+ * configuration cannot serve the call), so an MCPJam-provided model was
+ * refused. Not a credential problem and not transient: only choosing a model
+ * from an organization provider helps.
+ */
 export type SuiteFileRefusalAttribution =
-  "credentials" | "billing" | "rateLimited" | "unavailable";
+  "credentials" | "billing" | "orgPolicy" | "rateLimited" | "unavailable";
 
 export type SuiteFileIterationEvidence = {
   iterationNumber: number;

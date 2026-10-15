@@ -20,6 +20,10 @@ import { useHostContextStore } from "@/stores/client-context-store";
 import { authFetch } from "@/lib/session-token";
 import { readCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
+import {
+  captureOAuthCallbackFromUrl,
+  resetOAuthCallbackInboxForTests,
+} from "@/lib/oauth-callback-inbox";
 
 const {
   toastError,
@@ -73,6 +77,14 @@ const {
   mockDeleteServer: vi.fn(),
   mockUseDbUserReady: vi.fn(() => false),
   mockHostedMode: vi.fn(() => false),
+}));
+
+const { analyticsTrackMock } = vi.hoisted(() => ({
+  analyticsTrackMock: vi.fn(),
+}));
+vi.mock("@/lib/analytics", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/analytics")>()),
+  track: analyticsTrackMock,
 }));
 
 vi.mock("sonner", () => ({
@@ -1522,6 +1534,27 @@ describe("useServerState OAuth callback failures", () => {
     expect(successCall?.[0]?.config?.mcpProtocolVersion).toBe("2026-07-28");
   });
 
+  it("records one connect outcome when the attempt ends", async () => {
+    reconnectServerMock.mockResolvedValueOnce({ success: true, initInfo: null });
+    analyticsTrackMock.mockClear();
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState());
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        { accessToken: "access-token", clientId: "client-id" },
+        "https://example.com/mcp"
+      );
+    });
+
+    const outcomes = analyticsTrackMock.mock.calls.filter(
+      ([event]) => event === "server_connect_outcome"
+    );
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0][1]).toMatchObject({ outcome: "success" });
+  });
+
   it("imports debugger-applied OAuth tokens before reconnecting a synced server", async () => {
     reconnectServerMock.mockResolvedValueOnce({
       success: true,
@@ -1821,6 +1854,51 @@ describe("useServerState OAuth callback failures", () => {
           action.type === "CONNECT_SUCCESS" || action.type === "CONNECT_FAILURE"
       )
     ).toBe(false);
+  });
+
+  it("clears pending OAuth state when a runtime connect is canceled", () => {
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify([
+        "default::srv_demo",
+        "default::name:demo-server",
+      ])
+    );
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "/playground");
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        projectId: "project_default",
+        serverId: "srv_demo",
+        serverName: "demo-server",
+        serverUrl: "https://example.com/mcp",
+        returnPath: "/playground",
+        startedAt: Date.now(),
+      })
+    );
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    act(() => result.current.handleRuntimeDisconnect("demo-server"));
+
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]");
+    expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+    expect(localStorage.getItem("mcp-oauth-return-hash")).toBeNull();
+    expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+  });
+
+  it("clears the Auto escalation marker under the identity the hook writes", () => {
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify(["default::srv_demo", "default::name:demo-server"]),
+    );
+    const { result } = renderUseServerState(vi.fn());
+
+    act(() => result.current.clearAutoOAuthEscalation("demo-server"));
+
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]");
   });
 
   it("does not resurrect a stale 2026 pin when the form downgrades to 2025", async () => {
@@ -2309,6 +2387,47 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
     expect(window.location.hash).toBe("");
+  });
+
+  it("completes a callback whose answer main.tsx moved into the inbox, then consumes it", async () => {
+    resetOAuthCallbackInboxForTests();
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    });
+    window.history.replaceState({}, "", "/oauth/callback?code=inbox-code");
+    captureOAuthCallbackFromUrl();
+    // What the hook sees in production: no code in the address bar.
+    expect(window.location.search).toBe("?oauth_pending=1");
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch);
+
+    await waitFor(() => {
+      expect(handleOAuthCallbackMock).toHaveBeenCalledWith(
+        "inbox-code",
+        expect.objectContaining({
+          onTraceUpdate: expect.any(Function),
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/servers");
+    });
+    expect(window.location.search).toBe("");
+    // The code was never written to storage.
+    expect(
+      Array.from({ length: sessionStorage.length }, (_, i) =>
+        sessionStorage.getItem(sessionStorage.key(i) ?? ""),
+      ).join("\n"),
+    ).not.toContain("inbox-code");
+    expect(handleOAuthCallbackMock).toHaveBeenCalledTimes(1);
   });
 
   it("preserves onboarding toast suppression through an OAuth callback", async () => {
@@ -3191,6 +3310,60 @@ describe("useServerState OAuth callback failures", () => {
     }
   );
 
+  it("reports superseded when a stale reconnect ends in reauth_required", async () => {
+    // The first-run recovery reconnect runs non-interactively, which is what
+    // yields reauth_required. If a newer op took the server meanwhile, the
+    // result must be "superseded" so callers leave the newer op alone.
+    const { ensureAuthorizedForReconnect } =
+      await import("@/state/oauth-orchestrator");
+    let resolveAuth: (value: unknown) => void = () => {};
+    vi.mocked(ensureAuthorizedForReconnect)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveAuth = resolve;
+        }) as any,
+      )
+      .mockResolvedValue({
+        kind: "ready",
+        serverConfig:
+          createAppState().projects.default.servers["demo-server"].config,
+        tokens: undefined,
+      } as any);
+    reconnectServerMock.mockResolvedValue({
+      success: true,
+      initInfo: { clientCapabilities: {} },
+    } as any);
+    const appState = createAppState();
+    for (const bucket of [
+      appState.projects.default.servers,
+      appState.servers,
+    ]) {
+      (bucket["demo-server"] as any).useOAuth = false;
+    }
+    const { result } = renderUseServerState(vi.fn(), appState);
+
+    let outcome: unknown = null;
+    await act(async () => {
+      const recovery = result.current
+        .reconnectServerWithResult("demo-server", {
+          allowInteractiveOAuthFlow: false,
+          suppressErrors: true,
+        })
+        .then((value) => {
+          outcome = value;
+        });
+      await flushAsyncWork();
+      // A newer reconnect takes the server while authorization is resolving.
+      const newer = result.current.handleReconnect("demo-server");
+      await flushAsyncWork();
+      resolveAuth({ kind: "reauth_required", error: "Sign in again" });
+      await recovery;
+      await newer;
+    });
+
+    expect(outcome).toMatchObject({ status: "superseded" });
+  });
+
   it("treats a superseded client-switch reconnect as in-progress, not a failure", async () => {
     // Repro of the client-switch toast bug: when the user switches clients
     // faster than a reconnect completes, the in-flight reconnect's op token
@@ -3512,7 +3685,8 @@ describe("useServerState OAuth callback failures", () => {
         registryServerId: "registry-asana",
         useRegistryOAuthProxy: true,
         scopes: ["default"],
-      })
+      }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
     );
   });
 
@@ -3539,7 +3713,8 @@ describe("useServerState OAuth callback failures", () => {
       expect.objectContaining({
         serverName: "New OAuth Server",
         serverUrl: "https://oauth.example.com/mcp",
-      })
+      }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
     );
     expect(dispatch).toHaveBeenCalledWith({
       type: "UPSERT_SERVER",
@@ -3586,7 +3761,8 @@ describe("useServerState OAuth callback failures", () => {
         registryServerId: "registry-linear",
         useRegistryOAuthProxy: false,
         scopes: ["read", "write"],
-      })
+      }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
     );
   });
 
@@ -3640,6 +3816,27 @@ describe("useServerState OAuth callback failures", () => {
       "project_default",
       "srv_demo"
     );
+    expect(initiateOAuthMock).toHaveBeenCalled();
+    expect(clearOAuthDataMock).not.toHaveBeenCalled();
+    expect(deleteServer).not.toHaveBeenCalled();
+  });
+
+  it("can force onboarding OAuth without replacing the default account", async () => {
+    const { deleteServer } = await import("@/state/mcp-api");
+    listOAuthConnectionsMock.mockResolvedValue({
+      connections: [{ connectionId: "default-account", isDefault: true }],
+      shared: false,
+    });
+    const { result } = renderUseServerState(vi.fn());
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server", {
+        forceOAuthFlow: true,
+        replaceExistingOAuthConnection: false,
+      });
+    });
+
+    expect(listOAuthConnectionsMock).not.toHaveBeenCalled();
     expect(initiateOAuthMock).toHaveBeenCalled();
     expect(clearOAuthDataMock).not.toHaveBeenCalled();
     expect(deleteServer).not.toHaveBeenCalled();
@@ -3700,7 +3897,8 @@ describe("useServerState OAuth callback failures", () => {
         useRegistryOAuthProxy: true,
         protocolVersion: "2025-11-25",
         registrationStrategy: "preregistered",
-      })
+      }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
     );
     expect(dispatch).toHaveBeenCalledWith({
       type: "UPSERT_SERVER",
@@ -3774,7 +3972,8 @@ describe("useServerState OAuth callback failures", () => {
         protocolVersion: "2025-11-25",
         registrationMode: "preregistered",
         registrationStrategy: "preregistered",
-      })
+      }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
     );
   });
 
@@ -3913,6 +4112,170 @@ describe("useServerState auth mode regressions", () => {
     await act(cancelProbe);
     expect(dispatch).toHaveBeenCalledWith({ type: "CONNECT_CANCELLED", name: "demo-server", wasConnected: false });
     unmount();
+  });
+
+  it("lets an inline surface own Auto's OAuth authorization prompt", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+    const requestOAuthAuthorization = vi.fn().mockResolvedValue(true);
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "auto-server",
+          type: "http",
+          url: "https://auto.example.com/mcp",
+          useOAuth: true,
+          authMethod: "auto",
+        },
+        {
+          suppressErrorToast: true,
+          suppressSuccessToast: true,
+          requestOAuthAuthorization,
+        },
+      );
+    });
+
+    expect(requestOAuthAuthorization).toHaveBeenCalledOnce();
+    expect(requestOAuthAuthorization).toHaveBeenCalledWith("auto-server");
+    expect(initiateOAuthMock).toHaveBeenCalledOnce();
+    expect(toastError).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("does not let a marker from an abandoned redirect block the next authorization", async () => {
+    // Keyed the way a redirect-surviving identity would key it. The user left
+    // at the provider (Back), so no callback ever cleared it.
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify(["project_default::name:auto-server"]),
+    );
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+    const requestOAuthAuthorization = vi.fn().mockResolvedValue(true);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const { result } = renderUseServerState(vi.fn(), appState);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "auto-server",
+          type: "http",
+          url: "https://auto.example.com/mcp",
+          useOAuth: true,
+          authMethod: "auto",
+        },
+        { suppressErrorToast: true, requestOAuthAuthorization },
+      );
+    });
+
+    // Re-prompts instead of failing with "still returns 401 after OAuth".
+    expect(requestOAuthAuthorization).toHaveBeenCalledWith("auto-server");
+    expect(initiateOAuthMock).toHaveBeenCalledOnce();
+  });
+
+  it("clears Auto's pending marker when OAuth init throws after confirmation", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockRejectedValueOnce(new Error("network down"));
+    const requestOAuthAuthorization = vi.fn().mockResolvedValue(true);
+    const { result } = renderUseServerState(vi.fn());
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "auto-server",
+          type: "http",
+          url: "https://auto.example.com/mcp",
+          useOAuth: true,
+          authMethod: "auto",
+        },
+        { suppressErrorToast: true, requestOAuthAuthorization },
+      );
+    });
+
+    expect(requestOAuthAuthorization).toHaveBeenCalledOnce();
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]");
+  });
+
+  it("clears Auto's pending marker on disconnect", async () => {
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify(["default::name:auto-server"]),
+    );
+    const { result } = renderUseServerState(vi.fn());
+
+    await act(async () => {
+      await result.current.handleDisconnect("auto-server");
+    });
+
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]");
+  });
+
+  it("persists authorization edits before starting Auto's OAuth redirect", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockResolvedValueOnce({ success: true });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect(
+        {
+          name: "auto-server",
+          type: "http",
+          url: "https://auto.example.com/mcp",
+          useOAuth: true,
+          authMethod: "auto",
+        },
+        {
+          requestOAuthAuthorization: vi.fn().mockResolvedValue({
+            oauthProtocolMode: "2025-06-18",
+            registrationMode: "preregistered",
+            clientId: "test-client-id",
+            oauthScopes: ["read", "write"],
+          }),
+        },
+      );
+    });
+
+    expect(initiateOAuthMock).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "UPSERT_SERVER",
+        name: "auto-server",
+        server: expect.objectContaining({
+          oauthProtocolMode: "2025-06-18",
+          registrationMode: "preregistered",
+          oauthFlowProfile: expect.objectContaining({
+            clientId: "test-client-id",
+            scopes: "read,write",
+          }),
+        }),
+      }),
+    );
+    expect(JSON.parse(localStorage.getItem("mcp-oauth-config-auto-server") ?? "{}")).toMatchObject({
+      protocolMode: "2025-06-18",
+      registrationMode: "preregistered",
+      scopes: ["read", "write"],
+    });
   });
 
   it("dispatches explicit non-OAuth success when updating an OAuth server to direct auth", async () => {
@@ -4537,6 +4900,114 @@ describe("syncServerToConvex name-collision recovery", () => {
     expect(dispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "UPSERT_SERVER" })
     );
+  });
+
+  describe("renames the saved row by id, keeping its stored client secret", () => {
+    // A rename used to delete this row and create a new one. The edit form
+    // never holds a stored secret, so the new row had none and the next OAuth
+    // token request went out without it.
+    const savedRow = {
+      _id: "srv_saved",
+      projectId: "project_default",
+      name: "demo-server",
+      enabled: true,
+      transportType: "http",
+      url: "https://example.com/mcp",
+    };
+    const renamedForm = {
+      name: "demo-server-renamed",
+      type: "http" as const,
+      url: "https://example.com/mcp",
+    };
+
+    function renderSignedIn(dispatch = vi.fn()) {
+      const appState = createAppState();
+      appState.projects.default.sharedProjectId = "project_default";
+      const rendered = renderUseServerState(dispatch, appState, {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        activeProjectServersFlat: [savedRow],
+      });
+      return { dispatch, ...rendered };
+    }
+
+    function expectRenamedInPlace() {
+      expect(mockUpdateServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "srv_saved",
+          name: "demo-server-renamed",
+        })
+      );
+      expect(mockDeleteServer).not.toHaveBeenCalled();
+      expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+      expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    }
+
+    it("from the Servers tab's Update server", async () => {
+      const { dispatch, result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.handleUpdate("demo-server", renamedForm);
+      });
+
+      expectRenamedInPlace();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+      );
+    });
+
+    it("from the Servers tab's Update server without connecting", async () => {
+      const { dispatch, result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.handleUpdate("demo-server", renamedForm, true);
+      });
+
+      expectRenamedInPlace();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+      );
+    });
+
+    it("from the OAuth debugger's server modal, which passes no target", async () => {
+      const { dispatch, result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.saveServerConfigWithoutConnecting(renamedForm, {
+          originalServerName: "demo-server",
+        });
+      });
+
+      expectRenamedInPlace();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+      );
+    });
+
+    it("writes a newly typed secret to the same row", async () => {
+      const { result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.handleUpdate("demo-server", {
+          ...renamedForm,
+          useOAuth: true,
+          clientId: "client-1",
+          clientSecret: "new-secret",
+        });
+      });
+
+      expect(mockUpdateServerWithClientSecret).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "srv_saved",
+          name: "demo-server-renamed",
+          clientSecret: "new-secret",
+        })
+      );
+      expect(mockDeleteServer).not.toHaveBeenCalled();
+      expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects a rename onto another server's name", async () => {

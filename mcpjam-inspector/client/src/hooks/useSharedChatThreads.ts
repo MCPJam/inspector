@@ -1,3 +1,4 @@
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import { useQuery } from "convex/react";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import type { HostSnapshot } from "@/lib/host-snapshot";
@@ -27,6 +28,8 @@ export interface SharedChatThread {
   userId?: string;
   visitorDisplayName?: string;
   modelId?: string;
+  /** The last turn's model selection, effort included; absent on older sessions. */
+  modelSelection?: RequestedModelSelection | null;
   messageCount: number;
   firstMessagePreview?: string;
   startedAt: number;
@@ -248,6 +251,8 @@ export interface SessionHistoricalHostConfig
   hostConfigId: string;
   hostStyle: string;
   modelId: string;
+  /** The session's last-turn selection (effort included), when it recorded one. */
+  modelSelection?: RequestedModelSelection | null;
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;

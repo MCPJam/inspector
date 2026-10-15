@@ -62,16 +62,26 @@ function post(
   });
 }
 
+// Shaped like a Convex id: the routes refuse anything else before Convex.
+const PROJECT_ID = "kd7a1b2c3d4e5f6g7h8i9j0k1l2m3n4p";
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
 describe("POST /api/web/skills/list", () => {
+  it("answers a malformed project id with a 404 before calling Convex", async () => {
+    const res = await post("/api/web/skills/list", { projectId: "badid" });
+    expect(res.status).toBe(404);
+    expect((await res.json()).message).toBe("Project not found");
+    expect(vi.mocked(listCloudSkills)).not.toHaveBeenCalled();
+  });
+
   it("returns the project's skills", async () => {
     vi.mocked(listCloudSkills).mockResolvedValue([
       {
         skillId: "s1",
-        projectId: "proj_1",
+        projectId: PROJECT_ID,
         name: "pdf",
         description: "d",
         sharing: "project",
@@ -81,14 +91,14 @@ describe("POST /api/web/skills/list", () => {
         updatedAt: 1,
       },
     ]);
-    const res = await post("/api/web/skills/list", { projectId: "proj_1" });
+    const res = await post("/api/web/skills/list", { projectId: PROJECT_ID });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.skills[0].name).toBe("pdf");
     expect(vi.mocked(listCloudSkills)).toHaveBeenCalledWith(
       expect.objectContaining({
         authHeader: "convex-jwt",
-        projectId: "proj_1",
+        projectId: PROJECT_ID,
       }),
     );
   });
@@ -103,7 +113,7 @@ describe("POST /api/web/skills/create", () => {
   it("creates and returns the skill", async () => {
     vi.mocked(createCloudSkill).mockResolvedValue({
       skillId: "s2",
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "greeter",
       description: "hi",
       sharing: "user",
@@ -114,7 +124,7 @@ describe("POST /api/web/skills/create", () => {
       updatedAt: 1,
     });
     const res = await post("/api/web/skills/create", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "greeter",
       description: "hi",
       content: "wave",
@@ -129,7 +139,7 @@ describe("POST /api/web/skills/create", () => {
       new CloudSkillsError("requires project admin", 403),
     );
     const res = await post("/api/web/skills/create", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "team",
       description: "d",
       content: "c",
@@ -143,7 +153,7 @@ describe("POST /api/web/skills/create", () => {
 describe("POST /api/web/skills/create with raw skillMd", () => {
   const created = {
     skillId: "s3",
-    projectId: "proj_1",
+    projectId: PROJECT_ID,
     name: "git-helper",
     description: "Server-parsed description",
     sharing: "user" as const,
@@ -167,7 +177,7 @@ describe("POST /api/web/skills/create with raw skillMd", () => {
       "Run git carefully.",
     ].join("\n");
     const res = await post("/api/web/skills/create", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "git-helper",
       // Client-sent fields are superseded by the server-side parse.
       description: "naive client parse",
@@ -176,7 +186,7 @@ describe("POST /api/web/skills/create with raw skillMd", () => {
     });
     expect(res.status).toBe(200);
     expect(vi.mocked(createCloudSkill)).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "proj_1" }),
+      expect.objectContaining({ projectId: PROJECT_ID }),
       {
         name: "git-helper",
         description: "Server-parsed description",
@@ -199,7 +209,7 @@ describe("POST /api/web/skills/create with raw skillMd", () => {
       "body",
     ].join("\n");
     const res = await post("/api/web/skills/create", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "git-helper",
       description: "d",
       content: "body",
@@ -213,7 +223,7 @@ describe("POST /api/web/skills/create with raw skillMd", () => {
   it("rejects an unparseable skillMd (missing description)", async () => {
     const skillMd = ["---", "name: git-helper", "---", "", "body"].join("\n");
     const res = await post("/api/web/skills/create", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "git-helper",
       description: "d",
       content: "body",
@@ -226,7 +236,7 @@ describe("POST /api/web/skills/create with raw skillMd", () => {
   it("without skillMd, forwards the client fields unchanged (no extraFrontmatter)", async () => {
     vi.mocked(createCloudSkill).mockResolvedValue(created);
     const res = await post("/api/web/skills/create", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "git-helper",
       description: "client description",
       content: "client body",
@@ -249,7 +259,7 @@ describe("POST /api/web/skills/delete + /promote", () => {
       new CloudSkillsError("Skill not found", 404),
     );
     const res = await post("/api/web/skills/delete", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       skillId: "missing",
     });
     expect(res.status).toBe(404);
@@ -258,7 +268,7 @@ describe("POST /api/web/skills/delete + /promote", () => {
   it("promote returns the shared skill", async () => {
     vi.mocked(promoteCloudSkill).mockResolvedValue({
       skillId: "s1",
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "pdf",
       description: "d",
       sharing: "project",
@@ -269,7 +279,7 @@ describe("POST /api/web/skills/delete + /promote", () => {
       updatedAt: 1,
     });
     const res = await post("/api/web/skills/promote", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       skillId: "s1",
     });
     expect(res.status).toBe(200);
@@ -294,13 +304,13 @@ describe("POST /api/web/skills/versions/*", () => {
   it("lists a skill's revisions", async () => {
     vi.mocked(listCloudSkillVersions).mockResolvedValue([VERSION]);
     const res = await post("/api/web/skills/versions/list", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       skillId: "s1",
     });
     expect(res.status).toBe(200);
     expect((await res.json()).versions[0].versionNumber).toBe(1);
     expect(vi.mocked(listCloudSkillVersions)).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "proj_1" }),
+      expect.objectContaining({ projectId: PROJECT_ID }),
       "s1",
     );
   });
@@ -312,7 +322,7 @@ describe("POST /api/web/skills/versions/*", () => {
       files: [{ path: "scripts/run.py", size: 10, contentHash: "f1" }],
     });
     const res = await post("/api/web/skills/versions/get", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       skillId: "s1",
       versionId: "v1",
     });
@@ -321,7 +331,7 @@ describe("POST /api/web/skills/versions/*", () => {
     expect(body.version.content).toBe("body");
     expect(body.version.files).toHaveLength(1);
     expect(vi.mocked(getCloudSkillVersion)).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "proj_1" }),
+      expect.objectContaining({ projectId: PROJECT_ID }),
       { skillId: "s1", versionId: "v1" },
     );
   });
@@ -329,7 +339,7 @@ describe("POST /api/web/skills/versions/*", () => {
   it("restores a revision", async () => {
     vi.mocked(restoreCloudSkillVersion).mockResolvedValue({
       skillId: "s1",
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "pdf",
       description: "d",
       sharing: "project",
@@ -340,7 +350,7 @@ describe("POST /api/web/skills/versions/*", () => {
       updatedAt: 2,
     });
     const res = await post("/api/web/skills/versions/restore", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       skillId: "s1",
       versionId: "v1",
     });
@@ -358,7 +368,7 @@ describe("POST /api/web/skills/versions/*", () => {
     ] as const) {
       for (const versionId of [undefined, null, ""]) {
         const res = await post(`/api/web/skills/versions/${route}`, {
-          projectId: "proj_1",
+          projectId: PROJECT_ID,
           skillId: "s1",
           ...(versionId === undefined ? {} : { versionId }),
         });
@@ -371,7 +381,7 @@ describe("POST /api/web/skills/versions/*", () => {
   it("rejects a missing, null or empty skillId without calling upstream", async () => {
     for (const skillId of [undefined, null, ""]) {
       const res = await post("/api/web/skills/versions/list", {
-        projectId: "proj_1",
+        projectId: PROJECT_ID,
         ...(skillId === undefined ? {} : { skillId }),
       });
       expect(res.status).toBe(400);
@@ -384,7 +394,7 @@ describe("POST /api/web/skills/versions/*", () => {
       new CloudSkillsError("Skill not found", 404),
     );
     const res = await post("/api/web/skills/versions/list", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       skillId: "gone",
     });
     expect(res.status).toBe(404);
@@ -394,7 +404,7 @@ describe("POST /api/web/skills/versions/*", () => {
 describe("POST /api/web/skills/create — folder-import draft", () => {
   const CREATED = {
     skillId: "s2",
-    projectId: "proj_1",
+    projectId: PROJECT_ID,
     name: "greeter",
     description: "hi",
     sharing: "user" as const,
@@ -408,7 +418,7 @@ describe("POST /api/web/skills/create — folder-import draft", () => {
   it("forwards importPending so the attach commits the single v1", async () => {
     vi.mocked(createCloudSkill).mockResolvedValue(CREATED);
     const res = await post("/api/web/skills/create", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "greeter",
       description: "hi",
       content: "c",
@@ -424,7 +434,7 @@ describe("POST /api/web/skills/create — folder-import draft", () => {
   it("omits it entirely for an ordinary create, preserving legacy behavior", async () => {
     vi.mocked(createCloudSkill).mockResolvedValue(CREATED);
     await post("/api/web/skills/create", {
-      projectId: "proj_1",
+      projectId: PROJECT_ID,
       name: "greeter",
       description: "hi",
       content: "c",

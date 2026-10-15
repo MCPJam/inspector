@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reasoningEffortOptions } from "../reasoning-effort-options";
+import { reasoningEffortOptions, reasoningEffortRouteForRow } from "../reasoning-effort-options";
 
 describe("reasoningEffortOptions", () => {
   it("a hosted row offers exactly the catalog's list", () => {
@@ -33,10 +33,53 @@ describe("reasoningEffortOptions", () => {
     ).toEqual([]);
   });
 
-  it("org routes and harnesses offer nothing until verified", () => {
+  it("an unresolved org route offers nothing; org-cloud reads the tables; harnesses use adapter rows", () => {
     const row = { id: "gpt-5.1", provider: "openai" as const };
     expect(reasoningEffortOptions(row, "org")).toEqual([]);
-    expect(reasoningEffortOptions(row, "orgCloud")).toEqual([]);
+    expect(reasoningEffortOptions(row, "orgCloud")).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+    ]);
+    // A harness offers its verified levels intersected with the MODEL's own:
+    // with no catalog list the model's levels are unknown, so nothing is offered.
     expect(reasoningEffortOptions(row, "hosted", "codex")).toEqual([]);
+    const catalogRow = {
+      ...row,
+      supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+    };
+    expect(reasoningEffortOptions(catalogRow, "hosted", "codex")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(
+      reasoningEffortOptions(
+        { ...row, supportedReasoningEfforts: ["low", "medium", "high"] },
+        "hosted",
+        "codex",
+      ),
+    ).toEqual(["low", "medium", "high"]);
+    expect(reasoningEffortOptions(catalogRow, "hosted", "claude-code")).toEqual(
+      [],
+    );
   });
+  it("uses the named connection's runtime for effort capabilities", () => {
+    const row = { id: "gpt-5.1", provider: "openai" as const,
+      orgProvider: { id: "connection-a", providerKey: "openai" } };
+    const connection = { id: "connection-a", providerKey: "openai", enabled: true, hasSecret: true };
+    expect(reasoningEffortRouteForRow(row)).toBe("org");
+    expect(reasoningEffortRouteForRow(row, { providers: [
+      { ...connection, runtimeLocation: "cloud" },
+    ] })).toBe("orgCloud");
+    expect(reasoningEffortRouteForRow(row, { providers: [
+      { ...connection, id: "other", runtimeLocation: "cloud" },
+    ] })).toBe("org");
+    expect(reasoningEffortOptions(row, reasoningEffortRouteForRow(row, {
+      providers: [{ ...connection, runtimeLocation: "local" }],
+    }))).toContain("high");
+  });
+
 });

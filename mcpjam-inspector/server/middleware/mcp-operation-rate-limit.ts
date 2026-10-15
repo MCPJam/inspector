@@ -114,7 +114,8 @@ export type McpOperationFamily =
   | "resources"
   | "prompts"
   | "tasks"
-  | "events";
+  | "events"
+  | "apps/plugin-instances";
 
 /** `burst` is the bucket's capacity: BURST, or CALL_BURST for tool calls. */
 type Bucket = { tokens: number; updatedAt: number; burst: number };

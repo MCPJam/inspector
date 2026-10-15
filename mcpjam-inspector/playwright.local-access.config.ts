@@ -1,4 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
+import {
+  communityBackendEnv,
+  NO_PRODUCTION_BROWSER_ARGS,
+} from "./e2e/community-backend";
 const port = process.env.LOCAL_ACCESS_TEST_PORT ?? "6284";
 const baseURL =
   process.env.LOCAL_ACCESS_TEST_BASE_URL ?? `http://127.0.0.1:${port}`;
@@ -13,6 +17,10 @@ export default defineConfig({
   use: {
     baseURL,
     ...devices["Desktop Chrome"],
+    // A local boot must never reach production; see e2e/community-backend.ts.
+    ...(process.env.LOCAL_ACCESS_TEST_BASE_URL
+      ? {}
+      : { launchOptions: { args: NO_PRODUCTION_BROWSER_ARGS } }),
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
@@ -23,6 +31,7 @@ export default defineConfig({
         url: `${baseURL}/health`,
         reuseExistingServer: !process.env.CI,
         env: {
+          ...communityBackendEnv(),
           NODE_ENV: "production",
           VITE_MCPJAM_HOSTED_MODE: "false",
           MCPJAM_SESSION_TOKEN: token,

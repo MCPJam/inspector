@@ -8,7 +8,7 @@
  * to UNAUTHORIZED, defeating the v1 closed-union contract.
  */
 import { describe, it, expect } from "vitest";
-import { mapErrorToV1, v1Error } from "../envelope.js";
+import { mapErrorToV1, v1Error, v1OnError } from "../envelope.js";
 import { V1_ERROR_STATUS } from "../contract.js";
 import { ErrorCode, WebRouteError } from "../../web/errors.js";
 
@@ -491,4 +491,74 @@ describe("mapErrorToV1 — structured Convex refusals", () => {
     expect(result.details).toMatchObject({ code: "ENV_SECRET_MISSING" });
   });
 
+});
+
+describe("mapErrorToV1 / v1OnError — recorded capture outcome", () => {
+  // The request-log backstop for the v1 agent captures what nothing else
+  // did, so the mapping's outcome has to be RECORDED: the capture stamp means
+  // only that a decision was made, and a decline makes one too.
+  it("returns captured: false for a declined client outcome", () => {
+    const mapped = mapErrorToV1(
+      new WebRouteError(404, ErrorCode.NOT_FOUND, "no such thing"),
+    );
+    expect(mapped.captured).toBe(false);
+  });
+
+  it("returns captured: true for an internal failure it paged on", () => {
+    const mapped = mapErrorToV1(new Error("kaboom"), {
+      boundary: "mcpjam_internal",
+    });
+    expect(mapped.captured).toBe(true);
+  });
+
+  it("records the outcome on webErrorMeta", () => {
+    const meta: Record<string, any> = {};
+    const c = {
+      set: (key: string, value: unknown) => {
+        meta[key] = value;
+      },
+      get: (key: string) => meta[key],
+      var: meta,
+      json: (body: unknown, status: number) => ({ body, status }),
+      req: { header: () => undefined },
+    };
+    v1OnError(new WebRouteError(404, ErrorCode.NOT_FOUND, "nope"), c as never);
+    expect(meta.webErrorMeta).toMatchObject({ captured: false });
+  });
+
+  it("applies Ask MCPJam's rule to a throw on the v1 agent path", () => {
+    // The v1 agent handler has no catch, so its throws land here. Without
+    // the agent rule they were captured untagged (or declined), and the
+    // recorded outcome kept the backstop off them too.
+    const meta: Record<string, any> = {};
+    const c = {
+      set: (key: string, value: unknown) => {
+        meta[key] = value;
+      },
+      get: (key: string) => meta[key],
+      var: meta,
+      json: (body: unknown, status: number) => ({ body, status }),
+      req: {
+        header: () => undefined,
+        path: "/api/v1/projects/proj_1/agent",
+      },
+    };
+    // Declined on any other path (see above); Ask MCPJam captures it.
+    v1OnError(new WebRouteError(404, ErrorCode.NOT_FOUND, "nope"), c as never);
+    expect(meta.webErrorMeta).toMatchObject({ captured: true });
+  });
+
+  it("applies a surface's rule on the early OAuth/method-not-found branches", () => {
+    const capture = () => ({
+      always: true,
+      tags: { surface: "mcpjam_agent", page_class: "routine" },
+    });
+    // A fresh error each time: the first decision stamps the error it saw.
+    const methodNotFound = () =>
+      Object.assign(new Error("MCP error -32601: Method not found"), {
+        code: -32601,
+      });
+    expect(mapErrorToV1(methodNotFound()).captured).toBe(false);
+    expect(mapErrorToV1(methodNotFound(), { capture }).captured).toBe(true);
+  });
 });

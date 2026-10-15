@@ -143,6 +143,26 @@ describe("resolveEnvironmentForRuntime", () => {
     expect(runtimeServerIds(spec)).toEqual(["ps_1"]);
     expect(runtimeServerNames(spec)).toEqual([]);
     expect(runtimeSkills(spec)).toEqual([]);
+    expect(spec.environmentOrigin).toBeUndefined();
+  });
+
+  it("keeps a known environmentOrigin and drops an unknown one", async () => {
+    for (const origin of ["named", "adhoc"] as const) {
+      const spec = await resolveEnvironmentForRuntime(
+        fakeConvexClient({ ...SPEC, environmentOrigin: origin }),
+        { projectId: "p_1", environmentId: "env_1" }
+      );
+      expect(spec.environmentOrigin).toBe(origin);
+    }
+    for (const origin of ["hidden", true, 1, null]) {
+      const spec = await resolveEnvironmentForRuntime(
+        fakeConvexClient({ ...SPEC, environmentOrigin: origin }),
+        { projectId: "p_1", environmentId: "env_1" }
+      );
+      // Additive, so not a reason to stop the turn, and never read as either.
+      expect(spec).not.toHaveProperty("environmentOrigin");
+      expect(spec.environmentRef).toEqual(SPEC.environmentRef);
+    }
   });
 
   it("FAILS CLOSED when an identity or host invariant is missing", async () => {

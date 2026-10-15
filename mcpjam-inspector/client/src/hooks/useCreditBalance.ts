@@ -1,7 +1,12 @@
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import { useEffect, useMemo } from "react";
+import { useSoftQuery } from "@/hooks/use-soft-query";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
+import {
+  formatCreditResetText,
+  formatMonthlyResetText,
+} from "@/lib/credit-usage";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 export interface CreditBalanceState {
@@ -140,10 +145,12 @@ export function useCreditBalance({
     hasConvexIdentity &&
     (hasWorkOsUser ? !!organizationId : includeGuests);
   const queryArgs = organizationId ? { organizationId } : {};
-  const raw = useQuery(
-    "billing:getCreditBalance" as any,
-    shouldFetchBalance ? (queryArgs as any) : "skip",
-  ) as unknown | undefined;
+  // Soft: the sidebar and the chat input read this on every page, and a
+  // failed balance must not replace the app. A failure reads as no balance.
+  const { data: raw, error } = useSoftQuery<unknown>(
+    "billing:getCreditBalance",
+    shouldFetchBalance ? queryArgs : "skip",
+  );
   // Memoize on the raw query reference. Convex returns a stable reference
   // when the underlying data is unchanged, so the normalized object stays
   // referentially stable across renders. Keeps downstream effects/memos
@@ -152,7 +159,9 @@ export function useCreditBalance({
   // Treat the bootstrap window as loading so the card shows a skeleton
   // instead of flashing an empty zero state before the query resolves.
   const isLoading =
-    enabled && (isAuthLoading || (shouldFetchBalance && raw === undefined));
+    enabled &&
+    (isAuthLoading ||
+      (shouldFetchBalance && raw === undefined && error === undefined));
   return {
     balance,
     isLoading,
@@ -225,7 +234,50 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
     resolvedOrganizationId,
   ]);
 
+  // Credits came back (a top-up or a reset), so running out again is news and
+  // the dialog may open once more. Only a seen change counts: a balance that
+  // never read empty (credits held by in-flight work) does not end it.
+  const observeBalance = useMCPJamLimitDialogStore(
+    (state) => state.observeBalance,
+  );
+  const balanceLoaded = balance !== undefined;
+  useEffect(() => {
+    if (!balanceLoaded) return;
+    observeBalance(resolvedOrganizationId ?? null, balanceOutOfCredits);
+  }, [
+    balanceLoaded,
+    balanceOutOfCredits,
+    observeBalance,
+    resolvedOrganizationId,
+  ]);
+
   return balanceOutOfCredits || locallyLimited;
+}
+
+/**
+ * The tooltip of a run, send or launch button that would spend MCPJam credits,
+ * while the organization has none ("Out of MCPJam credits · resets in 3h"), or
+ * null while it can spend. The reset text is the sidebar's.
+ */
+export function useOutOfCreditsReason(
+  organizationId?: string | null,
+): string | null {
+  const outOfCredits = useOutOfCredits(organizationId);
+  const { user } = useAuth();
+  const { balance } = useCreditBalance({
+    organizationId:
+      organizationId ?? (user ? readStoredActiveOrganizationId(user.id) : null),
+    includeGuests: true,
+  });
+  if (!outOfCredits) return null;
+  if (!balance) return "Out of MCPJam credits";
+  const monthly =
+    balance.billingModel === "monthly_per_seat" ||
+    balance.billingModel === "monthly_flat";
+  const resetText = monthly
+    ? formatMonthlyResetText(balance.monthlyResetAt, { withDate: false })
+    : formatCreditResetText(balance.freeDailyResetAt);
+  return `Out of MCPJam credits · ${resetText}`;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { startPluginFormFileJanitor } from "./services/plugin-host/form-file-grants.js";
 import { writeInspectorRuntime } from "./services/inspector-runtime.js";
 import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
@@ -11,7 +12,9 @@ import { bodyLimit } from "hono/body-limit";
 import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
+import { scrubCredentialUrl } from "../shared/credential-urls.js";
 import { logger as appLogger } from "./utils/logger";
+import { reportServiceCredentialAtBoot } from "./services/service-credential-boot";
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
@@ -26,6 +29,7 @@ import {
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env";
+import { startTelemetryCanary } from "./utils/telemetry-canary.js";
 import { initServerSentry } from "./sentry.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
@@ -58,13 +62,13 @@ import {
   stopRevokedSessionCache,
 } from "./services/revoked-session-cache.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
-import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
-import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
+import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
+import { sentryRequestIdentityMiddleware } from "./utils/sentry-request-identity.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
 import {
@@ -184,6 +188,7 @@ import {
   shutdownBrowserFrameSockets,
 } from "./routes/web/computer-browser-frames.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
+import { logGuestAuthorityOnce } from "./utils/guest-authority.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
 import surfaceLinkRoutes from "./routes/surface-link/index";
@@ -235,6 +240,7 @@ import {
   HOSTED_MODE,
   ALLOWED_HOSTS,
   CANIUSE_LANDING_HOSTS,
+  LOCAL_HARNESS_ENABLED,
   SCORE_LANDING_HOSTS,
 } from "./config";
 import {
@@ -336,20 +342,21 @@ function getInspectorFrontendUrlOptions() {
 try {
   fixPath();
 } catch {}
-
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
+if (!HOSTED_MODE) void startPluginFormFileJanitor();
 // One line, after the env is loaded: which grading-engine mode this process
 // could reach. Mirror of the call in server/app.ts.
 logGradingEngineModeOnce();
+logGuestAuthorityOnce(appLogger);
 
 // Immediately after the env load and before anything that can throw: the init
 // reads DO_NOT_TRACK / ENVIRONMENT / VITE_MCPJAM_HOSTED_MODE, which only exist
 // once `loadInspectorEnv` has run. Deliberately a call, not an import side
 // effect — an import would be hoisted above the env load.
 initServerSentry();
-
+startTelemetryCanary();
 // Generate session token for API authentication
 generateSessionToken();
 setXaaIdpLogger(appLogger);
@@ -363,14 +370,16 @@ startHostedModelCatalogRefresh();
 // waits for it. A no-op without the service token. Mirror of server/app.ts.
 startRevokedSessionCache();
 
-startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
-// Reports whether a local-harness runtime pack is present. Deliberately
-// only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
-// kill switch and a consent grant is installed when the user asks, never
-// at startup and never during a session start.
-reportLocalHarnessRuntimeStatusInBackground();
-if (!HOSTED_MODE) void startLocalHarnessJanitor();
+// Local runtime maintenance, after the janitor has reclaimed orphaned
+// sessions: this Inspector's liveness record, GC of packs no live
+// Inspector may select, and — only on a machine where somebody durably
+// authorized the harness, under the `auto` update policy — a background
+// prefetch of the desired pack. Never during a session start.
+if (!HOSTED_MODE) {
+  const janitor = startLocalHarnessJanitor();
+  if (LOCAL_HARNESS_ENABLED) void startLocalHarnessRuntimeMaintenance({ afterJanitor: janitor });
+}
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before
@@ -378,6 +387,10 @@ if (!HOSTED_MODE) void startLocalHarnessJanitor();
 // `isComputersDataPlaneConfigured()`, which is only truthful once the
 // credential bootstrap has resolved.
 const computersStartup = initComputersStartup();
+// Which credential-backed capabilities this process has (names only), and the
+// hosted-mode refusal to run half-configured. Mirror of the call in
+// server/app.ts::createHonoApp.
+reportServiceCredentialAtBoot(HOSTED_MODE);
 const app = new Hono().onError((err, c) => {
   // Last-resort handler: an exception escaped every route and every router's
   // own `onError`. Declared `mcpjam_internal` — if our routers could not name
@@ -390,7 +403,7 @@ const app = new Hono().onError((err, c) => {
   const { normalized, origin } = reportRouteFailure("Unhandled error", err, {
     source: "app.onError",
     hop: "mcpjam_internal",
-    context: { path: c.req.path, method: c.req.method },
+    context: { path: scrubCredentialUrl(c.req.path), method: c.req.method },
   });
 
   // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
@@ -518,7 +531,9 @@ app.use("*", sessionAuthMiddleware);
 const enableHttpLogs =
   process.env.NODE_ENV !== "production" || process.env.VERBOSE_LOGS === "true";
 if (enableHttpLogs) {
-  // Use custom print function to scrub session tokens from logged URLs
+  // Custom print function: every credential the registry knows (session and
+  // link tokens in the query, share tokens in the path, OAuth codes) is
+  // scrubbed from the request line before it is logged.
   app.use(
     "*",
     logger((message) => {
@@ -542,6 +557,7 @@ app.use("*", cors(CORS_OPTIONS));
 app.use("/api/web/*", webBodyLimit());
 
 // Typed event logging context (matches app.ts)
+app.use("/api/*", sentryRequestIdentityMiddleware);
 app.use("/api/*", requestLogContextMiddleware);
 
 // API Routes

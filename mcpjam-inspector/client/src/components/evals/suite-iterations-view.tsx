@@ -1,7 +1,12 @@
+import type { CaseRunLaunchOptions } from "./types";
+import { useRunGroupSummaries } from "./use-run-group-summaries";
+import { useSelectedRun } from "./use-selected-run";
 import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
 import { SuiteClientsSettings } from "./suite-clients-settings";
+import type { ReactNode } from "react";
+import { Input } from "@mcpjam/design-system/input";
 import {
   useMemo,
   useState,
@@ -10,7 +15,7 @@ import {
   useReducer,
   useRef,
 } from "react";
-import { useMutation, useConvexAuth, useQuery } from "convex/react";
+import { useMutation, useConvexAuth, useQuery, useConvex } from "convex/react";
 import { Loader2 } from "lucide-react";
 import {
   EVAL_GRADING_VALIDITY_HINTS,
@@ -19,11 +24,19 @@ import {
   EVAL_ITERATION_RULE_LABELS,
   EVAL_PASS_CRITERION_SCOPE_HINTS,
   EVAL_PASS_CRITERION_SCOPE_LABELS,
+  EXECUTION_BUDGET_DEFAULTS,
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
 } from "@mcpjam/sdk/contract";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
+import { useOutOfCreditsReason } from "@/hooks/useCreditBalance";
+import {
+  allModelsOutOfCredits,
+  OUT_OF_CREDITS_MODEL_REASON,
+} from "@/components/chat-v2/shared/available-models";
+import { preflightTargets } from "../evaluate/suite-run-preflight";
 import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
@@ -55,6 +68,7 @@ import {
   generationEnvironmentId,
   getLatestRunMetricSource,
   getRunMetricSource,
+  isSubsetRerunRun,
   runEnvironmentRef,
 } from "./helpers";
 import { SuiteHeader } from "./suite-header";
@@ -130,6 +144,7 @@ import type {
   EvalIteration,
   EvalSuite,
   EvalSuiteRun,
+  EvalSuiteRunListItem,
   SuiteAggregate,
 } from "./types";
 import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
@@ -144,6 +159,8 @@ import {
   readSuiteSettingsValues,
   suiteImageSetting,
   suiteSettingsReducer,
+  EXECUTION_BUDGET_DRAFT_BOUNDS,
+  type ExecutionBudgetBounds,
   type SuiteSettingsKey,
 } from "./suite-settings-draft";
 import { SuiteSettingsRow } from "./suite-settings-row";
@@ -172,6 +189,7 @@ import {
   type EvalExportCaseInput,
   type EvalExportDraftInput,
 } from "@/lib/evals/eval-export";
+import { sameRunTarget } from "@/lib/eval-target-key";
 
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: SuiteOverviewView) => void;
@@ -228,7 +246,100 @@ const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
       "judgeRubric",
     ],
     computerEnvironment: ["computerEnvironmentId"],
+    // One clock per row, so each badge names exactly the clock it belongs to.
+    turnTimeoutMs: ["turnTimeoutMs"],
+    toolCallTimeoutMs: ["toolCallTimeoutMs"],
+    iterationTimeoutMs: ["iterationTimeoutMs"],
+    runTimeoutMs: ["runTimeoutMs"],
+    turnRetries: ["turnRetries"],
   };
+
+/**
+ * One authored execution-budget clock.
+ *
+ * Authored in the unit a person thinks in and stored in milliseconds, because
+ * "6" is what someone types and `360000` is what the runner spends. An EMPTY
+ * input is not zero — it is un-authored, and the placeholder shows the platform
+ * default the run will inherit instead, so "no value" reads as inheritance
+ * rather than as something missing.
+ *
+ * `max` is the PLATFORM ceiling. An organization that lowered its own ceiling
+ * is enforced by the server, which refuses the save with
+ * EXECUTION_BUDGET_EXCEEDS_CEILING naming the field and the bound — the same
+ * refuse-don't-clamp rule the resolver follows. Pre-empting it here would need
+ * the effective ceiling, which suite capabilities do not carry yet.
+ */
+function BudgetSettingRow({
+  settingKey,
+  label,
+  hint,
+  unit,
+  unitMs,
+  bounds,
+  defaultMs,
+  value,
+  onChange,
+  accessory,
+}: {
+  settingKey: EvalSuiteSettingKey;
+  label: string;
+  hint: string;
+  unit: string;
+  /** Milliseconds in one unit; 1 for a plain count like retries. */
+  unitMs: number;
+  /** Both platform bounds, so the control cannot offer what the save refuses. */
+  bounds: ExecutionBudgetBounds;
+  defaultMs: number;
+  value: number | undefined;
+  onChange: (next: number | undefined) => void;
+  accessory?: ReactNode;
+}) {
+  const toUnit = (ms: number) => ms / unitMs;
+  return (
+    <SuiteSettingsRow
+      settingKey={settingKey}
+      chained={false}
+      data-subsection-id={settingKey}
+      accessory={accessory}
+      hint={hint}
+    >
+      <div className="flex items-center gap-2">
+        <Input
+          type="number"
+          className="w-28"
+          aria-label={label}
+          min={toUnit(bounds.min)}
+          max={toUnit(bounds.max)}
+          // The stored unit is milliseconds; minutes and seconds are only how
+          // the number is shown. Without this the browser steps by 1 FROM the
+          // floor, so a 10s floor on a minutes field makes every whole minute
+          // a step mismatch — and a legal 45s could never be typed anyway.
+          step="any"
+          placeholder={`${toUnit(defaultMs)}`}
+          value={value === undefined ? "" : String(toUnit(value))}
+          onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+            const raw = event.target.value.trim();
+            if (raw === "") {
+              onChange(undefined);
+              return;
+            }
+            const parsed = Number(raw);
+            // Refuse to turn a half-typed or nonsense entry into a stored
+            // number: leave the previous value alone rather than writing NaN.
+            if (!Number.isFinite(parsed)) return;
+            onChange(Math.round(parsed * unitMs));
+          }}
+        />
+        <span className="text-muted-foreground text-xs">{unit}</span>
+        {value === undefined ? (
+          <span className="text-muted-foreground text-xs">
+            inheriting the platform default
+          </span>
+        ) : null}
+      </div>
+    </SuiteSettingsRow>
+  );
+}
 
 function LedgerRowChips({
   dirty,
@@ -259,7 +370,9 @@ function LedgerRowChips({
  * run number, so a bare sort puts run #1 first — which is how a suite with
  * fifty runs once backtested a draft rubric against its very first run.
  */
-export function sortRunsNewestFirst(runs: EvalSuiteRun[]): EvalSuiteRun[] {
+export function sortRunsNewestFirst(
+  runs: EvalSuiteRunListItem[],
+): EvalSuiteRunListItem[] {
   return [...runs].sort((a, b) => compareRunsBySequence(b, a));
 }
 
@@ -278,12 +391,15 @@ const TERMINAL_RUN_STATUSES = new Set([
  * draft against, and a run still going has nothing to re-grade at all.
  * `null` means the panel is not offered rather than offered and refused.
  */
-export function pickBacktestableRun(runs: EvalSuiteRun[]): EvalSuiteRun | null {
+export function pickBacktestableRun(
+  runs: EvalSuiteRunListItem[],
+): EvalSuiteRunListItem | null {
   return (
     sortRunsNewestFirst(runs).find(
       (run) =>
         TERMINAL_RUN_STATUSES.has(run.status ?? "") &&
-        run.goalCompletion != null,
+        (run.judgeScore != null ||
+          ("goalCompletion" in run && run.goalCompletion != null)),
     ) ?? null
   );
 }
@@ -347,8 +463,10 @@ export function SuiteIterationsView({
   allIterations: legacyAllIterations = NO_ITERATIONS,
   metricsByRun,
   metricsLoading = false,
-  runs,
+  runs: listedRuns,
   runsLoading,
+  runHistoryStatus,
+  onLoadMoreRuns,
   aggregate,
   onRerun,
   onReplayRun,
@@ -363,9 +481,12 @@ export function SuiteIterationsView({
   deletingSuiteId,
   deletingRunId: _deletingRunId,
   availableModels,
+  requireOrgKeys = false,
+  onManageOrgProviders,
   route,
   userMap,
   projectId = null,
+  organizationId,
   navigation,
   onSetupCi,
   onCreateTestCase: onCreateTestCaseProp,
@@ -391,7 +512,6 @@ export function SuiteIterationsView({
   suiteDetailOverview = false,
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
-  evaluateObserveFirst = false,
   onGeneratingChange,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
@@ -419,8 +539,14 @@ export function SuiteIterationsView({
   /** One metrics object per run — see `run-metrics.ts`. Evaluate only. */
   metricsByRun?: RunMetricsByRun;
   metricsLoading?: boolean;
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   runsLoading: boolean;
+  runHistoryStatus?:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreRuns?: () => void;
   aggregate: SuiteAggregate | null;
   onRerun: (
     suite: EvalSuite,
@@ -429,9 +555,11 @@ export function SuiteIterationsView({
       iterationOverride?: number;
       caseIds?: string[];
       skipJudge?: boolean;
+      ephemeralEnvironment?: boolean;
+      throwOnFailure?: boolean;
     },
   ) => void | Promise<unknown>;
-  onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
+  onReplayRun?: (suite: EvalSuite, run: EvalSuiteRunListItem) => void;
   /**
    * One id, or every in-progress id of a launch — the run page and the suite
    * page cancel a whole client-model fan-out in one click.
@@ -447,6 +575,13 @@ export function SuiteIterationsView({
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   availableModels: any[];
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
@@ -481,7 +616,7 @@ export function SuiteIterationsView({
    * Per ROW, because deleting a run takes the project manage tier OR
    * authorship of that run. Omitted means every listed run may be deleted.
    */
-  canDeleteRun?: (run: EvalSuiteRun) => boolean;
+  canDeleteRun?: (run: EvalSuiteRunListItem) => boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
   /**
@@ -550,8 +685,6 @@ export function SuiteIterationsView({
    * today. Only `EvaluateTab` passes it.
    */
   evaluateCaseEditor?: boolean;
-  /** Observe-first authoring: the spine, Run test, and run-derived checks. */
-  evaluateObserveFirst?: boolean;
   /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
   onGeneratingChange?: (
     state: { exit: () => void; label?: string } | null,
@@ -577,6 +710,18 @@ export function SuiteIterationsView({
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
 }) {
+  const selectedRunId = route.type === "run-detail" ? route.runId : null;
+  const selectedRunState = useSelectedRun(suite._id, selectedRunId);
+  const selectedRunDetails = selectedRunState.run;
+  const { runs: groupRuns, loadGroup } = useRunGroupSummaries(
+    suite._id,
+    listedRuns,
+  );
+  const runs = useMemo(() => {
+    if (route.type !== "run-detail") return listedRuns;
+    if (!selectedRunDetails) return groupRuns;
+    return [selectedRunDetails, ...groupRuns.filter((run) => run._id !== selectedRunDetails._id)];
+  }, [route.type, listedRuns, groupRuns, selectedRunDetails]);
   const appState = useSharedAppState();
   // Derive view state from route
   //
@@ -713,7 +858,6 @@ export function SuiteIterationsView({
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
       : null;
-  const selectedRunId = route.type === "run-detail" ? route.runId : null;
   const viewMode =
     route.type === "run-detail"
       ? "run-detail"
@@ -751,12 +895,9 @@ export function SuiteIterationsView({
   const onRerunWithOverride = useCallback(
     (
       s: EvalSuite,
-      opts?: {
+      opts?: CaseRunLaunchOptions & {
         matchOptionsOverride?: EvalMatchOptions;
-        iterationOverride?: number;
-        ephemeralEnvironment?: boolean;
         caseIds?: string[];
-        skipJudge?: boolean;
       },
     ) => onRerun(s, opts),
     [onRerun],
@@ -773,9 +914,13 @@ export function SuiteIterationsView({
   const onRunCase = useCallback(
     async (
       caseId: string,
-      opts?: { iterationOverride?: number; skipJudge?: boolean },
+      opts?: CaseRunLaunchOptions,
     ) => {
-      await onRerunWithOverride(suite, { ...opts, caseIds: [caseId] });
+      const { suiteOverride, ...options } = opts ?? {};
+      await onRerunWithOverride(suiteOverride ?? suite, {
+        ...options,
+        caseIds: [caseId],
+      });
     },
     [onRerunWithOverride, suite],
   );
@@ -828,7 +973,8 @@ export function SuiteIterationsView({
     [draftDefaultPredicates],
   );
   const defaultMinimumPassRate =
-    draft.current.defaultPassCriteria?.minimumPassRate ?? 100;
+    draft.current.defaultPassCriteria?.minimumPassRate ??
+    DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT;
   const draftChanges = useMemo(() => describeDraft(draft), [draft]);
   // Memoized with the changes: `canCommit` re-runs `dirtyKeys` (a stringify per
   // key) and a zod parse over every default check, and this component re-renders
@@ -1005,12 +1151,17 @@ export function SuiteIterationsView({
   const unifiedShareEvals =
     useFeatureFlagEnabled("unified-share-evals") === true;
 
-  // Selected run details
-  const selectedRunDetails = useMemo(() => {
-    if (!selectedRunId) return null;
-    const run = runs.find((r) => r._id === selectedRunId);
-    return run ?? null;
-  }, [selectedRunId, runs]);
+  const convex = useConvex();
+  const replaySummaryRun = useCallback(
+    (run: EvalSuiteRunListItem) => onReplayRun?.(suite, run),
+    [onReplayRun, suite],
+  );
+  useEffect(() => {
+    if (selectedRunDetails?.runGroupId)
+      void loadGroup(selectedRunDetails.runGroupId).catch(() =>
+        toast.error("Could not load the complete run group"),
+      );
+  }, [loadGroup, selectedRunDetails?._id, selectedRunDetails?.runGroupId]);
 
   const previousCompletedRunForSelectedRun = useMemo(() => {
     if (!selectedRunDetails || selectedRunDetails.status !== "completed") {
@@ -1021,9 +1172,11 @@ export function SuiteIterationsView({
         (run) =>
           run._id !== selectedRunDetails._id &&
           run.status === "completed" &&
+          // A subset rerun is never a baseline: it measured only what failed.
+          !isSubsetRerunRun(run) &&
           (!suiteDetailOverview ||
             (run.namedHostId === selectedRunDetails.namedHostId &&
-              run.effectiveModelId === selectedRunDetails.effectiveModelId &&
+              sameRunTarget(run, selectedRunDetails) &&
               (!selectedRunDetails.runGroupId ||
                 run.runGroupId !== selectedRunDetails.runGroupId))) &&
           compareRunsBySequence(run, selectedRunDetails) < 0,
@@ -1105,13 +1258,13 @@ export function SuiteIterationsView({
   // ONE condition decides both whether the row renders and whether its images
   // are fetched. They used to be written separately — visibility here, the
   // fetch gated on the client flag alone — so a deployment whose capabilities
-  // say computers ARE available, seen by a client whose flag is off, rendered
+  // say images ARE available, seen by a client whose flag is off, rendered
   // an ENABLED select whose only option was "None (default image)". A control
   // that offers nothing is the failure this file is being repaired for.
-  const computersEnabled = useComputersEnabled();
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const computerEnvironmentRowVisible = capabilitiesReady
     ? Boolean(projectId)
-    : computersEnabled && Boolean(projectId);
+    : sandboxImagesEnabled && Boolean(projectId);
   const computerEnvironments = useSandboxImages(
     computerEnvironmentRowVisible ? projectId : null,
   );
@@ -1136,11 +1289,6 @@ export function SuiteIterationsView({
     suite,
     projectEnvironments ?? undefined,
   );
-  const evalRunsDisabledReason =
-    evalRunsDisabledReasonProp ??
-    (suitePinsSandboxImage && ephemeralCloudAvailable === false
-      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
-      : null);
   // A LOOKUP feeding `hostNamesById` below — nothing here offers a client to
   // pick, so it opts into private scenario-backing clients. Naming and
   // offering are different questions: a run that already resolved against a
@@ -1151,6 +1299,40 @@ export function SuiteIterationsView({
     projectId: projectId ?? null,
     includePrivateBacking: true,
   });
+  const evalRunsDisabledReason =
+    evalRunsDisabledReasonProp ??
+    (suitePinsSandboxImage && ephemeralCloudAvailable === false
+      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
+      : null);
+  // Out of credits, a run whose every model is a locked MCPJam one could only
+  // be refused, so its buttons say so before the click. Each control asks
+  // about the cases it launches: the suite for Run all, one case for its Run.
+  // The editor asks about its own draft models.
+  const outOfCreditsReason = useOutOfCreditsReason(organizationId);
+  const creditsReasonFor = useCallback(
+    (runCases: readonly EvalCase[]) =>
+      allModelsOutOfCredits(
+        preflightTargets({
+          suite,
+          cases: runCases,
+          environments: projectEnvironments ?? [],
+          hosts: namableHosts,
+          environmentServerRefs: [],
+        }).models,
+        availableModels,
+      )
+        ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
+        : null,
+    [suite, projectEnvironments, namableHosts, availableModels, outOfCreditsReason],
+  );
+  const caseRunOutOfCreditsReason = useCallback(
+    (testCase: EvalCase) => creditsReasonFor([testCase]),
+    [creditsReasonFor],
+  );
+  const suiteRunsDisabledReason = useMemo(
+    () => evalRunsDisabledReason ?? creditsReasonFor(cases),
+    [evalRunsDisabledReason, creditsReasonFor, cases],
+  );
 
   // Use custom hooks for data calculations
   const legacySuiteData = useSuiteData(
@@ -1177,11 +1359,16 @@ export function SuiteIterationsView({
 
   const latestCompletedRun = useMemo(
     () =>
-      sortRunsNewestFirst(runs).find((run) => run.status === "completed") ??
-      null,
+      sortRunsNewestFirst(runs).find(
+        (run) => run.status === "completed" && !isSubsetRerunRun(run),
+      ) ?? null,
     [runs],
   );
-  const groundedness = useGroundedness(latestCompletedRun);
+  const latestGroundednessRun = useSelectedRun(
+    suite._id,
+    isEditMode ? (latestCompletedRun?._id ?? null) : null,
+  );
+  const groundedness = useGroundedness(latestGroundednessRun.run);
 
   /**
    * Every trial's chain for the run currently open, keyed by iteration.
@@ -1493,7 +1680,10 @@ export function SuiteIterationsView({
     ciOwnedReason ??
     (!capabilitiesReady
       ? undefined
-      : (featureDisabledReason(capabilities.features?.computers) ??
+      : (featureDisabledReason(
+          capabilities.features?.["sandbox-images"] ??
+            capabilities.features?.computers,
+        ) ??
         (capabilities.permissions?.["suite.configure"] === false
           ? PERMISSION_REASON_COPY
           : undefined))) ??
@@ -1546,12 +1736,24 @@ export function SuiteIterationsView({
     [subsectionOptions],
   );
 
-  const handleOpenSuiteExport = useCallback(() => {
-    setExportState({
-      scope: "suite",
-      cases: pickSuiteExportCases(cases, runs),
-    });
-  }, [cases, runs]);
+  const handleOpenSuiteExport = useCallback(async () => {
+    try {
+      const latest = sortRunsNewestFirst(runs)[0];
+      const full =
+        cases.length === 0 && latest
+          ? ((await convex.query(
+              "testSuites:getTestSuiteRun" as any,
+              { runId: latest._id } as any,
+            )) as EvalSuiteRun | null)
+          : null;
+      setExportState({
+        scope: "suite",
+        cases: pickSuiteExportCases(cases, full ? [full] : []),
+      });
+    } catch {
+      toast.error("Could not load suite export");
+    }
+  }, [cases, runs, convex]);
 
   const handleOpenTestCaseExport = useCallback((testCase: EvalCase) => {
     setExportState({
@@ -1734,6 +1936,7 @@ export function SuiteIterationsView({
         rerunningSuiteId || replayingRunId || evalRunsDisabledReason,
       )}
       runTestCaseDisabledReason={evalRunsDisabledReason}
+      runTestCaseOutOfCreditsReason={caseRunOutOfCreditsReason}
       connectedServerNames={connectedServerNames}
       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
       testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
@@ -1958,7 +2161,7 @@ export function SuiteIterationsView({
             onGenerateTestCases={onGenerateTestCases}
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}
-            evalRunsDisabledReason={evalRunsDisabledReason}
+            evalRunsDisabledReason={suiteRunsDisabledReason}
             isGeneratingTestCases={isGeneratingTestCases}
             onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
@@ -1998,6 +2201,8 @@ export function SuiteIterationsView({
                 className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
               >
                 <TestTemplateEditor
+                  outOfCreditsReason={outOfCreditsReason}
+                  runTestCaseOutOfCreditsReason={caseRunOutOfCreditsReason}
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
                   readOnly={editingDisabled}
@@ -2012,6 +2217,8 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   projectId={projectId}
                   availableModels={availableModels}
+                  requireOrgKeys={requireOrgKeys}
+                  onManageOrgProviders={onManageOrgProviders}
                   suiteIterations={caseIterations}
                   suiteRuns={runs}
                   // The same opt-in and project gate the decision card beside
@@ -2021,8 +2228,16 @@ export function SuiteIterationsView({
                     evaluateDecisionSummary && projectId,
                   )}
                   simpleCaseEditor={evaluateCaseEditor}
-                  observeFirst={evaluateObserveFirst}
                   onRunCase={onRunCase}
+                  launchReview={{
+                    projectId,
+                    suite,
+                    environments: projectEnvironments ?? undefined,
+                    hostNamesById,
+                    disabledReason:
+                      evalRunsDisabledReason ??
+                      (rerunningSuiteId ? "A run is already starting." : null),
+                  }}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}
@@ -2118,6 +2333,12 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : selectedRunId && selectedRunState.isLoading ? (
+              <RowsLoading key={contentKey} label="Loading run..." />
+            ) : selectedRunId && selectedRunState.isUnavailable ? (
+              <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
+                Run unavailable.
+              </div>
             ) : showEvaluateRunPage &&
               selectedRunDetails &&
               route.type === "run-detail" &&
@@ -2170,7 +2391,7 @@ export function SuiteIterationsView({
                       ? undefined
                       : () => navigation.toSuiteEdit(suite._id),
                     disabledReason:
-                      evalRunsDisabledReason ??
+                      suiteRunsDisabledReason ??
                       (rerunningSuiteId ? "A run is already starting." : null),
                   }}
                   run={selectedRunDetails}
@@ -2260,6 +2481,8 @@ export function SuiteIterationsView({
                   cases={cases}
                   runs={runs}
                   runsLoading={runsLoading || metricsLoading}
+                  runHistoryStatus={runHistoryStatus}
+                  onLoadMoreRuns={onLoadMoreRuns}
                   metricsByRun={metricsByRun ?? NO_METRICS}
                   hostNamesById={hostNamesById}
                   onRerun={onRerunWithOverride}
@@ -2268,9 +2491,7 @@ export function SuiteIterationsView({
                       ? (route.importJob ?? null)
                       : null
                   }
-                  onClearImportJob={() =>
-                    navigation.toSuiteOverview(suite._id)
-                  }
+                  onClearImportJob={() => navigation.toSuiteOverview(suite._id)}
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onDescribeCases={onDescribeTestCase}
@@ -2300,7 +2521,7 @@ export function SuiteIterationsView({
                   rerunningSuiteId={rerunningSuiteId}
                   replayingRunId={replayingRunId}
                   runningTestCaseId={runningTestCaseId}
-                  evalRunsDisabledReason={evalRunsDisabledReason}
+                  evalRunsDisabledReason={suiteRunsDisabledReason}
                   readOnlyConfig={readOnlyConfig}
                   configLocked={configLocked}
                   onDuplicateSuite={onDuplicateSuite}
@@ -2353,6 +2574,8 @@ export function SuiteIterationsView({
                     suite={suite}
                     runs={runs}
                     runsLoading={runsLoading}
+                    runHistoryStatus={runHistoryStatus}
+                    onLoadMoreRuns={onLoadMoreRuns}
                     allIterations={allIterations}
                     runTrendData={runTrendData}
                     modelStats={modelStats}
@@ -2405,9 +2628,7 @@ export function SuiteIterationsView({
                           }
                           onRunClick={handleRunClick}
                           onReplayLatestRun={
-                            onReplayRun
-                              ? (run) => onReplayRun(suite, run)
-                              : undefined
+                            onReplayRun ? replaySummaryRun : undefined
                           }
                           isReplayingLatestRun={isReplayingLatestRun}
                         />
@@ -2477,6 +2698,7 @@ export function SuiteIterationsView({
                         evalRunsDisabledReason,
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
+                      runTestCaseOutOfCreditsReason={caseRunOutOfCreditsReason}
                       connectedServerNames={connectedServerNames}
                       onGenerateTestCases={onGenerateTestCases}
                       canGenerateTestCases={canGenerateTestCases}
@@ -2493,6 +2715,12 @@ export function SuiteIterationsView({
                   )}
                 </motion.div>
               )
+            ) : viewMode === "run-detail" && selectedRunState.isLoading ? (
+              <RowsLoading key={contentKey} label="Loading run..." />
+            ) : viewMode === "run-detail" && selectedRunState.isUnavailable ? (
+              <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
+                Run unavailable.
+              </div>
             ) : viewMode === "run-detail" &&
               selectedRunDetails &&
               runRowsPending &&
@@ -2846,6 +3074,121 @@ export function SuiteIterationsView({
                   ) : null}
                 </SuiteSettingsRow>
               ) : null}
+              <BudgetSettingRow
+                settingKey="turnTimeoutMs"
+                label="Per-turn timeout"
+                hint="How long one assistant turn may take, including the tool steps it drives."
+                unit="minutes"
+                unitMs={60_000}
+                bounds={EXECUTION_BUDGET_DRAFT_BOUNDS.turnTimeoutMs}
+                defaultMs={EXECUTION_BUDGET_DEFAULTS.evals.turnTimeoutMs}
+                value={draft.current.turnTimeoutMs}
+                onChange={(next) =>
+                  dispatchDraft({
+                    type: "edit",
+                    key: "turnTimeoutMs",
+                    value: next,
+                  })
+                }
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("turnTimeoutMs")}
+                    conflict={rowIsConflict("turnTimeoutMs")}
+                  />
+                }
+              />
+              <BudgetSettingRow
+                settingKey="toolCallTimeoutMs"
+                label="Per-tool-call timeout"
+                hint="How long one MCP request may take. A host-pinned per-server override still wins over this."
+                unit="seconds"
+                unitMs={1_000}
+                bounds={EXECUTION_BUDGET_DRAFT_BOUNDS.toolCallTimeoutMs}
+                defaultMs={EXECUTION_BUDGET_DEFAULTS.evals.toolCallTimeoutMs}
+                value={draft.current.toolCallTimeoutMs}
+                onChange={(next) =>
+                  dispatchDraft({
+                    type: "edit",
+                    key: "toolCallTimeoutMs",
+                    value: next,
+                  })
+                }
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("toolCallTimeoutMs")}
+                    conflict={rowIsConflict("toolCallTimeoutMs")}
+                  />
+                }
+              />
+              <BudgetSettingRow
+                settingKey="iterationTimeoutMs"
+                label="Per-iteration timeout"
+                hint="How long one trial may take. A trial that runs out of clock fails alone; its siblings keep going."
+                unit="minutes"
+                unitMs={60_000}
+                bounds={EXECUTION_BUDGET_DRAFT_BOUNDS.iterationTimeoutMs}
+                defaultMs={EXECUTION_BUDGET_DEFAULTS.evals.unitTimeoutMs}
+                value={draft.current.iterationTimeoutMs}
+                onChange={(next) =>
+                  dispatchDraft({
+                    type: "edit",
+                    key: "iterationTimeoutMs",
+                    value: next,
+                  })
+                }
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("iterationTimeoutMs")}
+                    conflict={rowIsConflict("iterationTimeoutMs")}
+                  />
+                }
+              />
+              <BudgetSettingRow
+                settingKey="runTimeoutMs"
+                label="Whole-run timeout"
+                hint="A backstop for the whole run, not the working bound: the per-iteration clock is what usually fires."
+                unit="minutes"
+                unitMs={60_000}
+                bounds={EXECUTION_BUDGET_DRAFT_BOUNDS.runTimeoutMs}
+                defaultMs={EXECUTION_BUDGET_DEFAULTS.evals.runTimeoutMs}
+                value={draft.current.runTimeoutMs}
+                onChange={(next) =>
+                  dispatchDraft({
+                    type: "edit",
+                    key: "runTimeoutMs",
+                    value: next,
+                  })
+                }
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("runTimeoutMs")}
+                    conflict={rowIsConflict("runTimeoutMs")}
+                  />
+                }
+              />
+              <BudgetSettingRow
+                settingKey="turnRetries"
+                label="Model call retries"
+                hint="How many times one model call is retried. Never applied to a live stream."
+                unit="retries"
+                unitMs={1}
+                bounds={EXECUTION_BUDGET_DRAFT_BOUNDS.turnRetries}
+                defaultMs={EXECUTION_BUDGET_DEFAULTS.evals.turnRetries}
+                value={draft.current.turnRetries}
+                onChange={(next) =>
+                  dispatchDraft({
+                    type: "edit",
+                    key: "turnRetries",
+                    value: next,
+                  })
+                }
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("turnRetries")}
+                    conflict={rowIsConflict("turnRetries")}
+                  />
+                }
+              />
               <div data-setting-key="passOrFail" className="space-y-4">
                 <SuitePassOrFailSection
                   capabilities={capabilitiesReady ? capabilities : null}
@@ -2895,6 +3238,8 @@ export function SuiteIterationsView({
                     })
                   }
                   availableModels={availableModels}
+                  requireOrgKeys={requireOrgKeys}
+                  onManageOrgProviders={onManageOrgProviders}
                   judgeAccessory={
                     <JudgeGatePanel
                       suiteId={suite._id}

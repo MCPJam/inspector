@@ -20,6 +20,7 @@ import {
   MODEL_REASONING_EFFORTS,
   type ModelReasoningEffort,
   type ModelSelection,
+  type RequestedModelSelection,
 } from "./model-selection.js";
 
 // ── Level tables ─────────────────────────────────────────────────────────
@@ -57,10 +58,76 @@ export const GOOGLE_REASONING_EFFORTS: readonly ModelReasoningEffort[] = [
 export const HARNESS_REASONING_EFFORTS: Readonly<
   Record<Harness, readonly ModelReasoningEffort[]>
 > = {
+  // STILL REFUSED, PENDING THE LIVE CHECK. The adapter has the mapping code
+  // (`effort` option + adaptive thinking + effort env), but whether the AI
+  // Gateway accepts adaptive thinking + `output_config.effort` per model, and
+  // what reaches the wire, needs a staging run that has not happened. Fill
+  // this row only from that check's evidence, never by inference.
   "claude-code": [],
-  codex: [],
+  // Both transports apply it through their own option (exec `reasoningEffort`,
+  // app-server `turn/start effort`). none / minimal / max stay refused until
+  // verified.
+  codex: ["low", "medium", "high", "xhigh"],
   cursor: [],
 };
+
+/**
+ * The level a provider applies when the request sends NO effort, per model
+ * family (the provider's documented default). The effort control captions
+ * this level "Default"; picking Default sends `undefined`, never this value,
+ * so a saved selection stays a default selection. `undefined` where the
+ * provider documents no default or the family offers no effort.
+ */
+function providerDefaultEffort(
+  providerKey: string,
+  name: string
+): ModelReasoningEffort | undefined {
+  switch (providerKey) {
+    case "openai": {
+      const levels = openaiEfforts(name);
+      if (levels.length === 0) return undefined;
+      // GPT-5.1 and later default to no reasoning; earlier reasoning models
+      // (GPT-5, o-series, Codex) default to medium.
+      if (/^gpt-5\.\d+(?:[.-]|$)/.test(name) && levels.includes("none")) {
+        return "none";
+      }
+      return levels.includes("medium") ? "medium" : undefined;
+    }
+    case "anthropic":
+      // Claude applies `high` when no effort is sent.
+      return anthropicEfforts(name).includes("high") ? "high" : undefined;
+    case "google":
+      // Gemini 3 thinks at `high` (dynamic) unless a level is sent.
+      return googleEfforts(name).includes("high") ? "high" : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** Provider key from a canonical `provider/model` id (`undefined` if bare). */
+function providerOfModelId(modelId: string): string | undefined {
+  const slash = modelId.indexOf("/");
+  return slash > 0 ? modelId.slice(0, slash) : undefined;
+}
+
+/**
+ * The provider's default level for `modelId` on `route`: what the model does
+ * when the request carries no effort. For the control's "Default" caption,
+ * never to fill a request. `providerKey` is needed only when `modelId` is a
+ * bare native id (direct BYOK rows); a canonical id carries its provider.
+ * `org` (runtime unknown) answers `undefined`, like
+ * {@link supportedReasoningEfforts}.
+ */
+export function defaultReasoningEffort(
+  modelId: string,
+  route: ReasoningEffortRoute,
+  providerKey?: string
+): ModelReasoningEffort | undefined {
+  if (route === "org") return undefined;
+  const provider = providerKey ?? providerOfModelId(modelId);
+  if (provider === undefined) return undefined;
+  return providerDefaultEffort(provider, bareModelName(modelId));
+}
 
 // ── Capability ───────────────────────────────────────────────────────────
 
@@ -204,29 +271,53 @@ function orderedEfforts(values: readonly string[]): ModelReasoningEffort[] {
 }
 
 /**
+ * The efforts a harness adapter is verified to apply, whatever the model. For
+ * "does this harness enforce an effort at all" questions; the levels a control
+ * may offer for a model are {@link supportedReasoningEfforts}.
+ */
+export function harnessReasoningEfforts(
+  harness: Harness
+): ModelReasoningEffort[] {
+  return orderedEfforts(HARNESS_REASONING_EFFORTS[harness] ?? []);
+}
+
+/**
  * The efforts a control may offer for this model on this route, in canonical
  * low-to-high order. Empty means "hide the control": the capability is
  * unknown or absent.
  *
- *  - harness  → the adapter's verified table (empty until verified).
+ *  - harness  → the adapter's verified table intersected with the model's
+ *    own levels (empty until verified, or when the model's are unknown).
  *  - hosted   → the catalog's list, nothing else.
  *  - direct   → the provider tables above.
  *  - org      → none: the concrete runtime is unknown (see the route type).
- *  - orgCloud → none yet: the org-cloud stream does not apply an effort
- *    (flip when it does, in the same change as the backend).
+ *  - orgCloud → the provider tables, like direct: the backend's org-cloud
+ *    stream maps an effort per org provider key and refuses one it cannot
+ *    map. Providers this module has no table for offer nothing.
  */
 export function supportedReasoningEfforts(
   input: SupportedReasoningEffortsInput
 ): ModelReasoningEffort[] {
   if (input.harness !== undefined) {
-    return orderedEfforts(HARNESS_REASONING_EFFORTS[input.harness] ?? []);
+    // The adapter's table says what the RUNTIME can apply; the model's own
+    // levels say what the MODEL accepts (`xhigh` on `gpt-5-nano` passes the
+    // first and fails at the lease mint). Offer only what both allow, and
+    // nothing when the model's levels are unknown (fail closed).
+    const modelLevels = new Set<string>(
+      supportedReasoningEfforts({ ...input, harness: undefined })
+    );
+    return orderedEfforts(
+      (HARNESS_REASONING_EFFORTS[input.harness] ?? []).filter((level) =>
+        modelLevels.has(level)
+      )
+    );
   }
   switch (input.route) {
     case "hosted":
       return orderedEfforts(input.catalogEfforts ?? []);
     case "org":
-    case "orgCloud":
       return [];
+    case "orgCloud":
     case "direct":
       return orderedEfforts(directEfforts(input.providerKey, input.modelId));
   }
@@ -338,8 +429,21 @@ function canonicalSelection(selection: ModelSelection): ModelSelection {
  * already have"). {@link selectionKey} deliberately ignores settings — it is
  * the picker row / cache key, and an effort must not split a row — so it can
  * NOT tell that two selections differ only by effort.
+ *
+ * A stored legacy selection (what a host config DTO carries for a model id
+ * outside the hosted catalog) has no settings and no `fallback`; it keys as
+ * the backend's stored form, in its key order.
  */
-export function selectionConfigKey(selection: ModelSelection): string {
+export function selectionConfigKey(selection: RequestedModelSelection): string {
+  if (selection.source === "legacy") {
+    return JSON.stringify({
+      source: selection.source,
+      modelId: selection.modelId,
+      ...(selection.provider !== undefined
+        ? { provider: selection.provider }
+        : {}),
+    });
+  }
   return JSON.stringify(canonicalSelection(selection));
 }
 
@@ -355,4 +459,168 @@ export function selectionIfMatches(
 ): ModelSelection | undefined {
   if (selection === undefined || modelId === undefined) return undefined;
   return selection.modelId === modelId.trim() ? selection : undefined;
+}
+
+/**
+ * A selection that runs exactly like its bare model id: the legacy form, or a
+ * hosted selection with no settings and no `nativeModelId`. Its
+ * {@link comparisonKey} is the bare `modelId`, byte-identical to the keys
+ * stored before selections existed, so history, baselines and gates keyed on
+ * it do not move. `fallback` is not identity.
+ */
+export function isDefaultSelection(selection: RequestedModelSelection): boolean {
+  if (selection.source === "legacy") return true;
+  if (selection.source !== "hosted") return false;
+  if (selection.nativeModelId !== undefined) return false;
+  const settings = selection.settings;
+  return (
+    settings === undefined ||
+    (settings.reasoningEffort === undefined &&
+      settings.temperature === undefined)
+  );
+}
+
+/**
+ * THE identity of a model choice wherever two choices are compared: matrix
+ * cells, compare cards, result columns, run baselines, verdict variants.
+ *
+ * - a default selection ({@link isDefaultSelection}) keys as the bare
+ *   `modelId` (unchanged from before selections);
+ * - anything else keys as `modelId` + `\u0000` + the canonical selection JSON
+ *   WITHOUT `fallback`, so Sonnet·High, Sonnet·Low, Sonnet on MCPJam and
+ *   Sonnet on an org key are four different targets.
+ *
+ * Byte-identical to the backend's `comparisonKey`
+ * (`convex/lib/modelSelection.ts`); a golden string is asserted in both repos.
+ */
+export function comparisonKey(selection: RequestedModelSelection): string {
+  const variantKey = executionVariantSelectionKey(selection);
+  return variantKey === undefined
+    ? selection.modelId
+    : `${selection.modelId}\u0000${variantKey}`;
+}
+
+/**
+ * The `selectionKey` an eval execution variant carries: the canonical
+ * selection JSON without `fallback` ({@link comparisonKey} minus its
+ * `modelId` prefix), or `undefined` for a default selection so the verdict
+ * key of every default variant is unchanged.
+ */
+export function executionVariantSelectionKey(
+  selection: RequestedModelSelection
+): string | undefined {
+  if (isDefaultSelection(selection)) return undefined;
+  const { fallback: _fallback, ...rest } = canonicalSelection(
+    selection as ModelSelection
+  );
+  void _fallback;
+  return JSON.stringify(rest);
+}
+
+/** Short level labels for distinguishers ("· High"). */
+const DISTINGUISHER_EFFORT_LABELS: Record<ModelReasoningEffort, string> = {
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Med",
+  high: "High",
+  xhigh: "X-High",
+  max: "Max",
+};
+
+function connectionLabel(selection: RequestedModelSelection): string {
+  if (selection.source === "legacy") return "Your key";
+  if (selection.source === "hosted") return "MCPJam";
+  const ref = selection.connectionRef;
+  if (ref?.kind === "localProvider") {
+    return ref.customProviderName ?? ref.providerKey;
+  }
+  return "Org key";
+}
+
+function settingsOf(selection: RequestedModelSelection) {
+  return selection.source === "legacy" ? undefined : selection.settings;
+}
+
+/**
+ * What tells `selection` apart from its siblings, as short labels in a fixed
+ * order (source/connection, native id, effort, temperature). A set effort is
+ * ALWAYS labelled, so a run at High reads "High" even alone; the other
+ * dimensions (and "Default", an unset effort) appear only where they differ
+ * among the siblings that share its `modelId`. Two Sonnet columns at Low and
+ * High read "Low" / "High"; a lone Sonnet at High reads "High"; a lone
+ * Sonnet with no effort reads nothing.
+ *
+ * `siblings` may include `selection` itself; selections for other model ids
+ * are ignored (the model name already tells those apart).
+ */
+export function selectionDistinguishers(
+  selection: RequestedModelSelection,
+  siblings: readonly RequestedModelSelection[]
+): string[] {
+  const peers = siblings.filter(
+    (sibling) =>
+      sibling.modelId === selection.modelId &&
+      comparisonKey(sibling) !== comparisonKey(selection)
+  );
+  const effortOf = (s: RequestedModelSelection) =>
+    settingsOf(s)?.reasoningEffort;
+  const ownEffort = effortOf(selection);
+  if (peers.length === 0) {
+    return ownEffort === undefined
+      ? []
+      : [DISTINGUISHER_EFFORT_LABELS[ownEffort]];
+  }
+  const labels: string[] = [];
+
+  const own = connectionLabel(selection);
+  const ownConnectionKey =
+    selection.source === "legacy" ? "legacy" : connectionIdentity(selection);
+  if (
+    peers.some(
+      (peer) =>
+        (peer.source === "legacy" ? "legacy" : connectionIdentity(peer)) !==
+        ownConnectionKey
+    )
+  ) {
+    labels.push(own);
+  }
+
+  const nativeOf = (s: RequestedModelSelection) =>
+    s.source === "legacy" ? undefined : s.nativeModelId;
+  if (peers.some((peer) => nativeOf(peer) !== nativeOf(selection))) {
+    const native = nativeOf(selection);
+    if (native !== undefined) labels.push(native);
+  }
+
+  if (
+    ownEffort !== undefined ||
+    peers.some((peer) => effortOf(peer) !== ownEffort)
+  ) {
+    labels.push(
+      ownEffort === undefined
+        ? "Default"
+        : DISTINGUISHER_EFFORT_LABELS[ownEffort]
+    );
+  }
+
+  const temperatureOf = (s: RequestedModelSelection) =>
+    settingsOf(s)?.temperature;
+  if (peers.some((peer) => temperatureOf(peer) !== temperatureOf(selection))) {
+    const temperature = temperatureOf(selection);
+    labels.push(
+      temperature === undefined ? "Default temp" : `Temp ${temperature}`
+    );
+  }
+
+  return labels;
+}
+
+/** Source + connection only (no model id, no settings). */
+function connectionIdentity(selection: ModelSelection): string {
+  const ref = selection.connectionRef;
+  if (ref === undefined) return selection.source;
+  return ref.kind === "orgProvider"
+    ? `${selection.source}:${ref.id}`
+    : `${selection.source}:${ref.providerKey}:${ref.customProviderName ?? ""}`;
 }

@@ -56,6 +56,7 @@ import { wrapFetchForHttpErrors } from "./http-error-fetch.js";
 import type {
   MCPClientManagerConfig,
   MCPClientManagerOptions,
+  ExtensionRequestBinding,
   MCPServerConfig,
   StdioServerConfig,
   HttpServerConfig,
@@ -171,10 +172,7 @@ import {
   updateTaskExt,
   withTasksExtensionDeclaration,
 } from "./tasks-ext.js";
-import {
-  resolveSkillsSupport,
-  type SkillsSupport,
-} from "./skills-dispatch.js";
+import { resolveSkillsSupport, type SkillsSupport } from "./skills-dispatch.js";
 import {
   getSkillExt,
   listSkillsExt,
@@ -203,10 +201,7 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
-import {
-  runToolTaskSeam,
-  type ToolTaskSeamOptions,
-} from "./tool-task-seam.js";
+import { runToolTaskSeam, type ToolTaskSeamOptions } from "./tool-task-seam.js";
 import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
 import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
 import {
@@ -243,11 +238,11 @@ import {
   defaultResultSchemaForMethod,
   runInputRequiredOperation,
   type ElicitationContentValidator,
+  type ElicitationFormSchemaSelector,
   type InputRequiredResult,
   type MrtrInputCollector,
   type MrtrLegSender,
 } from "./mrtr-driver.js";
-
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -411,6 +406,15 @@ export class MCPClientManager {
    * hosted PRs plug into.
    */
   private readonly mrtrInputCollectors = new Map<string, MrtrInputCollector>();
+  /** Extension keys a server's MRTR collector also answers (see
+   *  {@link setMrtrInputCollector}); such a key is never legacy-only. */
+  private readonly mrtrExtensionClaims = new Map<string, readonly string[]>();
+  /** The form schema a server's in-process MRTR answers are validated
+   *  against (see {@link setMrtrInputCollector}). */
+  private readonly mrtrFormSchemaSelectors = new Map<
+    string,
+    ElicitationFormSchemaSelector
+  >();
 
   /** MCPJam-owned MRTR round cap (see `mrtr-driver.ts`). */
   private readonly mrtrMaxRounds = DEFAULT_MAX_MRTR_ROUNDS;
@@ -430,7 +434,8 @@ export class MCPClientManager {
    * it on the final complete result. Fail-open on an unknown dialect, matching
    * upstream's tool-output behavior (see `DialectAwareJsonSchemaValidator`).
    */
-  private readonly mrtrToolOutputValidator = new DialectAwareJsonSchemaValidator();
+  private readonly mrtrToolOutputValidator =
+    new DialectAwareJsonSchemaValidator();
 
   // Default options
   private readonly defaultClientName: string | undefined;
@@ -468,6 +473,10 @@ export class MCPClientManager {
   private readonly negotiationOutcomeLogger?: NegotiationOutcomeLogger;
   private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
+  private readonly extensionRequestHandlers: ReadonlyMap<
+    string,
+    readonly ExtensionRequestBinding[]
+  >;
   private readonly elicitationTimeoutExtensionMs: number;
 
   // Progress token counter for uniqueness
@@ -504,13 +513,31 @@ export class MCPClientManager {
     this.negotiationOutcomeLogger = options.negotiationOutcomeLogger;
     this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
+    this.extensionRequestHandlers = new Map(
+      Object.entries(options.extensionRequestHandlers ?? {}).map(
+        ([id, handlers]) => {
+          const seen = new Set<string>();
+          const owned = handlers.map((binding) => {
+            // A vendor extension cannot replace a standard MCP handler.
+            if (
+              !/^[^/]+\/[^/]+\/.+/.test(binding.method) ||
+              seen.has(binding.method)
+            )
+              throw new Error("Invalid or duplicate extension request method");
+            seen.add(binding.method);
+            return Object.freeze({ ...binding });
+          });
+          return [id, Object.freeze(owned)];
+        }
+      )
+    );
     this.elicitationTimeoutExtensionMs = Math.max(
       0,
       options.elicitationTimeoutExtensionMs ??
         DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS
     );
 
-    // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
+    // Start connecting to all configured servers (unless lazyConnect: replay connects explicitly)
     if (!this.lazyConnect) {
       for (const [id, config] of Object.entries(servers)) {
         // Fire-and-forget prefetch: a failure here is NOT lost — the failed
@@ -868,9 +895,10 @@ export class MCPClientManager {
         transportType = "streamable-http";
       } else {
         const url = new URL(config.url);
-        transportType = (config.preferSSE ?? url.pathname.endsWith("/sse"))
-          ? "sse"
-          : "streamable-http";
+        transportType =
+          config.preferSSE ?? url.pathname.endsWith("/sse")
+            ? "sse"
+            : "streamable-http";
       }
     }
 
@@ -989,8 +1017,8 @@ export class MCPClientManager {
         negotiation === undefined
           ? "legacy"
           : negotiation.mode === "auto"
-            ? "auto"
-            : "modern-pin";
+          ? "auto"
+          : "modern-pin";
 
       let negotiatedEra: "legacy" | "modern" | undefined;
       let negotiatedProtocolVersion: string | undefined;
@@ -1054,6 +1082,8 @@ export class MCPClientManager {
     // Purge the MRTR collector too; otherwise a re-registered server inherits
     // the previous owner's collector closure and stale `elicitation` capability.
     this.mrtrInputCollectors.delete(serverId);
+    this.mrtrExtensionClaims.delete(serverId);
+    this.mrtrFormSchemaSelectors.delete(serverId);
   }
 
   /**
@@ -1259,8 +1289,8 @@ export class MCPClientManager {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
-        ? [serverIds]
-        : this.listServers();
+      ? [serverIds]
+      : this.listServers();
 
     const perServerTools = await Promise.all(
       ids.map(async (id) => {
@@ -1396,6 +1426,13 @@ export class MCPClientManager {
     taskOptions?: TaskOptions
   ) {
     const request = this.normalizeExecuteToolRequest(options, taskOptions);
+    const baseCallParams = {
+      name: toolName,
+      arguments: args,
+      ...(request.metadata !== undefined
+        ? { _meta: structuredClone(request.metadata) }
+        : {}),
+    };
 
     // Modern multi-round-trip: when a collector is registered and this is not a
     // task-augmented call, drive the manual `input_required` loop. A complete
@@ -1409,7 +1446,7 @@ export class MCPClientManager {
       // envelope is unwrapped from whatever the loop terminates with.
       const mrtrResult = await this.executeToolWithInputRequired(
         serverId,
-        { name: toolName, arguments: args },
+        baseCallParams,
         request,
         mrtrCollect
       );
@@ -1422,10 +1459,11 @@ export class MCPClientManager {
       await this.ensureConnected(serverId, signal);
       const client = this.getClientOrThrow(serverId);
       const mergedOptions = this.withProgressHandler(serverId, request.request);
-      const callParams = this.withTaskEligibilityDeclaration(serverId, request, {
-        name: toolName,
-        arguments: args,
-      });
+      const callParams = this.withTaskEligibilityDeclaration(
+        serverId,
+        request,
+        baseCallParams
+      );
 
       if (request.task !== undefined) {
         this.assertLegacyTasksWire(serverId);
@@ -2010,19 +2048,45 @@ export class MCPClientManager {
    * reject on abort (never return a synthetic decline) and returns
    * `ElicitResult`-shaped responses keyed by the server's request keys.
    */
-  setMrtrInputCollector(serverId: string, collect: MrtrInputCollector): void {
+  setMrtrInputCollector(
+    serverId: string,
+    collect: MrtrInputCollector,
+    options?: {
+      /** Extension keys this collector fulfils on a 2026-era connection
+       *  (e.g. `"openai/elicitation"` for forms whose schema rides in that
+       *  key's `_meta`). While the collector drives rounds, a legacy
+       *  handler's claim on the same key is kept on the modern wire instead
+       *  of withheld; with `supportsMrtr: false` these keys are withheld. */
+      extensionClaims?: readonly string[];
+      /** Picks the schema an answer `collect` returns is validated against
+       *  before the retry; defaults to the core `requestedSchema`. Set it
+       *  with an extension claim whose forms carry their schema elsewhere
+       *  (see `selectElicitationFormSchema`), or the empty core schema
+       *  accepts any answer. */
+      selectFormSchema?: ElicitationFormSchemaSelector;
+    }
+  ): void {
     // Intentionally NOT gated on prior registration: a 2026-07-28 server checks
     // the request's declared client capabilities before embedding an
     // elicitation, so a collector must be registrable BEFORE connect for
-    // `elicitation` to be advertised on the connect envelope (see
-    // `buildCapabilities`). Registering for an as-yet-unknown server is a no-op
-    // until that server connects.
+    // `elicitation` to be advertised on a modern connection's request envelope
+    // (see `buildCapabilities`; never on a 2025 `initialize`, which a
+    // collector cannot answer). Registering for an as-yet-unknown server is a
+    // no-op until that server connects.
     this.mrtrInputCollectors.set(serverId, collect);
+    if (options?.extensionClaims?.length)
+      this.mrtrExtensionClaims.set(serverId, [...options.extensionClaims]);
+    else this.mrtrExtensionClaims.delete(serverId);
+    if (options?.selectFormSchema)
+      this.mrtrFormSchemaSelectors.set(serverId, options.selectFormSchema);
+    else this.mrtrFormSchemaSelectors.delete(serverId);
   }
 
   /** Removes a server's MRTR input collector. */
   clearMrtrInputCollector(serverId: string): void {
     this.mrtrInputCollectors.delete(serverId);
+    this.mrtrExtensionClaims.delete(serverId);
+    this.mrtrFormSchemaSelectors.delete(serverId);
   }
 
   /**
@@ -2723,11 +2787,11 @@ export class MCPClientManager {
       // against every version supported by the upstream SDK.
       const resolvedSupportedProtocolVersions = wantsAutoNegotiation
         ? undefined
-        : (config.supportedProtocolVersions ??
+        : config.supportedProtocolVersions ??
           this.defaultSupportedProtocolVersions ??
           (!wantsStateless && resolvedProtocolVersion !== undefined
             ? [resolvedProtocolVersion]
-            : undefined));
+            : undefined);
       // Send the version that was actually PINNED, not whatever happens to
       // sit at index 0 of the accept-list.
       //
@@ -2846,6 +2910,19 @@ export class MCPClientManager {
           serverId,
           client,
           declaredElicitation as DeclaredElicitationCapability
+        );
+      }
+
+      for (const binding of this.extensionRequestHandlers.get(serverId) ?? []) {
+        client.setRequestHandler(
+          binding.method,
+          (request) =>
+            binding.waitsForInput
+              ? this.elicitationManager.trackInput(serverId, () =>
+                  binding.handler(request)
+                )
+              : binding.handler(request),
+          binding.schemas
         );
       }
 
@@ -3217,9 +3294,12 @@ export class MCPClientManager {
           // message-regex guessing.
           throw new Error(
             connectionErrorMessage(
+              serverId,
               url,
               [error],
-              `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(error)}`
+              `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
+                error
+              )}`
             ),
             { cause: error }
           );
@@ -3339,6 +3419,7 @@ export class MCPClientManager {
       throw attachStreamableCause(
         new Error(
           connectionErrorMessage(
+            serverId,
             url,
             [streamableError, error],
             `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`
@@ -3830,7 +3911,12 @@ export class MCPClientManager {
     options: RequestOptions,
     run: (options: RequestOptions) => Promise<T>
   ): Promise<T> {
-    if (!this.elicitationManager.hasHandler(serverId)) {
+    if (
+      !this.elicitationManager.hasHandler(serverId) &&
+      !this.extensionRequestHandlers
+        .get(serverId)
+        ?.some((binding) => binding.waitsForInput)
+    ) {
       return run(options);
     }
 
@@ -3855,7 +3941,7 @@ export class MCPClientManager {
         this.elicitationManager.hasPendingForServer(
           serverId,
           this.elicitationTimeoutExtensionMs,
-          pendingSequenceAtStart,
+          pendingSequenceAtStart
         ),
     });
 
@@ -3905,8 +3991,22 @@ export class MCPClientManager {
     // it. `era` is undefined at connect time, so the legacy fulfiller is
     // still counted then and `applyModernEraCapabilities` narrows once the
     // connection actually classifies as modern.
+    //
+    // The MRTR collector, conversely, fulfils `elicitation` ONLY on a modern
+    // connection: it answers embedded `input_required` requests and cannot
+    // answer a server-to-client `elicitation/create`. A connect-time build
+    // (`era` undefined) becomes the 2025 `initialize` whenever the
+    // connection can land on a legacy era (unpinned Auto, or a 2025 pin), so
+    // it counts the collector only for a connection pinned to a 2026 era.
+    // Otherwise a collector-only connection that falls back to 2025 would
+    // claim elicitation there and answer the server's form with `-32601`.
+    // `applyModernEraCapabilities` restores the claim once the connection
+    // classifies as modern.
     const mrtrDisabled = config.supportsMrtr === false;
-    const mrtrFulfils = !mrtrDisabled && this.mrtrInputCollectors.has(serverId);
+    const mrtrFulfils =
+      !mrtrDisabled &&
+      this.mrtrInputCollectors.has(serverId) &&
+      (era === "modern" || this.isPinnedModern(config));
     const legacyFulfils =
       this.elicitationManager.hasHandler(serverId) &&
       !(mrtrDisabled && era === "modern");
@@ -3923,7 +4023,15 @@ export class MCPClientManager {
         delete exactCapabilities.elicitation;
       }
 
-      return exactCapabilities as ClientCapabilityOptions;
+      return (
+        era === "modern"
+          ? this.withoutUnansweredClaims(
+              serverId,
+              exactCapabilities,
+              mrtrFulfils
+            )
+          : exactCapabilities
+      ) as ClientCapabilityOptions;
     }
 
     let configuredCapabilities = mergeClientCapabilities(
@@ -3960,7 +4068,57 @@ export class MCPClientManager {
     if (mrtrDisabled && era === "modern") {
       delete (resolved as Record<string, unknown>).elicitation;
     }
-    return resolved;
+    return era === "modern"
+      ? (this.withoutUnansweredClaims(
+          serverId,
+          resolved as Record<string, unknown>,
+          mrtrFulfils
+        ) as ClientCapabilityOptions)
+      : resolved;
+  }
+
+  /** The `extensions` keys nothing on this server answers on a 2026-era
+   *  connection: a legacy server-to-client handler's claim (see
+   *  {@link ExtensionRequestBinding.legacyClaim}) unless the MRTR collector
+   *  also answers it, and the collector's own claims while it drives no
+   *  rounds (`supportsMrtr: false`). */
+  private unansweredModernClaims(
+    serverId: string,
+    mrtrFulfils: boolean
+  ): string[] {
+    const modern = this.mrtrExtensionClaims.get(serverId) ?? [];
+    const legacy = (this.extensionRequestHandlers.get(serverId) ?? []).flatMap(
+      (binding) => (binding.legacyClaim ? [binding.legacyClaim] : [])
+    );
+    return mrtrFulfils
+      ? legacy.filter((claim) => !modern.includes(claim))
+      : [...legacy, ...modern];
+  }
+
+  /** A 2026-era connection has no server-to-client requests, so a claim only
+   *  such a request could honor is withheld there, as is a claim only an
+   *  MRTR collector that drives no rounds could honor. Narrowing only. */
+  private withoutUnansweredClaims(
+    serverId: string,
+    capabilities: Record<string, unknown>,
+    mrtrFulfils: boolean
+  ): Record<string, unknown> {
+    const claims = this.unansweredModernClaims(serverId, mrtrFulfils);
+    const extensions = capabilities.extensions;
+    if (
+      !claims.length ||
+      !extensions ||
+      typeof extensions !== "object" ||
+      Array.isArray(extensions)
+    )
+      return capabilities;
+    const kept = Object.fromEntries(
+      Object.entries(extensions).filter(([key]) => !claims.includes(key))
+    );
+    const next = { ...capabilities };
+    if (Object.keys(kept).length) next.extensions = kept;
+    else delete next.extensions;
+    return next;
   }
 
   /**
@@ -4008,8 +4166,18 @@ export class MCPClientManager {
     // silently no-op. Re-running is safe for an exact set: `buildCapabilities`
     // applies the same gate to it and otherwise advertises it verbatim.
     const narrowsForMrtr = config.supportsMrtr === false;
+    // A legacy-only extension claim (a binding's `legacyClaim`) narrows on
+    // the same pass, exact sets included: withholding is never a widening.
+    const narrowsLegacyClaims =
+      this.unansweredModernClaims(serverId, !narrowsForMrtr).length > 0;
+    // An MRTR collector's `elicitation` is withheld from a connect-time set
+    // that may become a 2025 `initialize` (see `buildCapabilities`); a
+    // modern-classified connection restores it here, exact sets included.
+    const restoresMrtrElicitation = this.mrtrInputCollectors.has(serverId);
     if (
       !narrowsForMrtr &&
+      !narrowsLegacyClaims &&
+      !restoresMrtrElicitation &&
       (!config.eraCapabilities?.modern || config.clientCapabilities)
     ) {
       return connectCapabilities;
@@ -4053,9 +4221,10 @@ export class MCPClientManager {
       // No declaration on record: mirror the inbound path, which allows form
       // (the legacy default) and rejects url absent an explicit declaration.
       if (declared === undefined) return ["form"];
-      const { supportsFormMode, supportsUrlMode } = getSupportedElicitationModes(
-        declared as Parameters<typeof getSupportedElicitationModes>[0]
-      );
+      const { supportsFormMode, supportsUrlMode } =
+        getSupportedElicitationModes(
+          declared as Parameters<typeof getSupportedElicitationModes>[0]
+        );
       const modes: ElicitationMode[] = [];
       if (supportsFormMode) modes.push("form");
       if (supportsUrlMode) modes.push("url");
@@ -4194,13 +4363,25 @@ export class MCPClientManager {
     return "command" in config;
   }
 
+  /** A connection pinned to a 2026 era: it can never land on a 2025 one.
+   *  Mirrors `wantsStateless` in the connect path (stdio carries no pin). */
+  private isPinnedModern(config: MCPServerConfig): boolean {
+    const pin = this.isStdioConfig(config)
+      ? undefined
+      : config.mcpProtocolVersion;
+    return pin !== undefined && isStatelessProtocolVersion(pin);
+  }
+
   private isExecuteToolRequest(
     value: ClientRequestOptions | ExecuteToolRequest | undefined
   ): value is ExecuteToolRequest {
     return Boolean(
       value &&
-      typeof value === "object" &&
-      ("request" in value || "retry" in value || "allowTaskResult" in value)
+        typeof value === "object" &&
+        ("request" in value ||
+          "retry" in value ||
+          "allowTaskResult" in value ||
+          "metadata" in value)
     );
   }
 
@@ -4247,7 +4428,11 @@ export class MCPClientManager {
 
   private async executeToolWithInputRequired(
     serverId: string,
-    callParams: { name: string; arguments?: Record<string, unknown> },
+    callParams: {
+      name: string;
+      arguments?: Record<string, unknown>;
+      _meta?: Record<string, unknown>;
+    },
     request: ExecuteToolRequest,
     collect: MrtrInputCollector
   ): Promise<CallToolResult> {
@@ -4334,8 +4519,8 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
-      supportedElicitationModes:
-        this.mrtrSupportedElicitationModes(serverId),
+      selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
+      supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       validateResponse: (result) =>
         this.validateToolOutputSchema(serverId, callParams.name, result),
       requestOptions: baseOptions,
@@ -4351,11 +4536,14 @@ export class MCPClientManager {
     collect: MrtrInputCollector
   ): Promise<ReadResourceResult> {
     const sender: MrtrLegSender<ReadResourceResult> = (req) =>
-      this.runRetryableReadOperation(serverId, options, (client) =>
-        client.readResource(req.params as ReadResourceParams, {
-          ...this.withProgressHandler(serverId, options),
-          allowInputRequired: true,
-        }) as Promise<ReadResourceResult | InputRequiredResult>
+      this.runRetryableReadOperation(
+        serverId,
+        options,
+        (client) =>
+          client.readResource(req.params as ReadResourceParams, {
+            ...this.withProgressHandler(serverId, options),
+            allowInputRequired: true,
+          }) as Promise<ReadResourceResult | InputRequiredResult>
       );
 
     return runInputRequiredOperation<ReadResourceResult>({
@@ -4364,8 +4552,8 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
-      supportedElicitationModes:
-        this.mrtrSupportedElicitationModes(serverId),
+      selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
+      supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
@@ -4383,15 +4571,18 @@ export class MCPClientManager {
     // also exercises the modern per-request log-level `_meta` injection end to
     // end at the manager level.
     const sender: MrtrLegSender<GetPromptResult> = (req) =>
-      this.runRetryableReadOperation(serverId, options, (client) =>
-        client.requestWithSchema(
-          req as Request,
-          withInputRequired(defaultResultSchemaForMethod("prompts/get")),
-          {
-            ...this.withProgressHandler(serverId, options),
-            allowInputRequired: true,
-          }
-        ) as Promise<GetPromptResult | InputRequiredResult>
+      this.runRetryableReadOperation(
+        serverId,
+        options,
+        (client) =>
+          client.requestWithSchema(
+            req as Request,
+            withInputRequired(defaultResultSchemaForMethod("prompts/get")),
+            {
+              ...this.withProgressHandler(serverId, options),
+              allowInputRequired: true,
+            }
+          ) as Promise<GetPromptResult | InputRequiredResult>
       );
 
     return runInputRequiredOperation<GetPromptResult>({
@@ -4400,8 +4591,8 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
-      supportedElicitationModes:
-        this.mrtrSupportedElicitationModes(serverId),
+      selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
+      supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
@@ -4609,7 +4800,6 @@ export class MCPClientManager {
     const leaves = override ?? config?.toolCallCancellation;
     const suppressed =
       leaves?.[cancellationLeafForVersion(negotiated)] === false;
-
 
     if (abortSignal === undefined) {
       return {

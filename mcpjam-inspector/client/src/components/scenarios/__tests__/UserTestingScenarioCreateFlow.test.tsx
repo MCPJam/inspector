@@ -65,6 +65,11 @@ vi.mock("@/hooks/use-host-harness-targets", () => ({
   useHostHarnessTargets: () => ({}),
   useHostHarnessLoader: () => async () => null,
 }));
+// The resolver reads the project's secrets (a Cursor client's key); these tests
+// have none, which is what a project with no Cursor client looks like.
+vi.mock("@/hooks/useProjectSecrets", () => ({
+  useProjectSecrets: () => [],
+}));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => environmentsState.value,
   useEnsureAdhocEnvironments: () => ensureAdhocMock,

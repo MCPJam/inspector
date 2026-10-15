@@ -1,0 +1,143 @@
+name: Warm node_modules caches
+
+# A PR run can restore caches saved on its own branch or on `main`, and the
+# node_modules caches in test.yml and lint.yml keep their ten `npm ci` runs per
+# PR off the critical path. Those workflows run on PRs and in the merge queue,
+# not on `main`, and a queue run saves to its gh-readonly-queue/* ref, which no
+# PR can read. So this saves the same entries on `main`.
+#
+# Each job must match its consumers exactly: the key, the `path` list (the
+# cache's version is derived from it, so a different list is a different
+# entry), the container image, NODE_VERSION and `runs-on`. A cache lives with
+# the runner that saved it: Blacksmith routes actions/cache to its own store,
+# so the bare key is warmed twice, once there for lint.yml and once on GitHub
+# for the Meticulous and slop-deletion workflows.
+# .github/scripts/warm-node-modules.test.mjs checks that in Build and Test.
+#
+# On a hit, `lookup-only` skips the download, so a job ends after checkout.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Every push to main carries the newest lockfile, so only the latest run matters.
+concurrency:
+  group: warm-node-modules
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24.14.0"
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  playwright:
+    name: Playwright container (test.yml)
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 15
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
+
+    steps:
+      # Same as test.yml: git in the Playwright container can fail to discover
+      # its CA bundle.
+      - name: Prepare container certificates
+        run: |
+          update-ca-certificates --fresh
+          test -s /etc/ssl/certs/ca-certificates.crt
+          echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          lookup-only: true
+
+      - name: Setup Node.js
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+  bare:
+    name: Bare runner (lint.yml)
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          lookup-only: true
+
+      - name: Setup Node.js
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+  bare-github:
+    name: GitHub runner (Meticulous, slop deletion)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          lookup-only: true
+
+      - name: Setup Node.js
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps

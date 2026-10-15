@@ -216,6 +216,34 @@ describe("eval decision summary", () => {
     expect(text).not.toContain("iteration-1 (iteration-1, iteration 1)");
   });
 
+  it("leaves a trial MCPJam's infrastructure failed out of the cases and counts", () => {
+    const row = {
+      title: "case",
+      iterationNumber: 1,
+      expectedToolCalls: [],
+      actualToolCalls: [],
+      stageResults: undefined,
+    };
+    const summary = buildEvalDecisionSummaryFromIterations(
+      [
+        { ...row, id: "measured", result: "failed" },
+        {
+          ...row,
+          id: "outage",
+          result: "failed",
+          infraError: {
+            class: "provider_unavailable",
+            layer: "model",
+            retryable: true,
+          },
+        },
+      ] as never,
+      { iterationWalkComplete: true }
+    );
+    expect(summary.passRate).toMatchObject({ total: 1, failed: 1, passed: 0 });
+    expect(summary.cases.map((entry) => entry.id)).toEqual(["measured"]);
+  });
+
   it("flags a version-ahead chain without filtering the reported derivation", () => {
     const summary = buildEvalDecisionSummary({
       total: 1,

@@ -205,6 +205,26 @@ export interface PluginImportRow {
   expiresAt: number;
 }
 
+/**
+ * A plugin icon: a short-lived signed link plus its type. Raster images load
+ * straight into `<img>`; SVG is served as a download and must be rendered
+ * from a typed blob (see `PluginIcon`).
+ */
+export interface PluginIconRef {
+  url: string;
+  contentType: string;
+}
+
+/**
+ * OpenAI plugin icons: `logo` / `logoDark` are the directory icon (light and
+ * dark), `composerIcon` the icon on composer chips naming the plugin.
+ */
+export interface PluginIcons {
+  logo?: PluginIconRef;
+  logoDark?: PluginIconRef;
+  composerIcon?: PluginIconRef;
+}
+
 /** `plugins.listProjectPlugins` element / `getProjectPlugin` base. */
 export interface PluginSummary {
   pluginId: string;
@@ -217,6 +237,8 @@ export interface PluginSummary {
   deletedAt?: number;
   createdAt: number;
   updatedAt: number;
+  /** Present on `listProjectPlugins` rows whose active version has icons. */
+  icons?: PluginIcons;
 }
 
 export interface PluginVersionSummary {
@@ -315,6 +337,15 @@ export interface PluginVersionDetail extends PluginVersionSummary {
   schemaVersion?: string;
   servers: PluginVersionServerComponent[];
   skills: PluginVersionSkillComponent[];
+  /**
+   * The packaged onboarding skill (`extensions["com.openai"].onboardingSkill`)
+   * when the manifest declares one that resolves to a skill component.
+   */
+  onboarding?: {
+    componentId: string;
+    modelRef: string;
+    materializedSkillId?: string;
+  };
 }
 
 /**

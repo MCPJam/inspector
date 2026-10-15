@@ -950,8 +950,35 @@ describe("ChatTabV2 history sync", () => {
 
       expect(mockUseChatSession.setSelectedModel).toHaveBeenCalledWith(
         provider === "openrouter" ? openRouterSonnet : hostedSonnet,
+        { selection: undefined, persist: false },
       );
     });
+  });
+
+  it("restores the recorded connection and settings even if its row is unavailable", async () => {
+    const selection = {
+      modelId: "openai/gpt-4o",
+      nativeModelId: "gpt-4o",
+      source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "connection-removed" },
+      settings: { temperature: 0.2 },
+      fallback: { provider: "none" as const, model: "none" as const },
+    };
+    mockUseChatSession.availableModels = [];
+    mockUseChatSession.setSelectedModel = vi.fn();
+    mockGetChatHistoryDetail.mockResolvedValue({
+      ok: true,
+      session: { ...mockHistorySession, modelId: selection.modelId, modelSelection: selection,
+        messagesBlobUrl: "https://storage.test/blob" },
+      widgetSnapshots: [],
+    });
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+    expect(mockUseChatSession.setSelectedModel).toHaveBeenCalledWith(
+      mockUseChatSession.selectedModel, { selection, persist: false },
+    );
   });
 
   it("keeps the active resumed thread selected when servers change", async () => {
@@ -1220,6 +1247,57 @@ describe("ChatTabV2 history sync", () => {
     expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: "Edited text should not leak" })
     );
+  });
+
+  it("offers Retry for a temporary organization policy refusal and resends the last message", async () => {
+    // The organization's AI-key policy couldn't be read, or its provider was
+    // briefly down. Both lift on their own, so the tab itself must hand the
+    // banner a Retry action; the banner's own test passes one in directly.
+    mockUseChatSession.rewindToMessage.mockResolvedValue({
+      previousChatSessionId: "prev-session-1",
+    });
+    mockUseChatSession.error = Object.assign(
+      new Error("The organization's AI provider is unavailable."),
+      { formatted: { code: "provider_unavailable" } }
+    );
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    // Arm the resend with a message that actually went out.
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Edited text should not leak" })
+    );
+  });
+
+  it("offers Retry when the organization's AI policy couldn't be checked", () => {
+    mockUseChatSession.error = Object.assign(
+      new Error("The organization's AI policy couldn't be checked."),
+      { formatted: { code: "ai_key_policy_unavailable" } }
+    );
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("offers no Retry for an organization policy refusal that needs a configuration change", () => {
+    mockUseChatSession.error = Object.assign(
+      new Error("Choose a model from an organization provider."),
+      { formatted: { code: "org_keys_required" } }
+    );
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    expect(screen.getByTestId("error-box")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" })
+    ).not.toBeInTheDocument();
   });
 
   it("asks before discarding an unsent draft on edit, and does not rewind until confirmed", async () => {

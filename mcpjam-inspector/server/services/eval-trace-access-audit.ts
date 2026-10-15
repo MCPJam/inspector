@@ -42,6 +42,7 @@
 
 import { getInternalBackendConfig } from "./internal-backend.js";
 import { reportRouteFailure } from "../utils/route-error-report.js";
+import { hasServiceCredential } from "./service-credential.js";
 
 const ITERATION_READ_PATH = "/internal/v1/evals/iteration-read";
 
@@ -99,13 +100,22 @@ export interface EvalIterationReadAudit {
 export async function recordEvalIterationRead(
   audit: EvalIterationReadAudit
 ): Promise<void> {
+  // HOSTED-ONLY BY DESIGN. The backend route needs the service credential to
+  // write a row on someone's behalf, and deliberately has no bearer-only twin:
+  // a bearer alone would let any signed-in caller manufacture audit rows. A
+  // self-hosted build reads its own traces through its own server, so there is
+  // nothing for it to attest to — skip quietly rather than report a failure
+  // that is not one.
+  if (!hasServiceCredential()) return;
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
     AUDIT_REQUEST_TIMEOUT_MS
   );
   try {
-    const { convexUrl, serviceToken } = getInternalBackendConfig();
+    const { convexUrl, serviceToken } = getInternalBackendConfig(
+      "Eval trace-read audit"
+    );
     const response = await fetch(`${convexUrl}${ITERATION_READ_PATH}`, {
       method: "POST",
       signal: controller.signal,

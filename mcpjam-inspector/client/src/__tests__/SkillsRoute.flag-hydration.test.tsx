@@ -36,7 +36,7 @@ vi.mock("../hooks/useSkillsEnabled", () => ({
 // module graph still calls it elsewhere.
 vi.mock("../hooks/useComputersEnabled", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../hooks/useComputersEnabled")>()),
-  COMPUTERS_FEATURE_FLAG: "computers-enabled",
+  COMPUTERS_FEATURE_FLAG: "sandbox-images-enabled",
   useComputersEnabledState: () => true,
   useComputersEnabled: () => true,
 }));
