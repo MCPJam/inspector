@@ -627,7 +627,7 @@ describe("buildRedesignedHostCanvas — Project Computers islands", () => {
 
   it("shows the Computer island (but not built-in tools) when a computer is attached and the flag is off", () => {
     // Harness hosts seed a computer; the island must surface even with the
-    // computers-enabled rollout flag off, mirroring the Computer focus tab.
+    // machine rollout flag off, mirroring the Computer focus tab.
     const draft = emptyHostConfigInputV2();
     draft.computer = { kind: "personal" };
     const vm = buildVm({ draft }); // computersEnabled omitted
@@ -637,6 +637,17 @@ describe("buildRedesignedHostCanvas — Project Computers islands", () => {
     // Built-in tools island stays flag-gated.
     expect(vm.nodes.some((n) => n.id === BUILTIN_TOOLS_NODE_ID)).toBe(false);
     expect(vm.edges.some((e) => e.id === "host-to-builtin-tools")).toBe(false);
+  });
+
+  it("emits no Computer island for a harness draft, flag on or computer attached", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.harness = "claude-code";
+    draft.computer = { kind: "personal" };
+    for (const computersEnabled of [true, false]) {
+      const vm = buildVm({ draft, computersEnabled });
+      expect(vm.nodes.some((n) => n.id === COMPUTER_NODE_ID)).toBe(false);
+      expect(vm.edges.some((e) => e.id === "host-to-computer")).toBe(false);
+    }
   });
 
   it("maps attached built-in tool ids through the catalog for labels", () => {

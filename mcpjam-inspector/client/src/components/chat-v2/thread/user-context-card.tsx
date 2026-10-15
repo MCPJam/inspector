@@ -5,6 +5,7 @@
  * state is for the model only and renders nothing.
  */
 import {
+  AtSign,
   ChevronRight,
   MessageSquareQuote,
   SquareSlash,
@@ -20,6 +21,7 @@ type ShownKind = Exclude<UserContextKind, "widget-state">;
 type ShownBlock = UserContextBlock & { kind: ShownKind };
 
 const PRESENTATION: Record<ShownKind, { Icon: LucideIcon; label: string }> = {
+  mention: { Icon: AtSign, label: "Mention" },
   skill: { Icon: SquareSlash, label: "Skill" },
   "skill-file": { Icon: SquareSlash, label: "Skill file" },
   "tool-run": { Icon: Wrench, label: "Ran tool" },

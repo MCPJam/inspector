@@ -29,7 +29,7 @@ function statusOf(findings: ReturnType<typeof runClaudeToolChecks>, id: string) 
 const WELL_FORMED = tool({
   name: "list_orders",
   title: "List orders",
-  annotations: { readOnlyHint: true },
+  annotations: { title: "List orders", readOnlyHint: true },
 });
 
 describe("a well-formed tool list", () => {
@@ -82,10 +82,14 @@ describe("name length", () => {
 });
 
 describe("titles", () => {
-  it("accepts a title on the tool or on its annotations", () => {
+  it("accepts a title on the annotations, with or without a top-level one", () => {
     for (const candidate of [
-      tool({ name: "t", title: "T", annotations: { readOnlyHint: true } }),
       tool({ name: "t", annotations: { title: "T", readOnlyHint: true } }),
+      tool({
+        name: "t",
+        title: "T",
+        annotations: { title: "T", readOnlyHint: true },
+      }),
     ]) {
       expect(
         statusOf(
@@ -96,7 +100,19 @@ describe("titles", () => {
     }
   });
 
-  it("prefers the top-level title over the annotation, per MCP precedence", () => {
+  it("flags a tool titled only at the top level — Claude's directory does not read it", () => {
+    // Spec-valid, and still listed "Missing title annotation" by the
+    // directory. Passing it here is how a server can grade clean on this
+    // check while every one of its tools is flagged on submission.
+    const finding = runClaudeToolChecks(
+      [tool({ name: "t", title: "T", annotations: { readOnlyHint: true } })],
+      STAMP,
+    ).find((f) => f.id === "claude.tools.title-present")!;
+    expect(finding.status).toBe("violated");
+    expect(finding.details).toEqual({ tools: ["t"] });
+  });
+
+  it("does not let a top-level title cover a blank annotation", () => {
     expect(
       statusOf(
         runClaudeToolChecks(
@@ -107,18 +123,6 @@ describe("titles", () => {
               annotations: { title: "   ", readOnlyHint: true },
             }),
           ],
-          STAMP,
-        ),
-        "claude.tools.title-present",
-      ),
-    ).toBe("satisfied");
-  });
-
-  it("treats a whitespace-only title as absent", () => {
-    expect(
-      statusOf(
-        runClaudeToolChecks(
-          [tool({ name: "t", title: "   ", annotations: { readOnlyHint: true } })],
           STAMP,
         ),
         "claude.tools.title-present",

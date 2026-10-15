@@ -1,4 +1,5 @@
 import { readTraceRequestPayloads } from "@/shared/live-chat-trace";
+import { isLiveChatPreviewSpanId } from "@/shared/live-chat-trace-preview";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import {
   lazy,
@@ -78,6 +79,33 @@ const TraceTimelineLazy = lazy(() =>
 );
 
 const NOOP = (..._args: unknown[]) => {};
+
+type TranscriptNavigation = {
+  focusMessageId: string | null;
+  highlightedMessageIds: string[];
+  navigationKey: number;
+};
+
+const TRANSCRIPT_NAVIGATION_AT_REST: TranscriptNavigation = {
+  focusMessageId: null,
+  highlightedMessageIds: [],
+  navigationKey: 0,
+};
+
+/** Adds the rows in `rowIds` not seen before; keeps `open` when there are none. */
+function withNewRowsOpen(
+  open: Set<string>,
+  rowIds: Set<string>,
+  seenRowIds: Set<string>
+): Set<string> {
+  let next: Set<string> | null = null;
+  for (const id of rowIds) {
+    if (seenRowIds.has(id) || open.has(id)) continue;
+    next ??= new Set(open);
+    next.add(id);
+  }
+  return next ?? open;
+}
 
 export type TraceViewerEvalToolCall = {
   toolName: string;
@@ -429,15 +457,8 @@ export function TraceViewer({
   const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(
     () => new Set()
   );
-  const [transcriptNavigation, setTranscriptNavigation] = useState<{
-    focusMessageId: string | null;
-    highlightedMessageIds: string[];
-    navigationKey: number;
-  }>({
-    focusMessageId: null,
-    highlightedMessageIds: [],
-    navigationKey: 0,
-  });
+  const [transcriptNavigation, setTranscriptNavigation] =
+    useState<TranscriptNavigation>(TRANSCRIPT_NAVIGATION_AT_REST);
   const [timelineViewportMaxMs, setTimelineViewportMaxMs] = useState(1);
   const resolvedModel: ModelDefinition = model ?? {
     id: "unknown",
@@ -511,20 +532,79 @@ export function TraceViewer({
     return true;
   }, [promptGroups, expandedPromptIds, expandedStepIds, fullyExpandedStepIds]);
 
-  useEffect(() => {
+  // Reset the timeline's zoom and filter when its spans change, by
+  // adjusting state during render rather than in an effect. A streaming reply
+  // hands this viewer a new trace on every token, and an effect here set state
+  // after each token's commit. A fast stream stacks enough of those in a row
+  // to trip React's "Maximum update depth exceeded", the same failure the
+  // compare cards had in INSPECTOR-CLIENT-2HP. React applies an update to this
+  // component's own state within the same render pass, so it never schedules
+  // more work. The key starts at `null` so the first render applies the reset,
+  // as the mount-time effect did.
+  const [timelineResetIdentity, setTimelineResetIdentity] = useState<
+    string | null
+  >(null);
+  if (timelineResetIdentity !== traceIdentityForToolbar) {
+    setTimelineResetIdentity(traceIdentityForToolbar);
     setTimelineViewportMaxMs(maxEndMsForToolbar);
-  }, [maxEndMsForToolbar, traceIdentityForToolbar]);
-
-  useEffect(() => {
     setTimelineFilter("all");
-    if (!recordedSpans?.length) {
-      setExpandedPromptIds(new Set());
-      setExpandedStepIds(new Set());
-      return;
+  }
+
+  // Open every timeline row by default, but only when the rows change, during
+  // render for the same reason as above. Keying this on the spans' times too
+  // reopened a row the user had just closed, since a streaming bar grows on
+  // every token. While rows are only being added (new steps and tools, or the
+  // live preview rows giving way to the recorded ones), open just the new
+  // rows. Any other change, such as another trace, opens every row again.
+  const timelineRowIdsKey = useMemo(
+    () => recordedSpans?.map((span) => span.id).join("|") ?? "",
+    [recordedSpans]
+  );
+  const [openedTimelineRows, setOpenedTimelineRows] = useState<{
+    key: string;
+    spanIds: Set<string>;
+    promptIds: Set<string>;
+    stepIds: Set<string>;
+  } | null>(null);
+  if (openedTimelineRows?.key !== timelineRowIdsKey) {
+    const spanIds = new Set(recordedSpans?.map((span) => span.id) ?? []);
+    const promptIds = new Set(promptGroups.map((g) => g.key));
+    const stepIds = collectStepSpanIdsWithChildren(promptGroups);
+    setOpenedTimelineRows({
+      key: timelineRowIdsKey,
+      spanIds,
+      promptIds,
+      stepIds,
+    });
+
+    // Preview rows may only go away when the recorded rows replace them. If
+    // the new trace still has preview rows, it is another preview.
+    const previewGaveWayToRecorded = ![...spanIds].some(
+      isLiveChatPreviewSpanId
+    );
+    const onlyRowsAdded =
+      openedTimelineRows !== null &&
+      [...openedTimelineRows.spanIds].every(
+        (id) =>
+          spanIds.has(id) ||
+          (previewGaveWayToRecorded && isLiveChatPreviewSpanId(id))
+      );
+    if (onlyRowsAdded) {
+      setExpandedPromptIds(
+        withNewRowsOpen(
+          expandedPromptIds,
+          promptIds,
+          openedTimelineRows.promptIds
+        )
+      );
+      setExpandedStepIds(
+        withNewRowsOpen(expandedStepIds, stepIds, openedTimelineRows.stepIds)
+      );
+    } else {
+      setExpandedPromptIds(promptIds);
+      setExpandedStepIds(stepIds);
     }
-    setExpandedPromptIds(new Set(promptGroups.map((g) => g.key)));
-    setExpandedStepIds(collectStepSpanIdsWithChildren(promptGroups));
-  }, [traceIdentityForToolbar, promptGroups, recordedSpans?.length]);
+  }
 
   const adaptedTrace = useMemo(
     () =>
@@ -574,13 +654,17 @@ export function TraceViewer({
     [browserSteps, recorder?.recordingTarget]
   );
 
-  useEffect(() => {
-    setTranscriptNavigation({
-      focusMessageId: null,
-      highlightedMessageIds: [],
-      navigationKey: 0,
-    });
-  }, [trace]);
+  // A reveal-in-transcript highlight belongs to the trace it was made on. Clear
+  // it when the trace changes, during render for the same reason as the
+  // timeline reset above, and only when there is a highlight to clear.
+  const [transcriptNavigationTrace, setTranscriptNavigationTrace] =
+    useState(trace);
+  if (transcriptNavigationTrace !== trace) {
+    setTranscriptNavigationTrace(trace);
+    if (transcriptNavigation !== TRANSCRIPT_NAVIGATION_AT_REST) {
+      setTranscriptNavigation(TRANSCRIPT_NAVIGATION_AT_REST);
+    }
+  }
 
   useEffect(() => {
     if (!hasEvalToolCalls) {

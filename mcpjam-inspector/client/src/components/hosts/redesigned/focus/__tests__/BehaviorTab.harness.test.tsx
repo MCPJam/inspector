@@ -6,8 +6,11 @@ import { BehaviorTab } from "../BehaviorTab";
 // BehaviorTab pulls the model picker through provider-backed hooks; stub them
 // so the test stays focused on the harness gray-out wiring (the thing under
 // test), not the model pipeline.
+const catalog = vi.hoisted(() => ({
+  current: [] as Array<Record<string, unknown>>,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
-  useAvailableModels: () => ({ availableModels: [] }),
+  useAvailableModels: () => ({ availableModels: catalog.current }),
 }));
 // The approval switch now asks the server which transport a harness runs,
 // because that answer is no longer a property of the harness name. Default the
@@ -25,10 +28,19 @@ vi.mock("@/hooks/useHarnessCapabilities", () => ({
 vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
   // Carries `disabled` through: it is the prop the harness gating decides, and
   // a stub that swallowed it would let the model selector silently un-gate.
-  ModelSelector: ({ disabled }: { disabled?: boolean }) => (
+  ModelSelector: ({
+    disabled,
+    availableModels,
+  }: {
+    disabled?: boolean;
+    availableModels?: Array<{ id: string; orgProvider?: { id?: string } }>;
+  }) => (
     <div
       data-testid="model-selector"
       data-disabled={disabled ? "true" : undefined}
+      data-models={(availableModels ?? [])
+        .map((m) => `${m.orgProvider?.id ?? "hosted"}:${m.id}`)
+        .join(",")}
     />
   ),
 }));
@@ -119,16 +131,15 @@ describe("BehaviorTab harness gray-out", () => {
       screen.queryByText(/not enforced for the codex harness/i),
     ).not.toBeInTheDocument();
 
-    // The controls Codex genuinely can't honor are still gated — this is not a
-    // blanket un-graying. Their note says the turn is REFUSED, which is what
-    // actually happens; "not enforced" described an outcome (run anyway,
-    // unapproved) the pre-flight never produces.
+    // Approval works on Codex's app-server adapter, so its switch is live too.
+    // The controls Codex genuinely can't honor are still gated: this is not a
+    // blanket un-graying.
     expect(
       screen.getByRole("switch", { name: /require tool approval/i }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     expect(
-      screen.getByText(/refused rather than run unapproved/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/refused rather than run unapproved/i),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText(/codex does its own tool discovery/i),
     ).toBeInTheDocument();
@@ -199,29 +210,91 @@ describe("approval follows the server's answer about the runtime", () => {
     capabilitiesAnswer.current = undefined;
   });
 
-  it("stays disabled for codex when the server reports no approval support", () => {
-    // The exec transport: its bridge hardcodes `approvalPolicy: "never"`, so
-    // the pre-flight refuses an approval host outright and the switch would be
-    // a lie.
-    capabilitiesAnswer.current = { supportsNativeToolApproval: false };
-    renderBehaviorTab({ harness: "codex" });
-    expect(screen.getByLabelText(/require tool approval/i)).toBeDisabled();
-  });
-
-  it("enables approval for codex when the server reports the app-server transport", () => {
-    // The capability this whole change exists to make reachable. Without the
-    // server answer the static map keeps the switch greyed out and a user can
-    // never turn approvals on for Codex, however the deployment is configured.
-    capabilitiesAnswer.current = { supportsNativeToolApproval: true };
+  it("enables approval for codex before any server answer arrives", () => {
+    // Codex runs on the app-server adapter everywhere, so the static map
+    // already knows the switch works.
+    capabilitiesAnswer.current = undefined;
     renderBehaviorTab({ harness: "codex" });
     expect(screen.getByLabelText(/require tool approval/i)).not.toBeDisabled();
   });
 
-  it("never lets the server TAKE AWAY a control the static map allowed", () => {
-    // The override is one-directional on purpose: a stale or wrong server
-    // answer must not be able to disable a switch that works.
-    capabilitiesAnswer.current = { supportsNativeToolApproval: false };
+  it.each(["claude-code", "codex"] as const)(
+    "never lets the server TAKE AWAY a control the static map allowed (%s)",
+    (harness) => {
+      // The override is one-directional on purpose: a stale or wrong server
+      // answer must not be able to disable a switch that works.
+      capabilitiesAnswer.current = { supportsNativeToolApproval: false };
+      renderBehaviorTab({ harness });
+      expect(screen.getByLabelText(/require tool approval/i)).not.toBeDisabled();
+    },
+  );
+});
+
+describe("the model list a harness host offers", () => {
+  afterEach(() => {
+    catalog.current = [];
+  });
+
+  const HOSTED_HAIKU = {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Haiku",
+    provider: "anthropic",
+    hosted: true,
+  };
+  const HOSTED_GPT = {
+    id: "openai/gpt-5-mini",
+    name: "GPT-5 mini",
+    provider: "openai",
+    hosted: true,
+  };
+  const ORG_ANTHROPIC = {
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+    hosted: false,
+    orgProvider: { providerKey: "anthropic", id: "orgprov_a" },
+  };
+  const ORG_OPENAI = {
+    id: "gpt-5-mini",
+    name: "GPT-5 mini",
+    provider: "openai",
+    hosted: false,
+    orgProvider: { providerKey: "openai", id: "orgprov_o" },
+  };
+
+  it("a Claude Code host offers hosted rows and the org's Anthropic rows", () => {
+    catalog.current = [HOSTED_HAIKU, HOSTED_GPT, ORG_ANTHROPIC, ORG_OPENAI];
     renderBehaviorTab({ harness: "claude-code" });
-    expect(screen.getByLabelText(/require tool approval/i)).not.toBeDisabled();
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-models",
+      "hosted:anthropic/claude-haiku-4.5,orgprov_a:claude-sonnet-4-5",
+    );
+  });
+
+  it("a Codex host offers hosted rows and the org's OpenAI rows", () => {
+    catalog.current = [HOSTED_HAIKU, HOSTED_GPT, ORG_ANTHROPIC, ORG_OPENAI];
+    renderBehaviorTab({ harness: "codex" });
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-models",
+      "hosted:openai/gpt-5-mini,orgprov_o:gpt-5-mini",
+    );
+  });
+
+  it("offers nothing — not the unfiltered list — when no row can run", () => {
+    catalog.current = [ORG_OPENAI];
+    renderBehaviorTab({ harness: "claude-code" });
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-models",
+      "",
+    );
+  });
+
+  it("an emulated host still offers everything", () => {
+    catalog.current = [HOSTED_HAIKU, ORG_OPENAI];
+    renderBehaviorTab();
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-models",
+      "hosted:anthropic/claude-haiku-4.5,orgprov_o:gpt-5-mini",
+    );
   });
 });

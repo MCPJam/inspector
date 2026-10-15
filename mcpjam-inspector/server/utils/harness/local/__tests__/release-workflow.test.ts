@@ -1,15 +1,235 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
+// eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
+import { computePackInputs } from "../../../../../scripts/check-local-harness-inputs.mjs";
 
-const workflow = (name: string) => parse(readFileSync(new URL(`../../../../../../.github/workflows/${name}.yml`, import.meta.url), "utf8"));
+const workflowsDir = new URL("../../../../../../.github/workflows/", import.meta.url);
+const workflow = (name: string) => parse(readFileSync(new URL(`${name}.yml`, workflowsDir), "utf8"));
+
+describe("the layer digest helper", () => {
+  it("generates the Codex bridge bundle before anything that imports it", () => {
+    // release.yml's contract job runs only `npm ci` before computing layer
+    // digests; release 3.14.0 failed there with ERR_MODULE_NOT_FOUND after
+    // every platform had passed. The helper must not rely on its caller.
+    const source = readFileSync(new URL("../../../../../scripts/inspector-layer-digests.mjs", import.meta.url), "utf8");
+    const codex = source.indexOf("await bundleCodexAppServerBridge()");
+    const layer = source.indexOf("await bundleLocalHarnessLayer()");
+    const read = source.indexOf("inspector-layer-files.ts");
+    expect(codex).toBeGreaterThan(-1);
+    expect(codex).toBeLessThan(layer);
+    expect(layer).toBeLessThan(read);
+  });
+});
+
+describe("release critical path", () => {
+  it("publishes npm and the webapp without waiting for the desktop builds", () => {
+    // The desktop builds are mostly Apple's notary queue (10–25 min); they
+    // gate only the GitHub release. The local runtime contract still gates
+    // npm, which offers local execution too.
+    const { jobs } = workflow("release");
+    expect(jobs["artifact-gate"]).toBeUndefined();
+    const publish = jobs["publish-packages"];
+    expect(publish.needs).not.toContain("build-mac");
+    expect(publish.needs).not.toContain("build-windows");
+    expect(publish.needs).toContain("local-harness-contract");
+    const gate = String(publish.if).replace(/\s+/g, " ");
+    expect(gate).toContain(
+      "( needs.preflight.outputs.publish_inspector != 'true' || needs.local-harness-contract.result == 'success' )",
+    );
+    expect(gate).not.toContain("build-mac");
+  });
+
+  it("creates the immutable GitHub release only once every desktop asset exists, desktop-only included", () => {
+    const { jobs } = workflow("release");
+    const finalize = jobs.finalize;
+    expect(finalize.needs).toEqual(expect.arrayContaining(["build-mac", "build-windows", "local-harness-contract"]));
+    const gate = String(finalize.if).replace(/\s+/g, " ");
+    expect(gate).toContain(
+      "( needs.publish-packages.result == 'success' || needs.preflight.outputs.desktop_only == 'true' )",
+    );
+    expect(gate).toContain(
+      "( needs.preflight.outputs.build_inspector_artifacts != 'true' || ( needs.build-mac.result == 'success' && needs.build-windows.result == 'success' && needs.local-harness-contract.result == 'success' ) )",
+    );
+    // The plan comes from the tested script, and desktop-only is an output.
+    const preflight = jobs.preflight;
+    expect(preflight.outputs.desktop_only).toBe("${{ steps.plan.outputs.desktop_only }}");
+    const plan = preflight.steps.find((step: any) => step.id === "plan");
+    expect(plan.run).toContain("node .github/scripts/release-plan.mjs");
+    // A desktop-only run still proves the local runtime its desktop app offers.
+    for (const job of ["local-harness-evidence", "local-harness-evidence-permitted", "local-harness-contract"]) {
+      expect(String(jobs[job].if), job).toContain("build_inspector_artifacts");
+      expect(String(jobs[job].if), job).not.toContain("publish_inspector");
+    }
+  });
+
+  it("points production's hosted computers at the released commit's template only after the webapp deploys", () => {
+    const { jobs } = workflow("release");
+    const job = jobs["roll-out-hosted-template"];
+    expect(job.needs).toEqual(expect.arrayContaining(["preflight", "deploy-webapp"]));
+    expect(String(job.if)).toContain("needs.deploy-webapp.result == 'success'");
+    const script = job.steps.map((step: any) => step.with?.script ?? "").join("\n");
+    expect(script).toContain('event_type: "inspector_release_shipped"');
+    expect(script).toContain("sha: context.sha");
+    // And main's bake inputs reach the backend's staging build.
+    const notify = workflow("hosted-bake-notify");
+    expect(notify.on.push.branches).toEqual(["main"]);
+    expect(notify.on.push.paths).toContain("mcpjam-inspector/harness-bake.lock.json");
+    expect(JSON.stringify(notify.jobs)).toContain("inspector_bake_moved");
+  });
+
+  it("runs every Ubuntu release job on RELEASE_RUNNER when it is set", () => {
+    const { jobs } = workflow("release");
+    const ubuntu = Object.entries(jobs).filter(([, job]: [string, any]) => typeof job["runs-on"] === "string");
+    expect(ubuntu.length).toBeGreaterThan(0);
+    for (const [name, job] of ubuntu as Array<[string, any]>) {
+      expect(job["runs-on"], name).toBe("${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}");
+    }
+  });
+});
+
+describe("packs are part of starting a release", () => {
+  it("brings every harness's pack up to date before the version PR opens", () => {
+    const { jobs } = workflow("prepare-release");
+    expect(jobs.packs.uses).toBe("./.github/workflows/local-harness-pack-pipeline.yml");
+    expect(jobs.packs.strategy.matrix.harness).toBe("${{ fromJSON(needs.harnesses.outputs.list) }}");
+    expect(jobs.packs.strategy["fail-fast"]).toBe(false);
+    expect(jobs.packs.with.harness).toBe("${{ matrix.harness }}");
+    // A failed pipeline means no version PR: the release cannot say what it pins.
+    expect(jobs["version-pr"].needs).toBe("packs");
+    expect(jobs["version-pr"].if).toBeUndefined();
+
+    // Pins are written onto the version branch, then the gate checks exactly
+    // what the PR pins, then the PR opens.
+    const steps: any[] = jobs["version-pr"].steps;
+    const at = (test: (step: any) => boolean) => steps.findIndex(test);
+    const collect = at((step) => step.with?.pattern === "local-harness-pin-*");
+    const apply = at((step) => /local-harness-publication\.mjs apply-pins/.test(step.run ?? ""));
+    const gate = at((step) => /check-local-harness-release\.mjs/.test(step.run ?? ""));
+    const open = at((step) => step.name === "Open or refresh the version PR");
+    expect(collect).toBeGreaterThan(-1);
+    expect(collect).toBeLessThan(apply);
+    expect(apply).toBeLessThan(gate);
+    expect(gate).toBeLessThan(open);
+    // The PR says what it pins, and commits a new equivalence record too.
+    expect(steps[open].run).toMatch(/packs\.md/);
+    expect(steps[open].run).toMatch(/git add mcpjam-inspector\/scripts\/local-harness-pack-equivalence/);
+  });
+
+  it("runs the pack pipeline from a release and from the background prebuild only, one per harness at a time", () => {
+    const callers = readdirSync(workflowsDir)
+      .filter((name) => /\.ya?ml$/.test(name))
+      .filter((name) =>
+        Object.values(parse(readFileSync(new URL(name, workflowsDir), "utf8"))?.jobs ?? {}).some(
+          (job: any) => job?.uses === "./.github/workflows/local-harness-pack-pipeline.yml",
+        ),
+      )
+      .sort();
+    expect(callers).toEqual(["local-harness-pack-prebuild.yml", "prepare-release.yml"]);
+    expect(Object.keys(workflow("prepare-release").on)).toEqual(["workflow_dispatch"]);
+    // One concurrency group per harness across both callers, never cancelled:
+    // the two never build the same pack at once.
+    const group = { group: "local-harness-pack-${{ matrix.harness }}", "cancel-in-progress": false };
+    expect(workflow("prepare-release").jobs.packs.concurrency).toEqual(group);
+    expect(workflow("local-harness-pack-prebuild").jobs.prebuild.concurrency).toEqual(group);
+  });
+
+  it("prebuilds in the background without ever reaching main or users", () => {
+    const prebuild = workflow("local-harness-pack-prebuild");
+    expect(prebuild.on.push.branches).toEqual(["main"]);
+    // It pins nothing: no pin artifacts collected, no PR, no push token.
+    const text = JSON.stringify(prebuild);
+    expect(text).not.toContain("local-harness-pin-");
+    expect(text).not.toContain("RELEASE_PUSH_TOKEN");
+    expect(text).not.toContain("apply-pins");
+    // It stands down while a release is being prepared, and while signing
+    // needs a person (a build waiting for approval would hold the harness's
+    // group, and the next release would queue behind it).
+    expect(prebuild.jobs.prebuild.if).toBe("needs.harnesses.outputs.release_in_progress == 'false'");
+    const guard = JSON.stringify(prebuild.jobs.harnesses);
+    expect(guard).toContain("prepare-release.yml");
+    expect(guard).toContain("required_reviewers");
+  });
+
+  it("prebuilds on a push that changes ANY declared pack input", async () => {
+    // A missed input still gets built — by the nightly run, or by the release
+    // itself — but later than it should. Codex's bootstrap lockfile was such a
+    // miss once.
+    const globToRegExp = (glob: string) =>
+      new RegExp(
+        `^${glob
+          .split("**")
+          .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*"))
+          .join(".*")}$`,
+      );
+    const filters = (workflow("local-harness-pack-prebuild").on.push.paths as string[]).map(globToRegExp);
+    const { harnesses } = await computePackInputs();
+    const declared = new Set<string>(["package-lock.json"]); // pack-dependency-closure
+    for (const { inputs } of Object.values(harnesses)) {
+      for (const key of Object.keys(inputs)) {
+        // `recipe/*` are bytes emitted FROM declared sources, listed as well.
+        if (key === "pack-dependency-closure" || key.startsWith("recipe/")) continue;
+        declared.add(key);
+      }
+    }
+    expect([...declared].filter((path) => !filters.some((filter) => filter.test(path)))).toEqual([]);
+  });
+
+  it("never lets an approval of an older version PR cover new pins", () => {
+    // The rulesets keep approvals across pushes, and this PR pins what users
+    // download: a regenerated PR with different contents dismisses them first.
+    const steps: any[] = workflow("prepare-release").jobs["version-pr"].steps;
+    const run: string = steps.find((step) => step.name === "Open or refresh the version PR").run;
+    const dismiss = run.indexOf("/dismissals");
+    const push = run.indexOf("git push --force");
+    expect(dismiss).toBeGreaterThan(-1);
+    expect(dismiss).toBeLessThan(push);
+    expect(run).toMatch(/HEAD\^\{tree\}/);
+  });
+});
 
 describe("pack release boundaries", () => {
-  it("checks the published manifest in the required build and before versioning a release", () => {
-    for (const name of ["lint", "prepare-release"]) {
-      const steps = Object.values(workflow(name).jobs).flatMap((job: any) => job.steps ?? []);
-      expect(steps.some((step: any) => /check-local-harness-release\.mjs --assets/.test(step.run ?? ""))).toBe(true);
+  const runsAssetCheck = (name: string) =>
+    Object.values(workflow(name).jobs)
+      .flatMap((job: any) => job.steps ?? [])
+      .some((step: any) => /check-local-harness-release\.mjs[^\n]*--assets/.test(step.run ?? ""));
+
+  it("checks the published manifest before versioning a release and before publishing it", () => {
+    for (const name of ["prepare-release", "release"]) {
+      expect(runsAssetCheck(name), name).toBe(true);
     }
+  });
+
+  it("verifies the pinned packs' build provenance wherever it checks their assets", () => {
+    for (const name of ["prepare-release", "release"]) {
+      const steps = Object.values(workflow(name).jobs).flatMap((job: any) => job.steps ?? []);
+      const gate = steps.find((step: any) => /check-local-harness-release\.mjs[^\n]*--assets/.test(step.run ?? ""));
+      expect(gate.run, name).toMatch(/--verify-attestations/);
+      expect(gate.env?.GH_TOKEN, name).toBeDefined();
+    }
+  });
+
+  it("does not check published assets on a PR, where they cannot exist yet", () => {
+    // Packs publish only from main, so a PR changing a pack input could never
+    // pass this and had to merge with the required check red.
+    expect(runsAssetCheck("lint")).toBe(false);
+  });
+
+  it("reports moved fingerprints on a PR instead of failing it", () => {
+    // Merging is what publishes the pack a moved fingerprint describes; the
+    // release gate is where a stale record blocks.
+    const steps = workflow("lint").jobs.build.steps.filter((step: any) =>
+      /check-local-harness-inputs\.mjs/.test(step.run ?? ""),
+    );
+    expect(steps.map((step: any) => step.run.trim())).toEqual([
+      "node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --advisory",
+    ]);
+    const unit = workflow("local-harness-conformance").jobs.unit.steps.filter((step: any) =>
+      /check-local-harness-inputs\.mjs/.test(step.run ?? ""),
+    );
+    expect(unit.map((step: any) => step.run.trim())).toEqual([
+      "node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --advisory",
+    ]);
   });
 
   it("never gives the vendor build job the signing environment or secret", () => {
@@ -19,6 +239,128 @@ describe("pack release boundaries", () => {
     expect(jobs.sign.environment).toBe("local-harness-pack-release");
     expect(JSON.stringify(jobs.sign)).toContain("secrets.PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY");
     expect(jobs.publish.needs).toContain("sign");
-    expect(jobs.publish.steps.find((step: any) => step.uses?.startsWith("actions/download-artifact")).with.name).toBe("signed-local-harness-pack");
+    expect(jobs.publish.steps.find((step: any) => step.uses?.startsWith("actions/download-artifact")).with.name).toBe(
+      "signed-local-harness-pack-${{ inputs.harness }}-${{ inputs.pack_version }}",
+    );
+  });
+
+  it("generates the Codex bridge bundle before the Inspector layer that embeds it", () => {
+    // The pack workflow runs only on main, so a PR never exercises it: the
+    // first automatic run failed every leg because the layer bundler ran
+    // without the Codex bundle it imports.
+    const runs = workflow("local-harness-pack")
+      .jobs.build.steps.map((step: any) => String(step.run ?? ""))
+      .join("\n");
+    const codex = runs.indexOf("bundle-codex-appserver-bridge.mjs");
+    const layer = runs.indexOf("bundle-local-harness-layer.mjs");
+    expect(layer).toBeGreaterThan(-1);
+    expect(codex).toBeGreaterThan(-1);
+    expect(codex).toBeLessThan(layer);
+  });
+
+  it("keeps every pack artifact to its own harness and version", () => {
+    // Artifact names are run-wide, and the auto workflow builds every harness
+    // in one run: an unscoped name collides (409) and an unscoped pattern
+    // hands one harness's sign job the other's manifests.
+    const { jobs } = workflow("local-harness-pack");
+    const scope = "${{ inputs.harness }}";
+    const version = "${{ inputs.pack_version }}";
+    const artifactSteps = Object.values(jobs)
+      .flatMap((job: any) => job.steps ?? [])
+      .filter((step: any) => /^actions\/(upload|download)-artifact@/.test(step.uses ?? ""));
+    expect(artifactSteps.length).toBeGreaterThanOrEqual(5);
+    for (const step of artifactSteps) {
+      const key = step.with.name ?? step.with.pattern;
+      expect(key, JSON.stringify(step.with)).toContain(scope);
+      expect(key, JSON.stringify(step.with)).toContain(version);
+    }
+  });
+
+  it("ships a runtime contract proven by THIS commit's layer against every selected pack", () => {
+    const { jobs } = workflow("release");
+    // Evidence for the desired packs and, when the record permits one, the
+    // previous ones — both from the conformance workflow, on the release commit.
+    expect(jobs["local-harness-evidence"].uses).toBe("./.github/workflows/local-harness-conformance.yml");
+    expect(jobs["local-harness-evidence-permitted"].uses).toBe("./.github/workflows/local-harness-conformance.yml");
+    expect(jobs["local-harness-evidence-permitted"].with.harnesses).toContain("permitted_harnesses");
+    const contract = jobs["local-harness-contract"];
+    const runs = contract.steps.map((step: any) => step.run ?? "").join("\n");
+    expect(runs).toMatch(/check-local-harness-release\.mjs[\s\S]*--evidence[\s\S]*--contract/);
+    expect(contract.steps.some((step: any) => String(step.uses).startsWith("actions/attest-build-provenance"))).toBe(true);
+    expect(contract.permissions).toMatchObject({ "id-token": "write", attestations: "write" });
+    // No contract, no release: publishing requires it, and the published
+    // release carries it.
+    expect(jobs["publish-packages"].needs).toContain("local-harness-contract");
+    expect(jobs["publish-packages"].if).toMatch(/needs\.local-harness-contract\.result == 'success'/);
+    const finalizeFiles = jobs.finalize.steps
+      .filter((step: any) => step.with?.files)
+      .map((step: any) => step.with.files)
+      .join("\n");
+    expect(finalizeFiles).toContain("runtime-contract");
+  });
+
+  it("records conformance evidence in every leg, and plans PR legs against the pinned packs", () => {
+    const { jobs } = workflow("local-harness-conformance");
+    expect(jobs.plan.steps.some((step: any) => /plan-local-harness-conformance\.mjs/.test(step.run ?? ""))).toBe(true);
+    for (const name of ["scenarios", "windows", "codex-scenarios"]) {
+      const steps = jobs[name].steps;
+      expect(steps.some((step: any) => /write-conformance-evidence\.mjs/.test(step.run ?? "")), name).toBe(true);
+      expect(
+        steps.some((step: any) => String(step.with?.name ?? "").startsWith("conformance-evidence-")),
+        name,
+      ).toBe(true);
+      expect(jobs[name].needs, name).toContain("plan");
+    }
+  });
+
+  it("attests what it signs, and adopts or finishes what already exists instead of refusing", () => {
+    const { jobs, on } = workflow("local-harness-pack");
+    expect(on.workflow_call.inputs.publish.default).toBe("always");
+    expect(jobs.sign.permissions).toMatchObject({ "id-token": "write", attestations: "write" });
+    const attest = jobs.sign.steps.find((step: any) => String(step.uses).startsWith("actions/attest-build-provenance"));
+    expect(attest.with["subject-path"]).toMatch(/\.tar\.gz/);
+    expect(attest.with["subject-path"]).toMatch(/\.manifest\.json/);
+    expect(jobs.preflight.steps.some((step: any) => /local-harness-publication\.mjs existing/.test(step.run ?? ""))).toBe(true);
+    expect(jobs.build.if).toBe("needs.preflight.outputs.state == 'none'");
+    expect(jobs["finish-draft"].if).toMatch(/state == 'draft'/);
+    // A build that reproduced the pinned bytes publishes nothing.
+    expect(jobs.sign.if).toMatch(/equivalent != 'true'/);
+    expect(jobs.publish.if).toMatch(/equivalent != 'true'/);
+    // The build checks the install is the locked one; whether the inputs were
+    // REVIEWED is the version PR's question.
+    const builds = jobs.build.steps.map((step: any) => step.run ?? "").join("\n");
+    expect(builds).toMatch(/check-local-harness-inputs\.mjs --drift/);
+  });
+
+  it("pipelines plan → pack → conformance → a pin handed to the release, and reports failures", () => {
+    const { jobs } = workflow("local-harness-pack-pipeline");
+    expect(jobs.plan.steps.some((step: any) => /local-harness-publication\.mjs plan/.test(step.run ?? ""))).toBe(true);
+    expect(jobs.pack.uses).toBe("./.github/workflows/local-harness-pack.yml");
+    expect(jobs.pack.with.publish).toBe("unless-equivalent");
+    expect(jobs["candidate-conformance"].uses).toBe("./.github/workflows/local-harness-conformance.yml");
+    expect(jobs["candidate-conformance"].with.candidate).toBe(true);
+    expect(jobs.pin.if).toMatch(/candidate-conformance\.result == 'success'/);
+    const pinRuns = jobs.pin.steps.map((step: any) => step.run ?? "").join("\n");
+    expect(pinRuns).toMatch(/local-harness-publication\.mjs intent[\s\S]*--kind pin[\s\S]*--conformance/);
+    // Every outcome hands the release one artifact per harness: up to date
+    // (plan), an equivalence record, or a pin.
+    for (const job of ["plan", "equivalence", "pin"]) {
+      const upload = jobs[job].steps.find((step: any) => String(step.uses).startsWith("actions/upload-artifact@"));
+      expect(upload?.with.name, job).toBe("local-harness-pin-${{ inputs.harness }}");
+    }
+    // The pipeline writes nothing to main and opens no PR of its own.
+    const text = JSON.stringify(jobs);
+    expect(text).not.toContain("local-harness-bot-pr.sh");
+    expect(text).not.toContain("RELEASE_PUSH_TOKEN");
+    // No install where provenance can be minted or pins are decided.
+    for (const job of ["equivalence", "pin"]) {
+      const runs = jobs[job].steps.map((step: any) => step.run ?? "").join("\n");
+      expect(runs, job).not.toMatch(/npm (ci|install)/);
+    }
+    // The equivalence record is attested before it is handed over.
+    const equivalence = jobs.equivalence.steps;
+    expect(equivalence.some((step: any) => String(step.uses).startsWith("actions/attest-build-provenance"))).toBe(true);
+    expect(jobs.report.if).toBe("always()");
+    expect(jobs.report.permissions.issues).toBe("write");
   });
 });

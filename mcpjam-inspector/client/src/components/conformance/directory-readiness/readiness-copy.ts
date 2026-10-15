@@ -80,11 +80,15 @@ export const FINDING_STATUS_ORDER: Record<string, number> = {
  * at all.
  */
 export function detectAuthWall(report: {
-  context?: { authMode?: string };
+  // Any object: a Muse context has no `authMode` (it does no auth
+  // discovery) and must still be accepted, reading as "no wall".
+  context?: object;
   lanes?: Array<{ coverage: { missingInputs: string[] } }>;
   findings?: Array<{ id: string; status: string; details?: unknown }>;
 }): { waiting: number } | null {
-  if (report.context?.authMode !== "headless") return null;
+  const authMode = (report.context as { authMode?: unknown } | undefined)
+    ?.authMode;
+  if (authMode !== "headless") return null;
 
   const challenged = (report.findings ?? []).some(
     (finding) =>

@@ -367,22 +367,29 @@ describe("list_eval_suite_stage_analytics", () => {
 });
 
 describe("both descriptions carry the comparability contract", () => {
-  it("says never to sum, and what a zero denominator means", () => {
+  it("says tallies do not sum, and what a zero denominator means", () => {
     for (const operation of [
       getEvalRunStageAnalyticsOperation,
       listEvalSuiteStageAnalyticsOperation,
     ]) {
       const description = operation.description;
       expect(description, operation.name).toContain(
-        "ZERO DENOMINATOR MEANS NOT MEASURED"
+        "A zero denominator means not measured"
       );
-      expect(description, operation.name).toContain("Never sum tallies ACROSS");
-      expect(description, operation.name).toContain("Never merge documents");
-      expect(description, operation.name).toContain("NO BACKFILL");
-      // `integrity` is a bug report, not a population fact.
-      expect(description, operation.name).toContain("IS A BUG REPORT");
-      // The glossary is where the members are defined.
       expect(description, operation.name).toContain(
+        "tallies do not add up across stages"
+      );
+      expect(description, operation.name).toContain(
+        "Each document describes one run's population"
+      );
+      expect(description, operation.name).toContain("There is no backfill");
+      // `integrity` is a bug report, not a population fact.
+      expect(description, operation.name).toContain(
+        "a defect, not a population fact"
+      );
+      // Stated as facts, without sending the model to another source for its
+      // instructions: Claude's directory review rejects that pattern.
+      expect(description, operation.name).not.toContain(
         "user-value-chain-glossary"
       );
       expect(description, operation.name).not.toContain("COSTS MONEY");
@@ -405,7 +412,8 @@ describe("both descriptions carry the comparability contract", () => {
     }
     // An ABSENT identity blocks comparability rather than being assumed
     // compatible — the half a naive `a === b` gets backwards.
-    expect(description).toContain("BLOCKS comparability");
-    expect(description).toContain("stageAnalyticsParityBlockers");
+    expect(description).toContain("makes a run incomparable");
+    // No pointer into a package the caller cannot read from a tool call.
+    expect(description).not.toContain("@mcpjam/sdk/contract");
   });
 });

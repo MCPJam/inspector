@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APICallError } from "ai";
 import { EvalTest } from "../src/EvalTest.js";
-import { posthog } from "../src/telemetry.js";
+import * as telemetry from "../src/telemetry.js";
 import { createSuiteFileRunner } from "../src/suite-file-run/run-suite-file.js";
 import { SuiteFileRunError } from "../src/suite-file-run/errors.js";
 import type { RunSuiteFileOptions } from "../src/suite-file-run/types.js";
@@ -222,7 +222,9 @@ describe("runSuiteFile — passing and failing cases", () => {
 
 describe("runSuiteFile — telemetry", () => {
   it("never emits SDK telemetry: the caller owns that decision", async () => {
-    const capture = vi.spyOn(posthog, "capture").mockImplementation(() => {});
+    const capture = vi
+      .spyOn(telemetry, "captureSdkRun")
+      .mockImplementation(() => {});
     try {
       // The control: a plain EvalTest run sends its anonymous ping.
       const stub = {

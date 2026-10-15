@@ -89,6 +89,7 @@ export function ElicitationRequestDialog({
   request,
   onRespond,
   loading,
+  pluginForm,
 }: {
   request: HostedElicitationRequestEvent | null;
   onRespond: (answer: {
@@ -97,8 +98,10 @@ export function ElicitationRequestDialog({
     content?: Record<string, unknown>;
   }) => void | Promise<void>;
   loading?: boolean;
+  pluginForm?: React.ComponentProps<typeof ElicitationDialog>["pluginForm"];
 }) {
-  if (!request) return null;
+  // OwnedPluginFormHost must hydrate a private schema before this editor mounts.
+  if (!request || request.hasPrivateSchema) return null;
 
   if (request.mode === "url") {
     return (
@@ -139,6 +142,7 @@ export function ElicitationRequestDialog({
         })
       }
       loading={loading}
+      pluginForm={pluginForm}
     />
   );
 }

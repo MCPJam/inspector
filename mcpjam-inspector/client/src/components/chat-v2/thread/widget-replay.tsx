@@ -1,3 +1,11 @@
+import { OwnedModelApp } from "@/components/host-workspace/OwnedModelApp";
+import {
+  serverDisplayName,
+  usePluginIconDirectory,
+} from "@/components/host-workspace/plugin-icon-directory";
+import { PLUGIN_MODEL_APP_META } from "@/shared/plugin-model-app";
+import { WidgetPlaceholder } from "@mcpjam/chat-ui";
+import { useWidgetPresentation } from "./widget-presentation";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
 import { InspectorWidgetHostProvider } from "./mcp-apps/use-widget-host";
@@ -19,8 +27,12 @@ import {
 import type { DisplayMode } from "./mcp-apps/widget-host";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
+import { isFailedWidgetResult } from "./widget-result-policy";
+
 export interface WidgetReplayProps {
   chatSessionId?: string;
+  /** Original call attribution, already resolved from provider metadata. */
+  serverId?: string;
   toolName: string;
   toolCallId?: string;
   toolState?: ToolState;
@@ -42,7 +54,7 @@ export interface WidgetReplayProps {
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (
     toolName: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
   ) => Promise<unknown>;
   onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
@@ -51,7 +63,7 @@ export interface WidgetReplayProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    }
+    },
   ) => void;
   pipWidgetId?: string | null;
   fullscreenWidgetId?: string | null;
@@ -86,12 +98,21 @@ export interface WidgetReplayProps {
           reason?: string;
           deferred?: string;
         }>)
-      | null
+      | null,
   ) => void;
 }
 
-export function WidgetReplay({
+export function WidgetReplay(props: WidgetReplayProps) {
+  const presentation = useWidgetPresentation();
+  if (presentation === "placeholder") {
+    return <WidgetPlaceholder toolName={props.toolName} />;
+  }
+  return <LiveWidgetReplay {...props} />;
+}
+
+function LiveWidgetReplay({
   chatSessionId,
+  serverId: attributedServerId,
   toolName,
   toolCallId,
   toolState,
@@ -136,14 +157,17 @@ export function WidgetReplay({
     renderOverride?.resourceUri ?? getUIResourceUri(uiType, effectiveToolMeta);
   const serverId =
     renderOverride?.serverId ??
-    getToolServerId(toolName, toolServerMap) ??
-    readToolResultServerId(rawOutput);
+    attributedServerId ??
+    readToolResultServerId(rawOutput) ??
+    getToolServerId(toolName, toolServerMap);
   const hasCachedHtmlForOffline = !!renderOverride?.cachedWidgetHtmlUrl;
 
   // SEP-1865 `ui/download-file` confirmation. Called before any early return so
   // hook order stays stable; supplies `onConfirmDownload` + the modal element.
   const { confirmDownload, dialog: downloadConfirmDialog } =
     useDownloadConfirmation();
+  // Headers and side-panel tabs name the saved server, never its raw id.
+  const iconDirectory = usePluginIconDirectory();
 
   // Single-path routing: every UI-bearing tool (Apps SDK, MCP Apps, or
   // dual-metadata) renders through MCPAppsRenderer. Whether the OpenAI
@@ -171,7 +195,13 @@ export function WidgetReplay({
   // would strand the pending promise — the widget's `onDownloadFile` hangs and
   // the one-at-a-time guard auto-denies all future downloads. Keeping it mounted
   // leaves the prompt resolvable; it renders nothing while idle.
-  if (!hasUi) return downloadConfirmDialog;
+  if (
+    !hasUi ||
+    toolErrorText ||
+    isFailedWidgetResult(rawOutput) ||
+    isFailedWidgetResult(toolOutput)
+  )
+    return downloadConfirmDialog;
 
   if (
     toolState !== "output-available" &&
@@ -210,56 +240,72 @@ export function WidgetReplay({
   // context. Provide it here — this is the inline mount boundary for every
   // surface that renders <WidgetReplay> (chat thread, tools panel, transcript)
   // and only runs the host-composing hook once a widget actually mounts.
+  const widget = (
+    <MCPAppsRenderer
+      chatSessionId={chatSessionId}
+      serverId={serverId ?? "offline-view"}
+      serverName={serverDisplayName(
+        serverId ?? "offline-view",
+        iconDirectory,
+      )}
+      toolCallId={toolCallId}
+      toolName={toolName}
+      toolState={toolState}
+      toolInput={toolInput ?? undefined}
+      toolOutput={resolvedToolOutput}
+      toolResponseMetadata={toolResponseMetadata ?? null}
+      toolErrorText={toolErrorText}
+      resourceUri={uiResourceUri ?? "mcp://offline/view"}
+      toolMetadata={effectiveToolMeta}
+      toolsMetadata={toolsMetadata}
+      onSendFollowUp={onSendFollowUp}
+      onCallTool={onCallTool}
+      onAppToolInvocationChange={onAppToolInvocationChange}
+      onWidgetStateChange={onWidgetStateChange}
+      onModelContextUpdate={onModelContextUpdate}
+      pipWidgetId={pipWidgetId}
+      fullscreenWidgetId={fullscreenWidgetId}
+      onRequestPip={onRequestPip}
+      onExitPip={onExitPip}
+      displayMode={displayMode}
+      onDisplayModeChange={onDisplayModeChange}
+      onRequestFullscreen={onRequestFullscreen}
+      onExitFullscreen={onExitFullscreen}
+      onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
+      onRequestTeardown={onRequestTeardown}
+      onConfirmDownload={confirmDownload}
+      isOffline={renderOverride?.isOffline}
+      cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
+      liveFetchPreferred={renderOverride?.liveFetchPreferred}
+      widgetCsp={renderOverride?.widgetCsp}
+      widgetPermissions={renderOverride?.widgetPermissions}
+      widgetPermissive={renderOverride?.widgetPermissive}
+      prefersBorder={renderOverride?.prefersBorder}
+      injectedOpenAiCompat={renderOverride?.injectedOpenAiCompat}
+      injectedOpenAiCompatCapabilities={
+        renderOverride?.injectedOpenAiCompatCapabilities
+      }
+      initialWidgetState={renderOverride?.initialWidgetState}
+      minimalMode={minimalMode}
+      recordMode={recordMode}
+      onRecorderStep={onRecorderStep}
+      onRecorderReady={onRecorderReady}
+      onReplayControllerReady={onReplayControllerReady}
+    />
+  );
+  const modelApp =
+    readToolResultMeta(rawOutput)?.[PLUGIN_MODEL_APP_META] ??
+    readToolResultMeta(toolOutput)?.[PLUGIN_MODEL_APP_META];
+  if (modelApp !== undefined)
+    return (
+      <>
+        <OwnedModelApp marker={modelApp} renderProps={widget.props} />
+        {downloadConfirmDialog}
+      </>
+    );
   return (
     <InspectorWidgetHostProvider>
-      <MCPAppsRenderer
-        chatSessionId={chatSessionId}
-        serverId={serverId ?? "offline-view"}
-        serverName={serverId ?? "offline-view"}
-        toolCallId={toolCallId}
-        toolName={toolName}
-        toolState={toolState}
-        toolInput={toolInput ?? undefined}
-        toolOutput={resolvedToolOutput}
-        toolResponseMetadata={toolResponseMetadata ?? null}
-        toolErrorText={toolErrorText}
-        resourceUri={uiResourceUri ?? "mcp://offline/view"}
-        toolMetadata={effectiveToolMeta}
-        toolsMetadata={toolsMetadata}
-        onSendFollowUp={onSendFollowUp}
-        onCallTool={onCallTool}
-        onAppToolInvocationChange={onAppToolInvocationChange}
-        onWidgetStateChange={onWidgetStateChange}
-        onModelContextUpdate={onModelContextUpdate}
-        pipWidgetId={pipWidgetId}
-        fullscreenWidgetId={fullscreenWidgetId}
-        onRequestPip={onRequestPip}
-        onExitPip={onExitPip}
-        displayMode={displayMode}
-        onDisplayModeChange={onDisplayModeChange}
-        onRequestFullscreen={onRequestFullscreen}
-        onExitFullscreen={onExitFullscreen}
-        onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
-        onRequestTeardown={onRequestTeardown}
-        onConfirmDownload={confirmDownload}
-        isOffline={renderOverride?.isOffline}
-        cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
-        liveFetchPreferred={renderOverride?.liveFetchPreferred}
-        widgetCsp={renderOverride?.widgetCsp}
-        widgetPermissions={renderOverride?.widgetPermissions}
-        widgetPermissive={renderOverride?.widgetPermissive}
-        prefersBorder={renderOverride?.prefersBorder}
-        injectedOpenAiCompat={renderOverride?.injectedOpenAiCompat}
-        injectedOpenAiCompatCapabilities={
-          renderOverride?.injectedOpenAiCompatCapabilities
-        }
-        initialWidgetState={renderOverride?.initialWidgetState}
-        minimalMode={minimalMode}
-        recordMode={recordMode}
-        onRecorderStep={onRecorderStep}
-        onRecorderReady={onRecorderReady}
-        onReplayControllerReady={onReplayControllerReady}
-      />
+      {widget}
       {downloadConfirmDialog}
     </InspectorWidgetHostProvider>
   );

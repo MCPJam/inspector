@@ -61,7 +61,7 @@ describe("widget browser lifecycle", () => {
         "no_ui_resource",
         "no_ui_resource",
       ]);
-      expect(f.page.exposeBinding).toHaveBeenCalledTimes(2);
+      expect(f.page.exposeBinding).toHaveBeenCalledTimes(3);
     } finally {
       f.released.resolve();
       await f.harness.dispose();

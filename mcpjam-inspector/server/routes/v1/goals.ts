@@ -83,6 +83,7 @@ import { HOSTED_MODE } from "../../config.js";
 // drift, which is the failure this whole layer exists to prevent.
 import { requirePersonaInProject } from "./personas.js";
 import { requireSwarmInProject } from "./swarms.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const goals = new Hono();
 
@@ -130,6 +131,21 @@ const MAX_PAGE_SIZE = 200;
  */
 function translateReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, { scope: "v1.journeys" });
+}
+
+/**
+ * For the SCOPING reads — the ones that authorize a caller-supplied id
+ * (`getJourney`, `getJourneyRun`, the by-project list). Their refusals are
+ * plain errors production Convex masks to "Server Error", so without
+ * `redactedIsRefusal` a cross-tenant probe answered 502 instead of the 404
+ * the scope check exists to guarantee (MJ-021). Reads AFTER one of these keep
+ * `translateReadError`: there a redacted error is a genuine incident.
+ */
+function translatePreflightReadError(error: unknown): WebRouteError {
+  return translateConvexReadError(error, {
+    scope: "v1.journeys",
+    redactedIsRefusal: true,
+  });
 }
 
 /**
@@ -185,6 +201,8 @@ type JourneyRow = {
 };
 
 type JourneyRunRow = {
+  cancelRequested?: boolean;
+  cleanupPending?: boolean;
   verdictSummary?: JourneyRunVerdictSummary;
   report?: SwarmReport;
   _id: string;
@@ -317,6 +335,8 @@ function toGoalRunDto(row: JourneyRunRow, surface: Surface) {
     // a client does not have to know that, and does not render a deliberate
     // stop as a failure.
     canceled: row.error === "canceled",
+    cancelRequested: row.cancelRequested ?? row.error === "canceled",
+    cleanupPending: row.cleanupPending ?? false,
     // Likewise for the stale-runner sweep: the run did not fail on its merits,
     // its runner went silent.
     stale: row.error === "stale_runner",
@@ -564,6 +584,13 @@ function launchSchemaFor(surface: Surface) {
       // authored".
       .min(1, "environmentIds must name at least one environment")
       .optional(),
+    /**
+     * How many of this run's conversations the caller expects to be sponsored
+     * (paid from MCPJam's allowance rather than the organization's credits). A
+     * mismatch is a 409 `swarm_funding_changed` before anything is created.
+     * Omit to accept whatever split applies.
+     */
+    expectedSponsored: z.number().int().min(0).optional(),
   });
   // STRICT on the canonical surface: a caller that moved to `/goals/:id/runs`
   // but still sends `waveId` would otherwise have it stripped and get an
@@ -663,7 +690,7 @@ async function requireGoalInProject(
       } as never,
     )) as JourneyRow | null;
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error);
   }
   if (!row) {
     // The 404 names the noun the caller asked for. A script grepping the
@@ -694,7 +721,7 @@ async function requireRunInProject(
       } as never,
     )) as JourneyRunRow | null;
   } catch (error) {
-    throw translateReadError(error);
+    throw translatePreflightReadError(error);
   }
   if (!run || String(run.projectId) !== projectId) {
     throw new WebRouteError(
@@ -714,7 +741,7 @@ both(
   "/projects/:projectId/goals",
   "/projects/:projectId/journeys",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
+    const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.goals");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     let rows: JourneyRow[] | null;
     try {
@@ -725,7 +752,7 @@ both(
         } as never,
       )) as JourneyRow[] | null;
     } catch (error) {
-      throw translateReadError(error);
+      throw translatePreflightReadError(error);
     }
     // Archived goals are filtered backend-side; this list is live ones only.
     return v1PageJson(
@@ -911,9 +938,9 @@ both(
 // from my list", and a scorecard that vanished with its goal would take the
 // evidence for a decision with it.
 //
-// Second call answers 404: an archived goal is filtered out of the project's
-// goals, so the scoping preflight can no longer place it. Cleanup scripts
-// should read 404 here as success.
+// A second call succeeds again: the scoping preflight reads the goal by id,
+// archived or not, and `archiveJourney` is a no-op on an archived row
+// (observed on production 2026-10-06).
 //
 // NOT flag-gated — archiving reduces exposure.
 both(
@@ -1092,6 +1119,7 @@ both(
       canceled: true;
       alreadyCanceled: boolean;
       finalized: number;
+      cleanupPending?: boolean;
     };
     try {
       result = (await client.mutation(
@@ -1119,6 +1147,9 @@ both(
       alreadyCanceled: result.alreadyCanceled,
       /** Attempts this call moved to terminal. Zero on an idempotent replay. */
       finalized: result.finalized,
+      ...(result.cleanupPending !== undefined
+        ? { cleanupPending: result.cleanupPending }
+        : {}),
     });
   },
 );
@@ -1173,7 +1204,7 @@ both(
     }
     const swarmRunId = parsed.data.swarmRunId ?? parsed.data.waveId;
 
-    let result: { runId: string; deduped?: boolean };
+    let result: Awaited<ReturnType<typeof launchJourneyRun>>;
     try {
       result = await launchJourneyRun(
         {
@@ -1192,6 +1223,9 @@ both(
           ...(swarmRunId ? { waveId: swarmRunId } : {}),
           ...(parsed.data.environmentIds?.length
             ? { environmentIds: parsed.data.environmentIds }
+            : {}),
+          ...(parsed.data.expectedSponsored !== undefined
+            ? { expectedSponsored: parsed.data.expectedSponsored }
             : {}),
         },
       );
@@ -1221,6 +1255,12 @@ both(
          * without a second read.
          */
         deduped: result.deduped === true,
+        /**
+         * How the run's conversations were funded: `sponsored` come from
+         * MCPJam's allowance, `credits` from the organization's. Absent when
+         * the backend does not report it.
+         */
+        ...(result.funding ? { funding: result.funding } : {}),
       },
       202,
     );

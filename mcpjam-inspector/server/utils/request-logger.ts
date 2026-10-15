@@ -8,6 +8,7 @@ import {
   type SystemEventMap,
 } from "./log-events.js";
 import { logger } from "./logger.js";
+import { bindSentryIdentity } from "./sentry-request-identity.js";
 
 type SentryOptions = { error?: unknown; sentry?: boolean };
 
@@ -22,7 +23,7 @@ type SentryOptions = { error?: unknown; sentry?: boolean };
  */
 export function getRequestLogger(c: Context, component: string) {
   return {
-    event<E extends keyof RequestEventMap>(
+    event: bindSentryIdentity(function <E extends keyof RequestEventMap>(
       eventName: E,
       payload: RequestEventMap[E],
       options?: SentryOptions,
@@ -35,7 +36,7 @@ export function getRequestLogger(c: Context, component: string) {
         );
       }
       logger.event(eventName, { ...ctx, component }, payload, options);
-    },
+    }),
   };
 }
 

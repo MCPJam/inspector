@@ -54,6 +54,10 @@ describe("stale chunk recovery", () => {
   let uninstall: () => void;
 
   beforeEach(() => {
+    vi.useFakeTimers({
+      shouldAdvanceTime: true,
+      toFake: ["setTimeout", "clearTimeout"],
+    });
     vi.mocked(window.location.reload).mockClear();
     uninstall = installStaleChunkRecovery();
     render(<Toaster />);
@@ -61,14 +65,20 @@ describe("stale chunk recovery", () => {
 
   afterEach(() => {
     uninstall();
-    toast.dismiss();
+    // Deliver Sonner's queued notifications while the jsdom window is alive.
+    act(() => {
+      toast.dismiss();
+      vi.runOnlyPendingTimers();
+    });
     cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   it("offers a reload when a chunk from an older build fails to load", async () => {
     failChunkLoad();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Reload" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
 
     expect(window.location.reload).toHaveBeenCalledTimes(1);
   });
@@ -78,8 +88,8 @@ describe("stale chunk recovery", () => {
     failChunkLoad();
     failChunkLoad();
 
-    await screen.findByRole("button", { name: "Reload" });
-    expect(screen.getAllByRole("button", { name: "Reload" })).toHaveLength(1);
+    await screen.findByRole("button", { name: "Refresh" });
+    expect(screen.getAllByRole("button", { name: "Refresh" })).toHaveLength(1);
   });
 
   it("leaves the import rejection to its caller", () => {

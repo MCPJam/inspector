@@ -127,6 +127,21 @@ MCPJam-hosted inference uses the Cloud credential precedence (`--api-key` > `MCP
 
 `--host <template>` emulates one existing host template — its `initialize` identity, advertised capabilities, protocol versions and tool visibility, plus its model settings where the suite does not set them. It never launches the real client, and reports say "emulated". The suite's model, and any authored `systemPrompt` / `temperature`, win over the template's. `target.hosts` in the file is recorded as declared but not executed, and `target.environment` as declared but not resolved.
 
+## Reasoning effort
+
+A local suite file does **not** take a reasoning effort yet: `defaults` has no
+`reasoningEffort` key (a dialect-2 default needs a matching backend field on the
+suite's default config, which has not shipped), so the value is rejected as an
+unknown key rather than accepted and ignored. Ways to run a local suite at an
+effort today:
+
+- Run it against a **saved client** with `runWithClient`: the client's hosted
+  model selection carries `settings.reasoningEffort`, and the runner applies it
+  (and refuses a model that cannot) — see [`HostRunner`](/sdk/reference/host-runner#reasoningeffort).
+- Build the runner yourself with `HostRunner({ reasoningEffort })`.
+- Set the effort on the hosted suite's model selection with
+  `mcpjam cloud eval update --effort <level>` (see the [CLI reference](/cli/reference#reasoning-effort)).
+
 ## Tool policy
 
 A suite's `defaults.toolPolicy` is enforced before the MCP call: a denied tool never reaches the server, the model receives the refusal, and the report records the block by case, iteration and call id. A blocked call is not graded as a call and is not an executed tool span. A `deny` name that matches no tool the servers expose is invalid input (exit `2`); an unmatched `allow` is a warning. With no `toolPolicy`, nothing is restrained.

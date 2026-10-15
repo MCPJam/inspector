@@ -59,6 +59,7 @@ export const V1_ERROR_CODES = [
   "SERVER_UNREACHABLE",
   "TIMEOUT",
   "OAUTH_REQUIRED",
+  "GENERATION_FAILED",
   "INTERNAL_ERROR",
 ] as const;
 
@@ -96,6 +97,7 @@ export const V1_ERROR_STATUS: Record<V1ErrorCode, number> = {
   SERVER_UNREACHABLE: 502,
   TIMEOUT: 504,
   OAUTH_REQUIRED: 401,
+  GENERATION_FAILED: 502,
   INTERNAL_ERROR: 500,
 };
 
@@ -116,6 +118,7 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   FEATURE_NOT_SUPPORTED: "FEATURE_NOT_SUPPORTED",
   SERVER_UNREACHABLE: "SERVER_UNREACHABLE",
   TIMEOUT: "TIMEOUT",
+  GENERATION_FAILED: "GENERATION_FAILED",
   INTERNAL_ERROR: "INTERNAL_ERROR",
   UPSTREAM_ERROR: "SERVER_UNREACHABLE",
   OAUTH_REQUIRED: "OAUTH_REQUIRED",
@@ -171,6 +174,10 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   registry_connection_not_found: "NOT_FOUND",
   registry_server_not_approved: "FORBIDDEN",
   registry_project_org_mismatch: "FORBIDDEN",
+  // A beta feature that is not enabled for the caller's organization. Publicly
+  // FORBIDDEN, the same as the backend's `/v1`; the reason stays in
+  // `details.code` (see `isFeatureUnavailable` in the platform client).
+  FEATURE_UNAVAILABLE: "FORBIDDEN",
 };
 
 export function mapInternalCode(code: string | undefined | null): V1ErrorCode {

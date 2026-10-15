@@ -14,15 +14,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * decorative until the ERROR passed in was the redacted one.
  */
 
-const { errorMock } = vi.hoisted(() => ({ errorMock: vi.fn() }));
+const { errorMock, warnMock } = vi.hoisted(() => ({
+  errorMock: vi.fn(),
+  warnMock: vi.fn(),
+}));
 vi.mock("../../../utils/logger.js", () => ({
-  logger: { error: errorMock, warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+  logger: { error: errorMock, warn: warnMock, info: vi.fn(), debug: vi.fn() },
 }));
 
 import {
   classifyConvexReadError,
+  redactedReadRefusalError,
   translateConvexReadError,
 } from "../convex-read-errors.js";
+import { WebRouteError } from "../../web/errors.js";
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.clearAllMocks());
@@ -177,10 +182,23 @@ describe("translateConvexReadError", () => {
     );
     expect(err.status).toBe(404);
     expect(err.message).toBe("Scenario not found");
-    // And SILENTLY. A cross-workspace probe is someone typing an id they do
-    // not have access to; paging on each one turns a routine refusal into an
-    // alert stream, which is how the real incidents get lost.
+    // And without paging. A cross-workspace probe is someone typing an id
+    // they do not have access to; paging on each one turns a routine refusal
+    // into an alert stream, which is how the real incidents get lost.
     expect(errorMock).not.toHaveBeenCalled();
+    // But not invisibly: a genuine crash arrives as the same string, so the
+    // 404 leaves an Axiom-only warn an operator can rate-alert on.
+    expect(warnMock).toHaveBeenCalledTimes(1);
+    const [line, context] = warnMock.mock.calls[0]!;
+    expect(line).toContain("[v1.test]");
+    expect(context).toMatchObject({ scope: "v1.test" });
+  });
+
+  it("does not warn for a stated membership refusal", () => {
+    // Only the ambiguous redacted string needs a trace; a refusal the backend
+    // spelled out is exactly what it says.
+    expect(translate("Not a member of this project").status).toBe(404);
+    expect(warnMock).not.toHaveBeenCalled();
   });
 
   it("still answers 502 to a network failure even at a preflight", () => {
@@ -265,5 +283,72 @@ describe("translateConvexReadError", () => {
     expect(translateConvexReadError(already, { scope: "v1.test" })).toBe(
       already
     );
+  });
+});
+
+describe("redactedReadRefusalError", () => {
+  const NOT_FOUND = "Client not found";
+
+  it("answers a production-masked failure with the route's 404", () => {
+    const err = redactedReadRefusalError(
+      new Error("[Request ID: abc] Server Error"),
+      NOT_FOUND
+    );
+    expect(err?.status).toBe(404);
+    expect(err?.message).toBe(NOT_FOUND);
+    expect(errorMock).not.toHaveBeenCalled();
+    expect(warnMock).toHaveBeenCalledTimes(1);
+    expect(warnMock.mock.calls[0]![0]).toContain("redacted read failure");
+  });
+
+  it("answers a validator-rejected id with the same 404", () => {
+    // The write translator has no branch for this shape, so the read routes
+    // that fall back to it answered a malformed id with its terminal 500.
+    const err = redactedReadRefusalError(
+      new Error(
+        '[Request ID: abc] Server Error\nArgumentValidationError: Value does not match validator.\nValidator: v.id("projects")'
+      ),
+      NOT_FOUND
+    );
+    expect(err?.status).toBe(404);
+    expect(err?.message).toBe(NOT_FOUND);
+    expect(errorMock).not.toHaveBeenCalled();
+    // Deploy skew produces the same shape for every caller, so it leaves the
+    // same Axiom-only trace the read translator does.
+    expect(warnMock).toHaveBeenCalledTimes(1);
+    expect(warnMock.mock.calls[0]![0]).toContain(
+      "convex rejected read arguments"
+    );
+  });
+
+  it.each([
+    [
+      "a ConvexError payload",
+      Object.assign(new Error("[Request ID: abc] Server Error"), {
+        data: { code: "NOT_FOUND", message: "nope" },
+      }),
+    ],
+    [
+      "a ConvexError payload on a wrapper's cause",
+      Object.assign(new Error("ArgumentValidationError: wrapped"), {
+        cause: { data: "A deliberate refusal" },
+      }),
+    ],
+    ["a stated membership refusal", new Error("Not a member of this project")],
+    ["a bad credential", new Error("Unauthenticated")],
+    ["a network failure", new Error("fetch failed")],
+    ["a WebRouteError", translate("boom")],
+  ])("leaves %s to the caller's own translator", (_label, error) => {
+    expect(redactedReadRefusalError(error, NOT_FOUND)).toBeUndefined();
+    expect(warnMock).not.toHaveBeenCalled();
+  });
+
+  it("is only ever a 404", () => {
+    const err = redactedReadRefusalError(
+      new Error("Server Error"),
+      NOT_FOUND
+    );
+    expect(err).toBeInstanceOf(WebRouteError);
+    expect(err?.code).toBe("NOT_FOUND");
   });
 });

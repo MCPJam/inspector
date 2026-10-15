@@ -20,7 +20,7 @@ describe("browser tool evidence", () => {
     );
     const returned = await tools.browser_observe.execute!(
       {},
-      { toolCallId: "call", messages: [] },
+      { toolCallId: "call", messages: [], context: {} },
     );
     expect(returned).toBe(result);
     expect(persist).toHaveBeenCalledWith(
@@ -56,7 +56,7 @@ describe("browser tool evidence", () => {
     expect(
       await tools.browser_observe.execute!(
         {},
-        { toolCallId: "call", messages: [] },
+        { toolCallId: "call", messages: [], context: {} },
       ),
     ).toBe(result);
     expect(evidence[0].status).toBe("unavailable");

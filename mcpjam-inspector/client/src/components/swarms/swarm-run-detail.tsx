@@ -318,13 +318,17 @@ export function SwarmRunDetail({
   const runningRunIds = useMemo(() => {
     if (!wave) return [];
     return wave.runs
-      .filter((run) => run.status === "running" || run.status === "pending")
+      .filter(
+        (run) =>
+          !run.cancelRequested &&
+          (run.status === "running" || run.status === "pending"),
+      )
       .map((run) => run.runId);
   }, [wave]);
   const {
     stop: handleStopRun,
     busy: stopBusy,
-    stoppedHere,
+    stoppedRunIds,
   } = useStopSwarmRun(runningRunIds);
 
   if (overview === undefined) {
@@ -360,12 +364,23 @@ export function SwarmRunDetail({
 
   const title = swarmWaveTitle(wave);
   const live = liveProgress;
-  const dataRunState = waveRunState(wave.runs);
+  const dataRunState = waveRunState(
+    wave.runs.map((run) => ({
+      ...run,
+      cancelRequested: run.cancelRequested || stoppedRunIds.includes(run.runId),
+    })),
+  );
   // `stoppedHere` only overrides a TERMINAL read: between the cancel resolving
   // and the wave query catching up, the runs still say `running`, and claiming
   // "stopped" over a strip that is still counting sessions would be a lie the
   // progress bar contradicts on screen.
-  const showStopped = stoppedHere && dataRunState !== "running";
+  const cleanupPending = wave.runs.some((run) => run.cleanupPending);
+  const canceledHere =
+    stoppedRunIds.some((runId) =>
+      wave.runs.some((run) => run.runId === runId),
+    ) || wave.runs.some((run) => run.cancelRequested);
+  const showStopped =
+    canceledHere && !cleanupPending && dataRunState === "stopped";
   const sessionTotals = waveSessionTotals(wave.runs);
   /**
    * The finding this viewer followed in, resolved from the wave itself — the URL
@@ -373,9 +388,9 @@ export function SwarmRunDetail({
    * to no banner rather than to a stale sentence.
    */
   const followedFinding: SwarmOverviewFinding | null = findingParam
-    ? wave.runs
+    ? (wave.runs
         .flatMap((run) => run.findings)
-        .find((finding) => finding.criterionId === findingParam) ?? null
+        .find((finding) => finding.criterionId === findingParam) ?? null)
     : null;
   // 0% until the fan-out is known — a live run with no session total yet is
   // starting, not complete.
@@ -387,8 +402,12 @@ export function SwarmRunDetail({
   // settle. Saying work is in flight here contradicts the count printed right
   // beside it, which is what BB-76 reported seeing.
   const settling = live !== null && live.total > 0 && live.done >= live.total;
-  const hasLocalExecution = wave.runs.some(run => run.executionVenue === "local" || run.executionVenue === "mixed");
-  const hasHostedExecution = wave.runs.some(run => run.executionVenue !== "local");
+  const hasLocalExecution = wave.runs.some(
+    (run) => run.executionVenue === "local" || run.executionVenue === "mixed",
+  );
+  const hasHostedExecution = wave.runs.some(
+    (run) => run.executionVenue !== "local",
+  );
   const runIds = wave.runs.map((r) => r.runId);
   const runLabels = new Map(wave.runs.map((r) => [r.runId, r.journeyName]));
   const goalLabels = new Map(
@@ -412,15 +431,25 @@ export function SwarmRunDetail({
             data-testid="swarm-run-detail-title"
           >
             {title}
-            {hasLocalExecution && <span className="ml-2 rounded bg-muted px-2 py-0.5 align-middle text-xs font-normal text-muted-foreground">{hasHostedExecution ? "Local + cloud" : "Ran locally"}</span>}
+            {hasLocalExecution && (
+              <span className="ml-2 rounded bg-muted px-2 py-0.5 align-middle text-xs font-normal text-muted-foreground">
+                {hasHostedExecution ? "Local + cloud" : "Ran locally"}
+              </span>
+            )}
           </h1>
         }
         meta={
-          live ? undefined : (
+          live && !cleanupPending ? undefined : (
             <div
               className="flex items-center gap-2"
               data-testid="swarm-run-detail-state"
-              data-run-state={showStopped ? "stopped" : dataRunState}
+              data-run-state={
+                cleanupPending
+                  ? "stopping"
+                  : showStopped
+                    ? "stopped"
+                    : dataRunState
+              }
               role="status"
             >
               <span
@@ -432,7 +461,11 @@ export function SwarmRunDetail({
                 }
                 data-testid="swarm-run-detail-state-label"
               >
-                {showStopped ? "Stopped" : swarmWaveRunStateLabel(dataRunState)}
+                {cleanupPending
+                  ? "Stop requested"
+                  : showStopped
+                    ? "Stopped"
+                    : swarmWaveRunStateLabel(dataRunState)}
               </span>
               <span className="truncate text-sm text-muted-foreground">
                 {sessionTotals.total > 0

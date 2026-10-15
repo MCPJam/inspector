@@ -256,6 +256,8 @@ const DEFAULT_CORS_ORIGINS = [
   "http://localhost:8080", // Electron renderer dev server
   `http://localhost:${SERVER_PORT}`, // Hono server
   `http://127.0.0.1:${SERVER_PORT}`, // Hono server production
+  `http://[::1]:${CLIENT_PORT}`, // IPv6 loopback, same two ports
+  `http://[::1]:${SERVER_PORT}`,
   "https://staging.mcpjam.com", // Hosted deployment
 ];
 
@@ -284,7 +286,14 @@ export const CORS_ORIGINS =
 export const CORS_OPTIONS = {
   origin: CORS_ORIGINS,
   credentials: true,
-  exposeHeaders: ["x-request-id", "x-mcpjam-error-origin", "X-MCPJam-Session"],
+  // `x-mcpjam-failure-captured`: Ask MCPJam's browser reporter reads it to
+  // skip what the server already sent to Sentry; hidden, it double-reports.
+  exposeHeaders: [
+    "x-request-id",
+    "x-mcpjam-error-origin",
+    "X-MCPJam-Session",
+    "x-mcpjam-failure-captured",
+  ],
 };
 
 // Hosted web route timeouts (ms). Defined in `shared/` so the client can read
@@ -295,6 +304,7 @@ export {
   WEB_CONNECT_TIMEOUT_MS,
   WEB_CALL_TIMEOUT_MS,
   WEB_STREAM_TIMEOUT_MS,
+  WEB_SERVER_CHECK_DEADLINE_MS,
 } from "../shared/hosted-web-timeouts.js";
 // Imported as well as re-exported: `MRTR_CONTINUATION_LEASE_TTL_MS` below is
 // derived from the call timeout, and a re-export does not bind the name here.

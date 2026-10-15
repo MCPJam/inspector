@@ -13,11 +13,17 @@ import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import {
   actionRows,
   countModelSteps,
+  insertStepAfter,
   isAssertStep,
+  newStepId,
   stepTurnIndices,
   type TestStep,
 } from "@/shared/steps";
-import { removeStepById } from "../simple-case/simple-case-model";
+import {
+  isToolCalledWithAssert,
+  removeStepById,
+  type SimpleCaseTool,
+} from "../simple-case/simple-case-model";
 import type { CasePredicates } from "@/shared/eval-matching";
 import type {
   CaseScorecard,
@@ -235,4 +241,138 @@ export function isQuietCase(input: {
     return false;
   }
   return true;
+}
+
+/**
+ * The tools each LATER prompt expects, keyed by that prompt's step id.
+ *
+ * The runner grades a `toolCalledWith` against the turn it sits in, so a tool
+ * written under prompt 2 is prompt 2's expectation. The case-wide tool block
+ * reads every one of them (`readSimpleCase`) and used to draw them all under
+ * prompt 1, which left the later prompts looking like they checked nothing.
+ * The first prompt keeps whatever this map does not claim, so a case that
+ * opens with a check or a pinned call reads exactly as before.
+ */
+export function toolsByLaterAction(
+  steps: TestStep[],
+): Map<string, SimpleCaseTool[]> {
+  const out = new Map<string, SimpleCaseTool[]>();
+  for (const action of actionRows(steps).actions) {
+    if (action.ordinal === 1) continue;
+    const tools = action.checks.flatMap(({ step }) =>
+      isToolCalledWithAssert(step) &&
+      step.kind === "assert" &&
+      "type" in step.assertion &&
+      step.assertion.type === "toolCalledWith"
+        ? [
+            {
+              id: step.id,
+              toolName: step.assertion.toolName,
+              arguments: step.assertion.args?.args ?? {},
+            },
+          ]
+        : [],
+    );
+    if (tools.length > 0) out.set(action.step.id, tools);
+  }
+  return out;
+}
+
+/**
+ * Replace the tools ONE prompt expects, leaving every other step where it is.
+ *
+ * A kept tool is rewritten in place (same id, same position), a dropped one is
+ * removed, and a new one goes at the end of that prompt's block, in the order
+ * given, so it grades the same turn and never jumps ahead of an older gate.
+ */
+export function replaceActionTools(
+  steps: TestStep[],
+  actionStepId: string,
+  current: readonly SimpleCaseTool[],
+  next: readonly SimpleCaseTool[],
+): TestStep[] {
+  const toStep = (tool: SimpleCaseTool, id: string): TestStep => ({
+    id,
+    kind: "assert",
+    assertion: {
+      type: "toolCalledWith",
+      toolName: tool.toolName,
+      args: { args: tool.arguments ?? {} },
+    },
+  });
+  const currentIds = new Set(current.map((tool) => tool.id));
+  const nextById = new Map(
+    next.filter((tool) => tool.id).map((tool) => [tool.id as string, tool]),
+  );
+  let out = steps.flatMap((step) => {
+    if (!currentIds.has(step.id)) return [step];
+    const kept = nextById.get(step.id);
+    return kept ? [toStep(kept, step.id)] : [];
+  });
+  let anchor = actionStepId;
+  for (const tool of next) {
+    if (tool.id && currentIds.has(tool.id)) continue;
+    const id = tool.id ?? newStepId("assert");
+    out = insertStepAfter(out, anchor, toStep(tool, id));
+    anchor = id;
+  }
+  return out;
+}
+
+/** Dragging an action carries its checks; dragging a check moves just that check. */
+export function reorderSpineSteps(
+  steps: TestStep[],
+  activeId: string,
+  overId: string,
+): TestStep[] {
+  if (activeId === overId) return steps;
+  const from = steps.findIndex((step) => step.id === activeId);
+  const to = steps.findIndex((step) => step.id === overId);
+  if (from < 0 || to < 0) return steps;
+  const active = steps[from]!;
+  const over = steps[to]!;
+  if (active.kind === "assert" && over.kind === "assert") {
+    const next = [...steps];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved!);
+    return next;
+  }
+  if (
+    active.kind === "prompt" ||
+    active.kind === "assert" ||
+    over.kind === "assert" ||
+    over.kind === "prompt"
+  )
+    return steps;
+  const { leading, actions } = actionRows(steps);
+  const blocks = actions.map((action) => [
+    action.step,
+    ...action.checks.map((child) => child.step),
+  ]);
+  const activeBlock = actions.findIndex(
+    (action) => action.step.id === activeId,
+  );
+  const overBlock = actions.findIndex((action) => action.step.id === overId);
+  if (activeBlock < 0 || overBlock < 0) return steps;
+  const [moved] = blocks.splice(activeBlock, 1);
+  blocks.splice(overBlock, 0, moved!);
+  return [...leading.map((child) => child.step), ...blocks.flat()];
+}
+
+/** Move expected tool calls among their existing slots, preserving all other steps. */
+export function reorderRouteToolChecks(
+  steps: TestStep[],
+  fromId: string,
+  toId: string,
+): TestStep[] {
+  const tools = steps.filter(isToolCalledWithAssert);
+  const from = tools.findIndex((tool) => tool.id === fromId);
+  const to = tools.findIndex((tool) => tool.id === toId);
+  if (from < 0 || to < 0 || from === to) return steps;
+  const [moved] = tools.splice(from, 1);
+  tools.splice(to, 0, moved!);
+  let index = 0;
+  return steps.map((step) =>
+    isToolCalledWithAssert(step) ? tools[index++]! : step,
+  );
 }

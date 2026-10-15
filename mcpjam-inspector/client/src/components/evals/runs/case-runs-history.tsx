@@ -12,14 +12,17 @@ import { HostChip } from "@/components/hosts/host-chip";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { EnvironmentChip } from "../run-context-chip";
 import { CaseMetricStrip } from "../case-metric-strip";
-import { computeIterationResult } from "../pass-criteria";
+import {
+  computeIterationResult,
+  computeMeasuredIterationResult,
+} from "../pass-criteria";
 import {
   caseRunBatchTrigger,
   groupCaseIterations,
   resolveCaseRunBatchHost,
   type CaseRunBatch,
 } from "./group-case-iterations";
-import type { EvalIteration, EvalSuiteRun } from "../types";
+import type { EvalIteration, EvalSuiteRunListItem } from "../types";
 
 type Result = ReturnType<typeof computeIterationResult>;
 
@@ -73,7 +76,7 @@ function RunBatchGroup({
   onToggle: () => void;
   onSelectIteration: (it: EvalIteration) => void;
   selectedIterationId: string | null;
-  runsById?: Map<string, EvalSuiteRun>;
+  runsById?: Map<string, EvalSuiteRunListItem>;
   hostNamesById?: Map<string, string | null>;
   defaultHostLabel?: string | null;
   hasHostAttachments?: boolean;
@@ -87,12 +90,13 @@ function RunBatchGroup({
     projectEnvironmentsEnabled,
   });
   const total = batch.iterations.length;
+  // Measured results: an infra row is decided neither way.
   const decided = batch.iterations.filter((i) => {
-    const r = computeIterationResult(i);
+    const r = computeMeasuredIterationResult(i);
     return r === "passed" || r === "failed";
   });
   const passed = decided.filter(
-    (i) => computeIterationResult(i) === "passed",
+    (i) => computeMeasuredIterationResult(i) === "passed",
   ).length;
   const allPass = decided.length > 0 && passed === decided.length;
 
@@ -120,7 +124,8 @@ function RunBatchGroup({
             suite: {
               label: "Suite",
               title: "Ran as part of a suite run",
-              className: "bg-violet-500/12 text-violet-700 dark:text-violet-300",
+              className:
+                "bg-violet-500/12 text-violet-700 dark:text-violet-300",
             },
             replay: {
               label: "Replay",
@@ -243,7 +248,7 @@ export function CaseRunsHistory({
   selectedIterationId?: string | null;
   emptyState?: string;
   /** Parent suite runs — used to resolve `namedHostId` for suite batches. */
-  suiteRuns?: EvalSuiteRun[];
+  suiteRuns?: EvalSuiteRunListItem[];
   hostNamesById?: Map<string, string | null>;
   /** Shown for attachment-less suites when a run has no `namedHostId`. */
   defaultHostLabel?: string | null;
@@ -258,8 +263,7 @@ export function CaseRunsHistory({
   // `null` = untouched → default-expand the newest batch only. Once the user
   // toggles, the explicit set takes over.
   const [expandedKeys, setExpandedKeys] = useState<Set<string> | null>(null);
-  const defaultExpanded = () =>
-    new Set(batches[0] ? [batches[0].key] : []);
+  const defaultExpanded = () => new Set(batches[0] ? [batches[0].key] : []);
   const effectiveExpanded = expandedKeys ?? defaultExpanded();
   const toggle = (key: string) =>
     setExpandedKeys((prev) => {

@@ -1,3 +1,4 @@
+import { useRunGroupSummaries } from "./use-run-group-summaries";
 /**
  * Master-detail results surface for a multi-host suite. Replaces the
  * Runs ⟷ Cases tab switcher with one screen:
@@ -50,7 +51,12 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { cn } from "@/lib/utils";
 import { RunContextChip } from "./run-context-chip";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRunListItem,
+} from "./types";
 import { computeRunEffectiveStats } from "./suite-runs-list";
 import {
   formatRelativeTime,
@@ -78,7 +84,13 @@ import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
 export interface SuiteResultsSplitProps {
   suite: EvalSuite;
   cases: EvalCase[];
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
+  runHistoryStatus?:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreRuns?: () => void;
   allIterations: EvalIteration[];
   /**
    * namedHostId → display name, from the suite's attachments plus the project
@@ -139,7 +151,11 @@ export interface SuiteResultsSplitProps {
    * the selection isn't a multi-host group.
    */
   onGroupScopeChange?: (
-    scope: { suiteId: string; runGroupId: string; runs: EvalSuiteRun[] } | null,
+    scope: {
+      suiteId: string;
+      runGroupId: string;
+      runs: EvalSuiteRunListItem[];
+    } | null,
   ) => void;
 }
 
@@ -152,7 +168,7 @@ type RailGroup = {
   label: string;
   isStandalone: boolean;
   /** Newest-first. */
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   timestamp: number;
   passRate: number | null;
   /**
@@ -170,11 +186,15 @@ type RailGroup = {
   revisionSummary: string | null;
 };
 
-const runTimestamp = (r: EvalSuiteRun): number =>
+const runTimestamp = (r: EvalSuiteRunListItem): number =>
   r.completedAt ?? r.createdAt ?? r._creationTime ?? 0;
 
 function toneFor(value: number): string {
-  return value >= 85 ? "bg-success" : value >= 70 ? "bg-warning" : "bg-destructive";
+  return value >= 85
+    ? "bg-success"
+    : value >= 70
+      ? "bg-warning"
+      : "bg-destructive";
 }
 function textToneFor(value: number): string {
   return value >= 85
@@ -187,13 +207,16 @@ function textToneFor(value: number): string {
 function Sparkbar({ value }: { value: number }) {
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-      <div className={cn("h-full rounded-full", toneFor(value))} style={{ width: `${value}%` }} />
+      <div
+        className={cn("h-full rounded-full", toneFor(value))}
+        style={{ width: `${value}%` }}
+      />
     </div>
   );
 }
 
 /** Small pass/fail pill for the run-identity header. */
-function RunStatusBadge({ run }: { run: EvalSuiteRun }) {
+function RunStatusBadge({ run }: { run: EvalSuiteRunListItem }) {
   const outcome = run.result ?? run.status;
   const label =
     outcome === "passed"
@@ -261,13 +284,17 @@ function PinnedItem({
       onClick={onClick}
       className={cn(
         "flex w-full items-center gap-2 rounded-md border px-3 py-2.5 text-left transition-colors",
-        active ? "border-primary/40 bg-primary/[0.06]" : "border-transparent hover:bg-muted/60",
+        active
+          ? "border-primary/40 bg-primary/[0.06]"
+          : "border-transparent hover:bg-muted/60",
       )}
     >
       <span className="shrink-0 text-foreground">{icon}</span>
       <div className="min-w-0">
         <div className="text-sm font-medium text-foreground">{title}</div>
-        {subtitle ? <div className="text-[11px] text-muted-foreground">{subtitle}</div> : null}
+        {subtitle ? (
+          <div className="text-[11px] text-muted-foreground">{subtitle}</div>
+        ) : null}
       </div>
     </button>
   );
@@ -336,7 +363,8 @@ function RunGroupItem({
   onDeleteRun?: (runId: string) => void;
 }) {
   const rate = group.passRate;
-  const delta = rate == null || prevPassRate == null ? null : rate - prevPassRate;
+  const delta =
+    rate == null || prevPassRate == null ? null : rate - prevPassRate;
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const contextSummary = groupContextSummary(
     group,
@@ -355,7 +383,12 @@ function RunGroupItem({
           active ? "bg-primary/10 ring-1 ring-primary/40" : "hover:bg-muted",
         )}
       >
-        <span className={cn("h-2.5 w-2.5 rounded-full", rate == null ? "bg-muted-foreground/40" : toneFor(rate))} />
+        <span
+          className={cn(
+            "h-2.5 w-2.5 rounded-full",
+            rate == null ? "bg-muted-foreground/40" : toneFor(rate),
+          )}
+        />
       </button>
     );
   }
@@ -364,7 +397,9 @@ function RunGroupItem({
     <div
       className={cn(
         "group/run rounded-md border",
-        active ? "border-primary/40 bg-primary/[0.06]" : "border-transparent hover:bg-muted/60",
+        active
+          ? "border-primary/40 bg-primary/[0.06]"
+          : "border-transparent hover:bg-muted/60",
       )}
     >
       <div className="flex min-w-0 items-stretch">
@@ -375,14 +410,25 @@ function RunGroupItem({
             title={expanded ? "Hide client runs" : "Show client runs"}
             className="flex w-7 shrink-0 items-center justify-center rounded-l-md text-muted-foreground hover:bg-muted hover:text-foreground"
           >
-            <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-90")} />
+            <ChevronRight
+              className={cn(
+                "h-3.5 w-3.5 transition-transform",
+                expanded && "rotate-90",
+              )}
+            />
           </button>
         ) : (
           <span className="w-7 shrink-0" />
         )}
-        <button type="button" onClick={onSelect} className="min-w-0 flex-1 py-2.5 pr-3 text-left">
+        <button
+          type="button"
+          onClick={onSelect}
+          className="min-w-0 flex-1 py-2.5 pr-3 text-left"
+        >
           <div className="flex items-center justify-between gap-2">
-            <span className="truncate font-mono text-xs font-medium text-foreground">{group.label}</span>
+            <span className="truncate font-mono text-xs font-medium text-foreground">
+              {group.label}
+            </span>
             <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
               {formatRelativeTime(group.timestamp)}
             </span>
@@ -410,7 +456,11 @@ function RunGroupItem({
                   delta < 0 ? "text-destructive" : "text-success",
                 )}
               >
-                {delta < 0 ? <ArrowDownRight className="h-3 w-3" /> : <ArrowUpRight className="h-3 w-3" />}
+                {delta < 0 ? (
+                  <ArrowDownRight className="h-3 w-3" />
+                ) : (
+                  <ArrowUpRight className="h-3 w-3" />
+                )}
                 {delta > 0 ? "+" : ""}
                 {delta} pts
               </span>
@@ -436,14 +486,19 @@ function RunGroupItem({
       {expanded && !group.isStandalone ? (
         <div className="space-y-0.5 border-t border-border/40 px-2 py-1.5">
           {group.runs.map((run) => {
-            const childRate = computeRunEffectiveStats(run, iterationsByRun.get(run._id) ?? []).passRate;
+            const childRate = computeRunEffectiveStats(
+              run,
+              iterationsByRun.get(run._id) ?? [],
+            ).passRate;
             const runActive = selectedRunId === run._id;
             return (
               <div
                 key={run._id}
                 className={cn(
                   "group/child flex items-center gap-1 rounded transition-colors",
-                  runActive ? "bg-primary/10 ring-1 ring-primary/30" : "hover:bg-muted",
+                  runActive
+                    ? "bg-primary/10 ring-1 ring-primary/30"
+                    : "hover:bg-muted",
                 )}
               >
                 <button
@@ -461,9 +516,16 @@ function RunGroupItem({
                     className="max-w-[170px] gap-1 px-2 py-0.5 text-[10px] shadow-none"
                   />
                   <span className="flex items-center gap-1.5">
-                    <span className="font-mono text-[10px] text-muted-foreground">{formatRunId(run._id)}</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">
+                      {formatRunId(run._id)}
+                    </span>
                     {childRate != null ? (
-                      <span className={cn("text-[11px] font-medium tabular-nums", textToneFor(childRate))}>
+                      <span
+                        className={cn(
+                          "text-[11px] font-medium tabular-nums",
+                          textToneFor(childRate),
+                        )}
+                      >
                         {childRate}%
                       </span>
                     ) : null}
@@ -504,7 +566,9 @@ type View =
 export function SuiteResultsSplit({
   suite,
   cases,
-  runs,
+  runs: listedRuns,
+  runHistoryStatus,
+  onLoadMoreRuns,
   allIterations,
   hostNamesById,
   environments,
@@ -522,6 +586,10 @@ export function SuiteResultsSplit({
   onDeleteTestCasesBatch,
   onGroupScopeChange,
 }: SuiteResultsSplitProps) {
+  const { runs, loadGroup, forgetRuns } = useRunGroupSummaries(
+    suite._id,
+    listedRuns,
+  );
   const [internalView, setInternalView] = useState<View>({ kind: "all" });
   // Pending run deletion (single run or whole group), confirmed via dialog.
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -540,6 +608,7 @@ export function SuiteResultsSplit({
     try {
       for (const id of deleteTarget.ids) {
         await onDeleteRun(id);
+        forgetRuns([id]);
       }
       toast.success(
         deleteTarget.ids.length > 1
@@ -563,7 +632,11 @@ export function SuiteResultsSplit({
   // Falls back to the case itself when the cell carries no iteration. Returns
   // undefined when no handler is wired, which makes the matrix cells inert.
   const handleCellOpen = onOpenCaseIteration
-    ? (cell: { iterations: EvalIteration[] }, _hostId: string, caseId: string) => {
+    ? (
+        cell: { iterations: EvalIteration[] },
+        _hostId: string,
+        caseId: string,
+      ) => {
         const iteration = cell.iterations[0];
         if (iteration) onOpenCaseIteration(caseId, iteration._id);
         else onTestCaseClick(caseId);
@@ -584,6 +657,19 @@ export function SuiteResultsSplit({
     if (selectedRunId) onExitRun?.();
   };
 
+  const withCompleteGroup = async (
+    group: RailGroup,
+    action: (rows: EvalSuiteRunListItem[]) => void,
+  ) => {
+    try {
+      const groupId = group.runs[0]?.runGroupId;
+      const rows = groupId ? await loadGroup(groupId) : group.runs;
+      action(rows);
+    } catch {
+      toast.error("Could not load the complete run group. Try again.");
+    }
+  };
+
   const iterationsByRun = useMemo(() => {
     const map = new Map<string, EvalIteration[]>();
     for (const iter of allIterations) {
@@ -598,8 +684,8 @@ export function SuiteResultsSplit({
   // Group runs by runGroupId; single-member groups + ungrouped runs are
   // standalone. Newest-first.
   const railGroups = useMemo<RailGroup[]>(() => {
-    const byGroup = new Map<string, EvalSuiteRun[]>();
-    const standalones: EvalSuiteRun[] = [];
+    const byGroup = new Map<string, EvalSuiteRunListItem[]>();
+    const standalones: EvalSuiteRunListItem[] = [];
     for (const run of runs) {
       if (run.runGroupId) {
         const list = byGroup.get(run.runGroupId);
@@ -610,11 +696,14 @@ export function SuiteResultsSplit({
       }
     }
 
-    const aggregate = (groupRuns: EvalSuiteRun[]): number | null => {
+    const aggregate = (groupRuns: EvalSuiteRunListItem[]): number | null => {
       let passed = 0;
       let total = 0;
       for (const run of groupRuns) {
-        const stats = computeRunEffectiveStats(run, iterationsByRun.get(run._id) ?? []);
+        const stats = computeRunEffectiveStats(
+          run,
+          iterationsByRun.get(run._id) ?? [],
+        );
         passed += stats.effectivePassed;
         total += stats.effectiveTotal;
       }
@@ -624,7 +713,7 @@ export function SuiteResultsSplit({
     // environment-backed. Environment runs carry no `namedHostId`, so the old
     // `namedHostId` count reported a 3-environment fan-out as "1 client"; and
     // two environments sharing one host must still count as two.
-    const contextFacts = (groupRuns: EvalSuiteRun[]) => {
+    const contextFacts = (groupRuns: EvalSuiteRunListItem[]) => {
       const count = runContextKeys(groupRuns).length || 1;
       const noun: RailGroup["contextNoun"] = hasEnvironmentRun(groupRuns)
         ? "environment"
@@ -638,11 +727,9 @@ export function SuiteResultsSplit({
 
     const nodes: RailGroup[] = [];
     for (const [groupId, groupRuns] of byGroup) {
-      if (groupRuns.length < 2) {
-        standalones.push(...groupRuns);
-        continue;
-      }
-      const sorted = [...groupRuns].sort((a, b) => runTimestamp(b) - runTimestamp(a));
+      const sorted = [...groupRuns].sort(
+        (a, b) => runTimestamp(b) - runTimestamp(a),
+      );
       nodes.push({
         key: groupId,
         label: `Run group g${groupId.slice(0, 4)}`,
@@ -668,16 +755,21 @@ export function SuiteResultsSplit({
   }, [runs, iterationsByRun]);
 
   const activeGroup =
-    view.kind === "group" ? railGroups.find((g) => g.key === view.key) ?? null : null;
+    view.kind === "group"
+      ? (railGroups.find((g) => g.key === view.key) ?? null)
+      : null;
 
-  const selectedRun =
-    selectedRunId ? runs.find((r) => r._id === selectedRunId) ?? null : null;
+  const selectedRun = selectedRunId
+    ? (runs.find((r) => r._id === selectedRunId) ?? null)
+    : null;
 
   // Scope iterations + runs to the selected group for the read-only snapshot.
   const scoped = useMemo(() => {
     if (!activeGroup) return null;
     const runIds = new Set(activeGroup.runs.map((r) => r._id));
-    const iters = allIterations.filter((i) => i.suiteRunId && runIds.has(i.suiteRunId));
+    const iters = allIterations.filter(
+      (i) => i.suiteRunId && runIds.has(i.suiteRunId),
+    );
     return { runs: activeGroup.runs, iterations: iters };
   }, [activeGroup, allIterations]);
 
@@ -709,7 +801,10 @@ export function SuiteResultsSplit({
   // The rail group that contains the selected run — auto-expanded + highlighted.
   const selectedRunGroupKey = useMemo(() => {
     if (!selectedRunId) return null;
-    return railGroups.find((g) => g.runs.some((r) => r._id === selectedRunId))?.key ?? null;
+    return (
+      railGroups.find((g) => g.runs.some((r) => r._id === selectedRunId))
+        ?.key ?? null
+    );
   }, [selectedRunId, railGroups]);
 
   const isExpanded = (key: string): boolean =>
@@ -730,7 +825,7 @@ export function SuiteResultsSplit({
         ? "Monitoring"
         : view.kind === "compare"
           ? "Compare runs"
-          : activeGroup?.label ?? "Run group";
+          : (activeGroup?.label ?? "Run group");
 
   const showsCrossHostMatrix =
     view.kind === "all"
@@ -751,8 +846,12 @@ export function SuiteResultsSplit({
         <div className="flex items-center justify-between px-3 py-2.5">
           {collapsed ? null : (
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Runs</span>
-              <span className="text-xs tabular-nums text-muted-foreground/70">{railGroups.length}</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Runs
+              </span>
+              <span className="text-xs tabular-nums text-muted-foreground/70">
+                {railGroups.length}
+              </span>
             </div>
           )}
           <button
@@ -761,11 +860,20 @@ export function SuiteResultsSplit({
             title={collapsed ? "Expand runs" : "Collapse runs"}
             className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
           >
-            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+            {collapsed ? (
+              <PanelLeftOpen className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
           </button>
         </div>
 
-        <div className={cn("flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pb-2", collapsed ? "items-center px-2" : "px-2")}>
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pb-2",
+            collapsed ? "items-center px-2" : "px-2",
+          )}
+        >
           <PinnedItem
             icon={<Layers className="h-4 w-4" />}
             title="All runs"
@@ -774,12 +882,19 @@ export function SuiteResultsSplit({
             collapsed={collapsed}
             onClick={() => goTo({ kind: "all" })}
           />
-          <div className={cn("my-1 h-px shrink-0 bg-border/60", collapsed ? "w-8" : "w-full")} />
+          <div
+            className={cn(
+              "my-1 h-px shrink-0 bg-border/60",
+              collapsed ? "w-8" : "w-full",
+            )}
+          />
           {railGroups.map((group, i) => {
             // A standalone item IS a single run → selecting it opens run detail.
             // A multi-host group → selecting it opens the scoped cross-host grid;
             // its child runs open run detail individually.
-            const standaloneRunId = group.isStandalone ? group.runs[0]?._id : null;
+            const standaloneRunId = group.isStandalone
+              ? group.runs[0]?._id
+              : null;
             const active = group.isStandalone
               ? selectedRunId === standaloneRunId
               : view.kind === "group" && view.key === group.key;
@@ -797,19 +912,26 @@ export function SuiteResultsSplit({
                 onSelect={
                   group.isStandalone && standaloneRunId
                     ? () => onRunClick(standaloneRunId)
-                    : () => goTo({ kind: "group", key: group.key })
+                    : () =>
+                        void withCompleteGroup(group, () =>
+                          goTo({ kind: "group", key: group.key }),
+                        )
                 }
-                onToggleExpand={() => toggleExpand(group.key)}
+                onToggleExpand={() =>
+                  void withCompleteGroup(group, () => toggleExpand(group.key))
+                }
                 onRunClick={onRunClick}
                 onDeleteGroup={
                   onDeleteRun
                     ? () =>
-                        setDeleteTarget({
-                          ids: group.runs.map((r) => r._id),
-                          label: group.isStandalone
-                            ? formatRunId(group.runs[0]?._id ?? group.key)
-                            : group.label,
-                        })
+                        void withCompleteGroup(group, (rows) =>
+                          setDeleteTarget({
+                            ids: rows.map((r) => r._id),
+                            label: group.isStandalone
+                              ? formatRunId(group.runs[0]?._id ?? group.key)
+                              : group.label,
+                          }),
+                        )
                     : undefined
                 }
                 onDeleteRun={
@@ -824,6 +946,19 @@ export function SuiteResultsSplit({
               />
             );
           })}
+          {onLoadMoreRuns &&
+          (runHistoryStatus === "CanLoadMore" ||
+            runHistoryStatus === "LoadingMore") ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={runHistoryStatus === "LoadingMore"}
+              onClick={onLoadMoreRuns}
+              aria-label="Load more runs"
+            >
+              {runHistoryStatus === "LoadingMore" ? "Loading…" : "Load more"}
+            </Button>
+          ) : null}
         </div>
 
         <div className="border-t border-border/60 p-2">
@@ -884,7 +1019,9 @@ export function SuiteResultsSplit({
               {view.kind !== "monitoring" ? (
                 <>
                   <span className="text-xs text-muted-foreground">·</span>
-                  <span className="text-xs font-medium text-muted-foreground">{header}</span>
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {header}
+                  </span>
                 </>
               ) : null}
             </div>
@@ -907,11 +1044,11 @@ export function SuiteResultsSplit({
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {view.kind === "run" ? (
-            runDetailPane ?? (
+            (runDetailPane ?? (
               <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
                 Run detail unavailable.
               </div>
-            )
+            ))
           ) : view.kind === "all" ? (
             // Same cross-host matrix as a group view, across ALL runs (latest
             // per host + historical columns). Falls back to the authoring case
@@ -955,7 +1092,12 @@ export function SuiteResultsSplit({
             />
           ) : view.kind === "compare" ? (
             <SuiteGroupCompare
-              groups={railGroups.map((g) => ({ key: g.key, label: g.label, runs: g.runs }))}
+              loadGroup={loadGroup}
+              groups={railGroups.map((g) => ({
+                key: g.key,
+                label: g.label,
+                runs: g.runs,
+              }))}
               hostNamesById={hostNamesById}
               onBack={() => goTo({ kind: "all" })}
               onOpenRun={onRunClick}

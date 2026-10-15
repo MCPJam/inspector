@@ -1,12 +1,14 @@
+import { useSelectedRun } from "./use-selected-run";
 import { useMemo } from "react";
 import { Code2, Loader2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { TestCaseIterationsTable } from "./test-case-iterations-table";
-import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalCase, EvalIteration, EvalSuiteRunListItem } from "./types";
+import { iterationTargetKey, targetKeySuffix } from "@/lib/eval-target-key";
 
 interface TestCaseDetailViewProps {
   testCase: EvalCase;
@@ -16,7 +18,7 @@ interface TestCaseDetailViewProps {
   serverNames?: string[];
   suiteName?: string;
   onNavigateToSuite?: () => void;
-  runs?: EvalSuiteRun[];
+  runs?: EvalSuiteRunListItem[];
   onOpenExportCase?: () => void;
 }
 
@@ -38,13 +40,17 @@ export function TestCaseDetailView({
 
   useRunInsights(latestCompletedRun, { autoRequest: true });
 
+  const latestFullRun = useSelectedRun(
+    latestCompletedRun?.suiteId ?? "",
+    latestCompletedRun?._id ?? null,
+  ).run;
   const latestCaseInsight = useMemo(
     () =>
-      findRunInsightForCase(latestCompletedRun, {
+      findRunInsightForCase(latestFullRun, {
         caseKey: testCase.caseKey,
         testCaseId: testCase._id,
       }),
-    [latestCompletedRun, testCase.caseKey, testCase._id],
+    [latestFullRun, testCase.caseKey, testCase._id],
   );
 
   // Model breakdown
@@ -54,6 +60,7 @@ export function TestCaseDetailView({
       {
         provider: string;
         model: string;
+        targetKey: string;
         passed: number;
         failed: number;
         total: number;
@@ -64,8 +71,9 @@ export function TestCaseDetailView({
       const snapshot = iteration.testCaseSnapshot;
       if (!snapshot) return;
 
-      // Only count terminal pass/fail iterations - exclude pending/cancelled.
-      const result = computeIterationResult(iteration);
+      // Only count terminal pass/fail iterations - exclude pending/cancelled
+      // and infra rows.
+      const result = computeMeasuredIterationResult(iteration);
       if (
         result !== "passed" &&
         result !== "failed" &&
@@ -74,12 +82,16 @@ export function TestCaseDetailView({
         return;
       }
 
-      const key = `${snapshot.provider}/${snapshot.model}`;
+      // Keyed by TARGET (`targetKey`; the bare model id when default), so two
+      // efforts of one model are two rows.
+      const targetKey = iterationTargetKey(iteration) ?? snapshot.model;
+      const key = `${snapshot.provider}/${targetKey}`;
 
       if (!modelMap.has(key)) {
         modelMap.set(key, {
           provider: snapshot.provider,
           model: snapshot.model,
+          targetKey,
           passed: 0,
           failed: 0,
           total: 0,
@@ -96,9 +108,14 @@ export function TestCaseDetailView({
       }
     });
 
-    return Array.from(modelMap.values())
-      .map((stats) => ({
-        model: `${stats.provider}/${stats.model}`,
+    const targetKeys = [...modelMap.values()].map((stats) => stats.targetKey);
+    return Array.from(modelMap.entries())
+      .map(([key, stats]) => ({
+        key,
+        model: `${stats.provider}/${stats.model}${targetKeySuffix(
+          stats.targetKey,
+          targetKeys,
+        )}`,
         passRate:
           stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
         passed: stats.passed,
@@ -109,7 +126,7 @@ export function TestCaseDetailView({
 
   // Compute overall stats
   const overallStats = useMemo(() => {
-    const results = iterations.map((i) => computeIterationResult(i));
+    const results = iterations.map((i) => computeMeasuredIterationResult(i));
     const passed = results.filter((r) => r === "passed").length;
     const failed = results.filter(
       (r) => r === "failed" || r === "timed_out",
@@ -253,7 +270,7 @@ export function TestCaseDetailView({
                 By Model:
               </span>
               {modelBreakdown.map((model) => (
-                <div key={model.model} className="flex items-center gap-1.5">
+                <div key={model.key} className="flex items-center gap-1.5">
                   <div
                     className="h-1.5 w-1.5 rounded-full"
                     style={{

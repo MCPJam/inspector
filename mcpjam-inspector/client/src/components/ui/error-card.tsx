@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { WebApiError } from "@/lib/apis/web/base";
 import { withTechnicalDetails } from "@/lib/error-technical-details";
+import { useFeedbackReporter } from "@/components/support/FeedbackReporterContext";
 
 const DOCS_BASE_URL = "https://docs.mcpjam.com";
 
@@ -78,6 +79,19 @@ export type ErrorCardProps = {
    */
   className?: string;
 };
+
+/**
+ * The code a report quotes: the source's own code when it sent a string one
+ * (`INTERNAL_ERROR`), else the catalog slug. Capped to the report's field
+ * limit.
+ */
+function reportErrorCode(normalized: NormalizedError): string {
+  const code =
+    typeof normalized.rawCode === "string" && normalized.rawCode.trim()
+      ? normalized.rawCode.trim()
+      : normalized.slug;
+  return code.slice(0, 64);
+}
 
 function resolveNormalized(input: unknown): NormalizedError {
   // A caller that already holds a normalized block is passing the server's
@@ -352,6 +366,16 @@ export function ErrorCard({
   className,
 }: ErrorCardProps) {
   const normalized = useMemo(() => resolveNormalized(error), [error]);
+  // Present only inside the signed-in hosted shell. Everywhere else the card
+  // offers no report link, and never needs a Convex client to render.
+  const feedbackReporter = useFeedbackReporter();
+  // Only OUR failures, and only with the request id that joins the report to
+  // the server's logs. A user's own server or config failing is not a report
+  // for the MCPJam team.
+  const reportable =
+    feedbackReporter !== null &&
+    originOf(normalized) === "mcpjam" &&
+    Boolean(normalized.requestId);
   // Support both controlled (`open` provided) and uncontrolled (`defaultOpen`)
   // modes. `useState` only reads `defaultOpen` once at mount, so callers that
   // need the toggle to react to outside state must use the controlled form.
@@ -524,6 +548,22 @@ export function ErrorCard({
                 <div>
                   <SectionLabel>Request ID</SectionLabel>
                   <MonoBlock>{normalized.requestId}</MonoBlock>
+                  {reportable ? (
+                    <button
+                      type="button"
+                      data-testid="error-card-report"
+                      onClick={() =>
+                        feedbackReporter?.openFeedback({
+                          kind: "bug",
+                          requestId: normalized.requestId,
+                          errorCode: reportErrorCode(normalized),
+                        })
+                      }
+                      className="mt-1 text-[11px] font-medium text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
+                    >
+                      Report this
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
               {normalized.stack ? (

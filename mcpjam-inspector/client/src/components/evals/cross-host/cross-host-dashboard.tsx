@@ -12,7 +12,12 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRunListItem,
+} from "../types";
 import { evalSurfaceCardClass } from "../eval-surface-chrome";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "../constants";
 import { CrossHostMatrix, type HostVerdictMap } from "./cross-host-matrix";
@@ -30,7 +35,7 @@ import {
 interface CrossHostDashboardProps {
   suite: EvalSuite;
   cases: EvalCase[];
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   allIterations: EvalIteration[];
   /** Called when the user wants to navigate to host attachment settings. */
   onConfigureHosts?: () => void;
@@ -164,8 +169,8 @@ export function CrossHostDashboard({
         <div className="space-y-1">
           <p className="text-sm font-medium">No client attachments</p>
           <p className="text-xs text-muted-foreground max-w-xs">
-            Attach MCP client applications to this suite to compare results across
-            Claude Desktop, Cursor, ChatGPT, and others.
+            Attach MCP client applications to this suite to compare results
+            across Claude Desktop, Cursor, ChatGPT, and others.
           </p>
         </div>
         {onConfigureHosts && (
@@ -190,8 +195,8 @@ export function CrossHostDashboard({
         <div className="space-y-1">
           <p className="text-sm font-medium">No cross-client data yet</p>
           <p className="text-xs text-muted-foreground max-w-xs">
-            Run the suite across its attached clients to see per-client pass rates,
-            latency, and token usage in this matrix.
+            Run the suite across its attached clients to see per-client pass
+            rates, latency, and token usage in this matrix.
           </p>
         </div>
       </div>
@@ -255,8 +260,8 @@ export function CrossHostDashboard({
               Delete test case
             </DialogTitle>
             <DialogDescription>
-              Delete “{caseToDelete?.title || "Untitled test case"}”? This cannot
-              be undone.
+              Delete “{caseToDelete?.title || "Untitled test case"}”? This
+              cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -1,3 +1,4 @@
+import { RecordedPluginWorkspace } from "@/components/plugin-workspace/PluginWorkspaceReplay";
 /**
  * browser-step-replay.tsx — the shared vocabulary and UI for one recorded
  * browser interaction step, plus the filmstrip that ties a run's steps to its
@@ -246,7 +247,12 @@ export function BrowserStepDetail({
         <p className="text-xs text-destructive">{step.assertion.reason}</p>
       ) : null}
 
-      {step.screenshotUrl ? (
+      {step.pluginWorkspace ? (
+        <RecordedPluginWorkspace
+          recording={step.pluginWorkspace}
+          screenshotUrl={step.screenshotUrl}
+        />
+      ) : step.screenshotUrl ? (
         <ArtifactImage
           src={step.screenshotUrl}
           alt={browserStepLabel(step)}
@@ -377,7 +383,10 @@ export function BrowserStepFilmstrip({
   // An artifact link expires; the freshest one known for the recording is
   // played, and a failed load asks for a new one (see `onError` below).
   const resolvedVideoUrl = useFreshArtifactUrl(replayVideoUrl(videoUrl));
-  const videoSummary = useMemo(() => summarizeRecording(videoMeta), [videoMeta]);
+  const videoSummary = useMemo(
+    () => summarizeRecording(videoMeta),
+    [videoMeta],
+  );
 
   const ordered = useMemo(
     () =>
@@ -591,7 +600,11 @@ export function BrowserStepFilmstrip({
                       : "border-border/50 hover:border-border",
                   )}
                 >
-                  {step.screenshotUrl ? (
+                  {step.pluginWorkspace ? (
+                    <span className="text-xs text-muted-foreground">
+                      Workspace capture
+                    </span>
+                  ) : step.screenshotUrl ? (
                     <ArtifactImage
                       src={step.screenshotUrl}
                       alt={browserStepLabel(step)}

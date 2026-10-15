@@ -16,6 +16,7 @@
  * `Response` and drain it. The transcript flows back via the captured
  * `messageHistory` and the engine's `onConversationComplete` tap.
  */
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type {
   AssistantModelMessage,
@@ -41,6 +42,8 @@ import { getHarnessAdapter } from "./harness/registry.js";
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
+  harnessReasoningEffortRefusalReason,
+  turnReasoningEffortOf,
 } from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
@@ -75,6 +78,15 @@ export interface RunAssistantTurnOptions {
   modelDefinition: ModelDefinition;
   systemPrompt: string;
   temperature?: number;
+  /**
+   * The reasoning effort this turn asked for (else the one on the selection in
+   * `extraBodyFields.modelSelection`). A harness that has not verified it
+   * refuses the turn before any spend.
+   */
+  reasoningEffort?: ModelReasoningEffort;
+  /** The saved selection; an org one runs a harness on the org's own key. */
+  modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
 
   selectedServerIds?: string[];
   /**
@@ -209,6 +221,9 @@ export interface RunAssistantTurnOptions {
    * system-reporter fallback applies (requestId: null on the emitted rows).
    */
   failureReporter?: MCPJamHandlerOptions["failureReporter"];
+
+  /** A surface's capture rule; see `MCPJamHandlerOptions.failureCapture`. */
+  failureCapture?: MCPJamHandlerOptions["failureCapture"];
 
   /**
    * Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing
@@ -358,6 +373,12 @@ export interface RunAssistantTurnResult {
    * the harness lease is never committed/released and the next turn 409s.
    */
   harnessSessionCommit?: HarnessSessionCommitPayload;
+  /**
+   * A harness turn whose wait for Claude Code background agents was ended by
+   * a Stop or the caller's deadline AFTER its answer was delivered. The turn
+   * finished; a caller that treats its abort as a timeout must not.
+   */
+  backgroundDrainEnded?: true;
 }
 
 function extractAssistantMessages(
@@ -476,6 +497,10 @@ function buildHandlerOptions(
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
       : {}),
+    modelSelectionOrigin: opts.modelSelectionOrigin,
+    ...(opts.reasoningEffort !== undefined
+      ? { reasoningEffort: opts.reasoningEffort }
+      : {}),
     ...(opts.scenarioId ? { scenarioId: opts.scenarioId } : {}),
     ...(opts.accessVersion !== undefined
       ? { accessVersion: opts.accessVersion }
@@ -486,10 +511,7 @@ function buildHandlerOptions(
     ...(opts.selectedServerIds
       ? { selectedServers: opts.selectedServerIds }
       : {}),
-    // Carry the harness selector through to the handler — runHarnessTurn reads it
-    // off MCPJamHandlerOptions and now REQUIRES it. Without this, eval/synthetic/
-    // unified harness turns reach runHarnessTurn with harness=undefined (the old
-    // `?? "claude-code"` default silently mis-ran a codex eval as claude-code).
+    // Pass the verified harness selector through to its driver.
     ...(opts.harness ? { harness: opts.harness } : {}),
     ...(opts.harnessExecutionTarget ? { harnessExecutionTarget: opts.harnessExecutionTarget } : {}),
     // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
@@ -574,6 +596,7 @@ function buildHandlerOptions(
     // PR 5b-followup-2: pass-through structured-error callback.
     ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
     ...(opts.failureReporter ? { failureReporter: opts.failureReporter } : {}),
+    ...(opts.failureCapture ? { failureCapture: opts.failureCapture } : {}),
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     ...(opts.prepareAdvertisedTools
       ? { prepareAdvertisedTools: opts.prepareAdvertisedTools }
@@ -663,7 +686,12 @@ export async function runAssistantTurn(
   const harnessRequested = !!opts.harness;
   const harnessModelId = String(opts.modelDefinition.id);
   if (harnessRequested) {
+    // Venue-aware: a local target runs the local arm (app-server for Codex),
+    // and this backstop must judge the adapter that will actually run.
     const harnessAdapter = getHarnessAdapter(opts.harness as string);
+    // The turn's effort, else the saved selection's. Refused here too so a
+    // path that never runs the pre-flight cannot start a paid box for it.
+    const harnessEffort = turnReasoningEffortOf(opts);
     // Playground chat (`direct`) may run an unverified harness × model pair
     // with a warning; evals, scenarios and swarms may not.
     const purpose = harnessModelPurposeForSourceType(opts.sourceType);
@@ -675,7 +703,21 @@ export async function runAssistantTurn(
         hosted: opts.modelDefinition.hosted,
       },
       purpose,
+      ...(opts.modelSelection ? { selection: opts.modelSelection } : {}),
     });
+    const effortRefusal = harnessReasoningEffortRefusalReason({
+      adapter: harnessAdapter,
+      ...(harnessEffort !== undefined ? { reasoningEffort: harnessEffort } : {}),
+      ...(opts.modelDefinition.supportedReasoningEfforts
+        ? { modelEfforts: opts.modelDefinition.supportedReasoningEfforts }
+        : {}),
+    });
+    if (effortRefusal) {
+      throw new Error(
+        `This host runs the ${opts.harness} harness, which isn't available: ` +
+          `${effortRefusal}.`,
+      );
+    }
     if (refusal) {
       // Wrapped in the SAME sentence the chat routes build around a pre-flight
       // refusal, so a reader who meets this in a run log and one who meets it in
@@ -693,6 +735,7 @@ export async function runAssistantTurn(
         sourceType: opts.sourceType,
       });
     }
+    handlerOptions.modelSelection = opts.modelSelection;
   }
   const useHarness = harnessRequested;
   const engineResult = useHarness
@@ -736,6 +779,9 @@ export async function runAssistantTurn(
     // "none"; for "ui" it lands after the body drains, alongside the transcript).
     ...(capturedHarnessCommit
       ? { harnessSessionCommit: capturedHarnessCommit }
+      : {}),
+    ...(engineResult.backgroundDrainEnded
+      ? { backgroundDrainEnded: true as const }
       : {}),
   };
 

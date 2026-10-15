@@ -23,6 +23,7 @@
 import { Hono } from "hono";
 import { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
@@ -69,9 +70,7 @@ function toSkillDto(row: SkillListRow) {
     isOwner: row.isOwner,
     aggregateHash: row.aggregateHash,
     ...(row.provenance !== undefined ? { provenance: row.provenance } : {}),
-    ...(row.pinnability !== undefined
-      ? { pinnability: row.pinnability }
-      : {}),
+    ...(row.pinnability !== undefined ? { pinnability: row.pinnability } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -87,7 +86,7 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(convexUrl);
@@ -113,6 +112,9 @@ function translateSkillReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, {
     scope: "v1/skills",
     notFoundMessage: "Skill or project not found, or you do not have access.",
+    // Every read here scopes a caller-supplied id; production masks the plain
+    // refusal to "Server Error", which answered 502 without this (MJ-021).
+    redactedIsRefusal: true,
   });
 }
 
@@ -123,13 +125,13 @@ function translateSkillReadError(error: unknown): WebRouteError {
 // Only `sharing: "project"` rows are pinnable into an environment, which is
 // what `pinnability` reports per row.
 skills.get("/projects/:projectId/skills", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.skills");
   const readClient = createConvexClient(await getConvexBearerForRequest(c));
   let rows: SkillListRow[] | null | undefined;
   try {
     rows = (await readClient.query(
       "projectSkills:listSkills" as any,
-      { projectId } as any
+      { projectId } as any,
     )) as SkillListRow[] | null | undefined;
   } catch (error) {
     throw translateSkillReadError(error);
@@ -149,7 +151,7 @@ skills.get("/projects/:projectId/skills/:skillId", async (c) => {
   try {
     row = (await readClient.query(
       "projectSkills:getSkill" as any,
-      { projectId, skillId } as any
+      { projectId, skillId } as any,
     )) as SkillDetailRow | null | undefined;
   } catch (error) {
     throw translateSkillReadError(error);

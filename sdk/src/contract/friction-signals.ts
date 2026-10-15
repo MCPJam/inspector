@@ -218,7 +218,7 @@ const ID_LIKE_LITERAL_RE =
 /**
  * Whether a string is worth trying to `JSON.parse`.
  *
- * Ported verbatim from `mcpjam-backend/convex/lib/traceRepairPrompt.ts`'s
+ * Ported verbatim from `mcpjam-backend/convex/lib/traceSerialization.ts`'s
  * `looksLikeJsonDocumentString`: a tool that returns JSON as text is the
  * common case, and parsing every text part unconditionally would spend the
  * walk budget on prose.

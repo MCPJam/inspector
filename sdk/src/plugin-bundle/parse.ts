@@ -20,6 +20,7 @@ import {
   sha256HexBytes,
 } from "./hashes.js";
 import {
+  MCPJAM_EXTENSION_NAMESPACE,
   normalizePluginManifest,
   PLUGIN_MANIFEST_PATH,
   type NormalizedPluginManifest,
@@ -195,6 +196,19 @@ function parseJsonFile(
  * limits, manifest); component-level problems are isolated into `skipped`
  * with their issues demoted to warnings on the result.
  */
+/** Whether `logo` came from MCPJam's own (strict) namespace. */
+function manifestDeclaresMcpjamLogo(
+  manifest: NormalizedPluginManifest
+): boolean {
+  const namespace = manifest.extensions[MCPJAM_EXTENSION_NAMESPACE];
+  return (
+    namespace !== null &&
+    typeof namespace === "object" &&
+    !Array.isArray(namespace) &&
+    typeof (namespace as Record<string, unknown>).logo === "string"
+  );
+}
+
 export async function parsePluginBundle(
   source: PluginFileSource,
   options?: ParsePluginBundleOptions
@@ -449,34 +463,55 @@ export async function parsePluginBundle(
   // Phase 7 — presentation assets.
   const assets: ParsedPluginAsset[] = [];
   const assetPaths = new Set<string>();
+  /**
+   * `declaredBy` names the manifest field that points at the file. MCPJam's
+   * own `com.mcpjam` icon/logo fields are strict (a bad image is fatal, as
+   * before); OpenAI's interface icons are lenient — a bad one is reported and
+   * dropped from the manifest, so the plugin still imports. Returns whether
+   * the file is (now or already) a usable asset.
+   */
   const addAsset = (
     file: LoadedFile,
     kind: PluginAssetKind,
-    declaredBy?: "icon" | "logo"
-  ): void => {
-    if (assetPaths.has(file.path)) return;
-    assetPaths.add(file.path);
+    declaredBy?: string,
+    strict = true
+  ): boolean => {
+    if (assetPaths.has(file.path)) return true;
     const extension = fileExtension(file.path);
     const expectedFormat = IMAGE_EXTENSION_FORMAT[extension];
     if (declaredBy !== undefined && expectedFormat === undefined) {
-      issues.error(
-        "ASSET_UNSUPPORTED_TYPE",
-        `manifest "${declaredBy}" must reference an image file`,
-        { path: file.path }
-      );
-      return;
+      const message = `manifest "${declaredBy}" must reference an image file`;
+      if (strict) {
+        issues.error("ASSET_UNSUPPORTED_TYPE", message, { path: file.path });
+      } else {
+        issues.warn("ASSET_UNSUPPORTED_TYPE", `${message}; ignored`, {
+          path: file.path,
+        });
+      }
+      return false;
     }
     if (expectedFormat !== undefined) {
       const sniffed = sniffImageFormat(file.bytes);
       if (sniffed !== expectedFormat) {
         const message = `file extension ".${extension}" does not match its content`;
         if (declaredBy !== undefined) {
-          issues.error("ASSET_CONTENT_MISMATCH", message, { path: file.path });
-          return;
+          if (strict) {
+            issues.error("ASSET_CONTENT_MISMATCH", message, {
+              path: file.path,
+            });
+          } else {
+            issues.warn(
+              "ASSET_CONTENT_MISMATCH",
+              `manifest "${declaredBy}": ${message}; ignored`,
+              { path: file.path }
+            );
+          }
+          return false;
         }
         issues.warn("ASSET_CONTENT_MISMATCH", message, { path: file.path });
       }
     }
+    assetPaths.add(file.path);
     assets.push({
       path: file.path,
       kind,
@@ -484,15 +519,35 @@ export async function parsePluginBundle(
       contentHash: file.contentHash,
       contentType: contentTypeForPath(file.path),
     });
+    return true;
   };
 
   if (manifest.icon !== undefined) {
     const iconFile = byPath.get(manifest.icon);
     if (iconFile !== undefined) addAsset(iconFile, "icon", "icon");
   }
+  // `logo` is strict only when the com.mcpjam namespace set it (OpenAI's
+  // `interface.logo` is otherwise its only source).
+  const mcpjamLogo = manifestDeclaresMcpjamLogo(manifest);
   if (manifest.logo !== undefined) {
     const logoFile = byPath.get(manifest.logo);
-    if (logoFile !== undefined) addAsset(logoFile, "logo", "logo");
+    if (
+      logoFile !== undefined &&
+      !addAsset(logoFile, "logo", "logo", mcpjamLogo)
+    )
+      delete manifest.logo;
+  }
+  // OpenAI's dark directory icon and composer icon. Asset kinds stay within
+  // the stored set (`logo` / `icon`); consumers find each by its path.
+  for (const [key, kind] of [
+    ["logoDark", "logo"],
+    ["composerIcon", "icon"],
+  ] as const) {
+    const path = manifest[key];
+    if (path === undefined) continue;
+    const file = byPath.get(path);
+    if (file !== undefined && !addAsset(file, kind, `interface.${key}`, false))
+      delete manifest[key];
   }
   for (const file of files) {
     if (!isPathInside(ASSETS_DIR, file.path)) continue;

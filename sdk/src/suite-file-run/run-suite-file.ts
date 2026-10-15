@@ -64,6 +64,8 @@ import { assertImportedToolReferences } from "./import-gate.js";
 import {
   attributingModelFactory,
   isTerminalRefusal,
+  orgPolicyRefusalCode,
+  orgPolicyRefusalMessage,
   refusalMessage,
   resolveInferenceCredentials,
   type ResolvedInferenceCredentials,
@@ -217,6 +219,8 @@ type IterationContext = {
   refusals: SuiteFileRefusalAttribution[];
   /** What the provider or platform said when it stopped the run. */
   refusalError?: string;
+  /** The policy code behind an `orgPolicy` refusal, for the run's issue. */
+  orgPolicyCode?: string;
 };
 
 type CaseOutcome = {
@@ -515,6 +519,17 @@ async function executeSuiteFile(
           if (error instanceof SuiteFileRunError) throw error;
           if (error instanceof McpjamLeaseError) {
             const kind = classifyMcpjamLeaseError(error);
+            if (kind === "policy") {
+              // The organization's AI-key policy, not the credential: the
+              // fix is choosing an organization model, so it reads as a run
+              // this configuration cannot do (usage), never as `credentials`.
+              throw new SuiteFileRunError({
+                code: "AI_POLICY_REFUSED",
+                phase: "setup",
+                category: "unsupported",
+                message: `${orgPolicyRefusalMessage(model, orgPolicyRefusalCode(error))} (${messageOf(error)})`,
+              });
+            }
             throw new SuiteFileRunError({
               code:
                 kind === "billing"
@@ -871,13 +886,21 @@ async function executeCase(args: {
           if (isTerminalRefusal(kind)) {
             // Kept, because the abort below cancels this iteration's own
             // promise before its error can be recorded (see the loop below).
-            context.refusalError ??= refusalMessage(error);
+            if (kind === "orgPolicy") {
+              context.orgPolicyCode ??= orgPolicyRefusalCode(error);
+            }
+            context.refusalError ??=
+              kind === "orgPolicy"
+                ? `${orgPolicyRefusalMessage(model.effectiveModel, context.orgPolicyCode)} (${refusalMessage(error)})`
+                : refusalMessage(error);
             args.onStop(kind);
             caseController.abort(
               new Error(
                 kind === "credentials"
                   ? "stopped: the model credentials were rejected"
-                  : "stopped: inference was refused for a billing reason"
+                  : kind === "orgPolicy"
+                    ? "stopped: the organization requires its own provider keys"
+                    : "stopped: inference was refused for a billing reason"
               )
             );
           }
@@ -958,6 +981,7 @@ async function executeCase(args: {
   const evidence: SuiteFileIterationEvidence[] = [];
   const blocks: SuiteFileToolPolicyBlock[] = [];
   const refusals: SuiteFileRefusalAttribution[] = [];
+  let orgPolicyCode: string | undefined;
   for (let index = 0; index < planned.testCase.iterations; index += 1) {
     const iterationNumber = index + 1;
     const recorded = details[index];
@@ -1061,8 +1085,10 @@ async function executeCase(args: {
     observations.push(observed.observation);
     evidence.push(observed.evidence);
     blocks.push(...iterationBlocks);
-    if (refusal !== undefined && iteration.status !== "completed")
+    if (refusal !== undefined && iteration.status !== "completed") {
       refusals.push(refusal);
+      if (refusal === "orgPolicy") orgPolicyCode ??= context?.orgPolicyCode;
+    }
   }
 
   for (const kind of new Set(refusals)) {
@@ -1072,6 +1098,14 @@ async function executeCase(args: {
         phase: "execution",
         category: "credentials",
         message: `The ${model.rail === "mcpjam" ? "MCPJam platform" : `${model.provider} provider`} rejected the credentials for ${model.effectiveModel}; the remaining work was not started.`,
+        caseId,
+      });
+    } else if (kind === "orgPolicy") {
+      issues.push({
+        code: "AI_POLICY_REFUSED",
+        phase: "execution",
+        category: "unsupported",
+        message: `${orgPolicyRefusalMessage(model.effectiveModel, orgPolicyCode)} The remaining work was not started.`,
         caseId,
       });
     } else if (kind === "billing") {

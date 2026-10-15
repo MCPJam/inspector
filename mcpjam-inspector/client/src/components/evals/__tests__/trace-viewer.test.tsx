@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Profiler, type ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   act,
@@ -848,6 +848,208 @@ describe("TraceViewer", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Generation error")).not.toBeInTheDocument();
     expect(screen.getAllByText(/User: "Need docs"/).length).toBeGreaterThan(0);
+  });
+
+  describe("while a reply streams", () => {
+    // The live envelope is rebuilt on every streamed token: new span objects
+    // with the same ids, the open step and LLM spans ending a little later.
+    const traceAtToken = (token: number) => ({
+      ...waterfallTrace,
+      spans: waterfallTrace.spans.map((span) =>
+        span.id === "p1-step0" || span.id === "p1-llm0"
+          ? { ...span, endMs: span.endMs + token * 3 }
+          : { ...span },
+      ),
+    });
+
+    // Resetting the timeline from an effect committed a second render after
+    // every token. A fast stream stacks enough of those to trip React's
+    // "Maximum update depth exceeded" (same failure as INSPECTOR-CLIENT-2HP).
+    // Those effects run in every view, so this counts in the default chat
+    // view. That keeps out the Radix ScrollArea around the timeline, which
+    // re-attaches its ref and commits once more on every render but settles
+    // in one step.
+    it("commits once per token, with no follow-up state update", async () => {
+      let commits = 0;
+      const viewer = (token: number) => (
+        <Profiler
+          id="trace-viewer"
+          onRender={() => {
+            commits += 1;
+          }}
+        >
+          <TraceViewer trace={traceAtToken(token)} />
+        </Profiler>
+      );
+      const { rerender } = render(viewer(0));
+      await screen.findByTestId("trace-viewer-chat");
+
+      const committedBeforeStreaming = commits;
+      for (let token = 1; token <= 50; token++) {
+        rerender(viewer(token));
+      }
+      expect(commits - committedBeforeStreaming).toBe(50);
+    });
+
+    it("keeps the chosen filter when the trace is rebuilt with the same spans", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<TraceViewer trace={traceAtToken(0)} />);
+      openTraceTab();
+      await user.click(
+        await screen.findByRole("button", { name: /Filter timeline rows/ }),
+      );
+      await user.click(
+        await screen.findByRole("menuitemradio", { name: "Tool" }),
+      );
+      expect(
+        screen.getByRole("button", { name: "Filter timeline rows: Tool" }),
+      ).toBeInTheDocument();
+
+      rerender(<TraceViewer trace={traceAtToken(0)} />);
+      expect(
+        screen.getByRole("button", { name: "Filter timeline rows: Tool" }),
+      ).toBeInTheDocument();
+    });
+
+    it("resets the filter when the spans change", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<TraceViewer trace={traceAtToken(0)} />);
+      openTraceTab();
+      await user.click(
+        await screen.findByRole("button", { name: /Filter timeline rows/ }),
+      );
+      await user.click(
+        await screen.findByRole("menuitemradio", { name: "Tool" }),
+      );
+
+      rerender(<TraceViewer trace={traceAtToken(1)} />);
+      expect(
+        screen.getByRole("button", { name: "Filter timeline rows: All" }),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps a closed row closed while bars grow and rows are added", async () => {
+      const { rerender } = render(<TraceViewer trace={traceAtToken(0)} />);
+      openTraceTab();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+      );
+      for (let token = 1; token <= 3; token++) {
+        rerender(<TraceViewer trace={traceAtToken(token)} />);
+      }
+      expect(
+        screen.getByRole("button", { name: "Expand Prompt 1" }),
+      ).toBeInTheDocument();
+
+      // A new prompt still opens by default.
+      const withNextPrompt = traceAtToken(4);
+      rerender(
+        <TraceViewer
+          trace={{
+            ...withNextPrompt,
+            messages: [
+              ...withNextPrompt.messages,
+              { role: "user", content: "Thanks" },
+            ],
+            spans: [
+              ...withNextPrompt.spans,
+              {
+                id: "p2-step0",
+                name: "Step 1",
+                category: "step" as const,
+                startMs: 300,
+                endMs: 360,
+                promptIndex: 2,
+                stepIndex: 0,
+                status: "ok" as const,
+              },
+              {
+                id: "p2-llm0",
+                parentId: "p2-step0",
+                name: "LLM",
+                category: "llm" as const,
+                startMs: 300,
+                endMs: 360,
+                promptIndex: 2,
+                stepIndex: 0,
+                status: "ok" as const,
+              },
+            ],
+          }}
+        />,
+      );
+      expect(
+        screen.getByRole("button", { name: "Expand Prompt 1" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Collapse Prompt 3" }),
+      ).toBeInTheDocument();
+    });
+
+    // Live preview spans carry `pv-` ids until the recorded spans replace them.
+    const previewTrace = (idPrefix: string) => ({
+      ...waterfallTrace,
+      spans: waterfallTrace.spans.map((span) => ({
+        ...span,
+        id: `${idPrefix}${span.id}`,
+        parentId: span.parentId ? `${idPrefix}${span.parentId}` : undefined,
+      })),
+    });
+
+    it("keeps a closed row closed when the preview rows give way to the recorded ones", async () => {
+      const { rerender } = render(
+        <TraceViewer trace={previewTrace("pv-")} />,
+      );
+      openTraceTab();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+      );
+      rerender(<TraceViewer trace={waterfallTrace} />);
+      expect(
+        screen.getByRole("button", { name: "Expand Prompt 1" }),
+      ).toBeInTheDocument();
+    });
+
+    it("opens every row again when another preview replaces this one", async () => {
+      const { rerender } = render(
+        <TraceViewer trace={previewTrace("pv-a-")} />,
+      );
+      openTraceTab();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+      );
+      rerender(<TraceViewer trace={previewTrace("pv-b-")} />);
+      expect(
+        screen.getByRole("button", { name: "Collapse Prompt 1" }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("opens every timeline row again for a different trace", async () => {
+    const { rerender } = render(<TraceViewer trace={waterfallTrace} />);
+    openTraceTab();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+    );
+    rerender(
+      <TraceViewer
+        trace={{
+          ...waterfallTrace,
+          spans: waterfallTrace.spans.map((span) => ({
+            ...span,
+            id: `other-${span.id}`,
+            parentId: span.parentId ? `other-${span.parentId}` : undefined,
+          })),
+        }}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+    ).toBeInTheDocument();
   });
 
   it("does not render a reset button in the recorded trace toolbar", async () => {

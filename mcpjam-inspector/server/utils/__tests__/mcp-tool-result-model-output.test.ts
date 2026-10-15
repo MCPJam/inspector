@@ -41,9 +41,9 @@ describe("mapMcpImageToolOutputs", () => {
               type: "content",
               value: [
                 {
-                  type: "media",
-                  data: "aGVsbG8=",
+                  type: "file",
                   mediaType: "image/png",
+                  data: { type: "data", data: "aGVsbG8=" },
                 },
               ],
             },
@@ -229,7 +229,13 @@ describe("mapMcpImageToolOutputs", () => {
 
     expect((mapped[0] as any).content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -279,7 +285,13 @@ describe("mapMcpImageToolOutputs", () => {
 
     expect((mapped[0] as any).content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
     expect(readLinkedResource).toHaveBeenCalledWith({
       serverId: "srv-1",
@@ -345,7 +357,13 @@ describe("mapMcpImageToolOutputs", () => {
 
     expect((mapped[1] as any).content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
     expect(readLinkedResource).toHaveBeenCalledWith({
       serverId: "srv-1",
@@ -415,7 +433,13 @@ describe("mapMcpImageToolOutputs", () => {
 
     expect((mapped[1] as any).content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
     expect(readLinkedResource).toHaveBeenCalledWith({
       serverId: "qa-server",
@@ -455,7 +479,13 @@ describe("mapMcpImageToolOutputs", () => {
 
     expect((mapped[0] as any).content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -496,7 +526,13 @@ describe("mapMcpImageToolOutputs", () => {
 
     expect((mapped[0] as any).content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -582,7 +618,13 @@ describe("mapMcpImageToolOutputs", () => {
       type: "tool-result",
       output: {
         type: "content",
-        value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+        value: [
+          {
+            type: "file",
+            mediaType: "image/png",
+            data: { type: "data", data: "aGVsbG8=" },
+          },
+        ],
       },
       result: imageResult,
     });
@@ -773,7 +815,13 @@ describe("mapMcpImageToolOutputs", () => {
 
     expect((mapped[2] as any).content[0].output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
     expect(resolveLinkedResourceServerId).toHaveBeenCalledWith({
       toolCallId: "playground-L6XNQZ9X4Swm2LUv",
@@ -875,9 +923,9 @@ describe("mapMcpImageToolOutputs", () => {
               type: "content",
               value: [
                 {
-                  type: "media",
-                  data: "aGVsbG8=",
+                  type: "file",
                   mediaType: "image/png",
+                  data: { type: "data", data: "aGVsbG8=" },
                 },
               ],
             },
@@ -946,9 +994,9 @@ describe("mapMcpImageToolOutputs", () => {
               type: "content",
               value: [
                 {
-                  type: "media",
-                  data: "aGVsbG8=",
+                  type: "file",
                   mediaType: "image/png",
+                  data: { type: "data", data: "aGVsbG8=" },
                 },
               ],
             },
@@ -1036,9 +1084,9 @@ describe("mapMcpImageToolOutputs", () => {
               type: "content",
               value: [
                 {
-                  type: "media",
-                  data: "aGVsbG8=",
+                  type: "file",
                   mediaType: "image/png",
+                  data: { type: "data", data: "aGVsbG8=" },
                 },
               ],
             },

@@ -49,6 +49,44 @@ console.log(result.summary);
 console.log(result.checks);
 ```
 
+## Logging on MCP 2026-07-28
+
+Modern servers use per-request `_meta` log levels. The legacy
+`logging-set-level` check is skipped on this revision.
+
+```typescript
+import { runConformance } from "@mcpjam/sdk";
+
+const report = await runConformance({
+  server: { url: "https://your-server.com/mcp" },
+  suites: ["protocol"],
+  protocolVersion: "2026-07-28", // Omit to detect the server's version.
+  protocol: {
+    checkIds: [
+      "modern-logs-require-log-level",
+      "modern-log-level-filtering",
+    ],
+    logProbe: { toolName: "emit-logs", arguments: {} },
+  },
+});
+```
+
+Supply only a tool that is safe to call repeatedly and produces logs when
+requested. With both checks selected, the tool is called without a log level,
+with `debug`, and with `warning`. The filtering check requires the supplied tool
+to produce `warning` or higher logs. You can also pass `logProbe` directly to
+`MCPConformanceTest`.
+
+Logs on the request without a level fail `modern-logs-require-log-level`.
+Lower-level logs on the `warning` request fail `modern-log-level-filtering`.
+A successful supplied tool call that returns no requested logs fails with
+"the supplied tool produced no logs." A missing `logProbe` or an unsuccessful
+probe call reports `could-not-run` instead. The runner never picks tools to call
+on your behalf.
+
+`modern-log-level-filtering` runs and reports its result, but remains pending
+under the current scoring profile and does not change the score or CI verdict.
+
 ## Suite
 
 ```typescript
@@ -132,7 +170,9 @@ Check ids:
 
 - `server-initialize`
 - `ping`
-- `logging-set-level`
+- `logging-set-level` (legacy revisions only)
+- `modern-logs-require-log-level` (2026-07-28 only)
+- `modern-log-level-filtering` (2026-07-28 only; pending)
 - `completion-complete`
 - `capabilities-consistent`
 - `tools-list`

@@ -1,12 +1,12 @@
 /**
- * Ask MCPJam's web search is platform-paid, and the service token is what
- * makes that claim credible to Convex.
+ * Ask MCPJam's web search is platform-paid. Convex authorizes the claim on the
+ * signed-in user's own login, so a deployment with no service token (every
+ * self-hosted install) still sends it.
  *
- * The case that matters is the one that is easy to get wrong: a deployment
- * that asks for platform billing but has no token. Sending the search anyway
- * would not degrade gracefully — it would go through as an ordinary
- * CUSTOMER-PAID search and bill a signed-in user's organization for a feature
- * the product calls free. So the tool refuses before it reaches Convex.
+ * The case that matters is the one that is easy to get wrong: a backend that
+ * does NOT honour the claim. It would answer an ordinary CUSTOMER-PAID 200 and
+ * bill a signed-in user's organization for a feature the product calls free,
+ * so the tool refuses any result the backend did not confirm as platform-paid.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildExaWebSearchTool } from "../exa-web-search";
@@ -72,13 +72,21 @@ describe("exa web search — platform billing attestation", () => {
     vi.unstubAllEnvs();
   });
 
-  it("refuses rather than billing the customer when the token is missing", async () => {
-    // The whole point of the change: never silently fall back onto the
-    // customer's credits for a turn the product says is free.
+  it("sends the claim without a token on a deployment that has none", async () => {
+    // Every self-hosted install. The claim rides the user's bearer to the
+    // platform route; the confirmation header, not the token, is what stops a
+    // customer from being billed.
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
     const result = await runSearch({ billingFeature: BILLING_FEATURE });
-    expect(result.error).toBe("Web search is temporarily unavailable.");
-    expect(global.fetch).not.toHaveBeenCalled();
+    const call = (global.fetch as unknown as { mock: { calls: any[][] } }).mock
+      .calls[0];
+    expect(String(call?.[0])).toContain("/tools/exa/search/platform");
+    expect(call?.[1]?.headers["x-inspector-service-token"]).toBeUndefined();
+    expect(call?.[1]?.headers.Authorization).toBe("Bearer user-token");
+    expect(JSON.parse(call?.[1]?.body as string).billingFeature).toBe(
+      BILLING_FEATURE,
+    );
+    expect(result.results).toHaveLength(1);
   });
 
   it("sends the claim with the token when it is configured", async () => {
@@ -95,8 +103,8 @@ describe("exa web search — platform billing attestation", () => {
   });
 
   it("refuses results the backend did not confirm as platform-paid", async () => {
-    // Refusing on a missing token covers OUR half only. A backend that
-    // predates the claim ignores it, runs the search on the CUSTOMER's
+    // The platform route covers OUR half only. A backend that predates the
+    // claim ignores it, runs the search on the CUSTOMER's
     // allowance and answers an ordinary 200 with results — so without this
     // the model gets its answer and the organization gets the bill.
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "inspector-secret");

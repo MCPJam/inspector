@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { needsEphemeralEvalSandbox } from "../needs-ephemeral-sandbox";
+import {
+  needsEphemeralEvalSandbox,
+  singleCaseHarnessBoxRefusal,
+} from "../needs-ephemeral-sandbox";
 
 /**
  * Which iterations get a disposable box booted for them.
@@ -54,19 +57,40 @@ describe("needsEphemeralEvalSandbox", () => {
     ).toEqual({ needed: false, runtimeKind: "terminal" });
   });
 
-  it("boots nothing without a run — the single-case surface", () => {
-    // Both provisioning sites require a run id, so a single-case run can never
-    // get a box; the admission gate refuses a harness there rather than letting
-    // it reach the personal-computer fallback.
+  it("boots a terminal box keyed to the iteration for a single-case HARNESS run", () => {
+    // No run, so the control plane authorizes the iteration itself. Never the
+    // acting member's personal computer.
+    for (const runId of [null, undefined]) {
+      expect(
+        needsEphemeralEvalSandbox({
+          harness: "claude-code",
+          runId,
+        })
+      ).toEqual({ needed: true, runtimeKind: "terminal" });
+    }
+  });
+
+  it("boots nothing on the single-case surface for anything but a harness", () => {
+    // A pinned image or a browser alone needs a run to boot from; admission
+    // refuses a host that needs one there instead.
     for (const runId of [null, undefined]) {
       expect(
         needsEphemeralEvalSandbox({
           pinnedEnvironmentId: "env-1",
-          harness: "claude-code",
+          builtInToolIds: ["browser"],
+          browserToolPolicy: POLICY,
           runId,
         })
       ).toEqual({ needed: false, runtimeKind: "terminal" });
     }
+  });
+
+  it("still books a box for a single-case harness whose iteration was not recorded", () => {
+    // Booking nothing here let the harness fall back to the member's personal
+    // computer. The runner refuses the missing iteration instead.
+    expect(
+      needsEphemeralEvalSandbox({ harness: "claude-code", runId: null })
+    ).toEqual({ needed: true, runtimeKind: "terminal" });
   });
 
   it("boots a DESKTOP box for a declared browser policy", () => {
@@ -170,5 +194,42 @@ describe("needsEphemeralEvalSandbox", () => {
         runId: RUN,
       })
     ).toEqual({ needed: false, runtimeKind: "terminal" });
+  });
+});
+
+describe("singleCaseHarnessBoxRefusal", () => {
+  const POLICY = { mode: "allow_all" as const };
+
+  it("refuses a declared browser: the single-case box is only a terminal", () => {
+    const reason = singleCaseHarnessBoxRefusal({
+      builtInToolIds: ["browser"],
+      browserToolPolicy: POLICY,
+    });
+    expect(reason).toContain("browser tool policy");
+    expect(reason).toContain("as part of a suite");
+  });
+
+  it("refuses case attachments: they are seeded through a suite run", () => {
+    const reason = singleCaseHarnessBoxRefusal({ hasAttachments: true });
+    expect(reason).toContain("attached files");
+    expect(reason).toContain("as part of a suite");
+  });
+
+  it("admits a host whose browser would not be advertised anyway", () => {
+    // Same predicate as the suite path's desktop arm: no policy, or a replica
+    // that cannot advertise the browser, books no desktop there either.
+    expect(
+      singleCaseHarnessBoxRefusal({ builtInToolIds: ["browser"] })
+    ).toBeUndefined();
+    expect(
+      singleCaseHarnessBoxRefusal({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: POLICY,
+        hostedBrowserAvailable: false,
+      })
+    ).toBeUndefined();
+    expect(
+      singleCaseHarnessBoxRefusal({ builtInToolIds: ["bash"], hasAttachments: false })
+    ).toBeUndefined();
   });
 });

@@ -84,7 +84,13 @@ const iterationSchema = z
     evaluatorError: z.boolean().optional(),
     error: z.string().optional(),
     refusal: z
-      .enum(["credentials", "billing", "rateLimited", "unavailable"])
+      .enum([
+        "credentials",
+        "billing",
+        "orgPolicy",
+        "rateLimited",
+        "unavailable",
+      ])
       .optional(),
     toolCalls: z.array(
       z

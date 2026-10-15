@@ -33,6 +33,7 @@ import {
 
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import type { EvaluateCaseRow } from "./evaluate-case-row-model";
+import { iterationSelectionKey } from "@/lib/eval-target-key";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -106,11 +107,14 @@ function executionVariantOf(iteration: EvalIteration) {
   const model = iteration.testCaseSnapshot?.model;
   if (typeof model !== "string" || model.length === 0) return undefined;
   const provider = iteration.testCaseSnapshot?.provider;
+  // Non-default selections are their own variant (backend `selectionKey`).
+  const selectionKey = iterationSelectionKey(iteration);
   return {
     model,
     ...(typeof provider === "string" && provider.length > 0
       ? { provider }
       : {}),
+    ...(selectionKey !== undefined ? { selectionKey } : {}),
   };
 }
 

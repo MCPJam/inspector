@@ -320,6 +320,7 @@ export function OAuthProfileModal({
       url: validated.trimmedUrl,
       headers: Object.keys(headerMap).length ? headerMap : undefined,
       useOAuth: true,
+      authMethod: "oauth",
       // Carry the chosen OAuth protocol version onto the connection form so
       // `toMCPConfig` stamps the sessionless 2026 wire era on the saved/synced
       // server config. Without this, hosted chat/eval/backend connects — which

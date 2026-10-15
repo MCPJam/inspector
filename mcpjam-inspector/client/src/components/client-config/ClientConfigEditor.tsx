@@ -198,6 +198,7 @@ export function ClientConfigEditor({
         catalogHasComputerBackedTool(builtInToolCatalog),
       computerAttached: value.computer !== undefined,
       disallowed: computerToolsDisallowed,
+      hasHarness: value.harness !== undefined,
     });
 
   const hostStyleOptions = useMemo(() => listHostStyles(), []);
@@ -211,16 +212,9 @@ export function ClientConfigEditor({
       {showExecutionSection ? (
         <>
           <section className="space-y-4">
-            <div className="grid gap-2">
-              <Label htmlFor={`${reactId}-modelId`}>Model</Label>
-              <Input
-                id={`${reactId}-modelId`}
-                value={value.modelId}
-                onChange={(e) => update({ modelId: e.target.value })}
-                placeholder="anthropic/claude-sonnet-4.5"
-              />
-            </div>
-
+            {/* No model input: a raw id here would rewrite `modelId` without its
+                saved `modelSelection` (and reasoning effort). The model is
+                chosen in the host's Agent tab. */}
             <div className="grid gap-2">
               <Label htmlFor={`${reactId}-systemPrompt`}>System prompt</Label>
               <Textarea

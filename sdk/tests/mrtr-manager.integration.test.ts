@@ -1,6 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { MCPClientManager } from "../src/mcp-client-manager/index.js";
 import type {
@@ -246,6 +247,80 @@ describe("post-negotiation capability re-resolution (eraCapabilities.modern)", (
     await expect(manager.pingServer("fixture")).resolves.toEqual({});
   });
 
+  describe("legacy-only extension claims", () => {
+    const legacyForm = (claim = "fixture/elicitation") => ({
+      fixture: [
+        {
+          method: `${claim}/create`,
+          schemas: {
+            params: z.object({}).passthrough(),
+            result: z.object({}).passthrough(),
+          },
+          handler: async () => ({ action: "cancel" }),
+          legacyClaim: claim,
+        },
+      ],
+    });
+    const exact = {
+      extensions: {
+        "fixture/elicitation": { form: {} },
+        "fixture/other": {},
+      },
+    };
+
+    it("withholds a legacy handler's claim once AUTO negotiation lands modern", async () => {
+      // No server-to-client request exists on 2026-07-28, so a claim only
+      // such a request could honor must not ride the per-request envelope.
+      manager = new MCPClientManager({}, { extensionRequestHandlers: legacyForm() });
+      await manager.connectToServer("fixture", {
+        url: served.url,
+        timeout: 10_000,
+        clientCapabilities: exact,
+      });
+      const info = manager.getInitializationInfo("fixture");
+      expect(info?.protocolVersion).toBe("2026-07-28");
+      const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+      expect(caps.extensions).toEqual({ "fixture/other": {} });
+    });
+
+    it("drops the extensions field when the claim was its only key", async () => {
+      manager = new MCPClientManager({}, { extensionRequestHandlers: legacyForm() });
+      await manager.connectToServer("fixture", {
+        url: served.url,
+        timeout: 10_000,
+        clientCapabilities: { extensions: { "fixture/elicitation": { form: {} } } },
+      });
+      const caps = (manager.getInitializationInfo("fixture")?.clientCapabilities ??
+        {}) as Record<string, unknown>;
+      expect(caps.extensions).toBeUndefined();
+    });
+
+    it("keeps the claim on a 2025-era connection, where the handler answers", async () => {
+      manager = new MCPClientManager({}, { extensionRequestHandlers: legacyForm() });
+      await manager.connectToServer("fixture", {
+        url: served.url,
+        mcpProtocolVersion: "2025-11-25",
+        timeout: 10_000,
+        clientCapabilities: exact,
+      });
+      const info = manager.getInitializationInfo("fixture");
+      expect(info?.protocolVersion).toBe("2025-11-25");
+      const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+      expect(caps.extensions).toEqual(exact.extensions);
+    });
+
+    it("leaves a claim no binding marks as legacy-only untouched", async () => {
+      await manager.connectToServer("fixture", {
+        url: served.url,
+        timeout: 10_000,
+        clientCapabilities: exact,
+      });
+      const caps = (manager.getInitializationInfo("fixture")?.clientCapabilities ??
+        {}) as Record<string, unknown>;
+      expect(caps.extensions).toEqual(exact.extensions);
+    });
+  });
+
   it("also applies the overlay on a PINNED modern connection", async () => {
     // The seam keys on the classified era, not on how the era was selected —
     // a pin and a successful auto probe land in the same place.
@@ -310,6 +385,49 @@ describe("supportsMrtr: false — a client that never implemented MRTR", () => {
     const info = manager.getInitializationInfo("fixture");
     const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
     expect(caps.elicitation).toBeUndefined();
+  });
+
+  describe.each([
+    ["an exact set", "clientCapabilities"],
+    ["a merged set", "capabilities"],
+  ] as const)("a collector's extension claims in %s", (_, field) => {
+    const extensions = {
+      "fixture/elicitation": { form: {} },
+      "fixture/other": {},
+    };
+    const connect = (supportsMrtr?: false) => {
+      manager.setMrtrInputCollector("fixture", acceptAllCollector(), {
+        extensionClaims: ["fixture/elicitation"],
+      });
+      return manager.connectToServer("fixture", {
+        url: served.url,
+        mcpProtocolVersion: "2026-07-28",
+        supportsMrtr,
+        [field]: { extensions },
+        timeout: 10_000,
+      });
+    };
+    // A merged set also carries the default MCP Apps claim; only the
+    // fixture keys are under test.
+    const advertised = () => {
+      const caps = (manager.getInitializationInfo("fixture")
+        ?.clientCapabilities ?? {}) as {
+        extensions?: Record<string, unknown>;
+      };
+      return Object.keys(caps.extensions ?? {}).filter((key) =>
+        key.startsWith("fixture/")
+      );
+    };
+
+    it("are withheld: only a collector that drives rounds answers them", async () => {
+      await connect(false);
+      expect(advertised()).toEqual(["fixture/other"]);
+    });
+
+    it("are kept when the knob is absent (control)", async () => {
+      await connect();
+      expect(advertised()).toEqual(Object.keys(extensions));
+    });
   });
 
   it("suppresses a PINNED exact clientCapabilities set's elicitation", async () => {

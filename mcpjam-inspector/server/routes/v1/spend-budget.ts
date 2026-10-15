@@ -121,7 +121,15 @@ spendBudget.get("/organizations/:organizationId/spend-budget", async (c) => {
       { organizationId } as any,
     )) as BudgetView;
   } catch (error) {
-    throw translateConvexReadError(error, { scope: "v1.spendBudget" });
+    // The scoping read for the caller-supplied organization id; production
+    // masks its plain membership refusal to "Server Error", which answered
+    // 502 without this (MJ-021). The PUT/DELETE read-backs below keep the
+    // strict default: there the caller was just authorized by the mutation,
+    // so a redacted failure is a genuine incident.
+    throw translateConvexReadError(error, {
+      scope: "v1.spendBudget",
+      redactedIsRefusal: true,
+    });
   }
 
   return v1Resource(c, toBudgetDto(view));

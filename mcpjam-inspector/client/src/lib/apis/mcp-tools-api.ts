@@ -13,7 +13,12 @@ import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { authFetch } from "@/lib/session-token";
 import { WebApiError } from "@/lib/apis/web/base";
-import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
+import {
+  executeHostedTool,
+  listHostedTools,
+  listHostedToolsMulti,
+} from "@/lib/apis/web/tools-api";
+import { resolveHostedServerId } from "@/lib/apis/web/context";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { attachToolMetadata } from "@/lib/apis/tool-metadata";
 import {
@@ -138,6 +143,120 @@ export async function listTools({
         throw new WebApiError(res.status, code, message, normalized);
       }
       return attachToolMetadata(body as ListToolsResultWithMetadata);
+    },
+  });
+}
+
+export type ListToolsForServersResult = {
+  /** Keyed by the server name or id the caller passed. */
+  results: Record<string, ListToolsResultWithMetadata>;
+  /**
+   * The error each failed server's listing threw, keyed the same way: a
+   * `WebApiError` in both modes for a failure the server answered (hosted
+   * rebuilds it from the batch's per-server status, code, message, details
+   * and retry delay), or a name the context could not resolve. Kept as an
+   * error, not a message, so `getToolsMetadata` can rethrow what a
+   * single-server call would have.
+   */
+  errors: Record<string, unknown>;
+};
+
+/**
+ * `tools/list` for a server set.
+ *
+ * Hosted mode sends ONE request. The passthrough limiter counts requests per
+ * session token, and a 65-server workspace met it on every cold load while
+ * each hook listed its servers one by one (PLB-158). Local mode keeps a
+ * request per server: it has no such limit, and `/api/mcp/tools/list` resolves
+ * ids and cache modes per server. Hosted listings always read the live surface
+ * (see `listTools`), so `refresh` only reaches the local route.
+ */
+export async function listToolsForServers(
+  serverIds: string[],
+  options: { modelId?: string; refresh?: boolean } = {},
+): Promise<ListToolsForServersResult> {
+  return runByMode({
+    hosted: async () => {
+      // Resolve first, so a name the context does not know fails on its own,
+      // as it did when each server was its own request, instead of failing
+      // the batch. The route keys its answer by hosted server id; callers
+      // think in the names they passed, and two names can share an id.
+      const namesByHostedId: Record<string, string[]> = {};
+      const errors: Record<string, unknown> = {};
+      for (const serverId of serverIds) {
+        try {
+          const hostedId = resolveHostedServerId(serverId);
+          (namesByHostedId[hostedId] ??= []).push(serverId);
+        } catch (error) {
+          errors[serverId] = error;
+        }
+      }
+      const results: Record<string, ListToolsResultWithMetadata> = {};
+      const resolvable = Object.values(namesByHostedId).flat();
+      if (resolvable.length === 0) {
+        return { results, errors };
+      }
+
+      // One request, whatever each server answers: the route authorizes and
+      // lists each server on its own and reports a refused or failed one in
+      // `errors`, so a throw here is the request's own failure.
+      const body = await listHostedToolsMulti({
+        serverNamesOrIds: resolvable,
+        modelId: options.modelId,
+      });
+      for (const [hostedId, result] of Object.entries(
+        (body?.results ?? {}) as Record<string, ListToolsResultWithMetadata>,
+      )) {
+        const attached = attachToolMetadata(result);
+        for (const name of namesByHostedId[hostedId] ?? [hostedId]) {
+          results[name] = attached;
+        }
+      }
+      for (const [hostedId, failure] of Object.entries(
+        (body?.errors ?? {}) as Record<
+          string,
+          {
+            status: number;
+            code: string;
+            message: string;
+            details?: Record<string, unknown>;
+            retryAfterSeconds?: number;
+          }
+        >,
+      )) {
+        const error = new WebApiError(
+          failure.status,
+          failure.code,
+          failure.message,
+          undefined,
+          failure.details,
+        );
+        if (failure.retryAfterSeconds !== undefined) {
+          error.retryAfterMs = Math.max(0, failure.retryAfterSeconds * 1000);
+        }
+        for (const name of namesByHostedId[hostedId] ?? [hostedId]) {
+          errors[name] = error;
+        }
+      }
+      return { results, errors };
+    },
+    local: async () => {
+      const results: Record<string, ListToolsResultWithMetadata> = {};
+      const errors: Record<string, unknown> = {};
+      await Promise.all(
+        serverIds.map(async (serverId) => {
+          try {
+            results[serverId] = await listTools({
+              serverId,
+              modelId: options.modelId,
+              refresh: options.refresh,
+            });
+          } catch (error) {
+            errors[serverId] = error;
+          }
+        }),
+      );
+      return { results, errors };
     },
   });
 }
@@ -349,38 +468,47 @@ export async function getToolsMetadata(
   // a server badge).
   const seenOn = new Map<string, Set<string>>();
 
-  await Promise.all(
-    serverIds.map(async (serverId) => {
-      const data = await listTools({ serverId, modelId });
-      const toolsMetadata = data.toolsMetadata ?? {};
+  const { results, errors } = await listToolsForServers(serverIds, {
+    modelId,
+  });
+  // One failing server still fails the whole aggregate, with the error its
+  // own request would have thrown, as it did when each server was its own
+  // request: the chat clears every tool on this error rather than offering
+  // the model a partial set, and reads the status off it.
+  const failed = Object.values(errors)[0];
+  if (failed !== undefined) {
+    throw failed;
+  }
 
-      for (const [toolName, meta] of Object.entries(toolsMetadata)) {
-        aggregate.metadata[toolName] = meta as Record<string, unknown>;
-        aggregate.toolServerMap[toolName] = serverId;
-        aggregate.scopedMetadata[scopedToolKey(serverId, toolName)] =
-          meta as Record<string, unknown>;
-        const servers = seenOn.get(toolName) ?? new Set<string>();
-        servers.add(serverId);
-        seenOn.set(toolName, servers);
-      }
+  for (const [serverId, data] of Object.entries(results)) {
+    const toolsMetadata = data.toolsMetadata ?? {};
 
-      for (const tool of data.tools ?? []) {
-        aggregate.serializedTools[tool.name] = {
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
-        };
-      }
+    for (const [toolName, meta] of Object.entries(toolsMetadata)) {
+      aggregate.metadata[toolName] = meta as Record<string, unknown>;
+      aggregate.toolServerMap[toolName] = serverId;
+      aggregate.scopedMetadata[scopedToolKey(serverId, toolName)] =
+        meta as Record<string, unknown>;
+      const servers = seenOn.get(toolName) ?? new Set<string>();
+      servers.add(serverId);
+      seenOn.set(toolName, servers);
+    }
 
-      // Collect token counts if modelId was provided
-      if (modelId && data.tokenCount !== undefined && aggregate.tokenCounts) {
-        aggregate.tokenCounts[serverId] = data.tokenCount;
-      }
-      if (modelId && data.tokenCountError && aggregate.tokenCountErrors) {
-        aggregate.tokenCountErrors[serverId] = data.tokenCountError;
-      }
-    }),
-  );
+    for (const tool of data.tools ?? []) {
+      aggregate.serializedTools[tool.name] = {
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
+      };
+    }
+
+    // Collect token counts if modelId was provided
+    if (modelId && data.tokenCount !== undefined && aggregate.tokenCounts) {
+      aggregate.tokenCounts[serverId] = data.tokenCount;
+    }
+    if (modelId && data.tokenCountError && aggregate.tokenCountErrors) {
+      aggregate.tokenCountErrors[serverId] = data.tokenCountError;
+    }
+  }
 
   aggregate.collidingToolNames = Array.from(seenOn.entries())
     .filter(([, servers]) => servers.size > 1)

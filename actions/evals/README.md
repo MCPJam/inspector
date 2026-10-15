@@ -186,6 +186,12 @@ The action has no changeset of its own, so it rides along with the next package
 release that includes the change. Re-running a release after a successful one is
 a no-op: the folder now matches `evals-v1`.
 
+That sentence is now true. It used to not be: the smoke job was conditional on
+the two repo variables below, and the publish job treated a **skipped** smoke
+as good enough, so while those variables were unset every published tag shipped
+untested. A release that changes this folder without them now fails, loudly,
+rather than publishing quietly.
+
 Set these once, in the repository's settings:
 
 | Kind | Name | Value |

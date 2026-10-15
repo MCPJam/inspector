@@ -222,7 +222,7 @@ export interface ResolveMrtrChatResumeDeps {
 }
 
 /** Build the model-facing tool-result message for a completed MRTR tool call. */
-async function buildToolResultMessage(
+export async function buildMrtrToolResultMessage(
   toolCallId: string,
   toolName: string,
   serverId: string,
@@ -433,7 +433,7 @@ export async function resolveMrtrChatResume(
       }
       return {
         kind: "complete",
-        toolResultMessage: await buildToolResultMessage(
+        toolResultMessage: await buildMrtrToolResultMessage(
           toolCallId,
           resolvedName,
           serverId,

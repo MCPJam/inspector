@@ -8,23 +8,35 @@ import { isSignOutInProgress } from "@/lib/auth/sign-out-latch";
  * - `transient` — the token fetch failed its whole retry ladder (network down,
  *   upstream timeout). The session itself is probably fine, so retrying in
  *   place can genuinely recover.
+ * - `manual` — guest startup received a non-transient rejection. Keep Retry
+ *   available if the underlying problem is resolved, without automatic retries.
  * - `signed_out` — WorkOS rejected the refresh outright. authkit has wiped the
  *   session and latched to its ERROR state; retrying can only re-throw, so the
  *   only way forward is signing in again.
  */
-export type SessionRefreshFailureKind = "transient" | "signed_out";
+export type SessionRefreshFailureKind = "transient" | "manual" | "signed_out";
 
 interface SessionRefreshState {
   status: "idle" | "failed" | "retrying";
   kind: SessionRefreshFailureKind | null;
   /**
    * Bumped by `retry()`. `useUnifiedConvexAuth` lists this in its deps, so a
-   * bump hands Convex a fresh `getAccessToken` identity, which re-runs
+   * bump hands Convex a fresh `fetchAccessToken` identity, which re-runs
    * `client.setAuth` and re-authenticates in place — no page reload.
    */
   retryNonce: number;
   /** Hold readiness-gated reads while Convex is dropping its socket identity. */
   queriesPaused: boolean;
+  /** Only the current Convex auth configuration may release the recovery gate. */
+  authConfirmed: boolean;
+  /**
+   * Bumped every time the server accepts a token for this tab. A call that
+   * was refused for missing identity waits for the next bump before its one
+   * retry (`lib/auth/sign-in-retry.ts`).
+   */
+  authEpoch: number;
+  recoveryId: string | null;
+  recoveryAt: number;
   pauseQueries: () => void;
   resumeQueries: () => void;
   notifyFailure: (kind: SessionRefreshFailureKind) => void;
@@ -38,8 +50,14 @@ export const useSessionRefreshStore = create<SessionRefreshState>(
     kind: null,
     retryNonce: 0,
     queriesPaused: false,
+    authConfirmed: false,
+    authEpoch: 0,
+    recoveryId: null,
+    recoveryAt: 0,
     pauseQueries: () => set({ queriesPaused: true }),
-    resumeQueries: () => set({ queriesPaused: false }),
+    resumeQueries: () => {
+      if (get().authConfirmed) set({ queriesPaused: false });
+    },
     notifyFailure: (kind) => {
       // A sign-out in flight produces this failure on purpose: the session was
       // just revoked, and the refresh timer is reporting the revocation we

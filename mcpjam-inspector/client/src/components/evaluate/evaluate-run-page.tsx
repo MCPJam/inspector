@@ -37,7 +37,11 @@ import {
   DropdownMenuItem,
 } from "@mcpjam/design-system/dropdown-menu";
 import { formatRunId } from "../evals/helpers";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
@@ -116,8 +120,8 @@ export function EvaluateRunPage({
 }: {
   run: EvalSuiteRun;
   hostNamesById: Map<string, string | null>;
-  otherRuns: readonly EvalSuiteRun[];
-  relatedRuns?: readonly EvalSuiteRun[];
+  otherRuns: readonly EvalSuiteRunListItem[];
+  relatedRuns?: readonly EvalSuiteRunListItem[];
   defaultCompareRunId: string | null;
   onCompareWithRun: (baseRunId: string) => void;
   onOpenComparison?: () => void;
@@ -141,7 +145,10 @@ export function EvaluateRunPage({
   useEffect(() => {
     setReviewing(false);
   }, [run._id]);
-  const targets = launchRuns(run, relatedRuns ?? otherRuns);
+  const targets = launchRuns<EvalSuiteRunListItem>(
+    run,
+    relatedRuns ?? otherRuns,
+  );
   const scope = runScopeSummary(targets, iterations);
   const cancellableIds = cancellableRunIds(targets);
   const canCancel = Boolean(onCancelRun) && cancellableIds.length > 0;
@@ -316,7 +323,7 @@ export function EvaluateRunPage({
 }
 
 function pairingClientName(
-  target: EvalSuiteRun,
+  target: EvalSuiteRunListItem,
   hostNamesById: Map<string, string | null>,
 ): string {
   return runClientIdentity(target, hostNamesById).name;
@@ -336,7 +343,7 @@ export type PairingDecision = {
  * the same result the page already settled for that pairing — and never
  * invents Hold/Ship while the run is still in flight.
  */
-export function pairingDecision(run: EvalSuiteRun): PairingDecision {
+export function pairingDecision(run: EvalSuiteRunListItem): PairingDecision {
   const outcome = IN_FLIGHT_STATUSES.has(run.status)
     ? run.status
     : run.result && run.result !== "pending"
@@ -376,7 +383,7 @@ type PairingMark = {
 };
 
 function pairingModel(
-  target: EvalSuiteRun,
+  target: EvalSuiteRunListItem,
   iterations: readonly EvalIteration[] | undefined,
 ): string {
   const recovered = modelsFromRun(
@@ -389,7 +396,7 @@ function pairingModel(
 }
 
 function groupPairingsByDecision(
-  targets: readonly EvalSuiteRun[],
+  targets: readonly EvalSuiteRunListItem[],
   hostNamesById: Map<string, string | null>,
   iterations?: readonly EvalIteration[],
 ): Array<{
@@ -439,7 +446,7 @@ function plural(count: number, noun: string): string {
  * arrived, because a run that has recorded nothing has not recorded zero.
  */
 export function runScopeSummary(
-  targets: readonly EvalSuiteRun[],
+  targets: readonly EvalSuiteRunListItem[],
   iterations: readonly EvalIteration[] | undefined,
 ): string | null {
   const targetIds = new Set(targets.map((target) => target._id));
@@ -466,7 +473,7 @@ function RunPairingDecisions({
   hostNamesById,
   iterations,
 }: {
-  targets: readonly EvalSuiteRun[];
+  targets: readonly EvalSuiteRunListItem[];
   hostNamesById: Map<string, string | null>;
   iterations?: readonly EvalIteration[];
 }) {

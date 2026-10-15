@@ -238,4 +238,14 @@ describe("Suite Health", () => {
     const result = buildSuiteHealth(rows, details, "s1", "style:claude");
     expect(result.points.map((point) => point.key)).toEqual(["run:old"]);
   });
+
+  it("never charts or averages a subset rerun", () => {
+    const { rows, details } = fixture();
+    // "new" re-ran only what failed in "old": it is listed, never measured.
+    details.get("new")!.run.rerunOfRunId = "old";
+    details.get("new")!.run.rerunScope = "failed_cases";
+    const result = buildSuiteHealth(rows, details, "s1", "style:claude");
+    expect(result.points.map((point) => point.key)).toEqual(["run:old"]);
+    expect(result.average).toBe(100);
+  });
 });

@@ -450,3 +450,35 @@ export function usePluginManagementActions(): PluginManagementActions {
     [setEnabled, activateVersion, softDeletePlugin, restorePlugin],
   );
 }
+
+/**
+ * Detach a plugin skill as an independent personal skill
+ * (`pluginsNode.detachSkillAsCopy`, project-admin gated backend-side). The
+ * copy is editable; the plugin's own skill is untouched. Same fail-closed
+ * flag gate and error mapping as the other plugin actions.
+ */
+export function useDetachPluginSkill(): (
+  componentId: string,
+  name: string,
+) => Promise<{ skillId: string }> {
+  const enabled = usePluginsEnabled();
+  const detachAction = useAction("pluginsNode:detachSkillAsCopy" as any);
+  return useCallback(
+    async (componentId: string, name: string) => {
+      if (!enabled) {
+        throw new PluginApiError(
+          "PLUGINS_DISABLED",
+          "Plugin management is not enabled for this account.",
+        );
+      }
+      try {
+        return (await detachAction({ componentId, name } as any)) as {
+          skillId: string;
+        };
+      } catch (err) {
+        throw toPluginApiError(err, "Could not detach the skill");
+      }
+    },
+    [enabled, detachAction],
+  );
+}

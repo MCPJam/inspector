@@ -61,6 +61,7 @@
 import { HOSTED_MODE } from "../config.js";
 import { getInternalBackendConfig } from "./internal-backend.js";
 import { logger } from "../utils/logger.js";
+import { hasServiceCredential } from "./service-credential.js";
 
 export const REVOKED_SESSIONS_FEED_PATH = "/internal/v1/auth-sessions/revoked";
 
@@ -526,9 +527,7 @@ export class RevokedSessionCache {
 export function isRevokedSessionFeedConfigured(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return Boolean(
-    env.CONVEX_HTTP_URL?.trim() && env.INSPECTOR_SERVICE_TOKEN?.trim(),
-  );
+  return Boolean(env.CONVEX_HTTP_URL?.trim() && hasServiceCredential(env));
 }
 
 let processCache: RevokedSessionCache | null = null;

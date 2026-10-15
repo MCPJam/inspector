@@ -21,6 +21,8 @@
  */
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
+import { modelTarget, sameModelTarget } from "@/lib/model-target";
 import {
   chooseTemplate,
   lacksServerSource,
@@ -34,6 +36,13 @@ export type QuickRunTargetRequest = {
   hostId: string;
   /** Explicit model id; absent means the client's own model. */
   modelId?: string;
+  /**
+   * The saved selection behind `modelId`, when the caller knows which target
+   * (which effort) it means. With it an environment is matched by
+   * `comparisonKey`, so Sonnet·High and Sonnet·Low are two targets; without
+   * it every environment running the model id matches, as before.
+   */
+  modelSelection?: ModelSelection;
 };
 
 export type QuickRunTargetPlan =
@@ -45,6 +54,7 @@ export type QuickRunTargetPlan =
       overrides: {
         hostId: string;
         modelId: string | null;
+        modelSelection?: ModelSelection;
         serverAttachmentId: string;
       };
     }
@@ -114,11 +124,45 @@ function runsModel(
   clientModelId?: (hostId: string) => string | undefined,
 ): boolean {
   if (target.modelId === undefined) return environment.modelId === undefined;
-  if (environment.modelId !== undefined) {
-    return environment.modelId === target.modelId;
-  }
   // An environment that inherits its client's model runs that model.
-  return clientModelId?.(environment.hostId) === target.modelId;
+  const runs = environment.modelId ?? clientModelId?.(environment.hostId);
+  if (runs !== target.modelId) return false;
+  return (
+    !target.modelSelection ||
+    sameModelTarget(
+      modelTarget(runs, environment.modelSelection),
+      modelTarget(target.modelId, target.modelSelection),
+    )
+  );
+}
+
+/**
+ * The saved selection a plain pick of `modelId` on `hostId` runs with: the
+ * suite environment's own, which a pick with no selection of its own reuses.
+ * The run sheet starts the pick's effort menu on it, so a pick shows the
+ * effort it will really run at. `undefined` when no environment saves one for
+ * that model, or when the client runs it at two efforts (no single answer).
+ */
+export function quickRunEnvironmentSelection(
+  attached: readonly ProjectEnvironmentView[],
+  hostId: string,
+  modelId: string,
+  clientModelId?: (hostId: string) => string | undefined,
+): ModelSelection | undefined {
+  const target = { key: modelId, hostId, modelId };
+  const matches = attached.filter(
+    (candidate) =>
+      candidate.hostId === hostId &&
+      runsModel(candidate, target, clientModelId),
+  );
+  const efforts = new Set(
+    matches.map(
+      (candidate) => candidate.modelSelection?.settings?.reasoningEffort,
+    ),
+  );
+  if (efforts.size !== 1) return undefined;
+  const selection = matches[0]?.modelSelection;
+  return selection?.modelId === modelId ? selection : undefined;
 }
 
 /**
@@ -204,6 +248,9 @@ export function planQuickRunTargets(args: {
       overrides: {
         hostId: target.hostId,
         modelId: target.modelId ?? null,
+        ...(target.modelId && target.modelSelection?.modelId === target.modelId
+          ? { modelSelection: target.modelSelection }
+          : {}),
         serverAttachmentId: group,
       },
     };

@@ -1,0 +1,67 @@
+@import "../../../../design-system/src/tokens.css";
+
+/* This bundled page has no Tailwind pipeline; the shared component still owns
+   panel width, responsive takeover and permanent parentage. */
+#mcpjam-widget-root {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+#mcpjam-widget-root .run-host-shell,
+#mcpjam-widget-root .run-host-shell > div {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+#mcpjam-widget-root [data-host-workspace-app-panel] {
+  box-sizing: border-box;
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  border-inline-start: 1px solid var(--border);
+}
+.run-app-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.run-app-heading {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.run-app-content {
+  flex: 1;
+  min-height: 0;
+}
+.run-transcript {
+  padding: 16px;
+  font-size: 16px;
+}
+.run-transcript svg {
+  width: 16px;
+  height: 16px;
+}
+.run-conversation {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.run-transcript {
+  flex: 1;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.run-composer {
+  padding: 12px;
+}
+.run-composer [data-testid="chat-input-composer"] {
+  padding: 8px;
+}

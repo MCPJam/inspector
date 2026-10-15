@@ -1,4 +1,5 @@
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
+import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
 /**
  * step-executor.ts — the single sequential executor over a unified `TestStep[]`.
  *
@@ -202,6 +203,12 @@ export interface StepEngineOutcome {
   /** HTTP status, when the failure came from a non-OK response. */
   errorHttpStatus?: number;
   /**
+   * The producer's STRUCTURED evidence that one of OUR layers failed. Read
+   * only by the eval infra-error classifier (`infra-error-classification.ts`);
+   * absent ⇒ unclassified.
+   */
+  errorInfra?: InfraFailureEvidence;
+  /**
    * When true, the iterationError is a SETUP failure (status:"failed"), not an
    * assertion failure (status:"completed"+error). Mirrors the pinned
    * not-connected behavior.
@@ -259,6 +266,7 @@ export interface StepExecutorResult {
   errorSource?: "model" | "setup";
   errorCode?: string;
   errorHttpStatus?: number;
+  errorInfra?: InfraFailureEvidence;
   /** A step's engine reported cancellation — see `StepEngineOutcome`. */
   cancelled?: boolean;
   /** True when `iterationError` is a setup (not assertion) failure. */
@@ -621,6 +629,7 @@ export async function executeSteps(args: {
       ...(typeof failed.errorHttpStatus === "number"
         ? { errorHttpStatus: failed.errorHttpStatus }
         : {}),
+      ...(failed.errorInfra ? { errorInfra: failed.errorInfra } : {}),
       setupFailure: false,
     };
   };
@@ -664,6 +673,7 @@ export async function executeSteps(args: {
           ...(typeof outcome.errorHttpStatus === "number"
             ? { errorHttpStatus: outcome.errorHttpStatus }
             : {}),
+          ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }
@@ -709,6 +719,7 @@ export async function executeSteps(args: {
           ...(typeof outcome.errorHttpStatus === "number"
             ? { errorHttpStatus: outcome.errorHttpStatus }
             : {}),
+          ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }

@@ -18,6 +18,20 @@ export const SUITE_SETTINGS_GROUPS = [
     rows: ["policy", "iterations", "qualityGate", "passOrFail"],
   },
   { id: "runs", label: "Where it runs", rows: ["environments"] },
+  {
+    id: "limits",
+    label: "Time & retry limits",
+    // Ordered by how the clocks NEST — turn inside tool call inside iteration
+    // inside run — so a reader scanning down moves outward, and the retry
+    // count that multiplies the innermost sits last.
+    rows: [
+      "turnTimeoutMs",
+      "toolCallTimeoutMs",
+      "iterationTimeoutMs",
+      "runTimeoutMs",
+      "turnRetries",
+    ],
+  },
   { id: "triggers", label: "Triggers", rows: ["schedule", "githubChecks"] },
 ] as const;
 

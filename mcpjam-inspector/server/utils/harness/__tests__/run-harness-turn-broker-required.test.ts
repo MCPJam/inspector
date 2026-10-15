@@ -38,6 +38,7 @@ vi.mock("../registry.js", () => ({
   getHarnessAdapter: vi.fn(() => ({
     id: "claude-code",
     displayName: "Claude Code",
+    supportedReasoningEfforts: [],
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
     mcpDelivery: "host-executed",
@@ -190,6 +191,51 @@ describe("runHarnessTurn broker-required (COMP-23)", () => {
     const onEngineError = vi.fn();
     await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
 
+    expect(onEngineError).not.toHaveBeenCalled();
+    expect(startHarnessModelBroker).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runHarnessTurn reasoning effort backstop (refuse, never drop)", () => {
+  it.each([
+    ["the typed effort", { reasoningEffort: "high" }],
+    [
+      "the top-level effort a hosted runtime forwards",
+      { extraBodyFields: { reasoningEffort: "high" } },
+    ],
+    [
+      "the effort on the forwarded selection",
+      {
+        extraBodyFields: {
+          modelSelection: {
+            modelId: "anthropic/claude-sonnet-4-6",
+            source: "hosted",
+            settings: { reasoningEffort: "low" },
+            fallback: { provider: "none", model: "none" },
+          },
+        },
+      },
+    ],
+  ])(
+    "refuses %s an adapter has not verified — no broker start, no spend",
+    async (_label, extra) => {
+      vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+      const onEngineError = vi.fn();
+      await runHarnessTurn(
+        baseOptions({ onEngineError, ...extra }) as never,
+        "none"
+      );
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      const err = onEngineError.mock.calls[0]![0] as { message: string };
+      expect(err.message).toMatch(/can't apply a reasoning effort yet/);
+      expect(startHarnessModelBroker).not.toHaveBeenCalled();
+    }
+  );
+
+  it("control: no effort still starts the broker", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
     expect(onEngineError).not.toHaveBeenCalled();
     expect(startHarnessModelBroker).toHaveBeenCalledTimes(1);
   });

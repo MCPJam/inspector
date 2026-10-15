@@ -12,14 +12,6 @@ interface Env {
   MCPJAM_INSPECTOR_SERVICE_TOKEN?: string;
 
   /**
-   * Killswitch toggle (runtime var / dashboard secret, not in wrangler.jsonc).
-   * When "true", the worker is AuthKit-only: guest tokens are rejected and
-   * anonymous (tokenless) /mcp connections get the normal 401 → OAuth
-   * challenge.
-   */
-  MCPJAM_NONPROD_LOCKDOWN?: string;
-
-  /**
    * The BROWSER origin of the app this worker's permalinks point at
    * (`https://app.mcpjam.com`, `https://staging.mcpjam.com`,
    * `http://localhost:6274`).

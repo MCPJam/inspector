@@ -19,7 +19,7 @@
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["vitest/globals"],
+    "types": ["node", "vitest/globals"],
     "paths": {
       "@mcpjam/sdk": ["../sdk/dist/index.d.ts"]
     }

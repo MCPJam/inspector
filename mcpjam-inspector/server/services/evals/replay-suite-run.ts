@@ -1,7 +1,7 @@
 import { checkEvalExecutionAdmission, checkEvalHarnessAdmission, casesAssertingWidgetRender, failRunBeforeExecution } from "./harness-admission.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import { harnessOfHostConfig } from "./harness-admission.js";
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { runEvalSuiteWithAiSdk } from "../evals-runner.js";
 import {
@@ -25,6 +25,7 @@ import { loadSuiteHostConfig } from "./compat-runtime.js";
 import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/internal";
 import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
 import { resolveFrozenRunGradingMode } from "./grading-mode.js";
+import { prepareClientKeyRun } from "./org-policy-client-keys.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -100,10 +101,26 @@ export async function prepareSuiteReplayFromRun(
     });
   }
 
+  // Resolve org model config: prefer client-sent keys, fall back to org config.
+  const replayServerIds = replayConfig.servers.map((server) => server.serverId);
+  const replayProjectId =
+    typeof replayMetadata.projectId === "string"
+      ? replayMetadata.projectId
+      : undefined;
+  const replayOrgConfigTarget = replayProjectId
+    ? { projectId: replayProjectId }
+    : undefined;
+  const clientKeyRun = await prepareClientKeyRun(
+    { modelApiKeys, orgModelConfig, convexAuthToken },
+    replayProjectId,
+    replayServerIds,
+  );
+  const resolvedModelApiKeys = clientKeyRun.modelApiKeys;
+  let resolvedOrgModelConfig = clientKeyRun.orgModelConfig;
+
   const replayManager = buildReplayManager(replayConfig);
   try {
     await connectReplayManagerServers(replayManager, replayConfig);
-    const replayServerIds = replayConfig.servers.map((server) => server.serverId);
     const { toolSnapshot, toolSnapshotDebug } =
       await captureToolSnapshotForEvalAuthoring(replayManager, replayServerIds, {
         logPrefix: "evals.replay",
@@ -113,9 +130,11 @@ export async function prepareSuiteReplayFromRun(
       ? await loadSuiteHostConfig(convexClient, replayMetadata.suiteId)
       : { harness: typeof replayMetadata.executionEngine === "string" && replayMetadata.executionEngine.startsWith("harness:")
           ? replayMetadata.executionEngine.slice("harness:".length) : undefined };
+    const replayHarness = harnessOfHostConfig(launchHostConfig);
     const runtimeVenue = await shouldUseLocalHarness(
-      harnessOfHostConfig(launchHostConfig), convexAuthToken, replayMetadata.projectId,
+      replayHarness, convexAuthToken, replayMetadata.projectId, { scope: "unattended" },
     ) ? "local" : "hosted";
+    const replayLocalHarness = runtimeVenue === "local" ? localHarnessIdOf(replayHarness) : null;
 
     const {
       runId,
@@ -133,6 +152,7 @@ export async function prepareSuiteReplayFromRun(
       serverIds: replayServerIds,
       replayedFromRunId: sourceRunId,
       runtimeVenue,
+      ...(replayLocalHarness ? { localHarnessIds: [replayLocalHarness] } : {}),
       useCurrentSuiteConfig,
       environmentOverride:
         useCurrentSuiteConfig === true
@@ -178,18 +198,7 @@ export async function prepareSuiteReplayFromRun(
       }
     }
 
-    // Resolve org model config: prefer client-sent keys, fall back to org config.
-    const hasClientKeys =
-      !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
-    const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
-    let resolvedOrgModelConfig = orgModelConfig;
-    const replayProjectId =
-      typeof replayMetadata.projectId === "string"
-        ? replayMetadata.projectId
-        : undefined;
-    const replayOrgConfigTarget = replayProjectId
-      ? { projectId: replayProjectId }
-      : undefined;
+    // No client-sent keys: fall back to the organization's config.
     if (
       !resolvedModelApiKeys &&
       !resolvedOrgModelConfig &&
@@ -258,7 +267,7 @@ export async function prepareSuiteReplayFromRun(
 }
 
 /**
- * Full suite replay used by synchronous `/replay-run` callers and trace repair.
+ * Full suite replay used by synchronous `/replay-run` callers.
  */
 export async function executeSuiteReplayFromRun(
   params: ExecuteSuiteReplayFromRunParams,

@@ -11,7 +11,8 @@ import {
 } from "react";
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
-import { ChevronLeft, Github, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, Plus, Trash2 } from "lucide-react";
+import { GitHubIcon } from "@/components/ui/github-icon";
 import { toast } from "@/lib/toast";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -227,7 +228,7 @@ function InstallationRow({
     >
       <div className="flex items-center gap-3 min-w-0">
         <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-          <Github className="size-4 text-primary" aria-hidden />
+          <GitHubIcon className="size-4 text-primary" aria-hidden />
         </div>
         <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -913,7 +914,7 @@ export function GithubChecksRoute({
             disabled={bindingBusy || !canManage}
             onClick={() => void beginBindingFlow()}
           >
-            <Github className="mr-2 size-4" aria-hidden /> Connect a GitHub
+            <GitHubIcon className="mr-2 size-4" aria-hidden /> Connect a GitHub
             account
           </Button>
         </div>
@@ -975,7 +976,7 @@ export function GithubChecksRoute({
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                    <Github className="size-4 text-primary" aria-hidden />
+                    <GitHubIcon className="size-4 text-primary" aria-hidden />
                   </div>
                   <div className="flex flex-col min-w-0">
                     <div className="flex items-center gap-2 min-w-0">

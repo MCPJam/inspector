@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import { ClientContextHeader } from "../ClientContextHeader";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 
 const {
   mockPreferencesState,
@@ -120,9 +127,10 @@ vi.mock("@/components/shared/client-context-constants", () => ({
 vi.mock(
   "@/components/shared/client-context-picker-bodies",
   async (importOriginal) => {
-    const actual = await importOriginal<
-      typeof import("@/components/shared/client-context-picker-bodies")
-    >();
+    const actual =
+      await importOriginal<
+        typeof import("@/components/shared/client-context-picker-bodies")
+      >();
     return {
       ...actual,
       CspPickerBody: () => <div />,
@@ -144,15 +152,6 @@ vi.mock("@/stores/ui-playground-store", () => {
   useUIPlaygroundStore.getState = () => mockUIPlaygroundStore;
   return { useUIPlaygroundStore };
 });
-
-vi.mock("@/stores/widget-debug-store", () => ({
-  useWidgetDebugStore: (selector: any) =>
-    selector
-      ? selector({ widgets: new Map() })
-      : {
-          widgets: new Map(),
-        },
-}));
 
 vi.mock("@/stores/client-context-store", () => {
   const buildState = () => ({
@@ -197,6 +196,7 @@ vi.mock("@/lib/client-config", () => ({
 describe("ClientContextHeader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useWidgetDebugStore.setState({ widgets: new Map() });
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.hostStyle = "claude";
     mockUIPlaygroundStore.cspMode = "widget-declared";
@@ -213,6 +213,114 @@ describe("ClientContextHeader", () => {
       },
     };
     mockHostContextState.isDirty = false;
+  });
+
+  it("handles a burst of CSP violation messages without exceeding React's update depth", async () => {
+    const store = useWidgetDebugStore.getState();
+    store.setWidgetDebugInfo("burst-tool", { toolName: "test" });
+    const { unmount } = render(
+      <ClientContextHeader
+        activeProjectId="project-1"
+        protocol={UIType.MCP_APPS}
+      />
+    );
+    const errors: unknown[] = [];
+    const onError = (event: ErrorEvent) => {
+      errors.push(event.error ?? event.message);
+      event.preventDefault();
+    };
+    const onMessage = () => {
+      store.addCspViolation("burst-tool", {
+        directive: "img-src",
+        blockedUri: "http://localhost:8081/logo.png",
+        timestamp: Date.now(),
+      });
+    };
+    const actEnvironment = globalThis as typeof globalThis & {
+      IS_REACT_ACT_ENVIRONMENT?: boolean;
+    };
+    const previousActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
+    window.addEventListener("error", onError);
+    window.addEventListener("message", onMessage);
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      // Keep the browser's microtask cadence. Wrapping each message in act()
+      // flushes pending effects and hides the production update-depth failure.
+      for (let index = 0; index < 100; index++) {
+        window.dispatchEvent(new MessageEvent("message"));
+        await Promise.resolve();
+      }
+      await act(async () => {});
+
+      expect(errors).toEqual([]);
+      expect(
+        useWidgetDebugStore.getState().widgets.get("burst-tool")?.csp
+          ?.violations
+      ).toHaveLength(100);
+      expect(screen.getByRole("button", { name: "Strict" })).toHaveClass(
+        "animate-csp-alert-blink"
+      );
+    } finally {
+      actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+      window.removeEventListener("error", onError);
+      window.removeEventListener("message", onMessage);
+      unmount();
+    }
+  });
+
+  it.each([UIType.MCP_APPS, UIType.OPENAI_SDK])(
+    "blinks only for new violations and can blink again after animation and reset (%s)",
+    (protocol) => {
+      const store = useWidgetDebugStore.getState();
+      store.setWidgetDebugInfo("test-tool", { toolName: "test" });
+      const addViolation = () =>
+        store.addCspViolation("test-tool", {
+          directive: "img-src",
+          blockedUri: "http://localhost:8081/logo.png",
+          timestamp: Date.now(),
+        });
+      addViolation();
+      render(
+        <ClientContextHeader activeProjectId="project-1" protocol={protocol} />
+      );
+      const button = screen.getByRole("button", { name: "Strict" });
+      expect(button).not.toHaveClass("animate-csp-alert-blink");
+
+      act(addViolation);
+      expect(button).toHaveClass("animate-csp-alert-blink");
+      fireEvent.animationEnd(button);
+      expect(button).not.toHaveClass("animate-csp-alert-blink");
+
+      act(() => store.clearCspViolations("test-tool"));
+      expect(button).not.toHaveClass("animate-csp-alert-blink");
+      act(addViolation);
+      expect(button).toHaveClass("animate-csp-alert-blink");
+    }
+  );
+
+  it("does not blink in permissive mode when violations arrive", () => {
+    mockUIPlaygroundStore.cspMode = "permissive";
+    mockUIPlaygroundStore.mcpAppsCspMode = "permissive";
+    const store = useWidgetDebugStore.getState();
+    store.setWidgetDebugInfo("test-tool", { toolName: "test" });
+    render(
+      <ClientContextHeader
+        activeProjectId="project-1"
+        protocol={UIType.MCP_APPS}
+      />
+    );
+
+    act(() => {
+      store.addCspViolation("test-tool", {
+        directive: "img-src",
+        blockedUri: "http://localhost:8081/logo.png",
+        timestamp: Date.now(),
+      });
+    });
+
+    expect(screen.getByRole("button", { name: "Permissive" })).not.toHaveClass(
+      "animate-csp-alert-blink"
+    );
   });
 
   it("keeps the ChatGPT and MCP Apps CSP stores synchronized from the active chip", async () => {

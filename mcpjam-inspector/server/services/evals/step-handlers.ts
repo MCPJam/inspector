@@ -289,6 +289,7 @@ export function buildHostedStepHandlers(
             ...(typeof outcome.errorHttpStatus === "number"
               ? { errorHttpStatus: outcome.errorHttpStatus }
               : {}),
+            ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           }
         : {}),
     };
@@ -357,6 +358,7 @@ export function buildHostedStepHandlers(
             ...(typeof outcome.errorHttpStatus === "number"
               ? { errorHttpStatus: outcome.errorHttpStatus }
               : {}),
+            ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           }
         : {}),
     };

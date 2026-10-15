@@ -49,9 +49,9 @@ describe("buildBrowserdLaunchArgs", () => {
   });
 });
 
-describe("feature switches must not clobber Playwright's (verified vs. 1.62.1)", () => {
+describe("feature switches must not clobber Playwright's (verified vs. 1.63.0)", () => {
   it("emits NO --disable-features at all", () => {
-    // Playwright emits one combined --disable-features carrying twelve
+    // Playwright emits one combined --disable-features carrying fifteen
     // entries, then appends our args; Chromium honours only the LAST
     // occurrence. Any --disable-features of ours therefore deletes that whole
     // list — re-enabling HttpsUpgrades, Translate, the sync beforeunload
@@ -275,18 +275,18 @@ describe("the UA a real Chrome on this machine would send", () => {
   });
 
   it("takes the major from the manifest that decides which build is installed", () => {
-    // Not a hardcoded 151: the UA must never claim a version other than the
+    // Not a hardcoded 153: the UA must never claim a version other than the
     // binary's, which is why it comes from playwright-core's own browsers.json.
     expect(
       chromiumMajorFromManifest(
         JSON.stringify({
           browsers: [
             { name: "firefox", browserVersion: "999.0" },
-            { name: "chromium", browserVersion: "151.0.7922.34" },
+            { name: "chromium", browserVersion: "153.0.8010.12" },
           ],
         }),
       ),
-    ).toBe(151);
+    ).toBe(153);
   });
 
   it("answers null rather than a guess when the manifest cannot be read", () => {

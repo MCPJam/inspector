@@ -14,6 +14,7 @@
  */
 import { SWARM_STAGE_EVIDENCE_VERSION } from "@mcpjam/sdk/contract";
 import { logger } from "../../utils/logger.js";
+import { getServiceCredential } from "../service-credential.js";
 
 /** Per-request cap so a stalled Convex cannot wedge the pass. */
 const SERVICE_ROUTE_TIMEOUT_MS = 15_000;
@@ -30,7 +31,7 @@ export class ChatStageBackendError extends Error {
 /** Present only on a deployment that IS an infrastructure peer. */
 function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) return null;
   return { convexUrl, serviceToken };
 }

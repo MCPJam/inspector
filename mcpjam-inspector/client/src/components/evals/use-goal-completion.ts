@@ -1,10 +1,16 @@
 import { useCallback } from "react";
 import { useInsight } from "./use-insight";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 import type { EvalSuiteRun } from "./types";
 
 export interface GoalCompletionRunOverride {
   /** Per-run model override from the "⚙ Override for this run" disclosure. */
   judgeModel?: string;
+  /**
+   * The judge's full selection for this run (source, connection, reasoning
+   * effort). Names `judgeModel` when both are sent.
+   */
+  judgeSelection?: ModelSelection;
   /** Per-run threshold override from the same disclosure. */
   threshold?: number;
 }
@@ -60,6 +66,8 @@ export function useGoalCompletion(run: EvalSuiteRun | null) {
         const cleaned: Record<string, unknown> = {};
         if (args.runOverride.judgeModel)
           cleaned.judgeModel = args.runOverride.judgeModel;
+        if (args.runOverride.judgeSelection)
+          cleaned.judgeSelection = args.runOverride.judgeSelection;
         if (typeof args.runOverride.threshold === "number")
           cleaned.threshold = args.runOverride.threshold;
         if (Object.keys(cleaned).length > 0) {

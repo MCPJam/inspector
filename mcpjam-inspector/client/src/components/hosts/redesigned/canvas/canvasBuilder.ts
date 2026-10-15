@@ -65,8 +65,9 @@ const SERVERS_ROW_GAP = 40;
 /* ============================================================
    Project Computers islands. Built-in tools fan to the LEFT of
    the matrix and the Computer island to the RIGHT, both flanking
-   the matrix's header band. Emitted only when the builder context
-   has `computersEnabled === true`.
+   the matrix's header band. Emitted when the builder context has
+   `computersEnabled === true` (the Computer island also for an existing
+   attachment), and never as a Computer island for a harness draft.
    ============================================================ */
 const ISLAND_W = 240;
 const ISLAND_GAP = 60;
@@ -839,9 +840,10 @@ export function buildRedesignedHostCanvas(
   // 1b) Project Computers islands — Built-in tools (left) + Computer
   // (right), flanking the matrix header. The built-in-tools island is gated on
   // `computersEnabled`; the Computer island ALSO shows whenever a computer is
-  // attached (`draft.computer`), so a harness host (which seeds a computer)
-  // surfaces its island even when the rollout flag is off — mirroring
-  // `visibleHostFocusTabs`, which keeps the Computer tab visible while attached.
+  // attached (`draft.computer`), so an existing attachment stays detachable
+  // with the flag off — mirroring `visibleHostFocusTabs`. A HARNESS draft
+  // (Claude Code / Codex / Cursor) is the exception for everyone: it runs on a
+  // throwaway box, so it shows no computer island, flag or not.
   // Both island edges source from the matrix (which never reflows — it sits at
   // y=0 and grows downward), so the measured-height shift leaves them pinned.
   if (context.computersEnabled === true || draft.computer !== undefined) {
@@ -885,53 +887,58 @@ export function buildRedesignedHostCanvas(
       });
     }
 
-    // Computer node (right of the matrix). `attached` is the config intent
-    // (`draft.computer`); `status` is the orthogonal backend lifecycle.
-    const attached = draft.computer !== undefined;
-    const status =
-      context.computerStatus === undefined
-        ? undefined
-        : context.computerStatus === null
-          ? null
-          : context.computerStatus.status;
-    nodes.push({
-      id: COMPUTER_NODE_ID,
-      type: "redesignComputer",
-      position: { x: MATRIX_W + ISLAND_GAP, y: ISLAND_Y },
-      style: { width: ISLAND_W },
-      data: {
-        kind: "computer",
-        attached,
-        status,
-        ...(draft.computer?.workdir
-          ? { workdir: draft.computer.workdir }
-          : {}),
-        backedToolLabels: tools
-          .filter((tool) => tool.requiresComputer)
-          .map((tool) => tool.label),
-      },
-      draggable: false,
-    });
-    edges.push({
-      id: "host-to-computer",
-      source: HOST_MATRIX_NODE_ID,
-      target: COMPUTER_NODE_ID,
-      type: "hostBranch",
-      // Matrix right edge → computer node left edge, level on the header band.
-      data: {
-        fixedSourceX: MATRIX_W,
-        fixedSourceY: ISLAND_ANCHOR_Y,
-        fixedTargetX: MATRIX_W + ISLAND_GAP,
-        fixedTargetY: ISLAND_ANCHOR_Y,
-      },
-      style: {
-        stroke: "oklch(0.68 0.11 40 / 0.55)",
-        strokeWidth: 1.5,
-        // Dashed until the computer is actually attached, mirroring the
-        // ghost-vs-attached treatment of the node itself.
-        strokeDasharray: attached ? undefined : "4 4",
-      },
-    });
+    // Computer node (right of the matrix). A harness client (Claude Code /
+    // Codex / Cursor) runs on a throwaway per-conversation box and has no
+    // computer settings for anyone, so it gets no island. `attached` is the
+    // config intent (`draft.computer`); `status` is the orthogonal backend
+    // lifecycle.
+    if (draft.harness === undefined) {
+      const attached = draft.computer !== undefined;
+      const status =
+        context.computerStatus === undefined
+          ? undefined
+          : context.computerStatus === null
+            ? null
+            : context.computerStatus.status;
+      nodes.push({
+        id: COMPUTER_NODE_ID,
+        type: "redesignComputer",
+        position: { x: MATRIX_W + ISLAND_GAP, y: ISLAND_Y },
+        style: { width: ISLAND_W },
+        data: {
+          kind: "computer",
+          attached,
+          status,
+          ...(draft.computer?.workdir
+            ? { workdir: draft.computer.workdir }
+            : {}),
+          backedToolLabels: tools
+            .filter((tool) => tool.requiresComputer)
+            .map((tool) => tool.label),
+        },
+        draggable: false,
+      });
+      edges.push({
+        id: "host-to-computer",
+        source: HOST_MATRIX_NODE_ID,
+        target: COMPUTER_NODE_ID,
+        type: "hostBranch",
+        // Matrix right edge → computer node left edge, level on the header band.
+        data: {
+          fixedSourceX: MATRIX_W,
+          fixedSourceY: ISLAND_ANCHOR_Y,
+          fixedTargetX: MATRIX_W + ISLAND_GAP,
+          fixedTargetY: ISLAND_ANCHOR_Y,
+        },
+        style: {
+          stroke: "oklch(0.68 0.11 40 / 0.55)",
+          strokeWidth: 1.5,
+          // Dashed until the computer is actually attached, mirroring the
+          // ghost-vs-attached treatment of the node itself.
+          strokeDasharray: attached ? undefined : "4 4",
+        },
+      });
+    }
   }
 
   const browserEnabled = !HOSTED_MODE && draft.localBrowserEnabled !== undefined

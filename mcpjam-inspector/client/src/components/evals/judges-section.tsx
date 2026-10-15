@@ -8,8 +8,22 @@ import {
   type GoalCompletionJudgeSlot,
   type GoalJudgeConfig as EvalJudgeConfig,
 } from "@/components/shared/session-quality/judge-config";
-import { selectionBesideLegacyId } from "@/components/chat-v2/shared/model-selection";
+import {
+  findModelForStoredChoice,
+  selectionBesideLegacyId,
+  storedModelChoice,
+} from "@/components/chat-v2/shared/model-selection";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
+import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
+import {
+  selectionReasoningEffort,
+  withReasoningEffort,
+} from "@/lib/reasoning-effort-selection";
+import {
+  reasoningEffortOptions,
+  reasoningEffortRouteForRow,
+} from "@/lib/reasoning-effort-options";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { JudgeModelPicker } from "./judge-model-picker";
 
 /**
@@ -54,7 +68,29 @@ interface JudgesSectionProps {
    */
   bareAutoGradeBlurb?: string;
   bareAutoGradeAriaLabel?: string;
+  /**
+   * The organization requires its own provider keys for AI features: the
+   * judge picker offers only organization models and no default (a judge
+   * must be chosen before the suite can grade), and the copy stops promising
+   * MCPJam credits for the model tokens.
+   */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
 }
+
+/**
+ * What grading costs, as the judge blurbs say it. Judges run on MCPJam models
+ * (MCPJam credits) or on an organization provider; while the organization
+ * requires its own keys every judge runs on its providers, which bill the
+ * model tokens.
+ */
+export const JUDGE_CREDITS_COST_NOTE = "Uses credits.";
+export const JUDGE_ORG_PROVIDER_COST_NOTE =
+  "Runs on your organization’s AI providers.";
 
 /**
  * Drop a judge config that carries no information, keep one that does.
@@ -107,23 +143,121 @@ export function pruneEmpty(
  * would be refused), and both clear for the managed default.
  */
 export function judgeModelPatch(
-  next: string,
+  /** The picked row itself, or a bare id (resolved like a stored choice). */
+  next: string | ModelDefinition,
   availableModels: readonly ModelDefinition[],
   /** The deployment stores selections (`modelSelectionsSupported`). */
   saveModelSelection = true,
+  /**
+   * The effort saved on the previous judge. It follows the pick only when the
+   * picked row lists it (an effort belongs to the model it was chosen for).
+   */
+  previousEffort?: ModelReasoningEffort,
 ): Pick<GoalCompletionJudgeSlot, "judgeModel" | "judgeSelection"> {
-  if (next === MANAGED_DEFAULT_JUDGE_MODEL) {
+  const nextId = typeof next === "string" ? next : String(next.id);
+  if (nextId === MANAGED_DEFAULT_JUDGE_MODEL) {
     return { judgeModel: undefined, judgeSelection: undefined };
   }
-  // The first row with this id is the one saved: the picker passes the
-  // picked row itself first.
-  const row = saveModelSelection
-    ? availableModels.find((model) => String(model.id) === next)
-    : undefined;
+  // The picked row when the picker hands it over; otherwise the row a stored
+  // choice of this id resolves to (`findModelForStoredChoice`, which prefers
+  // the hosted row), never simply the first row that happens to share the id
+  // (an org row of the same id would save a different judge than the one
+  // meant).
+  const row = !saveModelSelection
+    ? undefined
+    : typeof next !== "string"
+      ? next
+      : findModelForStoredChoice({ modelId: nextId }, availableModels, undefined);
+  // An organization row (the BYOK judge) is saved WITH its connection,
+  // under the selection's canonical id: its bare row id alone (`gpt-4o`)
+  // would read back as a hosted judge of that id.
+  if (row?.orgProvider && row.hosted !== true) {
+    const choice = storedModelChoice(row, undefined, "judge");
+    if (choice.selection) {
+      const keeps =
+        previousEffort !== undefined &&
+        reasoningEffortOptions(row, reasoningEffortRouteForRow(row)).includes(
+          previousEffort,
+        );
+      return {
+        judgeModel: choice.modelId,
+        judgeSelection: keeps
+          ? withReasoningEffort(choice.selection, previousEffort)
+          : choice.selection,
+      };
+    }
+  }
+  const base = row ? selectionBesideLegacyId(row, "judge") : undefined;
+  const keepsEffort =
+    row !== undefined &&
+    base !== undefined &&
+    previousEffort !== undefined &&
+    reasoningEffortOptions(row, reasoningEffortRouteForRow(row)).includes(
+      previousEffort,
+    );
   return {
-    judgeModel: next,
-    judgeSelection: row ? selectionBesideLegacyId(row, "judge") : undefined,
+    judgeModel: nextId,
+    judgeSelection:
+      base && keepsEffort ? withReasoningEffort(base, previousEffort) : base,
   };
+}
+
+/**
+ * The judge-model picker alone, writing the same goal-completion patch as
+ * `JudgesSection`. The suite settings page shows only this for now; the
+ * judge's other settings keep their stored values and stay editable through
+ * the API.
+ */
+export function JudgeModelControl({
+  id,
+  value,
+  onChange,
+  availableModels,
+  saveModelSelections,
+  requireOrgKeys = false,
+  onManageOrgProviders,
+}: {
+  id: string;
+  value: EvalJudgeConfig | undefined;
+  onChange: (next: EvalJudgeConfig | undefined) => void;
+  availableModels: ModelDefinition[];
+  saveModelSelections?: boolean;
+  requireOrgKeys?: boolean;
+  onManageOrgProviders?: () => void;
+}) {
+  const deploymentStoresSelections = useModelSelectionsSupported();
+  const saveSelections = saveModelSelections ?? deploymentStoresSelections;
+  const gc = value?.goalCompletion;
+  return (
+    <JudgeModelPicker
+      id={id}
+      variant="pill"
+      className="w-fit max-w-full"
+      value={gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL}
+      selection={gc?.judgeSelection}
+      requireOrgKeys={requireOrgKeys}
+      onManageOrgProviders={onManageOrgProviders}
+      availableModels={availableModels}
+      selectionsSupported={saveSelections}
+      managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
+      onChange={(row) =>
+        onChange(
+          pruneEmpty({
+            ...value,
+            goalCompletion: {
+              ...(gc ?? {}),
+              ...judgeModelPatch(
+                row,
+                availableModels,
+                saveSelections,
+                selectionReasoningEffort(gc?.judgeSelection),
+              ),
+            },
+          }),
+        )
+      }
+    />
+  );
 }
 
 export function JudgesSection({
@@ -134,10 +268,18 @@ export function JudgesSection({
   title = "LLM as Judge",
   description = "Advisory grading of run results against rubric anchors. Calibrate per suite — scores aren't comparable across domains.",
   chrome = "panel",
-  bareAutoGradeBlurb = "Grade every run automatically against each case’s objective. Uses credits.",
+  bareAutoGradeBlurb,
   bareAutoGradeAriaLabel = "Auto-grade every run with LLM as Judge",
   saveModelSelections,
+  requireOrgKeys = false,
+  onManageOrgProviders,
 }: JudgesSectionProps) {
+  const costNote = requireOrgKeys
+    ? JUDGE_ORG_PROVIDER_COST_NOTE
+    : JUDGE_CREDITS_COST_NOTE;
+  const autoGradeBlurb =
+    bareAutoGradeBlurb ??
+    `Grade every run automatically against each case’s objective. ${costNote}`;
   // Explicit prop wins; otherwise ask the active project's deployment.
   const deploymentStoresSelections = useModelSelectionsSupported();
   const saveSelections = saveModelSelections ?? deploymentStoresSelections;
@@ -148,6 +290,18 @@ export function JudgesSection({
   // does at run time.
   const enabled = gc?.enabled !== false;
   const judgeModel = gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL;
+  // The row the saved judge names; none for the managed default (no explicit
+  // model to set an effort on).
+  const judgeRow =
+    gc?.judgeModel && gc.judgeModel !== MANAGED_DEFAULT_JUDGE_MODEL
+      ? // The saved selection names the row (its source and connection), else
+        // the legacy id does, hosted first.
+        findModelForStoredChoice(
+          { modelId: gc.judgeModel, selection: gc.judgeSelection },
+          availableModels,
+          undefined,
+        )
+      : undefined;
   const autoRun = gc?.autoRun ?? policy?.effective.autoRun;
 
   const stateUnknown = enabled && autoRun === undefined;
@@ -174,7 +328,7 @@ export function JudgesSection({
             // repeat the section header. In `panel` chrome there's no outer
             // label, so we keep the sub-heading + description.
             <p className="text-[12px] text-muted-foreground">
-              {bareAutoGradeBlurb}
+              {autoGradeBlurb}
             </p>
           ) : (
             <>
@@ -183,7 +337,7 @@ export function JudgesSection({
               </span>
               <p className="mt-0.5 text-[11px] text-muted-foreground/80">
                 Automatically grades the full recorded trace against each
-                case&apos;s objective. Uses credits.
+                case&apos;s objective. {costNote}
               </p>
             </>
           )}
@@ -213,22 +367,43 @@ export function JudgesSection({
           >
             Judge model
           </Label>
-          <JudgeModelPicker
-            id="suite-goal-judge-model"
-            className="w-[14rem]"
-            value={judgeModel}
-            availableModels={availableModels}
-            managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
-            onChange={(row) =>
-              update(
-                judgeModelPatch(
-                  String(row.id),
-                  [row, ...availableModels],
-                  saveSelections,
-                ),
-              )
-            }
-          />
+          <div className="flex items-center gap-1.5">
+            <JudgeModelPicker
+              id="suite-goal-judge-model"
+              className="w-[14rem]"
+              value={judgeModel}
+              selection={gc?.judgeSelection}
+              requireOrgKeys={requireOrgKeys}
+              onManageOrgProviders={onManageOrgProviders}
+              availableModels={availableModels}
+              selectionsSupported={saveSelections}
+              managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
+              onChange={(row) =>
+                update(
+                  judgeModelPatch(
+                    row,
+                    availableModels,
+                    saveSelections,
+                    selectionReasoningEffort(gc?.judgeSelection),
+                  ),
+                )
+              }
+            />
+            <SelectionEffortControl
+              variant="suffix"
+              row={judgeRow}
+              selection={gc?.judgeSelection}
+              purpose="judge"
+              selectionsSupported={saveSelections}
+              hint="Applies to the judge model"
+              onChange={(write) =>
+                update({
+                  judgeModel: write.modelId,
+                  judgeSelection: write.selection,
+                })
+              }
+            />
+          </div>
         </div>
       ) : null}
     </>

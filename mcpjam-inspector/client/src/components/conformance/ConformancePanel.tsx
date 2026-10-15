@@ -553,8 +553,8 @@ function ConformanceContent({
         <h2 className="text-lg font-semibold">Conformance</h2>
         <p className="text-sm text-muted-foreground">
           Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.{" "}
-          Directory readiness grades it against Anthropic's and OpenAI's
-          published rules.
+          Directory readiness grades it against Anthropic's, OpenAI's and Meta's
+          (Muse) published rules.
         </p>
       </div>
 
@@ -736,6 +736,7 @@ function ConformanceContent({
         */}
         <DirectoryReadinessSection publisher="claude" server={server} />
         <DirectoryReadinessSection publisher="openai" server={server} />
+        <DirectoryReadinessSection publisher="muse" server={server} />
       </div>
     </div>
   );

@@ -137,6 +137,31 @@ describe("chat-ingestion", () => {
     expect(body.resumeConfig.systemPrompt).toBe("HOST PROMPT");
   });
 
+  it("sends the turn's model selection (effort included) beside modelId", async () => {
+    const modelSelection = {
+      modelId: "openai/gpt-5.4-nano",
+      source: "hosted" as const,
+      settings: { reasoningEffort: "high" as const },
+      fallback: { provider: "none" as const, model: "none" as const },
+    };
+    await persistChatSessionToConvex({
+      chatSessionId: "session-selection",
+      modelId: "openai/gpt-5.4-nano",
+      modelSelection,
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      sourceType: "direct",
+      origin: "playground",
+      startedAt: 1,
+      lastActivityAt: 2,
+    });
+
+    const request = (global.fetch as any).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+    expect(body.modelId).toBe("openai/gpt-5.4-nano");
+    expect(body.modelSelection).toEqual(modelSelection);
+  });
+
   it("serializes rewind lineage for an edited branch", async () => {
     await persistChatSessionToConvex({
       chatSessionId: "branch-session",

@@ -107,9 +107,21 @@ describe("command execution approvals", () => {
       ...commandApproval(),
       params: { ...commandApproval().params, approvalId: null },
     });
-    expect(requested[0]).toMatch(/^codex-approval-\d+$/);
+    expect(requested[0]).toMatch(/^codex-approval-[0-9a-f]{8}-\d+$/);
     const approval = parts.find((p) => p.type === "tool-approval-request");
     expect(approval?.approvalId).toBe(requested[0]);
+  });
+
+  it("never reuses an approval id across controllers", async () => {
+    // A re-driven bridge builds a new controller; its first approval must not
+    // match the id an earlier controller's decision was stored under.
+    const first = harness();
+    const second = harness();
+    await first.controller.handle(commandApproval());
+    await second.controller.handle(commandApproval());
+    expect(first.requested[0]).toBeDefined();
+    expect(second.requested[0]).toBeDefined();
+    expect(second.requested[0]).not.toBe(first.requested[0]);
   });
 
   it("does not emit a second tool-call when the item follows the approval", async () => {

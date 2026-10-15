@@ -43,6 +43,10 @@ import {
   type OpenAIReadinessResult,
 } from "./openai-readiness/types.js";
 import {
+  isMuseReadinessResult,
+  type MuseReadinessResult,
+} from "./muse-readiness/types.js";
+import {
   isDispositiveDirectoryFinding,
   type DirectoryReadinessFinding,
 } from "./directory-readiness/types.js";
@@ -62,7 +66,9 @@ export type ConformanceReportKind =
   // Likewise not a suite. Same reasoning as the Claude entry above: it grades a
   // publisher's listing policy, carries no `score`, and is excluded from
   // `pooledConformanceScore` by construction.
-  | "openai-directory-readiness";
+  | "openai-directory-readiness"
+  // Likewise not a suite: Meta's Muse connector guidelines.
+  | "muse-directory-readiness";
 
 export type ConformanceReportCaseStatus = "passed" | "failed" | "skipped";
 
@@ -173,7 +179,8 @@ type SupportedSingleConformanceResult =
   | MCPAppsConformanceResult
   | MCPTasksConformanceResult
   | ClaudeReadinessResult
-  | OpenAIReadinessResult;
+  | OpenAIReadinessResult
+  | MuseReadinessResult;
 
 type SupportedSuiteConformanceResult =
   | MCPConformanceSuiteResult
@@ -936,11 +943,32 @@ export const OPENAI_READINESS_REPORT_PROVIDER: DirectoryReadinessReportProvider<
       ),
   };
 
+/**
+ * Muse's descriptor. An exact `readinessKind` test like OpenAI's, and the
+ * shared dispositive predicate — Muse's `isDispositiveMuseFinding` is that
+ * predicate under its own name.
+ */
+export const MUSE_READINESS_REPORT_PROVIDER: DirectoryReadinessReportProvider<MuseReadinessResult> =
+  {
+    kind: "muse-directory-readiness",
+    providerName: "Muse Directory Readiness",
+    isResult: (result): result is MuseReadinessResult =>
+      isMuseReadinessResult(result),
+    isDispositive: (finding) =>
+      isDispositiveDirectoryFinding(
+        finding as unknown as Pick<
+          DirectoryReadinessFinding<string, unknown, string>,
+          "class"
+        >,
+      ),
+  };
+
 const READINESS_REPORT_PROVIDERS: DirectoryReadinessReportProvider<never>[] = [
   // OpenAI first: its `readinessKind` test is exact, while Claude's recognises
   // "a readiness result with no kind". Ordering the exact test first means
   // neither provider depends on the other's negative case.
   OPENAI_READINESS_REPORT_PROVIDER as unknown as DirectoryReadinessReportProvider<never>,
+  MUSE_READINESS_REPORT_PROVIDER as unknown as DirectoryReadinessReportProvider<never>,
   CLAUDE_READINESS_REPORT_PROVIDER as unknown as DirectoryReadinessReportProvider<never>,
 ];
 
@@ -1012,6 +1040,9 @@ export function toConformanceReport(
 ): ConformanceReport;
 export function toConformanceReport(
   result: OpenAIReadinessResult,
+): ConformanceReport;
+export function toConformanceReport(
+  result: MuseReadinessResult,
 ): ConformanceReport;
 export function toConformanceReport(
   result: SupportedConformanceResult,

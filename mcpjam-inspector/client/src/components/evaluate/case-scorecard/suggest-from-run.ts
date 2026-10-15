@@ -515,7 +515,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
           kind: "widgetAssertion",
           basis: "held",
           purpose: `Verify the click calls ${calledToolName}`,
-          label: `View called tool · ${calledToolName}`,
+          label: `View called a tool · ${calledToolName}`,
           consequence: `Future runs where step ${ordinal} does not call ${calledToolName} will fail this case.`,
           evidence: `Clicking "${label}" called ${calledToolName} in ${held.held} of ${of}`,
           widgetAssertion: assertion,

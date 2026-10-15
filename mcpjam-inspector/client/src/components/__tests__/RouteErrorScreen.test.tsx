@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
 const { reportCaught, signInMock, track, captureAppSignInReturnPath } =
@@ -88,7 +88,10 @@ describe("RouteErrorScreen", () => {
     consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  afterEach(() => consoleError.mockRestore());
+  afterEach(() => {
+    consoleError.mockRestore();
+    vi.unstubAllGlobals();
+  });
 
   it("renders instead of a blank page when a route throws", async () => {
     renderCrashingRoute();
@@ -106,6 +109,32 @@ describe("RouteErrorScreen", () => {
     expect(reportCaught).toHaveBeenCalledTimes(1);
     expect(reportCaught).toHaveBeenCalledWith(
       expect.any(Error),
+      expect.objectContaining({ source: "route_error_element" }),
+    );
+  });
+
+  it.each([
+    "Failed to fetch dynamically imported module: https://app.mcpjam.com/assets/trace-timeline-old.js",
+    "error loading dynamically imported module: https://app.mcpjam.com/assets/trace-timeline-old.js",
+  ])("offers a page refresh without a toaster: %s", async (message) => {
+    const error = new TypeError(message);
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    renderRouteThrowing(error);
+
+    expect(
+      await screen.findByRole("heading", { name: "Please refresh the page" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Something didn’t load. Refresh to try again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+    expect(reportCaught).toHaveBeenCalledWith(
+      error,
       expect.objectContaining({ source: "route_error_element" }),
     );
   });

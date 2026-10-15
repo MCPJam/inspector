@@ -159,6 +159,7 @@ describe("workspace tool catalog", () => {
       "read_server_skill_file",
       "start_claude_readiness_run",
       "start_openai_readiness_run",
+      "start_muse_readiness_run",
       "get_readiness_run",
       "list_readiness_runs",
       "cancel_readiness_run",

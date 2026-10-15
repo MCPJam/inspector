@@ -13,6 +13,7 @@ import {
 import { useContext } from "react";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import type { SuiteRunHistoryRow } from "../evaluate/suite-detail-model";
+import { targetKeyLabel } from "@/lib/eval-target-key";
 
 export const VISIBLE_RUN_CLIENT_PAIRINGS = 2;
 
@@ -53,7 +54,13 @@ export function RunClientsCell({
   column?: "client" | "model";
 }) {
   const availableModels = useContext(ModelDisplayNamesContext);
-  const modelName = (id: string) => modelDisplayName(id, availableModels);
+  // `models` are TARGETS (`targetKey`): the display name of the model, plus
+  // only what tells two targets of one model apart ("· High").
+  const targetKeysInView = rows.flatMap((row) => row.models);
+  const modelName = (key: string) =>
+    targetKeyLabel(key, targetKeysInView, (id) =>
+      modelDisplayName(id, availableModels),
+    );
   const clientLabel = (mapping: ClientModelPairing) =>
     mapping.clientVersionNumber
       ? `${mapping.client} · v${mapping.clientVersionNumber}`

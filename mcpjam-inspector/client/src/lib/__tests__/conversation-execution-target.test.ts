@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   describeConversationTargetDisclosure,
   readConversationExecutionTarget,
+  readHiddenEnvironmentConversationTarget,
 } from "../conversation-execution-target";
 
 describe("readConversationExecutionTarget", () => {
@@ -186,5 +187,100 @@ describe("recorded resume destination", () => {
         composer: { kind: "host", hostId: "other" },
       }).kind,
     ).toBe("mismatch");
+  });
+});
+
+describe("a conversation that ran as the Playground's hidden environment", () => {
+  const recorded = readConversationExecutionTarget({
+    resumeConfig: {
+      executionTarget: { kind: "environment", environmentId: "env_hidden" },
+    },
+  });
+  const adhocRow = {
+    environmentId: "env_hidden",
+    hostId: "host_1",
+    origin: "adhoc" as const,
+  };
+
+  it("reads as its client while the environments UI is hidden, so reopening it discloses nothing", async () => {
+    const target = await readHiddenEnvironmentConversationTarget(recorded, {
+      environmentsEnabled: false,
+      loadEnvironment: async () => adhocRow,
+    });
+    expect(target).toEqual({ kind: "host", hostId: "host_1" });
+    // The composer, on that client and still carrying its plugins through
+    // whatever environment it composes now, describes the conversation.
+    expect(
+      describeConversationTargetDisclosure({
+        recorded: target,
+        composer: { kind: "host", hostId: "host_1" },
+      }),
+    ).toEqual({ kind: "none" });
+    // Another client is still another place.
+    expect(
+      describeConversationTargetDisclosure({
+        recorded: target,
+        composer: { kind: "host", hostId: "host_2" },
+      }).kind,
+    ).toBe("mismatch");
+  });
+
+  it("leaves a NAMED environment as recorded — someone chose it", async () => {
+    await expect(
+      readHiddenEnvironmentConversationTarget(recorded, {
+        environmentsEnabled: false,
+        loadEnvironment: async () => ({
+          ...adhocRow,
+          origin: "named" as const,
+          name: "Staging",
+        }),
+      }),
+    ).resolves.toEqual(recorded);
+  });
+
+  it("translates nothing while the environments UI is on", async () => {
+    let read = false;
+    await expect(
+      readHiddenEnvironmentConversationTarget(recorded, {
+        environmentsEnabled: true,
+        loadEnvironment: async () => {
+          read = true;
+          return adhocRow;
+        },
+      }),
+    ).resolves.toEqual(recorded);
+    expect(read).toBe(false);
+  });
+
+  it("keeps the recorded target when the row can't be read", async () => {
+    for (const loadEnvironment of [
+      async () => null,
+      async () => {
+        throw new Error("offline");
+      },
+    ]) {
+      await expect(
+        readHiddenEnvironmentConversationTarget(recorded, {
+          environmentsEnabled: false,
+          loadEnvironment,
+        }),
+      ).resolves.toEqual(recorded);
+    }
+  });
+
+  it("passes a client or ad-hoc target through untouched", async () => {
+    const loadEnvironment = async () => adhocRow;
+    for (const target of [
+      { kind: "host", hostId: "h" } as const,
+      { kind: "adhoc" } as const,
+      { kind: "unrecorded" } as const,
+    ]) {
+      await expect(
+        readHiddenEnvironmentConversationTarget(target, {
+          environmentsEnabled: false,
+          loadEnvironment,
+        }),
+      ).resolves.toEqual(target);
+    }
   });
 });

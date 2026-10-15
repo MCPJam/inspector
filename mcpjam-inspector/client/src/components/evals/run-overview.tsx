@@ -29,8 +29,8 @@ import {
   getLatestRunMetricSource,
 } from "./helpers";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
-import { computeIterationResult } from "./pass-criteria";
-import { EvalIteration, EvalSuiteRun } from "./types";
+import { computeMeasuredIterationResult } from "./pass-criteria";
+import { EvalIteration, EvalSuiteRunListItem } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { apiKeyTail, runAgentName } from "@/lib/evals/run-origin";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
@@ -83,7 +83,7 @@ type RunResultBadgeKind =
  * `slack`/`discord`, so asking the origin whether this was an MCP run hid the
  * name for exactly the runs that have one.
  */
-function runCredentialLabel(run: EvalSuiteRun): string | null {
+function runCredentialLabel(run: EvalSuiteRunListItem): string | null {
   const agent = runAgentName(run);
   if (agent) return `via ${agent}`;
   const tail = apiKeyTail(run.attribution?.apiKeyId);
@@ -95,7 +95,10 @@ function runResultBadge(result: RunResultBadgeKind) {
     case "passed":
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
-      return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+      return {
+        label: "Failed",
+        className: "bg-destructive/50 text-foreground",
+      };
     case "inconclusive":
       // Amber, never red: the backend refused to call this run either way.
       return {
@@ -103,7 +106,10 @@ function runResultBadge(result: RunResultBadgeKind) {
         className: "bg-warning/50 text-foreground",
       };
     case "cancelled":
-      return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
+      return {
+        label: "Cancelled",
+        className: "bg-muted text-muted-foreground",
+      };
     case "timed_out":
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
     case "running":
@@ -119,8 +125,14 @@ function runResultBadge(result: RunResultBadgeKind) {
 
 interface RunOverviewProps {
   suite: { _id: string; name: string; source?: "ui" | "sdk" };
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   runsLoading: boolean;
+  runHistoryStatus?:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreRuns?: () => void;
   allIterations: EvalIteration[];
   runTrendData: Array<{
     runId: string;
@@ -148,7 +160,7 @@ interface RunOverviewProps {
    * that run, so the answer differs across the list. Omitted means every run
    * may be deleted — the local/playground case, with no membership to rank.
    */
-  canDeleteRun?: (run: EvalSuiteRun) => boolean;
+  canDeleteRun?: (run: EvalSuiteRunListItem) => boolean;
   /** Show suite delete using the same toolbar pattern as run batch delete. */
   canDeleteSuite?: boolean;
   onDeleteSuite?: () => void;
@@ -212,7 +224,7 @@ function getTableColumnCount(input: RunsTableWidthInput): number {
 }
 
 export function estimateRunsTableRequiredWidth(
-  input: RunsTableWidthInput
+  input: RunsTableWidthInput,
 ): number {
   let width =
     (input.includeSelectionColumn === false ? 0 : TABLE_SELECTION_COL_PX) +
@@ -250,7 +262,7 @@ export function resolveRunsTableLayout(input: {
 }): RunsTableLayout {
   const normalizedContainerWidth = Math.max(
     0,
-    Math.floor(input.containerWidth)
+    Math.floor(input.containerWidth),
   );
   const showTokens = input.hasTokenData;
   const showRunBy = true;
@@ -279,6 +291,8 @@ export function RunOverview({
   suite,
   runs,
   runsLoading,
+  runHistoryStatus,
+  onLoadMoreRuns,
   allIterations,
   runTrendData,
   modelStats,
@@ -304,7 +318,7 @@ export function RunOverview({
 
   const hasTokenData = useMemo(
     () => allIterations.some((i) => (i.tokensUsed || 0) > 0),
-    [allIterations]
+    [allIterations],
   );
 
   const hasCiMetadata = useMemo(
@@ -313,9 +327,9 @@ export function RunOverview({
         (r) =>
           !!r.ciMetadata?.branch ||
           !!r.ciMetadata?.commitSha ||
-          !!r.ciMetadata?.runUrl
+          !!r.ciMetadata?.runUrl,
       ),
-    [runs]
+    [runs],
   );
 
   useEffect(() => {
@@ -384,7 +398,7 @@ export function RunOverview({
         hasCiMetadata,
         includeSelectionColumn: selectionEnabled,
       }),
-    [tableViewportWidth, hasTokenData, hasCiMetadata, selectionEnabled]
+    [tableViewportWidth, hasTokenData, hasCiMetadata, selectionEnabled],
   );
 
   const rowGridTemplateColumns = useMemo(() => {
@@ -410,7 +424,7 @@ export function RunOverview({
       columns.push(
         responsiveLayout.metadataMode === "chip"
           ? "minmax(72px, 0.7fr)"
-          : "minmax(140px, 1.3fr)"
+          : "minmax(140px, 1.3fr)",
       );
     }
 
@@ -422,7 +436,7 @@ export function RunOverview({
       selectionEnabled
         ? `28px ${rowGridTemplateColumns}`
         : rowGridTemplateColumns,
-    [selectionEnabled, rowGridTemplateColumns]
+    [selectionEnabled, rowGridTemplateColumns],
   );
 
   const toggleRunSelection = useCallback((runId: string) => {
@@ -452,7 +466,7 @@ export function RunOverview({
       runs
         .filter((run) => selectedRunIds.has(run._id))
         .sort(compareRunsBySequence),
-    [runs, selectedRunIds]
+    [runs, selectedRunIds],
   );
 
   /**
@@ -465,10 +479,10 @@ export function RunOverview({
     () =>
       canDeleteRun
         ? runs.filter(
-            (run) => selectedRunIds.has(run._id) && !canDeleteRun(run)
+            (run) => selectedRunIds.has(run._id) && !canDeleteRun(run),
           )
         : [],
-    [canDeleteRun, runs, selectedRunIds]
+    [canDeleteRun, runs, selectedRunIds],
   );
 
   const canCompareSelected =
@@ -655,7 +669,7 @@ export function RunOverview({
                         "px-2 py-0.5 text-xs rounded transition-colors",
                         runsViewMode === value
                           ? "bg-background text-foreground shadow-sm font-medium"
-                          : "text-muted-foreground hover:text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
                       )}
                     >
                       {label}
@@ -719,47 +733,48 @@ export function RunOverview({
               ) : (
                 runs.map((run, runIndex) => {
                   const runIterations = allIterations.filter(
-                    (iter) => iter.suiteRunId === run._id
+                    (iter) => iter.suiteRunId === run._id,
                   );
                   // Only count completed iterations - exclude pending/cancelled
+                  // and infra rows, which measured nothing about the server.
                   const iterationResults = runIterations.map((i) =>
-                    computeIterationResult(i)
+                    computeMeasuredIterationResult(i),
                   );
                   const realTimePassed = iterationResults.filter(
-                    (r) => r === "passed"
+                    (r) => r === "passed",
                   ).length;
                   const realTimeFailed = iterationResults.filter(
-                    (r) => r === "failed" || r === "timed_out"
+                    (r) => r === "failed" || r === "timed_out",
                   ).length;
                   const realTimeTotal = realTimePassed + realTimeFailed;
                   const totalTokens = runIterations.reduce(
                     (sum, iter) => sum + (iter.tokensUsed || 0),
-                    0
+                    0,
                   );
 
                   const hasRealTimeTotals = realTimeTotal > 0;
                   const passed = hasRealTimeTotals
                     ? realTimePassed
-                    : run.summary?.passed ?? 0;
+                    : (run.summary?.passed ?? 0);
                   const failed = hasRealTimeTotals
                     ? realTimeFailed
-                    : run.summary?.failed ?? 0;
+                    : (run.summary?.failed ?? 0);
                   const total = hasRealTimeTotals
                     ? realTimeTotal
-                    : run.summary?.total ?? 0;
+                    : (run.summary?.total ?? 0);
                   const passRate =
                     total > 0 ? Math.round((passed / total) * 100) : null;
 
                   const timestamp = formatTime(
-                    run.completedAt ?? run.createdAt
+                    run.completedAt ?? run.createdAt,
                   );
 
                   const duration =
                     run.completedAt && run.createdAt
                       ? formatDuration(run.completedAt - run.createdAt)
                       : run.createdAt && run.status === "running"
-                      ? formatDuration(Date.now() - run.createdAt)
-                      : "—";
+                        ? formatDuration(Date.now() - run.createdAt)
+                        : "—";
 
                   // Status FIRST for a held run: its `result` is the truthy
                   // "pending", which would otherwise win the `||` below and
@@ -872,7 +887,9 @@ export function RunOverview({
                                       />
                                     ) : null}
                                     <AvatarFallback className="text-[10px]">
-                                      {creator ? getInitials(creator.name) : "?"}
+                                      {creator
+                                        ? getInitials(creator.name)
+                                        : "?"}
                                     </AvatarFallback>
                                   </Avatar>
                                 </TooltipTrigger>
@@ -1008,6 +1025,16 @@ export function RunOverview({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {(runHistoryStatus === "CanLoadMore" ||
+        runHistoryStatus === "LoadingMore") && (
+        <Button
+          variant="outline"
+          disabled={runHistoryStatus === "LoadingMore"}
+          onClick={onLoadMoreRuns}
+        >
+          {runHistoryStatus === "LoadingMore" ? "Loading…" : "Load more"}
+        </Button>
+      )}
     </div>
   );
 }

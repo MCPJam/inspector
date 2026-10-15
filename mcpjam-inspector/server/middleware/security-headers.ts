@@ -6,6 +6,7 @@
  * - X-Frame-Options: Prevents clickjacking
  * - X-XSS-Protection: Enables XSS filter
  * - Referrer-Policy: Controls referrer information
+ * - Strict-Transport-Security: hosted HTTPS requests only, see below
  *
  * HTML documents also get a Permissions-Policy denying hardware and sensor
  * features nothing here uses, and a Content-Security-Policy (MJ-016):
@@ -14,11 +15,13 @@
  *   plugin content. It is inherited by srcdoc iframes, including MCP-UI
  *   rawHtml widgets, so it holds nothing a widget document may rely on;
  * - in hosted mode, a REPORT-ONLY policy describing the full intended source
- *   list, built from this deploy's runtime config. It blocks nothing; its
- *   reports are what a later enforcing policy gets tuned against. The app
+ *   list, built from this deploy's runtime config. It blocks nothing; browser
+ *   console violations can guide validation of a future enforcing policy. The app
  *   integrates with many external services (WorkOS, PostHog, Sentry, Convex,
  *   Stripe, MCP servers with OAuth), which is why it is not enforced yet.
- *   It is sent on a sampled share of documents (CSP_REPORT_SAMPLE_RATE), and
+ *   The header goes on every hosted response, documents and assets alike.
+ *   It has no reporting endpoint: native browser reports bypass our telemetry
+ *   serializers and include the document URL. On documents,
  *   its script-src allows the inline scripts the server writes into the
  *   document through a per-response nonce (documentScriptNonce).
  *
@@ -63,12 +66,6 @@ export const DOCUMENT_PERMISSIONS_POLICY = [
   "window-management=()",
 ].join(", ");
 
-/**
- * Share of hosted HTML documents that carry the report-only policy, which
- * bounds how many violation reports page views produce.
- */
-export const CSP_REPORT_SAMPLE_RATE = 0.05;
-
 const DEFAULT_WORKOS_API_HOSTNAME = "api.workos.com";
 
 // Stripe.js, per https://docs.stripe.com/security/guide#content-security-policy,
@@ -88,6 +85,19 @@ const STRIPE_CONNECT_SOURCES = [
   "https://api.stripe.com",
   "https://maps.googleapis.com",
   "https://r.stripe.com",
+];
+
+// Meticulous session recorder, per
+// https://app.meticulous.ai/docs/session-recording/csp-exceptions. Only hosted
+// builds that set METICULOUS_RECORDING_TOKEN load it.
+const METICULOUS_SCRIPT_SOURCES = [
+  "https://snippet.meticulous.ai",
+  "https://browser.sentry-cdn.com",
+];
+const METICULOUS_FRAME_SOURCES = ["https://snippet.meticulous.ai"];
+const METICULOUS_CONNECT_SOURCES = [
+  "https://cognito-identity.us-west-2.amazonaws.com",
+  "https://user-events-v3.s3-accelerate.amazonaws.com",
 ];
 
 const scriptNonces = new WeakMap<Context, string>();
@@ -130,19 +140,6 @@ function convexSources(value: string | undefined): string[] {
   return [url.origin, `${socket}//${url.host}`];
 }
 
-/** The Sentry ingest origin and the CSP report endpoint for a DSN. */
-export function sentryCspTargets(
-  dsn: string,
-): { ingestOrigin: string; reportUri: string } | null {
-  const url = originOf(dsn);
-  const projectId = url?.pathname.replace(/^\/+|\/+$/g, "");
-  if (!url || !url.username || !projectId) return null;
-  return {
-    ingestOrigin: url.origin,
-    reportUri: `${url.origin}/api/${projectId}/security/?sentry_key=${url.username}`,
-  };
-}
-
 type Directive = [name: string, sources: Iterable<string>];
 
 function reportOnlyDirectives(
@@ -150,7 +147,7 @@ function reportOnlyDirectives(
   sandboxHosts: ReadonlySet<string>,
   sentryDsn: string,
 ): Directive[] {
-  const sentry = sentryCspTargets(sentryDsn);
+  const sentry = originOf(sentryDsn);
   const workosHost =
     runtimeConfig.workosApiHostname ?? DEFAULT_WORKOS_API_HOSTNAME;
   const connectSources = new Set<string>([
@@ -158,22 +155,38 @@ function reportOnlyDirectives(
     ...convexSources(runtimeConfig.convexUrl),
     ...convexSources(runtimeConfig.convexSiteUrl),
     `https://${workosHost}`,
-    ...(sentry ? [sentry.ingestOrigin] : []),
+    ...(sentry ? [sentry.origin] : []),
     ...STRIPE_CONNECT_SOURCES,
+    ...METICULOUS_CONNECT_SOURCES,
   ]);
   const frameSources = new Set<string>(["'self'"]);
   for (const host of sandboxHosts) {
     frameSources.add(`https://${host}`);
     frameSources.add(`https://*.${host}`);
   }
-  for (const source of [...STRIPE_FRAME_SOURCES, "https://www.youtube.com"]) {
+  for (const source of [
+    ...STRIPE_FRAME_SOURCES,
+    "https://www.youtube.com",
+    ...METICULOUS_FRAME_SOURCES,
+  ]) {
     frameSources.add(source);
   }
 
   return [
+    // The fallback for fetch directives not listed below (media-src, …);
+    // report-only, so an unlisted source only produces a report.
+    ["default-src", ["'self'"]],
     // 'unsafe-eval': JSON Schema validators (ajv) compile schemas at runtime
     // with `new Function`.
-    ["script-src", ["'self'", "'unsafe-eval'", ...STRIPE_SCRIPT_SOURCES]],
+    [
+      "script-src",
+      [
+        "'self'",
+        "'unsafe-eval'",
+        ...STRIPE_SCRIPT_SOURCES,
+        ...METICULOUS_SCRIPT_SOURCES,
+      ],
+    ],
     [
       "style-src",
       ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
@@ -184,11 +197,13 @@ function reportOnlyDirectives(
     ["img-src", ["'self'", "data:", "blob:", "https:"]],
     ["worker-src", ["'self'", "blob:"]],
     ["base-uri", ["'self'"]],
-    ...(sentry ? ([["report-uri", [sentry.reportUri]]] as Directive[]) : []),
   ];
 }
 
-function renderPolicy(directives: Directive[], scriptNonce?: string): string {
+function renderPolicy(
+  directives: Directive[],
+  scriptNonce?: string,
+): string {
   return directives
     .map(([name, iterable]) => {
       const sources = Array.from(iterable);
@@ -219,7 +234,7 @@ export function buildReportOnlyContentSecurityPolicy(
 
 let reportOnlyBase: Directive[] | null = null;
 
-function reportOnlyContentSecurityPolicy(scriptNonce?: string): string {
+function reportOnlyContentSecurityPolicy(scriptNonce: string | undefined): string {
   reportOnlyBase ??= reportOnlyDirectives(
     getInspectorClientRuntimeConfig(),
     SANDBOX_HOSTS,
@@ -239,23 +254,44 @@ function isHtmlDocument(res: Response): boolean {
     .startsWith("text/html");
 }
 
-function setDocumentPolicies(
+function setResponsePolicies(
   headers: Headers,
+  isDocument: boolean,
   reportOnlyPolicy: string | null,
 ): void {
-  headers.set("Content-Security-Policy", DOCUMENT_CONTENT_SECURITY_POLICY);
-  if (!headers.has("Permissions-Policy")) {
-    headers.set("Permissions-Policy", DOCUMENT_PERMISSIONS_POLICY);
+  if (isDocument) {
+    headers.set("Content-Security-Policy", DOCUMENT_CONTENT_SECURITY_POLICY);
+    if (!headers.has("Permissions-Policy")) {
+      headers.set("Permissions-Policy", DOCUMENT_PERMISSIONS_POLICY);
+    }
   }
   if (reportOnlyPolicy) {
     headers.set("Content-Security-Policy-Report-Only", reportOnlyPolicy);
   }
 }
 
+const ONE_YEAR_SECONDS = 31_536_000;
+
+/**
+ * Whether the client reached the hosted deployment over HTTPS. TLS terminates
+ * at the proxy, so `c.req.url` is `http://` internally and `x-forwarded-proto`
+ * carries the scheme; across more than one hop it is a comma-separated list
+ * whose first entry is the client-facing scheme. Hosted mode only: a local run
+ * has no proxy, so there the header is whatever the client chose to send.
+ */
+function isHttpsRequest(c: Context): boolean {
+  const forwardedProto = c.req.header("x-forwarded-proto");
+  if (forwardedProto) {
+    return forwardedProto.split(",")[0]?.trim().toLowerCase() === "https";
+  }
+  return new URL(c.req.url).protocol === "https:";
+}
+
 /**
  * Security headers middleware.
- * Adds standard security headers to all responses, and the document policies
- * above to HTML responses.
+ * Adds standard security headers to all responses, the document policies
+ * above to HTML responses, and (hosted) the report-only policy to every
+ * response that does not carry its own Content-Security-Policy.
  */
 export async function securityHeadersMiddleware(
   c: Context,
@@ -267,23 +303,41 @@ export async function securityHeadersMiddleware(
   c.header("X-XSS-Protection", "1; mode=block");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
 
+  // Hosted mode only. Browsers ignore STS received over plain HTTP (RFC 6797
+  // §8.1), so http://localhost is unaffected either way. https://localhost is
+  // not: a local run behind a TLS proxy would pin every service on localhost,
+  // on any port, to HTTPS for the whole max-age.
+  //
+  // `includeSubDomains` is left off on purpose: it would cover every
+  // *.mcpjam.com host, including the tunnel and sandbox subdomains, and one of
+  // those not serving HTTPS becomes unreachable for the whole max-age. Widening
+  // this, and preload, belong with the edge configuration rather than here.
+  if (HOSTED_MODE && isHttpsRequest(c)) {
+    c.header("Strict-Transport-Security", `max-age=${ONE_YEAR_SECONDS}`);
+  }
+
   await next();
 
   const res = c.res;
-  if (!isHtmlDocument(res) || res.headers.has("Content-Security-Policy")) {
+  if (res.headers.has("Content-Security-Policy")) {
     return;
   }
-  const reportOnlyPolicy =
-    HOSTED_MODE && Math.random() < CSP_REPORT_SAMPLE_RATE
-      ? reportOnlyContentSecurityPolicy(scriptNonces.get(c))
-      : null;
+  const isDocument = isHtmlDocument(res);
+  const reportOnlyPolicy = HOSTED_MODE
+    ? reportOnlyContentSecurityPolicy(
+        isDocument ? scriptNonces.get(c) : undefined,
+      )
+    : null;
+  if (!isDocument && !reportOnlyPolicy) {
+    return;
+  }
   try {
-    setDocumentPolicies(res.headers, reportOnlyPolicy);
+    setResponsePolicies(res.headers, isDocument, reportOnlyPolicy);
   } catch {
     // A response built from another Response (a proxied fetch) can carry
     // immutable headers; copy it into one whose headers can be set.
     const copy = new Response(res.body, res);
-    setDocumentPolicies(copy.headers, reportOnlyPolicy);
+    setResponsePolicies(copy.headers, isDocument, reportOnlyPolicy);
     c.res = copy;
   }
 }

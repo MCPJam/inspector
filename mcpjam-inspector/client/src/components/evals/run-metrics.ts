@@ -1,10 +1,14 @@
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
 import {
   iterationLatencyP50,
   iterationLatencyP95,
   percentile,
 } from "./helpers";
-import type { EvalIteration, EvalRunMetrics, EvalSuiteRun } from "./types";
+import type {
+  EvalIteration,
+  EvalRunMetrics,
+  EvalSuiteRunListItem,
+} from "./types";
 
 /**
  * Per-run metrics for the suite page.
@@ -22,7 +26,9 @@ import type { EvalIteration, EvalRunMetrics, EvalSuiteRun } from "./types";
 
 const ACTIVE_RUN_STATUSES = new Set(["pending", "running", "grading"]);
 
-export function isActiveRun(run: Pick<EvalSuiteRun, "status">): boolean {
+export function isActiveRun(
+  run: Pick<EvalSuiteRunListItem, "status">,
+): boolean {
   return ACTIVE_RUN_STATUSES.has(run.status);
 }
 
@@ -32,7 +38,7 @@ export function isActiveRun(run: Pick<EvalSuiteRun, "status">): boolean {
  * its iterations carry no stored verdict (only the browser's tool-call matcher
  * can grade those, so the server's pass counts would be short).
  */
-export function runNeedsIterationFold(run: EvalSuiteRun): boolean {
+export function runNeedsIterationFold(run: EvalSuiteRunListItem): boolean {
   if (isActiveRun(run)) return true;
   if (!run.metrics) return true;
   return run.metrics.results.unscored > 0;
@@ -44,6 +50,29 @@ function durationMs(iteration: EvalIteration): number | null {
   if (typeof start !== "number" || typeof end !== "number") return null;
   if (end < start) return null;
   return end - start;
+}
+
+/**
+ * The effort an iteration ran at, read loosely off its execution record
+ * (`execution.effectiveSettings.reasoningEffort`) exactly as the backend fold
+ * does. Undefined when there is no record or it ran without an effort.
+ */
+export function iterationReasoningEffort(
+  iteration: Pick<EvalIteration, "execution">,
+): string | undefined {
+  const execution = iteration.execution as
+    | { effectiveSettings?: { reasoningEffort?: unknown } | null }
+    | null
+    | undefined;
+  const effort = execution?.effectiveSettings?.reasoningEffort;
+  if (typeof effort !== "string") return undefined;
+  const trimmed = effort.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Same key as the backend's `modelEffortGroupKey`; no effort keys as `default`. */
+function modelEffortKey(model: string, effort: string | undefined): string {
+  return `${model}::${effort ?? "default"}`;
 }
 
 /** A client-side fold also keeps its raw durations, for exact pooling. */
@@ -61,6 +90,7 @@ export function runMetricsFromIterations(
     setupFailed: 0,
     skipped: 0,
     unscored: 0,
+    infraError: 0,
   };
   const durationsMs: number[] = [];
   let tokensTotal = 0;
@@ -73,13 +103,17 @@ export function runMetricsFromIterations(
   const models = new Map<string, EvalRunMetrics["models"][number]>();
 
   for (const iteration of iterations) {
-    const result = computeIterationResult(iteration);
+    // An infra row lands in its own bucket and in no verdict count, exactly
+    // as the backend fold does (`evalRunMetrics.verdictOf`).
+    const result = computeMeasuredIterationResult(iteration);
     const bucket =
       result === "timed_out"
         ? "timedOut"
         : result === "setup_failed"
           ? "setupFailed"
-          : result;
+          : result === "infra_error"
+            ? "infraError"
+            : result;
     results[bucket] += 1;
 
     if (iteration.status === "completed") {
@@ -107,18 +141,32 @@ export function runMetricsFromIterations(
     }
     const model = iteration.testCaseSnapshot?.model?.trim();
     if (model) {
-      const row = models.get(model) ?? {
+      const reasoningEffort = iterationReasoningEffort(iteration);
+      const key = modelEffortKey(model, reasoningEffort);
+      const row = models.get(key) ?? {
         model,
         total: 0,
         passed: 0,
         failed: 0,
         timedOut: 0,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
       };
       row.total += 1;
       if (result === "passed") row.passed += 1;
       else if (result === "failed") row.failed += 1;
       else if (result === "timed_out") row.timedOut += 1;
-      models.set(model, row);
+      if (typeof cost === "number") {
+        row.costUsd = (row.costUsd ?? 0) + cost;
+        row.costedIterations = (row.costedIterations ?? 0) + 1;
+      }
+      const reasoningTokens = iteration.usage?.reasoningTokens;
+      if (
+        typeof reasoningTokens === "number" &&
+        Number.isFinite(reasoningTokens)
+      ) {
+        row.reasoningTokens = (row.reasoningTokens ?? 0) + reasoningTokens;
+      }
+      models.set(key, row);
     }
   }
 
@@ -164,7 +212,7 @@ export function metricsByRunFromIterations(
  * else a fold of the run's loaded iterations, else `null` (still loading).
  */
 export function resolveRunMetrics(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   iterations: readonly EvalIteration[] | undefined,
 ): RunMetrics | null {
   if (!runNeedsIterationFold(run) && run.metrics) return run.metrics;
@@ -182,7 +230,7 @@ export type RunMetricsByRun = ReadonlyMap<string, RunMetrics>;
  * back to the stored summary while nothing has been decided.
  */
 export function computeRunEffectiveStatsFromMetrics(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   metrics: RunMetrics | null | undefined,
 ): {
   effectivePassed: number;

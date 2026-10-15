@@ -21,6 +21,11 @@ concurrency:
 jobs:
   real-engines:
     name: Security / ${{ matrix.os }}
+    # Skip Dependabot's own rebases: it rebases every open PR each time main's
+    # lockfile moves, and the dependency change under test is the same one
+    # this job already ran on when the PR opened. That cost a macOS and a
+    # Windows runner per open Dependabot PR per wave (macOS is capped at 5).
+    if: ${{ !(github.event.action == 'synchronize' && github.event.sender.login == 'dependabot[bot]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -28,8 +33,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24.14.0"
           cache: npm

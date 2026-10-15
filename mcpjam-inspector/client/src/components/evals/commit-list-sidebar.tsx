@@ -1,5 +1,5 @@
 import { GitCommit } from "lucide-react";
-import type { CommitGroup, EvalSuiteRun } from "./types";
+import type { CommitGroup, EvalSuiteRunListItem } from "./types";
 import {
   evalStatusLeftBorderClasses,
   evalStatusMiniBarClasses,
@@ -45,7 +45,7 @@ function commitGroupOutcomeTitle(status: CommitGroup["status"]): string {
   }
 }
 
-function runOutcomeTitle(run: EvalSuiteRun): string {
+function runOutcomeTitle(run: EvalSuiteRunListItem): string {
   const isRunning = run.status === "running" || run.status === "pending";
   if (isRunning) return "Run in progress";
   if (run.result === "passed") return "Last run passed";

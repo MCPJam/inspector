@@ -11,6 +11,12 @@ declare module "hono" {
   interface ContextVariableMap {
     bridgeCaller?: "local" | "tunnel";
     guestId?: string;
+    /**
+     * `Date.now()` when a hosted server check reached the server, before its
+     * queue wait. Set by the server-check middleware; the hosted Connect route
+     * counts `WEB_SERVER_CHECK_DEADLINE_MS` from it. Absent outside hosted.
+     */
+    serverCheckStartedAt?: number;
     requestLogContext?: RequestLogContext;
     /**
      * Code + message from the last `webError()` on this request. Set so
@@ -35,7 +41,21 @@ declare module "hono" {
        * `http.request.failed` in `log-events.ts`. Absent means unknown.
        */
       hop?: RouteFailureHop;
+      /**
+       * Whether the route's own capture decision SENT this failure to Sentry.
+       * Explicit, because the capture stamp only says a decision was made —
+       * a decline sets it too. Read by the request-log backstop, which
+       * captures a surface's failures nobody else did. Absent means no
+       * decision was recorded, which the backstop treats as not captured.
+       */
+      captured?: boolean;
     };
+    /**
+     * Set when a failure on this request was sent to Sentry by a
+     * request-scoped stream reporter — the path a 200 stream fails on, which
+     * `webErrorMeta` never sees.
+     */
+    failureCaptured?: boolean;
     /**
      * Auth method used to resolve the caller. Set by `bearerAuthMiddleware`:
      * - `"workos_api_key"` — caller presented a WorkOS `sk_…` API key

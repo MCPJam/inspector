@@ -251,4 +251,23 @@ describe("consumeFullStreamAsEvalEvents", () => {
       { type: "text_delta", content: "Found it." },
     ]);
   });
+
+  it("hands the stream's error part over as the typed object, emitting nothing", async () => {
+    const events: any[] = [];
+    const errors: unknown[] = [];
+    const providerError = {
+      name: "AI_APICallError",
+      statusCode: 503,
+    };
+    await consumeFullStreamAsEvalEvents(
+      asyncStream([{ type: "error", error: providerError }]) as any,
+      {
+        emit: (e) => events.push(e),
+        getStepIndex: () => 0,
+        onError: (error) => errors.push(error),
+      },
+    );
+    expect(events).toEqual([]);
+    expect(errors).toEqual([providerError]);
+  });
 });

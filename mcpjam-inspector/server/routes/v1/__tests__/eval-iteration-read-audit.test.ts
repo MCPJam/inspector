@@ -37,12 +37,14 @@ vi.mock("../../../services/guest-token.js", () => ({
 }));
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: vi.fn(),
-    action: convexActionMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: vi.fn(),
+      action: convexActionMock,
+    };
+  }),
 }));
 
 vi.mock("../../../utils/route-error-report.js", async () => {

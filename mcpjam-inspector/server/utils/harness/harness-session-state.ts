@@ -119,8 +119,8 @@ export type HarnessResumeEligibility = {
  * (`detach()` embeds it at `data.bridge.sandboxId`); an unexpected shape
  * degrades to the legacy path rather than throwing. This only detects a
  * REPROVISIONED box — it cannot tell whether a bridge died inside the SAME
- * sandbox (that path is swallowed inside the adapter and falls back fresh on
- * its own).
+ * sandbox, and does not need to: a resumed turn respawns its bridge rather
+ * than reattaching (`diskResumeState`).
  */
 export function getHarnessResumeEligibility(args: {
   state: HarnessResumePayload | null | undefined;

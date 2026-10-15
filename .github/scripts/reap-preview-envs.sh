@@ -2,10 +2,10 @@
 # Delete Railway PR preview environments whose PR is no longer open.
 #
 # Why this exists: the `destroy-preview` and `destroy-backend-pr-preview`
-# jobs in pr-preview.yml only run when GitHub delivers the PR's `closed`
-# event, and that is not reliable. GitHub never starts a `pull_request`
-# workflow for a PR that has a merge conflict — close included — and bulk
-# closes lose runs too. A close run can also die (CLI install), be cancelled
+# jobs only run when GitHub delivers a close event or backend dispatch.
+# Historically conflicted PRs missed the pull_request close workflow;
+# preview-close.yml now uses pull_request_target to cover those as well.
+# A close run can still fail, be cancelled
 # by a late backend callback sharing its concurrency group, or be followed by
 # an upsert that recreates the environment. Every one of those leaves a full
 # inspector running with nothing to stop it. This reaper keys on PR state
@@ -24,12 +24,14 @@
 #                           or if it can't list PRs, `pr-be-*` envs are left
 #                           alone.
 #   STAGING_WORKOS_API_KEY  Needed to deregister the preview URL. Without it
-#                           nothing is deleted (see below).
+#                           previews with domains are preserved.
 #   DRY_RUN                 1 (default) lists what would be reaped; 0 deletes.
 #   MAX_DELETIONS           Cap per run (default 50). The rest wait an hour.
 #   GRACE_MINUTES           Skip PRs closed more recently than this (default
 #                           30) so the close-time destroy job goes first and a
 #                           quick reopen isn't raced.
+#
+#   TARGET_ENVIRONMENT      Optional exact preview name for close-time cleanup.
 #
 # Safety:
 #   - Only env names matching ^pr-[0-9]+$ or ^pr-be-[0-9]+$ are considered;
@@ -58,6 +60,11 @@ BACKEND_GITHUB_TOKEN="${BACKEND_GITHUB_TOKEN:-}"
 DRY_RUN="${DRY_RUN:-1}"
 MAX_DELETIONS="${MAX_DELETIONS:-50}"
 GRACE_MINUTES="${GRACE_MINUTES:-30}"
+TARGET_ENVIRONMENT="${TARGET_ENVIRONMENT:-}"
+if [ -n "$TARGET_ENVIRONMENT" ] && ! [[ "$TARGET_ENVIRONMENT" =~ ^pr-(be-)?[0-9]+$ ]]; then
+  echo "::error::TARGET_ENVIRONMENT must be pr-<number> or pr-be-<number>" >&2
+  exit 2
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RAILWAY_ENDPOINT="https://backboard.railway.app/graphql/v2"
@@ -126,9 +133,10 @@ fi
 # One line per preview env:
 #   <id> <name> <first service domain or -> <service domain count> <custom domain count>
 PREVIEWS_FILE="$TMP_DIR/previews.tsv"
-jq -r '
+jq -r --arg target "$TARGET_ENVIRONMENT" '
   .data.project.environments.edges[].node
   | select(.name | test("^pr-(be-)?[0-9]+$"))
+  | select($target == "" or .name == $target)
   | [ .id,
       .name,
       ([.serviceInstances.edges[].node.domains.serviceDomains[].domain] | first // "-"),
@@ -136,30 +144,43 @@ jq -r '
       ([.serviceInstances.edges[].node.domains.customDomains[]] | length)
     ] | @tsv' "$ENVS_FILE" >"$PREVIEWS_FILE"
 
-# Read the whole WorkOS redirect URI list once before trusting any "already
-# clean" answer from it. The per-env check below relies on that list being
-# complete; until 2026-09-25 it silently read only the newest 100 rows. The
-# count also lands in the summary, so a dry run shows whether paging works.
+if [ ! -s "$PREVIEWS_FILE" ]; then
+  echo "No matching preview environments; nothing to delete."
+  exit 0
+fi
+
+# Scheduled sweeps report the full WorkOS list count to diagnose pagination.
+# Targeted closes rely on the strict per-preview check below, which also reads
+# every page. Avoid a global dependency for previews that never had a URL.
 WORKOS_REDIRECTS="not checked (no STAGING_WORKOS_API_KEY)"
-if [ -n "${STAGING_WORKOS_API_KEY:-}" ]; then
+if [ -n "$TARGET_ENVIRONMENT" ]; then
+  WORKOS_REDIRECTS="checked per preview when it has a domain"
+elif [ -n "${STAGING_WORKOS_API_KEY:-}" ]; then
   if ! WORKOS_REDIRECTS=$("$SCRIPT_DIR/workos-cleanup.sh" --count redirect_uris); then
     echo "::error::Couldn't read the full WorkOS redirect URI list; reaping nothing" >&2
     exit 1
   fi
 fi
 
-if ! OPEN_INSPECTOR=$(list_open_prs "$INSPECTOR_REPO" "$GITHUB_TOKEN"); then
-  echo "::error::Could not list open PRs in ${INSPECTOR_REPO}; reaping nothing" >&2
-  exit 1
+OPEN_INSPECTOR=""
+if [ -z "$TARGET_ENVIRONMENT" ]; then
+  if ! OPEN_INSPECTOR=$(list_open_prs "$INSPECTOR_REPO" "$GITHUB_TOKEN"); then
+    echo "::error::Could not list open PRs in ${INSPECTOR_REPO}; reaping nothing" >&2
+    exit 1
+  fi
 fi
 BACKEND_OK=0
 OPEN_BACKEND=""
 if [ -n "$BACKEND_REPO" ] && [ -n "$BACKEND_GITHUB_TOKEN" ]; then
-  if OPEN_BACKEND=$(list_open_prs "$BACKEND_REPO" "$BACKEND_GITHUB_TOKEN"); then
+  if [ -n "$TARGET_ENVIRONMENT" ]; then
+    # A targeted close does its authoritative GET below. It must not depend
+    # on a repository-wide PR listing (especially one in the other repo).
+    BACKEND_OK=1
+  elif OPEN_BACKEND=$(list_open_prs "$BACKEND_REPO" "$BACKEND_GITHUB_TOKEN"); then
     BACKEND_OK=1
   fi
 fi
-if [ "$BACKEND_OK" -eq 0 ]; then
+if [ "$BACKEND_OK" -eq 0 ] && { [ -z "$TARGET_ENVIRONMENT" ] || [[ "$TARGET_ENVIRONMENT" == pr-be-* ]]; }; then
   echo "::warning::Backend PRs can't be read; leaving every pr-be-* environment alone" >&2
 fi
 

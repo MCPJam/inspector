@@ -3,13 +3,23 @@ import { Hono } from "hono";
 
 const mocks = vi.hoisted(() => ({
   getAllFlags: vi.fn(),
+  flagAccountEmail: vi.fn(),
   constructPostHog: vi.fn(),
   validateGuestToken: vi.fn(),
   verifyAuthKitToken: vi.fn(),
+  localHarnessAccountEnabled: vi.fn(async (..._args: unknown[]) => false),
+}));
+
+vi.mock("../../../utils/flag-account.js", () => ({ flagAccountEmail: mocks.flagAccountEmail }));
+
+// The account check is its own module's concern (readiness.test.ts); here it
+// only matters what the route does with its answer, or its failure.
+vi.mock("../../../utils/harness/local/readiness.js", () => ({
+  localHarnessAccountEnabled: mocks.localHarnessAccountEnabled,
 }));
 
 vi.mock("posthog-node", () => ({
-  PostHog: vi.fn(() => {
+  PostHog: vi.fn(function () {
     mocks.constructPostHog();
     return {
       getAllFlags: mocks.getAllFlags,
@@ -38,6 +48,12 @@ import { CLIENT_FEATURE_FLAG_KEYS } from "../../../../shared/client-feature-flag
 
 // posthog-js generates a v7 UUID for a visitor it has not identified.
 const ANONYMOUS_ID = "0192a3f1-8c5e-7b3d-8f21-6a4c9e0d1b2f";
+// Each local harness's flag, as answered to anyone the server has not
+// verified as a member who may run it here.
+const LOCAL_HARNESS_FLAGS_OFF = {
+  "local-harness-enabled": false,
+  "local-codex-enabled": false,
+};
 
 function createApp() {
   const app = new Hono();
@@ -55,6 +71,7 @@ async function getFlags(query = "", headers: Record<string, string> = {}) {
 describe("GET /api/web/flags", () => {
   beforeEach(() => {
     mocks.getAllFlags.mockReset().mockResolvedValue({});
+    mocks.flagAccountEmail.mockReset().mockResolvedValue(undefined);
     mocks.constructPostHog.mockReset();
     mocks.validateGuestToken
       .mockReset()
@@ -70,7 +87,7 @@ describe("GET /api/web/flags", () => {
 
   it("returns only allowlisted keys with flag-shaped values", async () => {
     mocks.getAllFlags.mockResolvedValueOnce({
-      "computers-enabled": true,
+      "sandbox-images-enabled": true,
       "guest-credit-wall-copy": "treatment",
       xaa: false,
       "unlisted-flag": true,
@@ -82,14 +99,27 @@ describe("GET /api/web/flags", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       flags: {
-        "local-harness-enabled": false,
-        "computers-enabled": true,
+        ...LOCAL_HARNESS_FLAGS_OFF,
+        "sandbox-images-enabled": true,
         "guest-credit-wall-copy": "treatment",
         xaa: false,
       },
     });
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("vary")).toContain("Authorization");
+  });
+
+  it("answers each local harness flag server-side, never from PostHog alone", async () => {
+    // Without a verified member this machine runs neither harness locally,
+    // whatever PostHog evaluates for the distinct id.
+    mocks.getAllFlags.mockResolvedValueOnce({
+      "local-harness-enabled": true,
+      "local-codex-enabled": true,
+    });
+
+    const { body } = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
+
+    expect(body).toEqual({ flags: LOCAL_HARNESS_FLAGS_OFF });
   });
 
   it("evaluates exactly the allowlist, whatever the request names", async () => {
@@ -123,7 +153,7 @@ describe("GET /api/web/flags", () => {
   it("evaluates the verified guest, not a distinct_id the request names", async () => {
     mocks.validateGuestToken.mockResolvedValueOnce({
       valid: true,
-      guestId: "guest-7",
+      guestId: "a1234567-1234-4234-8234-123456789abc",
     });
 
     await getFlags("?distinct_id=user_someone_else", {
@@ -131,18 +161,47 @@ describe("GET /api/web/flags", () => {
     });
 
     expect(mocks.validateGuestToken).toHaveBeenCalledWith("guest-token");
-    expect(mocks.getAllFlags.mock.calls[0][0]).toBe("guest-7");
+    expect(mocks.getAllFlags.mock.calls[0][0]).toBe("a1234567-1234-4234-8234-123456789abc");
+    expect(mocks.getAllFlags.mock.calls[0][1].personProperties).not.toHaveProperty("email");
+    expect(mocks.flagAccountEmail).not.toHaveBeenCalled();
   });
 
   it("evaluates the verified signed-in user", async () => {
-    mocks.verifyAuthKitToken.mockResolvedValueOnce({ sub: "user_1" });
+    mocks.verifyAuthKitToken.mockResolvedValueOnce({ sub: "user_01H00000000000000000000000" });
 
     await getFlags("?distinct_id=user_someone_else", {
       Authorization: "Bearer access-token",
     });
 
     expect(mocks.verifyAuthKitToken).toHaveBeenCalledWith("access-token");
-    expect(mocks.getAllFlags.mock.calls[0][0]).toBe("user_1");
+    expect(mocks.getAllFlags.mock.calls[0][0]).toBe("user_01H00000000000000000000000");
+  });
+
+
+  it("targets authenticated account email while ignoring caller email", async () => {
+    mocks.verifyAuthKitToken.mockResolvedValueOnce({ sub: "user_01H00000000000000000000000" });
+    mocks.flagAccountEmail.mockResolvedValueOnce("account@example.test");
+    await getFlags("?email=caller@example.test", { Authorization: "Bearer access-token" });
+    expect(mocks.flagAccountEmail).toHaveBeenCalledWith("access-token", "user_01H00000000000000000000000");
+    expect(mocks.getAllFlags.mock.calls[0][1].personProperties.email).toBe("account@example.test");
+    await getFlags(`?distinct_id=${ANONYMOUS_ID}&email=caller@example.test`);
+    expect(mocks.getAllFlags.mock.calls[1][1].personProperties).not.toHaveProperty("email");
+  });
+
+  it("answers a failed local account check as that flag off, not a failed response", async () => {
+    // With a published runtime pack the local check is reached for a member;
+    // a backend hiccup there must not take every other flag down with it.
+    mocks.verifyAuthKitToken.mockResolvedValueOnce({ sub: "user_01H00000000000000000000000" });
+    mocks.getAllFlags.mockResolvedValueOnce({ "some-other-flag": true });
+    mocks.localHarnessAccountEnabled.mockRejectedValue(new Error("backend down"));
+
+    const { response, body } = await getFlags("", {
+      Authorization: "Bearer access-token",
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ flags: LOCAL_HARNESS_FLAGS_OFF });
+    mocks.localHarnessAccountEnabled.mockReset().mockResolvedValue(false);
   });
 
   it("answers an unverified bearer with no values", async () => {
@@ -151,7 +210,7 @@ describe("GET /api/web/flags", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ flags: { "local-harness-enabled": false } });
+    expect(body).toEqual({ flags: LOCAL_HARNESS_FLAGS_OFF });
     expect(mocks.getAllFlags).not.toHaveBeenCalled();
   });
 
@@ -168,7 +227,7 @@ describe("GET /api/web/flags", () => {
     const { response, body } = await getFlags(query);
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ flags: { "local-harness-enabled": false } });
+    expect(body).toEqual({ flags: LOCAL_HARNESS_FLAGS_OFF });
     expect(mocks.getAllFlags).not.toHaveBeenCalled();
   });
 
@@ -176,7 +235,7 @@ describe("GET /api/web/flags", () => {
     mocks.getAllFlags.mockRejectedValueOnce(new Error("unavailable"));
     const failed = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
     expect(failed.response.status).toBe(200);
-    expect(failed.body).toEqual({ flags: { "local-harness-enabled": false } });
+    expect(failed.body).toEqual({ flags: LOCAL_HARNESS_FLAGS_OFF });
 
     await shutdownAnalytics();
     mocks.constructPostHog.mockImplementationOnce(() => {
@@ -184,6 +243,6 @@ describe("GET /api/web/flags", () => {
     });
     const unconfigured = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
     expect(unconfigured.response.status).toBe(200);
-    expect(unconfigured.body).toEqual({ flags: { "local-harness-enabled": false } });
+    expect(unconfigured.body).toEqual({ flags: LOCAL_HARNESS_FLAGS_OFF });
   });
 });

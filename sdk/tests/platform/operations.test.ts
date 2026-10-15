@@ -331,6 +331,8 @@ const SESSION_SUMMARIES = [
 type FixtureOverrides = {
   servers?: unknown[];
   suites?: unknown[];
+  /** The run's iteration page. Default: {@link ITERATIONS}. */
+  iterations?: unknown[];
   /**
    * Replaces the sessions envelope wholesale, so a test can model an OLD
    * backend: one that ignored the unknown `scope` param, ran a title search,
@@ -524,7 +526,10 @@ function makeClient(overrides: FixtureOverrides = {}): {
     if (
       /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/.test(path)
     ) {
-      return Response.json({ items: ITERATIONS, nextCursor: "cursor-2" });
+      return Response.json({
+        items: overrides.iterations ?? ITERATIONS,
+        nextCursor: "cursor-2",
+      });
     }
     if (
       /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/.test(
@@ -1611,14 +1616,15 @@ describe("eval run polling operations", () => {
       expect(description).toContain(`\`${state}\``);
     }
     // THE claim this whole vocabulary exists to protect.
-    expect(description).toContain("A LOCATION, NOT A CAUSE");
+    expect(description).toContain("where the chain stopped, not its cause");
     expect(description).toContain(
-      "authorizes proposing a change to the server under test"
+      "describe a change to the server under test"
     );
-    // The full 29-reason vocabulary does not belong in a tool description; it
-    // belongs where an agent already fetches reference material. Named here so
-    // the pointer cannot be dropped while the skill stays served.
-    expect(description).toContain("user-value-chain-glossary");
+    // Facts, not orders, and no pointer to another source to read
+    // instructions from: Claude's directory review rejects both. The glossary
+    // skill is still served for a client that loads it on its own.
+    expect(description).not.toContain("user-value-chain-glossary");
+    expect(description).not.toContain("START THERE");
     // And the phrase that would make a client render a spend warning on a
     // read-only operation (mcp/tests/platformTools.test.ts ties it to
     // `risk: "spend"`, which a read must never declare).
@@ -1664,6 +1670,31 @@ describe("eval run polling operations", () => {
         iterationId: "iter-1",
       }).success
     ).toBe(false);
+  });
+
+  it("passes an infra-failed iteration's infraError through untouched", async () => {
+    // What `mcpjam eval iterations --json` prints: the page as the API sent
+    // it, so a trial MCPJam's own infrastructure failed says so.
+    const infraFailed = {
+      ...ITERATIONS[0],
+      id: "iter-2",
+      status: "failed",
+      result: "failed",
+      error: "The AI provider is temporarily unavailable.",
+      infraError: {
+        class: "provider_unavailable",
+        layer: "model",
+        retryable: true,
+        code: "provider_error",
+        httpStatus: 503,
+      },
+    };
+    const { client } = makeClient({ iterations: [infraFailed] });
+    const result = await listEvalRunIterationsOperation.execute(
+      { project: "new", runId: "run-1" },
+      { client }
+    );
+    expect(result.items[0]?.infraError).toEqual(infraFailed.infraError);
   });
 
   it("forwards iteration pagination params and surfaces nextCursor", async () => {
@@ -2370,6 +2401,7 @@ describe("operation catalog consistency", () => {
     check_host_compatibility: { server: "s" },
     start_claude_readiness_run: { server: "s" },
     start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
+    start_muse_readiness_run: { server: "s" },
     get_readiness_run: { run: "r" },
     list_readiness_runs: {},
     cancel_readiness_run: { run: "r" },
@@ -2718,6 +2750,7 @@ describe("operation catalog consistency", () => {
       // the opt-in — spends the organization's credits.
       "start_claude_readiness_run",
       "start_openai_readiness_run",
+      "start_muse_readiness_run",
       "start_conformance_run",
       // Stops one. A write because it changes the row, spending nothing.
       "cancel_readiness_run",

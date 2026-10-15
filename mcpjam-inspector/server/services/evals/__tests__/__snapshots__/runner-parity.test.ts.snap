@@ -497,6 +497,16 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "evalErrors": [
+          {
+            "message": "pinned_server_not_connected: "Asana" is not connected in this run's environment",
+            "reason": "setupAborted",
+          },
+        ],
+        "evalExecutionFailure": {
+          "phase": "setup",
+          "reason": "execution_stopped",
+        },
         "failedTurnCount": 0,
         "failureCategory": "setup",
         "frictionSignals": {
@@ -2661,6 +2671,16 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "evalErrors": [
+          {
+            "message": "pinned_server_not_connected: "Asana" is not connected in this run's environment",
+            "reason": "setupAborted",
+          },
+        ],
+        "evalExecutionFailure": {
+          "phase": "setup",
+          "reason": "execution_stopped",
+        },
         "failedTurnCount": 0,
         "failureCategory": "setup",
         "frictionSignals": {
@@ -3978,6 +3998,12 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "evalErrors": [
+          {
+            "message": "boom",
+            "reason": "protocolError",
+          },
+        ],
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -4224,6 +4250,12 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "evalErrors": [
+          {
+            "message": "boom",
+            "reason": "protocolError",
+          },
+        ],
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,
@@ -5548,6 +5580,16 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "metadata": {
         "argumentMismatchCount": 0,
         "endedWithQuestion": false,
+        "evalErrors": [
+          {
+            "message": "provider stream exploded",
+            "reason": "setupAborted",
+          },
+        ],
+        "evalExecutionFailure": {
+          "phase": "execution",
+          "reason": "execution_stopped",
+        },
         "failedTurnCount": 0,
         "frictionSignals": {
           "callCount": 0,

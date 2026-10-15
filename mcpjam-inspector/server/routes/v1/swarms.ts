@@ -42,11 +42,18 @@ import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { SWARM_DESCRIPTION_MAX_CHARS } from "../../../shared/swarm-description.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const swarms = new Hono();
 
+// `redactedIsRefusal`: both reads here scope caller-supplied ids, and
+// production Convex masks the plain membership refusal to "Server Error" —
+// without it a cross-tenant probe answered 502 (MJ-021).
 function translateReadError(error: unknown): WebRouteError {
-  return translateConvexReadError(error, { scope: "v1.swarms" });
+  return translateConvexReadError(error, {
+    scope: "v1.swarms",
+    redactedIsRefusal: true,
+  });
 }
 
 type SwarmRow = {
@@ -217,7 +224,7 @@ export async function requireSwarmInProject(
 
 // GET /v1/projects/:projectId/swarms
 swarms.get("/projects/:projectId/swarms", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.swarms");
   const client = createConvexClient(await getConvexBearerForRequest(c));
   let rows: SwarmRow[] | null;
   try {

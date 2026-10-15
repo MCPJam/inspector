@@ -4,6 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import { RunResultsMatrix } from "../run-results-matrix";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 
+// The drawer asks useSelectedRun for the full run; this fixture already
+// carries its snapshot, so that read stays idle.
+vi.mock("convex/react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("convex/react")>()),
+  useQueries: () => ({}),
+}));
+
 vi.mock("../../evals/iteration-details", () => ({
   IterationDetails: ({
     hostSnapshot,

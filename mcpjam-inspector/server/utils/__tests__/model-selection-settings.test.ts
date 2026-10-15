@@ -109,15 +109,16 @@ describe("resolveEffectiveModelSettings: reasoning effort", () => {
     expect(result.refusal.reason).toContain("reasoning effort");
   });
 
-  it("orgCloud: refused (the backend route does not apply one)", () => {
+  it("orgCloud: kept for the backend to apply, no provider options", () => {
     const result = resolveEffectiveModelSettings({
       route: "orgCloud",
       modelDefinition: OPENAI_GPT5,
       selection: localSelection({ reasoningEffort: "low" }, "openai/gpt-5"),
     });
-    expect(result).toMatchObject({
-      ok: false,
-      refusal: { code: "capability_missing" },
+    expect(result).toEqual({
+      ok: true,
+      settings: { reasoningEffort: "low" },
+      sources: { reasoningEffort: "selection" },
     });
   });
 
@@ -162,7 +163,7 @@ describe("reasoningEffortProviderOptions", () => {
     expect(
       reasoningEffortProviderOptions({
         providerKey: "anthropic",
-        modelId: "anthropic/claude-sonnet-4.5",
+        modelId: "anthropic/claude-sonnet-4.6",
         effort: "medium",
       }),
     ).toEqual({
@@ -172,9 +173,17 @@ describe("reasoningEffortProviderOptions", () => {
       reasoningEffortProviderOptions({
         providerKey: "anthropic",
         modelId: "claude-opus-4-5",
+        effort: "high",
+      }),
+    ).toEqual({ anthropic: { effort: "high" } });
+    // Opus 4.5 takes low-high only; max needs 4.6+.
+    expect(
+      reasoningEffortProviderOptions({
+        providerKey: "anthropic",
+        modelId: "claude-opus-4-5",
         effort: "max",
       }),
-    ).toEqual({ anthropic: { effort: "max" } });
+    ).toBeUndefined();
     expect(
       reasoningEffortProviderOptions({
         providerKey: "google",

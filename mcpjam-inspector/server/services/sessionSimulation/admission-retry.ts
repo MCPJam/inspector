@@ -25,13 +25,23 @@ export function spendRefusalOf(error: unknown): SpendRefusal | undefined {
     return undefined;
   if (!(error instanceof Error)) return undefined;
   const info = humanizeSwarmAttemptError(error.message);
-  return info.refusalReason ? info : undefined;
+  // A sentence that only names a hold is never a reason to replay. The error
+  // may come from a turn whose tools already ran (a harness host fails after
+  // its tools did), and a replay would run them twice. Such a hold is still
+  // classified as a wait by `classifyRateLimit`; it just ends this session
+  // instead of repeating it.
+  return info.refusalReason || isTransientSpendRefusal(info.code)
+    ? info
+    : undefined;
 }
 
 /** Shared by all persona and host calls in one session. */
 export class AdmissionWaitBudget {
   remainingMs: number;
-  constructor(totalMs = 5 * 60_000, readonly maxAttemptsPerCall = 8) {
+  constructor(
+    totalMs = 5 * 60_000,
+    readonly maxAttemptsPerCall = 8,
+  ) {
     this.remainingMs = totalMs;
   }
   take(delayMs: number): boolean {

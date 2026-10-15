@@ -1,3 +1,4 @@
+import { wrapModelToolsets, type ModelToolExecutor } from "./model-tool-executor.js";
 import {
   mergeConnectionToolsets,
   type ConnectionsByServerId,
@@ -26,8 +27,10 @@ import {
   type MintedDeclaredTool,
 } from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
+import { withinToolListingBudget } from "./within-budget.js";
 import { mcpToolOptionsFor } from "./mcp-tool-options.js";
 import {
   MCPClientManager,
@@ -672,6 +675,7 @@ export function buildWidgetInteractionContextSystemPrompt(
 }
 
 export interface PrepareChatV2Options {
+  modelToolExecutor?: ModelToolExecutor;
   connectionsByServerId?: ConnectionsByServerId;
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
@@ -696,9 +700,27 @@ export interface PrepareChatV2Options {
    * before the model sees the catalog.
    */
   toolDescriptionOverrides?: Readonly<Record<string, string>>;
+  /**
+   * Upper bound, in ms, on connecting to the selected servers and listing
+   * their tools. On expiry the turn fails with a `MCP server "<name>" timed
+   * out` error, marked as the user's hop like any other dead server.
+   *
+   * Opt-in: absent means no deadline, which keeps local, eval and agent turns
+   * unchanged. The hosted web turn sets it because nothing else bounds this
+   * await before the first byte, and the edge gives up long before the
+   * manager's own per-request timeout and retries do.
+   */
+  toolListingTimeoutMs?: number;
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * The reasoning effort this turn runs at. Under an effort the resolved
+   * temperature is omitted (a default temperature is not a request, and
+   * reasoning providers reject or ignore one); an EXPLICIT temperature is
+   * refused by the direct routes before it gets here.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   requireToolApproval?: boolean;
   /**
    * Host-level switch for SEP-1865 `_meta.ui.visibility` filtering.
@@ -1285,6 +1307,37 @@ export interface PrepareChatV2Result {
 }
 
 /**
+ * `"a", "b"` — the selected servers still not connected when the budget ran
+ * out, by their host label. Falls back to every listed server when all of
+ * them report connected (the listing itself is what hung).
+ *
+ * Only servers the listing actually reached count: a stale selected id the
+ * manager never registered reads as "disconnected" and would otherwise be
+ * blamed for a server that did hang.
+ */
+function describeUnconnectedServers(
+  mcpClientManager: InstanceType<typeof MCPClientManager>,
+  serverIds: readonly string[],
+  groups: ConnectionsByServerId | undefined,
+  serverLabels: Record<string, string> | undefined,
+): string {
+  const keysOf = (id: string) =>
+    (groups?.[id]?.map((c) => c.key) ?? [id]).filter((key) =>
+      mcpClientManager.hasServer(key),
+    );
+  const reached = serverIds.filter((id) => keysOf(id).length > 0);
+  const listed = reached.length ? reached : serverIds;
+  const unconnected = listed.filter((id) =>
+    keysOf(id).some(
+      (key) => mcpClientManager.getConnectionStatus(key) !== "connected",
+    ),
+  );
+  return (unconnected.length ? unconnected : listed)
+    .map((id) => `"${serverLabels?.[id] ?? id}"`)
+    .join(", ");
+}
+
+/**
  * Prepare tools, system prompt, temperature, and message scrubber for chat-v2.
  *
  * Throws if Anthropic tool name validation fails.
@@ -1298,6 +1351,7 @@ export async function prepareChatV2(
     modelDefinition,
     systemPrompt,
     temperature,
+    reasoningEffort,
     requireToolApproval,
     respectToolVisibility,
     excludeMcpToolNames,
@@ -1314,6 +1368,7 @@ export async function prepareChatV2(
     serverLabels,
     toolCallCancellation,
     toolDescriptionOverrides,
+    toolListingTimeoutMs,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -1352,14 +1407,25 @@ export async function prepareChatV2(
   });
 
   // 1. Get MCP + skill tools
+  const listToolsWithinBudget = <T>(listing: Promise<T>): Promise<T> =>
+    withinToolListingBudget(listing, toolListingTimeoutMs, () =>
+      describeUnconnectedServers(
+        mcpClientManager,
+        selectedServers ?? mcpClientManager.listServers(),
+        selectedGroups,
+        serverLabels,
+      ),
+    );
   let mcpTools;
   try {
     mcpTools =
       selectedGroups && Object.keys(selectedGroups).length
         ? mergeConnectionToolsets(
-            await mcpClientManager.getToolsForAiSdkByServer(
-              knownSelectedServers,
-              toolOptions,
+            await listToolsWithinBudget(
+              mcpClientManager.getToolsForAiSdkByServer(
+                knownSelectedServers,
+                toolOptions,
+              ).then((groups) => wrapModelToolsets(groups, options.modelToolExecutor)),
             ),
             selectedGroups,
             {
@@ -1369,9 +1435,15 @@ export async function prepareChatV2(
               },
             },
           )
-        : await mcpClientManager.getToolsForAiSdk(
-            knownSelectedServers,
-            toolOptions,
+        : options.modelToolExecutor
+          ? Object.assign({}, ...Object.values(wrapModelToolsets(await listToolsWithinBudget(
+              mcpClientManager.getToolsForAiSdkByServer(knownSelectedServers, toolOptions)
+            ), options.modelToolExecutor)))
+          : await listToolsWithinBudget(
+            mcpClientManager.getToolsForAiSdk(
+              knownSelectedServers,
+              toolOptions,
+            ),
           );
   } catch (error) {
     // The ONE hop in this function that leaves MCPJam: listing tools reaches
@@ -1888,11 +1960,11 @@ export async function prepareChatV2(
   //
   // The persisted `hostConfig.temperature` is unaffected and stays numeric:
   // `buildDirectHostConfig` falls back to the requested value, then to 0.7.
-  const resolvedTemperature = modelDefinitionSupportsTemperature(
-    modelDefinition,
-  )
-    ? temperature
-    : undefined;
+  const resolvedTemperature =
+    reasoningEffort === undefined &&
+    modelDefinitionSupportsTemperature(modelDefinition)
+      ? temperature
+      : undefined;
 
   // 5. Message scrubber
   const scrubMessages = (msgs: ModelMessage[]) =>

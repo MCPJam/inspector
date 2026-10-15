@@ -37,6 +37,7 @@ export type MaterializeSwarmTargetsArgs = {
   liveEnvironments: ProjectEnvironmentView[];
   createEnvironment: CreateProjectEnvironmentFn;
   skillsEnabled: boolean;
+  /** The image-pin slot's flag: `sandbox-images-enabled`. */
   computersEnabled: boolean;
 };
 
@@ -208,8 +209,14 @@ export async function materializeSwarmTargets(
     );
   }
 
+  if (!legos.serverAttachmentId) {
+    throw new SwarmTargetMaterializeError(
+      "Pick a server or group before continuing.",
+    );
+  }
+
   const stack = {
-    serverAttachmentId: legos.serverAttachmentId ?? null,
+    serverAttachmentId: legos.serverAttachmentId,
     skillSelection: skillsEnabled ? (legos.skillSelection ?? null) : null,
     computerEnvironmentId: computersEnabled
       ? (legos.computerEnvironmentId ?? null)

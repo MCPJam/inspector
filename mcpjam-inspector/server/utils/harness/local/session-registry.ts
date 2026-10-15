@@ -51,6 +51,13 @@ export interface LocalHarnessSessionRecord {
    * once `stop` has run.
    */
   releaseRuntime: (() => Promise<void>) | null;
+  /**
+   * Called synchronously as this session is ended through the registry —
+   * Stop, stop-all, a workspace or project stop — before any teardown await.
+   * A session parked on an approval uses it to stop accepting that decision
+   * the moment a stop begins (`approval-park.ts`).
+   */
+  onEnded?: () => void;
   startedAt: number;
 }
 
@@ -194,6 +201,11 @@ async function endRecord(
   const sessionId = record.sessionId;
   const errors: string[] = [];
 
+  try {
+    record.onEnded?.();
+  } catch (error) {
+    errors.push(`end hook: ${messageOf(error)}`);
+  }
   try {
     record.gateway?.revoke();
   } catch (error) {

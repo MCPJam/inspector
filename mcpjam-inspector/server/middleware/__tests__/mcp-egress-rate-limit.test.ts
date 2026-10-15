@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 vi.mock("../../config.js", () => ({ HOSTED_MODE: true }));
 import {
+  CoordinatorError,
   createServerCheckMiddleware,
   promoteServerCheck,
   type CheckCoordinator,
@@ -12,6 +13,8 @@ import {
   withServerCheckSignal,
 } from "../../utils/server-check-scope.js";
 
+const timeoutError = () =>
+  new DOMException("The operation was aborted due to timeout", "TimeoutError");
 const active = (): CheckDecision => ({
   state: "active",
   expiresAt: Date.now() + 30_000,
@@ -181,7 +184,30 @@ describe("shared server check admission", () => {
       expect(coordinator).toHaveBeenLastCalledWith("release");
     },
   );
-  it("aborts running network work when renewal fails and fails closed", async () => {
+  it("keeps a running check through one failed heartbeat", async () => {
+    let failures = 0;
+    const coordinator = vi.fn(async (operation: string) => {
+      if (operation === "poll" && failures++ === 0)
+        throw new Error("The operation was aborted due to timeout");
+      return active();
+    });
+    let finish!: () => void;
+    let signal!: AbortSignal;
+    const handler = () =>
+      new Promise<Response>((resolve) => {
+        signal = serverCheckScope.getStore()!;
+        finish = () => resolve(new Response("ok"));
+      });
+    const result = app(coordinator, handler).request("/check", {
+      method: "POST",
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(signal.aborted).toBe(false);
+    finish();
+    expect((await result).status).toBe(200);
+    expect(coordinator).toHaveBeenLastCalledWith("release");
+  });
+  it("aborts running network work when the lease runs out without a heartbeat and fails closed", async () => {
     const coordinator = vi.fn(async (operation: string) => {
       if (operation === "renew") throw new Error("offline");
       return active();
@@ -204,7 +230,11 @@ describe("shared server check admission", () => {
     const result = app(coordinator, handler).request("/check", {
       method: "POST",
     });
-    await vi.advanceTimersByTimeAsync(10_000);
+    // Renewal is due at 10 s and keeps failing; the last good poll's lease
+    // still has time left, so the check keeps running for now.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect((await result).status).toBe(503);
     expect(aborted).toBe(true);
     expect(coordinator).toHaveBeenLastCalledWith("release");
@@ -240,12 +270,126 @@ describe("shared server check admission", () => {
     expect(coordinator).toHaveBeenLastCalledWith("release");
   });
 
-  it("does not run checks if the coordinator is unavailable", async () => {
+  it("hands the route the arrival time, before the queue wait", async () => {
+    let admit = false;
+    const coordinator: CheckCoordinator = async (operation) =>
+      operation === "admit" || (operation === "poll" && !admit)
+        ? { ...active(), state: "waiting" }
+        : active();
+    let seen: number | undefined;
+    const route = new Hono();
+    route.use("*", createServerCheckMiddleware(() => coordinator));
+    route.post("/check", (c) => {
+      seen = c.get("serverCheckStartedAt");
+      return new Response("ok");
+    });
+    const arrivedAt = Date.now();
+    const result = route.request("/check", { method: "POST" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    admit = true;
+    await vi.advanceTimersByTimeAsync(500);
+    expect((await result).status).toBe(200);
+    // The queue wait counts against the route's deadline.
+    expect(seen).toBe(arrivedAt);
+  });
+  it("retries a failed admit call with the same request", async () => {
+    let failures = 0;
+    const coordinator = vi.fn(async (operation: string) => {
+      if (operation === "admit" && failures++ === 0) throw timeoutError();
+      return active();
+    });
     const handler = vi.fn(async () => new Response("ok"));
-    const response = await app(async () => {
-      throw new Error("offline");
-    }, handler).request("/check", { method: "POST" });
+    const result = app(coordinator, handler).request("/check", {
+      method: "POST",
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    expect((await result).status).toBe(200);
+    expect(handler).toHaveBeenCalledOnce();
+    expect(
+      coordinator.mock.calls.filter(([op]) => op === "admit"),
+    ).toHaveLength(2);
+  });
+  it("fails fast on a coordinator error that cannot recover", async () => {
+    const coordinator = vi.fn(async () => {
+      throw new CoordinatorError("Server check coordinator returned 401", false);
+    });
+    const handler = vi.fn(async () => new Response("ok"));
+    const response = await app(coordinator, handler).request("/check", {
+      method: "POST",
+    });
     expect(response.status).toBe(503);
+    expect(handler).not.toHaveBeenCalled();
+    expect(coordinator.mock.calls.filter(([op]) => op === "admit")).toHaveLength(
+      1,
+    );
+  });
+  it("ends a hanging admission call at the queue window", async () => {
+    const coordinator = vi.fn(
+      (operation: string, signal?: AbortSignal) =>
+        new Promise<CheckDecision>((resolve, reject) => {
+          if (operation === "release") return resolve(active());
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+    const handler = vi.fn(async () => new Response("ok"));
+    let settled = false;
+    const result = app(coordinator, handler)
+      .request("/check", { method: "POST" })
+      .finally(() => {
+        settled = true;
+      });
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(settled).toBe(true);
+    expect((await result).status).toBe(503);
+    expect(handler).not.toHaveBeenCalled();
+  });
+  it("cuts short an in-flight heartbeat when the check finishes", async () => {
+    const coordinator = vi.fn(
+      (operation: string, signal?: AbortSignal) =>
+        new Promise<CheckDecision>((resolve, reject) => {
+          if (operation !== "poll") return resolve(active());
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+    let checkSignal!: AbortSignal;
+    const handler = () =>
+      new Promise<Response>((resolve) => {
+        checkSignal = serverCheckScope.getStore()!;
+        setTimeout(() => resolve(new Response("ok")), 1_500);
+      });
+    let settled = false;
+    const result = app(coordinator, handler)
+      .request("/check", { method: "POST" })
+      .finally(() => {
+        settled = true;
+      });
+    // The heartbeat poll starts at 1 s and never answers on its own.
+    await vi.advanceTimersByTimeAsync(1_600);
+    expect(settled).toBe(true);
+    expect((await result).status).toBe(200);
+    // The route's own outbound signal is left alone on success.
+    expect(checkSignal.aborted).toBe(false);
+    expect(coordinator).toHaveBeenLastCalledWith("release");
+  });
+  it("does not run checks if the coordinator stays unavailable", async () => {
+    const handler = vi.fn(async () => new Response("ok"));
+    const result = app(async () => {
+      throw timeoutError();
+    }, handler).request("/check", { method: "POST" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(handler).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(20_000);
+    const response = await result;
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      details: { reason: "SERVER_CHECK_QUEUE_UNAVAILABLE" },
+    });
     expect(handler).not.toHaveBeenCalled();
   });
   it("propagates cancellation through the outbound fetch and leaves other work alone", async () => {

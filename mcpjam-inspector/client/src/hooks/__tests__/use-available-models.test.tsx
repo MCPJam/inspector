@@ -30,14 +30,20 @@ const PROJECT_VISIBLE_CONFIG = {
 };
 
 const queryCalls: Array<{ name: string; args: unknown }> = [];
+const projectConfigState: { current: unknown } = {
+  current: PROJECT_VISIBLE_CONFIG,
+};
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (name: string, args: unknown) => {
     queryCalls.push({ name, args });
     if (args === "skip") return undefined;
     if (name === "organizationModelProviders:getVisibleConfigForProject") {
-      return PROJECT_VISIBLE_CONFIG;
+      return projectConfigState.current;
     }
     // Org-wide fallback query intentionally returns nothing — the
     // project-scoped result must be sufficient on its own.
@@ -102,11 +108,18 @@ vi.mock("@/lib/ollama-utils", () => ({
     mockDetectOllamaToolCapableModels(...args),
 }));
 
+// The viewer may manage the organization's providers (an admin).
+const manageOrgProviders = vi.hoisted(() => vi.fn());
+vi.mock("@/hooks/use-org-models-handoff", () => ({
+  useOrgModelsHandoff: () => manageOrgProviders,
+}));
+
 import { useAvailableModels } from "../use-available-models";
 
 describe("useAvailableModels", () => {
   beforeEach(() => {
     queryCalls.length = 0;
+    projectConfigState.current = PROJECT_VISIBLE_CONFIG;
     mockDetectOllamaModels.mockResolvedValue({
       isRunning: false,
       availableModels: [],
@@ -197,5 +210,63 @@ describe("useAvailableModels", () => {
     expect(
       result.current.availableModels.map((m) => String(m.id))
     ).toContain("amazon.nova-micro-v1:0");
+  });
+
+  it("offers only eligible org models while the organization requires its own keys", () => {
+    projectConfigState.current = {
+      providers: [
+        // The backend's verdict on each connection; the picker only reads it.
+        {
+          id: "conn_anthropic",
+          providerKey: "anthropic",
+          enabled: true,
+          hasSecret: true,
+          policyEligibility: { eligible: true },
+        },
+        {
+          id: "conn_router",
+          providerKey: "openrouter",
+          enabled: true,
+          hasSecret: true,
+          selectedModels: ["openai/gpt-4o"],
+          policyEligibility: { eligible: false, code: "org_keys_required" },
+        },
+      ],
+      aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
+      aiReadiness: {
+        requireOrgKeys: true,
+        features: [],
+        operations: [],
+        eligibleConnectionIds: ["conn_anthropic"],
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useAvailableModels({ savedModelIds: ["anthropic/claude-haiku-4.5"] }),
+    );
+
+    expect(result.current.requireOrgKeys).toBe(true);
+    // An admin's pickers can offer "Add a provider".
+    expect(result.current.onManageOrgProviders).toBe(manageOrgProviders);
+    const offered = result.current.availableModels.filter((m) => !m.disabled);
+    expect(offered.length).toBeGreaterThan(0);
+    expect(offered.every((m) => m.orgProvider?.id === "conn_anthropic")).toBe(
+      true,
+    );
+    expect(
+      result.current.availableModels.find(
+        (m) => String(m.id) === "anthropic/claude-haiku-4.5",
+      ),
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: "Choose a model from an organization provider.",
+    });
+  });
+
+  it("reports no policy for an organization that has not turned it on", () => {
+    const { result } = renderHook(() => useAvailableModels());
+    expect(result.current.requireOrgKeys).toBe(false);
+    // Off the policy the pickers look as they always have: no handoff.
+    expect(result.current.onManageOrgProviders).toBeUndefined();
   });
 });

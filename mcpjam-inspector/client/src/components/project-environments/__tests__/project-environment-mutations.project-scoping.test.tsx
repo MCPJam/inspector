@@ -45,8 +45,11 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 // Both flag-gated editor sections stay OFF: their pickers are irrelevant here
 // and their omission contract is covered by the sandbox-image/skills suites.
-vi.mock("@/hooks/useComputersEnabled", () => ({
-  useComputersEnabled: () => false,
+vi.mock("@/hooks/usePluginsEnabled", () => ({
+  usePluginsEnabled: () => false,
+}));
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => false,
 }));
 vi.mock("@/hooks/useSkillsEnabled", () => ({ useSkillsEnabled: () => false }));
 // The secrets picker is a sibling section, not what this test is about, and it
