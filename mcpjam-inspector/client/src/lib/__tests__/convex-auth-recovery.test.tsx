@@ -419,6 +419,7 @@ it("keeps the spinner until replacement confirmation; Retry recovers after an un
 });
 
 it("recovers failed guest startup without unauthenticated subscriptions", async () => {
+  const recoveryClock = vi.spyOn(performance, "now");
   auth.user = null;
   guest.mint.mockRejectedValue(new TypeError("network unavailable"));
   const { peer, view, close } = setup();
@@ -429,6 +430,9 @@ it("recovers failed guest startup without unauthenticated subscriptions", async 
     );
     expect(peer.active.size).toBe(0);
     expect(view.queryByText("Retry")).not.toBeNull();
+    await act(async () => window.dispatchEvent(new Event("online")));
+    expect(guest.mint).toHaveBeenCalledTimes(4);
+    recoveryClock.mockReturnValue(performance.now() + 75_000);
     guest.cached = { token: jwt(2), guestId: "guest-test" };
     guest.mint.mockImplementation(async () => guest.cached);
     guest.refresh.mockResolvedValue(jwt(2));
@@ -439,6 +443,7 @@ it("recovers failed guest startup without unauthenticated subscriptions", async 
     expect(peer.unauthenticatedAdds).toEqual([]);
   } finally {
     await close();
+    recoveryClock.mockRestore();
   }
 }, 15000);
 

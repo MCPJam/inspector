@@ -39,7 +39,17 @@ function allowSession(fetch: ReturnType<typeof vi.fn>) {
 
 describe("transient guest bootstrap recovery", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({
+      toFake: [
+        "Date",
+        "performance",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+      ],
+    });
+    vi.spyOn(Math, "random").mockReturnValue(0);
     clearGuestSession();
     auth.user = null;
     auth.isLoading = false;
@@ -88,7 +98,7 @@ describe("transient guest bootstrap recovery", () => {
     expect(useSessionRefreshStore.getState().status).toBe("idle");
   });
 
-  it("coalesces connection and focus events into one recovery", async () => {
+  it("makes connection and focus events share the timer's deadline", async () => {
     const { result, fetch } = await exhaustedBootstrap();
     allowSession(fetch);
     await act(async () => {
@@ -96,24 +106,14 @@ describe("transient guest bootstrap recovery", () => {
       window.dispatchEvent(new Event("focus"));
       document.dispatchEvent(new Event("visibilitychange"));
     });
+    expect(fetch).toHaveBeenCalledTimes(4);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+      window.dispatchEvent(new Event("focus"));
+    });
     expect(fetch).toHaveBeenCalledTimes(5);
     expect(result.current.isAuthenticated).toBe(true);
     expect(useSessionRefreshStore.getState().retryNonce).toBe(1);
-  });
-
-  it("does not spend another retry ladder on repeated focus events", async () => {
-    const { fetch } = await exhaustedBootstrap();
-    await act(async () => {
-      window.dispatchEvent(new Event("focus"));
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
-    expect(fetch).toHaveBeenCalledTimes(8);
-    await act(async () => {
-      window.dispatchEvent(new Event("online"));
-      window.dispatchEvent(new Event("focus"));
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
-    expect(fetch).toHaveBeenCalledTimes(8);
   });
 
   it.each(["hidden", "offline"])(
@@ -138,11 +138,22 @@ describe("transient guest bootstrap recovery", () => {
     },
   );
 
-  it("lets the existing Retry action recover immediately", async () => {
+  it("queues manual Retry behind the same deadline without adding rounds", async () => {
     const { result, fetch } = await exhaustedBootstrap();
     allowSession(fetch);
     await act(async () => {
       useSessionRefreshStore.getState().retry();
+    });
+    expect(useSessionRefreshStore.getState().status).toBe("retrying");
+    expect(fetch).toHaveBeenCalledTimes(4);
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      window.dispatchEvent(new Event("focus"));
+      await vi.advanceTimersByTimeAsync(59_999);
+    });
+    expect(fetch).toHaveBeenCalledTimes(4);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
     });
     expect(fetch).toHaveBeenCalledTimes(5);
     expect(result.current.isAuthenticated).toBe(true);
@@ -152,11 +163,18 @@ describe("transient guest bootstrap recovery", () => {
     const { result, fetch } = await exhaustedBootstrap();
     allowSession(fetch);
     await act(async () => {
+      useSessionRefreshStore.getState().retry();
+    });
+    await act(async () => {
       expect(await getGuestBearerToken()).toBe("recovered-token");
     });
     expect(fetch).toHaveBeenCalledTimes(5);
     expect(result.current.isAuthenticated).toBe(true);
     expect(useSessionRefreshStore.getState().status).toBe("idle");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(fetch).toHaveBeenCalledTimes(5);
   });
 
   it("adopts a recovered token for the same expired guest identity", async () => {
@@ -199,7 +217,7 @@ describe("transient guest bootstrap recovery", () => {
     expect(useSessionRefreshStore.getState().status).toBe("idle");
   });
 
-  it.each([400, 401, 403, 404])(
+  it.each([200, 204, 400, 401, 403, 404])(
     "keeps manual Retry without automatic recovery after %s",
     async (status) => {
       const { result, fetch } = await exhaustedBootstrap(status);
@@ -229,7 +247,7 @@ describe("transient guest bootstrap recovery", () => {
     fetch.mockImplementation(async () => new Response(null, { status: 403 }));
     await act(async () => {
       useSessionRefreshStore.getState().retry();
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(65_000);
     });
     expect(fetch).toHaveBeenCalledTimes(8);
     expect(useSessionRefreshStore.getState()).toMatchObject({
@@ -268,7 +286,112 @@ describe("transient guest bootstrap recovery", () => {
     allowSession(fetch);
     await act(async () => {
       useSessionRefreshStore.getState().retry();
+      await vi.advanceTimersByTimeAsync(60_000);
     });
     expect(result.current.isAuthenticated).toBe(true);
+  });
+
+  it("backs off through 1, 2, 4, then repeated 5 minute waits and reports once", async () => {
+    const { fetch } = await exhaustedBootstrap();
+    for (const [index, wait] of [
+      60_000, 120_000, 240_000, 300_000, 300_000, 300_000, 300_000, 300_000,
+    ].entries()) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(wait - 1);
+        window.dispatchEvent(new Event("focus"));
+      });
+      expect(fetch).toHaveBeenCalledTimes(4 * (index + 1));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_001);
+      });
+      expect(fetch).toHaveBeenCalledTimes(4 * (index + 2));
+    }
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([0, 0.5, 1])(
+    "adds one fixed jitter per failed round (%s)",
+    async (random) => {
+      vi.mocked(Math.random).mockReturnValue(random);
+      const { result, fetch } = await exhaustedBootstrap();
+      allowSession(fetch);
+      await act(async () => {
+        for (let i = 0; i < 3; i++) window.dispatchEvent(new Event("focus"));
+        await vi.advanceTimersByTimeAsync(30_000);
+        window.dispatchEvent(new Event("focus"));
+        await vi.advanceTimersByTimeAsync(30_000 + random * 15_000 - 1);
+      });
+      expect(fetch).toHaveBeenCalledTimes(4);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(result.current.isAuthenticated).toBe(true);
+      expect(fetch).toHaveBeenCalledTimes(5);
+    },
+  );
+
+  it.each(["hidden", "offline"])(
+    "holds queued manual Retry while %s",
+    async (mode) => {
+      const { result, fetch } = await exhaustedBootstrap();
+      allowSession(fetch);
+      visible = mode !== "hidden";
+      online = mode !== "offline";
+      await act(async () => {
+        useSessionRefreshStore.getState().retry();
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(fetch).toHaveBeenCalledTimes(4);
+      visible = online = true;
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      expect(result.current.isAuthenticated).toBe(true);
+      expect(fetch).toHaveBeenCalledTimes(5);
+    },
+  );
+
+  it.each(["sign-in", "unmount"])(
+    "cancels a queued manual retry on %s",
+    async (transition) => {
+      const { fetch, rerender, unmount } = await exhaustedBootstrap();
+      await act(async () => useSessionRefreshStore.getState().retry());
+      if (transition === "sign-in") {
+        auth.user = { id: "user-1" };
+        rerender();
+      } else unmount();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+        window.dispatchEvent(new Event("online"));
+      });
+      expect(fetch).toHaveBeenCalledTimes(4);
+    },
+  );
+
+  it("resets the wait and outage report after a cloud action recovers", async () => {
+    const { fetch } = await exhaustedBootstrap();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(65_000);
+    });
+    expect(fetch).toHaveBeenCalledTimes(8);
+    allowSession(fetch);
+    await act(async () => {
+      await getGuestBearerToken();
+    });
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+    fetch.mockImplementation(async () => new Response(null, { status: 503 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      useSessionRefreshStore.getState().retry();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(fetch).toHaveBeenCalledTimes(13);
+    expect(reportCaught).toHaveBeenCalledTimes(2);
+    allowSession(fetch);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(fetch).toHaveBeenCalledTimes(14);
+    expect(useSessionRefreshStore.getState().status).toBe("idle");
   });
 });

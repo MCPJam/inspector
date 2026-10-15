@@ -1,34 +1,29 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
-
-// Leave room for the four-attempt bootstrap ladder in the 10 requests/minute
-// guest-session budget. Resume events share this cooldown too.
-const GUEST_RECOVERY_INTERVAL_MS = 60_000;
+import {
+  canRecoverGuestSession,
+  createGuestSessionRecovery,
+} from "./guest-session-recovery";
 
 /** Restart failed guest authentication while the visitor can use the app. */
-export function useGuestSessionRecovery(enabled: boolean): void {
+export function useGuestSessionRecovery(enabled: boolean) {
   const status = useSessionRefreshStore((state) => state.status);
   const kind = useSessionRefreshStore((state) => state.kind);
-  const lastRecoveryAt = useRef<number | null>(null);
+  const [recovery] = useState(createGuestSessionRecovery);
 
   useEffect(() => {
-    if (!enabled || status !== "failed" || kind !== "transient") return;
+    if (!enabled || status !== "failed") return;
+    recovery.ensureScheduled();
+    if (kind !== "transient") return;
 
     const recover = () => {
-      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      if (!canRecoverGuestSession() || recovery.remaining() > 0) return;
       const state = useSessionRefreshStore.getState();
       if (state.status !== "failed" || state.kind !== "transient") return;
-      const now = performance.now();
-      if (
-        lastRecoveryAt.current !== null &&
-        now - lastRecoveryAt.current < GUEST_RECOVERY_INTERVAL_MS
-      )
-        return;
-      lastRecoveryAt.current = now;
       state.retry();
     };
 
-    const timer = setTimeout(recover, GUEST_RECOVERY_INTERVAL_MS);
+    const timer = setTimeout(recover, Math.ceil(recovery.remaining()));
     window.addEventListener("online", recover);
     window.addEventListener("focus", recover);
     document.addEventListener("visibilitychange", recover);
@@ -38,5 +33,6 @@ export function useGuestSessionRecovery(enabled: boolean): void {
       window.removeEventListener("focus", recover);
       document.removeEventListener("visibilitychange", recover);
     };
-  }, [enabled, status, kind]);
+  }, [enabled, status, kind, recovery]);
+  return recovery;
 }

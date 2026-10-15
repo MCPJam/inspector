@@ -181,7 +181,7 @@ export function useUnifiedConvexAuth() {
     getGuestSessionRefusal,
     () => null,
   );
-  useGuestSessionRecovery(
+  const guestRecovery = useGuestSessionRecovery(
     !skipGuest && !workos.isLoading && !workos.user && !guestRefusal,
   );
   // Bumped when the user presses Retry on the session-refresh banner. It feeds
@@ -207,17 +207,22 @@ export function useUnifiedConvexAuth() {
       return;
     }
     if (skipGuest) {
+      guestRecovery.reset();
       setGuestToken(null);
       setGuestLoading(false);
       return;
     }
     if (workos.user) {
+      guestRecovery.reset();
       setGuestToken(null);
       setGuestLoading(false);
       return;
     }
     let cancelled = false;
+    const round = new AbortController();
     const acceptSession = (token: string) => {
+      guestRecovery.reset();
+      round.abort();
       setGuestToken(token);
       setGuestLoading(false);
       useSessionRefreshStore.getState().clear();
@@ -242,6 +247,13 @@ export function useUnifiedConvexAuth() {
         attempt <= GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length;
         attempt += 1
       ) {
+        if (
+          !getCachedGuestSession() &&
+          !getGuestSessionRefusal() &&
+          !(await guestRecovery.wait(round.signal))
+        )
+          return;
+        if (cancelled || round.signal.aborted) return;
         let session: Awaited<
           ReturnType<typeof getOrCreateGuestSessionOrThrow>
         > = null;
@@ -253,7 +265,7 @@ export function useUnifiedConvexAuth() {
           lastError = error;
         }
 
-        if (cancelled) return;
+        if (cancelled || round.signal.aborted) return;
         if (session) {
           acceptSession(session.token);
           return;
@@ -273,15 +285,17 @@ export function useUnifiedConvexAuth() {
           setGuestToken(null);
           setGuestLoading(false);
           const failure = guestFailureExtra(lastError);
+          const shouldReport = guestRecovery.failed();
           const status = failure.httpStatus;
           if (
-            status === undefined ||
+            (status === undefined && lastError !== undefined) ||
             (typeof status === "number" && (status === 408 || status >= 500))
           ) {
             useSessionRefreshStore.getState().notifyFailure("transient");
           } else {
             useSessionRefreshStore.getState().notifyFailure("manual");
           }
+          if (!shouldReport) return;
           try {
             reportCaught(
               lastError ??
@@ -312,9 +326,17 @@ export function useUnifiedConvexAuth() {
 
     return () => {
       cancelled = true;
+      round.abort();
       stopWatchingGuest();
     };
-  }, [skipGuest, workos.isLoading, workos.user, retryNonce, guestRefusal]);
+  }, [
+    skipGuest,
+    workos.isLoading,
+    workos.user,
+    retryNonce,
+    guestRefusal,
+    guestRecovery,
+  ]);
 
   // Convex keys its auth configuration on these callbacks.
   // Changing one replaces authentication, even when the token is still valid.
