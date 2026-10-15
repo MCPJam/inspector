@@ -26,7 +26,12 @@ import {
   scopePreflightToHosts,
   type RunPreflightState,
 } from "./suite-run-preflight";
-import type { EvalCase, EvalSuite } from "../evals/types";
+import type { CaseRunLaunchOptions, EvalCase, EvalSuite } from "../evals/types";
+import {
+  savedCaseTargets,
+  startCaseReview,
+} from "./case-workspace/case-launch-preview";
+import type { CaseLaunchTarget } from "./case-workspace/pending-case-launches";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 
 type ReviewEnvironment = Pick<
@@ -53,12 +58,15 @@ export type SuiteRunReviewProps = {
   onClose: () => void;
   onStart: (
     suite: EvalSuite,
-    options: {
-      iterationOverride: number;
-      ephemeralEnvironment?: boolean;
-      throwOnFailure?: boolean;
-    },
+    options: CaseRunLaunchOptions & { iterationOverride: number },
   ) => unknown;
+  /**
+   * Persists the case draft as it stood when Start was clicked, before any
+   * launch preparation; `false` refuses the launch. Preparing a matrix run
+   * takes several round trips, so saving afterwards would overwrite an edit
+   * made in between.
+   */
+  saveBeforeRun?: () => Promise<boolean>;
   onEditSettings?: () => void;
   disabledReason?: string | null;
   preflight?: RunPreflightState;
@@ -178,6 +186,7 @@ export function SuiteRunReview(props: SuiteRunReviewProps) {
 }
 
 export function SuiteRunReviewContent({
+  projectId,
   suite,
   cases,
   caseTitle,
@@ -186,12 +195,14 @@ export function SuiteRunReviewContent({
   hostNamesById,
   onClose,
   onStart,
+  saveBeforeRun,
   onEditSettings,
   disabledReason: blockedReason,
   preflight,
   matrix,
 }: SuiteRunReviewProps & {
   matrix?: {
+    targets?: CaseLaunchTarget[];
     count: number;
     render: (disabled: boolean) => ReactNode;
     /** Changes whenever the matrix selection does. */
@@ -271,6 +282,38 @@ export function SuiteRunReviewContent({
     )
       return;
     lock.current = true;
+    if (isCaseRun) {
+      try {
+        const selectedSuite = matrix
+          ? suite
+          : selectReviewTargets(suite, selectedIds);
+        await startCaseReview(
+          {
+            projectId,
+            suite: selectedSuite,
+            cases,
+            onClose,
+            onStart,
+            saveBeforeRun,
+          },
+          matrix?.targets ??
+            savedCaseTargets({
+              suite: selectedSuite,
+              cases,
+              environments,
+              hostNamesById,
+            }),
+          count,
+        );
+      } catch (failure) {
+        setError(
+          convexErrMessage(failure, "Could not prepare this run. Try again."),
+        );
+      } finally {
+        lock.current = false;
+      }
+      return;
+    }
     setStarting(true);
     setError(null);
     setLaunchProblems([]);

@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { useLayoutEffect } from "react";
+import { StrictMode, useLayoutEffect } from "react";
 import { usePostHogIdentify } from "../usePostHogIdentify";
 
 const mockState = vi.hoisted(() => ({
   posthog: {
     identify: vi.fn(),
+    capture: vi.fn(),
     register: vi.fn(),
     reset: vi.fn(),
     setPersonPropertiesForFlags: vi.fn(),
@@ -15,6 +16,7 @@ const mockState = vi.hoisted(() => ({
   /** Whether the answer is held for the current actor. */
   grant: true,
   content: "full" as "full" | "strict",
+  revision: 0,
   telemetryActor: undefined as string | null | undefined,
   auth: {
     user: null as {
@@ -66,6 +68,7 @@ vi.mock("@/hooks/use-actor-key", () => ({
 // The identity grant: the backend's answer, held only for the current actor.
 vi.mock("@/lib/telemetry-context", () => ({
   subscribeTelemetryPolicy: () => () => {},
+  currentTelemetryProfileRetryRevision: () => mockState.revision,
   currentTelemetryActor: () =>
     mockState.telemetryActor === undefined
       ? mockState.actorKey
@@ -93,8 +96,40 @@ describe("usePostHogIdentify", () => {
     mockState.identity = "full";
     mockState.grant = true;
     mockState.content = "full";
+    mockState.revision = 0;
     mockState.telemetryActor = undefined;
     mockState.detectPlatform.mockReturnValue("mac");
+  });
+
+  it("retries once per permitted revision and never carries profiles across actors", () => {
+    mockState.actorKey = "user_123";
+    mockState.auth.user = { id: "user_123", email: "member@example.test" };
+    const hook = renderHook(usePostHogIdentify, { wrapper: StrictMode });
+    hook.rerender();
+    expect(mockState.posthog.capture).not.toHaveBeenCalled();
+    mockState.revision += 2;
+    hook.rerender();
+    hook.rerender();
+    expect(mockState.posthog.capture).toHaveBeenCalledTimes(1);
+    expect(mockState.posthog.capture).toHaveBeenCalledWith(
+      "$set",
+      {},
+      { $set: expect.objectContaining({ email: "member@example.test" }) },
+    );
+    mockState.content = "strict";
+    mockState.revision += 1;
+    hook.rerender();
+    expect(mockState.posthog.capture).toHaveBeenCalledTimes(1);
+    mockState.actorKey = "user_next";
+    mockState.auth.user = { id: "user_next", email: "next@example.test" };
+    mockState.content = "full";
+    mockState.revision += 1;
+    hook.rerender();
+    expect(mockState.posthog.capture).toHaveBeenCalledTimes(1);
+    expect(mockState.posthog.identify).toHaveBeenLastCalledWith(
+      "user_next",
+      expect.objectContaining({ email: "next@example.test" }),
+    );
   });
 
   it("rechecks content after layout effects before committing the SDK identity", () => {

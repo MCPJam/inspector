@@ -93,6 +93,7 @@ describe("aiLaunchDependencyTitle", () => {
   it("titles each known dependency and falls back for a new one", () => {
     expect(aiLaunchDependencyTitle("persona")).toBe("Simulated user");
     expect(aiLaunchDependencyTitle("judge")).toBe("Judge");
+    expect(aiLaunchDependencyTitle("builtin_tool")).toBe("Built-in tool");
     expect(aiLaunchDependencyTitle("toString")).toBe("Dependency");
   });
 });

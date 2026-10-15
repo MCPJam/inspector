@@ -418,6 +418,35 @@ it("keeps the spinner until replacement confirmation; Retry recovers after an un
   }
 });
 
+it("recovers failed guest startup without unauthenticated subscriptions", async () => {
+  const recoveryClock = vi.spyOn(performance, "now");
+  auth.user = null;
+  guest.mint.mockRejectedValue(new TypeError("network unavailable"));
+  const { peer, view, close } = setup();
+  try {
+    await waitFor(
+      () => expect(useSessionRefreshStore.getState().status).toBe("failed"),
+      { timeout: 10000 },
+    );
+    expect(peer.active.size).toBe(0);
+    expect(view.queryByText("Retry")).not.toBeNull();
+    await act(async () => window.dispatchEvent(new Event("online")));
+    expect(guest.mint).toHaveBeenCalledTimes(4);
+    recoveryClock.mockReturnValue(performance.now() + 75_000);
+    guest.cached = { token: jwt(2), guestId: "guest-test" };
+    guest.mint.mockImplementation(async () => guest.cached);
+    guest.refresh.mockResolvedValue(jwt(2));
+    await act(async () => window.dispatchEvent(new Event("online")));
+    await waitFor(() => expect(peer.active.size).toBe(9));
+    expect(useSessionRefreshStore.getState().status).toBe("idle");
+    expect(view.queryByText("App content")).not.toBeNull();
+    expect(peer.unauthenticatedAdds).toEqual([]);
+  } finally {
+    await close();
+    recoveryClock.mockRestore();
+  }
+}, 15000);
+
 it("guest refresh forces renewal even while the cache still has the rejected token", async () => {
   auth.user = null;
   guest.cached = { token: jwt(1), guestId: "guest-test" };

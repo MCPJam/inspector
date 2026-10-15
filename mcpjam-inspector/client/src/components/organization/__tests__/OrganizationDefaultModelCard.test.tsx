@@ -162,7 +162,7 @@ describe("OrganizationDefaultModelCard", () => {
     });
     renderCard();
 
-    expect(screen.getByText("Default AI models")).toBeInTheDocument();
+    expect(screen.getByText("Organization AI models")).toBeInTheDocument();
     for (const kind of ["default", "embedding", "transcription"]) {
       expect(screen.getByTestId(`org-ai-model-${kind}`)).toBeInTheDocument();
     }
@@ -457,6 +457,47 @@ describe("OrganizationDefaultModelCard", () => {
     expect(
       screen.queryByRole("option", { name: "Anthropic" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("offers a search model only on connections the backend says can search", async () => {
+    const user = userEvent.setup();
+    hookState.config = makeConfig({
+      supportedModelKinds: ["default", "search"],
+      aiModels: { default: null, search: null },
+      aiModelConnectionIds: {
+        default: ["conn_openai", "conn_anthropic"],
+        search: ["conn_anthropic"],
+      },
+    });
+    renderCard();
+
+    expect(screen.getByText("Organization AI models")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Set search model" }));
+    const editor = screen.getByTestId("org-ai-model-search-editor");
+    await user.click(
+      within(editor).getByRole("combobox", { name: "Search model provider" }),
+    );
+    expect(
+      screen.getByRole("option", { name: "Anthropic" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "OpenAI" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says which providers can search when none of the organization's can", async () => {
+    const user = userEvent.setup();
+    hookState.config = makeConfig({
+      supportedModelKinds: ["default", "search"],
+      aiModels: { default: null, search: null },
+      aiModelConnectionIds: { default: ["conn_openai"], search: [] },
+    });
+    renderCard();
+
+    await user.click(screen.getByRole("button", { name: "Set search model" }));
+    expect(
+      screen.getByText(/No organization provider can run web search/),
+    ).toBeInTheDocument();
   });
 
   it("tests a candidate before it is saved", async () => {
