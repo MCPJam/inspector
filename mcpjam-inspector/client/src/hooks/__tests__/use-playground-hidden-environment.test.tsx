@@ -415,6 +415,51 @@ describe("usePlaygroundHiddenEnvironment", () => {
     });
   });
 
+  describe("a server joining or leaving under the same composition", () => {
+    const twoServers = (unavailable?: "needs_auth") =>
+      plugin("bits", {
+        servers: [
+          {
+            serverId: "srv_bits",
+            name: "bits-server",
+            componentKey: "server",
+            placement: "remote",
+          },
+          {
+            serverId: "srv_crm",
+            name: "crm-server",
+            componentKey: "crm",
+            placement: "remote",
+            ...(unavailable ? { unavailable } : {}),
+          },
+        ],
+      });
+
+    it("names a server once the member signs in, without recomposing", async () => {
+      state.plugins = [twoServers("needs_auth")];
+      const { result, rerender } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(result.current.pluginServerIds).toEqual(["srv_bits"]);
+
+      state.plugins = [twoServers()];
+      rerender(PROPS_FOR_PENDING);
+      expect(result.current.pluginServerIds).toEqual(["srv_bits", "srv_crm"]);
+      expect(result.current.environmentId).toBe("env_1");
+      expect(state.ensure).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops naming a server the member can no longer use", async () => {
+      state.plugins = [twoServers()];
+      const { result, rerender } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+
+      state.plugins = [twoServers("needs_auth")];
+      rerender(PROPS_FOR_PENDING);
+      expect(result.current.pluginServerIds).toEqual(["srv_bits"]);
+      expect(state.ensure).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("recover", () => {
     it("re-reads the plugins and recomposes", async () => {
       state.plugins = [plugin("bits")];

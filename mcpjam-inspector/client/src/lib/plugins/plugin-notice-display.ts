@@ -92,7 +92,7 @@ const PARTIAL_COPY: Record<string, string> = {
 
 function describeSkip(plugin: PluginNoticePlugin): string {
   if (plugin.partial) {
-    const action = PARTIAL_COPY[plugin.reason] ?? "it couldn't load";
+    const action = PARTIAL_COPY[plugin.reason] ?? "it isn't available yet";
     return `${noticeLabel(plugin)} ran without one of its servers: ${action}.`;
   }
   const reason =

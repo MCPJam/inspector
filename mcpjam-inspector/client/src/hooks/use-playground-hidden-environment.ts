@@ -111,12 +111,22 @@ type Composed =
       status: "ready";
       environmentId: string;
       pluginServerIds: string[];
+      /**
+       * The live read's server ids when this was composed. Once they change,
+       * the live ids win: a sign-in changes which servers run without
+       * changing the composition key.
+       */
+      liveServerIds: string[];
     }
   /** No plugin is runnable after a re-read: a plain client turn. */
   | { key: string; status: "none" }
   | { key: string; status: "failed" };
 
 const EMPTY_SERVERS: ActivePluginServer[] = [];
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
 
 export function usePlaygroundHiddenEnvironment(
   input: PlaygroundHiddenEnvironmentInput,
@@ -295,6 +305,7 @@ export function usePlaygroundHiddenEnvironment(
           status: "ready",
           environmentId,
           pluginServerIds: target.pluginServerIds,
+          liveServerIds: target.pluginServerIds,
         });
       },
       (error: unknown) => {
@@ -365,6 +376,7 @@ export function usePlaygroundHiddenEnvironment(
         status: "ready",
         environmentId,
         pluginServerIds: serverIds,
+        liveServerIds: target.pluginServerIds,
       });
       return { ok: true, environmentId, pluginServerIds: serverIds };
     } catch (error) {
@@ -392,7 +404,10 @@ export function usePlaygroundHiddenEnvironment(
     wanted,
     environmentId: current?.status === "ready" ? current.environmentId : null,
     pluginServerIds:
-      current?.status === "ready" ? current.pluginServerIds : pluginServerIds,
+      current?.status === "ready" &&
+      sameIds(current.liveServerIds, pluginServerIds)
+        ? current.pluginServerIds
+        : pluginServerIds,
     failed: current?.status === "failed" || waitTimedOut || readFailed,
     recover,
   };
