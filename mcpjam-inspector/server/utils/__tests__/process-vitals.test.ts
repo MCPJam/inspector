@@ -214,9 +214,8 @@ describe("process vitals sampler", () => {
     expect(last.peakHeapUsedBytes).toBe(900 * MB);
   });
 
-  // PLB-140 / INSPECTOR-ELECTRON-X3: the renderer died of ENFILE holding 15
-  // fds of its own, and nothing recorded whether the main process was the one
-  // draining the system file table.
+  // A renderer can die of ENFILE while holding few fds of its own; this count
+  // says whether the main process is the one draining the system file table.
   it("counts this process's open file descriptors", async () => {
     const { flushProcessVitals } = await loadVitals([500 * MB]);
 

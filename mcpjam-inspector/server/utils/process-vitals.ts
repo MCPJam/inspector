@@ -85,6 +85,10 @@ function oldSpace(): { used: number; size: number } {
   return { used: 0, size: 0 };
 }
 
+// A closed list because the Axiom row keeps only the values log-events.ts
+// spells out; any other errno arrives as "unknown".
+const FD_ERRNOS = ["ENOENT", "EMFILE", "ENFILE", "EACCES", "EPERM"] as const;
+
 /**
  * Open file descriptors of THIS process, by listing `/dev/fd` (devfs on macOS,
  * a link to `/proc/self/fd` on Linux). When the listing fails the count is
@@ -94,14 +98,10 @@ function oldSpace(): { used: number; size: number } {
  * the worst moment is the one that cannot list. That one extra fd is also in
  * the count; the ramp is what matters, not the exact figure.
  *
- * INSPECTOR-ELECTRON-X3 (PLB-140): the renderer died of ENFILE, the SYSTEM
- * file table, while holding 15 fds of its own. Whether the main process was
- * the one draining that table went unrecorded. This answers it next time.
+ * A renderer can die of ENFILE, the SYSTEM file table, while holding a dozen
+ * fds of its own. This count says whether the main process is the one
+ * draining that table.
  */
-// A closed list because the Axiom row keeps only the values log-events.ts
-// spells out; any other errno arrives as "unknown".
-const FD_ERRNOS = ["ENOENT", "EMFILE", "ENFILE", "EACCES", "EPERM"] as const;
-
 function openFds(): Pick<ProcessVitals, "openFdCount" | "openFdError"> {
   try {
     return { openFdCount: fs.readdirSync("/dev/fd").length, openFdError: null };
