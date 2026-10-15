@@ -1,5 +1,6 @@
 import type { ActivePluginRow } from "@/lib/plugins/active-plugins-types";
 import type { PluginNoticePlugin } from "@/lib/plugins/plugin-notice-display";
+import type { PluginServerUnavailable } from "@/shared/plugin-server-unavailable";
 
 /**
  * How a Playground chat runs the project's installed plugins while the
@@ -148,6 +149,35 @@ export function skippedPluginsForNotice(
           },
         ]
       : [];
+  });
+}
+
+/**
+ * The plugins a turn ran without one of their servers, for the plugin notice.
+ * A server is matched to the plugin that lists it; a plugin with a server that
+ * needs a sign-in says that, since it is the one the member can act on.
+ */
+export function unavailableServersForNotice(
+  plugins: readonly ActivePluginRow[],
+  servers: readonly PluginServerUnavailable[],
+): PluginNoticePlugin[] {
+  return plugins.flatMap((plugin): PluginNoticePlugin[] => {
+    const own = servers.filter((unavailable) =>
+      plugin.servers.some((server) => server.serverId === unavailable.serverId),
+    );
+    const reason =
+      own.find((unavailable) => unavailable.reason === "needs_auth")?.reason ??
+      own[0]?.reason;
+    if (!reason) return [];
+    return [
+      {
+        pluginId: plugin.pluginId,
+        name: plugin.name,
+        displayName: plugin.displayName,
+        reason,
+        partial: true,
+      },
+    ];
   });
 }
 

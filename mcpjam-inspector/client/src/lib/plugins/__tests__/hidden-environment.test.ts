@@ -10,6 +10,7 @@ import {
   runnablePluginServerIds,
   runnablePluginVersionIds,
   skippedPluginsForNotice,
+  unavailableServersForNotice,
 } from "../hidden-environment";
 
 function row(
@@ -224,6 +225,64 @@ describe("skippedPluginsForNotice", () => {
         (plugin) => plugin.placement,
       ),
     ).toEqual(["local", "computer"]);
+  });
+});
+
+describe("unavailableServersForNotice", () => {
+  const twoServers = row("mail", {
+    displayName: "Mail",
+    servers: [
+      {
+        serverId: "srv_inbox",
+        name: "inbox",
+        componentKey: "inbox",
+        placement: "remote",
+      },
+      {
+        serverId: "srv_send",
+        name: "send",
+        componentKey: "send",
+        placement: "remote",
+      },
+    ],
+  });
+
+  it("names the plugin whose server the turn ran without, as a partial skip", () => {
+    expect(
+      unavailableServersForNotice(
+        [row("a"), twoServers],
+        [{ serverId: "srv_send", reason: "unreachable" }],
+      ),
+    ).toEqual([
+      {
+        pluginId: "plg_mail",
+        name: "mail",
+        displayName: "Mail",
+        reason: "unreachable",
+        partial: true,
+      },
+    ]);
+  });
+
+  it("says sign in when any of the plugin's servers needs it", () => {
+    expect(
+      unavailableServersForNotice(
+        [twoServers],
+        [
+          { serverId: "srv_send", reason: "unreachable" },
+          { serverId: "srv_inbox", reason: "needs_auth" },
+        ],
+      ).map((plugin) => plugin.reason),
+    ).toEqual(["needs_auth"]);
+  });
+
+  it("says nothing for a server no plugin lists", () => {
+    expect(
+      unavailableServersForNotice(
+        [row("a")],
+        [{ serverId: "srv_elsewhere", reason: "unreachable" }],
+      ),
+    ).toEqual([]);
   });
 });
 

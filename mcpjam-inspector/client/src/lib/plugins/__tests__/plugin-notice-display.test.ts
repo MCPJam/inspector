@@ -40,7 +40,7 @@ describe("describePluginNotice", () => {
   });
 
   it("says a plugin ran without one of its servers, and what to do", () => {
-    const partial = (reason: "needs_auth" | "needs_setup") =>
+    const partial = (reason: "needs_auth" | "needs_setup" | "unreachable") =>
       describePluginNotice({
         kind: "skipped",
         plugins: [{ ...bitsNeedsAuth.plugins[0], reason, partial: true }],
@@ -50,6 +50,9 @@ describe("describePluginNotice", () => {
     );
     expect(partial("needs_setup")).toBe(
       "Bits & Bolts ran without one of its servers: finish that server's setup to use it.",
+    );
+    expect(partial("unreachable")).toBe(
+      "Bits & Bolts ran without one of its servers: that server isn't working right now.",
     );
   });
 
