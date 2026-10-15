@@ -125,6 +125,13 @@ describe("strict telemetry reconstruction", () => {
       breadcrumbs: [{ category: "http", type: "http" }],
     });
     expect(rebuildSentryEvent(dirty)).not.toHaveProperty("user");
+    expect(
+      rebuildSentryEvent(dirty, { ...catalog, release: "1.2.3", dist: "npm" })
+    ).toMatchObject({
+      release: "1.2.3",
+      dist: "npm",
+      fingerprint: ["{{ default }}", "UnknownError"],
+    });
 
   });
   it("rebuilds transactions and child spans separately", () => {

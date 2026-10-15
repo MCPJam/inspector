@@ -239,6 +239,15 @@ export interface WidgetSurfaceInfo {
    * refuses the App either. Absent: modes are negotiated as usual.
    */
   fixedDisplayMode?: DisplayMode;
+  /**
+   * Apply OpenAI's display-mode rules (ChatGPT and Codex with the Display
+   * modes extension on): omitted resource modes mean every host mode, a
+   * preference picks the starting mode without narrowing, a resource that
+   * declares both inline and fullscreen starts fullscreen, and a fixed mode
+   * the initialized App says it cannot show refuses the App. Absent: modes are
+   * negotiated as before.
+   */
+  openAIDisplayModes?: boolean;
 }
 
 // --- Instrumentation ---------------------------------------------------------

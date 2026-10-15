@@ -366,3 +366,139 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
     expect(seams.cancel).not.toHaveBeenCalled();
   });
 });
+
+describe('an owned MRTR form whose schema rides in _meta["openai/elicitation"]', () => {
+  const owner = {
+    actorId: "actor",
+    projectId: "project",
+    workspaceId: "workspace-extension",
+    instanceId: "instance-extension",
+    generation: 1,
+    serverId: "server",
+    bindingId: "binding",
+    placement: "interactive" as const,
+  };
+  const authorization = {
+    owner,
+    origin: "app" as const,
+    revision: "revision",
+    tool: { name: "tool" },
+    enabled: true,
+    requiresApproval: false,
+    allowedOrigins: ["app" as const],
+  };
+  const extended = {
+    type: "object",
+    required: ["name"],
+    properties: { name: { type: "string" } },
+  };
+  const parent = {
+    kind: "mrtr" as const,
+    id: "parent-extension",
+    round: 1,
+    inputRequestKey: "input",
+  };
+  const pending = {
+    method: "tools/call",
+    originalParams: { name: "tool" },
+    pendingInputRequests: {
+      input: {
+        method: "elicitation/create",
+        params: {
+          mode: "form",
+          message: "Name",
+          requestedSchema: { type: "object", properties: {} },
+          _meta: { "openai/elicitation": { requestedSchema: extended } },
+        },
+      },
+    },
+  };
+  const live = (forms = { on: true }) =>
+    createOwnedPluginMrtr({
+      c: {} as any,
+      bearer: "disposable-bearer",
+      projectId: "project",
+      serverId: "server",
+      sourceBinding: { hostId: "host", hostRevision: "host-revision" },
+      assertCurrent: async () => {},
+      formsEnabled: () => forms.on,
+      manager: () =>
+        ({
+          getManagedClient: () => ({}),
+          getInitializationInfo: () => ({ protocolVersion: "2026-07-28" }),
+          getServerConfig: () => ({ url: "https://disposable.invalid" }),
+        }) as any,
+    });
+  const resume = (service: ReturnType<typeof live>) =>
+    service.resume(
+      authorization,
+      "operation-extension",
+      { name: "tool" },
+      {
+        continuationId: "parent-extension",
+        round: 1,
+        responsesBlobId: "answer",
+      },
+      new AbortController().signal,
+    );
+  let source: ReturnType<typeof pluginFormSources.bind>;
+  beforeEach(() => {
+    seams.resume.mockReset();
+    seams.cancel
+      .mockReset()
+      .mockResolvedValue({ ok: true, status: "cancelled" });
+    // The display bound the extension schema, as the collector shows it.
+    source = pluginFormSources.bind({
+      owner,
+      hostId: "host",
+      hostRevision: "host-revision",
+      invocationId: "operation-extension",
+      origin: "app",
+      revision: "revision",
+      toolName: "tool",
+      parent,
+      requestedSchema: extended,
+      expiresAt: Date.now() + 10000,
+    });
+  });
+  afterEach(() => source.release());
+
+  it("matches the bound source on resume and admits an answer the core schema would refuse", async () => {
+    const delivered = vi.fn();
+    seams.resume.mockImplementationOnce(async (options) => {
+      const prepared = await options.prepareLeg(pending, {
+        input: { action: "accept", content: { name: "bolt" } },
+      });
+      prepared.commit();
+      delivered(prepared.responses);
+      return { outcome: "completed", result: { content: [] } };
+    });
+    await expect(resume(live())).resolves.toEqual({ content: [] });
+    expect(delivered).toHaveBeenCalledExactlyOnceWith({
+      input: { action: "accept", content: { name: "bolt" } },
+    });
+  });
+
+  it("never delivers the answer when Forms goes off between rounds", async () => {
+    const forms = { on: true };
+    const service = live(forms);
+    const drive = vi.fn();
+    seams.resume.mockImplementationOnce(async (options) => {
+      forms.on = false;
+      try {
+        await options.prepareLeg(pending, {
+          input: { action: "accept", content: { name: "bolt" } },
+        });
+        drive();
+      } catch {
+        return { outcome: "failed", reason: "admission refused" };
+      }
+      return { outcome: "completed", result: { content: [] } };
+    });
+    await expect(resume(service)).rejects.toMatchObject({
+      code: "PLUGIN_FORMS_DISABLED",
+    });
+    expect(drive).not.toHaveBeenCalled();
+    expect(seams.cancel).toHaveBeenCalledOnce();
+  });
+});

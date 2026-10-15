@@ -2,6 +2,8 @@ import { useInitialRenderOutcome } from "./use-initial-render-outcome";
 import { WidgetFullscreenPlacementContext } from "./widget-fullscreen-placement";
 import {
   negotiateResourceDisplayModes,
+  openAIDisplayModes,
+  pickOpenAIDisplayMode,
   type ResourceDisplayHints,
 } from "@mcpjam/sdk/widget-runtime";
 /**
@@ -1146,6 +1148,9 @@ export function MCPAppsRendererSurface({
   const fixedDisplayMode = host.surface.fixedDisplayMode;
   const fixedDisplayModeRef = useRef(fixedDisplayMode);
   fixedDisplayModeRef.current = fixedDisplayMode;
+  const openAIRules = host.surface.openAIDisplayModes === true;
+  const openAIRulesRef = useRef(openAIRules);
+  openAIRulesRef.current = openAIRules;
   const displayModesFor = useCallback(
     (
       hostModes: readonly DisplayMode[],
@@ -1153,6 +1158,8 @@ export function MCPAppsRendererSurface({
       appModes?: readonly string[]
     ): DisplayMode[] => {
       const fixed = fixedDisplayModeRef.current;
+      if (openAIRulesRef.current)
+        return openAIDisplayModes(hostModes, hints, appModes, fixed);
       return fixed && hostModes.includes(fixed)
         ? [fixed]
         : negotiateResourceDisplayModes([...hostModes], hints, appModes);
@@ -1169,6 +1176,7 @@ export function MCPAppsRendererSurface({
     [
       displayModesFor,
       fixedDisplayMode,
+      openAIRules,
       hostAvailableDisplayModes,
       resourceDisplayHints,
       appSupportedDisplayModes,
@@ -2050,11 +2058,20 @@ export function MCPAppsRendererSurface({
         return false;
       }
       setResourceDisplayHints(resourceHints);
+      // OpenAI rules always pick a starting mode; otherwise only an explicit
+      // preference moves the App off the host's mode.
+      const initialMode = openAIRulesRef.current
+        ? pickOpenAIDisplayMode(allowed, resourceHints)
+        : resourceHints?.preferredDisplayMode;
       if (
-        resourceHints?.preferredDisplayMode &&
-        allowed.includes(resourceHints.preferredDisplayMode)
+        initialMode &&
+        allowed.includes(initialMode) &&
+        !(
+          openAIRulesRef.current &&
+          initialMode === effectiveDisplayModeRef.current
+        )
       ) {
-        setDisplayMode(resourceHints.preferredDisplayMode);
+        setDisplayMode(initialMode);
       }
       setWidgetHtml(html);
       setWidgetCsp(csp);
@@ -3432,11 +3449,28 @@ export function MCPAppsRendererSurface({
               declaredAppModes
             );
             if (negotiated.length === 0) {
-              setLoadError("This App has no supported display mode");
+              const fixed = fixedDisplayModeRef.current;
+              setLoadError(
+                openAIRulesRef.current && fixed === "fullscreen"
+                  ? "This App can't open here because it doesn't support full screen. Add full screen support to the App, then open it again."
+                  : "This App has no supported display mode"
+              );
               void b.close();
               return;
             }
             setAppSupportedDisplayModes(declaredAppModes);
+            // OpenAI rules: an App that can't stay in its starting mode moves
+            // to the mode it would have started in among what it allows.
+            if (
+              openAIRulesRef.current &&
+              !negotiated.includes(effectiveDisplayModeRef.current)
+            ) {
+              const next = pickOpenAIDisplayMode(
+                negotiated,
+                resourceDisplayHintsRef.current
+              );
+              if (next) setDisplayModeRef.current(next);
+            }
             // If the guest re-initialized (e.g. an SDK-based app completing
             // its own handshake after the openai-compat shim already
             // initialized), bump reinitCount so the delivery effects re-send

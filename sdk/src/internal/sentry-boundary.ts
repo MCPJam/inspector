@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, posix, resolve, win32 } from "node:path";
 import catalog from "./telemetry-catalog.generated.json" with { type: "json" };
 import {
   telemetryRecord,
@@ -49,6 +49,30 @@ function sdkFrameDebugIds(root: string): Record<string, string> {
   return ids;
 }
 
+/**
+ * Exact spellings of files under a verified SDK root: the native path that
+ * CommonJS frames carry, the module URL that ESM frames carry, and the
+ * forward-slash path Sentry's Node parser derives from that URL. On Windows
+ * these all differ; other paths, even with the same suffix, stay unaliased.
+ */
+export function sdkFrameAliases(
+  root: string,
+  files: readonly string[],
+  windows = process.platform === "win32"
+): Record<string, string> {
+  const path = windows ? win32 : posix;
+  return Object.fromEntries(
+    files.flatMap((file) => {
+      const native = path.resolve(root, file);
+      return [
+        native,
+        native.split(path.sep).join(posix.sep),
+        pathToFileURL(native, { windows }).href,
+      ].map((alias) => [alias, file]);
+    })
+  );
+}
+
 interface BoundaryTransport {
   send(envelope: never): PromiseLike<unknown>;
   flush(timeout?: number): PromiseLike<boolean>;
@@ -81,18 +105,10 @@ export function sdkDiagnosticBoundary(release: string) {
       owned = false;
     }
   }
-  const frameAliases = owned
-    ? Object.fromEntries(
-        catalog.files.flatMap((file) => [
-          [resolve(root, file), file],
-          [pathToFileURL(resolve(root, file)).href, file],
-        ])
-      )
-    : {};
   const options: SentryBoundaryOptions = {
     ...catalog,
     files: owned ? catalog.files : [],
-    frameAliases,
+    frameAliases: owned ? sdkFrameAliases(root, catalog.files) : {},
     frameDebugIds: owned && kind === "package" ? sdkFrameDebugIds(root) : {},
     release,
     platform: "node",
