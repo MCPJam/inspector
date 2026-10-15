@@ -140,7 +140,7 @@ COPY mcpjam-inspector/server/tsconfig.json mcpjam-inspector/server/tsup.config.t
 COPY mcpjam-inspector/bin ./mcpjam-inspector/bin
 COPY mcpjam-inspector/shared ./mcpjam-inspector/shared
 # Telemetry catalogs are build outputs. The SDK build writes the SDK catalog
-# here (no server or client yet); the server step below writes all four.
+# here (no server or client yet); `build:server`'s pre-hook writes all four.
 COPY scripts/generate-telemetry-catalogs.mjs scripts/telemetry-route-catalog.mjs ./scripts/
 
 COPY sdk/src ./sdk/src
@@ -195,8 +195,7 @@ ARG MCPJAM_BUILD_SURFACE=web
 # The server bakes in the same `dist`. `build:server` injects and verifies its
 # debug IDs and, given Railway's SENTRY_AUTH_TOKEN, uploads its maps. Docker
 # Hub runs the uploader in this same stage with a runtime-only credential.
-RUN npm run telemetry:catalogs -w @mcpjam/inspector && \
-    npm run bundle:browser-harness -w @mcpjam/inspector && \
+RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
     npm run build:server -w @mcpjam/inspector
 
 # Both releases inherit the verified server bytes; only this intermediate

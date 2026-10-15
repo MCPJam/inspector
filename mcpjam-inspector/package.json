@@ -102,6 +102,7 @@
     "electron:make": "npm run icons:win && npm run icons:mac && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-forge make",
     "electron:fix:dmg-deps": "npm --prefix .. rebuild macos-alias fs-xattr",
     "electron:install": "APP='out/MCPJam Inspector-darwin-arm64/MCPJam Inspector.app'; test -d \"$APP\" || { echo \"electron:install: $APP not found; run 'npm run electron:package' first (this script only copies a packaged app, and it removes the installed one before copying)\" >&2; exit 1; }; killall 'MCPJam Inspector' 2>/dev/null || true; rm -rf '/Applications/MCPJam Inspector.app' && cp -r \"$APP\" /Applications/ && open '/Applications/MCPJam Inspector.app'",
+    "preelectron:publish": "npm run telemetry:catalogs",
     "electron:publish": "cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-forge publish",
     "preelectron:dev": "node scripts/check-dev-env.mjs --task=electron-dev && npm run telemetry:catalogs && node scripts/build-sdk-if-stale.mjs && npm run bundle:all",
     "electron:dev": "node scripts/electron-dev.mjs",
