@@ -1,13 +1,26 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   OUTPUTS,
   ROOT,
   buildTelemetryCatalogs,
+  checkoutCacheFile,
   createCatalogCache,
   loadCatalogCache,
   sourceFiles,
@@ -16,7 +29,10 @@ import {
 } from "../generate-telemetry-catalogs.mjs";
 import { watchTelemetryCatalogs } from "../telemetry-catalog-watch.mjs";
 
-const BUDGET_MS = 1000;
+// Lint CI runs this on shared runners, and a loaded machine took up to 1.2 s to
+// land a save. The budget bounds what a user would notice; the re-parse count in
+// the watch test is the load-independent guard against a scan doing extra work.
+const BUDGET_MS = 5000;
 
 /** A minimal checkout: one SDK error, one diagnostic code, one log event, one mounted route. */
 function fixture() {
@@ -139,11 +155,12 @@ test("a second scan in one process sees edited, renamed and deleted routes", () 
   }
 });
 
-async function until(root, file, predicate) {
+/** Milliseconds until `condition` holds, or Infinity past the budget. */
+async function within(condition) {
   const started = performance.now();
-  while (performance.now() - started < 5 * BUDGET_MS) {
+  while (performance.now() - started < BUDGET_MS) {
     try {
-      if (predicate(JSON.parse(readFileSync(join(root, file), "utf8")))) return performance.now() - started;
+      if (condition()) return performance.now() - started;
     } catch {
       // Not written yet: keep polling.
     }
@@ -152,14 +169,20 @@ async function until(root, file, predicate) {
   return Infinity;
 }
 
+const readCatalog = (root, file) => JSON.parse(readFileSync(join(root, file), "utf8"));
+const until = (root, file, predicate) => within(() => predicate(readCatalog(root, file)));
+const quiet = () => {};
+
 test("--watch lands each addition, rename and deletion within budget, once per checkout", async () => {
   const root = fixture();
   const lines = [];
-  const watcher = watchTelemetryCatalogs({ root, log: (line) => lines.push(line) });
+  const cache = createCatalogCache();
+  const watcher = watchTelemetryCatalogs({ root, cache, log: (line) => lines.push(line) });
+  const standby = watchTelemetryCatalogs({ root, log: (line) => lines.push(line) });
   try {
-    assert.ok(watcher);
-    assert.equal(watchTelemetryCatalogs({ root, log: (line) => lines.push(line) }), null);
-    assert.ok(lines.some((line) => line.includes("already watching")));
+    assert.equal(watcher.watching, true);
+    assert.equal(standby.watching, false);
+    assert.ok(lines.some((line) => line.includes("standing by")));
     const steps = [
       ["add a log message", "mcpjam-inspector/server/probe.ts", 'logger.warn("watch probe added");',
         (catalog) => catalog.messages.includes("watch probe added")],
@@ -171,9 +194,12 @@ test("--watch lands each addition, rename and deletion within budget, once per c
         (catalog) => catalog.routes.includes("/api/renamed") && !catalog.routes.includes("/api/added")],
     ];
     for (const [name, file, text, landed] of steps) {
+      const parsed = cache.parsed;
       edit(root, file, text);
       const elapsed = await until(root, OUTPUTS.inspector, landed);
       assert.ok(elapsed <= BUDGET_MS, `${name}: ${elapsed} ms`);
+      // Load can delay a save, never multiply its work: only the edited file is parsed again.
+      assert.ok(cache.parsed - parsed <= 2, `${name}: re-parsed ${cache.parsed - parsed} files`);
     }
     rmSync(join(root, "mcpjam-inspector/server/probe.ts"));
     rmSync(join(root, "mcpjam-inspector/server/routes/gone.ts"));
@@ -181,7 +207,112 @@ test("--watch lands each addition, rename and deletion within budget, once per c
       !catalog.messages.includes("watch probe renamed") && !catalog.routes.includes("/api/gone"));
     assert.ok(elapsed <= BUDGET_MS, `delete: ${elapsed} ms`);
   } finally {
-    watcher?.stop();
+    standby.stop();
+    watcher.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a standby watcher takes over a released or stale lock, and a replaced writer stops writing", async () => {
+  const root = fixture();
+  const lock = checkoutCacheFile(root, "watch", "lock");
+  const first = watchTelemetryCatalogs({ root, log: quiet, takeoverMs: 20 });
+  const second = watchTelemetryCatalogs({ root, log: quiet, takeoverMs: 20 });
+  const messages = () => readCatalog(root, OUTPUTS.inspector).messages;
+  const save = (message) => edit(root, "mcpjam-inspector/server/probe.ts", `logger.warn(${JSON.stringify(message)});`);
+  try {
+    assert.equal(first.watching, true);
+    assert.equal(second.watching, false);
+
+    // The writer's dev process closed: the standby takes the released lock.
+    first.stop();
+    assert.ok((await within(() => second.watching)) <= BUDGET_MS, "standby took over a released lock");
+    save("after takeover");
+    assert.ok((await until(root, OUTPUTS.inspector, (catalog) => catalog.messages.includes("after takeover"))) <= BUDGET_MS);
+
+    // Another watcher judged this one stale and replaced the lock: the next scan
+    // stands down without writing, so there is never a second writer.
+    writeFileSync(lock, `${process.pid} another-watcher`);
+    save("while replaced");
+    assert.ok((await within(() => !second.watching)) <= BUDGET_MS, "replaced writer stood by");
+    assert.ok(!messages().includes("while replaced"));
+
+    // That watcher stopped refreshing the lock (a reused PID, say): it is stale.
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lock, old, old);
+    assert.ok((await within(() => second.watching && messages().includes("while replaced"))) <= BUDGET_MS, "took over a stale lock");
+
+    // A lock whose owner died is free at once, however fresh.
+    const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+    writeFileSync(lock, `${dead} dead-watcher`);
+    save("after a dead owner");
+    assert.ok((await until(root, OUTPUTS.inspector, (catalog) => catalog.messages.includes("after a dead owner"))) <= BUDGET_MS);
+    assert.equal(second.watching, true);
+    assert.equal(readFileSync(lock, "utf8").split(" ")[0], String(process.pid));
+  } finally {
+    first.stop();
+    second.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("checkouts sharing one node_modules keep separate watcher locks and parse caches", async () => {
+  const a = fixture();
+  const b = fixture();
+  try {
+    // A worktree that symlinks another checkout's node_modules.
+    mkdirSync(join(a, "node_modules"));
+    symlinkSync(join(a, "node_modules"), join(b, "node_modules"), "junction");
+    const [lockA, lockB] = [a, b].map((root) => checkoutCacheFile(root, "watch", "lock"));
+    assert.notEqual(lockA, lockB);
+
+    const watchA = watchTelemetryCatalogs({ root: a, log: quiet });
+    const watchB = watchTelemetryCatalogs({ root: b, log: quiet });
+    try {
+      assert.equal(watchA.watching, true);
+      assert.equal(watchB.watching, true);
+      assert.equal(realpathSync(dirname(lockA)), realpathSync(dirname(lockB)));
+      edit(b, "mcpjam-inspector/server/probe.ts", 'logger.warn("only in b");');
+      assert.ok((await until(b, OUTPUTS.inspector, (catalog) => catalog.messages.includes("only in b"))) <= BUDGET_MS);
+      assert.ok(!readCatalog(a, OUTPUTS.inspector).messages.includes("only in b"));
+    } finally {
+      watchA.stop();
+      watchB.stop();
+    }
+
+    // Alternating runs each start warm: neither prunes or overwrites the other's facts.
+    for (const root of [a, b, a, b]) {
+      const cache = loadCatalogCache(root);
+      writeTelemetryCatalogs({ root, cache });
+      assert.equal(cache.parsed, 0, `${root === a ? "a" : "b"} re-parsed after the other checkout ran`);
+    }
+    // One in-memory cache across roots: a run prunes only its own root's entries.
+    const shared = createCatalogCache();
+    writeTelemetryCatalogs({ root: a, cache: shared });
+    writeTelemetryCatalogs({ root: b, cache: shared });
+    const parsed = shared.parsed;
+    writeTelemetryCatalogs({ root: a, cache: shared });
+    assert.equal(shared.parsed, parsed);
+  } finally {
+    for (const root of [a, b]) rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the generator runs when started through a symlinked path", () => {
+  const root = fixture();
+  const link = `${root}-link`;
+  try {
+    mkdirSync(join(root, "scripts"));
+    for (const file of ["generate-telemetry-catalogs.mjs", "telemetry-route-catalog.mjs"])
+      copyFileSync(join(ROOT, "scripts", file), join(root, "scripts", file));
+    mkdirSync(join(root, "node_modules"));
+    symlinkSync(join(ROOT, "node_modules", "typescript"), join(root, "node_modules", "typescript"), "junction");
+    symlinkSync(root, link, "junction");
+    const output = execFileSync(process.execPath, [join(link, "scripts", "generate-telemetry-catalogs.mjs")], { encoding: "utf8" });
+    assert.match(output, /^\[telemetry\] wrote /);
+    assert.ok(readCatalog(root, OUTPUTS.inspector).routes.includes("/api/before"));
+  } finally {
+    rmSync(link, { force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });

@@ -154,8 +154,8 @@ async function main() {
     );
   }
 
-  // Keeps telemetry catalogs current while forge rebuilds on save; exits
-  // at once if another dev process of this checkout is already watching.
+  // Keeps telemetry catalogs current while forge rebuilds on save; if another
+  // dev process of this checkout is already watching, it stands by instead.
   const catalogs = spawn(
     process.execPath,
     [join(inspectorDir, "..", "scripts", "generate-telemetry-catalogs.mjs"), "--watch"],

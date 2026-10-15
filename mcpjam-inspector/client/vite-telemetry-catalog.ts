@@ -23,7 +23,8 @@ export function telemetrySourceCatalogsPlugin(): Plugin {
     name: "telemetry-source-catalogs",
     configureServer(server) {
       generate();
-      // A second watcher for the same checkout (from `npm run dev`) exits at once.
+      // A second watcher for the same checkout (from `npm run dev`) stands by
+      // and takes over if the first stops.
       watcher = spawn(process.execPath, [GENERATOR, "--watch"], {
         stdio: ["ignore", "inherit", "inherit", "ipc"],
       });

@@ -23,12 +23,13 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { debuglog } from "node:util";
 import { createRequire } from "node:module";
 import { createSourceCache, loadTypeScript, mountedRoutes } from "./telemetry-route-catalog.mjs";
@@ -57,6 +58,22 @@ export const SOURCE = /\.[cm]?tsx?$/;
 const EXCLUDED = /(?:__tests__|\.test\.|\.generated\.|\/tests\/|\.bundled\.)/;
 const posix = (path) => path.split(sep).join("/");
 export const cacheDir = (root = ROOT) => join(root, "node_modules", ".cache", "mcpjam-telemetry");
+
+/**
+ * This checkout's file in the cache directory. Worktrees that symlink one
+ * `node_modules` share that directory, so each name carries a hash of the
+ * checkout's real path: every checkout keeps its own watcher lock and facts.
+ */
+export function checkoutCacheFile(root, stem, extension) {
+  let path = resolve(root);
+  try {
+    path = realpathSync(path);
+  } catch {
+    // Not on disk yet: the resolved path still names it.
+  }
+  const key = createHash("sha256").update(path).digest("hex").slice(0, 12);
+  return join(cacheDir(root), `${stem}-${key}.${extension}`);
+}
 
 /** Every source file under `dir`, as sorted root-relative POSIX paths. */
 function walk(root, dir, files = []) {
@@ -260,7 +277,7 @@ const CACHE_VERSION = createHash("sha256")
 
 export function loadCatalogCache(root = ROOT) {
   try {
-    const saved = JSON.parse(readFileSync(join(cacheDir(root), "facts.json"), "utf8"));
+    const saved = JSON.parse(readFileSync(checkoutCacheFile(root, "facts", "json"), "utf8"));
     if (saved.version === CACHE_VERSION) return createCatalogCache(new Map(saved.entries));
   } catch (error) {
     // No cache yet, or a torn one: parse every file.
@@ -272,7 +289,7 @@ export function loadCatalogCache(root = ROOT) {
 function saveCache(root, cache, changed) {
   if (!changed || !existsSync(join(root, "node_modules"))) return;
   try {
-    writeIfChanged(join(cacheDir(root), "facts.json"), JSON.stringify({ version: CACHE_VERSION, entries: [...cache.entries] }));
+    writeIfChanged(checkoutCacheFile(root, "facts", "json"), JSON.stringify({ version: CACHE_VERSION, entries: [...cache.entries] }));
   } catch (error) {
     // A cache that cannot be written only costs the next run a re-parse.
     debug("parse cache not saved: %s", error.message);
@@ -285,9 +302,12 @@ export function writeTelemetryCatalogs({ root = ROOT, cache, full } = {}) {
   const { parsed } = cache;
   cache.used.clear();
   const outputs = buildTelemetryCatalogs({ root, cache, full });
-  // Forget deleted and renamed files, so a long-lived watcher cache never grows.
+  // Forget this checkout's deleted and renamed files, so a long-lived watcher
+  // cache never grows. Another root's entries are not this run's to judge.
+  const under = join(resolve(root), sep);
   let pruned = 0;
-  for (const file of cache.entries.keys()) if (!cache.used.has(file) && cache.entries.delete(file)) pruned++;
+  for (const file of cache.entries.keys())
+    if (!cache.used.has(file) && file.startsWith(under) && cache.entries.delete(file)) pruned++;
   const written = Object.entries(outputs).filter(([file, text]) => writeIfChanged(join(root, file), text)).map(([file]) => file);
   saveCache(root, cache, cache.parsed !== parsed || pruned > 0);
   return written;
@@ -302,7 +322,17 @@ export function setup(project) {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+/** Run as a script, also through a symlinked path (`/tmp` is `/private/tmp` on macOS). */
+function invokedDirectly() {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // No such path: not this file.
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
   // Not awaited: the watcher imports this module, which must finish evaluating first.
   if (process.argv.includes("--watch")) import("./telemetry-catalog-watch.mjs").then((watcher) => watcher.watchTelemetryCatalogs());
   else {
