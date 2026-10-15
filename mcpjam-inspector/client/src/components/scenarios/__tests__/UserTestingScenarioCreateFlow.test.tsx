@@ -1,23 +1,3 @@
-/**
- * `/user-testing/new`, environment-first and TWO steps (BB-176).
- *
- * What this pins:
- *  - nothing is written until Create study — Continue only moves the stepper —
- *    and the publish is ONE call carrying the name and the access mode (so a
- *    scenario is never briefly live in a mode nobody asked for);
- *  - step 1 arrives ANSWERED: a client is preselected and the name is
- *    suggested as the project's next "Study N", so Continue is pressable
- *    without typing, and an empty name is not a wall;
- *  - a name the project already uses is flagged while typing, and Continue
- *    will not carry it;
- *  - the access default is the least-exposed option;
- *  - step 2 authors the tester's task list, and Create study carries it — with
- *    ratings — in a single second write;
- *  - an already-published environment is reported as such rather than as a
- *    failure, and keeps its own ratings and tasks;
- *  - the flow never CREATES an environment — it hands off to the Environments
- *    editor with the typed name seeded.
- */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -97,6 +77,14 @@ vi.mock("@/hooks/useScenarios", async (importOriginal) => ({
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => hostListState,
+}));
+vi.mock("@/hooks/useViews", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useViews")>()),
+  useProjectServers: () => ({ servers: [], isLoading: false }),
+  useProjectServerAttachments: () => ({
+    serverAttachments: [],
+    isLoading: false,
+  }),
 }));
 // Partial: the composer's model-matrix hook imports `shouldQueryProjectId`
 // from this same module, so a full replacement takes out the strip.
@@ -685,18 +673,16 @@ describe("UserTestingScenarioCreateFlow — a setup with no servers", () => {
     ];
     renderFlow();
 
-    // Silent until asked: a client picked FOR them is not something the
-    // creator did wrong until they try to move on with it.
     expect(
-      screen.queryByTestId("user-testing-create-servers-required"),
-    ).not.toBeInTheDocument();
+      screen.getByTestId("user-testing-create-servers-required"),
+    ).toHaveTextContent("Claude has no servers");
 
     goToTasks();
 
     expect(onTasksStep()).toBe(false);
     expect(
       screen.getByTestId("user-testing-create-servers-required"),
-    ).toHaveTextContent(/no server picked/i);
+    ).toHaveTextContent("Claude has no servers");
   });
 
   it("says nothing while the host list has not settled, and lets nothing through", () => {
