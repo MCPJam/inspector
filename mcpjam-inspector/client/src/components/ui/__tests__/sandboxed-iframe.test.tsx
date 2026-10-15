@@ -273,6 +273,48 @@ describe("SandboxedIframe — resource-ready delivery", () => {
     window.dispatchEvent(event);
   }
 
+  it("sends the client snapshot with each mount and reloads on a client switch", async () => {
+    const clientContext = {
+      clientName: "Goose",
+      surface: "inline" as const,
+      declaredCsp: { resourceDomains: ["https://assets.example"] },
+      capabilities: {
+        cspFrameDomains: false,
+        cspBaseUriDomains: false,
+        cspResourceDomains: { image: false },
+      },
+    };
+    const renderIframe = (context = clientContext) => (
+      <SandboxedIframe
+        html="<html><body>widget</body></html>"
+        clientContext={context}
+        cspSubtypePolicy={{ cspResourceDomains: { image: false } }}
+        onMessage={() => {}}
+      />
+    );
+    const { container, rerender } = render(renderIframe());
+    const iframe = container.querySelector("iframe")!;
+    const post = vi.spyOn(iframe.contentWindow!, "postMessage");
+    act(() =>
+      dispatchFromIframe(iframe, {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-proxy-ready",
+      }),
+    );
+    await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post.mock.calls[0][0].params).toEqual(
+      expect.objectContaining({
+        clientContext,
+        cspSubtypePolicy: { cspResourceDomains: { image: false } },
+      }),
+    );
+    rerender(renderIframe({ ...clientContext, clientName: "New client" }));
+    await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1][0].params.clientContext.clientName).toBe(
+      "New client",
+    );
+  });
+
   it("does not resend sandbox-resource-ready for semantically unchanged payloads", async () => {
     const renderIframe = (csp: { connectDomains: string[] }) => (
       <SandboxedIframe
@@ -710,5 +752,45 @@ describe("SandboxedIframe — view mount reporting", () => {
       }),
       expect.any(String),
     );
+  });
+
+  it("re-sends with the opaque mount when the client's app iframe is not same-origin", async () => {
+    const { container, rerender } = render(
+      <SandboxedIframe
+        html="<html><body>a</body></html>"
+        onMessage={() => {}}
+        mountMode="write"
+      />,
+    );
+    const iframe = container.querySelector("iframe")!;
+    const postMessage = vi.spyOn(iframe.contentWindow!, "postMessage");
+    act(() => {
+      dispatchFromIframe(iframe, {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-proxy-ready",
+        params: {},
+      });
+    });
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(
+      <SandboxedIframe
+        html="<html><body>a</body></html>"
+        onMessage={() => {}}
+        mountMode="opaque"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          method: "ui/notifications/sandbox-resource-ready",
+          params: expect.objectContaining({ mountMode: "opaque" }),
+        }),
+        expect.any(String),
+      );
+    });
   });
 });

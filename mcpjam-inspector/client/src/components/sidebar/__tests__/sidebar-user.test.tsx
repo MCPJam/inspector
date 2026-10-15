@@ -13,6 +13,7 @@ import {
   REVOKE_SESSION_PATH,
   SIGN_OUT_REVOKE_TOKEN_TIMEOUT_MS,
 } from "@/lib/auth/revoke-session";
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 const authState = vi.hoisted(() => ({
   signInMock: vi.fn(),
@@ -37,6 +38,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isLoading: false, isAuthenticated: false }),
   useQuery: () => null,
+  // Soft reads answer the same null as `useQuery` above.
+  useQueries: (queries: Record<string, unknown>) =>
+    Object.fromEntries(Object.keys(queries).map((key) => [key, null])),
 }));
 
 vi.mock("@mcpjam/design-system/popover", () => ({
@@ -187,13 +191,16 @@ describe("SidebarUser", () => {
     authState.signOutMock.mockImplementation(() => {
       latchedWhenSignOutRan = isSignOutInProgress();
     });
+    useSessionRefreshStore.setState({ queriesPaused: false });
 
     render(<SidebarUser />);
 
     fireEvent.click(screen.getByText("Log out"));
 
-    // Latched synchronously, before the revocation step even starts.
+    // Latched synchronously, before the revocation step even starts, and the
+    // gated subscriptions are gone before Convex can lose its identity.
     expect(isSignOutInProgress()).toBe(true);
+    expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
     await waitFor(() => expect(authState.signOutMock).toHaveBeenCalled());
     expect(latchedWhenSignOutRan).toBe(true);
   });

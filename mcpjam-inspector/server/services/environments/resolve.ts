@@ -22,6 +22,8 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { logger } from "../../utils/logger.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
+import { machineUnattendedLocalHarnesses } from "../../utils/harness/local/run-resources.js";
+import { localHarnessCapabilities } from "../evals/runner-capabilities.js";
 
 export type EnvironmentServerSelection =
   | { mode: "selected" | "none" }
@@ -216,13 +218,26 @@ let loggedServerSourceDowngrade = false;
 
 export async function resolveEnvironmentForLaunch(
   convexClient: ConvexHttpClient,
-  args: {
+  rawArgs: {
     projectId: string;
     environmentId: string;
     serverSource?: typeof EVAL_LAUNCH_SERVER_SOURCE;
     runtimeVenue?: "local" | "hosted";
+    /** The launch's own declaration, when it has made one. */
+    runnerCapabilities?: readonly string[];
   },
 ): Promise<ResolvedEnvironmentForLaunch> {
+  // A local preview says which harnesses this runner can run here, so the
+  // backend narrows the venue exactly as the launch will (`localHarnessOnly`).
+  // Before a launch has checked the account, the machine's own set: never
+  // narrower than what the launch will declare.
+  const args =
+    rawArgs.runtimeVenue === "local" && rawArgs.runnerCapabilities === undefined
+      ? {
+          ...rawArgs,
+          runnerCapabilities: localHarnessCapabilities(machineUnattendedLocalHarnesses()),
+        }
+      : rawArgs;
   let raw: unknown;
   try {
     raw = await convexClient.query(
@@ -246,6 +261,19 @@ export async function resolveEnvironmentForLaunch(
     // launch. Matched on the validator's own wording, and only when we actually
     // sent the field — never a blanket retry.
     if (
+      args.runnerCapabilities &&
+      /Object contains extra field [`'"]?runnerCapabilities(?:[`'"]|\b)/i.test(
+        message,
+      )
+    ) {
+      // Deploy skew: a backend that predates per-harness local admission.
+      // It narrows to Claude Code by itself, which is what it did before.
+      const { runnerCapabilities: _dropped, ...older } = args;
+      raw = await convexClient.query(
+        "projectEnvironments:resolveEnvironmentForLaunch" as any,
+        older,
+      );
+    } else if (
       args.serverSource &&
       /Object contains extra field [`'"]?serverSource(?:[`'"]|\b)/i.test(
         message,

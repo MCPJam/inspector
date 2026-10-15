@@ -51,8 +51,8 @@ import swarms from "../swarms.js";
 import swarmInsights from "../swarm-insights.js";
 import { v1OnError } from "../envelope.js";
 
-const PROJECT = "proj_a";
-const OTHER_PROJECT = "proj_b";
+const PROJECT = "projaxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const OTHER_PROJECT = "projbxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 function makeApp(...routers: Array<Parameters<Hono["route"]>[1]>) {
   const app = new Hono();
@@ -203,8 +203,38 @@ describe("persona routes", () => {
     // A 404 here would tell a flagged-off customer their project is gone, and
     // they would go looking for a project that is fine.
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { message: string };
+    const body = (await res.json()) as {
+      code: string;
+      message: string;
+      details?: Record<string, unknown>;
+    };
     expect(body.message).toMatch(/not currently available/i);
+    // The public code is the generic FORBIDDEN; the reason a program branches
+    // on rides in `details`. No `feature` was sent, so none is invented.
+    expect(body.code).toBe("FORBIDDEN");
+    expect(body.details).toEqual({ code: "FEATURE_UNAVAILABLE" });
+  });
+
+  it("names the gated feature in details when the backend sends one", async () => {
+    queryMock.mockResolvedValue([]);
+    mutationMock.mockRejectedValue(
+      Object.assign(new Error("Swarms is not currently available."), {
+        data: {
+          code: "FEATURE_UNAVAILABLE",
+          feature: "sandboxes",
+          message: "Swarms is not currently available.",
+        },
+      }),
+    );
+    const res = await call(personas, "POST", `/projects/${PROJECT}/personas`, {
+      body: { name: "Ada", role: "buyer" },
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      code: "FORBIDDEN",
+      message: "Swarms is not currently available.",
+      details: { code: "FEATURE_UNAVAILABLE", feature: "sandboxes" },
+    });
   });
 
   it("rejects an empty update rather than issuing a no-op mutation", async () => {

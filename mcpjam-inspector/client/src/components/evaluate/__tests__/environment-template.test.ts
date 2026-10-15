@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   chooseTemplate,
+  composeAdhocStack,
   compositionKey,
   environmentComposition,
   lacksServerSource,
+  legacySuiteComposition,
   sharedServerGroup,
   unpreservableReason,
 } from "../environment-template";
@@ -130,5 +132,50 @@ describe("sharedServerGroup / lacksServerSource", () => {
     expect(lacksServerSource({})).toBe(true);
     expect(lacksServerSource({ pluginVersionIds: ["p"] })).toBe(false);
     expect(lacksServerSource({ serverAttachmentId: "g" })).toBe(false);
+  });
+});
+
+describe("composeAdhocStack", () => {
+  it("puts the composition's group, skills and image on the cell's client and model", () => {
+    expect(
+      composeAdhocStack(
+        {
+          serverAttachmentId: "g",
+          skillSelection: { mode: "explicit", skillIds: ["s"] },
+          computerEnvironmentId: "image",
+        },
+        { hostId: "h", modelId: "m" },
+      ),
+    ).toEqual({
+      hostId: "h",
+      modelId: "m",
+      serverAttachmentId: "g",
+      skillSelection: { mode: "explicit", skillIds: ["s"] },
+      computerEnvironmentId: "image",
+    });
+    // Empty selections and a client-default model add nothing.
+    expect(
+      composeAdhocStack(
+        { skillSelection: { mode: "explicit", skillIds: [] } },
+        { hostId: "h" },
+      ),
+    ).toEqual({ hostId: "h" });
+  });
+});
+
+describe("legacySuiteComposition", () => {
+  it("carries a suite's own skills and image, and nothing for an empty list", () => {
+    expect(
+      legacySuiteComposition({
+        selectedSkillIds: ["s"],
+        environment: { computerEnvironmentId: "image" },
+      }),
+    ).toEqual({
+      skillSelection: { mode: "explicit", skillIds: ["s"] },
+      computerEnvironmentId: "image",
+    });
+    expect(
+      legacySuiteComposition({ selectedSkillIds: [], environment: {} }),
+    ).toEqual({});
   });
 });

@@ -16,6 +16,7 @@ vi.mock("@/lib/toast", () => ({
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 import { useCreditTopup } from "../useCreditTopup";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const CHECKOUT_URL = "https://checkout.stripe.com/c/pay/cs_test_a1b2c3";
 
@@ -39,6 +40,9 @@ describe("useCreditTopup startCheckout", () => {
 
   afterEach(() => {
     delete (window as { isElectron?: boolean }).isElectron;
+    useMCPJamLimitDialogStore.setState(
+      useMCPJamLimitDialogStore.getInitialState(),
+    );
   });
 
   it("navigates in place in the browser", async () => {
@@ -124,5 +128,79 @@ describe("useCreditTopup startCheckout", () => {
     } finally {
       openSpy.mockRestore();
     }
+  });
+
+  it("makes the swarm waves announced so far news again once a purchase starts", async () => {
+    // The desktop app stays open while the browser handles checkout, and a
+    // retried launch reuses its wave: a run that runs out again after paying
+    // has to be able to reopen the dialog.
+    useMCPJamLimitDialogStore.setState({
+      notifiedKeys: new Set(["run:run-a", "wave:wave-1"]),
+    });
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    (window as { isElectron?: boolean }).isElectron = true;
+
+    try {
+      const { result } = renderHook(() => useCreditTopup());
+      await act(async () => {
+        await result.current.startCheckout(startCheckoutArgs());
+      });
+
+      const state = useMCPJamLimitDialogStore.getState();
+      expect(state.staleWaveKeys).toEqual(new Set(["wave:wave-1"]));
+      // Forgotten as current, not as known: a replay of run-a stays a no-op.
+      expect(state.notifiedKeys).toEqual(new Set(["run:run-a", "wave:wave-1"]));
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  it("leaves another organization's announced waves alone when a purchase starts", async () => {
+    // The purchase is for org-1. A wave that belongs to org-2 was announced and
+    // its balance did not change, so it must not reopen the dialog.
+    useMCPJamLimitDialogStore.setState({
+      notifiedKeys: new Set([
+        "run:run-a",
+        "wave:wave-1",
+        "run:run-b",
+        "wave:wave-2",
+      ]),
+      waveOrganizations: { "wave:wave-1": "org-1", "wave:wave-2": "org-2" },
+    });
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    (window as { isElectron?: boolean }).isElectron = true;
+
+    try {
+      const { result } = renderHook(() => useCreditTopup());
+      await act(async () => {
+        await result.current.startCheckout(startCheckoutArgs());
+      });
+
+      expect(useMCPJamLimitDialogStore.getState().staleWaveKeys).toEqual(
+        new Set(["wave:wave-1"]),
+      );
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  it("leaves the announced waves alone when the checkout never opens", async () => {
+    createCheckoutSession.mockResolvedValue({
+      checkoutUrl: "https://evil.example/c/pay/cs_test_x",
+    });
+    useMCPJamLimitDialogStore.setState({
+      notifiedKeys: new Set(["run:run-a", "wave:wave-1"]),
+    });
+
+    const { result } = renderHook(() => useCreditTopup());
+    await act(async () => {
+      await expect(
+        result.current.startCheckout(startCheckoutArgs()),
+      ).rejects.toThrow(/The payment link couldn’t be verified/);
+    });
+
+    expect(useMCPJamLimitDialogStore.getState().staleWaveKeys).toEqual(
+      new Set(),
+    );
   });
 });

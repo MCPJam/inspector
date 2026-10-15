@@ -44,7 +44,7 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { useHostList } from "@/hooks/useClients";
 import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
@@ -162,7 +162,9 @@ export function EnvironmentComposer({
   className?: string;
 }) {
   const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
+  // The "computers" slot is the sandbox-image pill: it rides the
+  // `sandbox-images-enabled` flag, not the personal-computer one.
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const { isAuthenticated } = useConvexAuth();
   const modelsOptedIn = slots.includes("models");
@@ -192,7 +194,8 @@ export function EnvironmentComposer({
   const showClientsSlot = slots.includes("clients");
   const showServersSlot = slots.includes("servers");
   const showSkillsSlot = slots.includes("skills") && skillsEnabled;
-  const showComputersSlot = slots.includes("computers") && computersEnabled;
+  const showComputersSlot =
+    slots.includes("computers") && sandboxImagesEnabled;
 
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
@@ -223,15 +226,15 @@ export function EnvironmentComposer({
     if (!modelsEnabled && environmentsCarryModels(selected)) return "models";
     return environmentsExceedOneStack(selected, {
       skillsEnabled,
-      computersEnabled,
+      computersEnabled: sandboxImagesEnabled,
       modelsEnabled,
     })
       ? "collapse"
       : null;
   }, [
-    computersEnabled,
     liveEnvironments,
     modelsEnabled,
+    sandboxImagesEnabled,
     skillsEnabled,
     value.customized,
     value.environmentIds,
@@ -340,7 +343,7 @@ export function EnvironmentComposer({
             selected.length > 0
               ? composerStateFromEnvironments(selected, {
                   skillsEnabled,
-                  computersEnabled,
+                  computersEnabled: sandboxImagesEnabled,
                   modelsEnabled,
                 }).stack
               : value.stack,
@@ -359,7 +362,7 @@ export function EnvironmentComposer({
             remaining.length > 0
               ? composerStateFromEnvironments(remaining, {
                   skillsEnabled,
-                  computersEnabled,
+                  computersEnabled: sandboxImagesEnabled,
                   modelsEnabled,
                 }).stack
               : emptyEnvironmentStack(),
@@ -390,11 +393,11 @@ export function EnvironmentComposer({
       });
     },
     [
-      computersEnabled,
       liveEnvironments,
       maxTargets,
       modelsEnabled,
       onChange,
+      sandboxImagesEnabled,
       skillsEnabled,
       value.environmentIds,
       value.customized,

@@ -1,14 +1,22 @@
 import type { CaptureResult } from "posthog-js";
+import { POSTHOG_PROJECT_KEY } from "../../../shared/posthog-project";
 import type { ClientFeatureFlagValues } from "../../../shared/client-feature-flags";
+import {
+  scrubTelemetryValue,
+} from "../../../shared/credential-urls";
 import { isInjectedScriptException } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
-import { getLastFailedRequest } from "./failed-request-tracker";
+import { scrubSensitiveUrl } from "../../../shared/credential-url";
+import { stampPostHogEvent } from "./telemetry-context";
+import {
+  isErrorCaptureSurface,
+  MASKED_SESSION_RECORDING_OPTIONS,
+  shouldMaskAnalytics,
+} from "./session-privacy";
 
-export const VITE_PUBLIC_POSTHOG_KEY =
-  "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
-export const VITE_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
+export { POSTHOG_PROJECT_KEY as VITE_PUBLIC_POSTHOG_KEY };
 
 // posthog-js talks to the same-origin /relay reverse proxy (server/routes/
 // relay.ts) instead of *.posthog.com directly: ad blockers block PostHog by
@@ -29,8 +37,8 @@ export function getPostHogApiHost(): string {
     // RELAY_MOUNT_PREFIXES in server/routes/relay.ts.
     return `${window.location.origin}/tlm`;
   }
-  // Non-browser context (tests) — no relay origin to derive.
-  return VITE_PUBLIC_POSTHOG_HOST;
+  // Unknown origins have no approved serializer; never fall back to the vendor.
+  return "/tlm";
 }
 
 // Guest identity bootstrap. Without it, posthog-js mints a random anonymous
@@ -84,113 +92,54 @@ const SERVER_EVALUATED_FLAG_OPTIONS = {
   advanced_disable_feature_flags_on_first_load: true,
 } as const;
 
+/** The parts of a posthog-js instance whose stored state is scrubbed. */
+interface PostHogPersistenceLike {
+  props?: Record<string, unknown>;
+  save?: () => void;
+}
+interface PostHogWithPersistence {
+  persistence?: PostHogPersistenceLike | null;
+  sessionPersistence?: PostHogPersistenceLike | null;
+}
+
+let persistedPostHog: PostHogWithPersistence | null = null;
+
 /**
- * A score result link is a bearer credential — the token in `/results/<token>`
- * is the only thing standing between a private run and anyone who has the URL.
- * Autocapture attaches `$current_url` to every captured event, so a single
- * click on that page would ship the credential to analytics, where it lands in
- * logs and exports that no one thinks of as secret-bearing. Replace the token
- * with a placeholder before anything leaves the browser; the path itself is
- * still useful, and the token never was.
+ * Credentials out of what posthog-js STORES, not only what it sends: on the
+ * first capture of a visit it records the landing URL as
+ * `$initial_person_info` (`u`, `r`) straight from `location.href`, into its
+ * cookie — scoped to the parent domain, so it rides every same-site request —
+ * and into localStorage. Neither `before_send` nor any URL hook sees that
+ * write. A landing on a share link would keep the token there for a year.
+ *
+ * Run from `before_send` (posthog-js writes the person info earlier in the
+ * same `capture`) and once at load, for values an older build stored. A walk
+ * that cannot finish deletes the person info rather than leaving it raw.
  */
-// Every path whose LAST segment is a bearer credential. Autocapture attaches
-// `$current_url` to each event, so a share viewer's address bar would ship the
-// redeem token to PostHog on every click if these were not redacted.
-const CREDENTIAL_PATH_PREFIXES = [
-  "/results/",
-  "/conformance/shared/",
-  "/evals/shared/",
-];
-
-export function scrubSensitiveUrl(value: string): string {
-  let out = value;
-  for (const prefix of CREDENTIAL_PATH_PREFIXES) {
-    const escaped = prefix.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
-    out = out.replace(new RegExp(`(${escaped})[^/?#]+`, "g"), "$1[redacted]");
-  }
-  // Organization ids are internal identifiers and organization routes are
-  // captured automatically by PostHog on otherwise privacy-safe events.
-  out = out.replace(/(\/organizations\/)[^/?#]+/g, "$1[redacted]");
-  return out;
-}
-
-// What browsers say when a request never got a response. Matched exactly so
-// our own errors like "Failed to fetch tools" don't get tagged.
-const NETWORK_FAILURE_MESSAGES = new Set([
-  "Load failed", // Safari
-  "Failed to fetch", // Chrome
-  "NetworkError when attempting to fetch resource.", // Firefox
-]);
-
-// posthog-js reports error-like objects that aren't real Errors as
-// "'TypeError' captured as exception with message: 'Load failed'".
-const POSTHOG_WRAPPED_TYPE_ERROR =
-  /^'TypeError' captured as exception with message: '([\s\S]*)'$/;
-
-// fetch only ever fails with a TypeError, so other error types never count.
-function isNetworkFailure(exception: { type?: unknown; value: string }) {
-  const wrapped = POSTHOG_WRAPPED_TYPE_ERROR.exec(exception.value);
-  const message = wrapped
-    ? wrapped[1]
-    : exception.type === "TypeError"
-      ? exception.value
-      : undefined;
-  if (message === undefined) return false;
-  return (
-    NETWORK_FAILURE_MESSAGES.has(message) ||
-    // Newer Chrome adds the host: "Failed to fetch (example.com)".
-    (message.startsWith("Failed to fetch (") && message.endsWith(")"))
-  );
-}
-
-// The exception fires right after the request fails; anything older is
-// probably a different request.
-const FAILED_REQUEST_MAX_AGE_MS = 10_000;
-
-// Name the request behind a bare "Load failed" exception. See
-// lib/failed-request-tracker.ts.
-function attachFailedRequest(properties: Record<string, any>): void {
-  const exceptions = properties.$exception_list;
-  const hasNetworkFailure =
-    Array.isArray(exceptions) &&
-    exceptions.some(
-      (exception) =>
-        typeof exception?.value === "string" && isNetworkFailure(exception),
-    );
-  if (!hasNetworkFailure) return;
-
-  const failed = getLastFailedRequest();
-  if (!failed) return;
-  const ageMs = Date.now() - failed.at;
-  if (ageMs > FAILED_REQUEST_MAX_AGE_MS) return;
-
-  properties.failed_request = `${failed.method} ${scrubSensitiveUrl(
-    failed.target,
-  )}`;
-  properties.failed_request_age_ms = ageMs;
-}
-
-export function sanitizeAnalyticsProperties(
-  properties: Record<string, any>,
-  eventName?: string,
-): Record<string, any> {
-  for (const key of [
-    "$current_url",
-    "$referrer",
-    "$pathname",
-    "$session_entry_url",
-    "$session_entry_pathname",
-    "$session_entry_referrer",
-    "$initial_current_url",
-    "$initial_pathname",
-    "$initial_referrer",
-  ]) {
-    if (typeof properties[key] === "string") {
-      properties[key] = scrubSensitiveUrl(properties[key]);
+export function scrubPostHogPersistence(
+  instance: PostHogWithPersistence | null = persistedPostHog,
+): void {
+  if (!instance) return;
+  for (const store of [instance.persistence, instance.sessionPersistence]) {
+    const props = store?.props;
+    if (!store || !props) continue;
+    try {
+      const scrubbed = scrubTelemetryValue(props);
+      if (scrubbed === props) continue;
+      // In place: the SDK holds this object, not a getter for it.
+      for (const key of Object.keys(props)) {
+        if (!(key in scrubbed)) delete props[key];
+      }
+      Object.assign(props, scrubbed);
+    } catch {
+      delete props.$initial_person_info;
+    }
+    try {
+      store.save?.();
+    } catch {
+      // Storage refused the write; nothing else to do here.
     }
   }
-  if (eventName === "$exception") attachFailedRequest(properties);
-  return properties;
 }
 
 /**
@@ -239,138 +188,21 @@ export const LANDING_ANALYTICS_HOSTS = VANITY_LANDING_HOSTS;
 
 // Check if PostHog should be disabled
 export const isPostHogDisabled =
-  import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
+  import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true" ||
+  getPostHogApiHost() === "/tlm";
 
-/**
- * Whether this surface records session replays and captures exceptions.
- *
- * Hosted (app.mcpjam.com) and the packaged desktop app only. npx/Docker
- * installs run on someone else's machine against their own MCP servers —
- * recording those sessions is not ours to do, and the volume from every OSS
- * install would swamp the quota that makes hosted replay useful.
- */
-export function isErrorCaptureSurface(): boolean {
-  return HOSTED_MODE || isPackagedDesktop();
-}
+// The credential-URL sanitizer lives in shared/ so the relay can use it too.
+export { scrubSensitiveUrl };
 
-/**
- * A *shipped* desktop build, as opposed to `electron-forge start`.
- *
- * `src/preload.ts` exposes `isElectron: true` unconditionally, so it cannot
- * tell a packaged app from a developer's local run. `import.meta.env.PROD`
- * can: the dev renderer is served by the vite dev server, the packaged one is
- * a `vite build` output. Without this check every `electron-forge start`
- * session would stream renderer DOM and text into the production Sentry and
- * PostHog projects — and the boundary this file documents is *packaged*
- * desktop, not "anything with a preload attached".
- *
- * `HOSTED_MODE` needs no equivalent: it comes from `VITE_MCPJAM_HOSTED_MODE`,
- * which only the deployed bundle's config sets.
- */
-function isPackagedDesktop(): boolean {
-  return (
-    import.meta.env.PROD &&
-    typeof window !== "undefined" &&
-    (window as unknown as { isElectron?: boolean }).isElectron === true
-  );
-}
-
-/**
- * Replay masking.
- *
- * `maskAllInputs` covers every `<input>`. The inspector also renders secrets
- * as TEXT — OAuth access/refresh tokens in the flow logger, the one-time API
- * key reveal, the SDK quickstart snippet — which no input-level masking can
- * reach. Those already carry this repo's `ph-no-capture rr-block` +
- * `data-ph-no-capture` convention for autocapture, so `maskTextSelector`
- * points at the SAME attribute rather than introducing a second thing to
- * remember: annotate a credential surface once and it is opted out of
- * autocapture AND masked in replay.
- */
-export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
-
-export const SESSION_RECORDING_OPTIONS = {
-  maskAllInputs: true,
-  maskInputOptions: { password: true },
-  maskTextSelector: `[${SECRET_SURFACE_ATTRIBUTE}]`,
-} as const;
-
-/**
- * `/results/<token>` is a bearer-credential URL — the token IS the auth. We
- * already redact it out of event properties (`scrubSensitiveUrl`), but a
- * replay of that page would capture the address bar's contents in the DOM
- * snapshot regardless. Don't record there at all.
- */
-export function isCredentialBearingPath(
-  pathname: string | undefined = typeof window === "undefined"
-    ? undefined
-    : window.location?.pathname,
-): boolean {
-  return (
-    !!pathname &&
-    (pathname.startsWith("/results/") ||
-      pathname.startsWith("/conformance/shared/") ||
-      pathname.startsWith("/evals/shared/"))
-  );
-}
-
-export function shouldRecordSession(): boolean {
-  return isErrorCaptureSurface() && !isCredentialBearingPath();
-}
-
-/**
- * Enforce the credential-path carve-out at RUNTIME.
- *
- * `disable_session_recording` is an init-time option, so it only covers a
- * session that *loads* on `/results/<token>`. `/results/:runToken` is an
- * in-app route: a user who lands anywhere else and then follows a results
- * link already has an active recorder, and rrweb snapshots the address bar.
- * Call this on navigation so the token-bearing page is never in a replay.
- *
- * Never throws — this is a privacy guard on a render path, and posthog-js may
- * be ad-blocked or uninitialized.
- */
-let recordingStoppedByGuard = false;
-
-export function syncSessionRecordingForPath(
-  posthogClient: {
-    startSessionRecording?: () => void;
-    stopSessionRecording?: () => void;
-    sessionRecordingStarted?: () => boolean;
-  },
-  pathname: string,
-): void {
-  try {
-    if (!isErrorCaptureSurface()) return;
-    if (isCredentialBearingPath(pathname)) {
-      // Arm the resume only if the recorder was ACTUALLY running. The build
-      // flag is not a proxy for that: PostHog's own project-side sampling can
-      // decline a session, and resuming one it declined would both break
-      // sampling and cost quota.
-      //
-      // Never DISARM here — `stop()` makes the probe read false, so
-      // `/results/a` → `/results/b` would otherwise forget that this guard is
-      // what stopped the recorder and the exit would never resume it.
-      // `stop()` itself stays unconditional: it is idempotent, and an SDK
-      // build without the probe must still stop on a credential path.
-      if (posthogClient.sessionRecordingStarted?.()) {
-        recordingStoppedByGuard = true;
-      }
-      posthogClient.stopSessionRecording?.();
-      return;
-    }
-    // Resume ONLY what this guard itself stopped. Starting on every
-    // non-credential path would undo `VITE_DISABLE_POSTHOG_LOCAL` on the first
-    // navigation — silently recording in a build documented as having it off —
-    // and would force a recorder on for a session sampling never selected.
-    if (recordingStoppedByGuard) {
-      recordingStoppedByGuard = false;
-      posthogClient.startSessionRecording?.();
-    }
-  } catch {
-    // A failed guard must not break the render. Recording stays as-is.
-  }
-}
+// The recording policy — surfaces, privacy levels, replay profiles — lives in
+// lib/session-privacy.ts. Re-exported here for the modules that have always
+// imported these from this file.
+export {
+  isCredentialBearingPath,
+  isErrorCaptureSurface,
+  SECRET_SURFACE_ATTRIBUTE,
+  SESSION_RECORDING_OPTIONS,
+} from "./session-privacy";
 
 export function getPageviewCaptureOptions(
   hostname: string | undefined = typeof window === "undefined"
@@ -393,13 +225,36 @@ export const options = {
   ...getPageviewCaptureOptions(),
   ...SERVER_EVALUATED_FLAG_OPTIONS,
   person_profiles: "always" as const,
-  sanitize_properties: sanitizeAnalyticsProperties,
-  before_send: dropInjectedScriptException,
+  // Fetch keeps the SDK bearer and the live-policy guard on unload batches.
+  disable_beacon: true,
+  // Capture records policy only; the relay owns the final vendor serializer.
+  before_send: [
+    dropInjectedScriptException,
+    stampPostHogEvent,
+    (event: CaptureResult | null) => { scrubPostHogPersistence(); return event; },
+  ],
+  // Fragments carry access tokens (`#token=`) and OAuth implicit responses;
+  // no event, replay URL or heatmap needs one.
+  disable_capture_url_hashes: true,
 
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe
   // on every platform, so it is not gated like replay/exceptions.
-  capture_dead_clicks: true,
+  get capture_dead_clicks() {
+    return !shouldMaskAnalytics();
+  },
+  get autocapture() {
+    return !shouldMaskAnalytics();
+  },
+  get rageclick() {
+    return !shouldMaskAnalytics();
+  },
+  get disable_surveys() {
+    return shouldMaskAnalytics();
+  },
+  get enable_heatmaps() {
+    return !shouldMaskAnalytics();
+  },
 
   // Getters, not eager calls. `options` is a module-scope literal, so calling
   // these at literal-creation time made merely IMPORTING this module read
@@ -411,15 +266,27 @@ export const options = {
   // feeds PostHog Error Tracking. Boundary-caught errors reach it through
   // lib/error-reporting.ts instead, so there is no double-count.
   get capture_exceptions() {
-    return isErrorCaptureSurface();
+    return isErrorCaptureSurface() && !shouldMaskAnalytics();
   },
-  get disable_session_recording() {
-    return !shouldRecordSession();
+  // Replay never starts at init, on any surface: `syncSessionRecording`
+  // (lib/session-privacy.ts) starts it once the session's privacy level is
+  // known, with that level's profile. Until then the profile and the
+  // autocapture flags below are the masked ones, so anything that slipped
+  // through early would fail closed.
+  disable_session_recording: true,
+  session_recording: MASKED_SESSION_RECORDING_OPTIONS,
+  enable_recording_console_log: false,
+  get mask_all_text() {
+    return shouldMaskAnalytics();
   },
-  session_recording: SESSION_RECORDING_OPTIONS,
+  get mask_all_element_attributes() {
+    return shouldMaskAnalytics();
+  },
 
   // Optional: Set static super properties that never change
   loaded: (posthog: any) => {
+    persistedPostHog = posthog;
+    scrubPostHogPersistence(posthog);
     posthog.register({
       environment: import.meta.env.MODE, // "development" or "production"
       platform: detectPlatform(),
@@ -487,7 +354,7 @@ function withServerFlags(
 // Conditional PostHog key and options
 // Always use the real PostHog key; flag values arrive as `serverFlags`, the
 // GET /api/web/flags answer for this visitor (lib/server-feature-flags.ts).
-export const getPostHogKey = () => VITE_PUBLIC_POSTHOG_KEY;
+export const getPostHogKey = () => POSTHOG_PROJECT_KEY;
 export const getPostHogOptions = (
   serverFlags?: ClientFeatureFlagValues | null,
 ) =>
@@ -501,6 +368,7 @@ export const getPostHogOptions = (
         ...getPageviewCaptureOptions(),
         ...SERVER_EVALUATED_FLAG_OPTIONS,
         person_profiles: "always" as const,
+        disable_beacon: true,
         // Explicitly off in the opt-out branch too. `opt_out_capturing_by_default`
         // suppresses event SENDING but the recorder and the exception handlers
         // still load — which in dev means fetching /relay/static/recorder.js on
@@ -512,6 +380,14 @@ export const getPostHogOptions = (
         // not a config field, so passing it here was silently ignored and dev
         // events flowed into prod PostHog from 2026-03-12 until this fix.
         opt_out_capturing_by_default: true,
+        // Nothing is sent from here by default, but anything that opts in
+        // later still goes through the same scrubber.
+        before_send: [
+          dropInjectedScriptException,
+          stampPostHogEvent,
+    (event: CaptureResult | null) => { scrubPostHogPersistence(); return event; },
+        ],
+        disable_capture_url_hashes: true,
         // Same flag person properties as the enabled branch.
         loaded: (posthog: any) => {
           posthog.setPersonPropertiesForFlags?.({

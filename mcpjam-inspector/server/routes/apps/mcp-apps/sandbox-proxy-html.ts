@@ -165,8 +165,9 @@ export function renderSandboxProxyHtml(): string {
   ).replace('"__MCPJAM_HOST_ORIGINS__"', () =>
     JSON.stringify(sandboxProxyHostOriginPatterns()),
   );
-  rendered = HOSTED_MODE ? withoutLocalFrameSources(html) : html;
-  return rendered;
+  const result = HOSTED_MODE ? withoutLocalFrameSources(html) : html;
+  rendered = result;
+  return result;
 }
 
 /** Test-only: drop the memo so a `vi.mock` of the config is observable. */

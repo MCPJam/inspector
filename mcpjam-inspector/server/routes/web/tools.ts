@@ -2,14 +2,17 @@ import { Hono } from "hono";
 import { isMCPTasksWireError } from "@mcpjam/sdk";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
+  mapEphemeralServerFailure,
+  projectRouteFailure,
   toolsListSchema,
+  toolsListMultiSchema,
   toolsExecuteSchema,
   withEphemeralConnection,
 } from "./auth.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import { runHostedDirectMrtrOperation } from "./mrtr-direct.js";
 import { isMrtrSuspendedSignal } from "../../utils/mrtr-hosted-collector.js";
-import { listTools } from "../../utils/route-handlers.js";
+import { listTools, listToolsMulti } from "../../utils/route-handlers.js";
 import { detectCreatedTask } from "../../utils/task-route-handlers.js";
 import { toRegistryTaskStatus } from "../../../shared/hosted-tasks.js";
 import { recordCreatedTask } from "../../services/hosted-task-registry.js";
@@ -82,6 +85,69 @@ tools.post("/list", async (c) =>
     // Hosted direct-ops read the server's live surface — never a cached
     // body — so raw/conformance evidence can't be masked by a stale serve.
     listTools(manager, { ...body, cacheMode: "bypass" }),
+  ),
+);
+
+/**
+ * One server's failure inside a batch, answered as its own request would
+ * have been: `mapEphemeralServerFailure` picks the status and code (the
+ * egress guard's 400 included, since the manager dials lazily and a refused
+ * target surfaces inside `listTools`; an authorization refusal arrives as the
+ * `WebRouteError` the connection built and passes through), and the hosted
+ * projection (MJ-001) reduces the message and details, so a batch says no
+ * more about a target than a single-server call does. The client rebuilds its
+ * usual `WebApiError` from these fields. `details` carry what the client acts
+ * on (`oauthRequired`, `exportDenied`), and `retryAfterSeconds` stands in for
+ * the `Retry-After` header a 200 cannot carry per server.
+ */
+function batchFailure(error: unknown): {
+  status: number;
+  code: ErrorCode;
+  message: string;
+  details?: Record<string, unknown>;
+  retryAfterSeconds?: number;
+} {
+  const { routeError } = projectRouteFailure(
+    mapEphemeralServerFailure(error),
+    error,
+    undefined,
+  );
+  const retryAfterSeconds = Number(routeError.headers?.["Retry-After"]);
+  return {
+    status: routeError.status,
+    code: routeError.code,
+    message: routeError.message,
+    ...(routeError.details ? { details: routeError.details } : {}),
+    ...(Number.isFinite(retryAfterSeconds) ? { retryAfterSeconds } : {}),
+  };
+}
+
+tools.post("/list-multi", async (c) =>
+  withEphemeralConnection(
+    c,
+    toolsListMultiSchema,
+    async (manager, body, _forwardLogMessages, refusedServers) => {
+      // A server the connection refused (a stale grant, a missing XAA
+      // registration) is answered here, next to the servers that failed
+      // while listing, instead of answering for the whole batch. Each server
+      // is listed independently, so the rest are not held up by it.
+      const { results, failures } = await listToolsMulti(manager, {
+        ...body,
+        serverIds: body.serverIds.filter(
+          (serverId) => !Object.hasOwn(refusedServers, serverId),
+        ),
+        cacheMode: "bypass",
+      });
+      const errors: Record<string, ReturnType<typeof batchFailure>> = {};
+      for (const [serverId, failure] of Object.entries({
+        ...refusedServers,
+        ...failures,
+      })) {
+        errors[serverId] = batchFailure(failure);
+      }
+      return Object.keys(errors).length > 0 ? { results, errors } : { results };
+    },
+    { tolerateServerRefusals: true },
   ),
 );
 

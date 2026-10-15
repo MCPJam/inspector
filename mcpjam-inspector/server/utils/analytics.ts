@@ -1,7 +1,13 @@
+import { POSTHOG_PROJECT_KEY } from "../../shared/posthog-project.js";
 import { PostHog } from "posthog-node";
+import { analyticsTransport } from "./analytics-transport.js";
 import type { Context } from "hono";
 import { randomUUID } from "crypto";
 import type { ServerAnalyticsEventName } from "@/shared/analytics-events";
+import {
+  rolloutActorId,
+  rolloutPersonProperties,
+} from "../../shared/strict-server-analytics.js";
 import {
   CLIENT_FEATURE_FLAG_KEYS,
   pickClientFeatureFlags,
@@ -36,8 +42,7 @@ import { HOSTED_MODE } from "../config.js";
 // Public project token — same one shipped in the client bundle
 // (client/src/lib/PosthogUtils.ts); it can only ingest, not read. The /relay
 // proxy forwards requests for this project only.
-export const POSTHOG_PROJECT_KEY =
-  "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
+export { POSTHOG_PROJECT_KEY } from "../../shared/posthog-project.js";
 const POSTHOG_HOST = "https://us.i.posthog.com";
 
 // Same opt-outs the client honors, plus the conventional DO_NOT_TRACK for
@@ -69,6 +74,13 @@ function getClient(forFeatureFlags = false): PostHog | null {
   if (!client) {
     client = new PostHog(POSTHOG_PROJECT_KEY, {
       host: POSTHOG_HOST,
+      disableCompression: true,
+      enableExceptionAutocapture: false,
+      fetch: analyticsTransport(
+        POSTHOG_HOST,
+        POSTHOG_PROJECT_KEY,
+        isAnalyticsDisabled,
+      ),
       // Low-volume, high-value stream: flush each event promptly rather than
       // batching, so a process exit can't drop a queued critical event.
       flushAt: 1,
@@ -135,15 +147,10 @@ export function captureServerEventForActor(
   try {
     const posthog = getClient();
     if (!posthog) return;
-    if (!actor.distinctId) return;
-
     posthog.capture({
-      distinctId: actor.distinctId,
       event,
+      distinctId: actor.distinctId,
       properties: {
-        // Caller props spread FIRST so the generated dedupe key, source
-        // marker, platform/environment, and request-context attribution below
-        // always win — a caller can't override them by passing the same keys.
         ...properties,
         // Retry-dedupe key: posthog-node may resend on transient failures.
         $insert_id: randomUUID(),
@@ -155,10 +162,6 @@ export function captureServerEventForActor(
         // (npm installs, the Electron-embedded local server, Docker), not
         // just the hosted Railway deployment.
         deployment: HOSTED_MODE ? "hosted" : "self_hosted",
-        ...(actor.organizationId
-          ? { organization_id: actor.organizationId }
-          : {}),
-        ...(actor.projectId ? { project_id: actor.projectId } : {}),
       },
     });
   } catch {
@@ -175,7 +178,7 @@ export async function evaluateBrowserRollout(
   key: "local-browser-enabled" | "hosted-browser-enabled",
   distinctId: string,
 ): Promise<boolean> {
-  if (!distinctId) return false;
+  if (!rolloutActorId(distinctId)) return false;
   try {
     return (
       (await getClient(true)?.isFeatureEnabled(key, distinctId, {
@@ -190,15 +193,36 @@ export async function evaluateBrowserRollout(
   }
 }
 
+/**
+ * The server-side rollout flag for each local harness. Codex rolls out on its
+ * own flag (D3), whose cohort must be a subset of `codex-host-enabled` — the
+ * backend refuses a Codex host config outside that cohort, so a user enabled
+ * here but not there could pick Codex and then fail to create the host.
+ */
+export const LOCAL_HARNESS_ROLLOUT_FLAG = {
+  "claude-code": "local-harness-enabled",
+  codex: "local-codex-enabled",
+} as const;
+export type LocalHarnessRolloutFlag =
+  (typeof LOCAL_HARNESS_ROLLOUT_FLAG)[keyof typeof LOCAL_HARNESS_ROLLOUT_FLAG];
+
 /** Same server-owned rollout decision for setup, launches and client visibility. */
-export async function evaluateLocalHarnessRollout(distinctId: string, email?: string): Promise<boolean> {
-  if (!distinctId || !email) return false;
+export async function evaluateLocalHarnessRollout(
+  distinctId: string,
+  trustedEmail?: string,
+  flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
+): Promise<boolean> {
+  if (!rolloutActorId(distinctId)) return false;
   try {
-    return (await getClient(true)?.isFeatureEnabled("local-harness-enabled", distinctId, {
-      sendFeatureFlagEvents: false,
-      personProperties: { email, deployment: "self_hosted" },
-    })) === true;
-  } catch { return false; }
+    return (
+      (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
+        sendFeatureFlagEvents: false,
+        personProperties: rolloutPersonProperties({ deployment: "self_hosted" }, trustedEmail),
+      })) === true
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -210,12 +234,13 @@ export async function evaluateLocalHarnessRollout(distinctId: string, email?: st
 export async function evaluateClientFeatureFlags(
   distinctId: string,
   personProperties: Record<string, string>,
+  trustedEmail?: string,
 ): Promise<ClientFeatureFlagValues> {
-  if (!distinctId) return {};
+  if (!rolloutActorId(distinctId)) return {};
   try {
     const values = await getClient(true)?.getAllFlags(distinctId, {
       flagKeys: [...CLIENT_FEATURE_FLAG_KEYS],
-      personProperties,
+      personProperties: rolloutPersonProperties(personProperties, trustedEmail),
     });
     return pickClientFeatureFlags(values);
   } catch {

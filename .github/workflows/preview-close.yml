@@ -1,0 +1,69 @@
+name: Close PR preview
+
+# Runs even for conflicted PRs and diffs excluded by the deploy workflow.
+# Never check out the PR head: this job has secrets and only runs trusted
+# cleanup scripts from the default branch.
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  destroy-preview:
+    # The deploy workflow excludes Dependabot PRs, and Dependabot-triggered
+    # closes cannot access the Actions secrets needed for cleanup.
+    if: >-
+      github.repository == 'MCPJam/inspector' &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    concurrency:
+      group: preview-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Delete closed PR preview after removing its login redirect
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INSPECTOR_REPO: ${{ github.repository }}
+          STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
+          TARGET_ENVIRONMENT: pr-${{ github.event.pull_request.number }}
+          GRACE_MINUTES: 0
+          DRY_RUN: 0
+          MAX_DELETIONS: 1
+        run: .github/scripts/reap-preview-envs.sh
+
+      - name: Dispatch backend preview cleanup
+        if: always() && !cancelled() && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v9
+        env:
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+        with:
+          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          script: |
+            // The Railway cleanup may have kept a PR that reopened while
+            // this job waited. Recheck before tearing down its backend too.
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            if (pr.state !== "closed") return;
+            const [owner, repo] = process.env.BACKEND_REPO.split("/");
+            await github.rest.repos.createDispatchEvent({
+              owner,
+              repo,
+              event_type: "inspector_preview_cleanup",
+              client_payload: {
+                branch: context.payload.pull_request.head.ref,
+                inspector_pr_number: context.payload.pull_request.number,
+              },
+            });

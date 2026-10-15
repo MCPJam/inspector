@@ -16,17 +16,25 @@ vi.mock("../../config.js", async (importOriginal) => {
   return { ...actual, HOSTED_MODE: true };
 });
 
+import { randomUUID } from "node:crypto";
+import { LAUNCH_ID } from "../../../shared/launch-engagement.js";
 import { POSTHOG_PROJECT_KEY } from "../../utils/analytics.js";
 import {
   RELAY_BODY_READ_TIMEOUT_MS,
   RELAY_INGEST_LIMIT_PER_MIN,
   RELAY_MAX_CLIENT_BUFFERED_BYTES,
+  RELAY_MOUNT_PREFIXES,
+  RELAY_POOLED_INGEST_LIMIT_PER_MIN,
+  RELAY_UNATTESTED_INGEST_LIMIT_PER_MIN,
 } from "../relay.js";
 
 const ORIGINAL_FETCH = global.fetch;
 const EDGE_SECRET = "edge-secret-for-tests";
 const INGEST_LIMIT = RELAY_INGEST_LIMIT_PER_MIN;
-const UNATTESTED_INGEST_LIMIT = 4 * RELAY_INGEST_LIMIT_PER_MIN;
+// Edge secret configured: only requests from outside the edge are unattested.
+const UNATTESTED_INGEST_LIMIT = RELAY_UNATTESTED_INGEST_LIMIT_PER_MIN;
+// No edge secret: every request is unattested, and the pool keeps its size.
+const POOLED_INGEST_LIMIT = 4 * RELAY_INGEST_LIMIT_PER_MIN;
 const OVERALL_LIMIT = 600;
 
 // A capture body for this deployment's project, so each request is one the
@@ -46,16 +54,38 @@ async function createTestApp() {
   vi.resetModules();
   const { default: relayRoutes, relayBodyLimit } = await import("../relay.js");
   const app = new Hono();
-  app.use("/relay/*", relayBodyLimit());
-  app.route("/relay", relayRoutes);
+  for (const prefix of RELAY_MOUNT_PREFIXES) {
+    app.use(`${prefix}/*`, relayBodyLimit());
+    app.route(prefix, relayRoutes);
+  }
   return app;
 }
 
-function capture(app: Hono, headers: Record<string, string>) {
-  return app.request("http://localhost:6274/relay/i/v0/e/", {
+function capture(
+  app: Hono,
+  headers: Record<string, string>,
+  origin = "http://localhost:6274",
+) {
+  return app.request(`${origin}/relay/i/v0/e/`, {
     method: "POST",
     body: CAPTURE_BODY,
     headers,
+  });
+}
+
+function launchEvent(app: Hono, headers: Record<string, string>) {
+  return app.request("http://localhost:6274/tlm/launch-engagement", {
+    method: "POST",
+    body: JSON.stringify({
+      event_id: randomUUID(),
+      launch_id: LAUNCH_ID,
+      action: "shown",
+      feature: "swarms",
+      presentation: "card",
+      prior_status: "unseen",
+      audience: "guest",
+    }),
+    headers: { "content-type": "application/json", ...headers },
   });
 }
 
@@ -104,8 +134,14 @@ describe("posthog relay rate limit (hosted mode)", () => {
     expect(other.status).toBe(200);
   });
 
-  it("puts ingestion without an attested IP in one shared bucket", async () => {
+  it("puts ingestion without an attested IP in one shared bucket, on every hostname", async () => {
     const app = await createTestApp();
+    const origins = [
+      "https://score.mcpjam.com",
+      "https://caniuse.dev",
+      "https://www.caniuse.dev",
+      "https://inspector-production.up.railway.app",
+    ];
 
     // Each request claims a different address, through headers a client can
     // write itself or with an edge secret that does not match.
@@ -124,16 +160,37 @@ describe("posthog relay rate limit (hosted mode)", () => {
     };
 
     for (let i = 0; i < UNATTESTED_INGEST_LIMIT; i++) {
-      expect((await capture(app, unattested(i))).status).toBe(200);
+      const origin = origins[i % origins.length];
+      expect((await capture(app, unattested(i), origin)).status).toBe(200);
     }
-    const refused = await capture(app, unattested(UNATTESTED_INGEST_LIMIT));
-    expect(refused.status).toBe(429);
-    expect(refused.headers.get("retry-after")).toMatch(/^\d+$/);
-    expect(await refused.json()).toEqual({ error: "rate_limited" });
+    for (const origin of origins) {
+      const refused = await capture(
+        app,
+        unattested(UNATTESTED_INGEST_LIMIT),
+        origin,
+      );
+      expect(refused.status).toBe(429);
+      expect(refused.headers.get("retry-after")).toMatch(/^\d+$/);
+      expect(await refused.json()).toEqual({ error: "rate_limited" });
+    }
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(UNATTESTED_INGEST_LIMIT);
 
     // An attested caller keeps its own bucket.
     const ok = await capture(app, attested("203.0.113.9"));
     expect(ok.status).toBe(200);
+  });
+
+  it("keeps each attested client's full budget while the shared bucket is spent", async () => {
+    const app = await createTestApp();
+    for (let i = 0; i < UNATTESTED_INGEST_LIMIT; i++) {
+      expect((await capture(app, {})).status).toBe(200);
+    }
+    expect((await capture(app, {})).status).toBe(429);
+
+    for (let i = 0; i < INGEST_LIMIT; i++) {
+      expect((await capture(app, attested("203.0.113.10"))).status).toBe(200);
+    }
+    expect((await capture(app, attested("203.0.113.10"))).status).toBe(429);
   });
 
   it.each([undefined, "x-real-ip"])(
@@ -144,7 +201,7 @@ describe("posthog relay rate limit (hosted mode)", () => {
       vi.stubEnv("MCPJAM_TRUSTED_CLIENT_IP_HEADER", trustedHeader);
       const app = await createTestApp();
 
-      for (let i = 0; i < UNATTESTED_INGEST_LIMIT; i++) {
+      for (let i = 0; i < POOLED_INGEST_LIMIT; i++) {
         const claimedIp = `198.51.${Math.floor(i / 250)}.${i % 250}`;
         expect(
           (
@@ -160,9 +217,75 @@ describe("posthog relay rate limit (hosted mode)", () => {
         "x-real-ip": "203.0.113.254",
       });
       expect(refused.status).toBe(429);
-      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(UNATTESTED_INGEST_LIMIT);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(POOLED_INGEST_LIMIT);
     },
   );
+
+  it("sizes the shared bucket by whether an edge secret is configured", () => {
+    expect(RELAY_UNATTESTED_INGEST_LIMIT_PER_MIN).toBe(INGEST_LIMIT);
+    expect(RELAY_POOLED_INGEST_LIMIT_PER_MIN).toBe(POOLED_INGEST_LIMIT);
+  });
+
+  it("charges launch events to the attested client's ingest window", async () => {
+    const app = await createTestApp();
+    const headers = attested("203.0.113.40");
+
+    for (let i = 0; i < INGEST_LIMIT; i++) {
+      expect((await launchEvent(app, headers)).status).toBe(204);
+    }
+    expect((await capture(app, headers)).status).toBe(429);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+
+    // The other order: captures spend the window a launch event then meets.
+    const other = attested("203.0.113.41");
+    for (let i = 0; i < INGEST_LIMIT; i++) {
+      expect((await capture(app, other)).status).toBe(200);
+    }
+    const refused = await launchEvent(app, other);
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("retry-after")).toMatch(/^\d+$/);
+    expect(await refused.json()).toEqual({ error: "rate_limited" });
+  });
+
+  it("charges unattested launch events to the shared bucket", async () => {
+    const app = await createTestApp();
+
+    for (let i = 0; i < UNATTESTED_INGEST_LIMIT; i++) {
+      const claimed = { "cf-connecting-ip": `198.51.100.${i % 250}` };
+      expect((await launchEvent(app, claimed)).status).toBe(204);
+    }
+    expect((await launchEvent(app, {})).status).toBe(429);
+    expect((await capture(app, {})).status).toBe(429);
+  });
+
+  it("groups attested IPv6 clients by /64", async () => {
+    const app = await createTestApp();
+
+    for (let i = 0; i < INGEST_LIMIT; i++) {
+      const ip = `2001:db8:1:2:${(i + 1).toString(16)}::${i % 7}`;
+      expect((await capture(app, attested(ip))).status).toBe(200);
+    }
+    const refused = await capture(app, attested("2001:db8:1:2:ffff::1"));
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("retry-after")).toMatch(/^\d+$/);
+
+    // The neighbouring /64 is a different client.
+    expect((await capture(app, attested("2001:db8:1:3::1"))).status).toBe(200);
+  });
+
+  it("keys an IPv4-mapped IPv6 client by its IPv4 address", async () => {
+    const app = await createTestApp();
+    const v4 = "203.0.113.50";
+    const mapped = `::ffff:${v4}`;
+
+    for (let i = 0; i < INGEST_LIMIT; i++) {
+      const ip = i % 2 === 0 ? v4 : mapped;
+      expect((await capture(app, attested(ip))).status).toBe(200);
+    }
+    expect((await capture(app, attested(v4))).status).toBe(429);
+    expect((await capture(app, attested(mapped))).status).toBe(429);
+    expect((await capture(app, attested("203.0.113.51"))).status).toBe(200);
+  });
 
   it("flushes and resets intervals containing only rate-limit rejections", async () => {
     const app = await createTestApp();

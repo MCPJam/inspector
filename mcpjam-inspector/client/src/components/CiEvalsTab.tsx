@@ -123,6 +123,8 @@ export function CiEvalsTab({
     canDeleteArtifact,
     canDeleteRuns,
     availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
   } = useEvalTabContext({
     isAuthenticated,
     projectId: convexProjectId,
@@ -333,8 +335,14 @@ export function CiEvalsTab({
       selectedSuite,
       queries.suiteDetails.testCases,
       queries.activeIterations,
+      queries.runsForSelectedSuite,
     );
-  }, [selectedSuite, queries.suiteDetails, queries.activeIterations]);
+  }, [
+    selectedSuite,
+    queries.suiteDetails,
+    queries.activeIterations,
+    queries.runsForSelectedSuite,
+  ]);
 
   const showCiSuiteDrilldownSidebar = useMemo(
     () =>
@@ -383,7 +391,7 @@ export function CiEvalsTab({
         (entry) => entry.suite._id === suiteId,
       );
       navigateApp(
-        isCiVisible ? buildEvalsRunsPath(target) : buildEvalsPath(target)
+        isCiVisible ? buildEvalsRunsPath(target) : buildEvalsPath(target),
       );
     },
     [visibleSuites],
@@ -808,6 +816,8 @@ export function CiEvalsTab({
                     allIterations={queries.sortedIterations}
                     runs={queries.runsForSelectedSuite}
                     runsLoading={queries.isSuiteRunsLoading}
+                    runHistoryStatus={queries.runHistoryStatus}
+                    onLoadMoreRuns={queries.loadMoreRuns}
                     aggregate={suiteAggregate}
                     runDetailSortByOverride={
                       isRunDetailView ? runDetailSidebarSortBy : undefined
@@ -830,6 +840,8 @@ export function CiEvalsTab({
                     deletingSuiteId={deletingSuiteId}
                     deletingRunId={deletingRunId}
                     availableModels={availableModels}
+                    requireOrgKeys={requireOrgKeys}
+                    onManageOrgProviders={onManageOrgProviders}
                     route={route}
                     userMap={userMap}
                     navigation={ciNavigation}

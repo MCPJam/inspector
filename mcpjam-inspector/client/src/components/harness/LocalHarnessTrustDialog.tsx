@@ -39,10 +39,8 @@ import type {
  * ── The wording is load-bearing ──────────────────────────────────────────
  * "The folder is where it starts, not a sandbox" is the honest description of
  * `local-native`, and `targets.ts` forbids calling it sandboxed or isolated
- * anywhere in the product. Edits inside the folder run freely under the
- * `workspace-edits` profile; commands ask for approval in chat. Both halves
- * are stated, because stating only the first oversells the containment and
- * stating only the second undersells the reach.
+ * anywhere in the product. Attended runtimes keep ask mode: On waits for
+ * commands and changes; Off requires its own consent and pre-approves them.
  */
 
 export type TrustDialogTrigger = "first_send" | "chip";
@@ -92,6 +90,8 @@ export function LocalHarnessTrustDialog({
   const [error, setError] = useState<string | null>(null);
 
   const availability = controller.availability;
+  const name = controller.harnessName ?? "Claude Code";
+  const isCodex = controller.harnessId === "codex";
   const expectedPack = availability?.expectedPack ?? null;
   const suggested = availability?.suggestedWorkspace ?? null;
   const displayRoot =
@@ -137,7 +137,7 @@ export function LocalHarnessTrustDialog({
     try {
       if (!(await useSuggestedIfNeeded())) {
         setError(
-          "Choose a folder for Claude Code to work in before allowing it.",
+          `Choose a folder for ${name} to work in before allowing it.`,
         );
         return;
       }
@@ -156,7 +156,7 @@ export function LocalHarnessTrustDialog({
         scopeKey,
       });
       if (approval === null) {
-        setError("Choose a folder for Claude Code to work in.");
+        setError(`Choose a folder for ${name} to work in.`);
         return;
       }
 
@@ -236,16 +236,16 @@ export function LocalHarnessTrustDialog({
   // false for has copy — including the two that are facts about the machine
   // rather than states of the flow.
   const blockingCopy =
-    blockingReason(controller.phase, controller.reason) ??
+    blockingReason(controller.phase, controller.reason, name) ??
     (expectedPack === null
-      ? "MCPJam hasn't published a Claude Code runtime for this machine's " +
+      ? `MCPJam hasn't published a ${name} runtime for this machine's ` +
         "operating system and processor, so there is nothing to install."
       : availability !== null && availability.machineId == null
         ? "This Inspector couldn't establish an identity for this machine, so " +
           "it can't bind an authorization to it. Restart the Inspector, or " +
           "check that it can write to its own state directory."
         : displayRoot === null
-          ? "Choose a folder for Claude Code to work in."
+          ? `Choose a folder for ${name} to work in.`
           : null);
 
   return (
@@ -258,14 +258,34 @@ export function LocalHarnessTrustDialog({
           <DialogTitle className="flex items-center gap-2 text-base">
             <Laptop className="size-4 text-muted-foreground" aria-hidden />
             {displayRoot
-              ? `Run Claude Code in ${displayRoot}?`
-              : "Run Claude Code on this machine?"}
+              ? `Run ${name} in ${displayRoot}?`
+              : `Run ${name} on this machine?`}
           </DialogTitle>
           <DialogDescription className="text-left leading-relaxed">
-            Claude Code will run on this computer as your user account. The
-            folder is where it starts, not a sandbox — anything you can read or
-            change, it can. Edits inside the folder run freely; commands ask for
-            approval in chat.
+            {isCodex ? (
+              <>
+                Codex will run on this computer as your user account, in a
+                runtime MCPJam manages, with models brokered by MCPJam. It does
+                not use a personal Codex or ChatGPT subscription. The folder is
+                where it starts. With Tool Approval on it asks before commands and file changes,
+                reads included. Turning it off requires a separate confirmation
+                to run without asking. In evals and swarms nobody is there to ask, so
+                Codex runs there only on platforms where MCPJam has verified
+                Codex's own sandbox: its commands can write only that run's
+                folder and a private temp folder, and have no network.
+                Elsewhere evals and swarms do not run Codex on this computer.
+                Reads are not restricted, and MCP tools run in MCPJam under
+                your tool policy, outside that sandbox.
+              </>
+            ) : (
+              <>
+                Claude Code will run on this computer as your user account. The
+                folder is where it starts, not a sandbox — anything you can read
+                or change, it can. With Tool Approval on, commands and changes ask for
+                approval in chat. Turning it off requires a separate confirmation
+                to run without asking.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -283,7 +303,11 @@ export function LocalHarnessTrustDialog({
             </span>
           </div>
           {onPickWorkspace ? (
-            <Button size="sm" variant="outline" onClick={() => void handlePick()}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handlePick()}
+            >
               Change…
             </Button>
           ) : (
@@ -319,7 +343,10 @@ export function LocalHarnessTrustDialog({
           aria-expanded={detailsOpen}
         >
           <ChevronRight
-            className={cn("size-3 transition-transform", detailsOpen && "rotate-90")}
+            className={cn(
+              "size-3 transition-transform",
+              detailsOpen && "rotate-90",
+            )}
             aria-hidden
           />
           Details
@@ -343,11 +370,14 @@ export function LocalHarnessTrustDialog({
               …
             </dd>
             <dt>Permissions</dt>
-            <dd>edits in folder, commands ask</dd>
+            <dd>
+              Tool Approval on asks for commands and changes; off pre-approves
+              them{isCodex ? "; evals and swarms only where sandboxed" : ""}
+            </dd>
             <dt>Policy</dt>
             <dd className="font-mono">{availability?.policyVersion ?? "—"}</dd>
             <dt>Expires</dt>
-            <dd>12 hours after you allow it</dd>
+            <dd>15 minutes, renewed automatically</dd>
           </dl>
         ) : null}
 
@@ -403,12 +433,13 @@ export function LocalHarnessTrustDialog({
 function blockingReason(
   phase: LocalHarnessPhase,
   reason: string | null,
+  name = "Claude Code",
 ): string | null {
   switch (phase) {
     case "needs-signin":
       return (
         reason ??
-        "Sign in to authorize Claude Code to run on this machine."
+        `Sign in to authorize ${name} to run on this machine.`
       );
     case "unavailable":
       return (
@@ -416,7 +447,7 @@ function blockingReason(
         // NOT "so turns run hosted": `localHarnessBlocksSend` disables Send in
         // this phase, so the turn does not run anywhere. Saying it falls back
         // to the cloud describes the one behaviour this design removed.
-        "This Inspector can't run Claude Code on this machine."
+        `This Inspector can't run ${name} on this machine.`
       );
     case "failed":
       return FAILURE_COPY[installFailureReason(reason)] ?? FAILURE_COPY.unknown;
@@ -440,9 +471,88 @@ function installFailureReason(message: string | null): string {
   if (/didn't match|does not match|digest|signature/i.test(message)) {
     return "verification";
   }
-  if (/download|network|offline|responded \d{3}/i.test(message)) return "network";
+  if (/download|network|offline|responded \d{3}/i.test(message))
+    return "network";
   if (/space|permission|ENOSPC|EACCES/i.test(message)) return "disk";
   return "unknown";
 }
 
 export { FAILURE_COPY as LOCAL_HARNESS_FAILURE_COPY };
+
+/** Reuses the trust dialog shell for the distinct attended Off decision. */
+export function LocalHarnessAutoApproveDialog({
+  open,
+  name,
+  onCancel,
+  onApprove,
+}: {
+  open: boolean;
+  name: string;
+  onCancel: () => void;
+  onApprove: () => Promise<void>;
+}) {
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (open) setError(null);
+  }, [open]);
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !working) onCancel();
+      }}
+    >
+      <DialogContent
+        className="sm:max-w-lg"
+        data-testid="local-harness-auto-approve-dialog"
+        onEscapeKeyDown={(event) => {
+          if (working) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (working) event.preventDefault();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>Run commands without asking?</DialogTitle>
+          <DialogDescription>
+            {name} will run commands and change files on this computer as your
+            user account, without asking first. Turn Tool Approval back on
+            anytime.
+          </DialogDescription>
+        </DialogHeader>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button variant="ghost" disabled={working} onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            disabled={working}
+            onClick={() => {
+              setWorking(true);
+              setError(null);
+              void onApprove()
+                .catch((error) =>
+                  setError(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not record consent",
+                  ),
+                )
+                .finally(() => setWorking(false));
+            }}
+          >
+            {working ? (
+              <Loader2 className="mr-1.5 size-3.5 animate-spin" aria-hidden />
+            ) : null}
+            Run without asking
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

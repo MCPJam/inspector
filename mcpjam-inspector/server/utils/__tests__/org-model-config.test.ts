@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildLlmRuntimeConfigFromOrgConfig,
+  buildModelApiKeysFromOrgConfig,
   buildSyntheticModelDefinition,
   deriveOrgProviderKey,
+  orgRequiresOwnKeys,
   isLocalRuntimeEligible,
   isUnsafeHostedOutboundUrl,
   resolveHostModelDefinition,
@@ -11,6 +14,7 @@ import {
 } from "../org-model-config";
 import type { ModelDefinition } from "@/shared/types";
 import { withGithubCredentialPolicy } from "../../services/github-checks/credential-policy";
+import { ModelResolutionRefusalError } from "../model-resolution-local";
 
 const ORIGINAL_ENV = {
   CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
@@ -43,6 +47,8 @@ describe("resolveOrgModelConfig", () => {
         const auth = new Headers(init?.headers).get("authorization");
         return Response.json({
           ok: true,
+          // Only an answer that withholds keys is cached.
+          aiKeyPolicy: { requireOrgKeys: true },
           providers: [
             {
               providerKey: "anthropic",
@@ -103,6 +109,72 @@ describe("resolveOrgModelConfig", () => {
     expect(
       new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("authorization"),
     ).toBe("Bearer user-b");
+  });
+
+  it("uses the bearer-only twin on a server without the service credential", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        Response.json({ ok: true, providers: [] }),
+      );
+
+    await expect(
+      resolveOrgModelConfig(
+        { projectId: "project_org_config_bearer_twin" },
+        { bearerToken: "user-self-hosted" },
+      ),
+    ).resolves.toEqual({ providers: [] });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://convex.example/v1/org-model-config/resolve",
+    );
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("authorization")).toBe("Bearer user-self-hosted");
+    // Omitted, not sent empty.
+    expect(headers.has("x-inspector-service-token")).toBe(false);
+  });
+
+  it("answers hosted-only when the backend predates the bearer-only twin (routing 404)", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "";
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("No matching routes found", { status: 404 }),
+    );
+
+    await expect(
+      resolveOrgModelConfig(
+        { projectId: "project_org_config_old_backend" },
+        { bearerToken: "user-self-hosted" },
+      ),
+    ).rejects.toMatchObject({ name: "ServiceCredentialUnavailableError" });
+  });
+
+  it("keeps the handler's own 404 on the twin an ordinary failure", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ ok: false, error: "Project not found" }, { status: 404 }),
+    );
+
+    await expect(
+      resolveOrgModelConfig(
+        { projectId: "project_org_config_twin_404" },
+        { bearerToken: "user-self-hosted" },
+      ),
+    ).rejects.not.toMatchObject({ name: "ServiceCredentialUnavailableError" });
+  });
+
+  it("refuses as hosted-only with neither a credential nor a bearer", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "";
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(
+      resolveOrgModelConfig({ projectId: "project_org_config_nobody" }),
+    ).rejects.toMatchObject({ name: "ServiceCredentialUnavailableError" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("does not reuse a runtime admission across tools, images or unattended purpose", async () => {
@@ -195,6 +267,255 @@ describe("resolveOrgModelConfig", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("the organization AI-key policy on the resolve responses", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (ORIGINAL_ENV.CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_ENV.CONVEX_HTTP_URL;
+    }
+    if (ORIGINAL_ENV.INSPECTOR_SERVICE_TOKEN === undefined) {
+      delete process.env.INSPECTOR_SERVICE_TOKEN;
+    } else {
+      process.env.INSPECTOR_SERVICE_TOKEN =
+        ORIGINAL_ENV.INSPECTOR_SERVICE_TOKEN;
+    }
+  });
+
+  it("parses aiKeyPolicy and never keeps a key the backend withheld", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        ok: true,
+        aiKeyPolicy: { requireOrgKeys: true },
+        providers: [
+          {
+            providerKey: "openai",
+            exportDenied: true,
+            exportDeniedCode: "org_keys_required",
+            // A misbehaving backend that still sent one: dropped.
+            apiKey: "should-not-survive",
+          },
+          {
+            providerKey: "custom:acme",
+            baseUrl: "https://models.acme.test/v1",
+            modelIds: ["llama-3"],
+            exportDenied: true,
+            exportDeniedCode: "org_keys_required",
+          },
+        ],
+      }),
+    );
+
+    const config = await resolveOrgModelConfig(
+      { projectId: "project_org_keys_required_policy" },
+      { bearerToken: "user-policy" },
+    );
+    expect(config.aiKeyPolicy).toEqual({ requireOrgKeys: true });
+    expect(orgRequiresOwnKeys(config)).toBe(true);
+    expect(config.providers[0]).toEqual({
+      providerKey: "openai",
+      exportDenied: true,
+      exportDeniedCode: "org_keys_required",
+    });
+    expect(buildModelApiKeysFromOrgConfig(config)).toEqual({});
+    expect(
+      buildLlmRuntimeConfigFromOrgConfig(config).customProviders[0]?.apiKey,
+    ).toBeUndefined();
+  });
+
+  it("re-reads an answer that hands out keys instead of caching it", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    let requireOrgKeys = false;
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        Response.json(
+          requireOrgKeys
+            ? {
+                ok: true,
+                aiKeyPolicy: { requireOrgKeys: true },
+                providers: [
+                  {
+                    providerKey: "openai",
+                    exportDenied: true,
+                    exportDeniedCode: "org_keys_required",
+                  },
+                ],
+              }
+            : {
+                ok: true,
+                aiKeyPolicy: { requireOrgKeys: false },
+                providers: [{ providerKey: "openai", apiKey: "sk-test" }],
+              },
+        ),
+      );
+    const target = { projectId: "project_org_keys_policy_flip" };
+    const auth = { bearerToken: "user-policy-flip" };
+
+    const before = await resolveOrgModelConfig(target, auth);
+    expect(buildModelApiKeysFromOrgConfig(before)).toEqual({
+      openai: "sk-test",
+    });
+
+    // An admin turns the policy on: the very next resolve sees it.
+    requireOrgKeys = true;
+    const after = await resolveOrgModelConfig(target, auth);
+    expect(orgRequiresOwnKeys(after)).toBe(true);
+    expect(buildModelApiKeysFromOrgConfig(after)).toEqual({});
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // The withholding answer is cached (a stale one fails closed).
+    await resolveOrgModelConfig(target, auth);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps each provider's policy verdict, normalized from the response", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        ok: true,
+        aiKeyPolicy: { requireOrgKeys: true, revision: 4 },
+        providers: [
+          {
+            providerKey: "anthropic",
+            exportDenied: true,
+            policyEligibility: { eligible: true, code: "ignored" },
+          },
+          {
+            providerKey: "openrouter",
+            exportDenied: true,
+            policyEligibility: {
+              eligible: false,
+              code: "ORG_KEYS_REQUIRED",
+              message: " Use a direct provider connection. ",
+            },
+          },
+          // Malformed: read as missing, which fails closed under the policy.
+          {
+            providerKey: "openai",
+            exportDenied: true,
+            policyEligibility: { eligible: "yes" },
+          },
+        ],
+      }),
+    );
+
+    const config = await resolveOrgModelConfig(
+      { projectId: "project_org_keys_policy_verdicts" },
+      { bearerToken: "user-policy-verdicts" },
+    );
+    expect(config.aiKeyPolicy).toEqual({ requireOrgKeys: true, revision: 4 });
+    expect(config.providers.map((p) => p.policyEligibility)).toEqual([
+      { eligible: true },
+      {
+        eligible: false,
+        code: "org_keys_required",
+        message: "Use a direct provider connection.",
+      },
+      undefined,
+    ]);
+    expect("policyEligibility" in config.providers[2]!).toBe(false);
+  });
+
+  it("reads a response without the policy as off", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        ok: true,
+        providers: [{ providerKey: "openai", apiKey: "sk-test" }],
+      }),
+    );
+    const config = await resolveOrgModelConfig(
+      { projectId: "project_org_keys_policy_absent" },
+      { bearerToken: "user-policy-absent" },
+    );
+    expect(config.aiKeyPolicy).toBeUndefined();
+    expect(orgRequiresOwnKeys(config)).toBe(false);
+    expect(buildModelApiKeysFromOrgConfig(config)).toEqual({
+      openai: "sk-test",
+    });
+    expect(orgRequiresOwnKeys(undefined)).toBe(false);
+  });
+
+  it("throws a typed refusal when /stream/org/resolve refuses a local runtime", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json(
+        {
+          ok: false,
+          code: "org_keys_required",
+          error:
+            "This organization requires its own provider keys for AI features.",
+          isRetryable: false,
+          remediation: "choose_org_model",
+        },
+        { status: 403 },
+      ),
+    );
+
+    const error = await resolveOrgProviderRuntimeForTarget(
+      { projectId: "project_resolve_refused" },
+      "ollama",
+      "llama3",
+      { bearerToken: "user" },
+    ).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(ModelResolutionRefusalError);
+    expect((error as ModelResolutionRefusalError).code).toBe(
+      "org_keys_required",
+    );
+    expect((error as Error).message).toMatch(/^org_keys_required: /);
+  });
+
+  it("keeps the policy's transient refusal an ordinary (retryable) error with its code", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json(
+        {
+          ok: false,
+          code: "ai_key_policy_unavailable",
+          error: "The organization's AI policy could not be read.",
+          isRetryable: true,
+        },
+        { status: 503 },
+      ),
+    );
+
+    const error = await resolveOrgProviderRuntimeForTarget(
+      { projectId: "project_resolve_policy_unavailable" },
+      "ollama",
+      "llama3",
+      { bearerToken: "user" },
+    ).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ModelResolutionRefusalError);
+    expect(error).toMatchObject({
+      code: "ai_key_policy_unavailable",
+      status: 503,
+    });
+  });
+
+  it("keeps an unrelated failure an ordinary error", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ ok: false, error: "boom" }, { status: 500 }),
+    );
+    const error = await resolveOrgProviderRuntimeForTarget(
+      { projectId: "project_resolve_unrelated" },
+      "ollama",
+      "llama3",
+      { bearerToken: "user" },
+    ).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ModelResolutionRefusalError);
   });
 });
 

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { createServer as createTcpServer, connect } from "node:net";
 import {
   createServer as createHttpServer,
@@ -6,6 +6,29 @@ import {
 } from "node:http";
 const token = process.env.MCPJAM_SESSION_TOKEN!;
 const key = "mcpjam.local-access";
+
+// This suite checks the local access credential, not cloud authentication.
+// A real guest mint spends a shared per-IP allowance and makes later cases
+// depend on how many other CI jobs have used the cloud backend that day.
+// Keep the local credential check real and refuse the unrelated guest mint.
+test.beforeEach(async ({ context }) => {
+  await context.route("**/api/web/guest-session", (route) =>
+    route.fulfill({ status: 429, headers: { "retry-after": "3600" } }),
+  );
+});
+
+async function expectLocalAccessAccepted(page: Page) {
+  // This banner is mounted only after the local access gate admits the page.
+  // Convex must still keep protected app subscriptions blocked without a guest.
+  await expect(page.getByTestId("guest-session-refused-banner")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Sign in", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId("app-shell")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Open MCPJam from your terminal" }),
+  ).toHaveCount(0);
+}
 
 test("production documents and credential checks never disclose the key", async ({
   request,
@@ -54,8 +77,8 @@ test("a plain address needs a link; opening it resumes both same-origin tabs", a
   await other.goto(`/#token=${token}`);
   await checked;
   await expect(other).not.toHaveURL(/token=/);
-  await expect(other.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
+  await expectLocalAccessAccepted(other);
+  await expectLocalAccessAccepted(page);
   expect(await other.evaluate((key) => localStorage.getItem(key), key)).toBe(
     token,
   );
@@ -71,7 +94,7 @@ test("a stale link shows restart guidance and can be replaced by pasting", async
   await page.getByText("Paste the link instead", { exact: true }).click();
   await page.getByLabel("Link or code from your terminal").fill(token);
   await page.getByRole("button", { name: "Open MCPJam", exact: true }).click();
-  await expect(page.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
+  await expectLocalAccessAccepted(page);
 });
 
 test("storage-blocked browsers sign in from memory", async ({ page }) => {
@@ -90,7 +113,7 @@ test("storage-blocked browsers sign in from memory", async ({ page }) => {
     };
   });
   await page.goto(`/#token=${token}`);
-  await expect(page.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
+  await expectLocalAccessAccepted(page);
   await expect(page).not.toHaveURL(/token=/);
   await page.reload();
   await expect(
@@ -114,8 +137,13 @@ test("TCP forwarding and a Host-rewriting proxy cannot acquire credentials", asy
   });
   const proxy = createHttpServer((req, res) => {
     const upstream = httpRequest(
-      new URL(req.url!, target),
       {
+        // The upstream is always the app under test; only the path comes from
+        // the incoming request. An absolute req.url must not retarget it.
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port,
+        path: req.url,
         method: req.method,
         headers: {
           ...req.headers,

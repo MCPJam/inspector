@@ -35,6 +35,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { redactedReadRefusalError } from "./convex-read-errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const images = new Hono();
 
@@ -261,7 +262,7 @@ const validateBlueprintSchema = z.strictObject({
 
 // GET /v1/projects/:projectId/images — list a project's environments.
 images.get("/projects/:projectId/images", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.images");
   const readClient = createConvexReadClient(await getConvexBearerForRequest(c));
   let rows: EnvironmentRow[] | null | undefined;
   try {
@@ -321,7 +322,14 @@ images.post("/projects/:projectId/images/validate", async (c) => {
       { projectId, blueprint: body.blueprint } as any,
     )) as typeof result;
   } catch (error) {
-    throw translateConvexWriteError(error);
+    // Saves nothing, so this is a read — and the only one on the route, so it
+    // scopes the path's project id: same reading as the list (MJ-021).
+    throw (
+      redactedReadRefusalError(
+        error,
+        "Environment or project not found, or you do not have access to it.",
+      ) ?? translateConvexWriteError(error)
+    );
   }
   return v1Resource(c, result);
 });

@@ -48,8 +48,11 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
-import { inheritedGoalTarget } from "@/components/swarms/inherited-goal-target";
-import { joinLabels } from "@/lib/cloud-server-readiness";
+import {
+  inheritedGoalTarget,
+  type GoalWithTarget,
+} from "@/components/swarms/inherited-goal-target";
+import { newGoalErrorMessage } from "./new-goal-server-setup";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
 import { SectionLabel } from "@/components/shared/section-label";
 import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
@@ -590,6 +593,12 @@ export function SwarmsTab({
         environmentIds?: string[];
         /** Iterations for THIS run; leaves the journey's own config alone. */
         sessionsPerTarget?: number;
+        /**
+         * Sponsored conversations the person was shown for THIS run. Not cached
+         * with the launch key: a replay returns the run the backend already
+         * created and never re-checks it.
+         */
+        expectedSponsored?: number;
       },
     ): Promise<
       | { status: "launched"; runId?: string; swarmRunGroupId?: string }
@@ -626,6 +635,9 @@ export function SwarmsTab({
             : {}),
           ...(opts?.sessionsPerTarget !== undefined
             ? { sessionsPerTarget: opts.sessionsPerTarget }
+            : {}),
+          ...(opts?.expectedSponsored !== undefined
+            ? { expectedSponsored: opts.expectedSponsored }
             : {}),
         });
         launchKeysRef.current.delete(journeyId); // confirmed 2xx
@@ -1368,10 +1380,14 @@ export function SwarmsTab({
                           }}
                           goalSeed={journeyGoalSeed}
                           onCreate={async (draft) => {
+                            const { environmentIds, ...target } = draft;
                             await createJourney({
                               projectId,
                               personaRefId: selectedPersona._id,
-                              ...draft,
+                              ...target,
+                              ...(environmentIds.length
+                                ? { environmentIds }
+                                : {}),
                             } as any);
                           }}
                         />
@@ -1418,6 +1434,7 @@ export function SwarmsTab({
                       runId={runDetail.runId}
                       runSnapshot={runDetail.runSnapshot}
                       journeyRefId={runDetail.journeyId}
+                      organizationId={organizationId}
                       hosts={hosts ?? []}
                       sessionsPerTarget={detailJourney.config.sessionsPerTarget}
                       initialTargetKey={runDetail.targetKey}
@@ -1890,12 +1907,13 @@ function NewJourneyButton({
   /** Project clients, for the default target. */
   hosts: ReadonlyArray<{ hostId: string }>;
   /** This persona's existing goals; the new one runs where they do. */
-  siblingGoals: { environmentIds?: string[] | null }[] | undefined;
+  siblingGoals: GoalWithTarget[] | undefined;
   onCreate: (draft: {
     goal: string;
     hostIds: string[];
     /** Ordered fan-out; compat hostIds ride alongside. */
     environmentIds: string[];
+    serverAttachmentId?: string;
     config: { sessionsPerTarget: number; maxTurns: number };
   }) => Promise<void>;
   // Controlled by SwarmsTab so `ui_open_journey_form` can open + prefill it.
@@ -1943,11 +1961,12 @@ function NewJourneyForm({
   projectId: string;
   environments: ProjectEnvironmentView[] | undefined;
   hosts: ReadonlyArray<{ hostId: string }>;
-  siblingGoals: { environmentIds?: string[] | null }[] | undefined;
+  siblingGoals: GoalWithTarget[] | undefined;
   onCreate: (draft: {
     goal: string;
     hostIds: string[];
     environmentIds: string[];
+    serverAttachmentId?: string;
     config: { sessionsPerTarget: number; maxTurns: number };
   }) => Promise<void>;
   onOpenChange: (open: boolean) => void;
@@ -1963,11 +1982,7 @@ function NewJourneyForm({
     environments,
     hosts,
   });
-  const inherited = inheritedGoalTarget(
-    siblingGoals,
-    target.liveEnvironmentIds,
-  );
-  // The agent bridge can re-prefill an already-open form.
+  const inherited = inheritedGoalTarget(siblingGoals);
   useEffect(() => {
     setGoal(goalSeed);
   }, [goalSeed]);
@@ -2006,16 +2021,6 @@ function NewJourneyForm({
         </p>
       ) : null}
 
-      {!error && !inherited && target.noServers ? (
-        <p
-          role="alert"
-          className="mb-2.5 rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
-        >
-          {joinLabels(target.noServers.labels)} has no servers assigned. Pick a
-          server group for it.
-        </p>
-      ) : null}
-
       <div className="flex justify-end gap-2">
         <Button
           type="button"
@@ -2028,32 +2033,23 @@ function NewJourneyForm({
         <Button
           type="button"
           size="sm"
-          disabled={
-            !goal.trim() ||
-            goalsLoading ||
-            (!inherited && !target.ready) ||
-            saving
-          }
+          disabled={!goal.trim() || goalsLoading || saving}
           onClick={async () => {
             setSaving(true);
             setError(null);
             try {
               await onCreate({
                 goal,
-                hostIds: [],
-                environmentIds: inherited ?? (await target.resolve()),
-                // Matches the generated goals and the swarm flow's default.
+                ...(inherited
+                  ? await target.resolveExisting(inherited)
+                  : { hostIds: [], environmentIds: await target.resolve() }),
                 config: { sessionsPerTarget: 1, maxTurns: 6 },
               });
               setOpen(false);
               setGoal("");
             } catch (err) {
               // Keep the form and its text: the goal is retried, not retyped.
-              setError(
-                err instanceof Error
-                  ? err.message
-                  : "Could not create the goal",
-              );
+              setError(newGoalErrorMessage(err));
             } finally {
               setSaving(false);
             }

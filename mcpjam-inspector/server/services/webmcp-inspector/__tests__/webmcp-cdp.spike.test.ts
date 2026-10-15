@@ -8,7 +8,7 @@
  * (`navigator.` → `document.modelContext`), which is exactly why the provider
  * speaks CDP and why this file exists.
  *
- * Pinned surface: Playwright 1.62.1 / Chromium 151.0.7922.34.
+ * Pinned surface: Playwright 1.63.0 / Chromium 153.0.8010.12.
  *
  * Findings encoded below that the implementation depends on:
  *   1. `WebMCP.enable` resolves even when the feature is OFF — it is not a
@@ -67,12 +67,14 @@
  *  13. A tool that returns a value and THEN navigates is answered TWICE for one
  *      invocation id: its own value first, the destination document's JSON-LD
  *      second. The first is the true outcome; the second must not displace it.
- *  14. A pending DECLARATIVE invocation cannot be cancelled: `cancelInvocation`
- *      rejects its id ("No pending execution for invocation id") while the same
- *      call on a pending imperative one is accepted and answers `Canceled`. So
- *      a form waiting on a person stays live after we have given up on it, and
- *      the bridge has to remember that it settled the caller and drop the
- *      answer that arrives if the person submits later.
+ *  14. A pending DECLARATIVE invocation can be cancelled at this pin:
+ *      `cancelInvocation` on a form waiting for a person is accepted and
+ *      answers `Canceled`, like a pending imperative one. At 151 it was
+ *      rejected ("No pending execution for invocation id") and the form stayed
+ *      live after we had given up on it, which is why the bridge remembers that
+ *      it settled the caller and drops an answer that arrives later. A form
+ *      invoked TWICE still holds only the second invocation; cancelling the
+ *      replaced first one never answers and crashes the renderer at this pin.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Browser, CDPSession, Page } from "playwright";
@@ -249,9 +251,15 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("CDP WebMCP domain contract", () => {
     expect(browser.version()).toBe(PINNED_CHROMIUM);
   });
 
-  it("exposes the page API under document.modelContext, aliased on navigator", async () => {
+  it("exposes the page API under document.modelContext only — no navigator alias", async () => {
     expect(await page.evaluate(PAGE_API_PROBE)).toBe(true);
-    expect(await page.evaluate("window.__navigatorAliasesDocument")).toBe(true);
+    // A version fact: 151 still aliased `navigator.modelContext` to the same
+    // object, and this pin does not define it at all. Every reader falls back
+    // to it rather than requiring it, so nothing breaks — but anything that
+    // read ONLY the alias would now see no WebMCP.
+    expect(await page.evaluate("window.__navigatorHasModelContext")).toBe(
+      false,
+    );
   });
 
   it("reports registrations with the documented Tool shape", () => {
@@ -1035,22 +1043,20 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
     // "Waiting for a human" and "stuck" look identical from here — which is the
     // point of having the shape: nothing settles, and nothing claims to.
     expect(first.response).toBeUndefined();
-    // AND IT CANNOT BE CANCELLED. A declarative invocation waiting on a person
-    // is not a "pending execution" as far as the domain is concerned, so
-    // `cancelInvocation` rejects its id outright — where the same call on a
-    // pending IMPERATIVE invocation is accepted and answers `Canceled` (the
-    // contract suite's cancel test). Consequences in the bridge: a caller who
-    // stops one of these is still freed, by the grace timer that settles a
-    // cancel the page never answers, but the page's form invocation stays live
-    // — so a person submitting later answers an invocation already reported as
-    // cancelled, and `settle()` must therefore remember the id and DROP that
-    // late answer rather than buffer it.
-    expect(await cancelStillValid(first.invocationId)).toBe(false);
+    // Not cancelled here: the next test does that. This one leaves the first
+    // invocation live and lets a second REPLACE it, which is the state a form
+    // was always left in at 151, where `cancelInvocation` rejected a waiting
+    // declarative invocation outright.
+    //
+    // Never cancel the first from this state. Measured while re-taking this
+    // file at 153.0.8010.12 (and not asserted, because the result is a dead
+    // tab): `cancelInvocation` on an invocation a form has already replaced
+    // never answers, and the renderer crashes. 151 rejected the same call.
 
     // A person now submits, and an invocation is answered. WHICH ONE matters,
-    // because the first is still live in the page and could not be cancelled:
-    // the form holds ONE invocation and the second replaces the first, so the
-    // submit answers the second.
+    // because the first is still live in the page: the form holds ONE
+    // invocation and the second replaces the first, so the submit answers the
+    // second.
     //
     // That is asserted against the RAW response stream below, not through
     // `invokeAndWait`'s return: it filters by the id it was given, so its
@@ -1060,8 +1066,8 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
     // answered" is a question that can actually come back false.
     //
     // The first is therefore left dangling on purpose, because nothing can
-    // reach it. Contained rather than ignored: every test here starts with
-    // `open()`, which navigates, and a form invocation cannot outlive the
+    // safely reach it. Contained rather than ignored: every test here starts
+    // with `open()`, which navigates, and a form invocation cannot outlive the
     // document holding it.
     const { response, invocationId } = await invokeAndWait(
       frameId,
@@ -1092,6 +1098,38 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
       },
     ]);
   }, 40_000);
+
+  it("CANCELS a non-autosubmit form waiting for a person", async () => {
+    const frameId = await open(
+      fixture.declarativeUrl,
+      FIXTURE_TOOLS.confirmOrder,
+    );
+    const { response, invocationId } = await invokeAndWait(
+      frameId,
+      FIXTURE_TOOLS.confirmOrder,
+      { sku: "C1" },
+      2_500,
+    );
+    expect(response).toBeUndefined();
+    // A version fact. At 151 a declarative invocation waiting on a person was
+    // not a "pending execution" to the domain, so `cancelInvocation` rejected
+    // its id and the form stayed live after we had given up on it. At this pin
+    // it is accepted and answered `Canceled`, exactly like a pending
+    // IMPERATIVE invocation (the contract suite's cancel test). `settle()`
+    // still remembers every id it settled and drops a late answer, which is
+    // what kept 151 safe and costs nothing here.
+    expect(await cancelStillValid(invocationId)).toBe(true);
+    const cancelled = await waitFor(() =>
+      responded.find((r) => r.invocationId === invocationId),
+    );
+    expect(cancelled.status).toBe("Canceled");
+    // Answered once, and spent: a second cancel is rejected like any other.
+    await new Promise((resolve) => setTimeout(resolve, FOLLOW_UP_WINDOW_MS));
+    expect(
+      responded.filter((r) => r.invocationId === invocationId),
+    ).toHaveLength(1);
+    expect(await cancelStillValid(invocationId)).toBe(false);
+  }, 30_000);
 
   it("answers an IMPERATIVE navigation that never returns", async () => {
     const frameId = await open(fixture.url, FIXTURE_TOOLS.goElsewhere);

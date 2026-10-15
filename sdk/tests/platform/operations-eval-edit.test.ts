@@ -171,6 +171,7 @@ describe("eval-edit operation input validation", () => {
         case: "c1",
         matchOptions: null,
         checks: null,
+        scenario: null,
       }).success
     ).toBe(true);
     // create accepts null too (treated as "no override").
@@ -254,6 +255,17 @@ describe("eval-edit operation execution", () => {
     // `null` CLEARS; omitting leaves the stored claim alone. `buildCaseBody`
     // drops undefined and keeps null, which is exactly that distinction.
     expect(patch?.body).toEqual({ import: null });
+  });
+
+  it("update_eval_case forwards null to clear a scenario binding", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalCaseOperation.execute(
+      { suite: "s1", case: "c2", scenario: null },
+      { client }
+    );
+    expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({
+      scenario: null,
+    });
   });
 
   it("forwards intent on create and distinguishes clear from omission on update", async () => {
@@ -519,7 +531,11 @@ describe("eval-edit operation execution", () => {
     // The way out of a partial import, stated where a model will read it.
     expect(importEvalCasesOperation.description).toContain("reviewUrl");
     expect(importEvalCasesOperation.description).toMatch(
-      /re-import(ing)? ONLY that case|re-import ONLY/i
+      /importing only one case's corrected text/i
+    );
+    // ...and the cost of not taking it, as a fact rather than an order.
+    expect(importEvalCasesOperation.description).toContain(
+      "re-authors and re-bills every case"
     );
   });
 

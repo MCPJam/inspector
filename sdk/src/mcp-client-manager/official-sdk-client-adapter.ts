@@ -31,6 +31,7 @@ import type {
   ManagedMcpClientNotificationMethod,
   ManagedMcpClientRequestHandler,
   ManagedMcpClientRequestMethod,
+  ManagedMcpClientRequestSchemas,
 } from "./managed-mcp-client.js";
 import { TasksExtNotificationMethod } from "./tasks-ext.js";
 
@@ -271,7 +272,16 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
   setRequestHandler(
     method: ManagedMcpClientRequestMethod,
     handler: ManagedMcpClientRequestHandler,
+    schemas?: ManagedMcpClientRequestSchemas,
   ): void {
+    if (schemas) {
+      this.inner.setRequestHandler(
+        method,
+        schemas,
+        (params) => handler({ method, params: params as Record<string, unknown> }),
+      );
+      return;
+    }
     this.inner.setRequestHandler(method as never, handler as never);
   }
   removeRequestHandler(method: ManagedMcpClientRequestMethod): void {

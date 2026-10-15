@@ -1,4 +1,5 @@
 import type { GroundingReport } from "../../shared/swarm-grounding";
+import { getServiceCredential } from "./service-credential.js";
 import type { Harness } from "@mcpjam/sdk";
 import type {
   HostConfigMcpProfileV1,
@@ -8,7 +9,19 @@ import type {
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
-import { runnerCapabilities } from "./evals/runner-capabilities.js";
+import {
+  localHarnessCapabilities,
+  runnerCapabilities,
+  swarmSponsorshipCapabilities,
+} from "./evals/runner-capabilities.js";
+import {
+  parseFundingSummary,
+  parseSessionFunding,
+  SWARM_SPONSORSHIP_CAPABILITY,
+  SWARM_SPONSORSHIP_REJECTED_CODE,
+  type SwarmFundingSummary,
+  type SwarmSessionFunding,
+} from "../../shared/swarm-sponsorship";
 
 /**
  * Inspector-side adapter for the backend swarm (journey-execution)
@@ -104,10 +117,13 @@ export interface PinnedHostExecutionSpec {
    * Why this target has NO image, when it wanted one. Forms an explicit
    * tri-state with the field above:
    *   `computerEnvironment` ⇒ a sandbox is obtainable,
-   *   `computerUnavailableReason` ⇒ known-unavailable, say so in the run,
-   *   BOTH absent ⇒ a pre-B-isolation run (or a target that never wanted bash),
-   *     which must keep today's behaviour rather than being treated as
-   *     "unavailable".
+   *   `computerUnavailableReason` ⇒ known-unavailable, say so in the run (a
+   *     hosted harness target with a broken pin is now refused at launch, so
+   *     only older runs carry it for one),
+   *   BOTH absent ⇒ for a HARNESS target with a computer, boot the default
+   *     template; otherwise a pre-B-isolation run (or a target that never
+   *     wanted bash), which must keep today's behaviour rather than being
+   *     treated as "unavailable".
    */
   computerUnavailableReason?: string;
   harness?: Harness;
@@ -230,10 +246,22 @@ export interface CreateJourneyRunResult {
    * the owner and can kill attempts the owner is still executing.
    */
   deduped: boolean;
+  /**
+   * How the backend funded this run's conversations. Absent from a backend
+   * that predates sponsorship (and from a replay it cannot re-derive), in which
+   * case every conversation is credit-funded exactly as before.
+   */
+  funding?: SwarmFundingSummary;
+  /** Per-conversation funding in planned target/session order. */
+  sessions?: SwarmSessionFunding[];
 }
 
 export type SwarmAttemptStatus =
-  "pending" | "running" | "succeeded" | "failed" | "rate_limited";
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "rate_limited";
 
 export interface SwarmPersonaNextTurnResponse {
   message: string;
@@ -303,12 +331,14 @@ async function postJson<T>(
   // Optional caller signal (e.g. the run's abort) composed with the per-call
   // timeout so EITHER a timeout OR a shutdown/cancel aborts the in-flight fetch.
   signal?: AbortSignal,
+  extraHeaders?: Record<string, string>,
 ): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${bearer}`,
+      ...(extraHeaders ?? {}),
     },
     body: JSON.stringify(body),
     signal: signal
@@ -325,6 +355,43 @@ async function postJson<T>(
     );
   }
   return (await response.json()) as T;
+}
+
+/**
+ * The proof the backend requires, on top of user auth, for a SPONSORED
+ * conversation's control-plane calls. Never attached to a credit-funded one:
+ * the backend decides sponsorship from the attempt's persisted funding, so the
+ * header cannot make a call sponsored, it only lets a sponsored call through.
+ *
+ * Throws a sponsorship-rejected error when the token is missing rather than
+ * sending a call the backend must refuse; the caller ends that conversation as
+ * a platform problem, never as a paid retry.
+ */
+function sponsoredCallHeaders(): Record<string, string> {
+  const token = getServiceCredential();
+  if (!token) {
+    throw new Error(
+      `INSPECTOR_SERVICE_TOKEN is not set, so this server cannot attest a sponsored conversation (${SWARM_SPONSORSHIP_REJECTED_CODE}).`,
+    );
+  }
+  return { "x-inspector-service-token": token };
+}
+
+/**
+ * The same proof, for the call that DECLARES the capability. The backend only
+ * honours `swarm-sponsorship-v1` on a request that carries it, because the
+ * capability is what lets a launch allocate platform money: a browser that puts
+ * the string in a request body must not be able to claim it. Attached exactly
+ * when the declared list carries the capability, which this process only
+ * declares while the token is set, so a server without one sends the same bare
+ * request it always has.
+ */
+function capabilityAttestationHeaders(
+  capabilities: readonly string[],
+): Record<string, string> | undefined {
+  return capabilities.includes(SWARM_SPONSORSHIP_CAPABILITY)
+    ? sponsoredCallHeaders()
+    : undefined;
 }
 
 async function getJson<T>(
@@ -433,6 +500,132 @@ export async function fetchPinnedSkill(
 }
 
 /**
+ * What this process declares on `runs/create` and on the funding preview. One
+ * list for both, so the preview describes exactly the allocation the launch
+ * will get. A launch for the local venue also names the harnesses it will run
+ * (`local-harness:<id>`), which only `runs/create` carries.
+ */
+export function swarmRunnerCapabilities(local?: {
+  runtimeVenue?: "hosted" | "local";
+  localHarnessIds?: readonly string[];
+}): string[] {
+  return [
+    ...runnerCapabilities(),
+    "swarm-standard-checks-v1",
+    ...(local?.runtimeVenue === "local"
+      ? localHarnessCapabilities(local.localHarnessIds)
+      : []),
+    ...swarmSponsorshipCapabilities(),
+  ];
+}
+
+/** One planned run in a funding preview; mirrors the launch parameters. */
+export interface SwarmFundingPreviewRunInput {
+  journeyRefId: string;
+  /** What the launch will create the run as (see the client's twin type). */
+  kind?: "swarm" | "user_testing";
+  environmentIds?: string[];
+  sessionsPerTarget?: number;
+}
+
+export interface SwarmFundingPreviewRun extends SwarmFundingSummary {
+  targets: Array<{ targetId: string; eligible: boolean; reason?: string }>;
+}
+
+export interface SwarmFundingPreview {
+  /** False when sponsorship cannot apply to this caller or this server. */
+  supported: boolean;
+  /** Sponsored conversations left in the caller's allowance. */
+  remaining: number;
+  granted: number;
+  runs: SwarmFundingPreviewRun[];
+}
+
+const UNSUPPORTED_FUNDING_PREVIEW: SwarmFundingPreview = {
+  supported: false,
+  remaining: 0,
+  granted: 0,
+  runs: [],
+};
+
+/**
+ * Read-only preview of how a wave's conversations would be funded. Counts are
+ * cumulative across `runs` in order, mirroring the wave's sequential
+ * allocation. A server without INSPECTOR_SERVICE_TOKEN never advertises the
+ * capability, so it answers `supported: false` without asking the backend; a
+ * backend that predates the route (404/405) reads the same way.
+ */
+export async function previewSwarmFunding(
+  convexHttpUrl: string,
+  bearer: string,
+  args: { projectId: string; runs: SwarmFundingPreviewRunInput[] },
+): Promise<SwarmFundingPreview> {
+  if (swarmSponsorshipCapabilities().length === 0) {
+    return UNSUPPORTED_FUNDING_PREVIEW;
+  }
+  const capabilities = swarmRunnerCapabilities();
+  let data: Record<string, unknown>;
+  try {
+    data = await postJson<Record<string, unknown>>(
+      `${convexHttpUrl}/journey-execution/funding-preview`,
+      bearer,
+      {
+        projectId: args.projectId,
+        runnerCapabilities: capabilities,
+        runs: args.runs,
+      },
+      NON_LLM_TIMEOUT_MS,
+      undefined,
+      capabilityAttestationHeaders(capabilities),
+    );
+  } catch (error) {
+    if (
+      error instanceof SwarmAgentError &&
+      (error.status === 404 || error.status === 405)
+    ) {
+      return UNSUPPORTED_FUNDING_PREVIEW;
+    }
+    throw error;
+  }
+  const nonNegative = (value: unknown): number =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? Math.floor(value)
+      : 0;
+  const runs: SwarmFundingPreviewRun[] = Array.isArray(data.runs)
+    ? data.runs.map((entry): SwarmFundingPreviewRun => {
+        const run = (entry ?? {}) as Record<string, unknown>;
+        return {
+          sponsored: nonNegative(run.sponsored),
+          credits: nonNegative(run.credits),
+          total: nonNegative(run.total),
+          targets: Array.isArray(run.targets)
+            ? run.targets.flatMap((t) => {
+                const target = (t ?? {}) as Record<string, unknown>;
+                return typeof target.targetId === "string"
+                  ? [
+                      {
+                        targetId: target.targetId,
+                        eligible: target.eligible === true,
+                        ...(typeof target.reason === "string"
+                          ? { reason: target.reason }
+                          : {}),
+                      },
+                    ]
+                  : [];
+              })
+            : [],
+        };
+      })
+    : [];
+  return {
+    supported: data.supported === true,
+    remaining: nonNegative(data.remaining),
+    granted: nonNegative(data.granted),
+    runs,
+  };
+}
+
+/**
  * Create a journey run and return the pinned execution snapshot.
  *
  * `maxHosts` is an optional upper bound the backend enforces transactionally
@@ -446,6 +639,12 @@ export async function createJourneyRun(
   bearer: string,
   args: {
     runtimeVenue?: "hosted" | "local";
+    /**
+     * The harnesses this runner will execute locally for this wave, checked
+     * by the launch. Declared as `local-harness:<id>` so the backend stamps
+     * exactly those targets local.
+     */
+    localHarnessIds?: readonly string[];
     projectId: string;
     journeyRefId: string;
     launchKey: string;
@@ -462,8 +661,21 @@ export async function createJourneyRun(
     environmentIds?: string[];
     /** Iterations for THIS run, overriding the journey's stored fan-out. */
     sessionsPerTarget?: number;
+    /**
+     * How many of this request's conversations the caller was told are
+     * sponsored. The backend refuses the launch (409 `swarm_funding_changed`)
+     * instead of silently shifting conversations to the organization's credits.
+     */
+    expectedSponsored?: number;
   },
 ): Promise<CreateJourneyRunResult> {
+  // Asserted by this process, never a caller: the runner is the only honest
+  // source for what it can execute. One list feeds the body and the
+  // attestation header, so they cannot disagree.
+  const capabilities = swarmRunnerCapabilities({
+    runtimeVenue: args.runtimeVenue,
+    localHarnessIds: args.localHarnessIds,
+  });
   const data = await postJson<{
     ok?: boolean;
     runId?: string;
@@ -471,6 +683,8 @@ export async function createJourneyRun(
     journeyRefId?: string;
     snapshot?: JourneySnapshot;
     deduped?: boolean;
+    funding?: unknown;
+    sessions?: unknown;
     error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/runs/create`,
@@ -493,11 +707,14 @@ export async function createJourneyRun(
       ...(args.sessionsPerTarget !== undefined
         ? { sessionsPerTarget: args.sessionsPerTarget }
         : {}),
-      // Asserted by this process, never a caller: the runner is the only
-      // honest source for what it can execute.
-      runnerCapabilities: [...runnerCapabilities(), "swarm-standard-checks-v1"],
+      ...(args.expectedSponsored !== undefined
+        ? { expectedSponsored: args.expectedSponsored }
+        : {}),
+      runnerCapabilities: capabilities,
     },
     NON_LLM_TIMEOUT_MS,
+    undefined,
+    capabilityAttestationHeaders(capabilities),
   );
   if (
     !data.ok ||
@@ -520,6 +737,14 @@ export async function createJourneyRun(
     // Strict `=== true`: an absent field means a fresh run (never wrongly skip
     // starting the runner for a genuinely new launch).
     deduped: data.deduped === true,
+    ...(() => {
+      const funding = parseFundingSummary(data.funding);
+      const sessions = parseSessionFunding(data.sessions);
+      return {
+        ...(funding ? { funding } : {}),
+        ...(sessions.length > 0 ? { sessions } : {}),
+      };
+    })(),
   };
 }
 
@@ -563,10 +788,11 @@ export async function reportAttempt(
     errorCode?: string;
     errorMessage?: string;
   },
-): Promise<{ ok: true; applied: boolean }> {
+): Promise<{ ok: true; applied: boolean; canceled?: boolean }> {
   const data = await postJson<{
     ok?: boolean;
     applied?: boolean;
+    canceled?: boolean;
     error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/runs/attempt`,
@@ -595,7 +821,11 @@ export async function reportAttempt(
   // an explicit `applied` boolean on a 200. Treat only an explicit `false` as a
   // no-op replay; anything else (incl. a defensively-absent field) is "applied"
   // so a missing field can never wrongly suppress a fresh claim's execution.
-  return { ok: true, applied: data.applied !== false };
+  return {
+    ok: true,
+    applied: data.applied !== false,
+    ...(data.canceled === true ? { canceled: true } : {}),
+  };
 }
 
 /**
@@ -774,7 +1004,12 @@ export async function failSwarmChecks(
 }
 
 type JourneyHeartbeatStatus =
-  "running" | "completed" | "partial" | "failed" | "rate_limited" | "missing";
+  | "running"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "rate_limited"
+  | "missing";
 
 export async function heartbeatJourneyRun(
   convexHttpUrl: string,
@@ -785,6 +1020,7 @@ export async function heartbeatJourneyRun(
     ok?: boolean;
     error?: string;
     status?: JourneyHeartbeatStatus;
+    cancelRequested?: boolean;
   }>(
     `${convexHttpUrl}/journey-execution/runs/heartbeat`,
     bearer,
@@ -813,7 +1049,7 @@ export async function heartbeatJourneyRun(
   ) {
     throw new Error("Invalid run status in backend heartbeat response");
   }
-  return data.status;
+  return data.cancelRequested === true ? "failed" : data.status;
 }
 
 /**
@@ -824,10 +1060,13 @@ export async function heartbeatJourneyRun(
  *     `errorCode: "spend_cap_exceeded"`
  *   - controlled shutdown / cancel → `errorCode: "runner_shutdown"`
  *
- * A provider rate-limit is per-HOST (it stops one host, not the run), so it does
- * NOT use this — the runner marks that host's remaining attempts via
- * {@link reportAttempt} instead. The backend stale-run cron is the hard backstop
- * for anything this best-effort call misses.
+ * A provider rate-limit is per-HOST (it stops one host, not the run), so a
+ * credit-funded host's remaining attempts are marked via {@link reportAttempt}
+ * instead. A SPONSORED conversation cannot be: claiming it `running` counts as
+ * execution and spends the launcher's allowance. So a target's unstarted
+ * sponsored conversations are closed here, scoped with `fundingScope:
+ * "sponsored"` and `targetId`, which the backend refunds. The backend stale-run
+ * cron is the hard backstop for anything this best-effort call misses.
  */
 export async function finalizePendingAttempts(
   convexHttpUrl: string,
@@ -838,6 +1077,19 @@ export async function finalizePendingAttempts(
     terminalStatus?: Exclude<SwarmAttemptStatus, "pending" | "running">;
     errorCode?: string;
     errorMessage?: string;
+    /**
+     * `"credits"` finalizes credit-funded attempts only and leaves sponsored
+     * ones pending, so an organization spend cap cannot stop (or refund) a
+     * conversation the platform is paying for. `"sponsored"` finalizes the
+     * sponsored ones only; pair it with `targetId` to close one target's.
+     */
+    fundingScope?: "credits" | "sponsored";
+    /**
+     * Only this target's attempts. Always pair it with a `fundingScope` the
+     * runner means: without one the backend would close the target's
+     * credit-funded conversations too.
+     */
+    targetId?: string;
   },
 ): Promise<void> {
   const data = await postJson<{ ok?: boolean; error?: string }>(
@@ -846,6 +1098,8 @@ export async function finalizePendingAttempts(
     {
       projectId: args.projectId,
       runId: args.runId,
+      ...(args.fundingScope ? { fundingScope: args.fundingScope } : {}),
+      ...(args.targetId ? { targetId: args.targetId } : {}),
       ...(args.terminalStatus ? { terminalStatus: args.terminalStatus } : {}),
       ...(args.errorCode ? { errorCode: args.errorCode } : {}),
       ...(args.errorMessage ? { errorMessage: args.errorMessage } : {}),
@@ -885,6 +1139,8 @@ export async function swarmPersonaNextTurn(
     // an uncancellable place; forwarding the run's signal lets a shutdown/cancel
     // abort the parked fetch immediately so the session can unwind.
     signal?: AbortSignal;
+    /** True for a sponsored conversation: attaches the service-token proof. */
+    sponsored?: boolean;
   },
 ): Promise<SwarmPersonaNextTurnResponse> {
   const data = await postJson<{
@@ -907,6 +1163,7 @@ export async function swarmPersonaNextTurn(
     },
     LLM_TIMEOUT_MS,
     args.signal,
+    args.sponsored ? sponsoredCallHeaders() : undefined,
   );
   if (!data.ok || typeof data.message !== "string") {
     throw new Error(
@@ -927,6 +1184,8 @@ export async function reportTargetGrounding(
   bearer: string,
   body: GroundingReport,
   signal?: AbortSignal,
+  /** True when the target has sponsored conversations: attaches the token. */
+  sponsored?: boolean,
 ): Promise<{ unavailable?: boolean }> {
   try {
     return await postJson(
@@ -935,6 +1194,7 @@ export async function reportTargetGrounding(
       body,
       LLM_TIMEOUT_MS,
       signal,
+      sponsored ? sponsoredCallHeaders() : undefined,
     );
   } catch (error) {
     if (error instanceof SwarmAgentError && error.status === 404)

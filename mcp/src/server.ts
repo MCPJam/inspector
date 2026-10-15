@@ -34,20 +34,20 @@ const SERVER_INFO = {
 } as const;
 
 /**
- * What a model must do with the links these tools return.
+ * What the links these tools return are, said as facts about the results.
  *
- * ONE rule, because it is the one this worker cannot enforce from the
- * outside. Tool results carry a `permalinks` array and a matching text line;
- * a model that instead assembles `app.mcpjam.com/<something>` from an id
- * produces a URL with no project in it, which opens whichever project the
- * READER last selected — a link that looks right, resolves, and shows the
- * wrong data.
+ * Tool results carry a `permalinks` array and a matching text line; a URL
+ * assembled from an id instead has no project in it, which opens whichever
+ * project the READER last selected — a link that looks right, resolves, and
+ * shows the wrong data. Stated as a property of the results rather than as
+ * orders: Claude's directory review rejects server text that tells the model
+ * how to behave, and nothing here may nudge it toward a tool the user did not
+ * ask for (the `send_feedback` line that used to close this list did).
  */
 const SERVER_INSTRUCTIONS = [
   "Tool results may include a `permalinks` array; the text output repeats each one as a `Label: https://…` line.",
-  "Hand those URLs to the user EXACTLY as written. Never invent, shorten, or rewrite an MCPJam app URL, and never build one from an id — a hand-made link opens whichever project the reader last selected, not the one you are describing.",
-  "When a result has no permalink, give the id and say which MCPJam screen it lives on.",
-  "If an MCPJam tool fails with an internal error, or you need a capability these tools do not offer, you can report it once with send_feedback — describe what you were trying to do, what you expected and what blocked you, then carry on with the task.",
+  "Those URLs carry the project they belong to. An MCPJam app URL built from an id alone has no project in it, so it opens whichever project the reader last selected rather than the one described.",
+  "Results without a permalink identify resources by id; the resource type names the MCPJam screen it lives on.",
 ].join("\n");
 
 /**

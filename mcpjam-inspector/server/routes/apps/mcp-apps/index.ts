@@ -1,3 +1,4 @@
+import { readResourceDisplayHints } from "@mcpjam/sdk/widget-runtime";
 /**
  * MCP Apps (SEP-1865) Server Routes
  *
@@ -153,7 +154,7 @@ apps.post("/widget-content", async (c) => {
           error:
             "cspMode is required and must be 'permissive' or 'widget-declared'",
         },
-        400
+        400,
       );
     }
 
@@ -179,7 +180,7 @@ apps.post("/widget-content", async (c) => {
           resourceUri: resolvedResourceUri,
           cspMode: effectiveCspMode,
           errorCode: classifyWidgetError(null, "resource_missing"),
-        }
+        },
       );
       return c.json({ error: "No content in resource" }, 404);
     }
@@ -226,7 +227,7 @@ apps.post("/widget-content", async (c) => {
           resourceUri: resolvedResourceUri,
           cspMode: effectiveCspMode,
           errorCode: classifyWidgetError(null, "html_missing"),
-        }
+        },
       );
       return c.json({ error: "No HTML content in resource" }, 404);
     }
@@ -251,7 +252,7 @@ apps.post("/widget-content", async (c) => {
             logger.debug("[MCP Apps] resources/list fallback skipped", {
               resourceUri: resolvedResourceUri,
               reason,
-            })
+            }),
         );
 
     const {
@@ -329,7 +330,7 @@ apps.post("/widget-content", async (c) => {
         cspMode: effectiveCspMode,
         injectedOpenAiCompat: shouldInjectOpenAiCompat,
         mimeTypeValid,
-      }
+      },
     );
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
@@ -347,6 +348,7 @@ apps.post("/widget-content", async (c) => {
       permissive: isPermissive, // Tell sandbox-proxy to skip CSP injection entirely
       cspMode: effectiveCspMode,
       prefersBorder,
+      resourceDisplayHints: readResourceDisplayHints(resourceMeta, listingMeta),
       declaredDomain,
       // The subdomain this server's views get once per-app origins are on.
       // Optional-called: the route tests stand up managers that expose no
@@ -384,12 +386,12 @@ apps.post("/widget-content", async (c) => {
       {
         widgetType: "mcp_apps",
         errorCode: classifyWidgetError(error),
-      }
+      },
     );
     logger.error("[MCP Apps] Error fetching resource", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
-      500
+      500,
     );
   }
 });

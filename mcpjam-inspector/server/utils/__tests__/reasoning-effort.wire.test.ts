@@ -1,6 +1,6 @@
 import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGoogle } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { describe, expect, it } from "vitest";
 import {
@@ -100,7 +100,7 @@ describe("reasoning effort on the wire (installed @ai-sdk providers)", () => {
     })!;
     const body = await captureBody(
       (fetch) =>
-        createGoogleGenerativeAI({ apiKey: "k", fetch })("gemini-3-pro"),
+        createGoogle({ apiKey: "k", fetch })("gemini-3-pro"),
       options,
       {
         candidates: [
@@ -176,7 +176,7 @@ describe("reasoning effort on the wire (installed @ai-sdk providers)", () => {
               )
             : await captureBody(
                 (fetch) =>
-                  createGoogleGenerativeAI({ apiKey: "k", fetch })(modelId),
+                  createGoogle({ apiKey: "k", fetch })(modelId),
                 options,
                 {},
               );

@@ -7,9 +7,10 @@ import {
   packTargetsWithDigests,
 } from "../release-gate.js";
 import {
-  EXPECTED_PACK_VERSION,
+  EXPECTED_PACK_VERSIONS,
   PACK_RECORDS,
   type PackDigestRecord,
+  PERMITTED_PACK_RECORDS,
 } from "../pack-digests.generated.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import type { LocalPackTarget } from "../targets.js";
@@ -114,14 +115,30 @@ describe("the derived offer", () => {
     ).toEqual([]);
   });
 
-  it("says nothing is offered on the reviewed checkout", () => {
+  it("offers on the reviewed checkout only what its packs and evidence support", () => {
     // Reads the REAL committed table and manifest, so this fails the day
     // somebody records conformance evidence without shipping packs — which is
-    // the inconsistent release the gate exists to stop.
-    expect(advertisedLocalPlatforms("claude-code")).toEqual([]);
-    expect(
-      localExecutionReleasedForThisMachine({ harnessId: "claude-code" }),
-    ).toBe(false);
+    // the inconsistent release the gate exists to stop. Before a release that
+    // meant "nothing is offered"; after one, every offered platform must be
+    // backed by a reviewed pack record at the expected version.
+    for (const harnessId of ["claude-code", "codex"] as const) {
+      const offered = advertisedLocalPlatforms(harnessId);
+      if (LOCAL_HARNESS_MANIFEST[harnessId].lifecycleConformanceVersion === "") {
+        expect(offered).toEqual([]);
+        expect(localExecutionReleasedForThisMachine({ harnessId })).toBe(false);
+        continue;
+      }
+      expect(offered.length).toBeGreaterThan(0);
+      for (const platform of offered) {
+        expect(
+          Object.entries(PACK_RECORDS[harnessId] ?? {}).some(
+            ([target, record]) =>
+              target.startsWith(`${platform}-`) &&
+              record?.packVersion === EXPECTED_PACK_VERSIONS[harnessId],
+          ),
+        ).toBe(true);
+      }
+    }
   });
 
   // A digest record is ONE of the three facts a release needs. On its own it
@@ -295,14 +312,28 @@ describe("release blockers", () => {
     ).toEqual(["no-manifest"]);
   });
 
-  it("holds the real committed state to the same rule", () => {
+  it("holds the real committed state to the same rule, for every harness", () => {
     // Whatever `pack-digests.generated.ts` and `compatibility.ts` say today,
     // they must not describe a build that offers something it cannot serve.
-    const blocking = localHarnessReleaseBlockers({
-      harnessId: "claude-code",
-      version: EXPECTED_PACK_VERSION || undefined,
-    }).filter((b) => b.blocking);
-    expect(blocking).toEqual([]);
+    for (const harnessId of ["claude-code", "codex"] as const) {
+      const blocking = localHarnessReleaseBlockers({
+        harnessId,
+        version: EXPECTED_PACK_VERSIONS[harnessId] || undefined,
+      }).filter((b) => b.blocking);
+      expect(blocking, harnessId).toEqual([]);
+    }
+  });
+
+  it("reads each harness's records at its OWN pinned version", () => {
+    // Packs are versioned per harness. A Claude Code pin must never admit
+    // Codex records stamped with the same string, nor the reverse.
+    const table = {
+      "claude-code": { "linux-x64": { packVersion: "1.0.0", treeDigest: DIGEST } },
+      codex: { "linux-x64": { packVersion: "2.0.0", treeDigest: DIGEST } },
+    } as typeof PACK_RECORDS;
+    expect(packTargetsWithDigests("codex", table, "2.0.0")).toEqual(["linux-x64"]);
+    expect(packTargetsWithDigests("codex", table, "1.0.0")).toEqual([]);
+    expect(packTargetsWithDigests("claude-code", table, "2.0.0")).toEqual([]);
   });
 });
 
@@ -311,12 +342,17 @@ describe("packAssetNames", () => {
     // Derived from the same stem the build writes and `packSourceFor`
     // downloads: a check that guesses the name proves nothing about the name
     // a user's installer asks for.
-    expect(packAssetNames("darwin-arm64", "3.4.0")).toEqual({
+    expect(packAssetNames("claude-code", "darwin-arm64", "3.4.0")).toEqual({
       archive: "local-harness-pack-darwin-arm64-3.4.0.tar.gz",
       manifest: "local-harness-pack-darwin-arm64-3.4.0.manifest.json",
       signature: "local-harness-pack-darwin-arm64-3.4.0.manifest.json.sig",
       sha256: "local-harness-pack-darwin-arm64-3.4.0.tar.gz.sha256",
     });
+    // Every harness but Claude Code (which keeps its shipped names) carries
+    // its id in the asset names.
+    expect(packAssetNames("codex", "darwin-arm64", "1.0.0").archive).toBe(
+      "local-harness-pack-codex-darwin-arm64-1.0.0.tar.gz",
+    );
   });
 });
 
@@ -333,20 +369,84 @@ describe("the release script and this module read the same committed facts", () 
     );
     const facts = await readCommittedFacts();
 
-    expect(facts.expectedVersion).toBe(EXPECTED_PACK_VERSION);
-    expect(facts.conformance).toBe(
-      LOCAL_HARNESS_MANIFEST["claude-code"].lifecycleConformanceVersion,
+    // Every harness with a manifest entry, located by KEY — not by the order
+    // of the entries or by what follows them.
+    expect(Object.keys(facts).sort()).toEqual(
+      Object.keys(LOCAL_HARNESS_MANIFEST).sort(),
     );
-    expect(facts.nativePlatforms).toEqual([
-      ...LOCAL_HARNESS_MANIFEST["claude-code"].nativePlatforms,
-    ]);
-    expect(Object.keys(facts.records).sort()).toEqual(
-      Object.keys(PACK_RECORDS["claude-code"]).sort(),
-    );
-    for (const [target, record] of Object.entries(facts.records)) {
-      expect(record).toEqual(
-        PACK_RECORDS["claude-code"][target as LocalPackTarget],
+    for (const harnessId of Object.keys(LOCAL_HARNESS_MANIFEST) as Array<
+      keyof typeof LOCAL_HARNESS_MANIFEST
+    >) {
+      const harness = facts[harnessId]!;
+      expect(harness.expectedVersion).toBe(EXPECTED_PACK_VERSIONS[harnessId]);
+      expect(harness.conformance).toBe(
+        LOCAL_HARNESS_MANIFEST[harnessId].lifecycleConformanceVersion,
       );
+      expect(harness.nativePlatforms).toEqual([
+        ...LOCAL_HARNESS_MANIFEST[harnessId].nativePlatforms,
+      ]);
+      const certified = LOCAL_HARNESS_MANIFEST[harnessId].nativeTargets;
+      expect(harness.nativeTargets).toEqual(
+        certified === undefined ? undefined : [...certified],
+      );
+      expect(Object.keys(harness.records).sort()).toEqual(
+        Object.keys(PACK_RECORDS[harnessId]).sort(),
+      );
+      for (const [target, record] of Object.entries(harness.records)) {
+        expect(record).toEqual(
+          PACK_RECORDS[harnessId][target as LocalPackTarget],
+        );
+      }
+      // The permitted previous pack, read the same way by both.
+      expect(harness.permitted).toEqual(PERMITTED_PACK_RECORDS[harnessId]);
     }
   });
 });
+
+describe("per-target certification (D8)", () => {
+  const codexManifest = (nativeTargets: LocalPackTarget[]) => ({
+    codex: {
+      ...LOCAL_HARNESS_MANIFEST.codex,
+      lifecycleConformanceVersion: "codex-conformance",
+      nativePlatforms: ["darwin", "linux"] as const,
+      nativeTargets,
+    },
+  });
+  const codexRecords = (targets: LocalPackTarget[]) =>
+    ({
+      "claude-code": {},
+      codex: Object.fromEntries(
+        targets.map((t) => [t, { packVersion: "1.0.0", treeDigest: DIGEST }]),
+      ),
+    }) as typeof PACK_RECORDS;
+
+  it("ships a certified target while an uncertified one stays unavailable", () => {
+    const manifests = codexManifest(["darwin-arm64"]);
+    const records = codexRecords(["darwin-arm64", "darwin-x64", "linux-x64"]);
+    expect(
+      localExecutionReleasedForThisMachine({
+        harnessId: "codex", platform: "darwin", arch: "arm64",
+        manifests, records, expectedVersion: "1.0.0",
+      }),
+    ).toBe(true);
+    // Same OS, built pack, but not certified: unavailable.
+    expect(
+      localExecutionReleasedForThisMachine({
+        harnessId: "codex", platform: "darwin", arch: "x64",
+        manifests, records, expectedVersion: "1.0.0",
+      }),
+    ).toBe(false);
+    expect(advertisedLocalPlatforms("codex", manifests, records, "1.0.0")).toEqual(["darwin"]);
+  });
+
+  it("blocks only on certified targets with no pack, never on uncertified ones", () => {
+    const blockers = localHarnessReleaseBlockers({
+      harnessId: "codex",
+      manifests: codexManifest(["darwin-arm64", "linux-x64"]),
+      records: codexRecords(["darwin-arm64"]),
+      expectedVersion: "1.0.0",
+    }).filter((b) => b.blocking);
+    expect(blockers.map((b) => b.target)).toEqual(["linux-x64"]);
+  });
+});
+

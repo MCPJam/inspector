@@ -29,7 +29,13 @@
 import type {
   ProjectEnvironmentView,
   ProjectEnvironmentSkillSelection,
+  useEnsureAdhocEnvironments,
 } from "@/hooks/useProjectEnvironments";
+
+/** One ad-hoc environment the browser asks the backend to find or create. */
+export type AdhocStack = Parameters<
+  ReturnType<typeof useEnsureAdhocEnvironments>
+>[0]["stacks"][number];
 
 /** Every execution field of an environment except its client and its model. */
 export type EnvironmentComposition = Pick<
@@ -197,4 +203,54 @@ export function adhocSkillSelection(
   composition: EnvironmentComposition,
 ): ProjectEnvironmentSkillSelection | undefined {
   return environmentComposition(composition).skillSelection ?? undefined;
+}
+
+/**
+ * A new cell's ad-hoc environment: the composition's server group, skills and
+ * image on the cell's client and model. Whether the composition may be copied
+ * at all (`unpreservableReason`) is the caller's call, made first.
+ */
+export function composeAdhocStack(
+  composition: EnvironmentComposition,
+  cell: Pick<AdhocStack, "hostId" | "modelId" | "modelSelection">,
+): AdhocStack {
+  const c = environmentComposition(composition);
+  const skillSelection = adhocSkillSelection(c);
+  return {
+    hostId: cell.hostId,
+    ...(cell.modelId ? { modelId: cell.modelId } : {}),
+    ...(cell.modelSelection ? { modelSelection: cell.modelSelection } : {}),
+    ...(c.serverAttachmentId
+      ? { serverAttachmentId: c.serverAttachmentId }
+      : {}),
+    ...(skillSelection ? { skillSelection } : {}),
+    ...(c.computerEnvironmentId
+      ? { computerEnvironmentId: c.computerEnvironmentId }
+      : {}),
+  };
+}
+
+/**
+ * What a suite WITHOUT environments runs besides its client, model and
+ * servers: its own skills and sandbox image. An environment run reads neither
+ * from the suite, so a one-run cell for such a suite carries them, as the
+ * backend's legacy-suite converter does.
+ */
+export function legacySuiteComposition(suite: {
+  selectedSkillIds?: readonly string[];
+  environment?: { computerEnvironmentId?: string };
+}): EnvironmentComposition {
+  return environmentComposition({
+    ...(suite.selectedSkillIds?.length
+      ? {
+          skillSelection: {
+            mode: "explicit",
+            skillIds: [...suite.selectedSkillIds],
+          },
+        }
+      : {}),
+    ...(suite.environment?.computerEnvironmentId
+      ? { computerEnvironmentId: suite.environment.computerEnvironmentId }
+      : {}),
+  });
 }

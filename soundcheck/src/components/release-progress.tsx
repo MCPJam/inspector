@@ -52,7 +52,6 @@ const JOB_ORDER = [
   "build-windows / make-windows",
   "build-packages",
   "deploy-backend-prod",
-  "artifact-gate",
   "publish-packages",
   "deploy-webapp / deploy",
   "deploy-webapp / smoke / smoke",

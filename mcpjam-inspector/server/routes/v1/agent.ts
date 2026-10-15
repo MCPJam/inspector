@@ -55,8 +55,7 @@
  * but BOTH the engine's Convex `/stream` calls and the self-dispatched
  * platform-op calls need a JWT — so the delegated org-scoped JWT minted by
  * `getConvexBearerForRequest` is used for both. Routing the ops through the
- * delegated JWT (not the raw `sk_` key) also keeps the agent's own tool
- * calls out of the caller's per-key rate bucket.
+ * delegated JWT (not the raw `sk_` key) also keeps the agent's own tool calls out of the caller's per-key rate bucket.
  */
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
@@ -89,7 +88,7 @@ import {
 import { MCPJAM_HOSTED_ORIGIN, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
-import { parseWithSchema } from "../web/errors.js";
+import { hostedOnlyRouteError, parseWithSchema } from "../web/errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { isAuthorizedInternalServiceRequest } from "../../middleware/internal-service-auth.js";
@@ -115,6 +114,7 @@ import {
   AGENT_MAX_STEPS,
   MCPJAM_AGENT_BILLING_FEATURE,
   MCPJAM_AGENT_MODEL_DEFINITION,
+  MCPJAM_AGENT_MODEL_SELECTION,
 } from "../../../shared/mcpjam-agent-model.js";
 import type { ModelDefinition } from "@/shared/types";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -123,6 +123,12 @@ import { logger } from "../../utils/logger.js";
 import { createProposedAction } from "../../services/slack-backend.js";
 import { getOrgAgentPolicyCached } from "../../utils/org-agent-policy.js";
 import { v1Error, v1Resource } from "./envelope.js";
+import { MCPJAM_AGENT_FAILURE_CAPTURE } from "../../utils/agent-failure-capture.js";
+import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import {
+  hasServiceCredential,
+  serviceCredentialHeaders,
+} from "../../services/service-credential.js";
 
 // ---------------------------------------------------------------------------
 // Tool surface
@@ -1206,12 +1212,19 @@ agent.post("/projects/:projectId/agent", async (c) => {
 
   // Graceful degradation on OSS/self-hosted installs: the hosted engine and
   // the delegated-token mint both require the backend wiring.
-  if (!process.env.CONVEX_HTTP_URL || !process.env.INSPECTOR_SERVICE_TOKEN) {
-    return v1Error(
-      c,
-      "FEATURE_NOT_SUPPORTED",
-      "The agent endpoint requires a hosted MCPJam deployment.",
+  // The shared hosted-only answer (thrown, so the v1 envelope maps it the
+  // same way as every other credential-backed feature: 422 with
+  // `details.reason` on a self-hosted build, 500 on a misconfigured hosted
+  // one, naming what is actually missing).
+  if (!process.env.CONVEX_HTTP_URL) {
+    throw hostedOnlyRouteError(
+      "The agent endpoint",
+      undefined,
+      "CONVEX_HTTP_URL",
     );
+  }
+  if (!hasServiceCredential()) {
+    throw hostedOnlyRouteError("The agent endpoint");
   }
 
   if (!isHostedCatalogModel(String(AGENT_API_MODEL.id), "anthropic")) {
@@ -1284,7 +1297,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${await getConvexBearerForRequest(c)}`,
-          "x-inspector-service-token": process.env.INSPECTOR_SERVICE_TOKEN!,
+          ...serviceCredentialHeaders(),
         },
         body: JSON.stringify({
           projectId,
@@ -1502,6 +1515,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
 
     const chatSessionId = randomUUID();
     const rt = await resolveTurnRuntime({
+      modelSelection: MCPJAM_AGENT_MODEL_SELECTION,
       modelDefinition: AGENT_API_MODEL,
       projectId,
       authHeader,
@@ -1588,9 +1602,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
       runtime: {
         ...rt.runtime,
         // MCPJam pays for agent turns on every surface, not just the in-app
-        // panel. This rail already requires the Inspector service token at its
-        // boundary and only accepts signed-in delegated org JWTs, which is
-        // exactly what the backend re-checks before honouring the claim.
+        // panel. The backend honours the claim on the caller's own sign-in,
+        // and only for the credentials it accepts for this — the org-scoped
+        // delegated token this route mints for `sk_` keys, Slack and Discord,
+        // or a first-party session — so a bearer minted for another audience
+        // is refused rather than billed.
         extraBodyFields: {
           ...(rt.runtime.extraBodyFields ?? {}),
           billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
@@ -1611,6 +1627,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
       authContext: { kind: "user_bearer", token: authHeader },
       sourceType: "direct",
       origin: "mcpjam_agent",
+      // Every failure of an agent turn reaches Sentry, classified — and is
+      // recorded on THIS request, so the request-log backstop does not
+      // capture the `v1Error` this route then answers with a second time.
+      failureCapture: MCPJAM_AGENT_FAILURE_CAPTURE,
+      failureReporter: createRequestStreamFailureReporter(c, "v1-agent"),
       // The SHARED ceiling, not a local 16. Now that this route sends the
       // billing claim, the backend refuses any step at or past
       // `AGENT_MAX_STEPS` — so a local copy that drifted upward would not buy
@@ -1730,7 +1751,6 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // spend-precheck denial (issue #3708) returns 200 OK with a JSON body,
     // so the engine's error path fires onEngineError but runSucceeded still
     // flips to true (the per-step error exits the loop, the safety epilogue
-    // runs, and onConversationComplete sets capturedTurnTrace). Without this
     // second check the agent route would return a silent empty-reply 200.
     const rateLimitCodes = new Set(["user_rate_limit", "org_rate_limit"]);
     if (!result.turnTrace || lastEngineError) {

@@ -5,7 +5,7 @@
  * tool's schema comes from somewhere else entirely: Blink derives it from a
  * `<form>`'s own controls, and until the declarative fixtures existed nothing
  * had ever put one through this code. The constant below is that schema,
- * captured verbatim from Chromium 151.0.7922.34 against the `typed_fields`
+ * captured verbatim from Chromium 153.0.8010.12 against the `typed_fields`
  * fixture (`server/services/webmcp-inspector/__tests__/fixture-page.ts`) and
  * re-derived by the spike's "derives the inputSchema" tests — so if a Chromium
  * bump changes what the browser writes, the spike says so and this file is the

@@ -238,6 +238,94 @@ describe("projectSelectedMcpServersAsHostTools", () => {
     });
   });
 
+  describe("the plugin executor wraps each call like the emulated engine's", () => {
+    const snapshot = buildToolPolicySnapshot({
+      policy: { mode: "default", deny: ["delete_all"] },
+      tools: [{ name: "delete_all" }, { name: "pick" }],
+    });
+
+    it("runs an allowed call through it with the call's identity, and keeps its raw result", async () => {
+      const pick = {
+        ...tool({ content: [{ type: "text", text: "picked" }] }),
+        // A real manager tool also projects what the model sees.
+        toModelOutput: vi.fn((opts: { output: unknown }) => ({
+          type: "json" as const,
+          value: scrubMetaAndStructuredContentFromToolResult(
+            opts.output as CallToolResult,
+          ),
+        })),
+      };
+      const manager = fakeManager({ srv: { pick } });
+      const executor = vi.fn(
+        async (_execution: unknown, run: () => Promise<unknown>) => ({
+          ...((await run()) as object),
+          _meta: { "mcpjam/plugin-model-app": { instanceToken: "t" } },
+        }),
+      );
+      const raws: unknown[] = [];
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["srv"],
+        toolPolicy: { srv: snapshot },
+        executor,
+        onRawResult: ({ raw }) => raws.push(raw),
+      });
+      const signal = new AbortController().signal;
+      const relayed = await (projected.tools["mcp__srv__pick"] as FakeTool).execute(
+        { part: "a" },
+        { toolCallId: "call-1", abortSignal: signal, messages: [] },
+      );
+      // The model sees the projection, never the App marker.
+      expect(relayed).toEqual({ content: [{ type: "text", text: "picked" }] });
+      expect(executor).toHaveBeenCalledOnce();
+      expect(executor.mock.calls[0]![0]).toEqual({
+        serverKey: "srv",
+        toolName: "pick",
+        input: { part: "a" },
+        toolCallId: "call-1",
+        signal,
+      });
+      expect(pick.execute).toHaveBeenCalledOnce();
+      // The UI renders what the executor returned (an owned App marker).
+      expect(raws).toEqual([
+        {
+          content: [{ type: "text", text: "picked" }],
+          _meta: { "mcpjam/plugin-model-app": { instanceToken: "t" } },
+        },
+      ]);
+    });
+
+    it("never runs a policy-blocked call through it", async () => {
+      const denied = tool();
+      const manager = fakeManager({ srv: { delete_all: denied } });
+      const executor = vi.fn(
+        async (_execution: unknown, run: () => Promise<unknown>) => run(),
+      );
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["srv"],
+        toolPolicy: { srv: snapshot },
+        executor,
+      });
+      await (projected.tools["mcp__srv__delete_all"] as FakeTool).execute(
+        {},
+        { toolCallId: "call-2" },
+      );
+      expect(executor).not.toHaveBeenCalled();
+      expect(denied.execute).not.toHaveBeenCalled();
+    });
+
+    it("leaves the manager's tool as is without one", async () => {
+      const pick = tool();
+      const manager = fakeManager({ srv: { pick } });
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["srv"],
+      });
+      expect(projected.tools["mcp__srv__pick"]).toBe(pick);
+    });
+  });
+
   describe("a projection failure fails the turn instead of quietly shrinking it", () => {
     const plugin = {
       pluginId: "p1",
@@ -497,6 +585,43 @@ describe("projectSelectedMcpServersAsHostTools", () => {
           toolName: "create_event",
           toolInput: { title: "x" },
         },
+      ]);
+    });
+
+    it("still sees the server's challenge under a plugin executor that rewrites errors", async () => {
+      // The plugin executor reports a dispatched error as an unknown outcome;
+      // the observer sits inside it, so the step-up is not lost.
+      const error = insufficientScope();
+      const manager = fakeManager({ cal: { create_event: throwing(error) } });
+      const seen: unknown[] = [];
+      const executor = vi.fn(
+        async (_execution: unknown, run: () => Promise<unknown>) => {
+          try {
+            return await run();
+          } catch {
+            throw new Error("INVOCATION_OUTCOME_UNKNOWN");
+          }
+        },
+      );
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["cal"],
+        onScopeStepUpChallenge: (event) => seen.push(event),
+        executor,
+      });
+      await expect(
+        (projected.tools["mcp__cal__create_event"] as FakeTool).execute(
+          { title: "x" },
+          { toolCallId: "call-1" }
+        )
+      ).rejects.toThrow("INVOCATION_OUTCOME_UNKNOWN");
+      expect(seen).toEqual([
+        expect.objectContaining({
+          serverId: "cal",
+          toolCallId: "call-1",
+          requiredScope: "calendar.write",
+          toolName: "create_event",
+        }),
       ]);
     });
 

@@ -21,7 +21,7 @@ const MODELS = [
 async function openAddModel(harness: { harnessId: string } | null) {
   render(
     <EvalModelChoices
-      value={{ includeClientDefaults: true, explicitModelIds: [] }}
+      value={{ includeClientDefaults: true, explicitTargets: [] }}
       onChange={vi.fn()}
       disabled={false}
       testId="choices"

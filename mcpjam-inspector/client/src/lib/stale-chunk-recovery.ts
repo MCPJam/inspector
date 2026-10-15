@@ -1,4 +1,5 @@
 import { toast } from "@/lib/toast";
+import { MODULE_LOAD_ERROR_COPY } from "./module-load-error";
 
 const STALE_CHUNK_TOAST_ID = "stale-chunk-reload";
 
@@ -15,10 +16,13 @@ export function installStaleChunkRecovery(): () => void {
   const onPreloadError = () => {
     // The same event fires when the network drops, so the copy cannot promise
     // a new version.
-    toast.warning("Please refresh the page", {
+    toast.warning(MODULE_LOAD_ERROR_COPY.title, {
       id: STALE_CHUNK_TOAST_ID,
-      description: "Something didn’t load. Refresh to try again.",
-      action: { label: "Refresh", onClick: () => window.location.reload() },
+      description: MODULE_LOAD_ERROR_COPY.description,
+      action: {
+        label: MODULE_LOAD_ERROR_COPY.actionLabel,
+        onClick: () => window.location.reload(),
+      },
     });
   };
   window.addEventListener("vite:preloadError", onPreloadError);

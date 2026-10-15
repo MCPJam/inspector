@@ -10,7 +10,7 @@ import {
   SignJWT,
   errors as joseErrors,
   generateKeyPair,
-  type KeyLike,
+  type CryptoKey,
 } from "jose";
 import {
   AUTHKIT_KEYS_UNAVAILABLE_BACKOFF_MS,
@@ -28,9 +28,9 @@ const MCP_AUDIENCE = "https://mcp.example.test/mcp";
 const SUB = "user_gateway_1";
 const SID = "session_gateway_1";
 
-let trustedPrivate: KeyLike;
-let trustedPublic: KeyLike;
-let attackerPrivate: KeyLike;
+let trustedPrivate: CryptoKey;
+let trustedPublic: CryptoKey;
+let attackerPrivate: CryptoKey;
 
 beforeAll(async () => {
   const trusted = await generateKeyPair("RS256");
@@ -55,7 +55,7 @@ function deps(
 }
 
 async function sign(
-  key: KeyLike,
+  key: CryptoKey,
   opts: {
     iss?: string;
     aud?: string;

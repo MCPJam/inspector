@@ -13,6 +13,7 @@ import {
   isHistoryNoticeDataPart,
 } from "@/shared/history-notice";
 
+const mockWidgetHost = vi.fn();
 const mockMessageView = vi.fn();
 const mockThinkingIndicator = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
@@ -37,7 +38,10 @@ vi.mock("../thread/mcp-apps/use-widget-host", () => ({
     children,
   }: {
     children: import("react").ReactNode;
-  }) => children,
+  }) => {
+    mockWidgetHost();
+    return children;
+  },
 }));
 
 // Mock child components
@@ -101,6 +105,14 @@ describe("Thread", () => {
     toolsMetadata: {},
     toolServerMap: {},
   };
+
+  it("never mounts a retained App host in a placeholder transcript", () => {
+    mockWidgetHost.mockClear();
+    renderWithHost(
+      <Thread {...defaultProps} messages={[]} widgetPolicy="placeholder" />,
+    );
+    expect(mockWidgetHost).not.toHaveBeenCalled();
+  });
 
   it("aligns an empty-stream indicator without adding transcript vertical padding", () => {
     render(<Thread {...defaultProps} isLoading />);

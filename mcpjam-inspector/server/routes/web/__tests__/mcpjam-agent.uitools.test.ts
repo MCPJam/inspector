@@ -15,10 +15,12 @@ vi.mock("@mcpjam/sdk", async () => {
   return {
     ...actual,
     isMCPAuthError: vi.fn().mockReturnValue(false),
-    MCPClientManager: vi.fn().mockImplementation(() => ({
-      disconnectAllServers: disconnectAllServersMock,
-      listTools: listToolsMock,
-    })),
+    MCPClientManager: vi.fn().mockImplementation(function () {
+      return {
+        disconnectAllServers: disconnectAllServersMock,
+        listTools: listToolsMock,
+      };
+    }),
   };
 });
 

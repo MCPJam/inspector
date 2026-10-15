@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -26,7 +26,7 @@ function isGuestSharingSignInRequired(error: unknown): boolean {
 }
 
 function GuestSharingSignUpDialog({ onClose }: { onClose: () => void }) {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp } = useInspectorAuth();
   const authenticate = (signup: boolean) => {
     track(signup ? "sign_up_button_clicked" : "login_button_clicked", {
       location: "guest_sharing_signup",

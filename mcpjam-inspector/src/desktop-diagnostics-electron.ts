@@ -1,5 +1,6 @@
 import { app, ipcMain, type BrowserWindow } from "electron";
 import * as Sentry from "@sentry/electron/main";
+import { sentryUserId } from "../shared/sentry-identity.js";
 import { createDesktopDiagnostics } from "./desktop-diagnostics.js";
 import { DESKTOP_DIAGNOSTICS_CHANNEL } from "../shared/desktop-diagnostics.js";
 
@@ -16,7 +17,7 @@ export function installDesktopDiagnostics() {
         // uses only our allowlisted history, never the ambient renderer scope.
         scope.addEventProcessor((event) => ({
           ...event,
-          user: undefined,
+          user: sentryUserId(event.user),
           request: undefined,
           extra: undefined,
           breadcrumbs: [],
@@ -31,6 +32,9 @@ export function installDesktopDiagnostics() {
             component: "desktop-proxy-diagnostics",
             desktop_run_id: collector.runId,
             deployment: "self_hosted",
+            ...(event.tags?.actor_kind
+              ? { actor_kind: event.tags.actor_kind }
+              : {}),
           },
         }));
         Sentry.captureEvent({

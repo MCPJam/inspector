@@ -16,6 +16,7 @@ import type { Context } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { HOSTED_MODE } from "../../config.js";
 import { logger } from "../../utils/logger.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   hostedInternalErrorMessage,
@@ -126,6 +127,10 @@ export async function fetchConvexV1Read(
   configure?: (target: URL) => void,
   options: { public?: boolean; negotiatesVocabulary?: boolean } = {},
 ): Promise<{ status: number; body: unknown; headers: Record<string, string> }> {
+  // Every proxied route under `/projects/:projectId` forwards it to a backend
+  // read with a `v.id("projects")` argument.
+  const projectId = c.req.param("projectId");
+  if (projectId !== undefined) requireProjectIdArg(projectId, "v1.catalog");
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(

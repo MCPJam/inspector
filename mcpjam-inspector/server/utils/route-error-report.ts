@@ -4,8 +4,11 @@ import { logger } from "./logger.js";
 import {
   ensureStampable,
   maybeCaptureOriginError,
+  type CapturePolicy,
   type OriginCaptureBoundary,
 } from "./error-origin-capture.js";
+
+export type { CapturePolicy } from "./error-origin-capture.js";
 
 /**
  * What a route catch-site says about the hop that failed.
@@ -245,6 +248,12 @@ export type RouteFailureOptions = {
    * classification pass when the route also puts `normalized` on its response.
    */
   normalized?: NormalizedError;
+  /**
+   * A surface's own capture rule (`always`, tags, level, fingerprint). Changes
+   * whether Sentry hears about it — never the origin, the hop, or the Axiom
+   * row. See {@link CapturePolicy}.
+   */
+  capture?: CapturePolicy;
 };
 
 export type RouteFailureReport = {
@@ -259,6 +268,12 @@ export type RouteFailureReport = {
    * exactly the attribution drift this work exists to remove.
    */
   origin: ErrorOrigin;
+  /**
+   * Whether THIS call sent the failure to Sentry. An explicit outcome, never
+   * inferred from the capture stamp: the stamp means "a decision was made",
+   * which is just as true of a decline.
+   */
+  captured: boolean;
 };
 
 /**
@@ -314,6 +329,7 @@ export function reportRouteFailure(
     source: `route:${options.source}`,
     boundary,
     extra: options.context,
+    ...(options.capture ? { capture: options.capture } : {}),
   });
 
   logger.error(message, reported, {
@@ -327,7 +343,7 @@ export function reportRouteFailure(
     captured,
   });
 
-  return { normalized, origin };
+  return { normalized, origin, captured };
 }
 
 /**

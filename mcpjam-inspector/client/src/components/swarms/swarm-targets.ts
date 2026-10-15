@@ -18,10 +18,13 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { SwarmSessionTargetIdentity } from "@/shared/swarm-session-id";
 import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
 import {
+  compactModelIdTail,
   disambiguateLabels,
   environmentLabel,
   trimOrUndefined,
 } from "@/lib/environment-label";
+import { comparisonKey } from "@mcpjam/sdk/browser";
+import { targetKeyLabels } from "@/lib/eval-target-key";
 
 /** One matrix/list column. `key` is the canonical target key (D2); `identity`
  * feeds the shared session-id mint. */
@@ -30,10 +33,36 @@ export interface SwarmTargetColumn {
   hostId: string;
   targetId?: string;
   environmentId?: string;
-  /** Display label: environment name (env targets) or host name; `#n`-suffixed
-   * on collisions. */
+  /** Display label: environment name (env targets) or host name. Two targets
+   * of one client add their model ("MCPJam · gpt-5.4-nano · High"), else
+   * `#n` on collisions. */
   label: string;
+  /** The model the target ran, with its effort ("gpt-5.4-nano · High"). */
+  model?: string;
   identity: SwarmSessionTargetIdentity;
+}
+
+/**
+ * Each snapshot target's model label with its effort ("gpt-5.4-nano · High"),
+ * labelled against the run's other targets. Targets without a recorded model
+ * are absent.
+ */
+export function snapshotTargetModelLabels(
+  hosts: readonly JourneySnapshotTarget[] | undefined,
+): Map<JourneySnapshotTarget, string> {
+  const keyed = (hosts ?? []).flatMap((host) => {
+    const key = host.resolvedSelection
+      ? comparisonKey(host.resolvedSelection)
+      : host.modelId;
+    return key ? [{ host, key }] : [];
+  });
+  const labels = targetKeyLabels(
+    keyed.map((entry) => entry.key),
+    compactModelIdTail,
+  );
+  return new Map(
+    keyed.map(({ host, key }) => [host, labels.get(key) ?? key]),
+  );
 }
 
 /** The backend's one production spelling of a host-shaped target id —
@@ -122,6 +151,7 @@ export function buildSwarmRunTargets(args: {
   hostName: (hostId: string) => string | undefined;
 }): SwarmTargetColumn[] {
   const { hostSummaries, snapshotHosts, hostName } = args;
+  const modelLabels = snapshotTargetModelLabels(snapshotHosts);
   const columns = hostSummaries.map((summary) => {
     const snap =
       (summary.targetId !== undefined
@@ -137,19 +167,45 @@ export function buildSwarmRunTargets(args: {
       hostName(summary.hostId) ??
       snap?.hostName ??
       summary.hostId.slice(0, 8);
+    const model = snap ? modelLabels.get(snap) : undefined;
+    // A target that ran the client's own model is saved under the bare client
+    // name. Name the model it RAN (recorded at launch), never the client's
+    // current default, which can change after the run.
+    // A saved environment name is compared with the client name saved beside
+    // it, so a later client rename cannot make a custom name look bare.
+    const savedEnvironmentName = trimOrUndefined(snap?.environmentRef?.name);
+    const isClientName =
+      savedEnvironmentName === undefined ||
+      savedEnvironmentName ===
+        (trimOrUndefined(snap?.hostName) ?? hostName(summary.hostId));
     return {
       key: summaryTargetKey(summary),
       hostId: summary.hostId,
       ...(summary.targetId !== undefined ? { targetId: summary.targetId } : {}),
       ...(environmentId !== undefined ? { environmentId } : {}),
-      label,
+      label: isClientName && model ? `${label} · ${model}` : label,
+      ...(model ? { model } : {}),
       identity: {
         hostId: summary.hostId,
         ...(environmentId !== undefined ? { environmentId } : {}),
       },
     } satisfies SwarmTargetColumn;
   });
-  return disambiguateLabels(columns);
+  // Two targets of one client (Sonnet·Low and Sonnet·High) are told apart by
+  // their model rather than a bare "#2".
+  const counts = new Map<string, number>();
+  for (const column of columns) {
+    counts.set(column.label, (counts.get(column.label) ?? 0) + 1);
+  }
+  return disambiguateLabels(
+    columns.map((column) =>
+      (counts.get(column.label) ?? 0) > 1 &&
+      column.model &&
+      !column.label.endsWith(` · ${column.model}`)
+        ? { ...column, label: `${column.label} · ${column.model}` }
+        : column,
+    ),
+  );
 }
 
 /**

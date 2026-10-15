@@ -41,6 +41,7 @@ import type {
 } from "@mcpjam/sdk/platform";
 import type {
   ClaudeReadinessResult,
+  MuseReadinessResult,
   OpenAIReadinessResult,
   OpenAISubmissionMode,
 } from "@mcpjam/sdk/browser";
@@ -52,11 +53,12 @@ import {
   tryResolveProjectServer,
 } from "@/lib/apis/web/context";
 
-export type DirectoryReadinessPublisher = "claude" | "openai";
+export type DirectoryReadinessPublisher = "claude" | "openai" | "muse";
 
 export type DirectoryReadinessResult =
   | ClaudeReadinessResult
-  | OpenAIReadinessResult;
+  | OpenAIReadinessResult
+  | MuseReadinessResult;
 
 /** The run row and receipt, named by the contract that produces them. */
 export type ReadinessRun = PlatformReadinessRun;
@@ -166,6 +168,17 @@ export async function startHostedReadiness(
     return client().startOpenAIReadinessRun({
       ...shared,
       submissionMode: options.submissionMode,
+    });
+  }
+  if (publisher === "muse") {
+    // No observation opt-in: Muse has no catalogue, and the platform refuses
+    // the field rather than ignoring it.
+    return client().startMuseReadinessRun({
+      projectId,
+      serverId,
+      ...(options.idempotencyKey
+        ? { idempotencyKey: options.idempotencyKey }
+        : {}),
     });
   }
   return client().startClaudeReadinessRun(shared);

@@ -26,6 +26,7 @@ import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const plugins = new Hono();
 
@@ -161,7 +162,7 @@ function translatePluginReadError(error: unknown): WebRouteError {
 // GET /v1/projects/:projectId/plugins — the LIVE (non-uninstalled) plugins
 // installed in a project, disabled ones included (marked `enabled: false`).
 plugins.get("/projects/:projectId/plugins", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.plugins");
   const readClient = createConvexClient(await getConvexBearerForRequest(c));
   let rows: PluginRow[] | null | undefined;
   try {

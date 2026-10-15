@@ -115,9 +115,9 @@ describe("PatternMatchFields — shared by both kinds", () => {
   it("adds and removes patterns, keeping authored order", async () => {
     const { last } = setup();
     fireEvent.change(pattern(1), { target: { value: "Idea" } });
-    await userEvent.click(screen.getByRole("button", { name: "Add pattern" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add regex" }));
     fireEvent.change(pattern(2), { target: { value: "Build" } });
-    await userEvent.click(screen.getByRole("button", { name: "Add pattern" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add regex" }));
     fireEvent.change(pattern(3), { target: { value: "Ship" } });
     expect(last().patterns).toEqual(["Idea", "Build", "Ship"]);
 
@@ -141,7 +141,7 @@ describe("PatternMatchFields — shared by both kinds", () => {
     const { last } = setup(
       rule({ patterns: ["a", "b", "c", "d", "e", "f", "g"] }),
     );
-    const add = screen.getByRole("button", { name: "Add pattern" });
+    const add = screen.getByRole("button", { name: "Add regex" });
     expect(add).toBeEnabled();
     await userEvent.click(add);
     expect(last().patterns).toHaveLength(8);
@@ -213,26 +213,30 @@ describe("PatternMatchFields — shared by both kinds", () => {
 
   it("writes flags in canonical order, and drops the key when none is on", async () => {
     const { last } = setup(rule({ patterns: ["Idea"] }));
-    await userEvent.click(screen.getByRole("switch", { name: "Ignore case" }));
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Ignore capitals (A = a)" }),
+    );
     expect(last().flags).toBe("i");
 
     await userEvent.click(screen.getByText("More options"));
     await userEvent.click(
-      screen.getByRole("switch", { name: "^ and $ match at line breaks" }),
+      screen.getByRole("switch", { name: "Check ^ and $ on every line" }),
     );
     expect(last().flags).toBe("im");
     await userEvent.click(
-      screen.getByRole("switch", { name: ". matches line breaks" }),
+      screen.getByRole("switch", { name: "Let . match across lines" }),
     );
     expect(last().flags).toBe("ims");
 
-    await userEvent.click(screen.getByRole("switch", { name: "Ignore case" }));
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Ignore capitals (A = a)" }),
+    );
     expect(last().flags).toBe("ms");
     await userEvent.click(
-      screen.getByRole("switch", { name: "^ and $ match at line breaks" }),
+      screen.getByRole("switch", { name: "Check ^ and $ on every line" }),
     );
     await userEvent.click(
-      screen.getByRole("switch", { name: ". matches line breaks" }),
+      screen.getByRole("switch", { name: "Let . match across lines" }),
     );
     expect("flags" in last()).toBe(false);
     expect(areAllChecksValid([last()])).toBe(true);
@@ -284,18 +288,11 @@ describe("PatternMatchFields — shared by both kinds", () => {
 describe("PatternMatchFields — counting, per unit", () => {
   it("input: 0/0 means no call matches, not never called", async () => {
     const { last } = setup(rule({ patterns: ["secret"] }));
-    const note = screen.getByText(/At least 0 and at most 0 means no call/);
-    expect(note).toHaveTextContent(
-      "At least 0 and at most 0 means no call matches. It does not mean the tool was never called.",
-    );
-    expect(note).toHaveTextContent(
-      /Counts only calls that match every pattern, not all calls/,
-    );
-    expect(screen.getByText("Matching calls")).toBeInTheDocument();
+    const legend = screen.getByText("Matching calls");
     // Behind the disclosure until opened.
-    expect(note).not.toBeVisible();
+    expect(legend).not.toBeVisible();
     await userEvent.click(screen.getByText("More options"));
-    expect(note).toBeVisible();
+    expect(legend).toBeVisible();
 
     fireEvent.change(screen.getByLabelText("At least"), {
       target: { value: "0" },
@@ -316,13 +313,6 @@ describe("PatternMatchFields — counting, per unit", () => {
 
   it("output: 0/0 means no result matches, not that the tool returned nothing", async () => {
     const { last } = setup(resultRule({ patterns: ["secret"] }));
-    const note = screen.getByText(/At least 0 and at most 0 means no result/);
-    expect(note).toHaveTextContent(
-      "At least 0 and at most 0 means no result matches. It does not mean the tool returned nothing.",
-    );
-    expect(note).toHaveTextContent(
-      /Counts only results that match every pattern, not all results/,
-    );
     expect(screen.getByText("Matching results")).toBeInTheDocument();
     expect(screen.queryByText("Matching calls")).toBeNull();
 
@@ -409,7 +399,7 @@ describe("PatternMatchFields — the tool", () => {
 describe("PatternMatchFields — the path", () => {
   it("reads the whole input by default and omits an emptied path", () => {
     const { last } = setup(rule({ patterns: ["Idea"] }));
-    const argument = screen.getByLabelText("Argument");
+    const argument = screen.getByLabelText("Only search this argument");
     expect(argument).toHaveAttribute("placeholder", "Whole input");
 
     // The author types the key; the predicate stores its pointer.
@@ -424,7 +414,7 @@ describe("PatternMatchFields — the path", () => {
 
   it("escapes a typed key with / or ~ and shows it back as typed", () => {
     const { last } = setup(rule({ patterns: ["Idea"] }));
-    const argument = screen.getByLabelText("Argument");
+    const argument = screen.getByLabelText("Only search this argument");
     fireEvent.change(argument, { target: { value: "a/b~c" } });
     expect(last().path).toBe("/a~1b~0c");
     expect(argument).toHaveValue("a/b~c");
@@ -433,7 +423,7 @@ describe("PatternMatchFields — the path", () => {
 
   it("names a key too long to store, counting each escape twice", () => {
     const { last } = setup(rule({ patterns: ["Idea"] }));
-    const argument = screen.getByLabelText("Argument");
+    const argument = screen.getByLabelText("Only search this argument");
     // 256 characters is the most a key can have…
     fireEvent.change(argument, { target: { value: "k".repeat(256) } });
     expect(argument).not.toHaveAttribute("aria-invalid");
@@ -460,7 +450,7 @@ describe("PatternMatchFields — the path", () => {
       { toolArgSchemas: { create_view: { elements: {} } } },
     );
     // Free text, not the picker: no key decodes from it.
-    const argument = screen.getByLabelText("Argument");
+    const argument = screen.getByLabelText("Only search this argument");
     expect(argument).toHaveValue("/elements/0");
     expect(argument).toHaveAttribute("aria-invalid", "true");
     expect(
@@ -472,7 +462,7 @@ describe("PatternMatchFields — the path", () => {
 
   it("output: reads the whole output by default", () => {
     const { last } = setup(resultRule({ patterns: ["open"] }));
-    const field = screen.getByLabelText("Field");
+    const field = screen.getByLabelText("Only search this output key");
     expect(field).toHaveAttribute("placeholder", "Whole output");
     fireEvent.change(field, { target: { value: "status" } });
     expect(last().path).toBe("/status");
@@ -490,7 +480,9 @@ describe("PatternMatchFields — the path", () => {
         },
       },
     });
-    const picker = screen.getByRole("combobox", { name: "Argument" });
+    const picker = screen.getByRole("combobox", {
+      name: "Only search this argument",
+    });
     expect(picker).toHaveTextContent("Whole input");
 
     await user.click(picker);
@@ -500,20 +492,24 @@ describe("PatternMatchFields — the path", () => {
     expect(last().path).toBe("/elements");
     // Shown as the key, never the pointer.
     expect(
-      screen.getByRole("combobox", { name: "Argument" }),
+      screen.getByRole("combobox", { name: "Only search this argument" }),
     ).toHaveTextContent("elements");
 
     // A key with "/" in it is stored escaped.
-    await user.click(screen.getByRole("combobox", { name: "Argument" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Only search this argument" }),
+    );
     await user.click(screen.getByRole("option", { name: "a/b" }));
     expect(last().path).toBe("/a~1b");
     expect(
-      screen.getByRole("combobox", { name: "Argument" }),
+      screen.getByRole("combobox", { name: "Only search this argument" }),
     ).toHaveTextContent("a/b");
     expect(areAllChecksValid([last()])).toBe(true);
 
     // "Whole input" omits the path.
-    await user.click(screen.getByRole("combobox", { name: "Argument" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Only search this argument" }),
+    );
     await user.click(screen.getByRole("option", { name: "Whole input" }));
     expect("path" in last()).toBe(false);
   });
@@ -527,7 +523,9 @@ describe("PatternMatchFields — the path", () => {
         toolOutputSchemas: { search: { status: {}, items: {} } },
       },
     );
-    const picker = screen.getByRole("combobox", { name: "Field" });
+    const picker = screen.getByRole("combobox", {
+      name: "Only search this output key",
+    });
     expect(picker).toHaveTextContent("Whole output");
     await user.click(picker);
     expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
@@ -549,11 +547,12 @@ describe("PatternMatchFields — the path", () => {
       toolOutputSchemas: { search: { status: {} } },
     });
     // No tool chosen: there is no one schema to offer keys from.
-    expect(screen.queryByRole("combobox", { name: "Field" })).toBeNull();
-    expect(screen.getByLabelText("Field")).toHaveAttribute(
-      "placeholder",
-      "Whole output",
-    );
+    expect(
+      screen.queryByRole("combobox", { name: "Only search this output key" }),
+    ).toBeNull();
+    expect(
+      screen.getByLabelText("Only search this output key"),
+    ).toHaveAttribute("placeholder", "Whole output");
   });
 
   it("drops a path the newly chosen tool does not declare", () => {

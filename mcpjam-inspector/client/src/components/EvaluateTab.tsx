@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "./evals/types";
 import { createElement } from "react";
 import { ModelDisplayNamesContext } from "@/lib/model-display-name";
 import { evalChatSuiteContext } from "@/lib/mcpjam-agent/eval-chat-context";
@@ -25,6 +26,10 @@ import {
 } from "@mcpjam/design-system/sheet";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import {
+  isModuleLoadError,
+  MODULE_LOAD_ERROR_COPY,
+} from "@/lib/module-load-error";
 import { EvalsEmptyHero } from "./evaluate/evals-empty-hero";
 import { PreparedEvalServerPage } from "./evaluate/prepared-eval-server-page";
 import { savePreparedEvalSuites } from "./evaluate/launch-prepared-evals";
@@ -46,7 +51,6 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
-import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import {
@@ -95,11 +99,7 @@ import type {
   OpenEvalSuiteFormInspectorCommand,
   RunEvalSuiteInspectorCommand,
 } from "@/shared/inspector-command.js";
-import type {
-  EvalSuite,
-  EvalSuiteOverviewEntry,
-  EvalSuiteRun,
-} from "./evals/types";
+import type { EvalSuite, EvalSuiteOverviewEntry } from "./evals/types";
 import {
   CI_OWNED_REASON_COPY,
   isCiOwnedSuite,
@@ -144,21 +144,35 @@ export function EvaluateTab({
 }
 
 function EvalTabErrorFallback({
+  error,
   onRetry,
 }: {
   error: Error | null;
   onRetry: () => void;
 }) {
+  const moduleLoadFailed = isModuleLoadError(error);
   return (
     <div className="p-6">
       <EmptyState
         icon={FlaskConical}
-        title="Could not load Testing"
-        description="Something went wrong while loading suites. Try again in a moment."
+        title={
+          moduleLoadFailed
+            ? MODULE_LOAD_ERROR_COPY.title
+            : "Could not load Testing"
+        }
+        description={
+          moduleLoadFailed
+            ? MODULE_LOAD_ERROR_COPY.description
+            : "Something went wrong while loading suites. Try again in a moment."
+        }
         className="h-[calc(100vh-200px)]"
       >
-        <Button type="button" variant="outline" onClick={onRetry}>
-          Try again
+        <Button
+          type="button"
+          variant="outline"
+          onClick={moduleLoadFailed ? () => window.location.reload() : onRetry}
+        >
+          {moduleLoadFailed ? MODULE_LOAD_ERROR_COPY.actionLabel : "Try again"}
         </Button>
       </EmptyState>
     </div>
@@ -180,7 +194,6 @@ function EvaluateTabContent({
   const hostsEnabled = isAuthenticated;
   // Decision summaries are part of the public Evaluate experience.
   const decisionSummaryEnabled = true;
-  const observeFirstEnabled = useObserveFirstEnabled();
   const route = useEvaluateRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
@@ -191,6 +204,8 @@ function EvaluateTabContent({
     canDeleteArtifact,
     canDeleteRuns,
     availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
   } = useEvalTabContext({
     isAuthenticated,
     projectId: projectId ?? null,
@@ -330,6 +345,10 @@ function EvaluateTabContent({
   const handleRerunWithQuota = useCallback(
     async (...args: Parameters<typeof handlers.handleRerun>) => {
       if (!guardEvalIterationQuota()) {
+        if (args[1]?.throwOnFailure)
+          throw new Error(
+            evalRunsDisabledReason ?? "Eval iteration limit reached.",
+          );
         return;
       }
       const launch = await handlers.handleRerun(...args);
@@ -344,7 +363,7 @@ function EvaluateTabContent({
       }
       return launch;
     },
-    [guardEvalIterationQuota, handlers],
+    [guardEvalIterationQuota, handlers, evalRunsDisabledReason],
   );
 
   const handleRunTestCaseWithQuota = useCallback(
@@ -897,7 +916,7 @@ function EvaluateTabContent({
     );
   };
 
-  const resolveRun = (raw: unknown): EvalSuiteRun => {
+  const resolveRun = (raw: unknown): EvalSuiteRunListItem => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
@@ -905,7 +924,7 @@ function EvaluateTabContent({
       );
     }
     const wanted = raw.trim();
-    const runsById = new Map<string, EvalSuiteRun>();
+    const runsById = new Map<string, EvalSuiteRunListItem>();
     const visibleRuns = [
       ...runsForSelectedSuite,
       ...visibleSuites.flatMap((entry) => [
@@ -1514,6 +1533,8 @@ function EvaluateTabContent({
           metricsLoading={queries.isRunMetricsLoading}
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
+          runHistoryStatus={queries.runHistoryStatus}
+          onLoadMoreRuns={queries.loadMoreRuns}
           // A suite-wide aggregate needs every iteration; Evaluate reads
           // per-run metrics instead, and nothing it mounts reads this.
           aggregate={null}
@@ -1558,6 +1579,8 @@ function EvaluateTabContent({
           deletingSuiteId={deletingSuiteId}
           deletingRunId={deletingRunId}
           availableModels={availableModels}
+          requireOrgKeys={requireOrgKeys}
+          onManageOrgProviders={onManageOrgProviders}
           route={route}
           userMap={userMap}
           projectId={projectId}
@@ -1569,7 +1592,6 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
-          evaluateObserveFirst={observeFirstEnabled}
           onGeneratingChange={setGeneratingCases}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}

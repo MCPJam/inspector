@@ -1,18 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
-import { createCodex } from "@ai-sdk/harness-codex";
 import claudeAdapterPkg from "@ai-sdk/harness-claude-code/package.json" with { type: "json" };
-import codexAdapterPkg from "@ai-sdk/harness-codex/package.json" with { type: "json" };
+import { createCodexAppServer } from "../../codex-appserver/index.js";
+import {
+  CODEX_BRIDGE_BUNDLE_DIGEST,
+  CODEX_LOCAL_ADAPTER_IDENTITY,
+} from "../../codex-appserver/local-identity.js";
 import {
   LOCAL_HARNESS_MANIFEST,
   resolveLocalCompatibility,
   type LocalHarnessCompatibility,
   localPermissionModeFor,
+  localSandboxPolicyFor,
 } from "../compatibility.js";
+import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../../codex-appserver/shared/sandbox-policy.js";
 import {
   LOCAL_PERMISSION_PROFILES,
   SUPPORTED_LOCAL_HARNESS_IDS,
 } from "../targets.js";
+import { EXPECTED_PACK_VERSIONS, PACK_RECORDS } from "../pack-digests.generated.js";
 
 /** The version each manifest was reviewed against. Supplied on every query
  *  because the pin is mandatory — a caller that cannot state the installed
@@ -38,18 +44,37 @@ function conformed(
 }
 
 describe("the shipped manifest", () => {
-  it("enables nothing until conformance evidence is recorded", () => {
+  // Before a release this said "enables nothing"; what must hold either side
+  // of one is that conformance is recorded only for a harness whose reviewed
+  // pack covers every target it advertises, and that a harness without it
+  // still enables nothing.
+  it("records conformance only where a reviewed pack covers every advertised target", () => {
+    const allTargets = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"] as const;
     for (const harnessId of ["claude-code", "codex"] as const) {
-      const result = resolveLocalCompatibility({
-        harnessId,
-        platform: "linux",
-        targetKind: "local-native",
-        installedAdapterVersion:
-          LOCAL_HARNESS_MANIFEST[harnessId].adapterVersion,
-        permissionProfile: "workspace-edits",
-      });
-      expect(result.ok).toBe(false);
-      expect(result).toMatchObject({ status: "conformance-missing" });
+      const manifest = LOCAL_HARNESS_MANIFEST[harnessId];
+      if (manifest.lifecycleConformanceVersion === "") {
+        const result = resolveLocalCompatibility({
+          harnessId,
+          platform: "linux",
+          targetKind: "local-native",
+          installedAdapterVersion: manifest.adapterVersion,
+          permissionProfile: "workspace-edits",
+        });
+        expect(result).toMatchObject({ ok: false, status: "conformance-missing" });
+        continue;
+      }
+      const advertised =
+        manifest.nativeTargets ??
+        allTargets.filter((target) =>
+          manifest.nativePlatforms.includes(target.split("-")[0] as never),
+        );
+      expect(advertised.length).toBeGreaterThan(0);
+      expect(EXPECTED_PACK_VERSIONS[harnessId]).not.toBe("");
+      for (const target of advertised) {
+        expect(PACK_RECORDS[harnessId]?.[target]?.packVersion).toBe(
+          EXPECTED_PACK_VERSIONS[harnessId],
+        );
+      }
     }
   });
 
@@ -60,8 +85,17 @@ describe("the shipped manifest", () => {
     // digest present is a real one. An absent target answers `bundle-absent` —
     // the same honest answer a missing directory gets — instead of launching
     // an unverified runtime.
+    // Claude Code's bridge is the adapter's own (byte-compared at session
+    // start); Codex's is MCPJam's bundle, whose digest the release gate
+    // compares against the published pack's manifest.
+    expect(LOCAL_HARNESS_MANIFEST["claude-code"].bridgeBundleDigest).toBe(
+      `sha256:${"0".repeat(64)}`,
+    );
+    expect(LOCAL_HARNESS_MANIFEST.codex.bridgeBundleDigest).toBe(
+      CODEX_BRIDGE_BUNDLE_DIGEST,
+    );
+    expect(CODEX_BRIDGE_BUNDLE_DIGEST).toMatch(/^sha256:[0-9a-f]{64}$/);
     for (const manifest of Object.values(LOCAL_HARNESS_MANIFEST)) {
-      expect(manifest.bridgeBundleDigest).toBe(`sha256:${"0".repeat(64)}`);
       expect(manifest.runtime).toMatchObject({ source: "managed-bundle" });
       if (manifest.runtime.source !== "managed-bundle") continue;
       for (const [target, digest] of Object.entries(
@@ -95,10 +129,11 @@ describe("the shipped manifest", () => {
     expect(
       LOCAL_HARNESS_MANIFEST["claude-code"].supportsBuiltinToolApprovals,
     ).toBe(createClaudeCode().supportsBuiltinToolApprovals);
+    // Codex is MCPJam's app-server adapter.
     expect(LOCAL_HARNESS_MANIFEST.codex.supportsBuiltinToolApprovals).toBe(
-      createCodex().supportsBuiltinToolApprovals,
+      createCodexAppServer().supportsBuiltinToolApprovals,
     );
-    expect(createCodex().supportsBuiltinToolApprovals).toBe(false);
+    expect(createCodexAppServer().supportsBuiltinToolApprovals).toBe(true);
   });
 
   it("pins the exact adapter versions the evidence was gathered against", () => {
@@ -108,8 +143,13 @@ describe("the shipped manifest", () => {
     expect(LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion).toBe(
       claudeAdapterPkg.version,
     );
+    // Codex's local adapter is the app-server bridge bundle plus the exact
+    // CLI; the pack byte-compare is what enforces it.
     expect(LOCAL_HARNESS_MANIFEST.codex.adapterVersion).toBe(
-      codexAdapterPkg.version,
+      CODEX_LOCAL_ADAPTER_IDENTITY,
+    );
+    expect(CODEX_LOCAL_ADAPTER_IDENTITY).toMatch(
+      /^app-server\/[0-9a-f]{32}\+@openai\/codex@\d+\.\d+\.\d+$/,
     );
   });
 
@@ -121,7 +161,7 @@ describe("the shipped manifest", () => {
       ".harness-bootstrap/claude-code",
     );
     expect(LOCAL_HARNESS_MANIFEST.codex.adapterBootstrapDir).toBe(
-      ".harness-bootstrap/codex",
+      ".harness-bootstrap/codex-appserver",
     );
   });
 
@@ -148,32 +188,146 @@ describe("the shipped manifest", () => {
   });
 });
 
-describe("codex is structurally barred from native mode", () => {
-  it("has no native platform at all", () => {
-    expect(LOCAL_HARNESS_MANIFEST.codex.nativePlatforms).toEqual([]);
+describe("codex runs locally only on the app-server adapter, attended, where certified", () => {
+  const codex = (overrides: Partial<LocalHarnessCompatibility> = {}) =>
+    conformed(LOCAL_HARNESS_MANIFEST.codex, overrides);
+
+  it("maps the attended profiles to approval modes and unrestricted to allow-all inside the sandbox", () => {
+    expect(LOCAL_HARNESS_MANIFEST.codex.permissionProfileMapping).toEqual({
+      "read-only": "allow-reads",
+      "workspace-edits": "allow-edits",
+      unrestricted: "allow-all",
+    });
+    // allow-all is only ever paired with the explicit D2 policy.
+    expect(LOCAL_HARNESS_MANIFEST.codex.unattendedSandboxPolicy).toEqual({
+      type: "workspaceWrite",
+      writableRoots: [],
+      networkAccess: false,
+      excludeSlashTmp: true,
+      excludeTmpdirEnvVar: false,
+    });
   });
 
-  it("stays barred even with conformance recorded and on every platform", () => {
-    for (const platform of ["darwin", "linux", "win32"] as const) {
-      const result = resolveLocalCompatibility(
-        {
-          harnessId: "codex",
-          platform,
-          targetKind: "local-native",
-          installedAdapterVersion: PINNED_CODEX,
-          permissionProfile: "unrestricted",
-        },
-        conformed(LOCAL_HARNESS_MANIFEST.codex),
-      );
-      expect(result).toMatchObject({ status: "native-not-eligible" });
-      expect((result as { message: string }).message).toMatch(
-        /cannot surface tool approvals/,
-      );
+  it("maps attended profiles onto approval-gated modes on a certified target", () => {
+    for (const [profile, mode] of [
+      ["read-only", "allow-reads"],
+      ["workspace-edits", "allow-edits"],
+    ] as const) {
+      expect(
+        resolveLocalCompatibility(
+          {
+            harnessId: "codex",
+            platform: "linux",
+            targetKind: "local-native",
+            packTarget: "linux-x64",
+            installedAdapterVersion: PINNED_CODEX,
+            permissionProfile: profile,
+          },
+          codex(),
+        ),
+      ).toMatchObject({ ok: true, permissionMode: mode });
     }
   });
 
-  it("offers no local permission profile whatsoever", () => {
-    expect(LOCAL_HARNESS_MANIFEST.codex.permissionProfileMapping).toEqual({});
+  it("refuses an architecture its evidence does not cover, even on a listed OS (D8)", () => {
+    const result = resolveLocalCompatibility(
+      {
+        harnessId: "codex",
+        platform: "linux",
+        targetKind: "local-native",
+        packTarget: "linux-arm64",
+        installedAdapterVersion: PINNED_CODEX,
+        permissionProfile: "workspace-edits",
+      },
+      codex(),
+    );
+    expect(result).toMatchObject({ status: "native-not-eligible" });
+    expect((result as { message: string }).message).toMatch(/certified/);
+  });
+
+  it("refuses Windows until its sandbox setup has evidence", () => {
+    expect(LOCAL_HARNESS_MANIFEST.codex.nativePlatforms).not.toContain("win32");
+  });
+
+  const unattended = (
+    overrides: Partial<Parameters<typeof resolveLocalCompatibility>[0]> = {},
+    manifest: Partial<LocalHarnessCompatibility> = {},
+  ) =>
+    resolveLocalCompatibility(
+      {
+        scope: "unattended",
+        harnessId: "codex",
+        platform: "linux",
+        targetKind: "local-native",
+        packTarget: "linux-x64",
+        installedAdapterVersion: PINNED_CODEX,
+        permissionProfile: "unrestricted",
+        ...overrides,
+      },
+      codex(manifest),
+    );
+
+  it("refuses unattended runs on a target whose sandbox was never measured", () => {
+    // As shipped: no target has passed, so unattended local Codex is refused
+    // everywhere — never run without the sandbox.
+    const refused = unattended();
+    expect(refused).toMatchObject({ ok: false, status: "backend-not-verified" });
+    expect((refused as { message: string }).message).toMatch(/sandbox/);
+    expect(
+      unattended({}, { unattendedSandboxTargets: ["darwin-arm64"] }),
+    ).toMatchObject({ ok: false, status: "backend-not-verified" });
+  });
+
+  it("admits unattended allow-all on a target whose sandbox was measured", () => {
+    expect(
+      unattended({}, { unattendedSandboxTargets: ["linux-x64"] }),
+    ).toMatchObject({ ok: true, permissionMode: "allow-all" });
+  });
+
+  it("refuses an unattended caller that cannot state its target", () => {
+    expect(
+      unattended(
+        { packTarget: undefined },
+        { unattendedSandboxTargets: ["linux-x64"] },
+      ),
+    ).toMatchObject({ ok: false, status: "backend-not-verified" });
+    // No pack target at all is already refused by the D8 certification gate.
+    expect(
+      unattended({ packTarget: null }, { unattendedSandboxTargets: ["linux-x64"] }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("never admits unrestricted to the Playground, sandbox or not", () => {
+    expect(
+      unattended(
+        { scope: "attended" },
+        { unattendedSandboxTargets: ["linux-x64"] },
+      ),
+    ).toMatchObject({ ok: false, status: "permission-profile-not-supported" });
+    expect(
+      localPermissionModeFor("codex", "unrestricted", "local-native", "attended"),
+    ).toBeNull();
+    expect(
+      localPermissionModeFor("codex", "unrestricted", "local-native", "unattended"),
+    ).toBe("allow-all");
+  });
+
+  it("hands the explicit policy only to an unattended unrestricted native turn", () => {
+    expect(
+      localSandboxPolicyFor("codex", "unrestricted", "local-native", "unattended"),
+    ).toBe(LOCAL_UNATTENDED_SANDBOX_POLICY);
+    for (const [harnessId, profile, kind, scope] of [
+      ["codex", "unrestricted", "local-native", "attended"],
+      ["codex", "workspace-edits", "local-native", "unattended"],
+      ["codex", "unrestricted", "local-isolated", "unattended"],
+      ["claude-code", "unrestricted", "local-native", "unattended"],
+      ["toString", "unrestricted", "local-native", "unattended"],
+    ] as const)
+      expect(localSandboxPolicyFor(harnessId, profile, kind, scope)).toBeNull();
+  });
+
+  it("records no target as passing the unattended sandbox yet", () => {
+    expect(LOCAL_HARNESS_MANIFEST.codex.unattendedSandboxTargets).toEqual([]);
   });
 });
 

@@ -7,6 +7,7 @@ import {
 import { getClientIp } from "../../utils/client-ip.js";
 import { ErrorCode, WebRouteError, readJsonBody } from "./errors.js";
 import { backendFailureRouteError } from "./backend-error.js";
+import { getServiceCredential } from "../../services/service-credential.js";
 
 /**
  * score.mcpjam.com persistence relay.
@@ -191,7 +192,7 @@ const BACKEND_TIMEOUT_MS = 10_000;
 
 function backendConfig(): { convexUrl: string; serviceToken: string } {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) {
     throw new WebRouteError(
       503,

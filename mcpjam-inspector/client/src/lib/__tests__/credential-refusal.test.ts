@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  describeError,
+  isNormalizedError,
+  type NormalizedError,
+} from "@mcpjam/sdk/browser";
+import {
   credentialRefusalMessage,
   onCredentialReentryRequest,
   readCredentialRefusal,
@@ -110,6 +115,48 @@ describe("withCredentialRefusal", () => {
     } finally {
       unsubscribe();
     }
+  });
+
+  it("gives the error card the toast's message instead of the generic 403", () => {
+    const serverBlock = describeError(
+      Object.assign(new Error("not bound to an address"), { status: 403 }),
+    );
+    expect(serverBlock.slug).toBe("auth/http_403");
+
+    const result = withCredentialRefusal(
+      {
+        success: false,
+        error: "Forbidden",
+        normalized: serverBlock,
+        credentialRefusal: {
+          kind: "origin_mismatch",
+          boundOrigin: null,
+          targetOrigin: "https://api-sandbox.example.com",
+        },
+      },
+      "Docs",
+    ) as { error: string; normalized: NormalizedError };
+
+    expect(result.normalized.title).toBe("Saved credentials not sent");
+    expect(result.normalized.oneLine).toBe(result.error);
+    expect(result.normalized.oneLine).not.toMatch(/lack permission/);
+    expect(result.normalized.likelyCauses).toEqual([]);
+    expect(result.normalized.nextSteps).toEqual([]);
+    expect(result.normalized.docsAnchor).not.toMatch(/forbidden-403/);
+    // Classification and the raw message stay the server's.
+    expect(result.normalized.slug).toBe("auth/http_403");
+    expect(result.normalized.rawMessage).toBe(serverBlock.rawMessage);
+  });
+
+  it("builds the card copy when the result carries no error block", () => {
+    const result = withCredentialRefusal(
+      { success: false, error: "Forbidden", exportDenied: true },
+      "Docs",
+    ) as { error: string; normalized: NormalizedError };
+
+    expect(isNormalizedError(result.normalized)).toBe(true);
+    expect(result.normalized.title).toBe("Blocked by organization policy");
+    expect(result.normalized.oneLine).toBe(result.error);
   });
 
   it("passes successes and unrelated failures through untouched", () => {

@@ -6,10 +6,10 @@ import {
   getPageviewCaptureOptions,
   isPostHogBooleanFlagOn,
   options,
-  sanitizeAnalyticsProperties,
   scrubSensitiveUrl,
   standardEventProps,
 } from "../PosthogUtils";
+import { stampPostHogEvent } from "../telemetry-context";
 
 describe("scrubSensitiveUrl", () => {
   // Autocapture attaches $current_url to every event, so an unredacted share
@@ -45,33 +45,6 @@ describe("scrubSensitiveUrl", () => {
     );
   });
 
-  it("redacts organization ids from PostHog session and initial URL properties", () => {
-    const properties = sanitizeAnalyticsProperties({
-      $session_entry_url:
-        "https://app.mcpjam.com/organizations/org_secret/billing",
-      $session_entry_pathname: "/organizations/org_secret/plans",
-      $session_entry_referrer:
-        "https://app.mcpjam.com/organizations/org_secret/plans",
-      $initial_current_url:
-        "https://app.mcpjam.com/organizations/org_secret/billing",
-      $initial_pathname: "/organizations/org_secret/billing",
-      $initial_referrer:
-        "https://app.mcpjam.com/organizations/org_secret/plans",
-    });
-
-    expect(properties).toMatchObject({
-      $session_entry_url:
-        "https://app.mcpjam.com/organizations/[redacted]/billing",
-      $session_entry_pathname: "/organizations/[redacted]/plans",
-      $session_entry_referrer:
-        "https://app.mcpjam.com/organizations/[redacted]/plans",
-      $initial_current_url:
-        "https://app.mcpjam.com/organizations/[redacted]/billing",
-      $initial_pathname: "/organizations/[redacted]/billing",
-      $initial_referrer:
-        "https://app.mcpjam.com/organizations/[redacted]/plans",
-    });
-  });
 });
 
 describe("PosthogUtils", () => {
@@ -197,10 +170,11 @@ describe("PosthogUtils", () => {
   });
 
   describe("replay + exception capture surface matrix", () => {
-    // The four shapes that reach getPostHogOptions(). Replay and
-    // capture_exceptions are ON for hosted + Electron desktop only; dead
-    // clicks are on everywhere because they cost nothing extra.
-    it("self-hosted web (npx/docker): no replay, no exceptions", async () => {
+    // The four shapes that reach getPostHogOptions(). Exceptions are ON for
+    // hosted + Electron desktop only; dead clicks are on everywhere because
+    // they cost nothing extra. Replay is OFF at init on every surface — the
+    // session privacy level starts it (lib/session-privacy.ts).
+    it("unresolved self-hosted web: no replay, exceptions or rich autocapture", async () => {
       vi.resetModules();
       const { options: opts, isErrorCaptureSurface } =
         await import("../PosthogUtils");
@@ -208,30 +182,42 @@ describe("PosthogUtils", () => {
       expect(isErrorCaptureSurface()).toBe(false);
       expect(opts.capture_exceptions).toBe(false);
       expect(opts.disable_session_recording).toBe(true);
-      expect(opts.capture_dead_clicks).toBe(true);
+      expect(opts.capture_dead_clicks).toBe(false);
+      // No backend content grant has resolved on this surface.
+      expect(opts.mask_all_text).toBe(true);
+      expect(opts.mask_all_element_attributes).toBe(true);
     });
 
-    it("hosted: replay + exceptions on", async () => {
+    it("hosted: exceptions on, replay held for the privacy level, masked until then", async () => {
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
       vi.resetModules();
       const { options: opts, isErrorCaptureSurface } =
         await import("../PosthogUtils");
+      const { MASKED_SESSION_RECORDING_OPTIONS } =
+        await import("../session-privacy");
 
       expect(isErrorCaptureSurface()).toBe(true);
-      expect(opts.capture_exceptions).toBe(true);
-      expect(opts.disable_session_recording).toBe(false);
+      expect(opts.capture_exceptions).toBe(false);
+      expect(opts.disable_session_recording).toBe(true);
+      expect(opts.session_recording).toBe(MASKED_SESSION_RECORDING_OPTIONS);
+      expect(opts.enable_recording_console_log).toBe(false);
+      expect(opts.mask_all_text).toBe(true);
+      expect(opts.mask_all_element_attributes).toBe(true);
     });
 
-    it("packaged electron desktop: replay + exceptions on", async () => {
+    it("packaged electron desktop: exceptions on, replay held, masked", async () => {
       vi.stubEnv("PROD", true);
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
       vi.stubGlobal("window", { ...window, isElectron: true });
       vi.resetModules();
       const { options: opts, isErrorCaptureSurface } =
         await import("../PosthogUtils");
 
       expect(isErrorCaptureSurface()).toBe(true);
-      expect(opts.capture_exceptions).toBe(true);
-      expect(opts.disable_session_recording).toBe(false);
+      expect(opts.capture_exceptions).toBe(false);
+      expect(opts.disable_session_recording).toBe(true);
+      expect(opts.mask_all_text).toBe(true);
     });
 
     it("electron-forge start: replay + exceptions OFF", async () => {
@@ -262,169 +248,83 @@ describe("PosthogUtils", () => {
       expect(opts.capture_exceptions).toBe(false);
     });
 
-    it("never records on bearer-credential /results/ URLs", async () => {
-      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-      vi.stubGlobal("location", {
-        hostname: "app.mcpjam.com",
-        origin: "https://app.mcpjam.com",
-        pathname: "/results/super-secret-token",
-      });
+    it("treats bearer-credential share URLs as credential paths", async () => {
       vi.resetModules();
-      const {
-        options: opts,
-        shouldRecordSession,
-        isCredentialBearingPath,
-      } = await import("../PosthogUtils");
+      const { isCredentialBearingPath } = await import("../PosthogUtils");
 
       expect(isCredentialBearingPath("/results/abc")).toBe(true);
       expect(isCredentialBearingPath("/conformance/shared/secret")).toBe(true);
       expect(isCredentialBearingPath("/evals/shared/secret")).toBe(true);
       expect(isCredentialBearingPath("/servers")).toBe(false);
-      expect(shouldRecordSession()).toBe(false);
-      expect(opts.disable_session_recording).toBe(true);
     });
 
-    it("masks inputs and every annotated secret surface", async () => {
+    it("keeps the full profile's masking: inputs and every annotated secret surface", async () => {
       vi.resetModules();
-      const { SESSION_RECORDING_OPTIONS, options: opts } =
-        await import("../PosthogUtils");
+      const { SESSION_RECORDING_OPTIONS } = await import("../PosthogUtils");
 
       expect(SESSION_RECORDING_OPTIONS.maskAllInputs).toBe(true);
       expect(SESSION_RECORDING_OPTIONS.maskInputOptions).toEqual({
         password: true,
       });
-      // Reuses the repo's existing `data-ph-no-capture` convention rather
-      // than a second attribute — annotate a secret surface once, get both
-      // autocapture opt-out and replay masking.
-      expect(SESSION_RECORDING_OPTIONS.maskTextSelector).toBe(
-        "[data-ph-no-capture]",
+      // Every text node goes through `maskTextFn`, which masks text under
+      // the repo's existing `data-ph-no-capture` convention (annotate a
+      // secret surface once, get both autocapture opt-out and replay
+      // masking) and scrubs credential URLs out of the rest.
+      expect(SESSION_RECORDING_OPTIONS.maskTextSelector).toBe("*");
+      const surface = document.createElement("div");
+      surface.setAttribute("data-ph-no-capture", "");
+      const inside = document.createElement("span");
+      surface.appendChild(inside);
+      expect(SESSION_RECORDING_OPTIONS.maskTextFn("sk-secret", inside)).toBe(
+        "*********",
       );
-      expect(opts.session_recording).toBe(SESSION_RECORDING_OPTIONS);
-    });
-
-    /** posthog-js client stub; `recording` drives the liveness probe. */
-    const recorderStub = (recording: boolean) => {
-      const client = {
-        startSessionRecording: vi.fn(),
-        stopSessionRecording: vi.fn(),
-        sessionRecordingStarted: vi.fn(() => recording),
-      };
-      // stop() ends the recording, so the probe must read false afterwards —
-      // that is exactly what makes the guard's flag load-bearing.
-      client.stopSessionRecording.mockImplementation(() =>
-        client.sessionRecordingStarted.mockReturnValue(false),
+      const plain = document.createElement("span");
+      expect(SESSION_RECORDING_OPTIONS.maskTextFn("Hello there", plain)).toBe(
+        "Hello there",
       );
-      return client;
-    };
-
-    it("stops recording at runtime when navigating INTO /results/", async () => {
-      // The init-time flag cannot cover SPA navigation into the route: the
-      // recorder is already running by then and rrweb snapshots the address
-      // bar, token and all.
-      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-      vi.resetModules();
-      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
-      const client = recorderStub(true);
-
-      syncSessionRecordingForPath(client, "/results/secret-token");
-      expect(client.stopSessionRecording).toHaveBeenCalledTimes(1);
-      expect(client.startSessionRecording).not.toHaveBeenCalled();
-
-      syncSessionRecordingForPath(client, "/servers");
-      expect(client.startSessionRecording).toHaveBeenCalledTimes(1);
-    });
-
-    it("keeps the resume armed across /results/ → /results/ navigation", async () => {
-      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-      vi.resetModules();
-      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
-      const client = recorderStub(true);
-
-      syncSessionRecordingForPath(client, "/results/token-a");
-      syncSessionRecordingForPath(client, "/results/token-b");
-      syncSessionRecordingForPath(client, "/servers");
-
-      expect(client.stopSessionRecording).toHaveBeenCalledTimes(2);
-      expect(client.startSessionRecording).toHaveBeenCalledTimes(1);
-    });
-
-    it("never resumes a recorder that was not running", async () => {
-      // Covers both the `VITE_DISABLE_POSTHOG_LOCAL` build and a session
-      // PostHog's own project-side sampling declined: leaving `/results/`
-      // must not be a back door that turns recording on.
-      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "true");
-      vi.resetModules();
-      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
-      const client = recorderStub(false);
-
-      syncSessionRecordingForPath(client, "/results/secret-token");
-      syncSessionRecordingForPath(client, "/servers");
-
-      expect(client.stopSessionRecording).toHaveBeenCalledTimes(1);
-      expect(client.startSessionRecording).not.toHaveBeenCalled();
-    });
-
-    it("does not force a recorder on for an ordinary navigation", async () => {
-      // Only ever RE-start what this guard stopped: `startSessionRecording()`
-      // is unconditional, so calling it on every route change would record
-      // sessions the init-time config chose not to.
-      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-      vi.resetModules();
-      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
-      const client = recorderStub(true);
-
-      syncSessionRecordingForPath(client, "/servers");
-      syncSessionRecordingForPath(client, "/tools");
-
-      expect(client.startSessionRecording).not.toHaveBeenCalled();
-      expect(client.stopSessionRecording).not.toHaveBeenCalled();
-    });
-
-    it("never starts recording on a non-capture surface", async () => {
-      vi.resetModules();
-      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
-      const client = {
-        startSessionRecording: vi.fn(),
-        stopSessionRecording: vi.fn(),
-      };
-
-      syncSessionRecordingForPath(client, "/servers");
-      expect(client.startSessionRecording).not.toHaveBeenCalled();
-    });
-
-    it("never throws when posthog is unavailable or ad-blocked", async () => {
-      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-      vi.resetModules();
-      const { syncSessionRecordingForPath } = await import("../PosthogUtils");
-
-      // Missing methods, and a method that throws — neither may break render.
-      expect(() => syncSessionRecordingForPath({}, "/results/x")).not.toThrow();
-      expect(() =>
-        syncSessionRecordingForPath(
-          {
-            stopSessionRecording: () => {
-              throw new Error("blocked");
-            },
-          },
-          "/results/x",
+      expect(
+        SESSION_RECORDING_OPTIONS.maskTextFn(
+          "Share https://app.mcpjam.com/results/tok_123",
+          plain,
         ),
-      ).not.toThrow();
+      ).toBe("Share https://app.mcpjam.com/results/[redacted]");
     });
 
     it("does not read HOSTED_MODE at module import time", async () => {
       // The capture-surface fields are getters on purpose: as eager calls they
       // made merely importing this module touch `@/lib/config`, which broke
       // every test that partially mocks it (62 files do).
-      const descriptor = Object.getOwnPropertyDescriptor(
-        options,
+      for (const key of [
         "capture_exceptions",
-      );
-      expect(descriptor?.get).toBeTypeOf("function");
-      expect(
-        Object.getOwnPropertyDescriptor(options, "disable_session_recording")
-          ?.get,
-      ).toBeTypeOf("function");
+        "mask_all_text",
+        "mask_all_element_attributes",
+      ]) {
+        expect(Object.getOwnPropertyDescriptor(options, key)?.get).toBeTypeOf(
+          "function",
+        );
+      }
+    });
+  });
+
+  describe("autocapture follows the level", () => {
+    it("unmasks analytics only after a backend content grant", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+      vi.resetModules();
+      const { options: opts } = await import("../PosthogUtils");
+      const { setSessionPrivacy } = await import("../session-privacy");
+      const policy = await import("../telemetry-context");
+      expect(opts.mask_all_text).toBe(true);
+      setSessionPrivacy("full");
+      expect(opts.mask_all_text).toBe(true);
+      policy.setTelemetryActor("user_A");
+      policy.setTelemetryCaptureContext({ projectIds: ["project_A"], organizationIds: [] });
+      policy.setTelemetryContentPolicy("user_A", "full");
+      expect(opts.mask_all_text).toBe(false);
+      expect(opts.mask_all_element_attributes).toBe(false);
+      policy.setTelemetryContentPolicy("user_A", "strict");
+      expect(opts.mask_all_text).toBe(true);
+      expect(opts.mask_all_element_attributes).toBe(true);
     });
   });
 
@@ -491,7 +391,7 @@ describe("PosthogUtils", () => {
 
   describe("server-evaluated feature flags (MJ-015)", () => {
     const serverFlags = {
-      "computers-enabled": true,
+      "sandbox-images-enabled": true,
       "guest-credit-wall-copy": "treatment",
     };
 
@@ -648,7 +548,23 @@ describe("dropInjectedScriptException", () => {
     expect(dropInjectedScriptException(null)).toBeNull();
   });
 
-  it("is wired into the app options", () => {
-    expect(options.before_send).toBe(dropInjectedScriptException);
+  it("stamps capture policy without installing a payload serializer", () => {
+    expect(options.before_send.slice(0, 2)).toEqual([
+      dropInjectedScriptException,
+      stampPostHogEvent,
+        ]);
+  });
+});
+
+describe("relay origin requirement", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+  it.each(["null", "file://", undefined])("disables capture without a relay origin (%s)", async (origin) => {
+    vi.resetModules();
+    vi.stubGlobal("window", origin === undefined ? undefined : { location: { origin } });
+    const module = await import("../PosthogUtils");
+    expect(module.getPostHogApiHost()).toBe("/tlm");
+    expect(module.isPostHogDisabled).toBe(true);
+    expect(module.getPostHogOptions().opt_out_capturing_by_default).toBe(true);
+    expect(module.getPostHogOptions().api_host).not.toContain("posthog.com");
   });
 });

@@ -125,6 +125,9 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
           { role: "assistant", content: "Hi" },
         ],
       }),
+      responseMessages: Promise.resolve(overrides.messages ?? [
+        { role: "assistant", content: "Hi" },
+      ]),
       steps: Promise.resolve(overrides.steps ?? []),
       totalUsage: Promise.resolve(
         overrides.totalUsage ?? {

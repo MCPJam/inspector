@@ -1,3 +1,4 @@
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
   createQueryRequestCache,
   queryFailureTags,
@@ -9,6 +10,7 @@ import posthog from "posthog-js";
 import {
   isAuthorizationRefusal,
   isSessionRevokedError,
+  isUnauthenticatedError,
 } from "./authorization-refusal";
 import {
   describeError,
@@ -17,6 +19,7 @@ import {
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
 import { isCredentialBearingPath, isErrorCaptureSurface } from "./PosthogUtils";
+import { getConvexRequestId } from "./convex-error";
 
 export type ReportLevel = "fatal" | "error" | "warning" | "info";
 
@@ -30,6 +33,16 @@ export interface ReportOptions {
   extra?: Record<string, unknown>;
   /** Captured from the observed Convex client, never query arguments. */
   queryBackend?: string;
+  /**
+   * Extra Sentry tags, merged under `source` (e.g. `surface`, `page_class` —
+   * what Ask MCPJam's alert rules filter on). Tags are indexed and searchable,
+   * which `extra` is not, so anything support has to look an issue up BY
+   * belongs here. `source` always wins: a caller cannot rename its own call
+   * site. Sentry only.
+   */
+  tags?: Record<string, string>;
+  /** Sentry grouping override, for a call site whose stacks are all alike. */
+  fingerprint?: string[];
 }
 
 /**
@@ -86,7 +99,11 @@ export function reportPossiblyOurFailure(
     // Checked here as well as in `reportCaught`, so the documented return value
     // stays honest: without this a refusal would be dropped downstream and
     // still reported as sent.
-    if (isAuthorizationRefusal(error) || isSessionRevokedError(error))
+    if (
+      isAuthorizationRefusal(error) ||
+      isSessionRevokedError(error) ||
+      isUnauthenticatedError(error)
+    )
       return false;
 
     // Prefer a normalized block the SERVER attached. A hosted route classifies
@@ -146,7 +163,12 @@ function toError(error: unknown): Error {
  * a path that is already handling one.
  */
 export function reportCaught(error: unknown, options: ReportOptions): void {
-  if (isAuthorizationRefusal(error) || isSessionRevokedError(error)) return;
+  if (
+    isAuthorizationRefusal(error) ||
+    isSessionRevokedError(error) ||
+    isUnauthenticatedError(error)
+  )
+    return;
 
   const normalized = safeQueryError(toError(error));
   const queryTags = queryFailureTags(normalized.message);
@@ -161,11 +183,32 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
     queryTags && typeof window !== "undefined"
       ? queryPageLocation(window.location.href)
       : undefined;
+  // The Convex request id is the join key support already has from the user:
+  // it is stamped on every function exception, it is what the toast shows as
+  // `Reference <id>`, and the Convex -> Sentry integration tags the BACKEND
+  // event with the same value. Tagging the client event closes the loop, so a
+  // screenshot resolves to the real stack in the Convex dashboard logs.
+  // Derived here rather than at each call site: every existing `reportCaught`
+  // gains it with no churn.
+  const requestId = getConvexRequestId(error);
+  const requestIdTag = requestId ? { convex_request_id: requestId } : {};
 
+  const recovery = useSessionRefreshStore.getState();
+  const recoveryTags =
+    recovery.recoveryId && Date.now() - recovery.recoveryAt < 300_000
+      ? { auth_recovery_id: recovery.recoveryId }
+      : {};
   try {
     Sentry.captureException(normalized, {
       level: options.level ?? "error",
-      tags: { source: options.source, ...queryTags },
+      tags: {
+        ...(options.tags ?? {}),
+        source: options.source,
+        ...requestIdTag,
+        ...queryTags,
+        ...recoveryTags,
+      },
+      ...(options.fingerprint ? { fingerprint: options.fingerprint } : {}),
       ...(queryTags
         ? {
             extra: {
@@ -198,6 +241,7 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
       posthog.captureException(normalized, {
         source: options.source,
         level: options.level ?? "error",
+        ...requestIdTag,
         ...(queryTags
           ? { ...queryTags, page_location: page }
           : (options.extra ?? {})),

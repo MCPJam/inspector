@@ -42,6 +42,7 @@ import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { SWARM_DESCRIPTION_MAX_CHARS } from "../../../shared/swarm-description.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const swarms = new Hono();
 
@@ -223,7 +224,7 @@ export async function requireSwarmInProject(
 
 // GET /v1/projects/:projectId/swarms
 swarms.get("/projects/:projectId/swarms", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.swarms");
   const client = createConvexClient(await getConvexBearerForRequest(c));
   let rows: SwarmRow[] | null;
   try {

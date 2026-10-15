@@ -416,6 +416,24 @@ test("a per-case evaluation config change breaks the population too", () => {
   assert.equal(input.evaluationConfigChanged, true);
 });
 
+test("infra-failed iterations are excluded from flakiness, not counted as failures", () => {
+  // Stored `failed` + `failed` by MCPJam's infrastructure: a pass beside it
+  // is not a flake.
+  assert.deepEqual(
+    flakyInputFrom([
+      { id: "it_1", testCaseId: "tc1", title: "A", result: "passed" } as never,
+      {
+        id: "it_2",
+        testCaseId: "tc1",
+        title: "A",
+        result: "failed",
+        infraError: { class: "rate_limited", layer: "model", retryable: true },
+      } as never,
+    ]),
+    [{ caseKey: "tc1", passed: true }]
+  );
+});
+
 test("pending iterations are excluded from flakiness, not counted as failures", () => {
   // `result: null` mapped to `passed: false` would make a half-finished case
   // look like it both passed and failed — a fabricated flake.

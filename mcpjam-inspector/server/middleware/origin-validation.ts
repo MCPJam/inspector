@@ -49,9 +49,14 @@ function getAllowedOrigins(): string[] {
   const ports = [SERVER_PORT, clientPort, 8080];
   const origins: string[] = [];
 
+  // All three loopback spellings a browser can show in its address bar. The
+  // session cookies (`scoped-cookie-context.ts`) and the backend's CORS treat
+  // `[::1]` as loopback too; refusing it here would mint a guest for a page
+  // whose every API call is then 403'd.
   for (const port of ports) {
     origins.push(`http://localhost:${port}`);
     origins.push(`http://127.0.0.1:${port}`);
+    origins.push(`http://[::1]:${port}`);
   }
 
   return origins;

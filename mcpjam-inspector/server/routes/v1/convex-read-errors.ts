@@ -93,6 +93,14 @@ const AUTHENTICATION_FAILURE =
  * whose mapping belongs to the write translator, and its message carries the
  * same "Server Error" framing this would otherwise misread.
  *
+ * An argument Convex's validator rejected is claimed too, for the reason
+ * `translateConvexReadError` gives it a 404: on a scoping read the arguments
+ * are the caller's ids, and an id that does not parse names nothing the caller
+ * can see — the same answer as an unknown id. The write translator has no
+ * branch for that shape either, so a malformed id on these routes also fell to
+ * its terminal 500. Writes never come through here; their bad input keeps the
+ * write translator's own answer.
+ *
  * Same caveat as `redactedIsRefusal` below: only for reads that scope a
  * caller-supplied id, where answering 404 to the rare genuine crash costs one
  * misleading status on a request that was about to fail anyway.
@@ -103,9 +111,32 @@ export function redactedReadRefusalError(
 ): WebRouteError | undefined {
   if (error instanceof WebRouteError) return undefined;
   if (hasConvexErrorData(error)) return undefined;
-  if (classifyConvexReadError(error).kind !== "redacted") return undefined;
-  logRedactedReadAsNotFound("v1.read-refusal", error);
+  const failure = classifyConvexReadError(error);
+  if (failure.kind === "invalid-argument") {
+    logRejectedReadArguments("v1.read-refusal", error);
+  } else if (failure.kind === "redacted") {
+    logRedactedReadAsNotFound("v1.read-refusal", error);
+  } else {
+    return undefined;
+  }
   return new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
+}
+
+/**
+ * The trace a validator-rejected read leaves — see the invalid-argument branch
+ * of `translateConvexReadError` for why it is a warn and not silence (deploy
+ * skew answers the same 404 to every caller).
+ *
+ * `detail`, NOT `message`: `ingestToAxiom` spreads the context and THEN sets
+ * `message` from its first argument, so a `message` key here is silently
+ * overwritten and the diagnosis — the whole point of the line — never reaches
+ * Axiom.
+ */
+function logRejectedReadArguments(scope: string, error: unknown): void {
+  logger.warn(`[${scope}] convex rejected read arguments`, {
+    scope,
+    detail: redactForLog(error),
+  });
 }
 
 /**
@@ -211,14 +242,7 @@ export function translateConvexReadError(
   // the 404 still cost nothing, while a route that has started answering 404
   // uniformly becomes something an operator can see and rate-alert on.
   if (failure.kind === "invalid-argument") {
-    // `detail`, NOT `message`: `ingestToAxiom` spreads the context and THEN
-    // sets `message` from its first argument, so a `message` key here is
-    // silently overwritten and the diagnosis — the whole point of the line —
-    // never reaches Axiom.
-    logger.warn(`[${options.scope}] convex rejected read arguments`, {
-      scope: options.scope,
-      detail: redactForLog(error),
-    });
+    logRejectedReadArguments(options.scope, error);
     return new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,

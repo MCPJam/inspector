@@ -11,6 +11,7 @@ import {
 } from "@/lib/billing-entitlements";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 /** Which wall the user was standing at. Drives the return confirmation copy. */
 export type UpgradeOrigin = "evals" | "credits";
@@ -385,6 +386,15 @@ export function useUpgradeCheckout({
         monthly_supported: monthlySupported,
       });
       const result = await resultPromise;
+      // The user is about to change plan, or has: a swarm wave that ran out
+      // before this and runs out again after it is news, not a repeat (a
+      // create-flow Retry reuses its wave). A change that only takes effect at
+      // renewal lifts nothing yet, and it is this organization's waves only.
+      if (result.kind !== "scheduled") {
+        useMCPJamLimitDialogStore
+          .getState()
+          .forgetNotifiedWaves(organizationId);
+      }
       if (result.kind === "checkout" || result.kind === "portal") {
         const nextUrl =
           result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;

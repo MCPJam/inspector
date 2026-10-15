@@ -1097,7 +1097,7 @@ describe("UserTestingScenarioDetail", () => {
         serverAttachmentId: null,
         skillSelection: null,
         computerEnvironmentId: null,
-        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
+        modelSelection: { includeClientDefaults: true, explicitTargets: [] },
       },
       customized: true,
     };

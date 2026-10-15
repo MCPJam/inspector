@@ -26,6 +26,7 @@
 import { Hono } from "hono";
 import { createConvexClient } from "./convex-client.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
@@ -245,7 +246,10 @@ function deriveCapabilities(row: CapabilitiesRow) {
 
 // GET /v1/projects/:projectId/capabilities
 capabilities.get("/projects/:projectId/capabilities", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(
+    c.req.param("projectId"),
+    "v1.capabilities",
+  );
   const client = createConvexClient(await getConvexBearerForRequest(c));
 
   let row: CapabilitiesRow | null;

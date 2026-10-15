@@ -209,6 +209,9 @@ beforeEach(() => {
   vi.setSystemTime(Date.UTC(2026, 8, 1, 12, 0, 0));
   vi.stubEnv("CONVEX_HTTP_URL", "https://revocation-test.convex.site");
   vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+  // Without both secrets a local build relays key management to the hosted
+  // app instead of serving it, and the mint route never reaches auth here.
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
   feed = createRevokedSessionFeed();
   backend.mode = "ok";
   backend.revokeCurrentSession = async (token) => {

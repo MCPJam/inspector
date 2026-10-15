@@ -1,3 +1,4 @@
+import { LOCAL_EVAL_MODEL } from "../../../test/support/local-eval-model";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // PR0 of the runner-unification (plan: we-need-robustness-and-jaunty-toast.md).
@@ -253,6 +254,9 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
         modelId: "gpt-5-mini",
         messages: [{ role: "assistant", content: "Done" }],
       }),
+      responseMessages: Promise.resolve([
+        { role: "assistant", content: "Done" },
+      ]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 1,
@@ -291,7 +295,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     };
   }
 
-  const LOCAL_MODEL = { model: "gpt-4-turbo", provider: "openai" } as const;
+  const LOCAL_MODEL = LOCAL_EVAL_MODEL;
   const HOSTED_MODEL = {
     model: "claude-haiku-4.5",
     provider: "anthropic",
@@ -312,8 +316,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
         title: "Case",
         query: "Hello",
         runs: 1,
-        model: args.model.model,
-        provider: args.model.provider,
+        ...args.model,
         expectedToolCalls: [],
         promptTurns: args.promptTurns,
         testCaseId: "case-1",
@@ -353,8 +356,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
             title: "Case",
             query: "Hello",
             runs: 1,
-            model: args.model.model,
-            provider: args.model.provider,
+            ...args.model,
             expectedToolCalls: [],
             ...(args.steps
               ? { steps: args.steps }
@@ -413,6 +415,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
         modelId: "gpt-5-mini",
         messages: [],
       }),
+      responseMessages: Promise.resolve([]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 0,
@@ -681,6 +684,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       consumeStream: async () => {},
       fullStream: (async function* () {})(),
       response: Promise.resolve({ modelId: "gpt-5-mini", messages }),
+      responseMessages: Promise.resolve(messages),
       steps: Promise.resolve(
         opts.toolCalls ? [{ toolCalls: opts.toolCalls }] : [],
       ),

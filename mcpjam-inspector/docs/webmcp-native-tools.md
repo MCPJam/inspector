@@ -118,9 +118,9 @@ see the tools published you need a browser where the API is live:
   switch already set. Pointing it at a running inspector lists MCPJam's tools
   like any other page's.
 
-Everything asserted about the API was measured against the pinned Chromium
-(151.0.7922.34, the build `webmcp-cdp.spike.test.ts` pins). The two facts the
-publisher is built around:
+Everything asserted about the API was measured against Chromium 151.0.7922.34,
+the build `webmcp-cdp.spike.test.ts` pinned at the time (it now pins
+153.0.8010.12). The two facts the publisher is built around:
 
 1. **A duplicate name is rejected** (`InvalidStateError`), so a replacement
    registration cannot overlap its predecessor — work for one name is

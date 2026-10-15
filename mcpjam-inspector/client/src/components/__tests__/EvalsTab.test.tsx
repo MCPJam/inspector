@@ -45,7 +45,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useConvexAuth: () => ({
     isAuthenticated: mocks.isAuthenticated,
     isLoading: false,

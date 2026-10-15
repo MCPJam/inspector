@@ -37,6 +37,7 @@
  * unanswered elicitation is a wedged sandbox that eventually TTLs out with no
  * explanation.
  */
+import { randomUUID } from "node:crypto";
 import type { BridgeTurn } from "@ai-sdk/harness/bridge";
 import {
   CODEX_APPSERVER_NATIVE_TOOL_NAMES,
@@ -65,6 +66,11 @@ export function createApprovalController(input: {
   onInterrupt?(): void;
 }): ApprovalController {
   const { turn, translator } = input;
+  // Unique per controller, not just per process: a new controller starts at
+  // seq 1, and the framework applies a stored decision to any LATER request
+  // that reuses its id. A bridge re-driven after a crash must never inherit
+  // "approved" for an action nobody saw.
+  const approvalIdPrefix = `codex-approval-${randomUUID().slice(0, 8)}`;
   let approvalSeq = 0;
   let cancelled = false;
   const waiting = new Set<(decision: ApprovalDecision) => void>();
@@ -79,7 +85,7 @@ export function createApprovalController(input: {
    */
   const pause = async (toolCallId: string): Promise<ApprovalDecision> => {
     if (cancelled) return "cancel";
-    const approvalId = `codex-approval-${++approvalSeq}`;
+    const approvalId = `${approvalIdPrefix}-${++approvalSeq}`;
     turn.emit({ type: "tool-approval-request", approvalId, toolCallId });
 
     let settle: ((decision: ApprovalDecision) => void) | undefined;

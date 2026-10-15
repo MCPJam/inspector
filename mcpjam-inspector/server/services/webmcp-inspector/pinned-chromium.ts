@@ -8,10 +8,10 @@
  */
 
 /** The Chromium build every WebMCP finding in this repo was measured against. */
-export const PINNED_CHROMIUM = "151.0.7922.34";
+export const PINNED_CHROMIUM = "153.0.8010.12";
 
 /** The Playwright release that installs it. @see PINNED_CHROMIUM */
-export const PINNED_PLAYWRIGHT = "1.62.1";
+export const PINNED_PLAYWRIGHT = "1.63.0";
 
-/** `151`, for a check that only cares about the line. */
+/** `153`, for a check that only cares about the line. */
 export const PINNED_CHROMIUM_MAJOR = Number(PINNED_CHROMIUM.split(".")[0]);

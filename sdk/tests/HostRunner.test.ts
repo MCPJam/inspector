@@ -31,58 +31,55 @@ import { createModelFromString } from "../src/model-factory";
 
 const mockModelInfo = { modelId: "gpt-4o", provider: "openai" } as const;
 
-const telemetryEventBase = {
-  messages: [],
-  abortSignal: undefined,
-  functionId: undefined,
-  metadata: undefined,
-  experimental_context: undefined,
-};
-
 /** Replays `experimental_telemetry.integrations` like real `generateText` (Jest mocks `ai` only). */
 async function replayEvalSpanStepFinish(params: any, stepResult: any) {
   for (const integration of params.experimental_telemetry?.integrations ?? []) {
-    await integration.onStepFinish?.(stepResult);
+    await integration.onStepEnd?.(stepResult);
   }
 }
 
-/** Wraps a tool execution with `onToolCallStart` / `onToolCallFinish` on span integrations. */
+/**
+ * Wraps a tool execution with AI SDK 7's `onToolExecutionStart` /
+ * `onToolExecutionEnd` on span integrations. Those events carry no step
+ * number; the integration attributes the tool to the step that last started.
+ */
 async function replayEvalSpanToolCall(
   params: any,
   spec: {
     toolName: string;
     toolCallId: string;
     input: Record<string, unknown>;
-    stepNumber?: number;
   },
   execute: () => Promise<unknown>
 ) {
   const integrations = params.experimental_telemetry?.integrations ?? [];
-  const stepNumber = spec.stepNumber ?? 0;
   const toolCall = {
     type: "tool-call" as const,
     toolCallId: spec.toolCallId,
     toolName: spec.toolName,
     input: spec.input,
   };
+  const eventBase = {
+    callId: "call",
+    messages: [],
+    toolCall,
+    toolContext: undefined,
+  };
   for (const integration of integrations) {
-    await integration.onToolCallStart?.({
-      stepNumber,
-      model: mockModelInfo,
-      toolCall,
-      ...telemetryEventBase,
-    });
+    await integration.onToolExecutionStart?.(eventBase);
   }
   const output = await execute();
   for (const integration of integrations) {
-    await integration.onToolCallFinish?.({
-      stepNumber,
-      model: mockModelInfo,
-      toolCall,
-      ...telemetryEventBase,
-      durationMs: 1,
-      success: true as const,
-      output,
+    await integration.onToolExecutionEnd?.({
+      ...eventBase,
+      toolExecutionMs: 1,
+      toolOutput: {
+        type: "tool-result" as const,
+        toolCallId: spec.toolCallId,
+        toolName: spec.toolName,
+        input: spec.input,
+        output,
+      },
     });
   }
 }
@@ -1889,7 +1886,7 @@ describe("HostRunner", () => {
         })
       ).toEqual({
         type: "content",
-        value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+        value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
       });
     });
   });
@@ -2004,4 +2001,82 @@ it("carries suite lease ownership through iteration clones into the model", asyn
       baseUrls: { mcpjam: "https://custom.test" },
     })
   );
+});
+
+describe("HostRunner reasoning effort", () => {
+  const okResult = {
+    text: "OK",
+    steps: [],
+    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+  } as any;
+
+  it("sends the provider's own effort option and drops the temperature it replaces", async () => {
+    (generateText as any).mockResolvedValueOnce(okResult);
+    const runner = new HostRunner({
+      tools: {},
+      model: "openai/gpt-5",
+      apiKey: "test-key",
+      temperature: 0.3,
+      reasoningEffort: "high",
+    });
+    await runner.run("hi");
+    const args = (generateText as any).mock.calls.at(-1)[0];
+    expect(args.providerOptions).toEqual({ openai: { reasoningEffort: "high" } });
+    expect(args).not.toHaveProperty("temperature");
+    expect(runner.getReasoningEffort()).toBe("high");
+  });
+
+  it("maps an MCPJam-hosted Claude model through the anthropic provider option", async () => {
+    (generateText as any).mockResolvedValueOnce(okResult);
+    const runner = new HostRunner({
+      tools: {},
+      model: "mcpjam/anthropic/claude-opus-4.7",
+      apiKey: "test-key",
+      reasoningEffort: "medium",
+    });
+    await runner.run("hi");
+    const args = (generateText as any).mock.calls.at(-1)[0];
+    expect(args.providerOptions.anthropic).toMatchObject({ effort: "medium" });
+  });
+
+  it("without an effort sends neither providerOptions nor changes the temperature", async () => {
+    (generateText as any).mockResolvedValueOnce(okResult);
+    const runner = new HostRunner({
+      tools: {},
+      model: "openai/gpt-4o",
+      apiKey: "test-key",
+      temperature: 0.3,
+    });
+    await runner.run("hi");
+    const args = (generateText as any).mock.calls.at(-1)[0];
+    expect(args).not.toHaveProperty("providerOptions");
+    expect(args.temperature).toBe(0.3);
+  });
+
+  it("refuses an effort the model has no control for, at construction", () => {
+    expect(
+      () =>
+        new HostRunner({
+          tools: {},
+          model: "openai/gpt-4o",
+          apiKey: "test-key",
+          reasoningEffort: "high",
+        })
+    ).toThrow(/capability_missing/);
+  });
+
+  it("carries the effort through withOptions, and revalidates it on a new model", () => {
+    const runner = new HostRunner({
+      tools: {},
+      model: "openai/gpt-5",
+      apiKey: "test-key",
+      reasoningEffort: "low",
+    });
+    expect(runner.withOptions({ temperature: 0.2 }).getReasoningEffort()).toBe(
+      "low"
+    );
+    expect(() => runner.withOptions({ model: "openai/gpt-4o" })).toThrow(
+      /capability_missing/
+    );
+  });
 });

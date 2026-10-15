@@ -1,6 +1,7 @@
-import { useAction, useConvexAuth, useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 
 /**
  * Client hooks for **Project secrets** (mcpjam-backend
@@ -84,11 +85,13 @@ export interface ProjectSecretView {
 export function useProjectSecrets(
   projectId: string | null | undefined,
 ): ProjectSecretView[] | undefined {
-  const { isAuthenticated } = useConvexAuth();
+  // A hosted guest is Convex-authenticated, but listSecrets requires a member.
+  // Check the actor Convex actually sees, including during guest→user swaps.
+  const isMemberActor = useIsMemberActor();
   const dbUserReady = useDbUserReady();
   return useQuery(
     "projectSecrets:listSecrets" as any,
-    isAuthenticated && dbUserReady && shouldQueryProjectId(projectId)
+    isMemberActor === true && dbUserReady && shouldQueryProjectId(projectId)
       ? ({ projectId } as any)
       : "skip",
   ) as ProjectSecretView[] | undefined;

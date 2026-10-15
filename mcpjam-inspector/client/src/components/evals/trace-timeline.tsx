@@ -1,3 +1,4 @@
+import { PluginWorkspaceEvents } from "@/components/plugin-workspace/PluginWorkspaceEvents";
 import {
   useCallback,
   useEffect,
@@ -931,8 +932,7 @@ function promptPreviewForLlmSpan(
 }
 
 type LlmAssistantRowPreview =
-  | { kind: "text"; preview: string }
-  | { kind: "tools"; preview: string };
+  { kind: "text"; preview: string } | { kind: "tools"; preview: string };
 
 /** Preview from the last assistant message(s) in-range: user-visible text, else tool-call names. */
 function assistantPreviewForLlmSpan(
@@ -1371,8 +1371,7 @@ function getRowTiming(row: TimelineRow): {
   endMs: number;
   durationMs: number;
 } {
-  const startMs =
-    row.kind === "span" ? row.span.startMs : row.startMs;
+  const startMs = row.kind === "span" ? row.span.startMs : row.startMs;
   const endMs = row.kind === "span" ? row.span.endMs : row.endMs;
   return {
     startMs,
@@ -1408,11 +1407,7 @@ function StringPayloadFormatToggles({
   );
 }
 
-function PayloadPreview({
-  value,
-}: {
-  value: unknown;
-}) {
+function PayloadPreview({ value }: { value: unknown }) {
   const [format, setFormat] = useState<PayloadVisualFormat>("plain");
 
   useEffect(() => {
@@ -1475,6 +1470,9 @@ function InteractionDetailPane({ row }: { row: InteractionRow }) {
         step={row.step}
         leading={<CategoryGlyph category="interaction" size="lg" />}
       />
+      {row.step.pluginWorkspace && (
+        <PluginWorkspaceEvents recording={row.step.pluginWorkspace} />
+      )}
     </div>
   );
 }
@@ -2469,7 +2467,7 @@ export function TraceTimeline({
                 { label: "User", cls: "trace-waterfall-bar-prompt" },
                 { label: "Connect", cls: "trace-waterfall-bar-step" },
                 { label: "Discovery", cls: "trace-waterfall-bar-step" },
-                { label: "LLM",  cls: "trace-waterfall-bar-llm" },
+                { label: "LLM", cls: "trace-waterfall-bar-llm" },
                 { label: "Tool", cls: "trace-waterfall-bar-tool" },
                 { label: "Step", cls: "trace-waterfall-bar-step" },
                 { label: "Error", cls: "trace-waterfall-bar-error" },
@@ -2624,9 +2622,7 @@ export function TraceTimeline({
                         transcriptMessages,
                       );
                     const rowGlyphCategory:
-                      | EvalTraceSpanCategory
-                      | "prompt"
-                      | "interaction" =
+                      EvalTraceSpanCategory | "prompt" | "interaction" =
                       row.kind === "prompt"
                         ? "prompt"
                         : row.kind === "interaction"
@@ -2769,8 +2765,7 @@ export function TraceTimeline({
                                   event.stopPropagation();
                                   if (row.kind === "prompt") {
                                     const next = new Set(expandedPromptIds);
-                                    if (next.has(row.key))
-                                      next.delete(row.key);
+                                    if (next.has(row.key)) next.delete(row.key);
                                     else next.add(row.key);
                                     setExpandedPromptIds(next);
                                     return;
@@ -2988,10 +2983,7 @@ function HoveredRowInspector({
         transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
         className="w-[19rem] overflow-hidden rounded-md border border-border/60 bg-popover text-popover-foreground shadow-xl"
       >
-        <div
-          data-testid="trace-row-hover-card"
-          className="space-y-3 p-3"
-        >
+        <div data-testid="trace-row-hover-card" className="space-y-3 p-3">
           <div className="flex min-w-0 items-center gap-2">
             <CategoryGlyph category={info.glyphCategory} />
             <span className="min-w-0 flex-1 truncate text-xs font-semibold text-popover-foreground">
@@ -3015,9 +3007,7 @@ function HoveredRowInspector({
                 </span>
               </div>
               <div className="flex min-w-0 items-baseline justify-between gap-3">
-                <span className="shrink-0 text-popover-foreground/70">
-                  End
-                </span>
+                <span className="shrink-0 text-popover-foreground/70">End</span>
                 <span
                   data-testid="trace-row-hover-end"
                   className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"

@@ -15,6 +15,7 @@ export type {
 } from "@mcpjam/widget-react";
 export {
   useAppToolsRegistry,
+  useAppToolsRegistryApi,
   useAppToolInvocationLog,
   recordAppToolInvocation,
   useAppToolAttributionResolver,

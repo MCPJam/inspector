@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { comparisonKey } from "@mcpjam/sdk/browser";
 
 import {
   buildHeroPairings,
   buildHeroStatDeltas,
   buildPassedDelta,
+  pairingKey,
   previousCompletedRunOf,
   previousHeroIterations,
 } from "../run-verdict-hero-deltas";
@@ -382,5 +384,55 @@ describe("buildHeroPairings", () => {
       previousIterations: null,
     });
     expect(pairings[0].delta).toBeNull();
+  });
+});
+
+describe("baselines by targetKey", () => {
+  const effort = (reasoningEffort: "low" | "high") =>
+    comparisonKey({
+      modelId: "gpt-5.1",
+      source: "hosted",
+      settings: { reasoningEffort },
+      fallback: { provider: "none", model: "none" },
+    });
+  const LOW = effort("low");
+  const HIGH = effort("high");
+
+  it("the previous run of another effort of the same model is not the baseline", () => {
+    const lowBefore = run({
+      _id: "low-1",
+      runNumber: 1,
+      createdAt: 1_000,
+      targetKey: LOW,
+    });
+    const highBefore = run({
+      _id: "high-1",
+      runNumber: 2,
+      createdAt: 2_000,
+      targetKey: HIGH,
+    });
+    const lowNow = run({
+      _id: "low-2",
+      runNumber: 3,
+      createdAt: 3_000,
+      targetKey: LOW,
+    });
+    expect(
+      previousCompletedRunOf(lowNow, [lowBefore, highBefore, lowNow])?._id,
+    ).toBe("low-1");
+    expect(pairingKey(lowNow)).not.toBe(pairingKey(highBefore));
+  });
+
+  it("a default run keys exactly as before and pairs across the upgrade", () => {
+    const legacy = run({ _id: "old", runNumber: 1, createdAt: 1_000 });
+    const keyed = run({
+      _id: "new",
+      runNumber: 2,
+      createdAt: 2_000,
+      targetKey: "gpt-5.1",
+    });
+    expect(pairingKey(keyed)).toBe(pairingKey(legacy));
+    expect(pairingKey(keyed).endsWith("::gpt-5.1")).toBe(true);
+    expect(previousCompletedRunOf(keyed, [legacy, keyed])?._id).toBe("old");
   });
 });

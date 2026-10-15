@@ -352,6 +352,45 @@ describe("POST /v1/chat-sessions/messages", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
+  it("refuses a restated reasoningEffort on a continuation: it is pinned on the first turn", async () => {
+    queryMock.mockResolvedValue(sessionRow());
+    const response = await turn({
+      sessionId: SESSION,
+      idempotencyKey: "k1",
+      message: "hi",
+      reasoningEffort: "high",
+    });
+    const body = await response.json();
+    expect(response.status).toBe(400);
+    expect(body.details.reason).toBe("CONFIG_ON_CONTINUATION");
+    expect(body.details.fields).toEqual(["reasoningEffort"]);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("validates reasoningEffort against the effort union and refuses it beside temperature", async () => {
+    const unknown = await turn({
+      projectId: PROJECT,
+      modelId: "openai/gpt-5",
+      idempotencyKey: "k1",
+      message: "hi",
+      reasoningEffort: "turbo",
+    });
+    expect(unknown.status).toBe(400);
+    expect((await unknown.json()).message).toContain("reasoningEffort");
+
+    const both = await turn({
+      projectId: PROJECT,
+      modelId: "openai/gpt-5",
+      idempotencyKey: "k2",
+      message: "hi",
+      reasoningEffort: "high",
+      temperature: 0.2,
+    });
+    expect(both.status).toBe(400);
+    expect((await both.json()).message).toMatch(/reasoningEffort or temperature/);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
   it("ACCEPTS per-turn bounds on a continuation", async () => {
     // These are not session config, and refusing them was actively harmful:
     // a first turn could narrow to two tools, every continuation would be

@@ -18,7 +18,7 @@ export type HostedOAuthSurface = "scenario" | "project" | "score";
 
 /** Cheap guard so both marker validators agree on what a surface can be. */
 export function isHostedOAuthSurface(
-  value: unknown
+  value: unknown,
 ): value is HostedOAuthSurface {
   return value === "scenario" || value === "project" || value === "score";
 }
@@ -30,6 +30,9 @@ export type HostedOAuthStatus =
   | "verifying"
   | "ready"
   | "error";
+
+export const OAUTH_AUTHORIZATION_CANCELLED_MESSAGE =
+  "Authorization was cancelled. Try again.";
 
 export interface HostedOAuthResumeMarker {
   surface: HostedOAuthSurface;
@@ -50,7 +53,7 @@ export const HOSTED_OAUTH_RESUME_STORAGE_KEY = "mcp-hosted-oauth-resume";
 const HOSTED_OAUTH_RESUME_TTL_MS = 60_000;
 
 export function writeHostedOAuthResumeMarker(
-  marker: Omit<HostedOAuthResumeMarker, "completedAt">
+  marker: Omit<HostedOAuthResumeMarker, "completedAt">,
 ): void {
   try {
     localStorage.setItem(
@@ -60,7 +63,7 @@ export function writeHostedOAuthResumeMarker(
         serverUrl: marker.serverUrl ?? null,
         errorMessage: marker.errorMessage ?? null,
         completedAt: Date.now(),
-      })
+      }),
     );
   } catch {
     // Ignore storage failures.
@@ -68,7 +71,7 @@ export function writeHostedOAuthResumeMarker(
 }
 
 export function readHostedOAuthResumeMarker(
-  surface?: HostedOAuthSurface
+  surface?: HostedOAuthSurface,
 ): HostedOAuthResumeMarker | null {
   try {
     const raw = localStorage.getItem(HOSTED_OAUTH_RESUME_STORAGE_KEY);
@@ -121,7 +124,7 @@ export function isHostedOAuthBusy(status: HostedOAuthStatus): boolean {
 
 export function sanitizeHostedOAuthErrorMessage(
   error: unknown,
-  fallback: string
+  fallback: string,
 ): string {
   const message =
     typeof error === "string"
@@ -146,10 +149,10 @@ export function sanitizeHostedOAuthErrorMessage(
 
   if (
     /\b(cancelled|canceled)\b|user denied|denied the request|access_denied/i.test(
-      sanitized
+      sanitized,
     )
   ) {
-    return "Authorization was cancelled. Try again.";
+    return OAUTH_AUTHORIZATION_CANCELLED_MESSAGE;
   }
 
   if (/missing its oauth url/i.test(sanitized)) {
@@ -166,7 +169,7 @@ export function sanitizeHostedOAuthErrorMessage(
 
   if (
     /\b(401|403)\b|unauthorized|forbidden|authentication failed|invalid[_\s-]?token|expired token|token expired|non-200 status code|access denied/i.test(
-      sanitized
+      sanitized,
     )
   ) {
     return "Your authorization expired or was rejected. Authorize again to continue.";
@@ -174,7 +177,7 @@ export function sanitizeHostedOAuthErrorMessage(
 
   if (
     /sse error|failed to fetch|network ?error|timeout|timed out|socket hang up|econn/i.test(
-      sanitized
+      sanitized,
     )
   ) {
     return "We couldn't reach the authorization service. Try again.";

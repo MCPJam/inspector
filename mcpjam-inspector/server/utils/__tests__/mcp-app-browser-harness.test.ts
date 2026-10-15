@@ -37,7 +37,7 @@ function guestHtml(js: string): string {
 }
 
 // A guest that completes the handshake and renders a clickable button whose
-// center sits at the viewport center (640,400). Clicking it calls a server tool.
+// center sits at the workspace app-panel center (960,420). Clicking it calls a server tool.
 const BUTTON_GUEST_SRC = `
 import { App } from "@modelcontextprotocol/ext-apps";
 const app = new App({ name: "fixture-button", version: "1.0.0" });
@@ -46,7 +46,7 @@ const app = new App({ name: "fixture-button", version: "1.0.0" });
   const b = document.createElement("button");
   b.id = "ok";
   b.textContent = "Reserve seat";
-  b.style.cssText = "position:absolute;left:540px;top:370px;width:200px;height:60px;font-size:18px";
+  b.style.cssText = "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:200px;height:60px;font-size:18px";
   b.addEventListener("click", () => {
     app.callServerTool({ name: "reserve", arguments: { seat: 12 } }).catch(() => {});
   });
@@ -360,6 +360,15 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — render classifica
     });
     expect(second.status).toBe("rendered");
     expect(h.hasRenderedWidget()).toBe(true);
+    const page = (h as unknown as { page: import("playwright").Page }).page;
+    expect(await page.locator("[data-host-workspace-app-panel] iframe").count()).toBe(1);
+    expect(await page.locator("iframe").count()).toBe(1);
+    expect(await page.locator("[data-widget-placeholder]").count()).toBe(1);
+    expect(await page.locator("h1, ol").count()).toBe(0);
+    const panelBox = await page.locator("[data-host-workspace-app-panel]").boundingBox();
+    expect(panelBox?.x).toBeGreaterThan(600);
+    expect(panelBox?.width).toBeLessThan(650);
+
   }, 30_000);
 
   it("reports screenshot_failed when the frame can't fit the byte budget", async () => {
@@ -403,7 +412,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — interaction", () 
 
     const result = await h.executeAction({
       toolCallId: "tc-int",
-      action: { action: "left_click", coordinate: [640, 400] },
+      action: { action: "left_click", coordinate: [960, 420] },
     });
 
     expect(result.widgetToolCalls.length).toBe(1);
@@ -454,13 +463,13 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — interaction", () 
     // The page shows only kept-2 now; acting on kept-1 must NOT drive it.
     const stale = await h.executeAction({
       toolCallId: "kept-1",
-      action: { action: "left_click", coordinate: [640, 400] },
+      action: { action: "left_click", coordinate: [960, 420] },
     });
     expect(stale.note).toBe("no_rendered_widget");
     // kept-2 is the live widget.
     const live = await h.executeAction({
       toolCallId: "kept-2",
-      action: { action: "left_click", coordinate: [640, 400] },
+      action: { action: "left_click", coordinate: [960, 420] },
     });
     expect(live.widgetToolCalls.map((c) => c.name)).toEqual(["reserve"]);
   }, 30_000);
@@ -487,7 +496,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — interaction", () 
     // First action consumes the only allowed step.
     const first = await h.executeAction({
       toolCallId: "cap-1",
-      action: { action: "left_click", coordinate: [640, 400] },
+      action: { action: "left_click", coordinate: [960, 420] },
     });
     expect(first.note).toBeUndefined();
 
@@ -983,3 +992,142 @@ describe.skipIf(!CHROMIUM_AVAILABLE)(
     }, 30_000);
   }
 );
+
+describe.skipIf(!CHROMIUM_AVAILABLE)(
+  "unattended workspace presentation ownership",
+  () => {
+    it("uses Playground styling and branding while keeping transcript Apps static", async () => {
+      const h = makeHarness({ getWorkspacePresentation: () => ({ hostStyle: "chatgpt", theme: "light", messages: [ { role: "user", text: "Disposable request" }, { role: "app" } ] }) });
+      const html = guestHtml(await bundleGuest(`import { App } from "@modelcontextprotocol/ext-apps"; const app = new App({name:"style",version:"1"}); (async()=>{await app.connect();document.body.textContent=app.getHostContext().theme;document.body.dataset.host=app.getHostVersion().name;})();`));
+      const result = await h.renderWidget({toolCallId:"style",toolName:"open",serverId:"s1",html,keepMounted:true});
+      expect(result.status).toBe("rendered");
+      const page = (h as unknown as {page: import("playwright").Page}).page;
+      expect(await page.locator(".run-host-shell").getAttribute("data-host-style")).toBe("chatgpt");
+      expect(await page.locator(".scenario-host-user-bubble").evaluate((node)=>getComputedStyle(node).borderRadius)).toBe("24px");
+      expect(await page.locator('[data-testid="chat-input-composer"]').evaluate((node)=>getComputedStyle(node).borderRadius)).toBe("28px");
+      expect(await page.locator(".run-transcript iframe").count()).toBe(0);
+      expect(await page.locator(".run-transcript [data-widget-placeholder]").count()).toBeGreaterThan(0);
+      expect(await page.frameLocator(".run-app-content iframe").locator("body").getAttribute("data-host")).toBe("ChatGPT");
+      await page.evaluate(() => (window as any).__mcpjamHarness.updatePresentation({ hostStyle: "chatgpt", theme: "dark", messages: [{role:"user",text:"Still inert"}] }));
+      expect(await page.locator('[data-testid="chat-input-composer"]').getAttribute("class")).toContain("bg-[#303030]");
+      await expect.poll(() => page.locator('[data-testid="chat-input-composer"]').evaluate((node)=>getComputedStyle(node).backgroundColor)).toBe("rgb(48, 48, 48)");
+      expect(h.calls).toHaveLength(0);
+    }, 30_000);
+
+    it("updates transcript, theme and geometry without remounting or calling the App again", async () => {
+      const h = makeHarness({
+        getWorkspacePresentation: () => ({
+          theme: "light",
+          messages: [
+            { role: "user", text: "Disposable request" },
+            { role: "app" },
+          ],
+        }),
+      });
+      const html = guestHtml(
+        await bundleGuest(`
+      import { App } from "@modelcontextprotocol/ext-apps";
+      const app = new App({name:"load-effect",version:"1"});
+      app.onhostcontextchanged = context => { document.body.dataset.theme = context.theme; };
+      (async()=>{await app.connect();document.body.dataset.theme=app.getHostContext().theme;await app.callServerTool({name:"once",arguments:{}});document.body.textContent="App ready";})();
+    `),
+      );
+      const observation = await h.renderWidget({
+        toolCallId: "load-once",
+        toolName: "open",
+        serverId: "s1",
+        html,
+        keepMounted: true,
+      });
+      expect(observation.status).toBe("rendered");
+      expect(h.calls).toHaveLength(1);
+      const replay = await h.renderWidget({
+        toolCallId: "load-once",
+        toolName: "open",
+        serverId: "s1",
+        html,
+        keepMounted: true,
+      });
+      expect(replay.status).toBe("rendered");
+      expect(h.calls).toHaveLength(1);
+      const changed = await h.renderWidget({
+        toolCallId: "load-once",
+        toolName: "open",
+        serverId: "s1",
+        html: html + "changed",
+        keepMounted: true,
+      });
+      expect(changed.status).toBe("mount_failed");
+      expect(h.calls).toHaveLength(1);
+      const page = (h as unknown as { page: import("playwright").Page }).page;
+      expect(
+        await page.frameLocator(".run-app-content iframe").locator("body").getAttribute("data-theme"),
+      ).toBe("light");
+      await expect(
+        page.locator(".run-transcript").textContent(),
+      ).resolves.toContain("Disposable request");
+      await page.evaluate(() => {
+        const frame = document.querySelector(".run-app-content iframe");
+        (window as any).__originalWorkspaceFrame = frame;
+        (window as any).__mcpjamHarness.updatePresentation({
+          theme: "dark",
+          messages: [
+            { role: "assistant", text: "<script>inert</script>" },
+            { role: "app" },
+            { role: "app" },
+          ],
+        });
+      });
+      await page.setViewportSize({ width: 600, height: 800 });
+      await page.setViewportSize({ width: 1280, height: 840 });
+      expect(
+        await page.evaluate(
+          () =>
+            document.querySelector(".run-app-content iframe") ===
+            (window as any).__originalWorkspaceFrame,
+        ),
+      ).toBe(true);
+      expect(await page.locator(".run-transcript script").count()).toBe(0);
+      expect(
+        await page.locator(".run-transcript [data-widget-placeholder]").count(),
+      ).toBe(3);
+      expect(
+        await page.locator("#mcpjam-widget-root").getAttribute("class"),
+      ).toContain("dark");
+      await vi.waitFor(async () => {
+        expect(
+          await page.frameLocator(".run-app-content iframe").locator("body").getAttribute("data-theme"),
+        ).toBe("dark");
+      });
+      expect(await page.getByRole("textbox", { name: "Message" }).isDisabled()).toBe(true);
+      expect(h.calls).toHaveLength(1);
+    }, 30000);
+  },
+);
+
+describe.skipIf(!CHROMIUM_AVAILABLE)("run-owned App context and host styling", () => {
+  it("acknowledges actual context bytes and notifies the guest with a real update ID", async () => {
+    const js = await bundleGuest(`
+      import { App } from "@modelcontextprotocol/ext-apps";
+      const app = new App({ name: "context-fixture", version: "1" });
+      app.onhostcontextchanged = (ctx) => {
+        document.body.textContent = ctx["openai/modelContext"]?.updateId ? "View attached" : "No view attached";
+      };
+      (async () => {
+        await app.connect();
+        const out = await app.updateModelContext({ content: [{ type: "text", text: "Selected bolt" }] });
+        if (!out._meta?.["openai/modelContext"]?.updateId) throw new Error("missing receipt");
+      })();
+    `);
+    const h = makeHarness({ getWorkspacePresentation: () => ({ theme: "dark", hostStyle: "chatgpt", messages: [{ role: "app" }] }) });
+    const result = await h.renderWidget({ toolCallId: "context-owner", toolName: "fixture", serverId: "s", html: guestHtml(js), keepMounted: true });
+    expect(result.status).toBe("rendered");
+    const page = (h as any).page;
+    await page.waitForFunction(() => document.querySelector("iframe")?.contentDocument?.body.textContent === "View attached");
+    expect(h.getModelContexts()[0].content).toEqual([{ type: "text", text: "Selected bolt" }]);
+    expect(await page.locator(".scenario-host-shell").getAttribute("data-host-style")).toBe("chatgpt");
+    expect(await page.locator("[data-widget-placeholder]").count()).toBeGreaterThan(0);
+    await h.dispose();
+    expect(h.getModelContexts()).toEqual([]);
+  }, 30000);
+});

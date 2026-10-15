@@ -1,6 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { Hono } from "hono";
 import webRoutes from "../index.js";
+import { resetGuestAuthorityForTests } from "../../../utils/guest-authority.js";
 
 vi.mock("@mcpjam/sdk", async () => {
   const actual =
@@ -18,7 +27,17 @@ vi.mock("../apps.js", () => ({
 
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
+const ORIGINAL_SECRET = process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
 const ORIGINAL_FETCH = global.fetch;
+
+function restoreGuestEnv() {
+  if (ORIGINAL_SECRET === undefined) {
+    delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+  } else {
+    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = ORIGINAL_SECRET;
+  }
+  resetGuestAuthorityForTests();
+}
 
 describe("GET /api/web/guest-jwks", () => {
   let app: Hono;
@@ -26,6 +45,9 @@ describe("GET /api/web/guest-jwks", () => {
   beforeEach(() => {
     process.env.NODE_ENV = "test";
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
+    // A backend guest authority: this deployment's own keys.
+    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-secret";
+    resetGuestAuthorityForTests();
     global.fetch = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -62,6 +84,7 @@ describe("GET /api/web/guest-jwks", () => {
       process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
     }
     global.fetch = ORIGINAL_FETCH;
+    restoreGuestEnv();
   });
 
   it("returns a short-lived cacheable JWKS document", async () => {
@@ -102,6 +125,27 @@ describe("GET /api/web/guest-jwks", () => {
     );
   });
 
+  it("serves the hosted authority's keys for the standard OSS profile, never CONVEX_HTTP_URL's", async () => {
+    delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+    const savedOrigin = process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
+    delete process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
+    onTestFinished(() => {
+      if (savedOrigin !== undefined) {
+        process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN = savedOrigin;
+      }
+    });
+    resetGuestAuthorityForTests();
+    await app.request("/api/web/guest-jwks");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://app.mcpjam.com/api/web/guest-jwks",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      "https://test-deployment.convex.site/guest/jwks",
+      expect.anything(),
+    );
+  });
+
   it("returns exactly one key", async () => {
     const response = await app.request("/api/web/guest-jwks");
     const body = await response.json();
@@ -112,6 +156,7 @@ describe("GET /api/web/guest-jwks", () => {
 
 describe("GET /api/web/guest-jwks (upstream unavailable)", () => {
   afterEach(() => {
+    restoreGuestEnv();
     process.env.NODE_ENV = ORIGINAL_NODE_ENV;
     if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
       delete process.env.CONVEX_HTTP_URL;

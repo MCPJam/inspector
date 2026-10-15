@@ -363,7 +363,7 @@ describe("ElicitationDialog", () => {
   });
 
   describe("requesting-server identity (spec MUST)", () => {
-    it("shows the server name with the immutable serverId alongside it", () => {
+    it("shows the server name without a duplicate internal identifier", () => {
       // NOTE: the dialog content is portalled, so it lives on `baseElement`,
       // not on the render `container`.
       const { baseElement } = render(
@@ -376,8 +376,7 @@ describe("ElicitationDialog", () => {
         />
       );
       expect(screen.getByText("Acme Weather")).toBeTruthy();
-      // The trusted anchor stays visible even when a prettier name exists.
-      expect(screen.getByText("srv_abc123")).toBeTruthy();
+      expect(screen.queryByText("srv_abc123")).toBeNull();
       expect(baseElement.textContent).toContain("is requesting information");
     });
 

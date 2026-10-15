@@ -27,6 +27,7 @@ vi.mock("@ai-sdk/harness/agent", () => ({
       })(),
       text: Promise.resolve("done"),
     }));
+    continueStream = this.stream;
   },
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
 }));
@@ -128,6 +129,7 @@ import {
 } from "../harness-model-broker.js";
 import { resolveHarnessSandbox } from "../resolve-sandbox.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
+import { ScenarioHarnessRepublishRequiredError } from "../../scenario-runtime-config.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -233,30 +235,56 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
     });
   });
 
-  it("refuses a binding combined with an execution scope — before any credential is minted", async () => {
-    // The ephemeral box is launcher-owned and billed to its run's project; an
-    // execution scope is the host-funded GUEST path on a scenario's own
-    // computer. The backend rejects the combination outright; throwing here,
-    // at the same place the missing-harness-id guard throws, means no box is
-    // bound and no egress transform is ever installed.
-    await expect(
-      runHarnessTurn(
-        baseOptions({
-          harnessSandboxBinding: BINDING,
-          executionScope: {
-            kind: "swarm",
-            swarmId: "cb_1",
-            accessVersion: 1,
-            projectId: "project-1",
-            workspaceId: "ws_1",
-          },
-        }) as never,
-        "none"
-      )
-    ).rejects.toThrow(/execution scope/i);
+  it("runs a binding WITH an execution scope on the box, and keeps the scope off the lease", async () => {
+    // A scenario conversation's harness runs on its disposable box while the
+    // scope still resolves its session lane and skills. The two must never meet
+    // at the broker — the backend rejects a sandbox lease that carries a scope
+    // — and they cannot: the scope rides only the `computer` arm of the box.
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        executionScope: {
+          kind: "swarm",
+          swarmId: "cb_1",
+          accessVersion: 1,
+          projectId: "project-1",
+          workspaceId: "ws_1",
+        },
+      }) as never,
+      "none"
+    );
 
-    expect(startHarnessModelBroker).not.toHaveBeenCalled();
     expect(resolveHarnessSandbox).not.toHaveBeenCalled();
+    const brokerArgs = vi.mocked(startHarnessModelBroker).mock.calls[0]![0];
+    expect(brokerArgs.box).toEqual({
+      kind: "sandbox",
+      sandboxRowId: BINDING.sandboxRowId,
+    });
+  });
+});
+
+describe("runHarnessTurn — a scenario harness never takes a persistent computer (5c)", () => {
+  it("throws a typed 409 before reserving anything when a scenario scope has no box", async () => {
+    const thrown = await runHarnessTurn(
+      baseOptions({
+        executionScope: {
+          kind: "swarm",
+          swarmId: "cb_1",
+          accessVersion: 1,
+          projectId: "project-1",
+          workspaceId: "ws_1",
+        },
+      }) as never,
+      "none"
+    ).catch((error: unknown) => error);
+    // A WebRouteError, so the route answers 409 and never a 500 INTERNAL_ERROR.
+    expect(thrown).toBeInstanceOf(ScenarioHarnessRepublishRequiredError);
+    expect(thrown).toMatchObject({
+      status: 409,
+      details: { reason: "SCENARIO_HARNESS_REPUBLISH_REQUIRED" },
+    });
+    expect(resolveHarnessSandbox).not.toHaveBeenCalled();
+    expect(startHarnessModelBroker).not.toHaveBeenCalled();
   });
 });
 
@@ -425,5 +453,142 @@ describe("runHarnessTurn — teardown is bounded", () => {
         AbortSignal
       );
     }
+  });
+});
+
+describe("runHarnessTurn — an approval answered after the scenario box was recycled", () => {
+  async function answerApproval(paused: { computerId: string }) {
+    const { claimHarnessSessionState } = await import(
+      "../harness-session-state.js"
+    );
+    const { collectHarnessAgentToolApprovalContinuations } = await import(
+      "@ai-sdk/harness/agent"
+    );
+    vi.mocked(collectHarnessAgentToolApprovalContinuations).mockReturnValueOnce(
+      [{ approvalId: "approval-1", approved: true }] as never
+    );
+    vi.mocked(claimHarnessSessionState).mockResolvedValueOnce({
+      ok: true,
+      leaseId: "lease-1",
+      stateVersion: 2,
+      state: {
+        harnessSessionId: "hs-1",
+        resumeState: { data: { bridge: { sandboxId: BINDING.sandboxId } } },
+        computerId: paused.computerId,
+        awaitingApproval: true,
+      },
+      fingerprintChanged: false,
+    } as never);
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        sourceType: "scenario",
+        scenarioId: "cbx_1",
+        chatSessionId: "cs-1",
+        onEngineError,
+      }) as never,
+      "none"
+    );
+    return onEngineError;
+  }
+
+  it("says the conversation's computer was recycled, and to send the message again", async () => {
+    // The turn paused on a box that idled out; this turn was given a new one.
+    const onEngineError = await answerApproval({ computerId: "sbxrow_old" });
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(onEngineError.mock.calls[0]![0].message).toBe(
+      "This conversation's computer was recycled while waiting for your approval. Send your message again."
+    );
+  });
+
+  it("resumes the paused turn when the box is the same one", async () => {
+    const onEngineError = await answerApproval({
+      computerId: BINDING.sandboxRowId,
+    });
+    expect(onEngineError).not.toHaveBeenCalled();
+  });
+});
+
+describe("runHarnessTurn — a participant's broker refusal is participant-safe", () => {
+  const SCOPE = {
+    kind: "swarm",
+    swarmId: "cb_1",
+    accessVersion: 1,
+    projectId: "project-1",
+    workspaceId: "ws_1",
+  };
+
+  async function refusalMessage(
+    refusal: { status: number; error: string; code?: string },
+    overrides: Record<string, unknown>,
+  ): Promise<string> {
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
+      ok: false,
+      ...refusal,
+    });
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        executionScope: SCOPE,
+        onEngineError,
+        ...overrides,
+      }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    return onEngineError.mock.calls[0]![0].message;
+  }
+
+  it.each([
+    [
+      {
+        status: 429,
+        error: "Spending limit reached; add credits or retry later.",
+      },
+      "This study has reached its limit for now. Try again later.",
+    ],
+    [
+      {
+        status: 429,
+        code: "spend_budget_reached",
+        error:
+          "This organization's spend budget is reached. An owner or admin can raise it in Organization → Budget.",
+      },
+      "This study has reached its limit for now. Try again later.",
+    ],
+    [
+      {
+        status: 429,
+        error: "This share link has reached its concurrent harness run limit.",
+      },
+      "This study has reached its limit for now. Try again later.",
+    ],
+    [
+      {
+        status: 403,
+        code: "free_tier_model_restricted",
+        error:
+          "This model is not included in the free daily allowance. Add credits or use your own API key (BYOK) to use it.",
+      },
+      "This study isn't set up correctly yet. Let the study owner know.",
+    ],
+  ])("maps %j for a participant", async (refusal, expected) => {
+    expect(await refusalMessage(refusal, { scenarioParticipant: true })).toBe(
+      expected,
+    );
+  });
+
+  it("a member keeps the detailed copy", async () => {
+    expect(
+      await refusalMessage(
+        {
+          status: 429,
+          error: "Spending limit reached; add credits or retry later.",
+        },
+        {},
+      ),
+    ).toBe("Spending limit reached; add credits or retry later.");
   });
 });

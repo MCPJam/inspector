@@ -38,8 +38,8 @@ surfaces are currently in that state: the baseline is version-controlled next
 to the routes, whereas naming them in this file would publish the answer.
 
 For a feature that IS live but only enabled for some accounts, use an
-availability `<Note>` at the top of the page — `inspector/plugins.mdx`,
-`inspector/computer.mdx` and `inspector/skills.mdx` all carry one. Say what is
+availability `<Note>` at the top of the page — `inspector/plugins.mdx` and
+`inspector/skills.mdx` both carry one. Say what is
 gated and what the reader would see if it is not on for them.
 
 ### `contributing/` is deliberately not in the nav

@@ -68,12 +68,23 @@ vi.mock("../org-model-config.js", async (importOriginal) => ({
   resolveOrgProviderRuntime: vi.fn(async () => ({
     runtimeLocation: "local",
     provider: { providerKey: "openai", provider: "openai", runtime: "local" },
+    admission: { target: { projectId: "p" }, providerKey: "openai", model: "m" },
+  })),
+}));
+// Each provider attempt asks again; the backend keeps saying yes here.
+vi.mock("../org-runtime-admission.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  admitLocalOrgAttempt: vi.fn(async () => ({
+    providerKey: "openai",
+    provider: "openai",
+    runtime: "local",
   })),
 }));
 
 vi.mock("@mcpjam/sdk/model-factory", async (importOriginal) => {
-  const { MockLanguageModelV3, simulateReadableStream } =
-    await import("ai/test");
+  const { MockLanguageModelV3, simulateReadableStream } = await import(
+    "ai/test"
+  );
   return {
     ...(await importOriginal<object>()),
     assertOrgModelAllowed: vi.fn(),
@@ -1050,5 +1061,38 @@ describe("the local-runtime provider is sent only the history it can verify (MJ-
     expect(prompt).toContain("GENUINE_LOCAL_REPLY");
     expect(prompt).toContain("call_local_1");
     expect(prompt).not.toContain("Result unavailable");
+  });
+});
+
+describe("App message presentation persistence", () => {
+  it("persists the verified user text and bounded label without leaking private intent", async () => {
+    await runTurn([
+      {
+        id: "app-message-user",
+        role: "user",
+        parts: [
+          {
+            type: "data-plugin-message-text",
+            data: {
+              title: "Visible App item",
+              text: "Underlying model instruction",
+            },
+          },
+        ],
+      },
+    ]);
+    const saved = (state.persisted.at(-1) as any[]).find(
+      (message) => message.role === "user",
+    );
+    expect(saved.content).toContainEqual({
+      type: "text",
+      text: "Underlying model instruction",
+      mcpjamMessageTitle: "Visible App item",
+    });
+    expect(JSON.stringify(saved)).not.toMatch(
+      /instanceToken|preparationToken|operationId/,
+    );
+    expect(modelRequests.at(-1)!.raw).toContain("Underlying model instruction");
+    expect(modelRequests.at(-1)!.raw).not.toContain("Visible App item");
   });
 });

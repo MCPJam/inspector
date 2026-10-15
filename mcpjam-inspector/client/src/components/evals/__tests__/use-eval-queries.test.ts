@@ -4,10 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   useQuery: vi.fn(),
+  usePaginatedQuery: vi.fn(),
+  loadMore: vi.fn(),
   isUserReady: true,
 }));
 
 vi.mock("convex/react", () => ({
+  usePaginatedQuery: (...args: unknown[]) => mocks.usePaginatedQuery(...args),
   useQuery: (...args: unknown[]) => mocks.useQuery(...args),
   // Per-run metrics and live-run rows; idle unless `perRunMetrics` is on.
   useQueries: () => ({}),
@@ -25,6 +28,11 @@ describe("useEvalQueries", () => {
     vi.clearAllMocks();
     mocks.isUserReady = true;
     mocks.useQuery.mockReturnValue(undefined);
+    mocks.usePaginatedQuery.mockReturnValue({
+      results: [],
+      status: "LoadingFirstPage",
+      loadMore: mocks.loadMore,
+    });
   });
 
   it("does not report overview loading when the overview query is skipped", () => {
@@ -43,15 +51,16 @@ describe("useEvalQueries", () => {
     expect(result.current.sortedSuites).toEqual([]);
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
-      "skip"
+      "skip",
     );
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getAllTestCasesAndIterationsBySuite",
-      "skip"
+      "skip",
     );
-    expect(mocks.useQuery).toHaveBeenCalledWith(
-      "testSuites:listTestSuiteRuns",
-      "skip"
+    expect(mocks.usePaginatedQuery).toHaveBeenCalledWith(
+      "testSuites:listTestSuiteRunSummaries",
+      "skip",
+      { initialNumItems: 20 },
     );
   });
 
@@ -70,7 +79,7 @@ describe("useEvalQueries", () => {
     expect(result.current.isOverviewLoading).toBe(true);
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
-      { projectId: "ws-1" }
+      { projectId: "ws-1" },
     );
   });
 
@@ -87,11 +96,12 @@ describe("useEvalQueries", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getAllTestCasesAndIterationsBySuite",
-      { suiteId: "suite-1" }
+      { suiteId: "suite-1" },
     );
-    expect(mocks.useQuery).toHaveBeenCalledWith(
-      "testSuites:listTestSuiteRuns",
-      { suiteId: "suite-1", limit: 100 }
+    expect(mocks.usePaginatedQuery).toHaveBeenCalledWith(
+      "testSuites:listTestSuiteRunSummaries",
+      { suiteId: "suite-1" },
+      { initialNumItems: 20 },
     );
   });
 
@@ -112,11 +122,11 @@ describe("useEvalQueries", () => {
     });
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getAllTestCasesAndIterationsBySuite",
-      "skip"
+      "skip",
     );
     expect(mocks.useQuery).not.toHaveBeenCalledWith(
       "testSuites:getAllTestCasesAndIterationsBySuite",
-      { suiteId: "suite-1" }
+      { suiteId: "suite-1" },
     );
     expect(result.current.sortedIterations).toEqual([]);
     expect(result.current.metricsByRun.size).toBe(0);
@@ -133,7 +143,10 @@ describe("useEvalQueries", () => {
       }),
     );
 
-    expect(mocks.useQuery).toHaveBeenCalledWith("testSuites:listTestCases", "skip");
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:listTestCases",
+      "skip",
+    );
   });
 
   it("uses empty overview args when ready with no project or organization", () => {
@@ -149,7 +162,7 @@ describe("useEvalQueries", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
-      {}
+      {},
     );
   });
 
@@ -168,7 +181,7 @@ describe("useEvalQueries", () => {
     expect(result.current.enableOverviewQuery).toBe(true);
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
-      { projectId: "guest-project" }
+      { projectId: "guest-project" },
     );
   });
 
@@ -195,15 +208,16 @@ describe("useEvalQueries", () => {
     expect(result.current.isSuiteRunsLoading).toBe(true);
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
-      "skip"
+      "skip",
     );
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getAllTestCasesAndIterationsBySuite",
-      "skip"
+      "skip",
     );
-    expect(mocks.useQuery).toHaveBeenCalledWith(
-      "testSuites:listTestSuiteRuns",
-      "skip"
+    expect(mocks.usePaginatedQuery).toHaveBeenCalledWith(
+      "testSuites:listTestSuiteRunSummaries",
+      "skip",
+      { initialNumItems: 20 },
     );
   });
 
@@ -239,7 +253,7 @@ it("opens the credit wall for a live iteration failure once and preserves comple
   store.setState({
     authStatus: "signedIn",
     isOpen: false,
-    notifiedRunIds: new Set(),
+    notifiedKeys: new Set(),
   });
   let runs = [{ _id: "live-eval", status: "running" }];
   const completed = {
@@ -248,8 +262,12 @@ it("opens the credit wall for a live iteration failure once and preserves comple
     status: "completed",
   };
   let iterations: any[] = [completed];
+  mocks.usePaginatedQuery.mockImplementation(() => ({
+    results: runs,
+    status: "Exhausted",
+    loadMore: mocks.loadMore,
+  }));
   mocks.useQuery.mockImplementation((query: string) => {
-    if (query === "testSuites:listTestSuiteRuns") return runs;
     if (query === "testSuites:getAllTestCasesAndIterationsBySuite")
       return { iterations, testCases: [] };
     return [];
@@ -276,4 +294,32 @@ it("opens the credit wall for a live iteration failure once and preserves comple
   iterations = [...iterations];
   rerender();
   expect(store.getState().isOpen).toBe(false);
+});
+
+it("loads twenty more rows and resets the subscription on suite switching", () => {
+  mocks.isUserReady = true;
+  mocks.usePaginatedQuery.mockReturnValue({
+    results: [],
+    status: "CanLoadMore",
+    loadMore: mocks.loadMore,
+  });
+  const { result, rerender } = renderHook(
+    ({ suiteId }) =>
+      useEvalQueries({
+        isAuthenticated: true,
+        selectedSuiteId: suiteId,
+        deletingSuiteId: null,
+        projectId: "project",
+        organizationId: null,
+      }),
+    { initialProps: { suiteId: "first" } },
+  );
+  result.current.loadMoreRuns();
+  expect(mocks.loadMore).toHaveBeenCalledWith(20);
+  rerender({ suiteId: "second" });
+  expect(mocks.usePaginatedQuery).toHaveBeenLastCalledWith(
+    "testSuites:listTestSuiteRunSummaries",
+    { suiteId: "second" },
+    { initialNumItems: 20 },
+  );
 });

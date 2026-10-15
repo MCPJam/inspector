@@ -51,6 +51,7 @@ import {
   buildOrgModelFromResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
 import { handleLocalOrgChatModel } from "../org-model-stream-handler";
+import type { LocalOrgAttemptRequest } from "../org-runtime-admission";
 
 function buildResolvedProvider(): OrgProviderResolvedConfig {
   // Cast — the handler only reads `providerKey` off the resolved config;
@@ -99,6 +100,17 @@ function defaultStreamTextReturn(
     }),
   };
 }
+
+/**
+ * What the turn asked `/stream/org/resolve`. `streamText` is stubbed here, so
+ * no attempt runs and nothing asks again; the per-attempt admission has its
+ * own tests (`local-org-attempt-admission.test.ts`).
+ */
+const ADMISSION: LocalOrgAttemptRequest = {
+  target: { projectId: "proj" },
+  providerKey: "openai",
+  model: "gpt-4-turbo",
+};
 
 const ORIGINAL_CONVEX = process.env.CONVEX_HTTP_URL;
 
@@ -154,6 +166,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     // would actually ask can get there.
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
+      admission: ADMISSION,
       projectId: "proj",
       modelId: "gpt-4-turbo",
       messages: [{ role: "user", content: "hi" } as any],
@@ -192,6 +205,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     // about a turn that was never going to ask.
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
+      admission: ADMISSION,
       projectId: "proj",
       modelId: "gpt-4-turbo",
       messages: [{ role: "user", content: "hi" } as any],
@@ -294,6 +308,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     ];
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
+      admission: ADMISSION,
       projectId: "proj",
       modelId: "gpt-4-turbo",
       messages: messages as any,
@@ -365,6 +380,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
 
       const response = handleLocalOrgChatModel({
         provider: buildResolvedProvider(),
+        admission: ADMISSION,
         projectId: "proj",
         chatSessionId: "chat_1",
         modelId: "gpt-4-turbo",
@@ -421,6 +437,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     // `streamText` evaluates the function per call, as it always did.
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
+      admission: ADMISSION,
       projectId: "proj",
       modelId: "gpt-4-turbo",
       messages: [{ role: "user", content: "hi" } as any],
@@ -454,6 +471,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
 
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
+      admission: ADMISSION,
       projectId: "proj",
       modelId: "blocked-model",
       messages: [{ role: "user", content: "hi" } as any],
@@ -502,6 +520,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
 
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
+      admission: ADMISSION,
       projectId: "proj-123",
       modelId: "gpt-4-turbo",
       messages: [{ role: "user", content: "hi" } as any],
@@ -559,6 +578,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
 
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
+      admission: ADMISSION,
       projectId: "proj",
       modelId: "gpt-4-turbo",
       messages: [{ role: "user", content: "hi" } as any],
@@ -592,6 +612,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     const deltas: string[] = [];
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
+      admission: ADMISSION,
       projectId: "proj",
       modelId: "gpt-4-turbo",
       messages: [{ role: "user", content: "hi" } as any],
@@ -609,6 +630,36 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     }
 
     expect(deltas).toEqual(["Hi"]);
+  });
+
+  it("hands the caller's provider options (a reasoning effort) to streamText, and nothing without them", async () => {
+    const run = async (extra: Record<string, unknown>) => {
+      streamTextMock.mockImplementationOnce(() => defaultStreamTextReturn());
+      const response = handleLocalOrgChatModel({
+        provider: buildResolvedProvider(),
+        admission: ADMISSION,
+        projectId: "proj",
+        modelId: "gpt-4-turbo",
+        messages: [{ role: "user", content: "hi" } as any],
+        systemPrompt: "s",
+        tools: {} as any,
+        ...extra,
+      });
+      const reader = response.body?.getReader();
+      if (reader) {
+        while (!(await reader.read()).done);
+      }
+      return streamTextMock.mock.calls.at(-1)![0] as Record<string, unknown>;
+    };
+
+    const withEffort = await run({
+      providerOptions: { openai: { reasoningEffort: "high" } },
+    });
+    expect(withEffort.providerOptions).toEqual({
+      openai: { reasoningEffort: "high" },
+    });
+    const without = await run({});
+    expect(without.providerOptions).toBeUndefined();
   });
 
   it("does NOT invoke onConversationComplete when the stream errors mid-flight (Cursor PR-review fix)", async () => {
@@ -642,6 +693,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     const onConversationComplete = vi.fn();
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
+      admission: ADMISSION,
       projectId: "proj",
       modelId: "gpt-4-turbo",
       messages: [{ role: "user", content: "hi" } as any],
@@ -704,6 +756,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     const onConversationComplete = vi.fn();
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
+      admission: ADMISSION,
       projectId: "proj",
       modelId: "gpt-4-turbo",
       messages: [sharedMsg] as any,

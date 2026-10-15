@@ -43,9 +43,7 @@ export type {
   HttpExchangeLogger,
 } from "./mcp-client-manager/index.js";
 
-// SEP-2243 `x-mcp-header` → `Mcp-Param-*` mirroring helpers. The send path
-// uses these internally; they are public so the CLI and the conformance
-// runner judge tool declarations with the SAME walk the wire does.
+// SEP-2243 header mirroring: CLI and conformance use the send path’s walk.
 export {
   buildMcpParamHeaders,
   classifyMcpHeader,
@@ -105,11 +103,13 @@ export {
   MCP_LINKED_RESOURCE_MAX_READS,
   MCP_PRESERVE_RAW_RESULT_FOR_UI,
   mcpCallToolResultToModelOutput,
+  readModelOutputImage,
   mcpCallToolResultToModelOutputWithLinkedResources,
   scrubMetaFromToolResult,
   scrubMetaAndStructuredContentFromToolResult,
   type McpModelOutputContent,
   type McpModelOutputContentPart,
+  type McpModelOutputImagePart,
   type McpModelOutputOptions,
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,
@@ -468,6 +468,7 @@ export type {
  */
 export {
   GRADING_POLICY_READ_REFUSALS,
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
   LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
   gradingPolicyForReportedRun,
   gradingPolicyFromLoadedSuiteFile,
@@ -714,6 +715,12 @@ export {
 // is banned from the browser entry's import graph, so the Node fallback lives
 // behind this entry and is passed in as `parseXml`.
 export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
+
+// Muse (Meta) connector readiness. The barrel is pure data and grading; the
+// gatherer dials, so it is exported only from this Node entry.
+export * from "./muse-readiness/index.js";
+export { gatherMuseReadinessEvidence } from "./muse-readiness/gather.js";
+export type { GatherMuseReadinessEvidenceOptions } from "./muse-readiness/gather.js";
 
 // The OpenAI readiness modules that touch the network, exported only from the
 // Node entry. They are deliberately absent from `openai-readiness/index.ts` so
@@ -1149,6 +1156,7 @@ export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
 export {
   describeError,
   describeAsSlug,
+  orgPolicySlugForCode,
   isNormalizedError,
   originOf,
   ERROR_CATALOG,
@@ -1165,6 +1173,24 @@ export type {
   ErrorCatalogEntry,
   ErrorCatalogSlug,
 } from "./error-describer/index.js";
+
+// The organization AI-key policy's refusal codes and how each is handled.
+// Pure, browser-safe; also exported from `@mcpjam/sdk/browser`.
+export {
+  AI_CONFIGURATION_REFUSAL_CODES,
+  AI_EXECUTION_REFUSAL_CODES,
+  AI_REFUSAL_CODES,
+  AI_RETRYABLE_REFUSAL_CODES,
+  AI_REUSED_REFUSAL_CODES,
+  aiRefusalClass,
+  isAiExecutionRefusalCode,
+  recognizedAiRefusalCode,
+} from "./ai-refusal-codes.js";
+export type {
+  AiExecutionRefusalCode,
+  AiRefusalClass,
+  AiRefusalCode,
+} from "./ai-refusal-codes.js";
 
 // OAuth conformance
 export {
@@ -1702,7 +1728,13 @@ export {
   reasoningEffortProviderOptions,
   selectionConfigKey,
   selectionIfMatches,
+  isDefaultSelection,
+  comparisonKey,
+  executionVariantSelectionKey,
+  selectionDistinguishers,
+  defaultReasoningEffort,
   supportedReasoningEfforts,
+  harnessReasoningEfforts,
 } from "./host-config/index.js";
 export type {
   ReasoningEffortProviderOptions,
@@ -1799,8 +1831,12 @@ export {
   MrtrInputValidationError,
   isInputRequiredResult,
   withInputRequired,
+  OPENAI_ELICITATION_EXTENSION,
+  selectElicitationFormSchema,
 } from "./mcp-client-manager/index.js";
 export type {
+  ElicitationFormSchemaSelection,
+  ElicitationFormSchemaSelector,
   MrtrMethod,
   MrtrOperationState,
   MrtrLegResult,
@@ -1964,3 +2000,5 @@ export type {
   ConnectionRoutingSnapshot,
   ConnectionToolMetadata,
 } from "./mcp-client-manager/multi-connection-tools.js";
+
+export { aiRequestHeaders } from "./ai-request-headers.js";

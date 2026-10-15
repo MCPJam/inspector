@@ -41,6 +41,8 @@ export interface BuildFixtureServerOptions {
    * it (see `dual-era-fixture.test.ts`).
    */
   apps?: boolean;
+  /** Advertise logging for conformance era-gating regressions. Defaults to false. */
+  logging?: boolean;
 }
 
 /**
@@ -51,7 +53,12 @@ export function buildFixtureServer(
   options: BuildFixtureServerOptions = {},
 ): McpServer {
   const server = new McpServer(FIXTURE_SERVER_INFO, {
-    capabilities: { tools: {}, resources: {}, prompts: {} },
+    capabilities: {
+      tools: {},
+      resources: {},
+      prompts: {},
+      ...(options.logging ? { logging: {} } : {}),
+    },
   });
 
   server.registerTool(

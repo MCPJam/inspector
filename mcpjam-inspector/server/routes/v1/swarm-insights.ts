@@ -45,6 +45,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const swarmInsights = new Hono();
 
@@ -359,6 +360,7 @@ async function listFindingRows(
   client: ConvexHttpClient,
   projectId: string,
 ): Promise<FindingRow[]> {
+  requireProjectIdArg(projectId, "v1.swarm-insights");
   try {
     return ((await client.query(
       "swarmWaveInsights:listSwarmFindings" as never,
@@ -428,7 +430,10 @@ both(
   "/projects/:projectId/goals-overview",
   "/projects/:projectId/journeys-overview",
   async (c) => {
-    const projectId = c.req.param("projectId");
+    const projectId = requireProjectIdArg(
+      c.req.param("projectId"),
+      "v1.swarm-insights",
+    );
     const client = createConvexClient(await getConvexBearerForRequest(c));
     let row: OverviewRow;
     try {
@@ -484,7 +489,10 @@ both(
   "/projects/:projectId/goal-findings",
   "/projects/:projectId/journey-findings",
   async (c) => {
-    const projectId = c.req.param("projectId");
+    const projectId = requireProjectIdArg(
+      c.req.param("projectId"),
+      "v1.swarm-insights",
+    );
     const client = createConvexClient(await getConvexBearerForRequest(c));
     const rows = await listFindingRows(client, projectId);
     return v1PageJson(c, rows.map(toFindingDto));

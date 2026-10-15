@@ -125,12 +125,14 @@ vi.mock("@mcpjam/sdk", async () => {
     await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
   return {
     ...actual,
-    MCPClientManager: vi.fn().mockImplementation(() => ({
-      listTools: managerListToolsMock,
-      disconnectAllServers: managerDisconnectMock,
-      hasServer: () => false,
-      getToolsForAiSdk: async () => ({}),
-    })),
+    MCPClientManager: vi.fn().mockImplementation(function () {
+      return {
+        listTools: managerListToolsMock,
+        disconnectAllServers: managerDisconnectMock,
+        hasServer: () => false,
+        getToolsForAiSdk: async () => ({}),
+      };
+    }),
   };
 });
 

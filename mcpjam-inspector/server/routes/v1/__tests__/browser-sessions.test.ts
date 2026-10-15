@@ -117,6 +117,29 @@ describe("cloud agent browser route", () => {
     ).toBe(404);
     expect(mocks.ensure).not.toHaveBeenCalled();
   });
+  it("answers the hosted-browser gate with 403 and its reason, before provisioning", async () => {
+    mocks.fetch.mockResolvedValue(
+      Response.json(
+        {
+          error: "Hosted Browser is not currently available",
+          code: "FEATURE_UNAVAILABLE",
+          feature: "hosted-browser",
+        },
+        { status: 403 },
+      ),
+    );
+    const response = await request("session", {
+      policy: { mode: "allow_all" },
+      runKey: "test",
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "FORBIDDEN",
+      message: "Hosted Browser is not currently available",
+      details: { code: "FEATURE_UNAVAILABLE", feature: "hosted-browser" },
+    });
+    expect(mocks.ensure).not.toHaveBeenCalled();
+  });
   it("applies stored read-only policy before provisioning", async () => {
     mocks.fetch.mockImplementation(async (url: URL) =>
       Response.json(

@@ -766,7 +766,7 @@ describe("hosted validate responses (web and v1)", () => {
     expectLogsProjected(body);
   });
 
-  it("web: masks a failure after initialize and preserves projected logs", async () => {
+  it("web: reports the server's HTTP error after initialize by its status line and preserves projected logs", async () => {
     upstream.current = mcpServer(
       () =>
         new Response("<html>UNEXPECTED_MARKER_25</html>", {
@@ -776,20 +776,17 @@ describe("hosted validate responses (web and v1)", () => {
         }),
     );
     const res = await webValidate(routes);
-    expect(res.status).toBe(500);
-    const requestId = res.headers.get("x-request-id");
-    expect(requestId).toBeTruthy();
+    // The server's own error answer, not ours: a 424 the edge passes through,
+    // never the masked 500 that pages us and hides the status.
+    expect(res.status).toBe(424);
     const body = (await res.json()) as any;
-    // The hosted internal-error policy masks the message while diagnostics
-    // retain only the projected response and frame envelopes.
     expect(JSON.stringify(body)).not.toMatch(MARKER);
-    expect(body.code).toBe("INTERNAL_ERROR");
+    expect(body.code).toBe("UPSTREAM_HTTP_ERROR");
     expect(body.message).toBe(
-      `An unexpected error occurred. If it keeps happening, contact support with reference ${requestId}.`,
+      "The MCP server responded with HTTP 500 Internal Server Error.",
     );
-    expect(body.details.requestId).toBe(requestId);
+    expect(body.message).not.toMatch(/unexpected error/i);
     expect(body.normalized.rawMessage).toBe(body.message);
-    expect(body.normalized.requestId).toBe(requestId);
     expectLogsProjected(body);
     expect(body._httpLogs).toContainEqual(
       expect.objectContaining({

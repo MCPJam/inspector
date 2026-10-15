@@ -55,6 +55,7 @@ import {
   type ReadinessPublisher as Publisher,
 } from "../shared/readiness-runs.js";
 import type { OpenAISubmissionMode } from "@mcpjam/sdk";
+import { requireProjectIdArg } from "./convex-id-param.js";
 
 const readiness = new Hono();
 
@@ -115,6 +116,15 @@ const startOpenAISchema = z.strictObject({
    * of health, which is the exact failure `incomplete` exists to prevent.
    */
   submissionMode: z.enum(HOSTED_SUBMISSION_MODES),
+});
+
+/**
+ * Muse: the replay guard only. No observation opt-in — Muse has no catalogue
+ * for a model to grade against — so the strict schema refuses the key here,
+ * with a 400 that names it, rather than at the backend.
+ */
+const startMuseSchema = z.strictObject({
+  idempotencyKey: startFields.idempotencyKey,
 });
 
 /**
@@ -227,6 +237,14 @@ readiness.post(
   },
 );
 
+readiness.post(
+  "/projects/:projectId/servers/:serverId/readiness-runs/muse",
+  async (c) => {
+    const body = parseWithSchema(startMuseSchema, await readBody(c));
+    return startRun(c, "muse", undefined, body);
+  },
+);
+
 /**
  * Read the body, treating an ACTUALLY empty one as `{}`.
  *
@@ -280,7 +298,10 @@ readiness.get("/projects/:projectId/readiness-runs/:runId", async (c) => {
 });
 
 readiness.get("/projects/:projectId/readiness-runs", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(
+    c.req.param("projectId"),
+    "v1.readiness",
+  );
   const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   const publisher = c.req.query("readinessKind");
@@ -288,7 +309,7 @@ readiness.get("/projects/:projectId/readiness-runs", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "readinessKind must be claude or openai",
+      "readinessKind must be claude, openai or muse",
     );
   }
   const serverId = c.req.query("serverId");

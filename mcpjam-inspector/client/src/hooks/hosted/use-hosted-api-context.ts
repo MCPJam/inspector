@@ -1,5 +1,6 @@
-import { useLayoutEffect } from "react";
-import { setApiContext } from "@/lib/apis/web/context";
+import { useLayoutEffect, useRef } from "react";
+import isEqual from "fast-deep-equal";
+import { setApiContext, type ApiContext } from "@/lib/apis/web/context";
 import type {
   McpProtocolVersion,
   XaaEnterprisePolicy,
@@ -59,6 +60,11 @@ export function useApiContext({
   hasSession,
   enabled = true,
 }: UseApiContextOptions): void {
+  // Callers rebuild some inputs as fresh objects with equal values. Each
+  // publish bumps the revision every all-server tools/list fan-out refetches
+  // on, so publishing on identity alone loops (PLB-145).
+  const publishedRef = useRef<ApiContext | null>(null);
+
   // useLayoutEffect so the global hosted context is set synchronously before
   // any child useEffect hooks fire (e.g. fetchToolsMetadata in useChatSession).
   // With useEffect, React's bottom-up ordering means child passive effects run
@@ -69,7 +75,7 @@ export function useApiContext({
       return;
     }
 
-    setApiContext({
+    const next: ApiContext = {
       projectId,
       serverIdsByName,
       clientCapabilities,
@@ -90,11 +96,12 @@ export function useApiContext({
       accessVersion,
       isAuthenticated,
       hasSession,
-    });
-
-    return () => {
-      setApiContext(null);
     };
+    if (publishedRef.current && isEqual(publishedRef.current, next)) {
+      return;
+    }
+    publishedRef.current = next;
+    setApiContext(next);
   }, [
     enabled,
     projectId,
@@ -118,4 +125,15 @@ export function useApiContext({
     isAuthenticated,
     hasSession,
   ]);
+
+  // Torn down only when disabled or unmounted, not on every input change.
+  useLayoutEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    return () => {
+      publishedRef.current = null;
+      setApiContext(null);
+    };
+  }, [enabled]);
 }

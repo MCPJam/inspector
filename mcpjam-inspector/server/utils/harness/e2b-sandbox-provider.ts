@@ -17,13 +17,27 @@
  *   id / defaultWorkingDirectory / ports    → native E2B
  *   stop / destroy                          → no-op (control plane owns teardown)
  */
-import { Sandbox, FileNotFoundError, CommandExitError } from "e2b";
+import {
+  Sandbox,
+  FileNotFoundError,
+  CommandExitError,
+  SandboxNotFoundError,
+} from "e2b";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
+import { scrubLogText } from "../../../shared/log-scrubber.js";
 import { confineToHome } from "../computers/path-confine.js";
 import { logger } from "../logger.js";
+import {
+  BRIDGE_REAP_GRACE_MS,
+  bridgeStateDirOf,
+  isBridgeSpawn,
+  reapHarnessBridgesCommand,
+} from "./bridge-reaper.js";
+import { harnessPnpmGuardCommand } from "./harness-bake.js";
+import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
   /**
@@ -51,15 +65,18 @@ export interface E2BHarnessSandboxProviderOptions {
   /** Working dir inside the sandbox. E2B's default home for the computer
    *  template. */
   defaultWorkingDirectory?: string;
-  /** Port the in-sandbox Claude Code bridge binds to; surfaced via
-   *  `session.ports` so the claude-code adapter picks it up. E2B's `getHost`
-   *  bridges any listening port, but the adapter reads `ports`. */
+  /** Port the in-sandbox bridges bind to; surfaced via `session.ports` so the
+   *  adapters pick it up. Defaults to 0: each bridge binds a port of its own
+   *  and reports it, and the adapter connects to the port that was bound. A
+   *  bridge outlives its turn, so a fixed port would let one chat's bridge —
+   *  possibly holding a paused approval — block every other chat's on the
+   *  same computer. E2B's `getHost` reaches any listening port. */
   bridgePort?: number;
   /** Connect/keep-alive timeout handed to `Sandbox.connect`. */
   connectTimeoutMs?: number;
-  /** Per-command exec timeout for `run`. E2B foreground commands default to
-   *  ~60s — too short for the harness bootstrap (`pnpm install`) on a larger
-   *  dep tree. Background `spawn` is not subject to the foreground cap. */
+  /** Per-command exec timeout for `run`. E2B commands default to ~60s — too
+   *  short for the harness bootstrap (`pnpm install`) on a larger dep tree.
+   *  `spawn` does not use it: a bridge runs with no timeout at all. */
   commandTimeoutMs?: number;
   /**
    * SESSION-WIDE environment merged into every `run` and `spawn`.
@@ -83,6 +100,63 @@ export interface E2BHarnessSandboxProviderOptions {
 }
 
 const enc = new TextEncoder();
+
+/**
+ * Longest stderr line a bridge can forward. The harness framework copies every
+ * line into this process's stderr — which ships to the platform's log
+ * pipeline — and into the tail a startup error quotes.
+ */
+const MAX_BRIDGE_STDERR_LINE_CHARS = 2000;
+
+/**
+ * A bridge's stderr carries whatever the agent and its CLI print: an upstream
+ * error quoting a request, a tool's arguments, a URL with a token in it. Each
+ * line is capped and loses credentials, emails and URL paths here, before it
+ * leaves the provider — the one place every E2B harness's stream passes.
+ *
+ * Per COMPLETE line: a chunk boundary can fall inside a credential
+ * (`/res` | `ults/<token>`), and neither half matches a scrubber pattern. The
+ * incomplete last line of a chunk waits for the next one (or the stream's
+ * end); a line that never ends is flushed once it passes twice the cap, so
+ * the hold-back is bounded, and the rest of that line, up to its newline, is
+ * dropped: emitted on its own it would start mid-credential again
+ * (`…?co` | `de=<code>`), and the cap would have cut it anyway.
+ */
+export function createBridgeStderrRedactor(): {
+  push(chunk: string): string;
+  flush(): string;
+} {
+  let pending = "";
+  // Set once an unterminated line overflowed: drop text up to its newline.
+  let discarding = false;
+  const redact = (line: string) =>
+    scrubLogText(line, MAX_BRIDGE_STDERR_LINE_CHARS);
+  return {
+    push(chunk) {
+      let text = chunk;
+      if (discarding) {
+        const end = text.indexOf("\n");
+        if (end === -1) return "";
+        text = text.slice(end + 1);
+        discarding = false;
+      }
+      const lines = `${pending}${text}`.split("\n");
+      pending = lines.pop() ?? "";
+      if (pending.length > MAX_BRIDGE_STDERR_LINE_CHARS * 2) {
+        lines.push(pending);
+        pending = "";
+        discarding = true;
+      }
+      return lines.length > 0 ? `${lines.map(redact).join("\n")}\n` : "";
+    },
+    flush() {
+      const rest = pending;
+      pending = "";
+      discarding = false;
+      return rest ? redact(rest) : "";
+    },
+  };
+}
 
 /**
  * Path confinement for the harness file writers — keeps every `write*` under the
@@ -158,7 +232,7 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 }
 
 async function streamToBytes(
-  stream: ReadableStream<Uint8Array>
+  stream: ReadableStream<Uint8Array>,
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   const reader = stream.getReader();
@@ -178,13 +252,14 @@ async function streamToBytes(
 }
 
 export function createE2BHarnessSandboxProvider(
-  opts: E2BHarnessSandboxProviderOptions
+  opts: E2BHarnessSandboxProviderOptions,
 ): HarnessV1SandboxProvider {
-  const bridgePort = opts.bridgePort ?? 39271;
+  const bridgePort = opts.bridgePort ?? 0;
   const cwd = opts.defaultWorkingDirectory ?? "/home/user";
-  // E2B foreground `commands.run` defaults to a ~60s command timeout, separate
-  // from the sandbox's own lifetime — too short for the harness bootstrap
-  // (`pnpm install`). Background `spawn` is not subject to this cap.
+  // E2B `commands.run` defaults to a ~60s command timeout, separate from the
+  // sandbox's own lifetime — too short for the harness bootstrap
+  // (`pnpm install`). It applies to background commands too, which is why
+  // `spawn` below opts out of it explicitly.
   const commandTimeoutMs = opts.commandTimeoutMs ?? 10 * 60_000;
   // Frozen at provider construction. The session's env is fixed for its
   // lifetime by design: a harness session that changed its environment
@@ -208,7 +283,7 @@ export function createE2BHarnessSandboxProvider(
     }
   };
   const mergeEnv = (
-    env: Record<string, string> | undefined
+    env: Record<string, string> | undefined,
   ): Record<string, string> | undefined => {
     if (!sessionEnv) return env;
     return { ...sessionEnv, ...(env ?? {}) };
@@ -221,7 +296,7 @@ export function createE2BHarnessSandboxProvider(
   // (which persists on the box) using the `resumeFrom` state; our provider just
   // has to supply the sandbox connection.
   const connectSession = async (
-    connectSignal?: AbortSignal
+    connectSignal?: AbortSignal,
   ): Promise<HarnessV1NetworkSandboxSession> => {
     // Reuse the host's existing computer. It must already be awake — the
     // caller wakes it via the control plane (`ensureComputerReady`) before
@@ -230,6 +305,17 @@ export function createE2BHarnessSandboxProvider(
       apiKey: opts.apiKey,
       timeoutMs: opts.connectTimeoutMs,
       ...(connectSignal ? { signal: connectSignal } : {}),
+    }).catch((error: unknown) => {
+      // TYPED by the vendor SDK: the box is gone (killed on its timeout, or
+      // reaped). Our sandbox layer failed — never the model, never the server
+      // under test — so the eval infra classifier can exclude the trial.
+      if (error instanceof SandboxNotFoundError) {
+        throw new HarnessInfraSetupError(error.message, {
+          source: "sandbox_setup",
+          code: "sandbox_not_found",
+        });
+      }
+      throw error;
     });
 
     // Mutated in place by setPorts so `session.ports` (same ref) stays live.
@@ -238,9 +324,11 @@ export function createE2BHarnessSandboxProvider(
     // The harness bootstrap shells `pnpm install` BEFORE any session hook runs.
     // pnpm is baked into the computer template (mcpjam-backend
     // templates/computer/e2b.Dockerfile); this idempotent guard covers boxes
-    // provisioned before that template rebuild lands, and no-ops once pnpm is
-    // present. We do not own the box, so a failure here propagates (the control
-    // plane still owns teardown).
+    // provisioned before that template rebuild lands — and custom environment
+    // images, which never had it — and no-ops once pnpm is present. The
+    // fallback install is PINNED to the template's version: an unpinned one is
+    // how pnpm 11 reached hosted turns. We do not own the box, so a failure
+    // here propagates (the control plane still owns teardown).
     //
     // Where it runs matters: on the harness path this is reached during PREWARM,
     // while the box still has ordinary egress. Reached after a lease has locked
@@ -248,7 +336,7 @@ export function createE2BHarnessSandboxProvider(
     // spends a minute of retries before failing — which is why the failure is
     // spelled out below rather than surfacing as E2B's bare "exit status 1".
     try {
-      await sandbox.commands.run("command -v pnpm || npm install -g pnpm", {
+      await sandbox.commands.run(harnessPnpmGuardCommand(), {
         timeoutMs: commandTimeoutMs,
         ...(connectSignal ? { signal: connectSignal } : {}),
       });
@@ -261,20 +349,45 @@ export function createE2BHarnessSandboxProvider(
             `model proxy, the package registry is unreachable by design — the ` +
             `harness runtime must be installed before that lock. Output: ` +
             (output ? output.slice(-500) : "(none)"),
-          { cause: err }
+          { cause: err },
         );
       }
       throw err;
     }
+
+    // Housekeeping, so best-effort: a failure here never blocks the spawn.
+    const reapBridges = async (
+      ownStateDir: string,
+      abortSignal?: AbortSignal,
+    ): Promise<void> => {
+      try {
+        const res = await sandbox.commands.run(
+          reapHarnessBridgesCommand(ownStateDir),
+          {
+            timeoutMs: BRIDGE_REAP_GRACE_MS + 10_000,
+            ...signalOpt(abortSignal),
+          },
+        );
+        const pids = res.stdout.trim();
+        if (pids) {
+          logger.info("[e2b-sandbox-provider] stopped unused harness bridges", {
+            pids,
+          });
+        }
+      } catch (err) {
+        logger.warn(
+          "[e2b-sandbox-provider] could not reap harness bridges; starting the bridge anyway",
+          { error: err instanceof Error ? err.message : String(err) },
+        );
+      }
+    };
 
     const session: HarnessV1NetworkSandboxSession = {
       id: sandbox.sandboxId,
       defaultWorkingDirectory: cwd,
       description:
         `E2B sandbox ${sandbox.sandboxId} (host computer). Working dir ${cwd}. ` +
-        `Bridge port ${bridgePort} reachable at ${sandbox.getHost(
-          bridgePort
-        )}.`,
+        `Each harness bridge binds a port of its own.`,
 
       // ── file I/O ──────────────────────────────────────────────────────
       readTextFile: async ({ path, abortSignal }) => {
@@ -309,14 +422,14 @@ export function createE2BHarnessSandboxProvider(
         enforceHarnessWritePath(path);
         await sandbox.files.write(
           [{ path, data: content }],
-          signalOpt(abortSignal)
+          signalOpt(abortSignal),
         );
       },
       writeBinaryFile: async ({ path, content, abortSignal }) => {
         enforceHarnessWritePath(path);
         await sandbox.files.write(
           [{ path, data: u8ToArrayBuffer(content) }],
-          signalOpt(abortSignal)
+          signalOpt(abortSignal),
         );
       },
       writeFile: async ({ path, content, abortSignal }) => {
@@ -324,7 +437,7 @@ export function createE2BHarnessSandboxProvider(
         const bytes = await streamToBytes(content);
         await sandbox.files.write(
           [{ path, data: u8ToArrayBuffer(bytes) }],
-          signalOpt(abortSignal)
+          signalOpt(abortSignal),
         );
       },
 
@@ -364,14 +477,29 @@ export function createE2BHarnessSandboxProvider(
 
       // ── spawn (long-lived; adapt E2B callbacks → ReadableStreams) ──────
       spawn: async ({ command, workingDirectory, env, abortSignal }) => {
+        // Before a bridge starts, stop the ones no turn will reattach to —
+        // never one paused on an approval (see `bridge-reaper.ts`).
+        // Without the new bridge's state dir there is no sessions root to
+        // bound the reaper to, so it does not run.
+        const stateDir = isBridgeSpawn(env)
+          ? bridgeStateDirOf(command)
+          : undefined;
+        if (stateDir) await reapBridges(stateDir, abortSignal);
         let outCtl!: ReadableStreamDefaultController<Uint8Array>;
         let errCtl!: ReadableStreamDefaultController<Uint8Array>;
         let streamsClosed = false;
+        const stderrRedactor = createBridgeStderrRedactor();
         const closeStreams = () => {
           if (streamsClosed) return;
           streamsClosed = true;
           try {
             outCtl.close();
+          } catch {
+            /* already closed */
+          }
+          try {
+            const rest = stderrRedactor.flush();
+            if (rest) errCtl.enqueue(enc.encode(rest));
           } catch {
             /* already closed */
           }
@@ -391,13 +519,24 @@ export function createE2BHarnessSandboxProvider(
           background: true,
           cwd: workingDirectory ?? cwd,
           envs: mergeEnv(env),
+          // 0, never the default: E2B kills a command when its timeout
+          // expires "even when `background` is set", and the default is 60s.
+          // With it, every bridge died a minute after it started — mid-turn
+          // for a longer turn, and always before the next turn could reattach,
+          // which then waited out the adapter's 120s handshake for nothing.
+          // A bridge now lives until a later spawn reaps it (above) or the
+          // computer hibernates.
+          timeoutMs: 0,
           ...signalOpt(abortSignal),
           // Guard against enqueue-after-close once the process ends/is killed.
           onStdout: (d: string) => {
             if (!streamsClosed) outCtl.enqueue(enc.encode(d));
           },
           onStderr: (d: string) => {
-            if (!streamsClosed) errCtl.enqueue(enc.encode(d));
+            if (!streamsClosed) {
+              const redacted = stderrRedactor.push(d);
+              if (redacted) errCtl.enqueue(enc.encode(redacted));
+            }
           },
         });
         // A background handle is returned only after E2B accepted the process.
@@ -447,13 +586,13 @@ export function createE2BHarnessSandboxProvider(
       // injects the broker lease outside the VM (see harness-model-broker.ts).
       getPortEndpoint: async ({ port, protocol }) => {
         const host = sandbox.getHost(port);
-        const scheme = protocol === "ws" ? "wss" : protocol ?? "https";
+        const scheme = protocol === "ws" ? "wss" : (protocol ?? "https");
         return { url: `${scheme}://${host}` };
       },
       // Deprecated in the stable contract but still required; same resolution.
       getPortUrl: async ({ port, protocol }) => {
         const host = sandbox.getHost(port);
-        const scheme = protocol === "ws" ? "wss" : protocol ?? "https";
+        const scheme = protocol === "ws" ? "wss" : (protocol ?? "https");
         return `${scheme}://${host}`;
       },
       // Never tear down a shared host computer: the control plane owns its
@@ -532,7 +671,8 @@ export function createE2BHarnessSandboxProvider(
     // The canary-era provider-level `bridgePorts` pool is gone from the stable
     // contract: adapters now lease the bridge port from the SESSION's `ports`
     // array (claude-code's resolveBridgePort reads ports[0]) and resolve it
-    // via `getPortEndpoint`. Our sessions already expose `[bridgePort]`.
+    // via `getPortEndpoint`. Our sessions expose `[bridgePort]` — 0, so each
+    // bridge binds its own port and the adapter connects to the one it bound.
 
     // `identity` and `onFirstCreate` are deliberately unused: they exist for
     // providers that CREATE and snapshot boxes, and this one only ever attaches

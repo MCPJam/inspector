@@ -8,7 +8,10 @@ import { useMintConversationBrowserToken } from "@/hooks/useProjectComputer";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
-import { ComparisonBrowser } from "@/components/browser/ComparisonBrowser";
+import {
+  ComparisonBrowser,
+  LocalBrowserUnavailable,
+} from "@/components/browser/ComparisonBrowser";
 
 /**
  * The browser, beside chat.
@@ -166,10 +169,7 @@ export function PlaygroundBrowserPanel({
             active={visible}
           />
         ) : isLocal && !engine.localAvailable ? (
-          <p className="p-4 text-sm text-muted-foreground">
-            Browser is unavailable on this machine. Check Browser settings or
-            choose Cloud for a new chat.
-          </p>
+          <LocalBrowserUnavailable engine={engine} />
         ) : isLocal ? (
           <LocalBrowserBody
             key={`${projectId}:${browserSessionId}:local`}

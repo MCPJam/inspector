@@ -787,6 +787,33 @@ describe("appReducer", () => {
       });
     });
 
+    describe("UPDATE_PROJECT_SERVER", () => {
+      it("preserves servers added after a connection save began", () => {
+        const state = createInitialState();
+        const anotherServer = createServer("another-server");
+        const currentState = appReducer(state, {
+          type: "UPDATE_PROJECT",
+          projectId: "project-1",
+          updates: { servers: { "another-server": anotherServer } },
+        });
+        const authorizedServer = createServer("authorized-server", {
+          useOAuth: true,
+        });
+
+        const result = appReducer(currentState, {
+          type: "UPDATE_PROJECT_SERVER",
+          projectId: "project-1",
+          name: "authorized-server",
+          server: authorizedServer,
+        });
+
+        expect(result.projects["project-1"].servers).toEqual({
+          "another-server": anotherServer,
+          "authorized-server": authorizedServer,
+        });
+      });
+    });
+
     describe("DELETE_PROJECT", () => {
       it("removes project from state", () => {
         const extraProject: Project = {
