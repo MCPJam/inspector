@@ -19,7 +19,7 @@ import {
   hashCanonicalJson,
   sha256HexBytes,
 } from "./hashes.js";
-import { resolveManifestSource } from "./layout.js";
+import { LEGACY_MCP_CONFIG_PATH, resolveManifestSource } from "./layout.js";
 import { adaptLegacyMcpConfig } from "./legacy-mcp.js";
 import {
   MCPJAM_EXTENSION_NAMESPACE,
@@ -408,11 +408,13 @@ export async function parsePluginBundle(
         : undefined;
   if (resolved.skipped !== undefined) skipped.push(resolved.skipped);
   for (const file of files) {
-    if (
-      file !== mcpFile &&
-      `/${file.path}`.endsWith(`/${MCP_CONFIG_PATH}`) &&
-      !isPathInside(SKILLS_DIR, file.path)
-    ) {
+    const namedLikeMcpConfig =
+      (`/${file.path}`.endsWith(`/${MCP_CONFIG_PATH}`) &&
+        !isPathInside(SKILLS_DIR, file.path)) ||
+      // A legacy manifest's own `mcpServers` takes the place of `.mcp.json`.
+      (interpretation.layout !== "agent-plugins" &&
+        file.path === LEGACY_MCP_CONFIG_PATH);
+    if (file !== mcpFile && namedLikeMcpConfig) {
       issues.warn(
         "MCP_CONFIG_IGNORED",
         `"${file.path}" is not this bundle's MCP configuration; ignored`,

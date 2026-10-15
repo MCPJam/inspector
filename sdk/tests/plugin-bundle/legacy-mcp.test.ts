@@ -257,6 +257,48 @@ describe("legacy .mcp.json", () => {
     expect(parsed.warnings).toEqual([]);
   });
 
+  it("reports a .mcp.json that the manifest's declaration takes the place of", async () => {
+    for (const mcpServers of [
+      "./config/mcp.json",
+      { inline: { command: "node" } },
+      "./missing.json",
+    ]) {
+      const parsed = await parsePluginBundle(
+        bundle({
+          [CODEX]: JSON.stringify({ name: "demo", mcpServers }),
+          "config/mcp.json": JSON.stringify({
+            mcpServers: { declared: { command: "node" } },
+          }),
+          ".mcp.json": JSON.stringify({
+            mcpServers: { fallback: { command: "node" } },
+          }),
+        }),
+        compat
+      );
+      expect(parsed.mcpServers.map((server) => server.key)).not.toContain(
+        "fallback"
+      );
+      expect(parsed.warnings).toContainEqual(
+        expect.objectContaining({
+          code: "MCP_CONFIG_IGNORED",
+          path: ".mcp.json",
+        })
+      );
+    }
+    // Declaring .mcp.json itself reads it, with nothing to report.
+    const declared = await parsePluginBundle(
+      codexBundle(
+        { local: { command: "node" } },
+        {
+          [CODEX]: JSON.stringify({ name: "demo", mcpServers: "./.mcp.json" }),
+        }
+      ),
+      compat
+    );
+    expect(declared.mcpServers.map((server) => server.key)).toEqual(["local"]);
+    expect(declared.warnings).toEqual([]);
+  });
+
   it("invalidates MCP servers when the declared location escapes the package", async () => {
     const parsed = await parsePluginBundle(
       bundle({
