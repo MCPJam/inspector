@@ -8,13 +8,12 @@ import {
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
 import {
-  assertBearerToken,
   ErrorCode,
   WebRouteError,
   mapRuntimeError,
   webErrorFromRoute,
 } from "./errors.js";
-import { fetchRuntimeServerSecrets } from "../../utils/server-secrets.js";
+import { HOSTED_MODE } from "../../config.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
@@ -31,6 +30,7 @@ const oauthWeb = new Hono();
 const OAUTH_UPSTREAM_URL_HEADER = "X-MCPJam-OAuth-Upstream-URL";
 const LOCAL_RECOVERY_TTL_MS = 15 * 60 * 1000;
 const LOCAL_RECOVERY_MAX_RECORDS = 128;
+const LOCAL_RECOVERY_MAX_PER_PRINCIPAL = 16;
 const LOCAL_RECOVERY_MAX_HEADER_BYTES = 64 * 1024;
 const LOCAL_RECOVERY_MAX_SERVER_NAME_LENGTH = 256;
 const LOCAL_RECOVERY_MAX_SERVER_URL_LENGTH = 4096;
@@ -136,11 +136,13 @@ function omitAuthorizationHeader(
 function parseRecoveryHeaders(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const entries = Object.entries(value).filter(
-    ([key, headerValue]) =>
-      key.trim().length > 0 &&
+    (entry): entry is [string, string] => {
+      const [key, headerValue] = entry;
+      return key.trim().length > 0 &&
       key.length <= 256 &&
       typeof headerValue === "string" &&
-      headerValue.length <= 8192,
+      headerValue.length <= 8192;
+    },
   );
   if (entries.length > 64) {
     throw new WebRouteError(
@@ -382,107 +384,97 @@ for (const path of CONVEX_OAUTH_PROXY_PATHS) {
 }
 
 /**
- * Recover callback-only OAuth headers from the encrypted server-secret store.
- * Values are returned to the initiating browser for this exchange only and are
- * never written to browser storage. The backend verifies that the credential
- * binding permits the requested server URL.
+ * Local callbacks recover only values staged by the same initiating principal.
+ * The handle binds a single exchange; this route never reads Convex secrets and
+ * is unavailable in hosted mode.
  */
-oauthWeb.post("/recovery-headers", async (c) => {
-  try {
-    const bearerToken = assertBearerToken(c);
-    const body = await c.req.json();
-    const projectId = typeof body?.projectId === "string" ? body.projectId : "";
-    const serverId = typeof body?.serverId === "string" ? body.serverId : "";
-    const { serverName, serverUrl } = parseRecoveryBinding(body);
-    if (projectId && serverId) {
-      const secrets = await fetchRuntimeServerSecrets({
-        bearerToken,
-        projectId,
-        serverId,
-        expectedTargetUrl: serverUrl,
-        accessScope: "project_member",
+if (!HOSTED_MODE) {
+  oauthWeb.post("/recovery-headers", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { serverName, serverUrl } = parseRecoveryBinding(body);
+      const recoveryHandle = parseRecoveryHandle(body?.recoveryHandle);
+      evictExpiredLocalRecoveryHeaders();
+      const key = localRecoveryKey({
+        principal: localRecoveryPrincipal(c),
+        recoveryHandle,
+        serverName,
+        serverUrl,
       });
+      const staged = localRecoveryHeaders.get(key);
+      localRecoveryHeaders.delete(key);
+      if (!staged || staged.expiresAt <= Date.now()) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "OAuth recovery headers are no longer available",
+        );
+      }
       return c.json({
         success: true,
-        headers: omitAuthorizationHeader(secrets.headers),
+        headers: omitAuthorizationHeader(staged.headers),
       });
+    } catch (error) {
+      return webErrorCompat(c, toRouteError(error));
     }
-    const recoveryHandle = parseRecoveryHandle(body?.recoveryHandle);
-    evictExpiredLocalRecoveryHeaders();
-    const key = localRecoveryKey({
-      principal: localRecoveryPrincipal(c),
-      recoveryHandle,
-      serverName,
-      serverUrl,
-    });
-    const staged = localRecoveryHeaders.get(key);
-    localRecoveryHeaders.delete(key);
-    if (!staged || staged.expiresAt <= Date.now()) {
-      throw new WebRouteError(
-        404,
-        ErrorCode.NOT_FOUND,
-        "OAuth recovery headers are no longer available",
-      );
-    }
-    return c.json({
-      success: true,
-      headers: omitAuthorizationHeader(staged.headers),
-    });
-  } catch (error) {
-    return webErrorCompat(c, toRouteError(error));
-  }
-});
+  });
 
-oauthWeb.post("/recovery-headers/stage", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { serverName, serverUrl } = parseRecoveryBinding(body);
-    const recoveryHandle = parseRecoveryHandle(body?.recoveryHandle);
-    const headers = parseRecoveryHeaders(body?.headers);
-    if (Object.keys(headers).length === 0) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Missing OAuth recovery headers",
-      );
+  oauthWeb.post("/recovery-headers/stage", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { serverName, serverUrl } = parseRecoveryBinding(body);
+      const recoveryHandle = parseRecoveryHandle(body?.recoveryHandle);
+      const headers = omitAuthorizationHeader(parseRecoveryHeaders(body?.headers));
+      if (Object.keys(headers).length === 0) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "Missing OAuth recovery headers",
+        );
+      }
+      evictExpiredLocalRecoveryHeaders();
+      const key = localRecoveryKey({
+        principal: localRecoveryPrincipal(c),
+        recoveryHandle,
+        serverName,
+        serverUrl,
+      });
+      const principalPrefix = `${localRecoveryPrincipal(c)}\0`;
+      let principalCount = 0;
+      for (const storedKey of localRecoveryHeaders.keys()) {
+        if (!storedKey.startsWith(principalPrefix)) continue;
+        if (storedKey.endsWith(`\0${serverName}\0${serverUrl}`)) {
+          localRecoveryHeaders.delete(storedKey);
+        } else {
+          principalCount += 1;
+        }
+      }
+      if (principalCount >= LOCAL_RECOVERY_MAX_PER_PRINCIPAL) {
+        throw new WebRouteError(
+          429, ErrorCode.RATE_LIMITED,
+          "Too many pending OAuth recovery records for this caller",
+        );
+      }
+      if (
+        !localRecoveryHeaders.has(key) &&
+        localRecoveryHeaders.size >= LOCAL_RECOVERY_MAX_RECORDS
+      ) {
+        throw new WebRouteError(
+          429,
+          ErrorCode.RATE_LIMITED,
+          "Too many pending OAuth recovery records",
+        );
+      }
+      localRecoveryHeaders.set(key, {
+        expiresAt: Date.now() + LOCAL_RECOVERY_TTL_MS,
+        headers,
+      });
+      return c.json({ success: true });
+    } catch (error) {
+      return webErrorCompat(c, toRouteError(error));
     }
-    evictExpiredLocalRecoveryHeaders();
-    const key = localRecoveryKey({
-      principal: localRecoveryPrincipal(c),
-      recoveryHandle,
-      serverName,
-      serverUrl,
-    });
-    if (
-      !localRecoveryHeaders.has(key) &&
-      localRecoveryHeaders.size >= LOCAL_RECOVERY_MAX_RECORDS
-    ) {
-      throw new WebRouteError(
-        429,
-        ErrorCode.RATE_LIMITED,
-        "Too many pending OAuth recovery records",
-      );
-    }
-    localRecoveryHeaders.set(key, {
-      expiresAt: Date.now() + LOCAL_RECOVERY_TTL_MS,
-      headers,
-    });
-    return c.json({ success: true });
-  } catch (error) {
-    return webErrorCompat(c, toRouteError(error));
-  }
-});
-
-// Local-mode token import — see backend `/web/oauth/import-tokens` for shape.
-// The local CLI's `MCPOAuthProvider` uses this to push browser-side
-// PKCE-exchanged tokens into Convex so the resolver can read them.
-oauthWeb.post("/import-tokens", async (c) => {
-  try {
-    return await proxyConvexOAuthPost(c, "/web/oauth/import-tokens");
-  } catch (error) {
-    return webErrorCompat(c, toRouteError(error));
-  }
-});
+  });
+}
 
 /**
  * Debug proxy for OAuth flow visualization (hosted mode).

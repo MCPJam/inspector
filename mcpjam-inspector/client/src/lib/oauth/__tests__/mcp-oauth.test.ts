@@ -972,7 +972,7 @@ describe("mcp-oauth", () => {
         }),
         { status: 200 }
       );
-      authFetch.mockResolvedValue(metadataResponse);
+      authFetch.mockImplementation(async (input: RequestInfo | URL) => getUrlString(input).includes("/recovery-headers/stage") ? createJsonResponse({ success: true }) : metadataResponse.clone());
       mockDiscoverOAuthServerInfo.mockImplementationOnce(
         async (_serverUrl, options) => {
           const response = await options?.fetchFn?.(
@@ -2828,7 +2828,7 @@ describe("mcp-oauth", () => {
       );
     });
 
-    it("recovers custom headers from the protected server-secret store for callback exchange", async () => {
+    it("recovers staged headers even when a Convex binding is present", async () => {
       await seedPendingOAuth(undefined);
       localStorage.setItem(
         "mcp-oauth-config-asana",
@@ -2842,6 +2842,7 @@ describe("mcp-oauth", () => {
           kind: "generic",
         })
       );
+      sessionStorage.setItem("mcp-oauth-recovery-handle-asana", "a".repeat(48));
       authFetch
         .mockResolvedValueOnce(
           createJsonResponse({
@@ -2888,8 +2889,7 @@ describe("mcp-oauth", () => {
           body: JSON.stringify({
             serverName: "asana",
             serverUrl: "https://mcp.asana.com/v2/mcp",
-            projectId: "proj_default",
-            serverId: "srv_asana",
+            recoveryHandle: "a".repeat(48),
           }),
         })
       );

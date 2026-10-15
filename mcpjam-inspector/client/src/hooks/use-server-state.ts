@@ -343,10 +343,10 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     "headers",
   );
   const hasCustomHeaders = hasExplicitHeaderPatch
-    ? Object.keys(formData.secretPatch?.headers ?? {}).length > 0
+    ? Object.keys(formData.secretPatch?.headers ?? {}).some((name) => name.toLowerCase() !== "authorization")
     : existingOAuthConfig.hasCustomHeaders === true ||
       Object.keys(existingOAuthConfig.customHeaders ?? {}).length > 0 ||
-      Object.keys(formData.headers ?? {}).length > 0;
+      Object.keys(formData.headers ?? {}).some((name) => name.toLowerCase() !== "authorization");
   oauthConfig.hasCustomHeaders = hasCustomHeaders;
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;

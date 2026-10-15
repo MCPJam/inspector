@@ -5,10 +5,10 @@ export interface FetchServerSecretsRequest {
   serverId: string;
 }
 
-export interface FetchOAuthRecoveryHeadersRequest extends Partial<FetchServerSecretsRequest> {
+export interface FetchOAuthRecoveryHeadersRequest {
   serverName: string;
   serverUrl: string;
-  recoveryHandle?: string;
+  recoveryHandle: string;
 }
 
 export interface StageOAuthRecoveryHeadersRequest {

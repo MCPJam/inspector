@@ -1,3 +1,5 @@
+import type { ResolvedAuthorizationPlan, OAuthRegistrationMode } from "@mcpjam/sdk/browser";
+
 /**
  * OAuth Constants for MCPJam Inspector
  */
@@ -121,4 +123,20 @@ export function getRedirectUri(): string {
 
   // Default fallback
   return "http://localhost:6274/oauth/callback";
+}
+
+export function applyPreviewRegistrationPolicy(
+  plan: ResolvedAuthorizationPlan,
+  mode: OAuthRegistrationMode,
+  supportsCimd: boolean,
+): { plan: ResolvedAuthorizationPlan; reason?: string; error?: string } {
+  if (plan.status !== "ready" || plan.registrationStrategy !== "cimd" || supportsCimd) return { plan };
+  if (mode !== "auto") return { plan, error: "CIMD is unavailable on this preview host because its OAuth callback is not registered. Use Automatic or DCR for this preview." };
+  if (!plan.capabilities.supportsDcr) return { plan, error: "CIMD is unavailable on this preview host, and the authorization server did not advertise DCR as a fallback." };
+  // Change only the selected strategy; re-planning would feed credential-bearing
+  // options back into metadata that is later persisted in the browser.
+  return {
+    plan: { ...plan, registrationStrategy: "dcr" },
+    reason: "CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.",
+  };
 }

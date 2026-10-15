@@ -137,41 +137,12 @@ describe("web routes — oauth requires bearer token", () => {
     );
   });
 
-  it("POST /recovery-headers returns only protected headers for the bound server", async () => {
-    fetchRuntimeServerSecretsMock.mockResolvedValueOnce({
-      env: { PRIVATE_ENV: "not-returned" },
-      headers: {
-        "X-Tenant": "protected-tenant",
-        Authorization: "Bearer mcp-server-token",
-      },
-      boundOrigins: ["https://mcp.example.com"],
-    });
-
-    const response = await postJson(
-      app,
-      "/api/web/oauth/recovery-headers",
-      {
-        projectId: "project-1",
-        serverId: "server-1",
-        serverName: "example",
-        serverUrl: "https://mcp.example.com/mcp",
-      },
-      token,
-    );
-    const { status, data } = await expectJson(response);
-
-    expect(status).toBe(200);
-    expect(data).toEqual({
-      success: true,
-      headers: { "X-Tenant": "protected-tenant" },
-    });
-    expect(fetchRuntimeServerSecretsMock).toHaveBeenCalledWith({
-      bearerToken: token,
-      projectId: "project-1",
-      serverId: "server-1",
-      expectedTargetUrl: "https://mcp.example.com/mcp",
-      accessScope: "project_member",
-    });
+  it("does not reveal runtime secrets for a project/server binding", async () => {
+    const response = await postJson(app, "/api/web/oauth/recovery-headers", {
+      projectId: "project-1", serverId: "server-1", serverName: "example", serverUrl: "https://mcp.example.com/mcp",
+    }, token);
+    expect(response.status).toBe(400);
+    expect(fetchRuntimeServerSecretsMock).not.toHaveBeenCalled();
   });
 
   it("stages and consumes callback headers for an unsynced local server", async () => {
@@ -243,7 +214,7 @@ describe("web routes — oauth requires bearer token", () => {
   it("bounds pending local recovery records and evicts them after expiry", async () => {
     vi.useFakeTimers();
     try {
-      for (let index = 0; index < 128; index += 1) {
+      for (let index = 0; index < 16; index += 1) {
         const response = await postJson(
           app,
           "/api/web/oauth/recovery-headers/stage",

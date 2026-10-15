@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - .github/scripts/preview-cleanup.test.mjs
+      - .github/scripts/protected-preview.test.mjs
+      - .github/scripts/check-protected-preview.sh
       - .github/scripts/railway-env.sh
       - .github/scripts/reap-preview-envs.sh
       - .github/workflows/preview-close.yml
@@ -13,6 +15,8 @@ on:
     branches: [main]
     paths:
       - .github/scripts/preview-cleanup.test.mjs
+      - .github/scripts/protected-preview.test.mjs
+      - .github/scripts/check-protected-preview.sh
       - .github/scripts/railway-env.sh
       - .github/scripts/reap-preview-envs.sh
       - .github/workflows/preview-close.yml
@@ -33,5 +37,5 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - run: node --test .github/scripts/preview-cleanup.test.mjs
+      - run: node --test .github/scripts/preview-cleanup.test.mjs .github/scripts/protected-preview.test.mjs
       - run: bash -n .github/scripts/railway-env.sh .github/scripts/reap-preview-envs.sh

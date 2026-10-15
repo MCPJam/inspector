@@ -74,6 +74,7 @@ jobs:
       url: https://pr-${{ github.event.pull_request.number }}.mcpjam.dev
     env:
       BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+      PREVIEW_EDGE_SECRET: ${{ secrets.PREVIEW_EDGE_SECRET }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
@@ -172,9 +173,11 @@ jobs:
       # redirect_uri_invalid. Write both spellings.
       - name: Configure non-prod preview defaults
         run: |
+          : "${PREVIEW_EDGE_SECRET:?PREVIEW_EDGE_SECRET must match the preview router secret}"
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
+            PREVIEW_EDGE_SECRET="$PREVIEW_EDGE_SECRET" \
             MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app,$PUBLIC_PREVIEW_HOST" \
             VITE_MCPJAM_HOSTED_MODE=true \
@@ -239,6 +242,7 @@ jobs:
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
+          : "${PREVIEW_EDGE_SECRET:?PREVIEW_EDGE_SECRET must match the preview router secret}"
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
@@ -251,18 +255,19 @@ jobs:
         env:
           STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
         run: |
-          workos config redirect add "${{ steps.preview_domain.outputs.url }}/callback" \
-            --api-key "$STAGING_WORKOS_API_KEY" \
-            --json
-          workos config cors add "${{ steps.preview_domain.outputs.url }}" \
-            --api-key "$STAGING_WORKOS_API_KEY" \
-            --json || true
+          # Only MCPJam-owned origins may receive login callbacks.
+          WORKOS_CLEANUP_STRICT=1 bash .github/scripts/workos-cleanup.sh "${{ steps.preview_domain.outputs.url }}"
           workos config redirect add "$PUBLIC_PREVIEW_ORIGIN/callback" \
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json
           workos config cors add "$PUBLIC_PREVIEW_ORIGIN" \
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
+
+      - name: Check protected preview routing
+        id: protected_preview
+        if: steps.preview_domain.outputs.url != ''
+        run: bash .github/scripts/check-protected-preview.sh "$PUBLIC_PREVIEW_ORIGIN"
 
       # Initial health check: the preview starts wired to the default
       # backend (shared preview deployment, or staging until that's
@@ -312,7 +317,7 @@ jobs:
         if: always()
         uses: actions/github-script@v9
         env:
-          PREVIEW_URL: ${{ env.PUBLIC_PREVIEW_ORIGIN }}
+          PREVIEW_URL: ${{ steps.protected_preview.outcome == 'success' && env.PUBLIC_PREVIEW_ORIGIN || '' }}
           # 'preview requested' is string-matched by preview-watchdog.yml —
           # keep that label verbatim when rewording.
           BACKEND_MODE: ${{ steps.backend_branch.outputs.exists == 'true' && 'preview requested' || (vars.PREVIEW_BACKEND_VITE_CONVEX_URL != '' && 'shared preview backend' || 'staging fallback') }}
@@ -393,6 +398,7 @@ jobs:
       url: https://pr-be-${{ github.event.client_payload.backend_pr_number }}.mcpjam.dev
     env:
       BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+      PREVIEW_EDGE_SECRET: ${{ secrets.PREVIEW_EDGE_SECRET }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
@@ -466,9 +472,11 @@ jobs:
       # redirect_uri_invalid. Write both spellings.
       - name: Configure non-prod preview defaults
         run: |
+          : "${PREVIEW_EDGE_SECRET:?PREVIEW_EDGE_SECRET must match the preview router secret}"
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
+            PREVIEW_EDGE_SECRET="$PREVIEW_EDGE_SECRET" \
             MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app,$PUBLIC_PREVIEW_HOST" \
             VITE_MCPJAM_HOSTED_MODE=true \
@@ -533,6 +541,7 @@ jobs:
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
+          : "${PREVIEW_EDGE_SECRET:?PREVIEW_EDGE_SECRET must match the preview router secret}"
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
@@ -545,18 +554,19 @@ jobs:
         env:
           STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
         run: |
-          workos config redirect add "${{ steps.preview_domain.outputs.url }}/callback" \
-            --api-key "$STAGING_WORKOS_API_KEY" \
-            --json
-          workos config cors add "${{ steps.preview_domain.outputs.url }}" \
-            --api-key "$STAGING_WORKOS_API_KEY" \
-            --json || true
+          # Only MCPJam-owned origins may receive login callbacks.
+          WORKOS_CLEANUP_STRICT=1 bash .github/scripts/workos-cleanup.sh "${{ steps.preview_domain.outputs.url }}"
           workos config redirect add "$PUBLIC_PREVIEW_ORIGIN/callback" \
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json
           workos config cors add "$PUBLIC_PREVIEW_ORIGIN" \
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
+
+      - name: Check protected preview routing
+        id: protected_preview
+        if: steps.preview_domain.outputs.url != ''
+        run: bash .github/scripts/check-protected-preview.sh "$PUBLIC_PREVIEW_ORIGIN"
 
       - name: Dispatch backend preview request
         if: steps.preview_domain.outputs.url != ''
@@ -598,7 +608,7 @@ jobs:
       - name: Upsert preview comment on backend PR
         uses: actions/github-script@v9
         env:
-          PREVIEW_URL: ${{ env.PUBLIC_PREVIEW_ORIGIN }}
+          PREVIEW_URL: ${{ steps.protected_preview.outcome == 'success' && env.PUBLIC_PREVIEW_ORIGIN || '' }}
           BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
           PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
@@ -708,6 +718,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      PREVIEW_EDGE_SECRET: ${{ secrets.PREVIEW_EDGE_SECRET }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
@@ -781,9 +792,11 @@ jobs:
       # redirect_uri_invalid. Write both spellings.
       - name: Update preview environment variables
         run: |
+          : "${PREVIEW_EDGE_SECRET:?PREVIEW_EDGE_SECRET must match the preview router secret}"
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
+            PREVIEW_EDGE_SECRET="$PREVIEW_EDGE_SECRET" \
             MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app,$PUBLIC_PREVIEW_HOST" \
             VITE_MCPJAM_HOSTED_MODE=true \
@@ -838,6 +851,7 @@ jobs:
       - name: Refresh preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
+          : "${PREVIEW_EDGE_SECRET:?PREVIEW_EDGE_SECRET must match the preview router secret}"
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
@@ -850,18 +864,19 @@ jobs:
         env:
           STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
         run: |
-          workos config redirect add "${{ steps.preview_domain.outputs.url }}/callback" \
-            --api-key "$STAGING_WORKOS_API_KEY" \
-            --json
-          workos config cors add "${{ steps.preview_domain.outputs.url }}" \
-            --api-key "$STAGING_WORKOS_API_KEY" \
-            --json || true
+          # Only MCPJam-owned origins may receive login callbacks.
+          WORKOS_CLEANUP_STRICT=1 bash .github/scripts/workos-cleanup.sh "${{ steps.preview_domain.outputs.url }}"
           workos config redirect add "$PUBLIC_PREVIEW_ORIGIN/callback" \
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json
           workos config cors add "$PUBLIC_PREVIEW_ORIGIN" \
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
+
+      - name: Check protected preview routing
+        id: protected_preview
+        if: steps.preview_domain.outputs.url != ''
+        run: bash .github/scripts/check-protected-preview.sh "$PUBLIC_PREVIEW_ORIGIN"
 
       # End-to-end health check: whatever Convex URL the inspector is now
       # wired to (preview or staging fallback) must actually have the public
@@ -884,7 +899,7 @@ jobs:
         if: always()
         uses: actions/github-script@v9
         env:
-          PREVIEW_URL: ${{ env.PUBLIC_PREVIEW_ORIGIN }}
+          PREVIEW_URL: ${{ steps.protected_preview.outcome == 'success' && env.PUBLIC_PREVIEW_ORIGIN || '' }}
           BACKEND_MODE: ${{ steps.backend_target.outputs.backend_mode }}
           HEALTH_OUTCOME: ${{ steps.final_health.outcome }}
           PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}

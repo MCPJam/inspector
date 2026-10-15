@@ -57,9 +57,16 @@ import {
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import {
-  fetchOAuthRecoveryHeaders,
-  stageOAuthRecoveryHeaders,
-} from "@/lib/apis/server-secrets-api";
+  parseStoredOAuthConfig,
+  serializeStoredOAuthConfig,
+} from "./stored-oauth-config";
+export { serializeStoredOAuthConfig } from "./stored-oauth-config";
+import {
+  resolveLocalOAuthHeaders,
+  stageLocalOAuthHeaders,
+  recoverLocalOAuthHeaders,
+  withoutOAuthAuthorizationHeader,
+} from "./local-oauth-recovery";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import { captureCurrentReturnPath } from "@/lib/app-navigation";
@@ -71,7 +78,7 @@ import {
 } from "@/lib/hosted-oauth-callback";
 import {
   getRedirectUri,
-  resolveProtectedPreviewAppUrl,
+  applyPreviewRegistrationPolicy,
   supportsMcpJamCimdRedirect,
 } from "./constants";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
@@ -186,24 +193,6 @@ export interface StoredOAuthConfig {
   protocolVersion?: OAuthProtocolVersion;
   registrationMode?: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
-}
-
-export function serializeStoredOAuthConfig(config: StoredOAuthConfig): string {
-  const publicConfig: StoredOAuthConfig = {
-    scopes: config.scopes,
-    hasCustomHeaders: config.hasCustomHeaders === true ? true : undefined,
-    resourceUrl: config.resourceUrl,
-    registryServerId: config.registryServerId,
-    useRegistryOAuthProxy: config.useRegistryOAuthProxy,
-    protocolMode: config.protocolMode,
-    protocolVersion: config.protocolVersion,
-    registrationMode: config.registrationMode,
-    registrationStrategy: config.registrationStrategy,
-  };
-  // Encoding gives CodeQL an explicit protection boundary after the allowlist
-  // above. It is not relied on to protect secret values: those are excluded
-  // structurally and recovered from the encrypted secret store.
-  return encodeURIComponent(JSON.stringify(publicConfig));
 }
 
 interface OAuthRoutingConfig {
@@ -1073,71 +1062,7 @@ export function readStoredOAuthConfig(
     const parsed = JSON.parse(
       raw.trimStart().startsWith("{") ? raw : decodeURIComponent(raw)
     );
-    const config: StoredOAuthConfig = {
-      registryServerId:
-        typeof parsed?.registryServerId === "string"
-          ? parsed.registryServerId
-          : undefined,
-      useRegistryOAuthProxy: parsed?.useRegistryOAuthProxy === true,
-      resourceUrl:
-        typeof parsed?.resourceUrl === "string" &&
-        parsed.resourceUrl.trim() !== ""
-          ? parsed.resourceUrl
-          : undefined,
-      protocolMode:
-        parsed?.protocolMode === "auto" ||
-        parsed?.protocolMode === "2025-03-26" ||
-        parsed?.protocolMode === "2025-06-18" ||
-        parsed?.protocolMode === "2025-11-25" ||
-        parsed?.protocolMode === "2026-07-28"
-          ? parsed.protocolMode
-          : undefined,
-      protocolVersion:
-        parsed?.protocolVersion === "2025-03-26" ||
-        parsed?.protocolVersion === "2025-06-18" ||
-        parsed?.protocolVersion === "2025-11-25" ||
-        parsed?.protocolVersion === "2026-07-28"
-          ? parsed.protocolVersion
-          : undefined,
-      registrationMode:
-        parsed?.registrationMode === "auto" ||
-        parsed?.registrationMode === "cimd" ||
-        parsed?.registrationMode === "dcr" ||
-        parsed?.registrationMode === "preregistered"
-          ? parsed.registrationMode
-          : undefined,
-      registrationStrategy:
-        parsed?.registrationStrategy === "cimd" ||
-        parsed?.registrationStrategy === "dcr" ||
-        parsed?.registrationStrategy === "preregistered"
-          ? parsed.registrationStrategy
-          : undefined,
-    };
-
-    if (parsed?.hasCustomHeaders === true) {
-      config.hasCustomHeaders = true;
-    }
-
-    if (
-      Array.isArray(parsed?.scopes) &&
-      parsed.scopes.every((scope: unknown) => typeof scope === "string")
-    ) {
-      config.scopes = parsed.scopes;
-    }
-
-    if (
-      parsed?.customHeaders &&
-      typeof parsed.customHeaders === "object" &&
-      !Array.isArray(parsed.customHeaders)
-    ) {
-      config.customHeaders = Object.fromEntries(
-        Object.entries(parsed.customHeaders).filter(
-          ([, value]) => typeof value === "string"
-        ) as Array<[string, string]>
-      );
-    }
-
-    return config;
+    return parseStoredOAuthConfig(parsed);
   } catch (e) {
     console.warn("[mcp-oauth] Failed to parse stored OAuth config", e);
     return {
@@ -1174,9 +1099,8 @@ export function buildStoredOAuthConfig(
     config.scopes = options.scopes;
   }
 
-  if (options.customHeaders && Object.keys(options.customHeaders).length > 0) {
-    config.hasCustomHeaders = true;
-  }
+  config.hasCustomHeaders =
+    Object.keys(withoutOAuthAuthorizationHeader(options.customHeaders)).length > 0;
 
   if (options.resourceUrl?.trim()) {
     config.resourceUrl = options.resourceUrl.trim();
@@ -1767,25 +1691,13 @@ function writeStoredOAuthConfig(
   updates: Partial<StoredOAuthConfig>
 ): void {
   const existing = readStoredOAuthConfig(serverName);
-  const publicConfig: StoredOAuthConfig = {
+  const publicConfig = {
     ...existing,
     ...updates,
+    hasCustomHeaders: updates.hasCustomHeaders ?? existing.hasCustomHeaders ?? Boolean(existing.customHeaders),
   };
-  const hasCustomHeaders =
-    updates.hasCustomHeaders ??
-    existing.hasCustomHeaders ??
-    Boolean(existing.customHeaders);
-  delete publicConfig.customHeaders;
-  if (hasCustomHeaders) {
-    publicConfig.hasCustomHeaders = true;
-  } else {
-    delete publicConfig.hasCustomHeaders;
-  }
-  // Only the explicit public allowlist in serializeStoredOAuthConfig reaches
-  // this sink. Secrets are recovered from protected storage instead.
   localStorage.setItem(
     `mcp-oauth-config-${serverName}`,
-    // codeql[js/clear-text-storage-of-sensitive-data]
     serializeStoredOAuthConfig(publicConfig)
   );
 }
@@ -2541,48 +2453,6 @@ function buildConvexBindingForServer(input: {
   return previousBinding;
 }
 
-async function recoverOAuthCustomHeaders(input: {
-  serverName: string;
-  serverUrl: string;
-  oauthConfig: StoredOAuthConfig;
-}): Promise<Record<string, string> | undefined> {
-  // Let an authorization started by an older build complete once. New writes
-  // remove the values and retain only `hasCustomHeaders`.
-  if (
-    input.oauthConfig.customHeaders &&
-    Object.keys(input.oauthConfig.customHeaders).length > 0
-  ) {
-    return input.oauthConfig.customHeaders;
-  }
-  if (!input.oauthConfig.hasCustomHeaders) return undefined;
-
-  const binding = buildConvexBindingForServer({
-    serverName: input.serverName,
-    oauthResourceUrl: input.oauthConfig.resourceUrl,
-    registryServerId: input.oauthConfig.registryServerId,
-    useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
-  });
-  const recoveryHandleKey = `mcp-oauth-recovery-handle-${input.serverName}`;
-  const recoveryHandle = binding
-    ? undefined
-    : sessionStorage.getItem(recoveryHandleKey) ?? undefined;
-  const headers = await fetchOAuthRecoveryHeaders({
-    serverName: input.serverName,
-    serverUrl: input.serverUrl,
-    ...(recoveryHandle ? { recoveryHandle } : {}),
-    ...(binding
-      ? { projectId: binding.projectId, serverId: binding.serverId }
-      : {}),
-  });
-  if (Object.keys(headers).length === 0) {
-    throw new Error(
-      "OAuth custom headers are no longer available. Save them again and retry authorization."
-    );
-  }
-  if (recoveryHandle) sessionStorage.removeItem(recoveryHandleKey);
-  return headers;
-}
-
 /**
  * Constructs an `MCPOAuthProvider` with its Convex binding pre-resolved.
  * Both OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`) need an
@@ -2742,12 +2612,6 @@ export async function initiateOAuth(
   options: BuiltOAuthRequest,
   control?: { shouldContinue?: () => boolean }
 ): Promise<OAuthResult> {
-  const protectedPreviewUrl = resolveProtectedPreviewAppUrl(window.location);
-  if (protectedPreviewUrl) {
-    window.location.replace(protectedPreviewUrl);
-    return { success: true };
-  }
-
   const assertCurrent = () => {
     if (control?.shouldContinue && !control.shouldContinue()) {
       throw new Error("OAuth authorization was canceled.");
@@ -2800,6 +2664,16 @@ export async function initiateOAuth(
     );
 
   try {
+    if (!HOSTED_MODE) {
+      const saved = readStoredOAuthConfig(options.serverName);
+      const binding = buildConvexBindingForServer({ serverName: options.serverName });
+      options = {
+        ...options,
+        customHeaders: await resolveLocalOAuthHeaders(
+          options.customHeaders, binding, saved.hasCustomHeaders === true,
+        ),
+      };
+    }
     const provider = createMCPOAuthProvider({
       serverName: options.serverName,
       serverUrl: options.serverUrl,
@@ -2825,37 +2699,12 @@ export async function initiateOAuth(
       options
     );
     assertCurrent();
-    if (
-      authorizationPlan.status === "ready" &&
-      authorizationPlan.registrationStrategy === "cimd" &&
-      typeof window !== "undefined" &&
-      !supportsMcpJamCimdRedirect(window.location)
-    ) {
-      if (requestedRegistrationMode !== "auto") {
-        return {
-          success: false,
-          error:
-            "CIMD is unavailable on this preview host because its OAuth callback is not registered. Use Automatic or DCR for this preview.",
-        };
-      }
-      if (!authorizationPlan.capabilities.supportsDcr) {
-        return {
-          success: false,
-          error:
-            "CIMD is unavailable on this preview host, and the authorization server did not advertise DCR as a fallback.",
-        };
-      }
-      automaticRegistrationOverrideReason =
-        "CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.";
-      // Discovery already established that this automatic plan can use DCR.
-      // Switch only the selected strategy instead of planning again from the
-      // full OAuth options object, which may include credentials that must not
-      // flow into persisted plan metadata.
-      authorizationPlan = {
-        ...authorizationPlan,
-        registrationStrategy: "dcr",
-      };
-    }
+    const previewPlan = applyPreviewRegistrationPolicy(
+      authorizationPlan, requestedRegistrationMode, supportsMcpJamCimdRedirect(window.location),
+    );
+    if (previewPlan.error) return { success: false, error: previewPlan.error };
+    authorizationPlan = previewPlan.plan;
+    automaticRegistrationOverrideReason = previewPlan.reason;
     traceAuthorizationPlan = authorizationPlan;
     if (
       authorizationPlan.status !== "ready" ||
@@ -2873,28 +2722,9 @@ export async function initiateOAuth(
       options.serverUrl
     );
 
-    let recoveryHandle: string | undefined;
-    if (
-      !HOSTED_MODE &&
-      options.customHeaders &&
-      Object.keys(options.customHeaders).length > 0 &&
-      !buildConvexBindingForServer({
-        serverName: options.serverName,
-        oauthResourceUrl: options.resourceUrl,
-        registryServerId: options.registryServerId,
-        useRegistryOAuthProxy: options.useRegistryOAuthProxy,
-      })
-    ) {
-      recoveryHandle = generateRandomString(48);
-      await stageOAuthRecoveryHeaders({
-        serverName: options.serverName,
-        serverUrl: options.serverUrl,
-        recoveryHandle,
-        headers: options.customHeaders,
-      });
-      sessionStorage.setItem(
-        `mcp-oauth-recovery-handle-${options.serverName}`,
-        recoveryHandle
+    if (!HOSTED_MODE) {
+      await stageLocalOAuthHeaders(
+        options.serverName, options.serverUrl, options.customHeaders,
       );
     }
 
@@ -3729,29 +3559,6 @@ export async function handleOAuthCallback(
     }
 
     options.assertProjectAccess?.();
-    const recoveredCustomHeaders = await recoverOAuthCustomHeaders({
-      serverName,
-      serverUrl,
-      oauthConfig,
-    });
-    oauthConfig = {
-      ...oauthConfig,
-      customHeaders: recoveredCustomHeaders,
-    };
-
-    // Get stored client credentials if any
-    const storedClientInfo = readStoredClientInformation(serverName);
-    const customClientId = storedClientInfo.client_id;
-
-    const provider = createMCPOAuthProvider({
-      serverName,
-      serverUrl,
-      clientId: customClientId,
-      oauthConfig,
-      assertProjectAccess: options.assertProjectAccess,
-    });
-    const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
-    const requestExecutor = createOAuthRequestExecutor(fetchFn, serverUrl);
     const storedSession = loadOAuthFlowSession(serverName);
     previousTrace = loadOAuthTraceFromSession(serverName);
     clearOAuthTraceSession(serverName);
@@ -3772,10 +3579,25 @@ export async function handleOAuthCallback(
         protocolVersion: storedSession.protocolVersion,
       });
       if (!security.ok) {
-        clearOAuthFlowSession(serverName);
-        localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         return { success: false, error: security.error, serverName };
       }
+      oauthConfig = {
+        ...oauthConfig,
+        customHeaders: await recoverLocalOAuthHeaders(serverName, serverUrl, oauthConfig),
+      };
+      // Get stored client credentials if any
+      const storedClientInfo = readStoredClientInformation(serverName);
+      const customClientId = storedClientInfo.client_id;
+
+      const provider = createMCPOAuthProvider({
+        serverName,
+        serverUrl,
+        clientId: customClientId,
+        oauthConfig,
+        assertProjectAccess: options.assertProjectAccess,
+      });
+      const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
+      const requestExecutor = createOAuthRequestExecutor(fetchFn, serverUrl);
       let state = cloneFlowState(storedSession.state);
       // Applied AFTER the trace merge below: the flow-state trace carries its
       // own `received_authorization_code` step, which would overwrite anything
