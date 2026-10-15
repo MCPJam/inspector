@@ -29,6 +29,7 @@ import {
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env";
+import { startTelemetryCanary } from "./utils/telemetry-canary.js";
 import { initServerSentry } from "./sentry.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
@@ -328,7 +329,6 @@ function getInspectorFrontendUrlOptions() {
 try {
   fixPath();
 } catch {}
-
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
@@ -343,7 +343,7 @@ logGuestAuthorityOnce(appLogger);
 // once `loadInspectorEnv` has run. Deliberately a call, not an import side
 // effect — an import would be hoisted above the env load.
 initServerSentry();
-
+startTelemetryCanary();
 // Generate session token for API authentication
 generateSessionToken();
 setXaaIdpLogger(appLogger);

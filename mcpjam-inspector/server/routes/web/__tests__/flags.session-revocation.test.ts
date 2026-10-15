@@ -12,9 +12,9 @@ import { Hono } from "hono";
 
 const SESSIONS = vi.hoisted(
   (): Record<string, { sub: string; sid?: string }> => ({
-    "token-alice": { sub: "user_alice", sid: "session_alice" },
-    "token-bob": { sub: "user_bob", sid: "session_bob" },
-    "token-carol": { sub: "user_carol" },
+    "token-alice": { sub: "user_01H00000000000000000000001", sid: "session_alice" },
+    "token-bob": { sub: "user_01H00000000000000000000002", sid: "session_bob" },
+    "token-carol": { sub: "user_01H00000000000000000000003" },
   }),
 );
 
@@ -33,7 +33,7 @@ vi.mock("posthog-node", () => ({
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: vi.fn(async (token: string) =>
     token.startsWith("guest-")
-      ? { valid: true, guestId: token }
+      ? { valid: true, guestId: "a1234567-1234-4234-8234-123456789abc" }
       : { valid: false, reason: "not_guest" },
   ),
 }));
@@ -119,7 +119,7 @@ describe("GET /api/web/flags — signed-out sessions (MJ-011)", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ flags: { xaa: true } });
-    expect(mocks.getAllFlags.mock.calls[0][0]).toBe("user_bob");
+    expect(mocks.getAllFlags.mock.calls[0][0]).toBe("user_01H00000000000000000000002");
   });
 
   it("refuses a session revoked after it was first served", async () => {
@@ -147,8 +147,8 @@ describe("GET /api/web/flags — signed-out sessions (MJ-011)", () => {
     expect((await getFlags("token-carol")).status).toBe(200);
     expect((await getFlags("guest-abc")).status).toBe(200);
     expect(mocks.getAllFlags.mock.calls.map((call) => call[0])).toEqual([
-      "user_carol",
-      "guest-abc",
+      "user_01H00000000000000000000003",
+      "a1234567-1234-4234-8234-123456789abc",
     ]);
   });
 

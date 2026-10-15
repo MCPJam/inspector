@@ -63,13 +63,11 @@ We have a Mac and Windows desktop app:
 - [Install Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
 - [Install Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe)
 
-Run MCPJam using Docker. There is no published image, so build one from source first:
+Run MCPJam using Docker:
 
 ```bash
-git clone https://github.com/MCPJam/inspector.git
-cd inspector
-docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
-docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
+docker pull mcpjam/mcp-inspector
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
 ```
 
 ## Accessing over the network
@@ -88,7 +86,7 @@ For another computer, set `MCPJAM_ALLOWED_HOSTS` to the hostname or IP you use,
 and publish the port on the host address that clients will connect to:
 
 ```bash
-docker run -p 192.168.1.50:6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
+docker run -p 192.168.1.50:6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector
 ```
 
 A bare `-p 6274:6274` publishes the port on every host interface, IPv4 and IPv6.

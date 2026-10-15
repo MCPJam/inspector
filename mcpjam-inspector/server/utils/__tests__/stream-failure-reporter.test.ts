@@ -15,6 +15,7 @@ vi.mock("../request-logger.js", () => ({
 }));
 
 import { reportRouteFailure } from "../route-error-report.js";
+import { buildStrictLogRow } from "../../../shared/strict-log.js";
 import {
   createRequestStreamFailureReporter,
   createSystemStreamFailureReporter,
@@ -36,6 +37,23 @@ beforeEach(() => {
 });
 
 describe("stream failure reporter", () => {
+  it.each([
+    ["agent_billing_rejected", "payment_not_confirmed", true],
+    ["agent_billing_rejected", "PRIVATE_SENTINEL", false],
+    ["unknown", "payment_not_confirmed", false],
+  ])("preserves only the exact payment refusal for %s / %s", (errorCode, reason, expected) => {
+    const event = failure({ errorCode, context: { reason, raw: "PRIVATE_SENTINEL" } });
+    createSystemStreamFailureReporter("chat")(event);
+    const [name, payload] = systemEvent.mock.calls[0];
+    const row = buildStrictLogRow(name, {}, payload);
+    if (expected) expect(row).toMatchObject({ errorCode, reason });
+    else expect(row).not.toHaveProperty("reason");
+    expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
+
+    createRequestStreamFailureReporter({} as never, "chat")(event);
+    const [requestName, requestPayload] = requestEvent.mock.calls[0];
+    expect(buildStrictLogRow(requestName, {}, requestPayload).reason).toBe(row.reason);
+  });
   it("classifies first, then emits the typed event with the EFFECTIVE origin", () => {
     const report = createRequestStreamFailureReporter({} as never, "chat")(
       failure(),

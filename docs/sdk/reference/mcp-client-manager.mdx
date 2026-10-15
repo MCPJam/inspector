@@ -670,6 +670,101 @@ const response = await generateText({
 
 ---
 
+### setMrtrInputCollector()
+
+Registers a collector that answers embedded elicitation requests for a server's MRTR (`input_required`) rounds. Call this before `connectToServer` — a 2026-07-28 server checks the declared client capabilities before embedding a form, so the collector must be registered first.
+
+```typescript
+setMrtrInputCollector(
+  serverId: string,
+  collect: MrtrInputCollector,
+  options?: {
+    extensionClaims?: readonly string[];
+    selectFormSchema?: ElicitationFormSchemaSelector;
+  }
+): void
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID whose MRTR rounds this collector answers. |
+| `collect` | `MrtrInputCollector` | Async function called once per round with the pending input state. Reject on abort; never return a synthetic decline. |
+| `options.extensionClaims` | `readonly string[]` | Extension keys this collector also answers on a 2026-era connection (e.g. `"openai/elicitation"` for forms whose schema rides in `_meta["openai/elicitation"]`). While the collector drives rounds, these keys are kept in the advertised capabilities. With `supportsMrtr: false` they are withheld. |
+| `options.selectFormSchema` | `ElicitationFormSchemaSelector` | Picks the schema an accepted form answer is validated against before the retry. Defaults to the core `requestedSchema`. Set this when the form's real schema is carried elsewhere — for example, in `_meta["openai/elicitation"].requestedSchema` — so retry validation matches what the user was shown. |
+
+#### Example
+
+```typescript
+import {
+  MCPClientManager,
+  selectElicitationFormSchema,
+} from "@mcpjam/sdk";
+
+const manager = new MCPClientManager({}, { lazyConnect: true });
+
+// Collector that suspends a round for a person to answer.
+manager.setMrtrInputCollector(
+  "myServer",
+  async ({ state }) => {
+    // Collect answers from the user, then return them keyed by request key.
+    const answers = await promptUser(state.pendingInputRequests);
+    return answers;
+  },
+  {
+    // Keep the openai/elicitation extension claim on 2026-era connections.
+    extensionClaims: ["openai/elicitation"],
+    // Validate answers against the extension schema, not the empty core schema.
+    selectFormSchema: (params) => {
+      const selected = selectElicitationFormSchema(params, {
+        extensionForms: true,
+      });
+      if (selected.kind === "unsupported") throw new Error(selected.reason);
+      return selected.schema;
+    },
+  },
+);
+
+await manager.connectToServer("myServer", {
+  url: "https://mcp.example.com/mcp",
+  supportedProtocolVersions: ["2026-07-28"],
+});
+```
+
+---
+
+### clearMrtrInputCollector()
+
+Removes a server's MRTR input collector and its associated extension claims and schema selector.
+
+```typescript
+clearMrtrInputCollector(serverId: string): void
+```
+
+---
+
+### selectElicitationFormSchema()
+
+A pure helper that picks the schema a form answer is validated against. OpenAI's extended forms carry their real schema in `_meta["openai/elicitation"].requestedSchema`; the core `requestedSchema` is an empty object. Pass this to `setMrtrInputCollector`'s `selectFormSchema` option so display, validation, and retry all use the same schema.
+
+```typescript
+import { selectElicitationFormSchema } from "@mcpjam/sdk";
+
+const selected = selectElicitationFormSchema(params, { extensionForms: true });
+// selected.kind === "schema"  → selected.schema is the schema to use
+// selected.kind === "unsupported" → selected.reason explains why
+```
+
+| Return kind | When |
+|-------------|------|
+| `{ kind: "schema", source: "core", schema }` | No `_meta["openai/elicitation"]` key — plain MCP form. |
+| `{ kind: "schema", source: "openai/elicitation", schema }` | Extension key present, `extensionForms: true`, valid object schema. |
+| `{ kind: "unsupported", reason: "extension-schema-invalid" }` | Extension key present but its `requestedSchema` is missing or not an object schema. |
+| `{ kind: "unsupported", reason: "extension-forms-off" }` | Extension key present but `extensionForms: false`. |
+
+---
+
 ## Complete Example
 
 ```typescript

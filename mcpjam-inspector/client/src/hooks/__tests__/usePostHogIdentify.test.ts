@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { usePostHogIdentify } from "../usePostHogIdentify";
-import { IDENTIFYING_PERSON_PROPERTIES } from "@/shared/telemetry-privacy";
 
 const mockState = vi.hoisted(() => ({
   posthog: {
@@ -9,12 +9,13 @@ const mockState = vi.hoisted(() => ({
     register: vi.fn(),
     reset: vi.fn(),
     setPersonPropertiesForFlags: vi.fn(),
-    unsetPersonProperties: vi.fn(),
     updateFlags: vi.fn(),
   },
   identity: "full" as "full" | "id_only" | undefined,
   /** Whether the answer is held for the current actor. */
   grant: true,
+  content: "full" as "full" | "strict",
+  telemetryActor: undefined as string | null | undefined,
   auth: {
     user: null as {
       id: string;
@@ -64,7 +65,14 @@ vi.mock("@/hooks/use-actor-key", () => ({
 
 // The identity grant: the backend's answer, held only for the current actor.
 vi.mock("@/lib/telemetry-context", () => ({
-  subscribeTelemetryIdentity: () => () => {},
+  subscribeTelemetryPolicy: () => () => {},
+  currentTelemetryActor: () =>
+    mockState.telemetryActor === undefined
+      ? mockState.actorKey
+      : mockState.telemetryActor,
+  currentTelemetryCaptureContext: () => ({
+    policy: { content: mockState.content },
+  }),
   telemetryIdentityFor: (actorKey: string | null) =>
     mockState.grant && actorKey !== null && actorKey === mockState.actorKey
       ? mockState.identity
@@ -84,7 +92,47 @@ describe("usePostHogIdentify", () => {
     mockState.actorKey = null;
     mockState.identity = "full";
     mockState.grant = true;
+    mockState.content = "full";
+    mockState.telemetryActor = undefined;
     mockState.detectPlatform.mockReturnValue("mac");
+  });
+
+  it("rechecks content after layout effects before committing the SDK identity", () => {
+    mockState.actorKey = "user_123";
+    mockState.auth.user = { id: "user_123", email: "user@example.com" };
+    const hook = renderHook(() => {
+      useLayoutEffect(() => {
+        mockState.content = "strict";
+      }, []);
+      usePostHogIdentify();
+    });
+    expect(mockState.posthog.identify).not.toHaveBeenCalled();
+    mockState.content = "full";
+    hook.rerender();
+    expect(mockState.posthog.identify).toHaveBeenCalledTimes(1);
+    expect(mockState.posthog.identify).toHaveBeenCalledWith(
+      "user_123",
+      expect.objectContaining({ email: "user@example.com" }),
+    );
+  });
+
+  it("does not consume identify while the full grant belongs to a previous actor", () => {
+    mockState.actorKey = "user_next";
+    mockState.auth.user = { id: "user_next", email: "next@example.com" };
+    mockState.telemetryActor = "user_previous";
+    const hook = renderHook(usePostHogIdentify);
+    expect(mockState.posthog.identify).not.toHaveBeenCalled();
+
+    mockState.telemetryActor = "user_next";
+    mockState.content = "strict";
+    hook.rerender();
+    mockState.content = "full";
+    hook.rerender();
+    expect(mockState.posthog.identify).toHaveBeenCalledTimes(1);
+    expect(mockState.posthog.identify).toHaveBeenCalledWith(
+      "user_next",
+      expect.objectContaining({ email: "next@example.com" }),
+    );
   });
 
   it("fetches server-evaluated flags once per new actor", () => {
@@ -365,85 +413,55 @@ describe("usePostHogIdentify", () => {
         last_name: "Smith",
         occupation: "Platform Engineer",
       });
-      expect(mockState.posthog.unsetPersonProperties).not.toHaveBeenCalled();
     });
 
-    it("never sends name, email or occupation while id-only", () => {
+    it("does not identify under the backend's restrictive answer", () => {
       mockState.identity = undefined;
+      mockState.content = "strict";
 
       const { rerender } = renderHook(identify);
       mockState.identity = "id_only";
       rerender();
 
-      for (const [, properties] of mockState.posthog.identify.mock.calls) {
-        expect(properties).toEqual({ deployment: "self_hosted" });
-      }
+      expect(mockState.posthog.identify).not.toHaveBeenCalled();
+      // Attribution does not wait on the answer.
+      expect(mockState.posthog.register).toHaveBeenCalledWith({
+        user_id: "user_123",
+      });
     });
 
-    it("clears identity sent before it became id-only, once per actor", () => {
-      mockState.identity = "id_only";
-
+    it("stops naming the actor when the answer turns restrictive, until it is full again", () => {
       const { rerender } = renderHook(identify);
-      rerender();
-      rerender();
-
-      expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledTimes(1);
-      expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledWith([
-        ...IDENTIFYING_PERSON_PROPERTIES,
-      ]);
-      expect(IDENTIFYING_PERSON_PROPERTIES).toEqual(
-        expect.arrayContaining([
-          "email",
-          "name",
-          "first_name",
-          "last_name",
-          "occupation",
-        ]),
-      );
-      // After identify, so a first-time merge has landed on the real person.
-      expect(
-        mockState.posthog.identify.mock.invocationCallOrder[0],
-      ).toBeLessThan(
-        mockState.posthog.unsetPersonProperties.mock.invocationCallOrder[0],
-      );
-    });
-
-    it("clears names again when the same actor turns id-only after a full grant", () => {
-      mockState.identity = "id_only";
-      const { rerender } = renderHook(identify);
-      expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledTimes(1);
-
-      // A membership reload grants names, then enterprise privacy turns on.
-      mockState.identity = "full";
-      rerender();
+      expect(mockState.posthog.identify).toHaveBeenCalledTimes(1);
       expect(mockState.posthog.identify).toHaveBeenLastCalledWith(
         "user_123",
         expect.objectContaining({ email: "user@example.com" }),
       );
-      mockState.identity = "id_only";
-      rerender();
-      rerender();
 
-      expect(mockState.posthog.unsetPersonProperties).toHaveBeenCalledTimes(2);
-      expect(
-        mockState.posthog.identify.mock.invocationCallOrder.at(-1),
-      ).toBeLessThan(
-        mockState.posthog.unsetPersonProperties.mock.invocationCallOrder[1],
+      // Enterprise privacy turns on: the backend answers off/id_only/strict.
+      mockState.identity = "id_only";
+      mockState.content = "strict";
+      rerender();
+      rerender();
+      expect(mockState.posthog.identify).toHaveBeenCalledTimes(1);
+
+      mockState.identity = "full";
+      mockState.content = "full";
+      rerender();
+      expect(mockState.posthog.identify).toHaveBeenCalledTimes(2);
+      expect(mockState.posthog.identify).toHaveBeenLastCalledWith(
+        "user_123",
+        expect.objectContaining({ email: "user@example.com" }),
       );
     });
 
-    it("leaves guests alone: they carry no identity to clear", () => {
-      mockState.auth.user = null;
-      mockState.convexAuth.isAuthenticated = false;
-      mockState.actorKey = "guest_abc";
+    it("still withholds names if identity were id-only with full content", () => {
+      // The backend never pairs these; the name gate must hold regardless.
       mockState.identity = "id_only";
-
       renderHook(identify);
-
-      expect(mockState.posthog.identify).toHaveBeenCalledWith("guest_abc", {
+      expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
         deployment: "self_hosted",
       });
-      expect(mockState.posthog.unsetPersonProperties).not.toHaveBeenCalled();
     });
 
     it("names no one whose answer is not held for them", () => {
@@ -453,23 +471,6 @@ describe("usePostHogIdentify", () => {
       expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
         deployment: "self_hosted",
       });
-      expect(mockState.posthog.unsetPersonProperties).not.toHaveBeenCalled();
-    });
-
-    it("does not throw against a posthog-js without unsetPersonProperties", () => {
-      mockState.identity = "id_only";
-      const { unsetPersonProperties } = mockState.posthog;
-      // A partial stand-in, or a host pinning an older posthog-js.
-      Reflect.deleteProperty(mockState.posthog, "unsetPersonProperties");
-
-      try {
-        expect(() => renderHook(identify)).not.toThrow();
-        expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
-          deployment: "self_hosted",
-        });
-      } finally {
-        mockState.posthog.unsetPersonProperties = unsetPersonProperties;
-      }
     });
   });
 });

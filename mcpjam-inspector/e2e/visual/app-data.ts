@@ -24,6 +24,7 @@ export const queries: Record<string, unknown> = {
   },
   "projects:getMyProjects": [project],
   "organizations:getMyOrganizations": [],
+  "organizations:getMyPendingOrganizationDeletions": [],
   "servers:getProjectServers": [],
   "servers:listForProjects": {},
   "hostConfigsV2:getProjectDefault": null,

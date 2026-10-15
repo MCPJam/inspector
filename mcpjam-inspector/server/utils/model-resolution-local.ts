@@ -419,7 +419,7 @@ export function readStoredModelSelection(
   return result.ok ? result.selection : undefined;
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 

@@ -1,235 +1,206 @@
 ---
 title: "Okta SSO & SCIM"
-description: "Configure Okta SAML or OIDC single sign-on and SCIM user provisioning for your MCPJam organization"
+description: "Install MCPJam from the Okta Integration Network and configure SAML single sign-on and SCIM provisioning"
 icon: "key-round"
 ---
 
-<Note>
-Single sign-on and SCIM provisioning are enterprise features, configured per
-organization. Your MCPJam contact provides the setup links for your
-organization. Complete and test single sign-on before configuring provisioning.
-</Note>
-
-MCPJam supports **SAML 2.0** or **OpenID Connect (OIDC)** single sign-on and
-**SCIM 2.0** user provisioning with Okta. Your Okta admin does the setup once,
-in a guided flow. Your directory then controls membership: assigning someone
-to MCPJam in Okta gives them access, and unassigning them takes it away.
-
-Choose one SSO protocol for your organization. SCIM provisioning is configured
-separately and works with either protocol.
+This guide covers the **MCPJam SAML 2.0 and SCIM 2.0 integration** in the
+Okta Integration Network (OIN). Okta manages user provisioning and
+organization access; MCPJam manages application roles separately.
 
 <Note>
-Until MCPJam is available in the Okta App Catalog, use a custom app integration
-as described below. Your organization can configure SSO and provisioning before
-the catalog listing is published.
+  The MCPJam catalog submission is under review. The catalog installation steps
+  below apply once the listing is published. If MCPJam is not available in your
+  catalog, contact [support@mcpjam.com](mailto:support@mcpjam.com) for assisted
+  setup. Do not select a similarly named application or a generic SCIM test app.
 </Note>
 
-## Before you start
+## Prerequisites
 
-- **An MCPJam organization** on a plan that includes SSO, and a setup link for
-  it. Your MCPJam contact provides one; each link is specific to your
-  organization.
-- **Okta admin access**, enough to add an app integration and configure
+- An MCPJam organization with enterprise SSO and provisioning enabled.
+- An Okta administrator who can add applications, assign users and configure
   provisioning.
-- Your email domain **verified** on your MCPJam organization. We do this for
-  you when you're onboarded — it's what lets us route your users to Okta and
-  manage their accounts.
+- Organization-specific SSO and provisioning setup links from your MCPJam
+  contact. Keep their credentials private.
+- Your users' email domain verified for your MCPJam organization. Your MCPJam
+  contact helps configure this before the pilot.
+- A pilot user with a work email address in that domain.
 
-## Part 1 — Single sign-on with SAML
+## Supported features
 
-<Steps>
-<Step title="Open the setup link and choose Okta SAML">
-The setup portal shows two values for your organization: an **ACS URL** and an
-**SP Entity ID**. Keep this tab open — you'll come back to it in step 4.
-</Step>
+| Feature                          | Behavior                                                                                                                                                      |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SP-initiated SAML SSO            | Start at MCPJam and authenticate with Okta.                                                                                                                   |
+| IdP-initiated SAML SSO           | Start from the MCPJam tile on the Okta dashboard.                                                                                                             |
+| Push new users without passwords | Assign a user in Okta to provision their directory account and MCPJam organization membership. Authentication uses SSO; no MCPJam password is provisioned.    |
+| Push profile updates             | Synchronize supported identity fields from Okta to the connected directory. For domain-managed users, given and family names update the AuthKit user profile. |
+| Push user deactivation           | Unassign or deactivate a user to deactivate their organization membership and revoke associated sessions.                                                     |
+| Reactivate users                 | Reassign a previously deactivated user to restore directory access and the provisioned membership, subject to any separate MCPJam removal.                    |
 
-<Step title="Add MCPJam in Okta">
-In the Okta Admin Console, go to **Applications → Create App Integration**,
-choose **SAML 2.0**, and name the app **MCPJam**. If Okta offers a choice of
-creation experiences, choose **Classic experience**.
+This guide does not configure importing MCPJam users or profile changes back
+into Okta, password synchronization, group push, or IdP-controlled application
+roles. Assigning an Okta group to the application assigns its users; it does
+not grant those users MCPJam admin access.
 
-In the app's SAML setup, paste the values from step 1:
+## Configuration steps
 
-| MCPJam setup portal | Okta field |
-| --- | --- |
-| ACS URL | Single Sign-On URL |
-| SP Entity ID | Audience URI (SP Entity ID) |
-</Step>
+Complete SAML setup and a pilot sign-in before enabling SCIM provisioning.
 
-<Step title="Check the attribute mappings">
-Configure these attribute statements in the SAML app:
+### 1. Add MCPJam from the OIN catalog
 
-| Name | Value |
-| --- | --- |
-| `id` | `user.getInternalProperty("id")` |
-| `email` | `user.email` |
-| `firstName` | `user.firstName` |
-| `lastName` | `user.lastName` |
+1. In the Okta Admin Console, open **Applications → Applications**.
+2. Select **Browse App Catalog**, search for **MCPJam**, and open its listing.
+3. Select **Add Integration**, enter an application label and continue.
+4. Open the SSO setup link supplied by MCPJam and select **Okta SAML**.
+5. Copy your complete **SP Entity ID** into the integration's **SP Entity ID**
+   field. The integration constructs the SAML ACS URL from this value.
+6. For **SCIM Base URL**, use only the directory identifier following
+   `/scim/v2.0/` in your provisioning endpoint. Obtain this from your
+   organization-specific provisioning setup link. It is not the bearer token.
+7. Save the integration. Use only the values issued for your organization;
+   identifiers are case-sensitive.
 
-Use the email address as the Name ID, with the email address format. Role
-assignment is configured separately; adding a groups attribute alone does not
-grant administrative access.
+### 2. Complete SAML configuration
 
-The `id` attribute must contain the immutable Okta user ID. Configure it in the
-app's attribute statements, using the expression exactly as shown without
-`${...}` around it. An empty `id` causes sign-in to fail even when the email
-and name attributes are correct.
-</Step>
+1. Open the application's **Sign On** tab and select **SAML 2.0** if prompted.
+2. Use the user's work email as the application username and SAML Name ID.
+3. Under **Attributes (Optional)**, configure the immutable user identifier:
+   add `oktaUserId` with value `user.getInternalProperty("id")`.
+4. Ask your MCPJam contact to map this connection's **IdP ID** to
+   `oktaUserId`. Do this before the first test sign-in.
+5. Copy the app's **Metadata URL** from **Sign On** to the MCPJam SSO setup
+   portal and complete the connection setup.
+6. Under **Assignments**, assign the pilot user. Test the SP-initiated and
+   IdP-initiated flows below before assigning the rest of the team.
 
-<Step title="Send Okta's metadata back to MCPJam">
-On the app's **Sign On** tab, copy the **Metadata URL**. Paste it into the
-MCPJam setup portal from step 1 and finish. Test a sign-in after the connection
-becomes active.
-</Step>
+The integration supplies the email, given-name and family-name SAML attributes.
+Do not add role or group assertions expecting them to change MCPJam permissions.
 
-<Step title="Assign users and test">
-Assign users or groups to the MCPJam app in Okta. Assigned users can now sign
-in — from the Okta dashboard, or by entering their work email on the MCPJam
-sign-in page, which redirects them to Okta.
+### 3. Enable SCIM provisioning
 
-Accounts are created automatically on first sign-in, with membership in your
-MCPJam organization. Nobody needs to be invited by hand.
-</Step>
-</Steps>
+1. Open your MCPJam provisioning setup link and choose Okta. Copy the directory
+   identifier into **SCIM Base URL** in the app's general settings if not
+   already configured. The resulting endpoint must match the **full SCIM
+   endpoint** shown by the setup portal.
+2. In the Okta app, open **Provisioning → Integration → Configure API
+   Integration** and enable API integration.
+3. Paste the setup portal's bearer token into **API Token**. Paste only the
+   token; do not add `Bearer`, and do not paste the directory identifier.
+4. Select **Test API Credentials**. Save only after the test succeeds.
+5. Open **Provisioning → To App**, select **Edit**, and enable **Create
+   Users**, **Update User Attributes** and **Deactivate Users**. Save.
+6. Keep password synchronization disabled. Users authenticate through SAML.
 
-## Alternative — Single sign-on with OIDC
+### 4. Check profile mappings
 
-Use this instead of the SAML setup when your organization chooses OIDC.
+Use the following identity fields. Additional business-profile attributes such
+as department, manager, title, postal address and telephone number are not
+required by MCPJam.
 
-1. Open your SSO setup link, select **Okta OIDC**, and copy the **Redirect URI**.
-2. In Okta, create an **OIDC – OpenID Connect → Web Application** integration.
-   Paste the full URI into **Sign-in redirect URIs** and assign the users who
-   should have access.
-3. Copy the app's **Client ID** and **Client secret** from its General tab into
-   the matching fields in the MCPJam setup portal. Keep PKCE enabled.
-4. Set **Discovery Endpoint** to your Okta tenant's discovery URL, shaped like
-   `https://your-company.okta.com/.well-known/openid-configuration`.
-5. Save the setup and test sign-in from [MCPJam](https://app.mcpjam.com) using
-   an assigned user's work email. The integration uses the `openid`, `profile`,
-   and `email` scopes for the user's identifier, name, and email address.
+| Okta source                                    | SCIM attribute                 | Purpose                                         |
+| ---------------------------------------------- | ------------------------------ | ----------------------------------------------- |
+| Application username, configured as work email | `userName`                     | Stable matching value for the assigned account. |
+| `user.email`                                   | `emails[type eq "work"].value` | Work email address.                             |
+| `user.firstName`                               | `name.givenName`               | Given name.                                     |
+| `user.lastName`                                | `name.familyName`              | Family name.                                    |
 
-The OIDC client secret belongs in the SSO setup portal. It is separate from the
-SCIM bearer token used for provisioning.
+Okta manages the SCIM `active` state through lifecycle operations. The server
+returns the SCIM `id`; do not manually replace it. Preserve identifiers and
+schema-required attributes maintained by the connector.
 
-If email-domain discovery selects a different organization, use an organization
-sign-in link supplied by your MCPJam contact:
-`https://app.mcpjam.com/login?organization_id=YOUR_WORKOS_ORGANIZATION_ID`.
-This link selects that organization's configured SSO connection, including when
-you already have a session in another organization. Users must still authenticate
-with the identity provider and meet the organization's access requirements.
+Keep the username and work email consistent. Contact MCPJam before changing a
+provisioned user's email or domain, so account linking and domain management
+can be checked.
 
-## MCPJam integration fields
+### 5. Test the user lifecycle
 
-If you are installing a supplied MCPJam integration that asks for these fields,
-use the values below. Custom apps configured with the steps above take the
-**full URLs** instead.
+1. Assign a pilot user under **Assignments**. Verify successful provisioning
+   in Okta and sign in to the intended MCPJam organization.
+2. Change the pilot user's given or family name in Okta. Verify the update in
+   the connected directory; the updated name should appear after a fresh login.
+3. Unassign the pilot user from the provisioning app. Verify that they lose
+   access to the MCPJam organization, including from an existing session.
+4. Reassign the user and verify that they can authenticate and access the
+   organization again.
 
-| Okta integration field | Value from your setup portal |
-| --- | --- |
-| **ACS URL** (`acs_url`), if shown | The full SAML ACS URL. |
-| **SP Entity ID** (`sp_entity_id`) | The complete SAML SP Entity ID. The integration constructs the ACS URL from this value. |
-| **Redirect URI** (`redirect_uri`) | Only the OIDC connection identifier between `/sso/oidc/` and `/callback` in the Redirect URI. |
-| **SCIM Base URL** (`scim_base_url`) | Only the directory identifier after `/scim/v2.0/` in the SCIM endpoint. |
-| **WorkOS Organization ID** (`workos_org_id`), if shown | The organization ID supplied by your MCPJam contact. |
+If your assisted setup uses separate SAML and provisioning apps, assign the
+pilot user to both and unassign from the provisioning app to test offboarding.
 
-These identifiers are case-sensitive. Copy them exactly from your own
-organization's setup portal. The directory identifier is not the bearer token.
+## SP-initiated SSO
 
-For a supplied MCPJam SAML integration, configure the immutable user identifier
-on the app's **Sign On** tab. Expand **Attributes (Optional)** under the SAML
-settings and add `oktaUserId` with the value `user.getInternalProperty("id")`.
-Your MCPJam contact must map this connection's **IdP ID** to `oktaUserId` before
-you test sign-in. This app-level statement avoids the OIN template's different
-expression syntax. Custom SAML apps use the `id` statement in Part 1 instead.
+1. Open [MCPJam](https://app.mcpjam.com) in a private browser window.
+2. Select **Sign in** and enter the assigned user's work email address.
+3. MCPJam routes the verified email domain to your organization's Okta SSO
+   connection. Complete Okta authentication and any required MFA.
+4. Verify that MCPJam opens with access to the intended organization.
 
-## Part 2 — Provisioning (SCIM)
+If the same email can access multiple organizations, ask your MCPJam contact
+for the organization's sign-in link. A successful login to another organization
+is not a successful test of this connection.
 
-SCIM keeps MCPJam membership in sync with your directory. Deprovisioning
-deactivates the user's organization membership and revokes their WorkOS sessions.
+## IdP-initiated SSO
 
-<Steps>
-<Step title="Open the provisioning setup link">
-Choose Okta. The portal shows a **SCIM endpoint** and a **bearer token**.
-</Step>
+Sign in to your Okta dashboard and select the **MCPJam** tile. Complete any
+required authentication and verify access to your MCPJam organization.
 
-<Step title="Enable provisioning in Okta">
-Use the MCPJam provisioning integration if one was supplied. Otherwise, add
-**SCIM 2.0 Test App (OAuth Bearer Token)** from Okta's App Catalog and give it
-a recognizable label such as **MCPJam Provisioning**.
+## Roles and limitations
 
-Open **Provisioning → Configure API Integration** and enable API integration.
-Enter the full endpoint in **SCIM 2.0 Base URL** and the bearer token in
-**OAuth Bearer Token** (or **API Token**). Paste the token itself; Okta adds the
-`Bearer` authorization prefix.
+MCPJam has separate **owner**, **admin**, **member** and **guest** roles.
+Organization owners manage role assignments in MCPJam. SCIM provisions and
+removes organization access, but this integration does not currently
+synchronize Okta group or role changes into MCPJam admin/member permissions.
 
-Click **Test API Credentials** and save after it succeeds. Under
-**Provisioning → To App**, enable:
+Deactivation applies to the connected organization. It does not delete the
+person's data or memberships in unrelated MCPJam organizations. An explicit
+removal performed in MCPJam is not automatically undone by an IdP reactivation.
 
-- **Create Users**
-- **Update User Attributes**
-- **Deactivate Users**
-</Step>
-
-<Step title="Assign users or groups">
-Okta now manages the lifecycle:
-
-- assigning someone provisions their MCPJam account and organization
-  membership;
-- profile changes sync automatically;
-- unassigning or deactivating someone deactivates their MCPJam membership and
-  revokes their WorkOS sessions.
-
-When SSO and provisioning use separate Okta apps, assign each user to both.
-Test provisioning, sign-in, deactivation, and reactivation with a pilot user
-before assigning the rest of your team.
-</Step>
-</Steps>
-
-## Roles
-
-MCPJam organizations separate **owner**, **admin**, and **member** access.
-Admins manage members and organization settings; members work in the product
-without administrative access. Owners additionally control ownership and
-billing.
-
-Users signing in through Okta are members by default. Your MCPJam contact can
-configure group-to-role assignments for your directory. Confirm those mappings
-and test both an admin and a standard member before relying on them.
+OIDC is a separate, optional setup and is not part of this SAML/SCIM catalog
+configuration. Contact MCPJam before configuring it.
 
 ## Troubleshooting
 
 <AccordionGroup>
-<Accordion title="Sign-in fails with an audience or recipient mismatch">
-The **Single Sign-On URL** or **Audience URI** in Okta doesn't match the values
-from the MCPJam setup portal. Re-copy both from the portal — they are unique to
-your organization.
-</Accordion>
-
-<Accordion title="Users sign in but land somewhere unexpected">
-Their email domain may not be verified on your MCPJam organization, so we can't
-tell which organization they belong to. Contact us and we'll verify it.
-</Accordion>
-
-<Accordion title="Provisioning shows errors in Okta">
-Re-check the SCIM endpoint and bearer token — tokens are specific to one
-directory connection. If you removed and re-created the connection, the old
-token stops working. In particular, do not put the directory identifier from
-the endpoint into the API Token field. Re-copy the actual bearer token and run
-**Test API Credentials** again.
-</Accordion>
-
-<Accordion title="Suspending a user in Okta did not deactivate their MCPJam membership">
-Okta suspension does not send a provisioning deactivation. Unassign the user
-from the provisioning app or deactivate the Okta user to trigger SCIM
-deprovisioning.
-</Accordion>
-
-<Accordion title="A deprovisioned user still appears in MCPJam">
-Deactivated members are retained for audit purposes, without access — their
-sessions are revoked and they cannot sign in.
-</Accordion>
+  <Accordion title="MCPJam is not in the Okta App Catalog">
+    The listing may still be under review. Contact support@mcpjam.com for
+    assisted setup; the catalog steps become available after publication.
+  </Accordion>
+  <Accordion title="Sign-in fails with an audience or recipient mismatch">
+    Compare the full SP Entity ID and ACS URL with your organization's setup
+    portal. Check for extra spaces, missing characters or values from another
+    organization.
+  </Accordion>
+  <Accordion title="Sign-in fails because the user identifier is missing">
+    Verify the `oktaUserId` SAML statement uses `user.getInternalProperty("id")`
+    and ask your MCPJam contact to verify the IdP ID mapping for the connection.
+  </Accordion>
+  <Accordion title="Users sign in but land in the wrong organization">
+    Confirm the user's email domain is verified for the intended organization
+    and that the user is assigned to the correct Okta app. Ask MCPJam for an
+    organization-specific sign-in link if needed.
+  </Accordion>
+  <Accordion title="Test API Credentials fails or provisioning returns 401">
+    Check the directory identifier and bearer token against the same setup
+    portal. They are different values. Copy the token without a `Bearer` prefix.
+    A revoked token must be replaced with a valid token for that directory.
+  </Accordion>
+  <Accordion title="Suspension does not remove MCPJam access">
+    Suspending an Okta user does not send the SCIM deactivation used by this
+    integration. Unassign the user from the provisioning app or deactivate the
+    Okta account, then verify the provisioning operation succeeded.
+  </Accordion>
+  <Accordion title="A deactivated user still appears in directory records">
+    Inactive directory records are retained. Their presence does not grant
+    access; verify that the MCPJam organization membership is inactive and
+    access is denied.
+  </Accordion>
+  <Accordion title="Changing an Okta group does not change MCPJam admin access">
+    Application roles are managed in MCPJam. Group assignment controls
+    application assignment, not MCPJam admin/member roles.
+  </Accordion>
 </AccordionGroup>
 
 ## Support
 
-Email [support@mcpjam.com](mailto:support@mcpjam.com) or your MCPJam contact.
+Email [support@mcpjam.com](mailto:support@mcpjam.com) with the organization name,
+failing operation, timestamp and error message. Never include passwords, API
+tokens or client secrets.

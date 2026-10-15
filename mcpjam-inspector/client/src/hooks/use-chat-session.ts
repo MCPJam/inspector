@@ -706,6 +706,8 @@ export interface UseChatSessionReturn {
     isCurrent?: () => boolean;
 
     pluginMentions?: PluginMentionSelection[];
+    /** Items an App's editable draft left in the composer, sent as-is. */
+    extraParts?: UIMessage["parts"];
     widgetModelContext?: WidgetModelContextEntry[];
     /**
      * Resolves `true` once the message was actually dispatched, `false` on
@@ -4956,6 +4958,7 @@ export function useChatSession(
       pluginMessage?: PluginMessageIntent;
       isCurrent?: () => boolean;
       pluginMentions?: PluginMentionSelection[];
+      extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
     }) => {
       const {
@@ -4966,6 +4969,7 @@ export function useChatSession(
         pluginMessage,
         isCurrent,
         pluginMentions,
+        extraParts,
       } = options;
 
       // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
@@ -5114,12 +5118,13 @@ export function useChatSession(
               { parts: pluginMessageParts(pluginMessage.params), ...extra },
               { body: { pluginMessage } },
             );
-          } else if (pluginMentions?.length) {
+          } else if (pluginMentions?.length || extraParts?.length) {
             baseSendMessage({
               parts: [
-                ...buildMentionContextMessages(pluginMentions).flatMap(
+                ...buildMentionContextMessages(pluginMentions ?? []).flatMap(
                   (message) => message.parts,
                 ),
+                ...(extraParts ?? []),
                 { type: "text", text },
                 ...(files ?? []),
               ],

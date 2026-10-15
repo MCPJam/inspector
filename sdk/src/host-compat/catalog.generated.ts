@@ -3125,6 +3125,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
         apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "chatgpt",
+              version: "26.928.20710",
+            },
+          },
           pluginExtensions: {
             enabled: true,
           },
