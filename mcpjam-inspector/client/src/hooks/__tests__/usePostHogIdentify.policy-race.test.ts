@@ -118,13 +118,17 @@ async function proveConsent({
 >) {
   const mark = network.requests.length;
   client.set_config({ respect_dnt: true });
+  const captures = vi.spyOn(client, "capture");
   vi.stubGlobal("doNotTrack", "1");
   await act(async () => {
     telemetry.setTelemetryContentPolicy(TELEMETRY_ACTOR_ID, "strict");
     telemetry.setTelemetryContentPolicy(TELEMETRY_ACTOR_ID, "full");
   });
   await network.settle();
+  expect(captures).toHaveBeenCalledTimes(1);
+  expect(captures).toHaveLastReturnedWith(undefined);
   expect(network.requests).toHaveLength(mark);
+  captures.mockClear();
   vi.stubGlobal("doNotTrack", "0");
   client.opt_out_capturing();
   await act(async () => {
@@ -132,6 +136,8 @@ async function proveConsent({
     telemetry.setTelemetryContentPolicy(TELEMETRY_ACTOR_ID, "full");
   });
   await network.settle();
+  expect(captures).toHaveBeenCalledTimes(1);
+  expect(captures).toHaveLastReturnedWith(undefined);
   expect(network.requests).toHaveLength(mark);
 }
 
