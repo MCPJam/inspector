@@ -83,7 +83,7 @@ export function activePluginServers(
  */
 export function refusesComponentAdmission(error: unknown): boolean {
   if (!(error instanceof Error) || "data" in error) return false;
-  if (error.message.includes("extra field `componentAdmission`")) return true;
+  if (/extra field `componentAdmission`/.test(error.message)) return true;
   return describeConvexFailure(error, "").redacted;
 }
 
