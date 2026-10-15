@@ -108,6 +108,33 @@ async function setup() {
   return { compression, vendor, network, telemetry, client, hook };
 }
 
+async function proveFullUpdates({
+  client,
+  telemetry,
+}: Pick<Awaited<ReturnType<typeof setup>>, "client" | "telemetry">) {
+  const captures = vi.spyOn(client, "capture");
+  await act(async () => {
+    telemetry.setTelemetryCaptureContextAndContent(
+      { projectIds: ["k17telemetrye2eproject000002"], organizationIds: [] },
+      TELEMETRY_ACTOR_ID,
+      "full",
+    );
+  });
+  expect(captures).not.toHaveBeenCalled();
+  await act(async () => telemetry.resetTelemetryIdentity());
+  captures.mockClear();
+  await act(async () =>
+    telemetry.setTelemetryIdentity(TELEMETRY_ACTOR_ID, "full"),
+  );
+  // Only the SDK's normal property update; no additional recovery capture.
+  expect(captures).toHaveBeenCalledTimes(1);
+  expect(captures).toHaveBeenCalledWith("$set", {
+    $set: expect.objectContaining({ email: "member@example.test" }),
+    $set_once: {},
+  });
+  captures.mockRestore();
+}
+
 async function proveConsent({
   client,
   network,
@@ -152,7 +179,7 @@ it("retries profile delivery after live policy drops an asynchronously compresse
     });
     await compression.started;
     await act(async () => {
-      telemetry.setTelemetryContentPolicy(TELEMETRY_ACTOR_ID, "strict");
+      window.history.replaceState(null, "", "/results/fixture");
       compression.release();
       await expect
         .poll(async () => {
@@ -167,7 +194,12 @@ it("retries profile delivery after live policy drops an asynchronously compresse
           ?.headers["x-mcpjam-telemetry-policy"],
       ).toBe("strict");
       expect(events().filter((event) => event.$set)).toHaveLength(0);
-      telemetry.setTelemetryContentPolicy(TELEMETRY_ACTOR_ID, "full");
+      window.history.replaceState(null, "", "/");
+      telemetry.setTelemetryCaptureContextAndContent(
+        { projectIds: [RELAY_PROJECT_ID], organizationIds: [] },
+        TELEMETRY_ACTOR_ID,
+        "full",
+      );
     });
     await expect
       .poll(async () => {
@@ -187,17 +219,22 @@ it("retries profile delivery after live policy drops an asynchronously compresse
         }),
       }),
     );
-    hook.rerender();
-    await network.settle();
-    expect(events().filter((event) => event.$set)).toHaveLength(1);
     expect(
       posthogEvents(scanAll(network.requests).decoded).filter(
         (event) => event.event === "$identify",
       ),
     ).toHaveLength(1);
+    await proveFullUpdates({ client, telemetry });
+    await expect
+      .poll(async () => {
+        await network.settle();
+        return events().filter((event) => event.event === "$set").length;
+      })
+      .toBe(3);
     await proveConsent({ client, network, telemetry });
   } finally {
     compression.release();
+    window.history.replaceState(null, "", "/");
     hook.unmount();
     client.opt_out_capturing();
     telemetry.setTelemetryActor(null);

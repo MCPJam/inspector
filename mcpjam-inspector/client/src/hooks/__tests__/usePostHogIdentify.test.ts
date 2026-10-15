@@ -68,7 +68,7 @@ vi.mock("@/hooks/use-actor-key", () => ({
 // The identity grant: the backend's answer, held only for the current actor.
 vi.mock("@/lib/telemetry-context", () => ({
   subscribeTelemetryPolicy: () => () => {},
-  currentTelemetryPolicyRevision: () => mockState.revision,
+  currentTelemetryProfileRetryRevision: () => mockState.revision,
   currentTelemetryActor: () =>
     mockState.telemetryActor === undefined
       ? mockState.actorKey

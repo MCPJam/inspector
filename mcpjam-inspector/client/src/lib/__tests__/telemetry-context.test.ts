@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   currentTelemetryCaptureContext,
-  currentTelemetryPolicyRevision,
+  currentTelemetryProfileRetryRevision,
   setTelemetryCaptureContextAndContent,
   subscribeTelemetryPolicy,
   resetTelemetryIdentity,
@@ -32,13 +32,13 @@ describe("the identity grant", () => {
     setTelemetryContentPolicy("user_A", "full");
   });
 
-  it("versions meaningful policy changes once per atomic update", () => {
-    const initial = currentTelemetryPolicyRevision();
+  it("versions only delivery-blocking windows, including credential locations", () => {
+    const initial = currentTelemetryProfileRetryRevision();
     setTelemetryContentPolicy("user_A", "full");
-    expect(currentTelemetryPolicyRevision()).toBe(initial);
+    expect(currentTelemetryProfileRetryRevision()).toBe(initial);
     setTelemetryContentPolicy("user_A", "strict");
     setTelemetryContentPolicy("user_A", "full");
-    expect(currentTelemetryPolicyRevision()).toBe(initial + 2);
+    expect(currentTelemetryProfileRetryRevision()).toBe(initial + 1);
     const listener = vi.fn();
     const unsubscribe = subscribeTelemetryPolicy(listener);
     setTelemetryCaptureContextAndContent(
@@ -48,7 +48,14 @@ describe("the identity grant", () => {
     );
     unsubscribe();
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(currentTelemetryPolicyRevision()).toBe(initial + 3);
+    expect(currentTelemetryProfileRetryRevision()).toBe(initial + 1);
+    const ids = { projectIds: ["project_next"], organizationIds: [] };
+    window.history.replaceState(null, "", "/results/fixture");
+    setTelemetryCaptureContextAndContent(ids, "user_A", "full");
+    expect(currentTelemetryCaptureContext().policy.content).toBe("strict");
+    window.history.replaceState(null, "", "/");
+    setTelemetryCaptureContextAndContent(ids, "user_A", "full");
+    expect(currentTelemetryProfileRetryRevision()).toBe(initial + 2);
     expect(currentTelemetryCaptureContext().policy.content).toBe("full");
   });
 

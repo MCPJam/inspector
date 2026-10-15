@@ -10,7 +10,7 @@ import {
   subscribeTelemetryPolicy,
   currentTelemetryCaptureContext,
   currentTelemetryActor,
-  currentTelemetryPolicyRevision,
+  currentTelemetryProfileRetryRevision,
   telemetryIdentityFor,
 } from "@/lib/telemetry-context";
 
@@ -29,7 +29,8 @@ import {
  * content, so no identify call is made while that answer holds; names sent
  * under an earlier full answer stay on the PostHog person. This is
  * independent of the session's replay recording level. Desktop content
- * remains strict, so identify is withheld.
+ * remains strict, so identify is withheld. A delivery-blocking permission
+ * window permits one fresh profile retry after full content returns.
  */
 export function usePostHogIdentify() {
   const posthog = usePostHog();
@@ -46,9 +47,9 @@ export function usePostHogIdentify() {
   const contentFull = useSyncExternalStore(subscribeTelemetryPolicy, () =>
     currentTelemetryCaptureContext().policy.content === "full",
   );
-  const policyRevision = useSyncExternalStore(
+  const profileRetryRevision = useSyncExternalStore(
     subscribeTelemetryPolicy,
-    currentTelemetryPolicyRevision,
+    currentTelemetryProfileRetryRevision,
   );
   const profileAttemptRef = useRef<{
     actor: string;
@@ -136,15 +137,15 @@ export function usePostHogIdentify() {
         !isActorChange &&
         previousAttempt?.actor === actorKey &&
         previousAttempt.client === posthog &&
-        previousAttempt.revision !== policyRevision
+        previousAttempt.revision !== profileRetryRevision
       ) {
-        // Bypass SDK profile dedup after a policy transition may have dropped it.
+        // Bypass SDK profile dedup after a delivery-blocking permission window.
         // capture still enforces opt-out, capture-time grants and live send policy.
         posthog.capture("$set", {}, { $set: personProperties });
       }
       profileAttemptRef.current = {
         actor: actorKey,
-        revision: policyRevision,
+        revision: profileRetryRevision,
         client: posthog,
       };
     }
@@ -166,6 +167,6 @@ export function usePostHogIdentify() {
     convexUser,
     identity,
     contentFull,
-    policyRevision,
+    profileRetryRevision,
   ]);
 }
