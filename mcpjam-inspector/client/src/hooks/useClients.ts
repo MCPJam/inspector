@@ -6,6 +6,7 @@ import type { ScenarioMode } from "./useScenarios";
 import { shouldQueryProjectId } from "./useProjects";
 import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 import { resolveClientDisplayNames } from "@/lib/client-display-name";
+import { ensureProjectClientMutation } from "@/shared/ensure-project-client";
 
 /**
  * Product ownership of a host. Defined in `@/lib/host-owner-scope` alongside
@@ -241,11 +242,14 @@ export function useHostMutations() {
     name?: string;
   }) => Promise<{ hostId: string; hostConfigId: string }>;
 
+  const ensureProjectClient = useMutation(ensureProjectClientMutation);
+
   return {
     createHost,
     updateHost,
     updateHostServers,
     deleteHost,
     duplicateHost,
+    ensureProjectClient,
   };
 }

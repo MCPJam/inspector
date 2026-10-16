@@ -93,6 +93,22 @@ describe("executable files", () => {
     }
   );
 
+  it("rejects a link-typed ZIP entry whose name ends in a slash", async () => {
+    const zip = new JSZip();
+    for (const [path, content] of Object.entries(FILES)) {
+      zip.file(path, content, { unixPermissions: MODES[path] });
+    }
+    zip.file("bin/link/", "server", { unixPermissions: 0o120777 });
+    const bytes = await zip.generateAsync({
+      type: "uint8array",
+      platform: "UNIX",
+    });
+    await expectParseError(
+      await createZipPluginFileSource(bytes),
+      "PATH_LINK_ENTRY"
+    );
+  });
+
   it("treats a ZIP file with a regular-file type as a file", async () => {
     const zip = new JSZip();
     for (const [path, content] of Object.entries(FILES)) {
@@ -140,30 +156,38 @@ describe("executable files", () => {
 });
 
 describe("execution digest", () => {
-  it("is identical across the in-memory, directory and ZIP sources", async () => {
-    const root = await mkdtemp(join(tmpdir(), "plugin-exec-"));
-    try {
-      for (const [path, content] of Object.entries(FILES)) {
-        const absolute = join(root, path);
-        await mkdir(dirname(absolute), { recursive: true });
-        await writeFile(absolute, content);
-        await chmod(absolute, MODES[path]);
-      }
-      const fromMemory = await parsePluginBundle(withModes(MODES));
-      const fromDirectory = await parsePluginBundle(
-        createDirectoryPluginFileSource(root)
-      );
-      const fromZip = await parsePluginBundle(
-        await createZipPluginFileSource(await zipWithModes({}))
-      );
-      expect(fromDirectory.executableFiles).toEqual(["bin/server"]);
-      expect(fromZip.executableFiles).toEqual(["bin/server"]);
-      expect(fromDirectory.executionDigest).toBe(fromMemory.executionDigest);
-      expect(fromZip.executionDigest).toBe(fromMemory.executionDigest);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+  it("is identical across the in-memory and ZIP sources", async () => {
+    const fromMemory = await parsePluginBundle(withModes(MODES));
+    const fromZip = await parsePluginBundle(
+      await createZipPluginFileSource(await zipWithModes({}))
+    );
+    expect(fromZip.executableFiles).toEqual(["bin/server"]);
+    expect(fromZip.executionDigest).toBe(fromMemory.executionDigest);
   });
+
+  // Windows reports no execute bit for a file on disk, whatever `chmod` set.
+  it.skipIf(process.platform === "win32")(
+    "is identical for a directory source",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "plugin-exec-"));
+      try {
+        for (const [path, content] of Object.entries(FILES)) {
+          const absolute = join(root, path);
+          await mkdir(dirname(absolute), { recursive: true });
+          await writeFile(absolute, content);
+          await chmod(absolute, MODES[path]);
+        }
+        const fromMemory = await parsePluginBundle(withModes(MODES));
+        const fromDirectory = await parsePluginBundle(
+          createDirectoryPluginFileSource(root)
+        );
+        expect(fromDirectory.executableFiles).toEqual(["bin/server"]);
+        expect(fromDirectory.executionDigest).toBe(fromMemory.executionDigest);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  );
 
   it("ignores ZIP timestamps and compression", async () => {
     const a = await parsePluginBundle(
