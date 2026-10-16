@@ -1402,7 +1402,13 @@ export function MCPAppsRendererSurface({
   const [openInAppUrlOverride, setOpenInAppUrlOverride] = useState<
     string | null
   >(null);
-  const [sandboxProxyReady, setSandboxProxyReady] = useState(false);
+  // Counts every `sandbox-proxy-ready`, not just the first. The proxy announces
+  // itself once per document load, so a second one means the outer iframe
+  // reloaded under us — e.g. a persistent surface re-parented when its anchor
+  // remounted. That new document has no view and our bridge still points at
+  // the old window, so each count rebuilds the bridge (below), which re-sends
+  // the resource. 0 = the proxy has not loaded yet.
+  const [sandboxProxyGeneration, setSandboxProxyGeneration] = useState(0);
   // Where the proxy mounted the view, reported once per mount. Surfaced as the
   // Sandbox Stack "View origin" chip.
   const [viewMount, setViewMount] = useState<{
@@ -3874,9 +3880,23 @@ export function MCPAppsRendererSurface({
     ]
   );
 
+  const bridgeTransportReadyRef = useRef(bridgeTransportReady);
+  bridgeTransportReadyRef.current = bridgeTransportReady;
+  const hasWidgetHtmlRef = useRef(hasWidgetHtml);
+  hasWidgetHtmlRef.current = hasWidgetHtml;
+  // Stable identity: SandboxedIframe calls this per proxy load, and every call
+  // now rebuilds the bridge, so it must not change on every render.
+  const handleSandboxProxyReady = useCallback(() => {
+    setSandboxProxyGeneration((generation) => generation + 1);
+    logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", {
+      bridgeTransportReady: bridgeTransportReadyRef.current,
+      hasWidgetHtml: hasWidgetHtmlRef.current,
+    });
+  }, [logWidgetDebug]);
+
   useEffect(() => {
     if (!widgetHtml) return;
-    if (!sandboxProxyReady) {
+    if (sandboxProxyGeneration === 0) {
       logWidgetDebug("host-to-ui", "debug/bridge-connect-skipped", {
         reason: "sandbox-proxy-not-ready",
       });
@@ -4063,7 +4083,8 @@ export function MCPAppsRendererSurface({
     };
   }, [
     widgetHtml,
-    sandboxProxyReady,
+    // A reloaded proxy is a new window with no view: reconnect to it.
+    sandboxProxyGeneration,
     registerBridgeHandlers,
     refreshAppProvidedTools,
     // Bridge must rebuild when the resolved sandbox policy changes — a host
@@ -4658,13 +4679,7 @@ export function MCPAppsRendererSurface({
       browserStorage={effectiveSandbox.browserStorage}
       colorScheme={resolvedTheme}
       recordMode={recordMode}
-      onProxyReady={() => {
-        setSandboxProxyReady(true);
-        logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", {
-          bridgeTransportReady,
-          hasWidgetHtml,
-        });
-      }}
+      onProxyReady={handleSandboxProxyReady}
       onMessage={handleSandboxMessage}
       title={`MCP App: ${toolName}`}
       hostedMode={host.surface.hostedMode}

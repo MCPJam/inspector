@@ -626,6 +626,51 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
   });
 
+  it("reconnects and reloads the guest when the sandbox proxy reloads", async () => {
+    // A re-parented iframe reloads the proxy document without React knowing:
+    // the new proxy has no view and the old bridge points at a dead window.
+    // A second sandbox-proxy-ready must rebuild the bridge and re-send the
+    // resource, or the App stays blank (MCPJam/inspector#6504).
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(sandboxedIframePropsRef.current?.html).toBeTruthy();
+    });
+    const firstLoad = sandboxedIframePropsRef.current.reloadKey;
+    act(() => triggerReady());
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("sandboxed-iframe").style.opacity).toBe("1"),
+    );
+
+    await act(async () => {
+      sandboxedIframePropsRef.current?.onProxyReady?.();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.close).toHaveBeenCalled();
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
+      expect(sandboxedIframePropsRef.current?.html).toBeTruthy();
+      expect(sandboxedIframePropsRef.current.reloadKey).not.toBe(firstLoad);
+    });
+    // Same iframe element; only the guest document is re-sent.
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+  });
+
+  it("keeps one bridge across re-renders while the proxy is unchanged", async () => {
+    const { rerender } = render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(sandboxedIframePropsRef.current?.html).toBeTruthy();
+    });
+    rerender(<HostedRenderer {...baseProps} />);
+    rerender(<HostedRenderer {...baseProps} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+  });
+
   it("renders separate iframes for distinct tool calls on the same widget", async () => {
     const firstOutput = { content: [{ type: "text" as const, text: "first" }] };
     const secondOutput = {

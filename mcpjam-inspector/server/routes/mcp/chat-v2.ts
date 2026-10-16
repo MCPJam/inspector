@@ -2498,6 +2498,14 @@ chatV2.post("/", async (c) => {
         clientIp: getSpendClientIp(c),
         mcpClientManager,
         selectedServers,
+        // Every turn, not just harness turns: the engine streams the persist
+        // receipt only when it knows the session. Without one the client cannot
+        // advance its version baseline, so the reactive history refresh
+        // rehydrates this thread after every turn — remounting each App iframe
+        // into a blank sandbox. Mirrors web-chat-turn.ts. The harness branch
+        // below also claims its continuity lane from these.
+        ...(chatSessionId ? { chatSessionId } : {}),
+        sourceType: chatSessionSourceType,
         requireToolApproval,
         modelVisibleMcpToolResults,
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
@@ -2542,14 +2550,10 @@ chatV2.post("/", async (c) => {
               // adapter-http (the persistent singleton manager).
               harnessMcpProxy: { plane: "local-mcp" as const },
               // Multi-turn continuity: runHarnessTurn claims the harnessSessions
-              // lane from the chat OWNER (chatSessionId + sourceType). The web
-              // route threads these via streamWebChatTurn's persist; this route
-              // calls the handler directly, so without them the continuity gate
-              // is skipped and every harness turn starts a fresh (amnesiac)
-              // Claude Code session. Scoped to the harness branch — the emulated
-              // path persists via onConversationComplete and doesn't read these.
-              ...(chatSessionId ? { chatSessionId } : {}),
-              sourceType: chatSessionSourceType,
+              // lane from the chat OWNER (chatSessionId + sourceType, passed
+              // above for every turn). Without them the continuity gate is
+              // skipped and every harness turn starts a fresh (amnesiac)
+              // Claude Code session.
               ...(bodyScenarioId ? { scenarioId: bodyScenarioId } : {}),
             }
           : {}),
@@ -2829,6 +2833,13 @@ chatV2.post("/", async (c) => {
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
+        // The engine streams the persist receipt only when it knows the
+        // session. Without one the client cannot advance its version baseline,
+        // so the reactive history refresh rehydrates this thread after every
+        // turn — remounting each App iframe into a blank sandbox. Same as the
+        // local-org call above and every handler in web-chat-turn.ts.
+        chatSessionId,
+        sourceType: chatSessionSourceType,
         ...(routingSelection?.source === "org"
           ? { modelSelection: { ...routingSelection, source: "org" as const }, modelSelectionOrigin: selected.origin }
           : {}),
