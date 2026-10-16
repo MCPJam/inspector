@@ -1,0 +1,41 @@
+name: Local Harness Browser
+on:
+  pull_request:
+    paths:
+      - "mcpjam-inspector/server/utils/harness/**"
+      - "mcpjam-inspector/client/**"
+      - "mcpjam-inspector/e2e/local-harness*"
+      - "mcpjam-inspector/e2e/fixtures/local-harness*/*"
+      - "package-lock.json"
+      - ".github/workflows/local-harness-browser.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: local-harness-browser-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  deterministic-approval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.14.0"
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - run: npm run sdk:build -w @mcpjam/inspector
+      - run: npm run pretest -w @mcpjam/inspector
+      - run: npx playwright install --with-deps chromium
+        working-directory: mcpjam-inspector
+      - run: npx playwright test --config e2e/local-harness.playwright.config.ts
+        working-directory: mcpjam-inspector
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: local-harness-browser-results
+          path: |
+            mcpjam-inspector/playwright-report/local-harness
+            mcpjam-inspector/test-results
+          retention-days: 7
