@@ -137,7 +137,11 @@ function adaptEntry(
         reason: `it declares "${field}", which a ${type} server does not take`,
       };
     }
-    if (own.has(field) || (type !== "stdio" && HTTP_HINT_FIELDS.has(field))) {
+    if (
+      own.has(field) ||
+      field === "extensions" ||
+      (type !== "stdio" && HTTP_HINT_FIELDS.has(field))
+    ) {
       entry[field] = value;
       continue;
     }

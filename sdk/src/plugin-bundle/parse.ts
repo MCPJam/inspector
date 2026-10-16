@@ -460,6 +460,7 @@ export async function parsePluginBundle(
         // malformed entries must not bypass the limit. Bundle-fatal via the
         // final throwIfErrors.
         maxServers: limits.maxMcpServers,
+        entryExtensions: interpretation.profile === "openai-compatible",
       });
       skipped.push(...normalized.skipped);
       for (const server of normalized.servers) {
@@ -614,16 +615,21 @@ export async function parsePluginBundle(
         serverKey: server.key,
         name: header.name,
         secret: header.secret,
+        ...(header.scheme !== undefined ? { scheme: header.scheme } : {}),
       });
     }
-    if (server.config.oauth !== undefined) {
+    const { auth, oauth } = server.config;
+    const declaresOAuth = auth?.type === "oauth" || auth?.type === "mixed";
+    // A declared method decides. MCPJam's own `oauth` hint asks for a
+    // sign-in only for a server that declares none, so `none` and `api_key`
+    // never surface one.
+    if (declaresOAuth || (auth === undefined && oauth !== undefined)) {
       setupRequirements.push({
         kind: "oauth",
         componentKey: server.componentKey,
         serverKey: server.key,
-        ...(server.config.oauth.timing !== undefined
-          ? { timing: server.config.oauth.timing }
-          : {}),
+        ...(oauth?.timing !== undefined ? { timing: oauth.timing } : {}),
+        ...(declaresOAuth ? { required: auth.type === "oauth" } : {}),
       });
     }
   }

@@ -17,6 +17,38 @@ import {
   type PluginIssueCollector,
 } from "./validation.js";
 
+/** Loopback hosts, where plain HTTP is tolerated for local development. */
+export function isLoopbackHost(hostname: string): boolean {
+  return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(hostname);
+}
+
+/**
+ * Userinfo, a fragment (even `https:@h/#`) or anything `URL` would rewrite,
+ * including a host that does not follow exactly two slashes (`https:h`,
+ * `https:/h`, `https:///h` all read as `https://h`).
+ */
+export const isUnsafeRawUrl = (raw: string): boolean =>
+  !/^[^:/?#]+:\/\/[^\\/?#]/.test(raw) ||
+  /^[^:]*:[\\/]*[^\\/?#]*@|[#\\\s]/.test(raw) ||
+  [...raw].some((char) => char < " " || char === "\u007f");
+
+/**
+ * A path segment or query value that looks like a credential, or a query
+ * parameter named like one: a personal MCP URL often carries its key in the
+ * path, and `?api_key=…` in the query. Each part is tested on its own, since a
+ * long path read whole would look like a token run.
+ */
+export function urlCarriesSecret(url: URL): boolean {
+  if (url.pathname.split("/").some((segment) => isSecretLikeValue(segment))) {
+    return true;
+  }
+  for (const [name, value] of url.searchParams) {
+    if (isSecretLikeValue(value)) return true;
+    if (value !== "" && SECRET_FIELD_NAME.test(name)) return true;
+  }
+  return false;
+}
+
 /** `${SOME_VAR}`-style reference that must be resolved by the user at setup. */
 const ENV_REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
 

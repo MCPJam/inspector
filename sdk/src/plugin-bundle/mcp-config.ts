@@ -22,10 +22,16 @@
  */
 
 import {
+  isLoopbackHost,
   normalizeEnv,
   normalizeHeaders,
   normalizeOAuthHint,
 } from "./mcp-entry-values.js";
+import {
+  readOpenAiServerAuth,
+  withApiKeyHeader,
+  type PluginServerAuth,
+} from "./openai-auth.js";
 import { PluginIssueCollector, type PluginIssueCode } from "./validation.js";
 import { resolveContainedPath } from "./paths.js";
 
@@ -97,6 +103,8 @@ export interface PluginHeaderRequirement {
   secret: boolean;
   /** Screened non-secret literal header value, when declared. */
   value?: string;
+  /** Set on an API key's header: how the supplied credential is sent. */
+  scheme?: "bearer" | "basic" | "custom_header";
 }
 
 export interface NormalizedPluginOAuthHint {
@@ -121,6 +129,8 @@ export type NormalizedPluginMcpServer =
       url: string;
       headerRequirements: PluginHeaderRequirement[];
       oauth?: NormalizedPluginOAuthHint;
+      /** OpenAI's typed auth declaration, read under openai-compatible only. */
+      auth?: PluginServerAuth;
     };
 
 export interface ParsedPluginServer {
@@ -269,7 +279,8 @@ function normalizeServer(
   serverKey: string,
   sourcePath: string,
   raw: unknown,
-  issues: PluginIssueCollector
+  issues: PluginIssueCollector,
+  entryExtensions: boolean
 ): Omit<ParsedPluginServer, "configHash"> | null {
   const componentKey = `server:${serverKey}`;
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -294,7 +305,7 @@ function normalizeServer(
   const knownFields =
     declared === "stdio" ? STDIO_KNOWN_FIELDS : HTTP_KNOWN_FIELDS;
   for (const key of Object.keys(record)) {
-    if (!knownFields.has(key)) {
+    if (!knownFields.has(key) && !(entryExtensions && key === "extensions")) {
       issues.error(
         "MCP_UNKNOWN_FIELD",
         `server "${serverKey}": field "${key}" is not part of the Agent Plugins ${declared} entry schema`,
@@ -442,13 +453,7 @@ function normalizeServer(
     return null;
   }
   if (parsedUrl.protocol !== "https:") {
-    const isLoopback =
-      parsedUrl.protocol === "http:" &&
-      (parsedUrl.hostname === "localhost" ||
-        parsedUrl.hostname === "127.0.0.1" ||
-        parsedUrl.hostname === "[::1]" ||
-        parsedUrl.hostname === "::1");
-    if (isLoopback) {
+    if (parsedUrl.protocol === "http:" && isLoopbackHost(parsedUrl.hostname)) {
       issues.warn(
         "MCP_INSECURE_URL_LOCALHOST",
         `server "${serverKey}": plain-HTTP loopback URL only works in local development`,
@@ -476,6 +481,19 @@ function normalizeServer(
   const oauth = hasOAuthHint
     ? normalizeOAuthHint(serverKey, componentKey, record, issues)
     : undefined;
+  const declaredAuth = readOpenAiServerAuth(
+    entryExtensions ? record.extensions : undefined,
+    { serverKey, componentKey, issues }
+  );
+  if (declaredAuth.error !== undefined) {
+    issues.error(
+      "MCP_INVALID_SERVER",
+      `server "${serverKey}": ${declaredAuth.error}`,
+      { componentKey }
+    );
+    return null;
+  }
+  const auth = declaredAuth.auth;
 
   return {
     componentKey,
@@ -485,8 +503,12 @@ function normalizeServer(
       transport: "http",
       httpVariant: declared,
       url,
-      headerRequirements,
+      headerRequirements:
+        auth?.type === "api_key"
+          ? withApiKeyHeader(headerRequirements, auth)
+          : headerRequirements,
       ...(oauth !== undefined ? { oauth } : {}),
+      ...(auth !== undefined ? { auth } : {}),
     },
   };
 }
@@ -642,6 +664,8 @@ export function normalizePluginMcpConfig(
      * error-severity issue — the caller's throw makes it bundle-fatal.
      */
     maxServers?: number;
+    /** Accept entry `extensions` (OpenAI auth); openai-compatible only. */
+    entryExtensions?: boolean;
   }
 ): PluginMcpConfigNormalization {
   const { sourcePath, manifestSchemaVersion, issues, maxServers } = context;
@@ -747,7 +771,13 @@ export function normalizePluginMcpConfig(
       skip(serverKey, scoped);
       continue;
     }
-    const server = normalizeServer(serverKey, sourcePath, config, scoped);
+    const server = normalizeServer(
+      serverKey,
+      sourcePath,
+      config,
+      scoped,
+      context.entryExtensions === true
+    );
     if (server === null || scoped.hasErrors()) {
       skip(serverKey, scoped);
       continue;

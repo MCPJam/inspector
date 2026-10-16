@@ -90,3 +90,38 @@ export function portableWithOverlayFiles(
       "---\nname: onboarding\ndescription: Set up Bits & Bolts.\n---\n\nWalk the user through setup.\n",
   };
 }
+
+/**
+ * A remote Codex package in the shape the installed Bits & Bolts Remote uses:
+ * an `http` server with OpenAI auth and a keyed `.app.json`. Constructed from
+ * OpenAI's documented formats, not copied from the installed package bytes.
+ */
+export function bitsAndBoltsRemoteFiles(
+  auth: Record<string, unknown> = { type: "oauth" }
+): Record<string, string | Uint8Array> {
+  const { mcpServers: _local, ...manifest } = BITS_AND_BOLTS_CODEX_MANIFEST;
+  return {
+    ".codex-plugin/plugin.json": JSON.stringify({
+      ...manifest,
+      version: "1.0.23",
+      mcpServers: "./.mcp.json",
+      apps: "./.app.json",
+    }),
+    ".mcp.json": JSON.stringify({
+      mcpServers: {
+        "bits-and-bolts": {
+          type: "http",
+          url: "https://bits-and-bolts.example.com/bits-and-bolts/mcp",
+          extensions: { "com.openai": { auth } },
+        },
+      },
+    }),
+    ".app.json": JSON.stringify({
+      apps: { "bits-and-bolts": { id: "plugin_asdk_app_bitsandbolts" } },
+    }),
+    "assets/icon.svg": SVG_BYTES,
+    "assets/icon-dark.svg": SVG_BYTES,
+    "skills/onboarding/SKILL.md":
+      "---\nname: onboarding\ndescription: Set up Bits & Bolts.\n---\n\nWalk the user through setup.\n",
+  };
+}
