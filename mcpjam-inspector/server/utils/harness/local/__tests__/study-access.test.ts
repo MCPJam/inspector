@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { requestLocalStudyReservation } from "../study-access.js";
+import { requestLocalStudyReservation, revokeLocalStudyReservation } from "../study-access.js";
 
 const fetchMock = vi.fn();
 const request = {
@@ -59,4 +59,14 @@ it("propagates transport failure without granting access", async () => {
   await expect(requestLocalStudyReservation("bearer", request)).rejects.toThrow(
     "Backend offline",
   );
+});
+
+it("allows canonical revoked scope to be returned after expiry", async () => {
+  fetchMock.mockResolvedValue(Response.json({ ok: true, reservation: { ...reservation, expiresAt: 0 } }));
+  expect(await revokeLocalStudyReservation("bearer", "reservation")).toMatchObject({ reservationId: "reservation", expiresAt: 0 });
+  expect(fetchMock).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ body: JSON.stringify({ action: "revoke", reservationId: "reservation" }) }));
+});
+it("rejects substituted revoke scope", async () => {
+  fetchMock.mockResolvedValue(Response.json({ ok: true, reservation: { ...reservation, reservationId: "other" } }));
+  await expect(revokeLocalStudyReservation("bearer", "reservation")).rejects.toThrow("could not be revoked");
 });

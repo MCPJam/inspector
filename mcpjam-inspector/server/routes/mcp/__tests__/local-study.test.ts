@@ -1,3 +1,4 @@
+vi.mock("../../../utils/harness/local/study-controls.js", () => ({ localStudyAvailability: async () => ({ harnessId: "codex", modelSourceReady: true }), revokeLocalStudy: async () => ({ revoked: true, cleanupComplete: true }) }));
 import { beforeEach, expect, it, vi } from "vitest";
 const setup = vi.hoisted(() => vi.fn());
 vi.mock("../../../utils/harness/local/study-readiness.js", () => ({
@@ -102,4 +103,11 @@ it("rejects malformed JSON", async () => {
   });
   expect(response.status).toBe(400);
   expect(setup).not.toHaveBeenCalled();
+});
+
+it("accepts only an opaque reservation id when revoking", async () => {
+  const headers = { "Content-Type": "application/json", Origin: "http://localhost:6274" };
+  expect((await localStudy.request("/revoke", { method: "POST", headers, body: JSON.stringify({ reservationId: "r", projectId: "forged" }) })).status).toBe(409);
+  const response = await localStudy.request("/revoke", { method: "POST", headers, body: JSON.stringify({ reservationId: "r" }) });
+  expect(await response.json()).toEqual({ revoked: true, cleanupComplete: true });
 });

@@ -118,7 +118,7 @@ localHarness.use("/*", bearerAuthMiddleware, requireVerifiedAuth());
 localHarness.use("/*", async (c, next) => {
   // The kill switch answers 404, not 403: an operator who turned the feature
   // off should not have the surface advertise that it exists.
-  if (!LOCAL_HARNESS_ENABLED || HOSTED_MODE) {
+  if (HOSTED_MODE || (!LOCAL_HARNESS_ENABLED && !c.req.path.endsWith("/study/revoke"))) {
     return c.json({ error: "Not found" }, 404);
   }
   if (c.get("guestId")) {

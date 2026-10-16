@@ -34,10 +34,7 @@ type StudyAccessRequest =
     };
 
 /** The backend owns conversation identity; this response is not a local grant. */
-export async function requestLocalStudyReservation(
-  bearer: string,
-  request: StudyAccessRequest,
-): Promise<LocalStudyReservation> {
+async function postStudyAction(bearer: string, request: StudyAccessRequest | { action: "revoke"; reservationId: string }) {
   if (!process.env.CONVEX_HTTP_URL)
     throw new Error("Study authorization is unavailable on this server.");
   const response = await fetch(
@@ -55,6 +52,10 @@ export async function requestLocalStudyReservation(
     },
   );
   const body: unknown = await response.json();
+  return { response, body };
+}
+export async function requestLocalStudyReservation(bearer: string, request: StudyAccessRequest): Promise<LocalStudyReservation> {
+  const { response, body } = await postStudyAction(bearer, request);
   const result = z
     .object({ ok: z.literal(true), reservation: reservationSchema })
     .safeParse(body);
@@ -67,5 +68,12 @@ export async function requestLocalStudyReservation(
       "This study preview could not be authorized for this account and installation. Reopen the study and retry.",
     );
   }
+  return result.data.reservation;
+}
+
+export async function revokeLocalStudyReservation(bearer: string, reservationId: string): Promise<LocalStudyReservation> {
+  const { response, body } = await postStudyAction(bearer, { action: "revoke", reservationId });
+  const result = z.object({ ok: z.literal(true), reservation: reservationSchema }).safeParse(body);
+  if (!response.ok || !result.success || result.data.reservation.reservationId !== reservationId) throw new Error("Study access could not be revoked. Retry after signing in.");
   return result.data.reservation;
 }

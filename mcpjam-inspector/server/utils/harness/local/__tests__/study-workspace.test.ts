@@ -1,3 +1,4 @@
+import { forgetScratchOwner } from "../scratch-janitor.js";
 import {
   mkdtemp,
   mkdir,
@@ -7,7 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ probe: vi.fn(), stop: vi.fn() }));
 vi.mock("../process-identity.js", () => ({ probeProcess: mocks.probe }));
@@ -17,7 +18,7 @@ vi.mock("../session-registry.js", () => ({
 vi.mock("../supervised-provider.js", () => ({
   sessionStateDirFor: (root: string, id: string) => join(root, "sessions", id),
 }));
-import { prepareLocalStudyWorkspace } from "../study-workspace.js";
+import { cleanupLocalStudyWorkspace, prepareLocalStudyWorkspace } from "../study-workspace.js";
 import {
   grantLocalHarnessConsent,
   resolveWorkspaceGrant,
@@ -171,4 +172,33 @@ it("retains files and grants until stop is confirmed, then removes both", async 
   });
   await expect(readFile(state)).rejects.toMatchObject({ code: "ENOENT" });
   expect((await verifyLocalHarnessGrant(grant.token, binding)).ok).toBe(false);
+});
+
+it("revokes and removes only the canonical actor's study workspace", async () => {
+  const own = await prepareLocalStudyWorkspace(owner);
+  const other = await prepareLocalStudyWorkspace({ ...owner, userId: "participant-b" });
+  const ownPath = await pathFor(own.workspaceGrantId);
+  const otherPath = await pathFor(other.workspaceGrantId);
+  await writeFile(join(ownPath, "data"), "own");
+  await writeFile(join(otherPath, "data"), "other");
+  expect(await cleanupLocalStudyWorkspace(owner)).toBe(true);
+  await expect(readFile(join(ownPath, "data"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(join(otherPath, "data"), "utf8")).toBe("other");
+});
+it("retains a study folder when its process cannot be confirmed stopped", async () => {
+  const own = await prepareLocalStudyWorkspace(owner);
+  const ownPath = await pathFor(own.workspaceGrantId);
+  await writeFile(join(ownPath, "data"), "keep");
+  mocks.stop.mockResolvedValue(false);
+  expect(await cleanupLocalStudyWorkspace(owner)).toBe(false);
+  expect(await readFile(join(ownPath, "data"), "utf8")).toBe("keep");
+});
+
+it("does not claim cleanup when ownership metadata disappeared", async () => {
+  const own = await prepareLocalStudyWorkspace(owner);
+  const ownPath = await pathFor(own.workspaceGrantId);
+  await writeFile(join(ownPath, "data"), "keep");
+  await forgetScratchOwner(basename(ownPath));
+  expect(await cleanupLocalStudyWorkspace(owner)).toBe(false);
+  expect(await readFile(join(ownPath, "data"), "utf8")).toBe("keep");
 });

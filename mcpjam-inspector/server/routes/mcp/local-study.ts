@@ -1,3 +1,4 @@
+import { localStudyAvailability, revokeLocalStudy } from "../../utils/harness/local/study-controls.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
@@ -58,5 +59,20 @@ localStudy.post("/setup", async (c) => {
       409,
     );
   }
+});
+localStudy.post("/availability", async (c) => {
+  if (!isAllowedRequestOrigin(c.req.header("origin"))) return c.json({ error: "Origin not allowed" }, 403);
+  try {
+    const body = requestSchema.pick({ scenarioId: true, accessVersion: true }).parse(await c.req.json());
+    const available = await localStudyAvailability({ ...body, bearer: (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "") });
+    return c.json({ available });
+  } catch (error) { return c.json({ error: error instanceof Error ? error.message : "Local availability could not be checked" }, 409); }
+});
+localStudy.post("/revoke", async (c) => {
+  if (!isAllowedRequestOrigin(c.req.header("origin"))) return c.json({ error: "Origin not allowed" }, 403);
+  try {
+    const body = z.object({ reservationId: z.string().min(1) }).strict().parse(await c.req.json());
+    return c.json(await revokeLocalStudy({ ...body, bearer: (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "") }));
+  } catch (error) { return c.json({ error: error instanceof Error ? error.message : "Local study revoke failed" }, 409); }
 });
 export default localStudy;

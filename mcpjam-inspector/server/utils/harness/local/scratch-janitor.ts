@@ -61,3 +61,15 @@ export function startLocalHarnessJanitor() {
   })().catch(error => { logger.warn("[local-harness] Startup cleanup failed", { error: String(error) }); });
   return startup;
 }
+
+export async function readScratchOwner(name: string): Promise<{ pid: number; birth: string; workspaceGrantId: string } | null> {
+  if (!validName(name)) throw new Error("Invalid scratch directory name");
+  try {
+    const owner = JSON.parse(await readFile(join(ownersRoot(), name), "utf8"));
+    if (!Number.isInteger(owner.pid) || owner.pid <= 0 || typeof owner.birth !== "string" || !owner.birth || typeof owner.workspaceGrantId !== "string" || !owner.workspaceGrantId) throw new Error("Scratch ownership is invalid");
+    return { pid: owner.pid, birth: owner.birth, workspaceGrantId: owner.workspaceGrantId };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
+}

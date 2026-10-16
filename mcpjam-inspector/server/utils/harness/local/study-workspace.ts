@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto";
-import { mkdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import {
   getLocalMachineId,
   localHarnessStateRoot,
   registerWorkspaceGrant,
+  revokeLocalHarnessGrants,
 } from "./grants.js";
 import { createLocalStateMutationLock } from "./local-state-lock.js";
 import { probeProcess } from "./process-identity.js";
 import { cleanupLocalHarnessScratch } from "./scratch-cleanup.js";
-import { recordScratchOwner, scratchRoot } from "./scratch-janitor.js";
+import { readScratchOwner, recordScratchOwner, scratchRoot } from "./scratch-janitor.js";
 import {
   isLocalStudyGrantBinding,
   type LocalStudyGrantBinding,
@@ -22,7 +23,7 @@ const withWorkspaceLock = createLocalStateMutationLock({
 });
 
 /** Allocates files only; callers must separately obtain study authorization. */
-export async function prepareLocalStudyWorkspace(args: {
+async function studyWorkspaceIdentity(args: {
   userId: string;
   projectId: string;
   study: LocalStudyGrantBinding;
@@ -56,6 +57,12 @@ export async function prepareLocalStudyWorkspace(args: {
     .digest("hex");
   const name = `run-${key}`;
   const localSessionId = `local-study-${key}`;
+  return { machineId, name, localSessionId, ownerIdentity: owner.identity };
+}
+
+type StudyWorkspaceOwner = Parameters<typeof studyWorkspaceIdentity>[0];
+export async function prepareLocalStudyWorkspace(args: StudyWorkspaceOwner) {
+  const { machineId, name, localSessionId } = await studyWorkspaceIdentity(args);
   return withWorkspaceLock(async () => {
     await mkdir(join(scratchRoot(), name), { recursive: true, mode: 0o700 });
     if (
@@ -83,5 +90,20 @@ export async function prepareLocalStudyWorkspace(args: {
           }),
         ),
     };
+  });
+}
+
+/** Scope comes from the authenticated backend revoke response, never the renderer. */
+export async function cleanupLocalStudyWorkspace(args: StudyWorkspaceOwner): Promise<boolean> {
+  const { name, localSessionId, ownerIdentity } = await studyWorkspaceIdentity(args);
+  return withWorkspaceLock(async () => {
+    const owner = await readScratchOwner(name);
+    if (!owner) {
+      try { await lstat(join(scratchRoot(), name)); return false; }
+      catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") return true; throw error; }
+    }
+    if (owner.pid !== process.pid || owner.birth !== ownerIdentity) return false;
+    await revokeLocalHarnessGrants({ workspaceGrantId: owner.workspaceGrantId });
+    return cleanupLocalHarnessScratch({ name, localSessionId, workspaceGrantId: owner.workspaceGrantId });
   });
 }
