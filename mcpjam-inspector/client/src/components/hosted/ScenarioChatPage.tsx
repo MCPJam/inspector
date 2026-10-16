@@ -1462,9 +1462,8 @@ export function ScenarioChatPage({
           selectedServerNames={sessionServersActive.map(
             (server) => server.serverName,
           )}
-          // No `showContextPopover`: the token/cost ring is a developer's
-          // gauge, and here it showed outside testers their session's cost.
           minimalMode
+          localStudyPreview={isPreviewSurface && session.payload.viewerIsProjectMember}
           reasoningDisplayMode="hidden"
           hostedContext={{
             scenarioId: session.scenarioId,

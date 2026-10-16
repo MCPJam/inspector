@@ -1,3 +1,8 @@
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { LOCAL_CODEX_FEATURE_FLAG } from "@/hooks/useCodexHostEnabled";
+import { useLocalStudyTarget } from "@/hooks/use-local-study-target";
+import { useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
+import { LocalStudyControls } from "@/components/harness/LocalStudyControls";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { resolveRestoredModel } from "@/lib/model-selection";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
@@ -180,6 +185,7 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
+  localStudyPreview?: boolean;
   showContextPopover?: boolean;
   hostedContext?: HostedRuntimeContext;
   executionConfig?: ExecutionConfig;
@@ -234,6 +240,7 @@ export function ChatTabV2({
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
+  localStudyPreview = false,
   showContextPopover,
   hostedContext,
   executionConfig,
@@ -250,7 +257,11 @@ export function ChatTabV2({
   onEvalChatHandoffConsumed,
   renderAssistantTurnActions,
 }: ChatTabProps) {
-  const { signUp } = useInspectorAuth();
+  const { signUp, user } = useInspectorAuth();
+  const localRollout = useLocalHarnessEnabled();
+  const localCodexRollout = useFeatureFlagEnabled(LOCAL_CODEX_FEATURE_FLAG) === true;
+  const localStudyEnabled = localStudyPreview && !HOSTED_MODE && (localRollout || localCodexRollout) && Boolean(user);
+  const localStudy = useLocalStudyTarget({ userId: user?.id, scenarioId: hostedContext?.scenarioId, accessVersion: hostedContext?.accessVersion });
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
@@ -345,7 +356,6 @@ export function ChatTabV2({
   } | null>(null);
   const hasUnsavedDraftRef = useRef(false);
 
-  /** Invalidate reactive history loads immediately (refs otherwise lag behind state until useEffect). */
   const invalidatePendingReactiveHistoryLoad = useCallback(() => {
     activeHistorySessionIdRef.current = null;
     reactiveHistoryLoadRequestIdRef.current += 1;
@@ -374,8 +384,6 @@ export function ChatTabV2({
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const organizationId = activeProject?.organizationId ?? null;
-  // Only owners/admins/creators may buy credits (mirrors the backend gate).
-  // Non-managers see an "ask org admin" hint instead of the buy button.
   const { sortedOrganizations } = useOrganizationQueries({
     isAuthenticated: isConvexAuthenticated,
   });
@@ -392,8 +400,6 @@ export function ChatTabV2({
   const modelConfigOrganizationId = hostedContext?.projectId
     ? null
     : organizationId;
-  // The model picker's "Your providers" footer points at the org whose keys back
-  // this chat, so hosted surfaces (no org page to reach) get no footer.
   const manageOrgProviders = useOrgModelsHandoff(modelConfigOrganizationId);
   // A hosted page's reader is a visitor: no organization configuration.
   const refusalHandoff = useMemo(
@@ -508,9 +514,8 @@ export function ChatTabV2({
     dismissUrlElicitationRequired,
     autoResumeNotice,
   } = useChatSession({
+    localHarnessExecution: localStudyEnabled ? { requested: localStudy.requested, studyPreview: true, resolveSendTarget: localStudy.resolveSendTarget } : undefined,
     selectedServers: selectedConnectedServerNames,
-    // A scenario / share-link turn runs the host's own config; the visitor's
-    // chip would be ignored there, so it is not offered.
     reasoningEffortEnabled: !hostedContext?.scenarioId,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
@@ -522,11 +527,6 @@ export function ChatTabV2({
       oauthTokens: effectiveHostedOAuthTokens,
     },
     executionConfig,
-    // Phase 3: forward the resolved chat-tab host style so direct
-    // chat traces persist with `claude`/`chatgpt` rather than
-    // defaulting to `'claude'` regardless of user choice. Backend
-    // ingestion ignores it for scenario flows (those resolve from the
-    // scenario row), so it's safe to forward unconditionally.
     hostStyle:
       hostStyle === "claude" || hostStyle === "chatgpt" ? hostStyle : undefined,
     minimalMode,
@@ -1826,11 +1826,10 @@ export function ChatTabV2({
     setStopBroadcastRequestId,
     stop,
   });
-  // History rail: any in-flight generation for this tab (matches composer blocking).
   const historyRailStreaming = isStreamingActive;
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive,
-    composerDisabled: submitBlocked || scenarioComposerBlocked,
+    composerDisabled: submitBlocked || scenarioComposerBlocked || (localStudyEnabled && localStudy.requested && !localStudy.resolveSendTarget(chatSessionId ?? undefined)),
   });
 
   let placeholder = minimalMode
@@ -2278,6 +2277,7 @@ export function ChatTabV2({
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (localStudyEnabled && localStudy.requested && !localStudy.resolveSendTarget(chatSessionId ?? undefined)) return;
     const hasContent =
       input.trim() ||
       mcpPromptResults.length > 0 ||
@@ -2495,7 +2495,6 @@ export function ChatTabV2({
     requireOrgKeys: orgRequiresOwnKeys(hostedOrgModelConfig),
   };
 
-  // Off on the hosted study page — see `shouldShowStarterPrompts` for why.
   const showStarterPrompts = shouldShowStarterPrompts({
     hasMessages: effectiveHasMessages,
     isAuthLoading,
@@ -2505,6 +2504,7 @@ export function ChatTabV2({
 
   const surface = (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
+      {localStudyEnabled && <LocalStudyControls controller={localStudy} chatSessionId={chatSessionId} disabled={isStreamingActive} />}
       <ResizablePanelGroup
         direction="horizontal"
         className="flex-1 min-h-0 h-full"
