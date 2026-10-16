@@ -100,6 +100,33 @@ export async function probeFreePort(
   );
 }
 
+/**
+ * Settle once a server whose `listen()` was already called is bound.
+ *
+ * `serve(...)` returns before the bind happens and reports a failure such as
+ * EADDRINUSE (the TOCTOU race above) only as an `error` event. With no
+ * listener, Node throws that event as an uncaught exception and the app dies
+ * instead of reaching the recovery dialog. This turns it into a rejection
+ * the caller can catch.
+ *
+ * Both listeners are removed on settle, so a server that bound fine keeps no
+ * extra `error` listener and later runtime errors behave as before.
+ */
+export function waitForListening(server: net.Server): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onListening = () => {
+      server.removeListener("error", onError);
+      resolve();
+    };
+    const onError = (err: NodeJS.ErrnoException) => {
+      server.removeListener("listening", onListening);
+      reject(err);
+    };
+    server.once("listening", onListening);
+    server.once("error", onError);
+  });
+}
+
 function probeOnce(
   createServer: typeof net.createServer,
   hostname: string,
