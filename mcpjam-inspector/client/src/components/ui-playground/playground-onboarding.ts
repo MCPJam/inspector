@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { buildSkillContextMessages } from "@/components/chat-v2/shared/chat-helpers";
 import {
   createThreadAppApi,
+  type PluginOnboardingTarget,
   type ThreadAppScope,
 } from "@/components/host-workspace/thread-app-api";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
@@ -29,7 +30,7 @@ export interface PlaygroundOnboardingLive {
 
 export type SendPluginOnboarding = (
   spec: PluginOnboardingSpec,
-  serverId: string,
+  onboardingTarget: PluginOnboardingTarget,
   threadId: string,
   ownerKey: string,
   sourceSignal?: AbortSignal,
@@ -68,7 +69,7 @@ export function createPluginOnboardingSend({
   outgoingSenderMetadata,
   onFirstMessageSent,
 }: PlaygroundOnboardingDeps): SendPluginOnboarding {
-  return async (spec, serverId, threadId, ownerKey, sourceSignal) => {
+  return async (spec, onboardingTarget, threadId, ownerKey, sourceSignal) => {
     const target = onboardingLiveRef.current;
     const isCurrent = () => {
       const live = onboardingLiveRef.current;
@@ -76,7 +77,10 @@ export function createPluginOnboardingSend({
         !sourceSignal?.aborted &&
         live.ownerKey === ownerKey &&
         live.scope?.threadId === threadId &&
-        live.servers.some((server) => server.serverId === serverId)
+        // A plugin with no server has none to keep in the chat. The re-read
+        // below admits it again.
+        (typeof onboardingTarget !== "string" ||
+          live.servers.some((server) => server.serverId === onboardingTarget))
       );
     };
     if (
@@ -106,7 +110,7 @@ export function createPluginOnboardingSend({
     // Re-read the same saved source under the destination's current authority.
     // The source menu's cached bytes are never used to send a new chat turn.
     const fresh = await createThreadAppApi(target.scope).onboarding(
-      serverId,
+      onboardingTarget,
       true,
       signal,
     );
@@ -150,7 +154,7 @@ export function createPluginOnboardingRun({
 }: PlaygroundOnboardingDeps & {
   sendPluginOnboardingRef: { readonly current: SendPluginOnboarding };
 }): RunPluginOnboarding {
-  return async (spec, conversation, signal, serverId) => {
+  return async (spec, conversation, signal, onboardingTarget) => {
     const source = onboardingLiveRef.current;
     const isSourceCurrent = () =>
       !signal.aborted &&
@@ -175,7 +179,7 @@ export function createPluginOnboardingRun({
       // The destination is freshly admitted above; do not reuse its aborted signal.
       await sendPluginOnboardingRef.current(
         spec,
-        serverId,
+        onboardingTarget,
         targetThread,
         source.ownerKey,
         conversation === "current" ? signal : undefined,

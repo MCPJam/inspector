@@ -353,10 +353,24 @@ describe("PluginSettingsSection", () => {
     expect(h.requestOnboarding).toHaveBeenCalledWith({
       projectId: "p_1",
       serverIds: ["s_1"],
+      pluginId: "pl_1",
       pluginName: "Demo",
       conversation: "new",
     });
     expect(h.navigateApp).toHaveBeenCalledWith("/playground");
+  });
+
+  it("offers onboarding for a plugin with no server, by plugin", () => {
+    h.version.value = {
+      ...baseVersion(),
+      servers: [],
+      onboarding: { componentId: "c_9", modelRef: "demo/onboarding" },
+    };
+    renderSection();
+    fireEvent.click(screen.getByTestId("plugin-onboarding-setup"));
+    expect(h.requestOnboarding).toHaveBeenCalledWith(
+      expect.objectContaining({ serverIds: [], pluginId: "pl_1" }),
+    );
   });
 });
 

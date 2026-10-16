@@ -9,10 +9,11 @@ import {
 } from "@/lib/plugin-onboarding-intent";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 
-const request = () =>
+const request = (serverIds = ["srv"]) =>
   usePluginOnboardingIntentStore.getState().request({
     projectId: "p",
-    serverIds: ["srv"],
+    serverIds,
+    pluginId: "plg",
     pluginName: "Bits & Bolts",
     conversation: "new",
   });
@@ -59,6 +60,17 @@ describe("plugin onboarding intent", () => {
             item.method === "plugin-extensions/PLUGIN_ONBOARDING_NOT_STARTED",
         ),
     ).toBe(true);
+  });
+
+  it("points a plugin with no server to its settings when it expires", () => {
+    request([]);
+    vi.advanceTimersByTime(PLUGIN_ONBOARDING_INTENT_TTL_MS + 1);
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringMatching(/Set up from the plugin's settings/),
+    );
+    expect(toastError).not.toHaveBeenCalledWith(
+      expect.stringMatching(/server/),
+    );
   });
 
   it("does not report expiry once taken", () => {
