@@ -1438,12 +1438,7 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    // Harness preflight: fail closed with a clear message when a host-resolved
-    // harness (claude-code | codex) can't run on this server (never silent-
-    // The HARNESS execution target, resolved BEFORE the availability gate,
-    // because it changes what that gate checks: a local turn reserves and wakes
-    // no E2B box, so the computers-data-plane requirement does not apply to it.
-    //
+    // Resolve the selected venue before checking capabilities and availability.
     // Parsed by the same shared rules `/api/web/chat-v2` uses, so the two
     // routes cannot disagree about shape. An explicit ask that cannot be
     // honoured is REFUSED here, before a stream opens, rather than silently
@@ -1559,6 +1554,10 @@ chatV2.post("/", async (c) => {
     if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
+        capabilities: {
+          builtInToolIds: resolvedExecution.builtInToolIds,
+          browserToolPolicy: resolvedExecution.browserToolPolicy,
+        },
         // A local turn reserves and wakes nothing, so the computers-data-plane
         // check does not apply to it. Every other rule still does.
         ...(harnessExecutionTarget ? { localExecution: true } : {}),

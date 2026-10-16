@@ -41,8 +41,6 @@ const {
   WidgetModelContextValidationErrorMock: class WidgetModelContextValidationError extends Error {},
 }));
 
-// Runtime preparation is covered separately; this route must use its fresh
-// server-bound target, not the stale launch credential sent by the renderer.
 vi.mock("../../../utils/harness/local/readiness.js", () => ({
   LOCAL_HARNESS_DISPLAY_NAMES: { "claude-code": "Claude Code", codex: "Codex" },
   ensureLocalHarnessTarget: vi.fn(async () => ({ target: {
@@ -77,9 +75,6 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
   AppToolValidationError: AppToolValidationErrorMock,
   validateUiToolEntries: validateUiToolEntriesMock,
   UiToolValidationError: UiToolValidationErrorMock,
-  // This mock replaces the module wholesale, so an export the route calls but
-  // this object omits is `undefined(...)` at runtime — a 500 that looks like a
-  // routing bug rather than a missing mock entry.
   validatePageToolEntries: validatePageToolEntriesMock,
   PageToolValidationError: PageToolValidationErrorMock,
   validateWidgetModelContextEntries: validateWidgetModelContextEntriesMock,
@@ -419,17 +414,6 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     });
   });
 
-  /**
-   * A LOCAL-NATIVE turn: the one class of request on this route that has to
-   * establish WHO is asking before anything else happens.
-   *
-   * The shipped bug was structural rather than subtle — the route called the
-   * target parser with no acting user at all, and the parser then read
-   * `.length` off `undefined`. So every case below is about the identity: that
-   * one is resolved, that it is the SAME one consent binds, that an
-   * unverifiable session is refused as an authentication problem rather than a
-   * malformed body, and that none of this touches an ordinary turn.
-   */
   describe("local-native execution target", () => {
     const LOCAL_TARGET = {
       kind: "local-native",
@@ -493,9 +477,6 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     });
 
     it("binds the SAME canonical id the consent route would have bound", async () => {
-      // The whole point of `acting-user.ts`. If these two ever disagree, the
-      // grant-binding check is comparing a value to a different value and
-      // every local turn fails — or, worse, stops comparing anything real.
       verifyAuthKitTokenMock.mockResolvedValue({ sub: "user_01ABC" });
 
       await postLocalTurn();
@@ -553,10 +534,6 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     });
 
     it("refuses — never 500s — a session that names no member", async () => {
-      // The regression, at the route: an identity the route could not resolve
-      // used to reach the parser as `undefined` and die there with a
-      // TypeError. Whatever the reason a subject is unusable, the answer is a
-      // refusal the caller can act on and a turn that did not run.
       verifyAuthKitTokenMock.mockResolvedValue({ sub: "" });
 
       const response = await postLocalTurn();
@@ -567,8 +544,6 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     });
 
     it("prepares local execution even when the client sends no target", async () => {
-      // Readiness owns session verification for automatically selected local
-      // execution; no second renderer-controlled grant is needed.
       await postLocalTurn({ harnessTarget: undefined });
 
       expect(verifyAuthKitTokenMock).not.toHaveBeenCalled();
@@ -577,6 +552,31 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
         handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0]
           .harnessExecutionTarget,
       ).toMatchObject({ kind: "local-native", grantToken: "fresh-grant-capability" });
+    });
+
+    it("refuses cloud tools on a local target before starting the engine", async () => {
+      verifyAuthKitTokenMock.mockResolvedValue({ sub: "user_01ABC" });
+      fetchHostRuntimeConfigMock.mockResolvedValueOnce({
+        ok: true,
+        config: {
+          harness: "claude-code",
+          modelId: "anthropic/claude-haiku-4.5",
+          builtInToolIds: ["bash"],
+          selectedServerIds: ["server-id-1"],
+        },
+      });
+      const actual = await vi.importActual<
+        typeof import("../../../utils/harness/harness-availability")
+      >("../../../utils/harness/harness-availability");
+      checkHarnessRuntimeAvailableMock.mockImplementation(
+        actual.checkHarnessRuntimeAvailable,
+      );
+      const response = await postLocalTurn();
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({
+        error: expect.stringContaining("Choose cloud execution"),
+      });
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
 
     it("exempts a local turn from the computers-data-plane requirement", async () => {

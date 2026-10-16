@@ -1,3 +1,7 @@
+import {
+  localHarnessCapabilityRefusal,
+  type HarnessCapabilityRequirements,
+} from "@/shared/harness-capability-support";
 /**
  * Cheap, synchronous pre-flight for a harness-typed host (Claude Code | Codex).
  *
@@ -478,6 +482,7 @@ export type HarnessUnavailableKind =
   | "enterprise-policy"
   | "computers-unconfigured"
   | "tool-approval"
+  | "capability-unsupported"
   | "model-not-hosted"
   /** An organization connection whose provider this harness does not run on
    *  (an OpenAI connection on Claude Code, say). */
@@ -593,6 +598,7 @@ export function checkHarnessRuntimeAvailable(args: {
    * chokepoint — rather than duplicated here.
    */
   localExecution?: boolean;
+  capabilities?: HarnessCapabilityRequirements;
   /**
    * What the turn is for. Decides what an `unknown` harness × model verdict
    * means: refused for `eval` / `swarm` (results someone will compare), run
@@ -622,6 +628,11 @@ export function checkHarnessRuntimeAvailable(args: {
   // adapter, so asking the hosted default here would refuse an approval-gated
   // local Codex turn the turn itself can serve.
   const adapter = getHarnessAdapter(args.harnessId);
+  if (args.localExecution && args.capabilities) {
+    const reason = localHarnessCapabilityRefusal(adapter.id, args.capabilities);
+    if (reason) return { ok: false, kind: "capability-unsupported", reason };
+  }
+
   const name = adapter.displayName;
 
   // Does MCPJam supply this runtime's model credential, or does the runtime
@@ -740,7 +751,9 @@ export function checkHarnessRuntimeAvailable(args: {
   const modelVerdict = harnessModelRefusal({
     adapter,
     model: args.model,
-    ...(args.hostModelId !== undefined ? { hostModelId: args.hostModelId } : {}),
+    ...(args.hostModelId !== undefined
+      ? { hostModelId: args.hostModelId }
+      : {}),
     purpose: args.purpose ?? "eval",
     ...(args.selection ? { selection: args.selection } : {}),
   });

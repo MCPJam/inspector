@@ -34,7 +34,7 @@ describe("shared local scheduler", () => {
   });
   it("rejects cloud-only features before starting a local process", () => {
     for (const capability of [{ hasAttachments: true }, { computerEnvironmentId: "image" }, { builtInToolIds: ["browser"] }, { browserToolPolicy: {} }]) {
-      expect(() => assertLocalHarnessCapabilities(capability)).toThrow(/cloud computer features/);
+      expect(() => assertLocalHarnessCapabilities(capability)).toThrow(/Choose cloud execution/);
     }
     expect(() => assertLocalHarnessCapabilities({})).not.toThrow();
   });
