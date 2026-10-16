@@ -4480,12 +4480,8 @@ export const runEvalSuiteOperation: PlatformOperation<
         )
       : undefined;
 
-    // The suite DETAIL carries both attachment axes in attach order, so the
-    // targets compute from one read. Skipped on the two paths that have no
-    // axis to read: an explicit server override is a single legacy run by
-    // construction, and a composed stack has already PRODUCED its target — for
-    // either of them the attachments are simply not consulted, so fetching
-    // them would be a round trip spent on an answer nobody reads.
+    // The saved target axes are only needed when no override or composition
+    // has already supplied the complete target.
     const detail =
       overrideServers || composed
         ? undefined
@@ -4502,17 +4498,15 @@ export const runEvalSuiteOperation: PlatformOperation<
       input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
-    const selectedHosts = resolveSuiteHostTargets(
+    const selectedClients = await resolveSuiteHostTargets(
+      client,
+      project,
       suite,
       detail,
-      input.host ? [input.host] : input.hosts ?? []
+      input.host ? [input.host] : input.hosts ?? [],
+      signal
     );
 
-    // Attached environments arrive as bare IDS — the suite detail carries no
-    // names — and every place they surface is one a person reads: the
-    // TARGET_REQUIRED refusal listing what is pickable, and a fan-out receipt
-    // naming which target failed. One listing buys names for both; an id that
-    // no longer resolves degrades to itself rather than failing the run.
     const attachedEnvironmentNames = await environmentNamesFor(
       client,
       project,
@@ -4547,8 +4541,11 @@ export const runEvalSuiteOperation: PlatformOperation<
             id: host.id,
             name: host.name,
           })),
-          selectedEnvironments,
-          selectedHosts,
+          selectedEnvironments: [
+            ...selectedEnvironments,
+            ...selectedClients.environments,
+          ],
+          selectedHosts: selectedClients.hosts,
           ...(input.allAttached !== undefined
             ? { allAttached: input.allAttached }
             : {}),
@@ -5036,19 +5033,21 @@ export const runEvalCaseOperation: PlatformOperation<
           signal
         )
       : undefined;
-    // The suite detail is read ONLY when a host was named — a case run is
-    // otherwise unchanged, and paying for an extra request on every call to
-    // support an optional selector would be a tax on the common path.
-    const host = input.host
-      ? resolveSuiteHostTargets(
+    const selectedClients = input.host
+      ? await resolveSuiteHostTargets(
+          client,
+          project,
           suite,
           await client.getEvalSuite(
             { projectId: project.id, suiteId: suite.id },
             { signal }
           ),
-          [input.host]
-        )[0]!
+          [input.host],
+          signal
+        )
       : undefined;
+    const host = selectedClients?.hosts[0];
+    const clientEnvironment = selectedClients?.environments[0];
     const created = await createEvalRunOrReportCompose(composed, () =>
       client.createEvalRun(
         {
@@ -5071,6 +5070,7 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(composed ? { environmentId: composed.environment.id } : {}),
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
+            ...(clientEnvironment ? { environmentId: clientEnvironment.id } : {}),
             ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
             ...(input.iterations !== undefined ||
             input.repetitions !== undefined
@@ -5695,18 +5695,14 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       detail.environmentIds ?? [],
       signal
     );
-    // `attachedHosts` IS included in this plan, and since G4c a caller can
-    // actually SATISFY a host-axis ambiguity: `host` names one, exactly as
-    // `run_eval_suite`'s own selector does. Before that this operation had to
-    // refuse the host axis outright — the backend contract took no host
-    // selector, so the only query it could have sent was the selector-less
-    // suite-base derivation, which a host config's own model/harness can
-    // contradict. `testSuites:getRunDisclosure` now takes `namedHostId`, so
-    // the refusal is gone and the host axis is disclosed for real.
-    const selectedHosts = resolveSuiteHostTargets(
+    // Use the same client-to-environment resolution as a run launch.
+    const selectedClients = await resolveSuiteHostTargets(
+      client,
+      project,
       suite,
       detail,
-      input.host ? [input.host] : []
+      input.host ? [input.host] : [],
+      signal
     );
     const plan = computeRunTargets({
       attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
@@ -5719,8 +5715,11 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         id: host.id,
         name: host.name,
       })),
-      selectedEnvironments,
-      selectedHosts,
+      selectedEnvironments: [
+        ...selectedEnvironments,
+        ...selectedClients.environments,
+      ],
+      selectedHosts: selectedClients.hosts,
     });
     if (plan.kind === "target-required") {
       // `readOnly` wording: this operation spends nothing, and has no
