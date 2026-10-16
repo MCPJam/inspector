@@ -94,13 +94,6 @@ export function usePostHogIdentify() {
       });
     }
 
-    if (isActorChange && previous && !previous.wasAuthed) {
-      // reset() above only covers a departing authed actor. A departing
-      // guest's server-evaluated flags must not survive into the new actor
-      // either — the refresh below can fail without replacing them.
-      posthog.updateFlags?.({});
-    }
-
     // `deployment` is a PERSON property here, not just a super property: the
     // super prop rides events, while `/flags` targeting reads person
     // properties. Set for every actor (guest included) so a cohort rule like
@@ -156,6 +149,9 @@ export function usePostHogIdentify() {
     if (isActorChange) {
       posthog.register({ user_id: actorKey });
       previousActorRef.current = { key: actorKey, wasAuthed: isAuthedActor };
+      // Keep the last server evaluation until the actor refresh replaces it.
+      // Clearing here persists an empty evaluation under the existing PostHog
+      // identity, which also clears flags in other tabs using that identity.
       // Flags are evaluated by our server, not by posthog-js on identify
       // (MJ-015), so fetch the new actor's values here.
       void refreshServerFeatureFlagsForActor(posthog, {
