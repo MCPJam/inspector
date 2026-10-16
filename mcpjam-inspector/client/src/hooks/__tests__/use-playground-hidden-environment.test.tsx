@@ -44,6 +44,7 @@ vi.mock("@/hooks/useActivePlugins", async (importOriginal) => {
         activeServers: actual.activePluginServers(plugins),
         isLoading: !!projectId && state.activeLoading,
         failed: !!projectId && state.activeFailed,
+        answered: !!answered,
       };
     },
   };
@@ -96,6 +97,12 @@ import {
   showPluginNotice,
 } from "@/lib/plugins/plugin-notice-display";
 import { usePluginServerNoticeStore } from "@/stores/plugin-server-notice-store";
+import {
+  hasOnboardingAfterSignIn,
+  markOnboardingSignInCompleted,
+  requestOnboardingAfterSignIn,
+  usePluginOnboardingIntentStore,
+} from "@/lib/plugin-onboarding-intent";
 
 const PROJECT_ID = "j57abcdefghijklmnopqrstuvwxyz012";
 
@@ -148,6 +155,80 @@ function render(
     },
   );
 }
+
+describe("a Set up kept across a sign-in", () => {
+  const binding = { pluginVersionId: "ver_bits", componentKey: "server:api" };
+  const bits = (unavailable?: "needs_auth") =>
+    plugin("bits", {
+      servers: [
+        {
+          serverId: "srv_bits",
+          name: "bits-server",
+          componentKey: "server:api",
+          placement: "remote",
+          ...(unavailable ? { unavailable } : {}),
+        },
+      ],
+    });
+  const outside = { ...PROPS_FOR_PENDING, eligible: false };
+  beforeEach(() => {
+    sessionStorage.clear();
+    usePluginOnboardingIntentStore.getState().clear();
+    state.isMember = true;
+    state.activeLoading = false;
+    state.activeFailed = false;
+    state.activePluginsProjectIds = [];
+    state.ensure.mockReset();
+    state.ensure.mockResolvedValue({
+      environment: { environmentId: "env_1" },
+      created: true,
+    });
+    requestOnboardingAfterSignIn(
+      {
+        projectId: PROJECT_ID,
+        serverIds: ["srv_bits"],
+        pluginId: "plg_bits",
+        pluginName: "Bits",
+        conversation: "new",
+      },
+      binding,
+    );
+  });
+
+  it("is made by the first read that answers with its server signed in, even outside a hidden chat", () => {
+    markOnboardingSignInCompleted(binding);
+    state.activeLoading = true;
+    state.plugins = [bits()];
+    const { rerender } = render(outside);
+    expect(state.activePluginsProjectIds).toContain(PROJECT_ID);
+    expect(usePluginOnboardingIntentStore.getState().intent).toBeNull();
+
+    state.activeLoading = false;
+    rerender(outside);
+    expect(usePluginOnboardingIntentStore.getState().intent).toMatchObject({
+      pluginId: "plg_bits",
+      conversation: "new",
+    });
+    // Settled, so that chat stops reading plugins for it.
+    expect(state.activePluginsProjectIds.at(-1)).toBeNull();
+  });
+
+  it("is dropped by that read when the sign-in did not finish, so a later one starts nothing", () => {
+    state.plugins = [bits("needs_auth")];
+    const { rerender } = render();
+    expect(hasOnboardingAfterSignIn(PROJECT_ID)).toBe(false);
+
+    state.plugins = [bits()];
+    rerender(PROPS_FOR_PENDING);
+    expect(usePluginOnboardingIntentStore.getState().intent).toBeNull();
+  });
+
+  it("reads no plugins for a chat outside the hidden environment otherwise", () => {
+    sessionStorage.clear();
+    render(outside);
+    expect(state.activePluginsProjectIds.every((id) => id === null)).toBe(true);
+  });
+});
 
 describe("the chat notice's Sign in", () => {
   beforeEach(() => {
