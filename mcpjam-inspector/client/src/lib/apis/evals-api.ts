@@ -313,7 +313,7 @@ function mergeHostedServerBatch<
 /**
  * Billing/entitlement caps (HTTP 402): the server forwards the original
  * ConvexError payload on `details` (code "billing_limit_reached" /
- * "billing_feature_not_included"). Rethrow it as a ConvexError so the shared
+ * "billing_feature_not_included" / "platform_fee_refused"). Rethrow it as a ConvexError so the shared
  * billing helpers (`extractBillingErrorPayload` / `getBillingErrorMessage`)
  * render the upgrade message + reset time instead of a generic failure. Shared
  * by the buffered (`postEvalRequest`) and streamed (`streamEvalTestCase`) eval
@@ -335,8 +335,14 @@ export function rethrowIfBillingError(errorBody: unknown): void {
     typeof billingPayload === "object" &&
     ((billingPayload as { code?: unknown }).code === "billing_limit_reached" ||
       (billingPayload as { code?: unknown }).code ===
-        "billing_feature_not_included")
+        "billing_feature_not_included" ||
+      (billingPayload as { code?: unknown }).code === "platform_fee_refused")
   ) {
+    const message = (billingPayload as { message?: unknown }).message;
+    notifyMCPJamLimitError({
+      details: errorBody,
+      message: typeof message === "string" ? message : undefined,
+    });
     throw new ConvexError(billingPayload as Value);
   }
 }
@@ -376,6 +382,7 @@ async function postEvalRequest<TResponse>(
 
     const limitKind = (errorBody as { limitKind?: unknown } | null | undefined)
       ?.limitKind;
+    rethrowIfBillingError(errorBody);
     notifyMCPJamLimitError({
       code: typeof errorBody?.code === "string" ? errorBody.code : undefined,
       details: body,
@@ -385,7 +392,6 @@ async function postEvalRequest<TResponse>(
           ? limitKind
           : undefined,
     });
-    rethrowIfBillingError(errorBody);
     // Carry the route's machine-readable `code` onto the Error. The message
     // alone can't be branched on (it's prose the server may reword), and the
     // eval fan-out summarises failures per plan — without this, a launch
@@ -554,6 +560,7 @@ export async function streamEvalTestCase(
       errorBody && typeof errorBody === "object"
         ? (errorBody as { limitKind?: unknown }).limitKind
         : undefined;
+    rethrowIfBillingError(errorBody);
     notifyMCPJamLimitError({
       code:
         errorBody &&
@@ -568,9 +575,6 @@ export async function streamEvalTestCase(
           ? limitKindRaw
           : undefined,
     });
-    // Plan quotas are excluded by the credit classifier and retain their
-    // existing eval-iteration upgrade flow.
-    rethrowIfBillingError(errorBody);
     throw new Error(errorMessage);
   }
 
