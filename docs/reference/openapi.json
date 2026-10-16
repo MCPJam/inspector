@@ -27422,8 +27422,14 @@
       "GoalJudgeWrite": {
         "type": "object",
         "additionalProperties": false,
-        "minProperties": 1,
-        "description": "The goal's judge on a write: the same keys `GoalJudge` returns, so a read can be sent back as is. Every field is optional: a create that omits the judge gets the managed defaults, and an update changes only the fields it names, merged onto the stored judge.",
+        "anyOf": [
+          { "required": ["enabled"] },
+          { "required": ["autoRun"] },
+          { "required": ["model"] },
+          { "required": ["modelSelection"] },
+          { "required": ["threshold"] }
+        ],
+        "description": "The goal's judge on a write: the same keys `GoalJudge` returns, so a read can be sent back as is. Each field is optional, but at least one besides `modelSelectionOrigin` is required. A create that omits the judge gets the managed defaults, and an update changes only the fields it names, merged onto the stored judge.",
         "properties": {
           "enabled": {
             "type": "boolean",

@@ -132,15 +132,14 @@ export function requestedSelectionIfMatches(
   return selection.modelId === modelId.trim() ? selection : undefined;
 }
 
-/** Two selections say the same thing (by value, not object identity). */
+/**
+ * Two selections say the same thing (by value, not object identity). A legacy
+ * selection's key carries its `provider`, so two legacy selections for one
+ * model with different providers are different selections.
+ */
 export function sameRequestedSelection(
   a: RequestedModelSelection,
   b: RequestedModelSelection,
 ): boolean {
-  if (a.source === "legacy" || b.source === "legacy")
-    return a.source === b.source && a.modelId === b.modelId;
-  return (
-    selectionConfigKey(a as ModelSelection) ===
-    selectionConfigKey(b as ModelSelection)
-  );
+  return selectionConfigKey(a) === selectionConfigKey(b);
 }
