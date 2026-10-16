@@ -49,6 +49,7 @@ export interface LocalHarnessTargetIds {
   runtimeId: string;
   permissionProfile: string;
   policyVersion: string;
+  localStudySessionId?: string;
 }
 
 export interface StoredLocalHarnessConsent {

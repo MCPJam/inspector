@@ -529,7 +529,8 @@ export interface UseChatSessionOptions {
    */
   localHarnessExecution?: {
     requested: boolean;
-    resolveSendTarget: () => {
+    studyPreview?: boolean;
+    resolveSendTarget: (chatSessionId?: string) => {
       serverAuthorized?: boolean;
       target: LocalHarnessTargetIds;
       token: string;
@@ -3407,12 +3408,8 @@ export function useChatSession(
   /**
    * Does THIS send explicitly ask to run Claude Code on this machine?
    *
-   * The caller answered the host/surface half (`lib/local-harness-scope.ts`)
-   * and the "did the user choose it" half. The surface facts this hook owns —
-   * hosted mode, a scenario session, a surface already forced onto the web
-   * route — are re-applied here so the two ends of the same predicate cannot
-   * disagree; each is a case where a local turn is structurally impossible
-   * rather than merely unauthorized.
+   * Local studies use an explicit controller and the authenticated web route.
+   * Other callers retain the direct-chat surface restrictions.
    *
    * Notably NOT gated on having a grant. "Requested" and "can be satisfied"
    * are different questions, and collapsing them is how an explicit local
@@ -3421,9 +3418,9 @@ export function useChatSession(
    */
   const localHarnessRequested =
     !HOSTED_MODE &&
-    !hostedRequiresWebChatApi &&
-    !hostedScenarioId &&
-    localHarnessExecution?.requested === true;
+    localHarnessExecution?.requested === true &&
+    ((!hostedRequiresWebChatApi && !hostedScenarioId) ||
+      (Boolean(hostedScenarioId) && localHarnessExecution.studyPreview === true));
   const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi;
   const shouldUseOrgAwareChatApi =
     isHostedTransport ||
@@ -4055,7 +4052,7 @@ export function useChatSession(
             ) =>
               prepareLocalHarnessSendRequest(
                 options,
-                localHarnessExecution?.resolveSendTarget() ?? null,
+                localHarnessExecution?.resolveSendTarget(options.id) ?? null,
               ),
           }
         : {}),

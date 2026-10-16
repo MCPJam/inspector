@@ -214,6 +214,7 @@ const LOCAL_TARGET = {
 };
 
 type HarnessOption = {
+  studyPreview?: boolean;
   requested: boolean;
   resolveSendTarget: () => {
     target: typeof LOCAL_TARGET;
@@ -444,6 +445,17 @@ describe("useChatSession — local Claude Code transmission", () => {
     const { body, headers } = sendRequest();
     expect("harnessTarget" in body).toBe(false);
     expect(headers[LOCAL_HARNESS_GRANT_HEADER]).toBeUndefined();
+  });
+
+  it("sends an explicitly authorized study on its web transport", async () => {
+    const target = { ...LOCAL_TARGET, localStudySessionId: "reservation" };
+    const resolveSendTarget = vi.fn(() => ({ target, token: "study-token" }));
+    await renderWithHarness({ requested: true, studyPreview: true, resolveSendTarget }, { projectId: "proj-1", scenarioId: "study", accessVersion: 1, requiresWebChatApi: true });
+    const { body, headers } = sendRequest();
+    expect(body.harnessTarget).toEqual(target);
+    expect(headers[LOCAL_HARNESS_GRANT_HEADER]).toBe("study-token");
+    expect(resolveSendTarget).toHaveBeenCalledWith("chat_1");
+    expect(latestTransport().api).toBe("/api/web/chat-v2");
   });
 
   it("never sends local on a scenario (share-link) session", async () => {
