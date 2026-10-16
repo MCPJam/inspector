@@ -1163,6 +1163,40 @@ describe("goal judge", () => {
     expect(written).not.toHaveProperty("judgeSelectionOrigin");
   });
 
+  it("treats a legacy selection with another provider as a different selection", async () => {
+    queryMock.mockResolvedValue(
+      journeyRow({
+        judgeConfig: {
+          goalCompletion: {
+            judgeModel: "openai/gpt-4o",
+            judgeSelection: {
+              source: "legacy",
+              modelId: "openai/gpt-4o",
+              provider: "openai",
+            },
+            judgeSelectionOrigin: "backfill",
+          },
+        },
+      }),
+    );
+    mutationMock.mockResolvedValue(journeyRow());
+    const moved = {
+      source: "legacy",
+      modelId: "openai/gpt-4o",
+      provider: "azure",
+    };
+    expect(
+      (
+        await patch({
+          judge: { modelSelection: moved, modelSelectionOrigin: "backfill" },
+        })
+      ).status,
+    ).toBe(200);
+    const written = mutationMock.mock.calls[0][1].judgeConfig.goalCompletion;
+    expect(written.judgeSelection).toEqual(moved);
+    expect(written).not.toHaveProperty("judgeSelectionOrigin");
+  });
+
   it("refuses a judge that only echoes the read-only marker", async () => {
     queryMock.mockResolvedValue(journeyRow());
     expect(
