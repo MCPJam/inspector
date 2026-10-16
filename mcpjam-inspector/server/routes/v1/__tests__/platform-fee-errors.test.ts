@@ -33,6 +33,8 @@ describe("platform admission transport", () => {
     ["platform_fee_unavailable", 503, "INTERNAL_ERROR"],
     ["ADMISSION_CONFLICT", 409, "CONFLICT"],
     ["ADMISSION_CLOSED", 409, "CONFLICT"],
+    ["ADMISSION_NOT_FOUND", 404, "NOT_FOUND"],
+    ["ORGANIZATION_SPEND_BUDGET_REACHED", 402, "PAYMENT_REQUIRED"],
     ["client_upgrade_required", 426, "UPGRADE_REQUIRED"],
   ])(
     "maps %s without treating it as a throttle",

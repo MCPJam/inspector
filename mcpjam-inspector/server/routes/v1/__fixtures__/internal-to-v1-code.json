@@ -42,5 +42,6 @@
   "platform_fee_unavailable": "INTERNAL_ERROR",
   "client_upgrade_required": "UPGRADE_REQUIRED",
   "ADMISSION_CONFLICT": "CONFLICT",
+  "ADMISSION_NOT_FOUND": "NOT_FOUND",
   "ADMISSION_CLOSED": "CONFLICT"
 }
