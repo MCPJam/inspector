@@ -29,6 +29,12 @@ import {
 import { translateStructuredConvexRefusal } from "./convex-errors.js";
 
 /** Canonical error response. */
+function errorStatus(code: V1ErrorCode, details?: Record<string, unknown>) {
+  return code === "INTERNAL_ERROR" && details?.code === "platform_fee_unavailable"
+    ? 503
+    : V1_ERROR_STATUS[code];
+}
+
 export function v1Error(
   c: Context,
   code: V1ErrorCode,
@@ -59,7 +65,7 @@ export function v1Error(
     c.set("webErrorMeta", {
       // Same v1 status `v1OnError` uses, for the same reason: the middleware
       // only trusts meta whose status matches the response it observed.
-      status: V1_ERROR_STATUS[code],
+      status: errorStatus(code, details),
       code,
       message,
     });
@@ -67,7 +73,7 @@ export function v1Error(
   // A hosted INTERNAL_ERROR answers with a generic sentence and the request id
   // in `details` (MJ-020, MJ-021); the message stashed above is what the log
   // keeps.
-  const view = internalErrorResponseView(c, V1_ERROR_STATUS[code], code, {
+  const view = internalErrorResponseView(c, errorStatus(code, details), code, {
     message,
     details,
   });
@@ -80,7 +86,7 @@ export function v1Error(
   // every error path to plumb a header almost none of them carry.
   return c.json(
     v1ErrorBody(code, view.message, view.details),
-    V1_ERROR_STATUS[code] as any,
+    errorStatus(code, details) as any,
     headers && Object.keys(headers).length > 0 ? headers : undefined
   );
 }
@@ -375,7 +381,7 @@ export function v1OnError(
   const details = override?.details
     ? override.details(mapped.details)
     : mapped.details;
-  const status = V1_ERROR_STATUS[code];
+  const status = errorStatus(code, details);
   // The middleware only trusts meta whose status matches the response it
   // observed, so this has to be the v1 status — which is not always the
   // internal one the mapper started from (UPSTREAM_AUTH_FAILED is a 403 here

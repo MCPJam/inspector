@@ -188,6 +188,8 @@ is stable and machine-readable; `message` is human-readable and may change;
 | `NOT_FOUND` | 404 | Unknown project, server, or resource |
 | `CONFLICT` | 409 | The resource isn't in a state that accepts this write — a stale `expectedRevision`, a duplicate name, or an environment that can't currently be launched. Re-read and retry |
 | `FEATURE_NOT_SUPPORTED` | 422 | The target server doesn't support this MCP capability |
+| `PAYMENT_REQUIRED` | 402 | Platform fee refused; `details.reason` identifies credits, spend budget, or wallet lock. Retrying unchanged does not help. |
+| `UPGRADE_REQUIRED` | 426 | Upgrade the SDK, CLI, or Vitest integration as directed by the response. |
 | `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits) |
 | `SERVER_UNREACHABLE` | 502 | Could not connect to the target MCP server |
 | `TIMEOUT` | 504 | The target MCP server connected but didn't respond in time |
