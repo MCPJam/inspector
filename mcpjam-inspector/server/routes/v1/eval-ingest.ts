@@ -127,6 +127,8 @@ async function proxyIngest(c: Context, suffix: string): Promise<Response> {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
+    const retryAfter = response.headers.get("Retry-After");
+    if (retryAfter) c.header("Retry-After", retryAfter);
     const body = (await response.json().catch(() => null)) as unknown;
     return c.json(body ?? {}, response.status as never);
   } catch (error) {

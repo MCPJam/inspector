@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SdkError } from "./errors.js";
+import { SdkError, type SdkErrorOptions } from "./errors.js";
 import {
   reportingRequest,
   ReportingHttpError,
@@ -33,9 +33,10 @@ export class EvalAdmissionError extends SdkError {
     message: string,
     code: string,
     public readonly details?: Record<string, unknown>,
-    public readonly receipt?: AdmissionReceipt
+    public readonly receipt?: AdmissionReceipt,
+    options?: SdkErrorOptions
   ) {
-    super(message, code);
+    super(message, code, options);
   }
 }
 
@@ -115,10 +116,17 @@ export class EvalAdmissionClient {
           body: JSON.stringify(payload),
         },
         (body) => receiptSchema.parse(body),
-        (error) => error.status === 429 || error.status >= 500
+        (error) =>
+          (error.status === 429 &&
+            !(
+              typeof error.body.details === "object" &&
+              error.body.details !== null &&
+              "code" in error.body.details &&
+              error.body.details.code === "billing_limit_reached"
+            )) || error.status >= 500
       );
       signal?.throwIfAborted();
-      if (receipt.state !== "active")
+      if (receipt.state !== "active" || receipt.expiresAt <= Date.now())
         throw new EvalAdmissionError(
           "This run authorization has expired or closed. Start a new run.",
           "ADMISSION_CLOSED",
@@ -142,12 +150,17 @@ export class EvalAdmissionClient {
             ? body.message
             : "Could not confirm billing with MCPJam, so this eval did not run. Try again in a few minutes.",
           admissionErrorCode(error.status, details),
-          details
+          details,
+          undefined,
+          { cause: error }
         );
       }
       throw new EvalAdmissionError(
         "Could not confirm billing with MCPJam, so this eval did not run. Try again in a few minutes.",
-        "PLATFORM_UNAVAILABLE"
+        "PLATFORM_UNAVAILABLE",
+        undefined,
+        undefined,
+        { cause: error }
       );
     }
   }

@@ -30,6 +30,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("local admission transport", () => {
+  it("rejects an active receipt already expired when it arrives", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      Response.json({ ...receipt, expiresAt: Date.now() - 1 })
+    ));
+    await expect(client().admit(input)).rejects.toMatchObject({ code: "ADMISSION_CLOSED" });
+  });
+  it("preserves the original transport failure for diagnosis", async () => {
+    vi.useFakeTimers();
+    const cause = new Error("connection reset");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(cause));
+    const result = expect(client().admit(input)).rejects.toMatchObject({
+      code: "PLATFORM_UNAVAILABLE", cause,
+    });
+    await vi.runAllTimersAsync();
+    await result;
+  });
   it("rejects cached grants at expiry without contacting the server", async () => {
     vi.useFakeTimers();
     const fetch = vi.fn();
@@ -68,7 +84,7 @@ describe("local admission transport", () => {
       code: "ADMISSION_CLOSED",
     });
   });
-  it("preserves quota exhaustion after bounded retries", async () => {
+  it("preserves quota exhaustion without retrying a terminal limit", async () => {
     vi.useFakeTimers();
     const details = {
       code: "billing_limit_reached",
@@ -93,6 +109,7 @@ describe("local admission transport", () => {
     });
     await vi.runAllTimersAsync();
     await result;
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
   it("requires credentials without making a request", () => {
     const fetch = vi.fn();
