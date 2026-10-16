@@ -10,10 +10,7 @@ import { usePlaygroundHiddenEnvironment } from "@/hooks/use-playground-hidden-en
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { ActivePluginServer } from "@/hooks/useActivePlugins";
 import { buildExtensionServers } from "./playground-plugins";
-import {
-  isRunnablePlugin,
-  skippedPluginsForNotice,
-} from "@/lib/plugins/hidden-environment";
+import { skippedPluginsForNotice } from "@/lib/plugins/hidden-environment";
 import {
   showPluginNotice,
   type PluginNoticeData,
@@ -1497,6 +1494,7 @@ export function PlaygroundMain({
                   hiddenEnvironment: {
                     environmentId: hiddenEnvironment.environmentId,
                     pluginServerIds: hiddenEnvironment.pluginServerIds,
+                    venue: hiddenEnvironment.venue,
                     recover: hiddenEnvironment.recover,
                   },
                 }
@@ -5396,7 +5394,7 @@ export function PlaygroundMain({
       // Compare columns each run a plain client turn: say so on the first
       // send of each comparison. Keyed by the chat and by the compare lanes'
       // generation, which a new or cleared chat moves on.
-      if (hiddenEnvironment.plugins.some(isRunnablePlugin)) {
+      if (hiddenEnvironment.hasRunnablePlugins) {
         showPluginNotice(
           `${chatSessionId}:compare:${multiModelSessionGeneration}`,
           { kind: "off", reason: "compare" },
@@ -5409,7 +5407,7 @@ export function PlaygroundMain({
     },
     [
       trackSendMessage,
-      hiddenEnvironment.plugins,
+      hiddenEnvironment.hasRunnablePlugins,
       chatSessionId,
       multiModelSessionGeneration,
     ],

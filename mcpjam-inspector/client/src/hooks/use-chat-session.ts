@@ -3361,17 +3361,16 @@ export function useChatSession(
     });
   }, [appState, hostedProjectId, selectedServers]);
   // ── Hidden environment (a Playground chat's plugins) ────────────────────
-  //
-  // Only the web chat route resolves an environment, so a chat carries its
-  // hidden environment only where that route can run the turn. In the hosted
-  // app it always can. On this machine, a turn that has to stay on the local
-  // route — a client run here, a local-only server, a model keyed on this
-  // machine, this machine's browser or shell — runs as the plain client turn
-  // it would have been, and the surface says the plugins were off.
+  // Only the web chat route resolves an environment. On this machine a turn
+  // that must stay local (a client run here, a local-only server, a model
+  // keyed here, this machine's browser or shell) runs without its plugins and
+  // says so, unless they were composed for that client here (venue `local`).
   const hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null =
     !hostedHiddenEnvironment || HOSTED_MODE
       ? null
-      : !explicitRequiresWebChatApi && localHarnessExecution?.requested === true
+      : !explicitRequiresWebChatApi &&
+          localHarnessExecution?.requested === true &&
+          hostedHiddenEnvironment.venue !== "local"
         ? "local_harness"
         : hasLocalOnlySelectedServer
           ? "local_server"

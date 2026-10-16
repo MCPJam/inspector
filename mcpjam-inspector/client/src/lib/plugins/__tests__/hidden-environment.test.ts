@@ -4,6 +4,8 @@ import {
   HIDDEN_ENVIRONMENT_RETRY_FAILED_MESSAGE,
   hiddenEnvironmentCompositionKey,
   hiddenEnvironmentServerOverride,
+  hiddenEnvironmentVenue,
+  needsLocalVenue,
   plainHiddenEnvironmentFailure,
   readRecoverableHiddenEnvironmentCode,
   retargetHiddenEnvironmentBody,
@@ -63,7 +65,7 @@ describe("runnable plugins", () => {
     expect(runnablePluginServerIds(rows)).toEqual(["srv_a", "srv_b"]);
   });
 
-  it("never treats a plugin with a local or computer component as runnable", () => {
+  it("never treats a plugin with a local or computer component as runnable when hosted", () => {
     // The hosted-venue read skips these; this holds even if a read did not.
     const local = row("local", {
       servers: [
@@ -92,6 +94,40 @@ describe("runnable plugins", () => {
     expect(runnablePluginServerIds([local, mixed, row("a")])).toEqual([
       "srv_a",
     ]);
+    // Composed to run here, a local component runs; a computer one still not.
+    expect(runnablePluginVersionIds([local, mixed, row("a")], "local")).toEqual(
+      ["ver_local", "ver_a"],
+    );
+    expect(runnablePluginServerIds([local, mixed, row("a")], "local")).toEqual([
+      "srv_l",
+      "srv_a",
+    ]);
+    // A local server still waiting on setup keeps the plugin composed here,
+    // so its remote server runs and the plugin is named as partly skipped.
+    const waiting = row("waiting", {
+      servers: [
+        {
+          serverId: "srv_w",
+          name: "w",
+          componentKey: "w",
+          placement: "local",
+          unavailable: "needs_setup",
+        },
+        {
+          serverId: "srv_wr",
+          name: "wr",
+          componentKey: "wr",
+          placement: "remote",
+        },
+      ],
+    });
+    expect([local, mixed, row("a"), waiting].map(needsLocalVenue)).toEqual([
+      true,
+      false,
+      false,
+      true,
+    ]);
+    expect(runnablePluginServerIds([waiting], "local")).toEqual(["srv_wr"]);
   });
 
   it("leaves out a server the member can't use yet, keeping its plugin", () => {
@@ -117,6 +153,25 @@ describe("runnable plugins", () => {
   });
 });
 
+describe("hiddenEnvironmentVenue", () => {
+  it("is local only for a client the member runs here, with a plugin that needs it", () => {
+    const local = { hostedMode: false, clientRunsHere: true, needsLocal: true };
+    expect(hiddenEnvironmentVenue(local)).toBe("local");
+    // The hosted app never reaches the member's machine.
+    expect(hiddenEnvironmentVenue({ ...local, hostedMode: true })).toBe(
+      "hosted",
+    );
+    // A local build with no choice to run the client here is not one.
+    expect(hiddenEnvironmentVenue({ ...local, clientRunsHere: false })).toBe(
+      "hosted",
+    );
+    // Nothing to run here: the chat keeps the route it had.
+    expect(hiddenEnvironmentVenue({ ...local, needsLocal: false })).toBe(
+      "hosted",
+    );
+  });
+});
+
 describe("hiddenEnvironmentCompositionKey", () => {
   it("is the same for the same composition and differs on any field", () => {
     const base = { hostId: "h", pluginVersionIds: ["v1", "v2"] };
@@ -138,6 +193,13 @@ describe("hiddenEnvironmentCompositionKey", () => {
     );
     expect(hiddenEnvironmentCompositionKey(base)).not.toBe(
       hiddenEnvironmentCompositionKey({ ...base, secretIds: ["s"] }),
+    );
+    // Hosted keys are unchanged; a local venue is its own composition.
+    expect(hiddenEnvironmentCompositionKey(base)).toBe(
+      hiddenEnvironmentCompositionKey({ ...base, venue: "hosted" }),
+    );
+    expect(hiddenEnvironmentCompositionKey(base)).not.toBe(
+      hiddenEnvironmentCompositionKey({ ...base, venue: "local" }),
     );
   });
 });
