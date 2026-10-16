@@ -1201,11 +1201,8 @@ export async function streamWebChatTurn(
     throw new WebRouteError(
       503,
       ErrorCode.INTERNAL_ERROR,
-      `This host runs the ${persist.harness} harness, which isn't available: ` +
-        `${
-          refusal?.reason ??
-          "choose a supported model and an eligible connection for this harness"
-        }.`,
+      refusal?.reason ??
+        "This client cannot use this model. Choose a supported model or connection.",
     );
   }
 
