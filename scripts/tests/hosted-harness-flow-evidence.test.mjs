@@ -63,6 +63,10 @@ test('requires separate write/read calls and an independent second-turn file rea
 test('truncated observations and transport failures stay inconclusive', () => {
   const trace = fixture(); trace.messagesTruncated = true;
   assert.throws(() => verifyFlowEvidence(trace, client, probe), /truncated_trace/);
+  const incomplete = fixture(); incomplete.traceComplete = false;
+  assert.throws(() => verifyFlowEvidence(incomplete, client, probe), /truncated_trace/);
+  const clipped = fixture(); clipped.messages[0].truncated = true;
+  assert.throws(() => verifyFlowEvidence(clipped, client, probe), /truncated_trace/);
   assert.equal(evidenceFailure(new Error('private upstream details')).reason, 'request_did_not_complete');
   assert.equal(evidenceFailure(new Error('native_file_read_unproven')).status, 'task_failed');
 });

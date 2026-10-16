@@ -31,7 +31,8 @@ function callsFrom(messages) {
 export function verifyFlowEvidence(envelope, client, probe) {
   const spans = envelope?.trace?.spans ?? envelope?.spans;
   requireThat(Array.isArray(spans) && Array.isArray(envelope.messages), 'missing_trace');
-  requireThat(!envelope.messagesTruncated && !envelope.spansTruncated, 'truncated_trace');
+  requireThat(envelope.traceComplete !== false && !envelope.messagesTruncated && !envelope.spansTruncated &&
+    !envelope.messages.some(message => message.truncated), 'truncated_trace');
   const executionSpans = spans.filter(span => ['step', 'llm'].includes(span.category));
   const indices = [...new Set(executionSpans.map(span => span.promptIndex))]
     .filter(Number.isInteger).sort((a, b) => a - b);

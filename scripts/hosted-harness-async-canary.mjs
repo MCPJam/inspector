@@ -47,7 +47,7 @@ async function waitForRun(kind, runId, invoke, pause) {
 export async function readSession(sessionId, invoke) {
   const detail = await invoke(['cloud', 'sessions', 'show', '--session', sessionId, '--limit', '200']);
   const trace = await invoke(['cloud', 'sessions', 'trace', '--session', sessionId, '--limit', '3']);
-  if (detail.nextCursor || detail.transcriptUnavailable || trace.turns?.some(turn => turn.spansUnavailable || turn.spansTruncated)) {
+  if (detail.nextMessageIndex !== undefined || detail.transcriptUnavailable || trace.turns?.some(turn => turn.spansUnavailable || turn.spansTruncated)) {
     throw new Error('truncated_trace');
   }
   return { messages: detail.messages, spans: (trace.turns ?? []).flatMap(turn => turn.spans ?? []) };
