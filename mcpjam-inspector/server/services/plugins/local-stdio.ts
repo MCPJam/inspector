@@ -410,11 +410,13 @@ export function retainPluginLease(serverName: string, release: () => void): void
 }
 
 /**
- * Resolve a local stdio server whose config still carries root placeholders
- * into a spawnable one, or throw the actionable reason it cannot run.
+ * Resolve a plugin's local stdio component into a spawnable config, or throw
+ * the actionable reason it cannot run. A component is one the backend says is
+ * (`pluginComponent`) or, from a backend that does not say, one whose config
+ * still carries a root placeholder.
  *
- * Returns `null` for the overwhelmingly common case: an ordinary stdio server
- * with no placeholders, which must take exactly the historical path.
+ * Returns `null` for the overwhelmingly common case: an ordinary stdio server,
+ * which must take exactly the historical path.
  */
 export async function materializePluginStdioForConnect(args: {
   /** Built only for a component that actually carries placeholders. */
@@ -437,6 +439,8 @@ export async function materializePluginStdioForConnect(args: {
    * and the caller releases at its own teardown.
    */
   onLease?: (release: () => void) => void;
+  /** The authorize result marked the row as a plugin's component. */
+  pluginComponent?: boolean;
   spec: PluginStdioLaunchSpec;
   cache?: PluginBundleCache;
   /** Test seam for the `${PLUGIN_DATA}` root. */
@@ -450,7 +454,7 @@ export async function materializePluginStdioForConnect(args: {
   pluginRoot: string;
   origin: PluginServerOrigin;
 } | null> {
-  if (!needsPluginRoot(args.spec)) return null;
+  if (!args.pluginComponent && !needsPluginRoot(args.spec)) return null;
 
   const prepared = await preparePluginStdioLaunch({
     client: args.createClient(),

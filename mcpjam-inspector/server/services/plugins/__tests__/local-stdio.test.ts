@@ -456,6 +456,32 @@ describe("materializePluginStdioForConnect", () => {
     ).resolves.toBeNull();
   });
 
+  it("prepares a component the backend marks as a plugin's, placeholders or not", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+
+    const result = await materializePluginStdioForConnect({
+      createClient: () => stubClient({ bundleHash }),
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      serverName: SERVER_ID,
+      pluginComponent: true,
+      spec: { command: "node", args: ["server/index.js"], env: {} },
+      cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
+    });
+
+    // It runs in the plugin root, with the root and its data directory.
+    expect(result?.workingDirectory).toBe(result?.pluginRoot);
+    expect(result?.env.PLUGIN_ROOT).toBe(result?.pluginRoot);
+    expect(result?.env.PLUGIN_DATA).toBe(
+      join(cacheRoot, "plugin-data", PROJECT_ID, PLUGIN_ID)
+    );
+    expect(cache.activeEntries()).toEqual([result?.pluginRoot]);
+  });
+
   it("substitutes the root for a plugin component", async () => {
     await cache.materialize(
       { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },

@@ -95,18 +95,21 @@ tested in the inspector's local plugin runtime,
   substitute only in `args`, `env` values, and `cwd`, in a single pass at
   spawn time (`plugin-root.ts`); a leftover placeholder refuses the spawn so
   a child process never sees a literal `${…}` token.
-- **Client-controlled variables cannot be shadowed** — satisfied by PARSE-TIME
-  rejection, not by ordering. `resolvePluginStdioLaunch` seeds the env with the
-  injected `PLUGIN_ROOT`/`PLUGIN_DATA` aliases and then writes the bundle's own
-  `env` over them, so an internally constructed launch spec could shadow an
-  alias; no imported bundle can, because the parser rejects any bundle whose
-  `env` declares the reserved keys. The spec phrases this MUST as "set last" —
-  MCPJam meets the guarantee by a different mechanism.
+- **Client-controlled variables cannot be shadowed** — `resolvePluginStdioLaunch`
+  writes the bundle's own `env` first and the client's `PLUGIN_ROOT`/
+  `PLUGIN_DATA` last (`plugin-root.ts`). The parser also rejects any bundle
+  whose `env` declares either key.
+- **Every plugin stdio server goes through plugin preparation, and runs in
+  the plugin root unless it declares a `cwd`** — the backend marks a plugin's
+  component in the authorize result (`pluginComponent`), and
+  `materializePluginStdioForConnect` (`local-stdio.ts`) routes on that as well
+  as on a placeholder, so the data directory and both variables never depend
+  on whether the entry mentions them. A backend without the flag falls back to
+  the placeholder check.
 - **Bare commands resolve through platform executable search rules** — the
   local stdio materializer (`local-stdio.ts`).
 - **`PLUGIN_DATA` created before launch and preserved across plugin
-  updates** — `plugin-data.ts` (see deviation 10 for hosted boxes, and the
-  placeholder-free gap below for the entries this path never reaches).
+  updates** — `plugin-data.ts` (see deviation 10 for hosted boxes).
 - **Continue loading when one server fails to start/connect/authenticate** —
   per-server failure isolation in `run-plugin-servers.ts`; authentication
   failure is a connection failure, not invalid package configuration.
@@ -114,31 +117,6 @@ tested in the inspector's local plugin runtime,
   containment in `bundle-cache.ts` / `bundle-file-sources.ts`.
 
 ## Known gaps (runtime MUSTs not yet met, and guarantees not enforced)
-
-- **`cwd` does not default to the plugin root.** The spec says an entry that
-  omits `cwd` runs with the plugin root as its working directory.
-  `resolvePluginStdioLaunch` emits `workingDirectory` only when the entry
-  supplied one, and the local resolver forwards `cwd` only when present, so
-  the stdio transport inherits the inspector process's working directory
-  instead. An entry with a relative entrypoint or relative resource paths and
-  no explicit `cwd` will therefore misbehave. Entries that DO declare a `cwd`
-  (including `./`-relative ones) are unaffected, as are `${PLUGIN_ROOT}`-
-  prefixed commands, which resolve to absolute paths. Fixing this is a
-  behavior change to the launch path and is deliberately not bundled into
-  this docs-and-tests PR.
-
-- **Placeholder-free entries never reach the plugin launch path.**
-  `materializePluginStdioForConnect` gates on `needsPluginRoot(spec)`
-  (`local-stdio.ts`), which is true only when a literal `${PLUGIN_ROOT}` or
-  `${PLUGIN_DATA}` survives into `command`, `args`, an `env` value, or `cwd`.
-  A conforming entry that references neither — `node` with a bare `args`
-  script, or a component that reads `process.env.PLUGIN_DATA` at runtime —
-  returns `null` and spawns through the ordinary stdio path, so
-  `preparePluginStdioLaunch` never runs: the data directory is not created
-  and the `PLUGIN_ROOT`/`PLUGIN_DATA` aliases are not injected. The spec makes
-  both unconditional for plugin-origin servers. Routing every plugin-origin
-  server through preparation regardless of placeholder use is the fix, and is
-  a launch-path behavior change out of scope here.
 
 - **Archive permission bits are not preserved.** `extractInto`
   (`bundle-cache.ts`) writes every entry with a bare
