@@ -39,6 +39,27 @@ export class EvalAdmissionError extends SdkError {
   }
 }
 
+function admissionErrorCode(
+  status: number,
+  details?: Record<string, unknown>
+): string {
+  return status === 402
+    ? "BILLING_REFUSED"
+    : status === 426
+    ? "CLIENT_UPGRADE_REQUIRED"
+    : status === 409
+    ? String(details?.code ?? "ADMISSION_CONFLICT")
+    : status === 401
+    ? "CREDENTIALS_MISSING"
+    : status === 404
+    ? "NOT_FOUND"
+    : status === 429
+    ? details?.code === "billing_limit_reached"
+      ? "BILLING_LIMIT_REACHED"
+      : "RATE_LIMITED"
+    : "PLATFORM_UNAVAILABLE";
+}
+
 export class EvalAdmissionClient {
   constructor(
     private readonly config: {
@@ -116,23 +137,11 @@ export class EvalAdmissionClient {
           !Array.isArray(body.details)
             ? (body.details as Record<string, unknown>)
             : undefined;
-        const code =
-          error.status === 402
-            ? "BILLING_REFUSED"
-            : error.status === 426
-            ? "CLIENT_UPGRADE_REQUIRED"
-            : error.status === 409
-            ? String(details?.code ?? "ADMISSION_CONFLICT")
-            : error.status === 401
-            ? "CREDENTIALS_MISSING"
-            : error.status === 404
-            ? "NOT_FOUND"
-            : "PLATFORM_UNAVAILABLE";
         throw new EvalAdmissionError(
           typeof body.message === "string"
             ? body.message
             : "Could not confirm billing with MCPJam, so this eval did not run. Try again in a few minutes.",
-          code,
+          admissionErrorCode(error.status, details),
           details
         );
       }
@@ -170,6 +179,7 @@ export class AttemptStepGuard {
     const target = ++this.ordinal;
     this.pending = this.pending.then(async () => {
       this.signal?.throwIfAborted();
+      this.requireActive();
       if (target > this.granted) {
         const grant = await this.client.ensureSteps(
           this.receipt.attemptId!,
@@ -185,7 +195,18 @@ export class AttemptStepGuard {
         this.granted = grant.grantedSteps;
       }
       this.signal?.throwIfAborted();
+      this.requireActive();
     });
     return this.pending;
+  }
+  private requireActive(): void {
+    if (Date.now() >= this.receipt.expiresAt) {
+      throw new EvalAdmissionError(
+        "This run authorization has expired or closed. Start a new run.",
+        "ADMISSION_CLOSED",
+        undefined,
+        this.receipt
+      );
+    }
   }
 }

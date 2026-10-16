@@ -30,6 +30,70 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("local admission transport", () => {
+  it("rejects cached grants at expiry without contacting the server", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const expiresAt = Date.now() + 1_000;
+    const guard = new AttemptStepGuard(client(), {
+      ...receipt,
+      state: "active",
+      grantedSteps: 5,
+      expiresAt,
+    });
+    await guard.beforePrompt();
+    vi.setSystemTime(expiresAt);
+    await expect(guard.beforePrompt()).rejects.toMatchObject({
+      code: "ADMISSION_CLOSED",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rejects a grant that arrives after the attempt expires", async () => {
+    vi.useFakeTimers();
+    const expiresAt = Date.now() + 1_000;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        vi.setSystemTime(expiresAt);
+        return Response.json({ ...receipt, grantedSteps: 2, expiresAt });
+      })
+    );
+    const guard = new AttemptStepGuard(client(), {
+      ...receipt,
+      state: "active",
+      expiresAt,
+    });
+    await guard.beforePrompt();
+    await expect(guard.beforePrompt()).rejects.toMatchObject({
+      code: "ADMISSION_CLOSED",
+    });
+  });
+  it("preserves quota exhaustion after bounded retries", async () => {
+    vi.useFakeTimers();
+    const details = {
+      code: "billing_limit_reached",
+      resetsAt: Date.now() + 60_000,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "RATE_LIMITED",
+            message: "Monthly iteration limit reached.",
+            details,
+          },
+          { status: 429 }
+        )
+      )
+    );
+    const result = expect(client().admit(input)).rejects.toMatchObject({
+      code: "BILLING_LIMIT_REACHED",
+      details,
+    });
+    await vi.runAllTimersAsync();
+    await result;
+  });
   it("requires credentials without making a request", () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);

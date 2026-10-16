@@ -35,5 +35,12 @@
   "registry_project_org_mismatch": "FORBIDDEN",
   "account_suspended": "FORBIDDEN",
   "FEATURE_UNAVAILABLE": "FORBIDDEN",
-  "GENERATION_FAILED": "GENERATION_FAILED"
+  "GENERATION_FAILED": "GENERATION_FAILED",
+  "PAYMENT_REQUIRED": "PAYMENT_REQUIRED",
+  "UPGRADE_REQUIRED": "UPGRADE_REQUIRED",
+  "platform_fee_refused": "PAYMENT_REQUIRED",
+  "platform_fee_unavailable": "INTERNAL_ERROR",
+  "client_upgrade_required": "UPGRADE_REQUIRED",
+  "ADMISSION_CONFLICT": "CONFLICT",
+  "ADMISSION_CLOSED": "CONFLICT"
 }

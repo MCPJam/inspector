@@ -20,8 +20,8 @@ import {
   translateAddressedConvexWriteError,
   translateConvexWriteError,
   translateStructuredConvexRefusal,
-  type TranslateConvexWriteErrorOptions,
 } from "./convex-errors.js";
+import type { TranslateConvexWriteErrorOptions } from "./convex-error-data.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
