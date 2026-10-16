@@ -614,6 +614,11 @@ export function NewSwarmCreateFlow({
   const [iterationsByPersona, setIterationsByPersona] = useState<
     Record<string, number>
   >(restoredDraft?.iterationsByPersona ?? {});
+  // The judge picked on Confirm. Not part of the resumable draft: a reload
+  // falls back to the managed default, which is what an untouched row means.
+  const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
+    undefined,
+  );
   const handleIterationsChange = useCallback(
     (personaKey: string, value: number) => {
       // Clearing the field reports "", which Number() turns into 0; the clamp
@@ -2369,6 +2374,8 @@ export function NewSwarmCreateFlow({
               await onUpdateJourney(journeyRefId, { goal });
             }}
             projectId={projectId}
+            judgeConfig={judgeConfig}
+            onJudgeConfigChange={setJudgeConfig}
             createdTargets={createdTargets}
             fundingRefreshKey={fundingRefreshKey}
             fundingNotice={fundingNotice}

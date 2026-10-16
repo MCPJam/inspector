@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getFunctionName } from "convex/server";
 import type { Predicate } from "@/shared/eval-matching";
+import type { ModelDefinition } from "@/shared/types";
 import { SWARM_DESCRIPTION_MAX_CHARS } from "@/shared/swarm-description";
 import { SwarmGenerateError } from "@/lib/swarm-api";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -19,8 +20,12 @@ vi.mock("@/hooks/use-host-harness-targets", () => ({
   useHostHarnessTargets: () => ({}),
   useHostHarnessLoader: () => async () => null,
 }));
+/** What the judge picker on Confirm can offer; empty unless a case says so. */
+const { availableModelsRef } = vi.hoisted(() => ({
+  availableModelsRef: { current: [] as ModelDefinition[] },
+}));
 vi.mock("@/hooks/use-available-models", () => ({
-  useAvailableModels: () => ({ availableModels: [] }),
+  useAvailableModels: () => ({ availableModels: availableModelsRef.current }),
 }));
 
 /** Swarms and environments have separate flags; test both combinations. */
@@ -328,6 +333,19 @@ const updateJourneyMock = vi.fn();
 const updatePersonaMock = vi.fn();
 
 import { SwarmsTab } from "../SwarmsTab";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+
+/**
+ * The create flow under the provider the app mounts it under: Confirm's judge
+ * picker shows the chosen model's provider logo, which reads the theme.
+ */
+function createFlowTab() {
+  return (
+    <PreferencesStoreProvider themeMode="light" themePreset="default">
+      <SwarmsTab projectId="proj-1" isAuthenticated createFlow />
+    </PreferencesStoreProvider>
+  );
+}
 // Real class (the `swarm-api` mock spreads the original), so the `instanceof`
 // branch the 402 handling turns on is the one under test.
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
@@ -356,7 +374,7 @@ function textFile(content: string, name: string): File {
 
 function openDescribe() {
   // `/swarms/new` is what opens the flow — mount it the way the router does.
-  render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+  render(createFlowTab());
 }
 
 function submitLaunchEnabled() {
@@ -383,6 +401,7 @@ beforeEach(() => {
     modelSource: "host",
   });
   environmentsFlagRef.current = true;
+  availableModelsRef.current = [];
   // The flow now mirrors its resumable state into sessionStorage, so a leftover
   // draft would otherwise resume the previous case's slate.
   sessionStorage.clear();
@@ -1291,6 +1310,40 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(toast.info).not.toHaveBeenCalledWith("New swarm draft discarded");
   });
 
+  it("a judge model picked on Confirm is born onto the swarm and every created goal", async () => {
+    availableModelsRef.current = [
+      {
+        id: "anthropic/claude-haiku-4.5",
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+        hosted: true,
+      },
+    ];
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Judge model" }));
+    await user.click(screen.getByRole("option", { name: /Claude Haiku 4\.5/ }));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    const judgeConfig = {
+      goalCompletion: expect.objectContaining({
+        judgeModel: "anthropic/claude-haiku-4.5",
+      }),
+    };
+    expect(createSwarmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ judgeConfig }),
+    );
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    for (const [args] of createJourneyMock.mock.calls) {
+      expect(args).toMatchObject({ judgeConfig });
+    }
+  });
+
   it("removing a persona on Confirm drops its journeys from the launch", async () => {
     openDescribe();
     fillDescribe();
@@ -2173,7 +2226,7 @@ describe("SwarmsTab create flow — survives a remount", () => {
   /** Unmount and mount the same route again, as a route-level gate would. */
   function remount() {
     cleanup();
-    render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+    render(createFlowTab());
   }
 
   it("keeps a description-only edit, and keeps its draft, across repeated remounts", async () => {
@@ -3156,9 +3209,7 @@ describe("SwarmsTab — Confirm keeps reused personas in their cards", () => {
     // blank for the rest of the flow and the launch had no target.
     hostsRef.current = [];
     setEnvironments([]);
-    const view = render(
-      <SwarmsTab projectId="proj-1" isAuthenticated createFlow />,
-    );
+    const view = render(createFlowTab());
     expect(
       screen.getByTestId("new-swarm-environments-picker"),
     ).toHaveTextContent("pick env");
@@ -3175,7 +3226,7 @@ describe("SwarmsTab — Confirm keeps reused personas in their cards", () => {
     ]);
     // Both queries land. In the app that re-renders the flow on its own; here
     // the rerender is what delivers the same thing.
-    view.rerender(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+    view.rerender(createFlowTab());
 
     await waitFor(() =>
       expect(
