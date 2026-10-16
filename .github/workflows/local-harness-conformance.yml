@@ -739,6 +739,7 @@ jobs:
           OUTCOME: ${{ steps.unattended.outcome }}
           CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
           TARGET: ${{ matrix.platform_key }}
+          PACK_VERSION: ${{ needs.plan.outputs.codex_pack_version || 'source' }}
         run: |
           echo "### Codex unattended sandbox on ${{ matrix.platform_key }}: ${OUTCOME}" >> "$GITHUB_STEP_SUMMARY"
           node --input-type=module <<'NODE'
@@ -746,7 +747,8 @@ jobs:
           import { join } from "node:path";
           const dir = join(process.env.CONFORMANCE_ROOT, "evidence");
           mkdirSync(dir, { recursive: true });
-          writeFileSync(join(dir, "unattended-outcome.json"), JSON.stringify({
+          const name = `unattended-outcome-${process.env.TARGET}-${process.env.PACK_VERSION}.json`;
+          writeFileSync(join(dir, name), JSON.stringify({
             harnessId: "codex", target: process.env.TARGET,
             scenario: "unattended", result: process.env.OUTCOME,
             commit: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID,

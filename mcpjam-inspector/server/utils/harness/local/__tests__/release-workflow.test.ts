@@ -375,7 +375,7 @@ it("gates Codex conformance evidence on unattended containment and retains faile
   expect(unattended["continue-on-error"]).toBeUndefined();
   const record = steps.find((step) => step.name === "Record the unattended outcome")!;
   expect(record.if).toBe("always()");
-  expect(record.run).toContain('"unattended-outcome.json"');
+  expect(record.run).toContain('unattended-outcome-${process.env.TARGET}-${process.env.PACK_VERSION}.json');
   expect(record.run).toContain("result: process.env.OUTCOME");
   const evidence = steps.find((step) => step.name === "Record conformance evidence")!;
   expect(evidence.if).toBeUndefined();
