@@ -118,6 +118,8 @@ export type LaunchTarget = {
    * counter's current value needs no per-run override). Created targets only.
    */
   bornIterations?: number;
+  /** A reused goal's own judge, so a swarm-picked model is layered onto it. */
+  judgeConfig?: GoalJudgeConfig;
 };
 
 export type ConfirmLaunchPayload = {
@@ -783,6 +785,7 @@ function ReusedPersonaJourneyLoader({
         hostIds: journey.hostIds ?? [],
         legacyServerAttachmentId: journey.serverAttachmentId ?? null,
         sessionsPerTarget: journey.config?.sessionsPerTarget ?? null,
+        ...(journey.judgeConfig ? { judgeConfig: journey.judgeConfig } : {}),
         ...(persona.avatarShape !== undefined
           ? { avatarShape: persona.avatarShape }
           : {}),

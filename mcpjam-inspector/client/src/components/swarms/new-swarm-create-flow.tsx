@@ -133,6 +133,7 @@ import { signInRemedyMessage } from "@/lib/sign-in-required";
 import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { cn } from "@/lib/utils";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
+import { reusedGoalJudgeConfig } from "@/components/swarms/reused-goal-judge";
 import {
   preflightSwarmTargets,
   resolveSwarmEnvironment,
@@ -1571,8 +1572,13 @@ export function NewSwarmCreateFlow({
             }
 
             // Only when the author set one. Absent must leave the journey's
-            // own judge alone, and `null` would CLEAR it.
-            if (payload.judgeConfig) patch.judgeConfig = payload.judgeConfig;
+            // own judge alone, and `null` would CLEAR it. A pick is layered
+            // onto the goal's own judge, never sent in its place.
+            if (payload.judgeConfig)
+              patch.judgeConfig = reusedGoalJudgeConfig(
+                target.judgeConfig,
+                payload.judgeConfig,
+              );
 
             if (Object.keys(patch).length > 0) {
               try {

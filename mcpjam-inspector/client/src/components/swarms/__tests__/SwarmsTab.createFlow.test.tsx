@@ -1678,6 +1678,70 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-running-step");
   });
 
+  it("layers a judge picked on Confirm onto a reused goal's own judge settings", async () => {
+    availableModelsRef.current = [
+      {
+        id: "anthropic/claude-haiku-4.5",
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+        hosted: true,
+      },
+    ];
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-existing",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        judgeConfig: {
+          goalCompletion: {
+            enabled: false,
+            threshold: 0.9,
+            judgeModel: "openai/gpt-4o",
+            judgeSelection: { source: "legacy", modelId: "openai/gpt-4o" },
+            judgeSelectionOrigin: "backfill",
+          },
+        },
+      },
+    ];
+    openDescribe();
+    fillDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled(),
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Judge model" }));
+    await user.click(screen.getByRole("option", { name: /Claude Haiku 4\.5/ }));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(updateJourneyMock).toHaveBeenCalled());
+    const reusedPatch = updateJourneyMock.mock.calls
+      .map((call) => call[0])
+      .find((arg) => arg.journeyRefId === "j-existing");
+    // Grading stays off at the goal's own threshold; only the model moved,
+    // and the old model's selection and marker went with it.
+    expect(reusedPatch.judgeConfig).toEqual({
+      goalCompletion: expect.objectContaining({
+        enabled: false,
+        threshold: 0.9,
+        judgeModel: "anthropic/claude-haiku-4.5",
+      }),
+    });
+    expect(reusedPatch.judgeConfig.goalCompletion.judgeSelection).not.toEqual({
+      source: "legacy",
+      modelId: "openai/gpt-4o",
+    });
+    expect(reusedPatch.judgeConfig.goalCompletion).not.toHaveProperty(
+      "judgeSelectionOrigin",
+    );
+  });
+
   it("runs reused journeys on a newly selected multi-env fan-out without rewriting them", async () => {
     // The bug this pins: reuse Ana, check BOTH environments on Describe, and
     // the launch used to run her journeys untouched on their old single env —
