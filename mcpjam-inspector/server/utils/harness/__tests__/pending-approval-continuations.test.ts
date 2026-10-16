@@ -21,6 +21,13 @@ function toolPart(
     providerExecuted: true,
     approval: { id, approved },
   };
+  if (completed && !approved) {
+    return {
+      ...base,
+      state: "output-denied",
+      approval: { id, approved: false },
+    };
+  }
   return completed
     ? {
         ...base,
@@ -86,7 +93,7 @@ describe("approval history converted by the AI SDK", () => {
         collectHarnessAgentToolApprovalContinuations({
           messages: messages as never,
         }),
-      ).toHaveLength(2);
+      ).toHaveLength(second ? 2 : 1);
       const next = pendingApprovalContinuations(messages);
       expect(next.map((part) => [part.approvalId, part.approved])).toEqual([
         ["a2", second],
