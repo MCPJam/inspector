@@ -41,6 +41,11 @@ on:
         required: false
         default: false
         type: boolean
+      announce:
+        description: "Post start and finish to Slack (#engineering)"
+        required: false
+        default: true
+        type: boolean
   workflow_call:
     inputs:
       ref:
@@ -56,6 +61,11 @@ on:
         description: "Run the Playwright suite against production after deploy"
         required: false
         default: false
+        type: boolean
+      announce:
+        description: "Post start and finish to Slack; release.yml passes false because it posts for itself"
+        required: false
+        default: true
         type: boolean
 
 permissions:
@@ -96,6 +106,37 @@ jobs:
           SHA="$(git rev-parse HEAD)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Deploying $SHA (ref: ${{ inputs.ref || github.sha }})"
+
+      # A deploy started on its own, usually a rollback during an incident,
+      # posts to #engineering like a hand-started backend deploy. A release
+      # passes `announce: false` because it posts for itself: `event_name`
+      # can't tell the two apart, since a called workflow sees the caller's.
+      - name: Announce the deploy in Slack
+        id: announce
+        if: ${{ inputs.announce == true || inputs.announce == 'true' }}
+        continue-on-error: true
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYS_WEBHOOK_URL }}
+          DEPLOY_SHA: ${{ steps.resolved.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          echo "at=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::warning::SLACK_DEPLOYS_WEBHOOK_URL is not set, so this deploy was not announced."
+            exit 0
+          fi
+          commit="<$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$DEPLOY_SHA|${DEPLOY_SHA:0:9}>"
+          text="🚀 Webapp → prod started by $GITHUB_TRIGGERING_ACTOR · $commit · <$RUN_URL|run>"
+          # `-f`: a 4xx/5xx from Slack must fail this step, not claim delivery.
+          # The webhook URL is a credential too, so curl reads it from a config
+          # file (mktemp: mode 0600) rather than from its command line.
+          cfg="$(mktemp)"
+          trap 'rm -f "$cfg"' EXIT
+          printf 'url = "%s"\n' "$SLACK_WEBHOOK_URL" > "$cfg"
+          jq -n --arg text "$text" '{text: $text}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
+                -d @- -K "$cfg"
 
       - name: Require green staging run for the deployed SHA
         if: ${{ inputs.require_staging_green == true || inputs.require_staging_green == 'true' }}
@@ -188,7 +229,10 @@ jobs:
       # `--detach` uploads and returns immediately. See railway-wait-deploy.sh
       # for why `--ci`'s build-log stream is not a usable success signal.
       - name: Deploy inspector to Railway production
+        id: railway_up
         run: |
+          # Where the Axiom band starts: production starts changing here.
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           .github/scripts/railway-retry.sh railway up \
             --detach \
             --project "$RAILWAY_PROJECT_ID" \
@@ -218,6 +262,68 @@ jobs:
             echo "- Target: \`$APP_URL\`"
             echo "- Previous Railway deployment: \`${PREVIOUS_DEPLOY_ID:-<none>}\` (roll back by re-running this workflow with that deployment's SHA)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # The deploy window as an Axiom annotation, drawn on every chart over
+      # these datasets, so an error or latency spike right after a deploy lines
+      # up with a marker. Releases and rollbacks both come through here. The
+      # token needs only "create annotations"; without it nothing is marked.
+      - name: Mark the deploy window in Axiom
+        if: always() && steps.railway_up.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          AXIOM_TOKEN: ${{ secrets.AXIOM_ANNOTATIONS_TOKEN }}
+          DATASETS: ${{ vars.AXIOM_DEPLOY_DATASETS || 'inspector-logs,inspector-clean-v1' }}
+          STARTED_AT: ${{ steps.railway_up.outputs.started_at }}
+          DEPLOY_SHA: ${{ steps.resolved.outputs.sha }}
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          if [ -z "${AXIOM_TOKEN:-}" ]; then
+            echo "::warning::AXIOM_ANNOTATIONS_TOKEN is not set, so this deploy is not marked in Axiom."
+            exit 0
+          fi
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # The header goes through a file (mktemp: mode 0600, printf: a builtin)
+          # so the token never appears in a process's command line.
+          auth="$(mktemp)"
+          trap 'rm -f "$auth"' EXIT
+          printf 'Authorization: Bearer %s\n' "$AXIOM_TOKEN" > "$auth"
+          # Names are trimmed: "a, b" must not ask Axiom for a dataset " b".
+          jq -n --arg datasets "$DATASETS" --arg time "${STARTED_AT:-$now}" --arg end "$now" \
+            --arg description "${DEPLOY_SHA:0:9} by $GITHUB_TRIGGERING_ACTOR, $STATUS" --arg url "$RUN_URL" \
+            '{datasets: ($datasets | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))),
+              type: "deploy", title: "Webapp prod deploy",
+              time: $time, endTime: $end, description: $description, url: $url}' \
+            | curl -fsS --max-time 20 --retry 2 -o /dev/null -X POST https://api.axiom.co/v2/annotations \
+                -H @"$auth" -H 'Content-Type: application/json' -d @-
+
+      # Only after a start post, so a release's own webapp deploy stays quiet.
+      - name: Announce the result in Slack
+        if: always() && steps.announce.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYS_WEBHOOK_URL }}
+          STARTED: ${{ steps.announce.outputs.at }}
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          [ -n "${SLACK_WEBHOOK_URL:-}" ] || exit 0
+          mins=$(( ( $(date -u +%s) - ${STARTED:-$(date -u +%s)} ) / 60 ))
+          case "$STATUS" in
+            success) text="✅ Webapp → prod done (${mins}m) · <$RUN_URL|run>" ;;
+            cancelled) text="⚪ Webapp → prod cancelled (${mins}m) · <$RUN_URL|run>" ;;
+            *) text="❌ Webapp → prod failed (${mins}m) · <$RUN_URL|run>" ;;
+          esac
+          # The webhook URL is a credential too, so curl reads it from a config
+          # file (mktemp: mode 0600) rather than from its command line.
+          cfg="$(mktemp)"
+          trap 'rm -f "$cfg"' EXIT
+          printf 'url = "%s"\n' "$SLACK_WEBHOOK_URL" > "$cfg"
+          jq -n --arg text "$text" '{text: $text}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
+                -d @- -K "$cfg"
 
   smoke:
     needs: deploy
