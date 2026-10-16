@@ -95,6 +95,7 @@ beta; they are listed [after the table](#held-tools).
 | `list_studies` | List the studies published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
 | `get_study` | One study's full read: model, system prompt, tool-approval policy, resolved servers, the environment it publishes, and its actionable-insights envelope. Matched by id or by name. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |
+| `authorize_local_execution` | Authorize unattended local execution for a verified member on an eligible local server. Returns a scoped target and expiring grant. | — |
 | `send_chat_message` | Send one message to a project's MCP servers and get the reply plus the raw tool calls, per-call latency and token usage. SPENDS model credits. Send `browser: {policy: …}` initially and `browser: {}` on later browser turns. Pass the returned `sessionId` back to continue. Tools default to `read_only`; `toolMode=auto` may cause real side effects. `idempotencyKey` is required and must be stable across retries. | — |
 | `get_chat_session` | Read a session's metadata and a window of its raw messages, indexed by absolute transcript position — the same indices the trace spans reference. | — |
 | `get_chat_session_trace` | Read a session's per-turn spans: tool latency, token usage, transcript indices. Returns the latest turn by default; page older turns with `afterPromptIndex`, or pass `includeSpans=false` for summaries. | — |
