@@ -1,3 +1,4 @@
+import { toolOrigin } from "@/shared/tool-origin";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCallToolResultError } from "@mcpjam/sdk";
@@ -10,19 +11,10 @@ import type { ModelMessage } from "ai";
 import { isToolPolicyBlockResult } from "./tool-policy-gate.js";
 
 /**
- * Pull the MCP error code off a thrown tool error. This is an MCP-LAYER code,
- * not necessarily a server JSON-RPC *response*: the MCP SDK raises `McpError`
- * with the same negative-code shape for both server error responses
- * (`-32602` invalid params, `-32601` method not found) AND client-side
- * lifecycle failures (`-32001` request timeout, `-32000` connection closed).
- * We can't reliably distinguish those by code, so we capture all of them and
- * the UI labels them neutrally as "MCP error" rather than claiming the server
- * returned them.
+ * MCP error codes cover server responses and client-side lifecycle failures.
+ * The UI labels both neutrally as "MCP error".
  *
- * Accepts only NEGATIVE integers — every MCP/JSON-RPC code is negative.
- * Transport errors (`StreamableHTTPError`, `SseError`) carry an HTTP status on
- * `.code` (e.g. `401`, a positive number); excluding non-negatives keeps those
- * out (they still surface via the existing error text + red dot).
+ * Accept only negative JSON-RPC codes; positive HTTP status codes stay out.
  */
 function extractMcpErrorCode(error: unknown): number | undefined {
   const code = (error as { code?: unknown } | null)?.code;
@@ -70,6 +62,7 @@ export type AiSdkEvalTraceContext = {
       stepNumber: number;
       startAt: number;
       serverId?: string;
+      toolOrigin?: EvalTraceSpan["toolOrigin"];
       promptIndex: number;
     }
   >;
@@ -224,6 +217,8 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
   const out: Record<string, unknown> = { ...tools };
   for (const name of Object.keys(out)) {
     const raw = out[name] as {
+      _serverId?: string;
+      _toolOrigin?: string;
       execute?: (
         input: unknown,
         options: {
@@ -267,6 +262,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
           stepNumber,
           startAt: toolStartedAt,
           serverId,
+          toolOrigin: toolOrigin(name, raw),
           promptIndex: resolvedPromptIndex,
         });
         let success = true;
@@ -298,6 +294,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               toolCallId,
               toolName: name,
               serverId,
+              toolOrigin: toolOrigin(name, raw),
               status: success ? "ok" : "error",
               ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
@@ -517,6 +514,7 @@ export function finalizeAiSdkTraceOnFailure(
       toolCallId,
       toolName: t.toolName,
       serverId: t.serverId,
+      toolOrigin: t.toolOrigin,
       status: "error",
       ...createOffsetInterval(runStartedAt, t.startAt, failAt),
     });
@@ -780,6 +778,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
         },
       ) => unknown;
       _serverId?: string;
+      _toolOrigin?: string;
     };
     if (!raw || typeof raw.execute !== "function") {
       continue;
@@ -828,6 +827,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             toolCallId,
             toolName: name,
             serverId: raw._serverId,
+            toolOrigin: toolOrigin(name, raw),
             ...(toolConnectionAttribution(raw, input, toolCallId)
               ? {
                   connectionId: toolConnectionAttribution(

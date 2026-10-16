@@ -437,9 +437,7 @@ function normalizeAuthHeader(raw: string): string {
  * there is nothing to advertise — no ids, or no Convex auth to execute them
  * with (e.g. local BYOK eval iterations, which pass `ctx: null`).
  *
- * Unknown ids are skipped with a warn (a newer backend catalog may advertise
- * ids this inspector build doesn't implement yet — degrading to "tool
- * absent" is what the model would see if the host never enabled it).
+ * Unknown ids are skipped with a warning because the backend catalog may be newer.
  * Computer-backed ids without a computer attached are skipped the same way:
  * the backend write-validation should have prevented that combination, so a
  * skip here is drift worth logging, not crashing over.
@@ -951,5 +949,6 @@ export function resolveHostTools(
     logger.warn("[built-in-tools] unknown builtInToolId; skipping", { id });
   }
 
+  for (const name of Object.keys(out)) out[name] = Object.assign({}, out[name], { _toolOrigin: "builtin" as const });
   return Object.keys(out).length > 0 ? out : undefined;
 }
