@@ -140,8 +140,11 @@ jobs:
           elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then file="$PRODUCTION_SUITE_FILE"
           else file="$DEFAULT_SUITE_FILE"; fi
           echo "Suite file: $file"
+          # This step runs outside the checkout, so a repo-relative path is
+          # resolved against it; an absolute one is used as given.
+          case "$file" in /*) file_path="$file" ;; *) file_path="$GITHUB_WORKSPACE/$file" ;; esac
           args=(cloud eval run
-            --file "$GITHUB_WORKSPACE/$file"
+            --file "$file_path"
             --project "$MCPJAM_PROJECT"
             --wait
             --notes "dogfood @ ${GITHUB_SHA} (${GITHUB_EVENT_NAME}, $file)"
@@ -178,10 +181,11 @@ jobs:
         working-directory: ${{ runner.temp }}
         env:
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+          RUN_ID: ${{ steps.run.outputs.run_id }}
         run: |
           set +e
           npx -y "@mcpjam/cli@$CLI_VERSION" cloud eval gate \
-            --run "${{ steps.run.outputs.run_id }}" \
+            --run "$RUN_ID" \
             --project "$MCPJAM_PROJECT" \
             --wait \
             --min-pass-rate-percent 80 \
@@ -262,7 +266,7 @@ jobs:
             case "$RUN_CODE" in
               0) echo "- Run: passed." ;;
               1) echo "- Run: **a measured eval failure**. The server's behaviour changed." ;;
-              2) echo "- Run: usage error or an invalid suite file. Not a server problem." ;;
+              2) echo "- Run: usage error, an invalid suite file, or the organization's AI-key policy refused the model. Not a server problem." ;;
               3) echo "- Run: authentication failed. Check \`MCPJAM_API_KEY\` and its organization." ;;
               4) echo "- Run: connection or setup failure, or a local write failure. Infrastructure, not a verdict." ;;
               5) echo "- Run: no valid verdict — inconclusive, non-terminal, or the wait timed out. Nothing was decided." ;;
