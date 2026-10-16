@@ -279,6 +279,36 @@ describe("v1 model leases", () => {
       { model: "anthropic/claude-sonnet-4.5", maxOutputTokens: "lots" },
       "maxOutputTokens must be",
     ],
+    [
+      { model: "anthropic/claude-sonnet-4.5", executionAdmissionId: null },
+      "executionAdmissionId must contain",
+    ],
+    [
+      { model: "anthropic/claude-sonnet-4.5", executionAdmissionId: "" },
+      "executionAdmissionId must contain",
+    ],
+    [
+      {
+        model: "anthropic/claude-sonnet-4.5",
+        executionAdmissionId: "x".repeat(257),
+      },
+      "executionAdmissionId must contain",
+    ],
+    [
+      { model: "anthropic/claude-sonnet-4.5", attemptAdmissionId: null },
+      "attemptAdmissionId must contain",
+    ],
+    [
+      { model: "anthropic/claude-sonnet-4.5", attemptAdmissionId: "" },
+      "attemptAdmissionId must contain",
+    ],
+    [
+      {
+        model: "anthropic/claude-sonnet-4.5",
+        attemptAdmissionId: "x".repeat(257),
+      },
+      "attemptAdmissionId must contain",
+    ],
   ])("rejects %j before calling the backend", async (body, message) => {
     const fetchMock = vi.fn();
     global.fetch = fetchMock as never;
