@@ -67,15 +67,7 @@ import { ErrorCode, WebRouteError, mapRuntimeError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
 import { redactForLog } from "./redact-log-message.js";
 
-type ConvexErrorData = {
-  code?: unknown;
-  message?: unknown;
-  kind?: unknown;
-  /** The stable sub-code a coded refusal carries alongside its prose. */
-  reason?: unknown;
-  /** The gated feature's key, on a `FEATURE_UNAVAILABLE` refusal. */
-  feature?: unknown;
-};
+import { convexErrorData } from "./convex-error-data.js";
 
 /**
  * The five `gate_waiver_*` refusal codes, mirrored from `GATE_WAIVER_REFUSAL`
@@ -118,17 +110,6 @@ const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
  * is a bug worth surviving, and three links is already more nesting than any
  * path here has.
  */
-function convexErrorData(error: unknown): ConvexErrorData | null {
-  let current: unknown = error;
-  for (let depth = 0; depth < 4 && current; depth += 1) {
-    const data = (current as { data?: unknown }).data;
-    if (data && typeof data === "object" && !Array.isArray(data)) {
-      return data as ConvexErrorData;
-    }
-    current = (current as { cause?: unknown }).cause;
-  }
-  return null;
-}
 
 /** Strip Convex's own framing so it cannot reach a public response body. */
 function cleanConvexMessage(error: unknown): string {
