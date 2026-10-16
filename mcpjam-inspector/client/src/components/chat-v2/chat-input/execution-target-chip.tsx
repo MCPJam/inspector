@@ -39,9 +39,14 @@ export type ExecutionTargetChipData = {
   harnessName?: string;
   /** Null ⇒ unknown. Only `true` offers a choice. */
   hostedAvailable: boolean | null;
-  onSelect: (target: "hosted" | "local-native") => void;
-  onOpenDetails: () => void;
-};
+} & (
+  | { readOnly: true }
+  | {
+      readOnly?: false;
+      onSelect: (target: "hosted" | "local-native") => void;
+      onOpenDetails: () => void;
+    }
+);
 
 const PILL_CLASS =
   "inline-flex items-center gap-1 rounded-full border border-border/60 " +
@@ -57,6 +62,20 @@ function chipFace(data: ExecutionTargetChipData): {
   title: string;
 } {
   const name = data.harnessName ?? "Claude Code";
+  if (
+    data.readOnly &&
+    data.target !== "hosted" &&
+    (data.phase === "unavailable" ||
+      (data.target === null && data.phase !== "loading"))
+  ) {
+    return {
+      label: "Unavailable",
+      icon: TriangleAlert,
+      tone: "attention",
+      title:
+        "Execution venue is unavailable. Check this client's setup before launching.",
+    };
+  }
   // Anything that is not an explicit local target runs hosted, and the phase
   // labels below all assume local — so falling through to them with no target
   // is how the chip came to say "This machine" over a turn bound for the
@@ -64,13 +83,13 @@ function chipFace(data: ExecutionTargetChipData): {
   // case: a machine that HAS a cloud target and no choice recorded.
   if (
     data.target === "hosted" ||
-    (data.target === null && data.hostedAvailable === true)
+    (data.target === null && data.hostedAvailable === true && !data.readOnly)
   ) {
     return {
       label: "Cloud",
       icon: Cloud,
       tone: "normal",
-      title: `This host's ${name} runs in a cloud computer`,
+      title: `This client's ${name} runs in a cloud computer`,
     };
   }
   switch (data.phase) {
@@ -156,9 +175,21 @@ export function ExecutionTargetChip(props: ExecutionTargetChipData) {
     </>
   );
   const toneClass =
-    face.tone === "attention"
-      ? "border-warning/50 text-foreground"
-      : undefined;
+    face.tone === "attention" ? "border-warning/50 text-foreground" : undefined;
+
+  if (props.readOnly) {
+    return (
+      <span
+        role="status"
+        data-testid="execution-target-chip"
+        data-phase={props.phase}
+        className={cn(PILL_CLASS, toneClass)}
+        title={face.title}
+      >
+        {body}
+      </span>
+    );
+  }
 
   // ONE offerable target ⇒ an indicator, not a menu. The click still opens the
   // dialog, because "where does this run" and "authorize it" are the same
