@@ -63,6 +63,24 @@ describe("org-keys refusal helpers", () => {
     );
   });
 
+  it("reads provider_not_configured as credential_missing: the same missing org provider", () => {
+    // `/stream/org`'s 422 envelope, and the org resolver's prefixed message.
+    expect(
+      orgKeysRefusalCodeFromError(
+        JSON.stringify({ ok: false, code: "provider_not_configured" }),
+      ),
+    ).toBe("credential_missing");
+    expect(
+      orgKeysRefusalCodeFromError(
+        new Error(
+          "provider_not_configured: anthropic is not enabled for this project/workspace organization",
+        ),
+      ),
+    ).toBe("credential_missing");
+    expect(isOrgKeysRefusalCode("PROVIDER_NOT_CONFIGURED")).toBe(true);
+    expect(isRetryableOrgKeysRefusal("provider_not_configured")).toBe(false);
+  });
+
   it("reads the code an Error carries even when its message is generic", () => {
     expect(
       orgKeysRefusalCodeFromError(

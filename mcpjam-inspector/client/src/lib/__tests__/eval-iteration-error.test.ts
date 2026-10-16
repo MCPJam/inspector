@@ -110,6 +110,30 @@ describe("describeEvalIterationError — organization AI-key refusals", () => {
     ).toBe("eval/ai_refused");
   });
 
+  it("explains a completed iteration whose model's provider isn't on for the org", () => {
+    // As a BYOK run records it (PLB-135): the turn failed, the iteration
+    // completed, and only the diagnostics carry the code.
+    const sentence =
+      'The "anthropic" provider isn\'t turned on for your organization. An organization admin can add it under AI providers in organization settings, or you can pick a model from another provider.';
+    expect(
+      describeEvalIterationError({
+        status: "completed",
+        result: "failed",
+        error: sentence,
+        errorDetails: JSON.stringify({
+          ok: false,
+          code: "provider_not_configured",
+          error: sentence,
+        }),
+      }),
+    ).toMatchObject({
+      slug: "eval/ai_refused",
+      title: "Unavailable: add an organization provider",
+      rawCode: "credential_missing",
+      nextSteps: ["Ask an organization admin to add or reconnect a provider."],
+    });
+  });
+
   it("leaves other setup failures as they were", () => {
     expect(
       describeEvalIterationError({

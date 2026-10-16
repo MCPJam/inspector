@@ -21,9 +21,10 @@ export function describeEvalIterationError(
   const cancelled = iteration.status === "cancelled";
   // The organization's AI key policy refused the run's model (or its own
   // provider did): configuration, not the host or the server. A failed
-  // iteration may carry the code only in its diagnostics.
+  // iteration may carry the code only in its diagnostics, and a refused
+  // model turn leaves the iteration completed with a failed result.
   const refusalCode =
-    setup || iteration.status === "failed"
+    setup || iteration.status === "failed" || iteration.result === "failed"
       ? orgKeysRefusalCodeInText(iteration.error, iteration.errorDetails)
       : undefined;
   if (!timeout && !setup && !cancelled && !iteration.error && !refusalCode)

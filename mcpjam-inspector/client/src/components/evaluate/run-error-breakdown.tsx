@@ -1,15 +1,46 @@
 import { useEffect } from "react";
+import { Button } from "@mcpjam/design-system/button";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
+import { ASK_ORG_ADMIN, MANAGE_AI_PROVIDERS } from "@/lib/org-keys-refusal";
 import { toast } from "@/lib/toast";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
+import { findProjectByAnyId } from "@/state/app-types";
 import type { RunErrorBreakdown } from "./run-error-breakdown-model";
 
 // Shared across mounts, for the lifetime of this app session.
 const toastedRuns = new Set<string>();
 const BREAKDOWN_TOAST_DURATION_MS = 20_000;
 
+/** The fix for a refusal from the organization's AI provider settings. */
+function OrgProvidersFix({ projectId }: { projectId?: string }) {
+  const appState = useOptionalSharedAppState();
+  const organizationId = projectId
+    ? (findProjectByAnyId(appState?.projects ?? {}, projectId)
+        ?.organizationId ?? null)
+    : null;
+  const manageProviders = useOrgModelsHandoff(organizationId);
+  return manageProviders ? (
+    <Button
+      variant="secondary"
+      size="sm"
+      className="mt-2"
+      onClick={manageProviders}
+    >
+      {MANAGE_AI_PROVIDERS}
+    </Button>
+  ) : (
+    <p className="mt-1 text-muted-foreground">
+      {ASK_ORG_ADMIN} to turn on the provider.
+    </p>
+  );
+}
+
 export function RunErrorBreakdownDescription({
   breakdown,
+  projectId,
 }: {
   breakdown: RunErrorBreakdown;
+  projectId?: string;
 }) {
   return (
     <div
@@ -43,6 +74,9 @@ export function RunErrorBreakdownDescription({
                 ))}
               </ul>
             )}
+            {group.cause === "orgProviders" && (
+              <OrgProvidersFix projectId={projectId} />
+            )}
           </li>
         ))}
       </ul>
@@ -53,15 +87,21 @@ export function RunErrorBreakdownDescription({
 export function useRunErrorBreakdownToast(
   runId: string,
   breakdown: RunErrorBreakdown | null,
+  projectId?: string,
 ) {
   useEffect(() => {
     if (!breakdown || toastedRuns.has(runId)) return;
     toast.warning(breakdown.headline, {
       id: `run-error-breakdown-${runId}`,
-      description: <RunErrorBreakdownDescription breakdown={breakdown} />,
+      description: (
+        <RunErrorBreakdownDescription
+          breakdown={breakdown}
+          projectId={projectId}
+        />
+      ),
       duration: BREAKDOWN_TOAST_DURATION_MS,
       closeButton: true,
     });
     toastedRuns.add(runId);
-  }, [runId, breakdown]);
+  }, [runId, breakdown, projectId]);
 }

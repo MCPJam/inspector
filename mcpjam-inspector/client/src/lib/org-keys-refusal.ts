@@ -46,8 +46,19 @@ const ORG_KEYS_REFUSAL_CODE_SET: ReadonlySet<string> = new Set(
   ORG_KEYS_REFUSAL_CODES,
 );
 
+/**
+ * `/stream/org` and the org resolver answer `provider_not_configured` when the
+ * organization has no such provider turned on: the same missing provider, and
+ * the same fix, as `credential_missing`.
+ */
+const ORG_KEYS_REFUSAL_ALIASES: Readonly<Record<string, OrgKeysRefusalCode>> = {
+  provider_not_configured: "credential_missing",
+};
+
 function normalizeCode(code: unknown): string | undefined {
-  return typeof code === "string" ? code.trim().toLowerCase() : undefined;
+  if (typeof code !== "string") return undefined;
+  const key = code.trim().toLowerCase();
+  return ORG_KEYS_REFUSAL_ALIASES[key] ?? key;
 }
 
 /** True for one of {@link ORG_KEYS_REFUSAL_CODES} (case and spacing tolerant). */

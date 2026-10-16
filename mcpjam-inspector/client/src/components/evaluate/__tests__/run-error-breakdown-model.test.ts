@@ -168,6 +168,59 @@ describe("classifyIterationError", () => {
   });
 });
 
+// A BYOK run whose provider isn't turned on for the organization, as the
+// dev repro recorded it (PLB-135): the code is only in the diagnostics.
+const notTurnedOn =
+  'The "anthropic" provider isn\'t turned on for your organization. An organization admin can add it under AI providers in organization settings, or you can pick a model from another provider.';
+const orgProviderRefusal = (code = "provider_not_configured") => ({
+  error: notTurnedOn,
+  errorDetails: JSON.stringify({ ok: false, code, error: notTurnedOn }),
+  metadata: { evalErrors: [{ message: notTurnedOn, reason: "providerError" }] },
+});
+
+describe("organization AI provider refusals", () => {
+  it("sends them to the organization's AI provider settings, not to MCPJam", () => {
+    for (const chain of [providerErrorChain, null]) {
+      expect(
+        classifyIterationError(
+          iteration("a", orgProviderRefusal() as Partial<EvalIteration>),
+          chain,
+        ),
+      ).toBe("orgProviders");
+    }
+  });
+
+  it("groups the run under one titled cause with the backend's reason", () => {
+    expect(
+      buildRunErrorBreakdown({
+        iterations: [
+          iteration("a", orgProviderRefusal() as Partial<EvalIteration>),
+        ],
+        chains: new Map([["a", providerErrorChain]]),
+      })?.groups,
+    ).toEqual([
+      {
+        cause: "orgProviders",
+        title: "Your organization's AI provider settings stopped the run",
+        count: 1,
+        errors: [{ message: notTurnedOn, count: 1 }],
+      },
+    ]);
+  });
+
+  it("keeps a refusal that lifts on its own where it was", () => {
+    expect(
+      classifyIterationError(
+        iteration(
+          "a",
+          orgProviderRefusal("provider_unavailable") as Partial<EvalIteration>,
+        ),
+        providerErrorChain,
+      ),
+    ).toBe("platform");
+  });
+});
+
 describe("buildRunErrorBreakdown", () => {
   it("explains a run where every result hit a server tool error", () => {
     const iterations = ["a", "b", "c"].map((id) => iteration(id));
