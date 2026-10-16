@@ -176,6 +176,19 @@ async function assertUnattendedGit(harnessId: SupportedLocalHarnessId): Promise<
   if (!version || Number(version[1]) < 2 || (Number(version[1]) === 2 && Number(version[2]) < 31)) throw new Error(`Unattended local ${name} requires Git 2.31 or newer`);
 }
 
+/** The setup UI and unattended launch use the same Git requirement. */
+export async function readUnattendedGitStatus(harnessId: SupportedLocalHarnessId) {
+  try {
+    await assertUnattendedGit(harnessId);
+    return { ready: true, message: "Git 2.31 or newer is available." };
+  } catch (error) {
+    return {
+      ready: false,
+      message: error instanceof Error ? error.message : "Install Git 2.31 or newer, then retry.",
+    };
+  }
+}
+
 export async function prepareLocalHarnessRun(args: { bearer: string; projectId: string; trustedActor?: LocalHarnessActor; harnessId?: SupportedLocalHarnessId }) {
   const harnessId = args.harnessId ?? "claude-code";
   await assertUnattendedGit(harnessId);

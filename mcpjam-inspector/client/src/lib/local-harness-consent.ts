@@ -336,6 +336,7 @@ export interface LocalHarnessRuntimeStatus {
 }
 
 export interface LocalHarnessAvailabilityView {
+  unattendedGit?: { ready: boolean; message: string };
   autoApproveAcknowledged?: boolean;
   preferredVenue?: "local" | "hosted";
   setupAvailable?: boolean;

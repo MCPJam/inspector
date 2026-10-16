@@ -6,6 +6,11 @@ vi.mock("../../../utils/harness/local/readiness.js", async importOriginal => ({
   ...await importOriginal<typeof import("../../../utils/harness/local/readiness.js")>(), localHarnessAccountEnabled: accountRollout, verifyLocalHarnessMember: offConsent.member,
 }));
 import { Hono } from "hono";
+const gitReadiness = vi.hoisted(() => vi.fn(async () => ({ ready: false, message: "Install Git 2.31 or newer." })));
+vi.mock("../../../utils/harness/local/run-resources.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../utils/harness/local/run-resources.js")>(),
+  readUnattendedGitStatus: gitReadiness,
+}));
 
 /**
  * The local-harness control routes' CONTRACTS.
@@ -200,7 +205,7 @@ describe("GET /availability", () => {
       "/api/mcp/local-harness/availability",
       { headers: AUTH },
     );
-    expect(await response.json()).toMatchObject({ hostedAvailable: false });
+    expect(await response.json()).toMatchObject({ hostedAvailable: false, unattendedGit: { ready: false, message: "Install Git 2.31 or newer." } });
 
     isComputersDataPlaneConfiguredMock.mockReturnValue(true);
     const configured = await createApp().request(
