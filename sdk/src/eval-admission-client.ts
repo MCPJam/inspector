@@ -88,7 +88,10 @@ export class EvalAdmissionClient {
   }
 }
 
-/** Assign ordinals synchronously; serialize grants before permitting each prompt. */
+/**
+ * Assign ordinals synchronously and serialize grants before permitting prompts.
+ * A failed check stops this attempt, including queued and subsequent prompts.
+ */
 export class AttemptStepGuard {
   private ordinal = 0;
   private granted: number;
