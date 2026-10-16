@@ -69,6 +69,10 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
  *    conversation panels, file viewers) gate new opens only.
  *  - `mcpProfile.apps.mcpAppsOverrides.{serverTools,updateModelContext,message}`
  *    and `requireToolApproval`, recomputed by every request.
+ *  - `mcpProfile.apps.modelContextPolicy`, the client's App context budgets.
+ *    They are read per request, never from the binding, and stored context
+ *    is re-read against the ceilings, so a lowered budget refuses the next
+ *    update instead of closing the App.
  *  - `hostConfigId`, the saved config's content address. It rotates on ANY
  *    saved edit, the toggles above included; the fields it summarizes are
  *    projected individually and stay bound.
@@ -88,7 +92,11 @@ export function pluginHostBindingDigest(config: unknown) {
   if (isPlainRecord(profile)) {
     const next: Record<string, unknown> = { ...profile };
     if (isPlainRecord(profile.apps)) {
-      const { pluginExtensions: _toggles, ...apps } = profile.apps;
+      const {
+        pluginExtensions: _toggles,
+        modelContextPolicy: _contextBudgets,
+        ...apps
+      } = profile.apps;
       if (isPlainRecord(apps.mcpAppsOverrides)) {
         const overrides = { ...apps.mcpAppsOverrides };
         for (const key of PER_REQUEST_APP_PERMISSIONS) delete overrides[key];

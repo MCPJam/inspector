@@ -343,6 +343,21 @@ export type HostConfigPluginExtensionsV1 = {
   capabilities?: Partial<Record<PluginExtensionCapabilityKey, boolean>>;
 };
 
+/**
+ * Per-client budgets for the context a plugin App pushes with
+ * `ui/update-model-context`. Every key is optional: absent means MCPJam's
+ * default (`MODEL_CONTEXT_POLICY_DEFAULTS`). No version field, because an
+ * eval pins the content-addressed `hostConfigId` instead.
+ */
+export type HostConfigModelContextPolicyV1 = {
+  /** UTF-8 bytes of one update's `{ content, structuredContent }`. */
+  updateMaxBytes?: number;
+  /** Content blocks in one update. */
+  maxBlocks?: number;
+  /** UTF-8 bytes of every App context one turn carries. */
+  turnMaxBytes?: number;
+};
+
 export type CspDomainSet = {
   connectDomains?: string[];
   resourceDomains?: string[];
@@ -518,6 +533,8 @@ export type HostConfigMcpProfileV1 = {
     // OpenAI plugin extensions (sidebar Apps, file viewers, forms, …) this
     // client offers. Absent → the client style's default.
     pluginExtensions?: HostConfigPluginExtensionsV1;
+    // Budgets for plugin App context. Absent → MCPJam's defaults.
+    modelContextPolicy?: HostConfigModelContextPolicyV1;
   };
   extensions?: Record<string, unknown>;
 };

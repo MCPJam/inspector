@@ -1,5 +1,5 @@
 {
-  "__inputHash": "84a7bccef2c67af3aca52871f3c2907bcc607ad15bbede9181a28ff922051fc5",
+  "__inputHash": "c7d444151729b61f1635a005ca987dac23acddb2a93928bec786b39bfbc1da0a",
   "rows": [
     {
       "label": "base-minimal",
@@ -582,6 +582,34 @@
       },
       "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"mcpAppsOverrides\":{\"availableDisplayModes\":[\"inline\",\"pip\"],\"logging\":true,\"widgetDisplayModeRequests\":\"user-initiated-only\"}}}}",
       "sha256": "a077644d119560766044be1bba3d1dd139e61cab9c914f9cec63930b48aed2df"
+    },
+    {
+      "label": "apps-model-context-policy-sorted",
+      "input": {
+        "hostStyle": "chatgpt",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "apps": {
+            "modelContextPolicy": {
+              "updateMaxBytes": 2548000,
+              "turnMaxBytes": 8388608,
+              "maxBlocks": 256
+            }
+          }
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"chatgpt\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"modelContextPolicy\":{\"maxBlocks\":256,\"turnMaxBytes\":8388608,\"updateMaxBytes\":2548000}}}}",
+      "sha256": "63d37eeeddee7088203fa2134840f05e5699384438faa8623337bbed95dff25a"
     },
     {
       "label": "host-capabilities-override-explicit-empty",

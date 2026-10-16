@@ -315,6 +315,25 @@ const inputs = [
     },
   },
   {
+    // Plugin App context budgets: keys sorted, values stored as given. An
+    // empty policy collapses to absent (covered by canonicalize tests).
+    label: "apps-model-context-policy-sorted",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          modelContextPolicy: {
+            updateMaxBytes: 2548000,
+            turnMaxBytes: 8388608,
+            maxBlocks: 256,
+          },
+        },
+      },
+    },
+  },
+  {
     label: "host-capabilities-override-explicit-empty",
     input: { ...base(), hostCapabilitiesOverride: {}, chatUiOverride: { logo: "x" } },
   },
