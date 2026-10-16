@@ -2621,6 +2621,42 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
+    it("streams the persist receipt for a cloud org BYOK turn", async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockImplementation(async (input) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org") {
+          return createSseResponse(completedStreamEvents());
+        }
+        if (url === "https://test-convex.example.com/ingest-chat") {
+          return Response.json({ version: 4 });
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4-turbo", provider: "openai" },
+          chatSessionId: "chat-session-org-receipt",
+          projectId: "project-1",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const receipt = capturedStreamEvents.find(
+          (event) => event?.type === "data-persist-receipt",
+        );
+        expect(receipt?.data).toMatchObject({
+          chatSessionId: "chat-session-org-receipt",
+          outcome: "saved",
+          version: 4,
+        });
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
     it("resolves local-runtime org BYOK chat before running locally", async () => {
       const originalFetch = global.fetch;
       const fetchMock = vi.fn().mockImplementation(async (input, init) => {

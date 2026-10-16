@@ -2833,11 +2833,7 @@ chatV2.post("/", async (c) => {
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
-        // The engine streams the persist receipt only when it knows the
-        // session. Without one the client cannot advance its version baseline,
-        // so the reactive history refresh rehydrates this thread after every
-        // turn — remounting each App iframe into a blank sandbox. Same as the
-        // local-org call above and every handler in web-chat-turn.ts.
+        // Needed for the persist receipt — see the MCPJam call above.
         chatSessionId,
         sourceType: chatSessionSourceType,
         ...(routingSelection?.source === "org"
