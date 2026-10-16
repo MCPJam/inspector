@@ -21,6 +21,7 @@ import {
   type McpProtocolVersion,
 } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
+  AUTH_CHALLENGE_ACTIONS,
   HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
   isHarness,
@@ -33,6 +34,8 @@ import {
   PLUGIN_EXTENSION_CAPABILITY_KEYS,
   SEP_1865_PERMISSION_FEATURES,
   TOOL_PARAM_HEADER_MIRRORING_MODES,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
   type CanonicalHostConfigBrowserToolPolicy,
   type CanonicalHostConfigSkillSelection,
   type CanonicalHostConfigV2,
@@ -920,6 +923,10 @@ function canonicalizeMcpProfile(
   const conformanceKnobs = [
     ["paginationTraversal", PAGINATION_TRAVERSAL_MODES],
     ["mrtrSupport", MRTR_SUPPORT_MODES],
+    ["unauthorizedChallenge", AUTH_CHALLENGE_ACTIONS],
+    ["unauthorizedChallengeTrigger", UNAUTHORIZED_CHALLENGE_TRIGGERS],
+    ["toolResultAuthChallenge", AUTH_CHALLENGE_ACTIONS],
+    ["toolResultAuthChallengeTrigger", TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS],
   ] as const;
   for (const [key, modes] of conformanceKnobs) {
     const value = input[key];
