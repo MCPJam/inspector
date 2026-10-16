@@ -96,7 +96,7 @@ jobs:
         env:
           PACK_VERSION: ${{ inputs.published_pack_version }}
           CANDIDATE: ${{ inputs.candidate && '--candidate' || '' }}
-        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "win32-x64" "$RUNNER_TEMP/conformance" codex $CANDIDATE
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "win32-x64" "$RUNNER_TEMP/codex conformance" codex $CANDIDATE
 
       - name: Build the pack
         if: inputs.published_pack_version == ''
@@ -110,11 +110,11 @@ jobs:
             --pack-version "$SOURCE_PACK_VERSION" \
             --node-tarball "$RUNNER_TEMP/node-runtime.zip" \
             --job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe" \
-            --out "$RUNNER_TEMP/conformance/runtime-src" \
+            --out "$RUNNER_TEMP/codex conformance/runtime-src" \
             --skip-archive
-          mkdir -p "$RUNNER_TEMP/conformance/runtime"
-          cp -R "$RUNNER_TEMP/conformance/runtime-src/codex" \
-            "$RUNNER_TEMP/conformance/runtime/codex"
+          mkdir -p "$RUNNER_TEMP/codex conformance/runtime"
+          cp -R "$RUNNER_TEMP/codex conformance/runtime-src/codex" \
+            "$RUNNER_TEMP/codex conformance/runtime/codex"
 
       - name: Build Inspector adapter dependencies
         run: |
@@ -125,7 +125,7 @@ jobs:
         id: native
         working-directory: mcpjam-inspector
         env:
-          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          CONFORMANCE_ROOT: ${{ runner.temp }}/codex conformance
           MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -138,7 +138,7 @@ jobs:
         if: always()
         shell: pwsh
         env:
-          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          CONFORMANCE_ROOT: ${{ runner.temp }}/codex conformance
         run: |
           $root = $env:CONFORMANCE_ROOT.Replace('/', '\')
           $survivors = Get-CimInstance Win32_Process | Where-Object {
@@ -154,7 +154,7 @@ jobs:
       - name: Record Windows Codex outcome
         if: always()
         env:
-          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          CONFORMANCE_ROOT: ${{ runner.temp }}/codex conformance
           OUTCOME: ${{ steps.native.outcome }}
           PACK_VERSION: ${{ inputs.published_pack_version || 'source' }}
         run: |
@@ -172,7 +172,7 @@ jobs:
       - name: Record Windows Codex conformance evidence
         working-directory: mcpjam-inspector
         env:
-          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          CONFORMANCE_ROOT: ${{ runner.temp }}/codex conformance
           PACK_VERSION: ${{ inputs.published_pack_version }}
         run: |
           published=()
@@ -190,5 +190,5 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: conformance-evidence-codex-win32-x64-${{ inputs.published_pack_version || 'source' }}
-          path: ${{ runner.temp }}/conformance/evidence/*.json
+          path: ${{ runner.temp }}/codex conformance/evidence/*.json
           if-no-files-found: error

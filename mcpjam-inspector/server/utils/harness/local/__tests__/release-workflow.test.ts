@@ -375,6 +375,7 @@ it("runs Windows Codex qualification without advertising native support", () => 
   const steps: Array<{ name?: string; run?: string; if?: string }> = job.steps;
   const native = steps.find((step) => step.name === "Native Codex scenarios")!;
   expect(native.run).toContain("for mode in attended attended-off unattended");
+  expect(JSON.stringify(job)).toContain("/codex conformance");
   expect(steps.some((step) => step.run?.includes("--job-launcher"))).toBe(true);
   const evidence = steps.find((step) => step.name === "Record Windows Codex conformance evidence")!;
   expect(evidence.if).toBeUndefined();
