@@ -1123,9 +1123,10 @@ jobs:
           who="by $GITHUB_TRIGGERING_ACTOR"
           case "$GITHUB_TRIGGERING_ACTOR" in *"[bot]") who="automatically" ;; esac
           # Not `releases/latest`: `finalize` may already have published this
-          # release, so skip its own tag and take the newest one before it.
-          prev="$(TAG="$RELEASE_TAG" gh api "repos/$GITHUB_REPOSITORY/releases?per_page=10" \
-            --jq '[.[] | select(.draft == false and .prerelease == false and .tag_name != env.TAG)][0].tag_name // empty')" || prev=""
+          # release, so skip its own tag and take the newest published one by
+          # date. 30 reaches well past any drafts; a miss only drops the count.
+          prev="$(TAG="$RELEASE_TAG" gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" \
+            --jq '[.[] | select(.draft == false and .prerelease == false and .tag_name != env.TAG)] | sort_by(.published_at) | last | .tag_name // empty')" || prev=""
           count=""
           if [ -n "$prev" ]; then
             count="$(gh api "repos/$GITHUB_REPOSITORY/compare/$prev...$GITHUB_SHA" --jq .total_commits)" || count=""
