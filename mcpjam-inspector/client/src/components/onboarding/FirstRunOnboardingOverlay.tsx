@@ -25,9 +25,13 @@ import { AuthenticationSection } from "@/components/connection/shared/Authentica
 import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
 import {
   getConfidentialCimdBlockReason,
+  inferFirstRunTransport,
+  type FirstRunValidationKind,
   validateOAuthClientId,
   validateOAuthClientSecret,
 } from "@/lib/server-form-validation";
+import { FirstRunValidationNotice } from "./FirstRunValidationNotice";
+import { getServerInputTransportHint } from "@/lib/hosted-ui";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import type {
   ServerFormAuthType,
@@ -78,6 +82,7 @@ export type FirstRunConnectionState =
       serverName: string;
       serverKind: FirstRunServerKind;
       error?: string;
+      validationKind?: FirstRunValidationKind;
     }
   | {
       status: "connected";
@@ -90,6 +95,7 @@ export type FirstRunConnectionState =
       serverName: string;
       serverKind: FirstRunServerKind;
       error: string;
+      validationKind?: FirstRunValidationKind;
     };
 
 export interface FirstRunServerDraft {
@@ -401,13 +407,9 @@ export function FirstRunOnboardingOverlay({
 
       setServerUrlError(null);
       setServerUrlOrCommand(trimmedUrlOrCommand);
-      // The choice screen starts a new server connection. Always derive its
-      // identity from the URL entered here instead of reusing a name hydrated
-      // from an earlier OAuth recovery attempt.
+      // New choices must not reuse the name from an OAuth recovery attempt.
       const inferredName = deriveServerName(trimmedUrlOrCommand);
-      const inferredTransport = /^https?:\/\//i.test(trimmedUrlOrCommand)
-        ? "http"
-        : "stdio";
+      const inferredTransport = inferFirstRunTransport(trimmedUrlOrCommand);
       setServerName(inferredName);
       setServerTransport(inferredTransport);
       onConnectOwnServer({
@@ -975,7 +977,7 @@ export function FirstRunOnboardingOverlay({
                   </p>
                 ) : (
                   <p className="mt-1.5 text-[10.5px] text-muted-foreground">
-                    HTTP, SSE, and stdio all work.
+                    {getServerInputTransportHint()}
                   </p>
                 )}
                 <Button
@@ -1033,7 +1035,10 @@ export function FirstRunOnboardingOverlay({
                 </p>
                 {connectionState.error ? (
                   <div className="mt-3">
-                    <ConnectionFailureNotice error={connectionState.error} />
+                    <ConnectionFailureNotice
+                      error={connectionState.error}
+                      validationKind={connectionState.validationKind}
+                    />
                   </div>
                 ) : null}
                 <Button
@@ -1211,8 +1216,7 @@ export function FirstRunOnboardingOverlay({
                   Set up your server
                 </DialogTitle>
                 <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  MCPJam couldn&apos;t connect with the default settings. Update
-                  the details and try again.
+                  Check your server details to continue.
                 </DialogDescription>
               </DialogHeader>
 
@@ -1220,6 +1224,7 @@ export function FirstRunOnboardingOverlay({
                 <ConnectionFailureNotice
                   key={connectionState.error}
                   error={connectionState.error}
+                  validationKind={connectionState.validationKind}
                 />
               ) : null}
 
@@ -1271,6 +1276,7 @@ export function FirstRunOnboardingOverlay({
                     aria-invalid={serverUrlError ? true : undefined}
                     onChange={(event) => {
                       setServerUrlOrCommand(event.target.value);
+                      setServerTransport(inferFirstRunTransport(event.target.value.trim(), serverTransport));
                       if (serverUrlError) setServerUrlError(null);
                     }}
                   />
@@ -1344,9 +1350,16 @@ function GuestSessionRefusalNotice({ onSignIn }: { onSignIn?: () => void }) {
   );
 }
 
-function ConnectionFailureNotice({ error }: { error: string }) {
+function ConnectionFailureNotice({
+  error,
+  validationKind,
+}: {
+  error: string;
+  validationKind?: FirstRunValidationKind;
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
   const detailsId = "first-run-connection-error-details";
+  if (validationKind) return <FirstRunValidationNotice error={error} kind={validationKind} />;
 
   return (
     <div
