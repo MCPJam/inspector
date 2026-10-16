@@ -188,6 +188,7 @@ vi.mock("../local/local-turn.js", () => ({
         sandboxWorkDir: "project",
         skillsBaseDir: "/local/home/.claude/skills",
         permissionMode: "allow-reads",
+        timings: { localRuntimeVerifyMs: 0, localGatewayReadyMs: 0 },
         sessionStateExists: true,
         teardown: () => endLocalHarnessSession(args.sessionId),
         discardState: async () => {},
@@ -302,7 +303,8 @@ describe("Claude approval through the turn runner's pause and teardown", () => {
       });
       expect(state.hold).toHaveBeenCalledOnce();
       expect(state.teardown).not.toHaveBeenCalled();
-      await answer(approved);
+      const continuation = await answer(approved);
+      expect(continuation).not.toContain('"type":"error"');
       expect(state.resumed).toBe(1);
       expect(state.executions).toBe(Number(approved));
       expect(state.create).toHaveBeenLastCalledWith(
