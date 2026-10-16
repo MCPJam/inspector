@@ -630,7 +630,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // A re-parented iframe reloads the proxy document without React knowing:
     // the new proxy has no view and the old bridge points at a dead window.
     // A second sandbox-proxy-ready must rebuild the bridge and re-send the
-    // resource, or the App stays blank (MCPJam/inspector#6504).
+    // resource, or the App stays blank.
     render(<HostedRenderer {...baseProps} />);
     await vi.waitFor(() => {
       expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);

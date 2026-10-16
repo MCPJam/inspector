@@ -2008,7 +2008,7 @@ describe("POST /api/mcp/chat-v2", () => {
     it("streams the persist receipt for a non-harness MCPJam turn", async () => {
       // Without a receipt the client cannot advance its version baseline, so
       // its reactive history refresh rehydrates the thread after every turn and
-      // remounts each App iframe into a blank sandbox (MCPJam/inspector#6504).
+      // remounts each App iframe into a blank sandbox.
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()

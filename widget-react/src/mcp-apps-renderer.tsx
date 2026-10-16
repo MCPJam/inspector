@@ -1,4 +1,5 @@
 import { useInitialRenderOutcome } from "./use-initial-render-outcome";
+import { useSandboxProxyGeneration } from "./use-sandbox-proxy-generation";
 import { WidgetFullscreenPlacementContext } from "./widget-fullscreen-placement";
 import {
   negotiateResourceDisplayModes,
@@ -1402,13 +1403,6 @@ export function MCPAppsRendererSurface({
   const [openInAppUrlOverride, setOpenInAppUrlOverride] = useState<
     string | null
   >(null);
-  // Counts every `sandbox-proxy-ready`, not just the first. The proxy announces
-  // itself once per document load, so a second one means the outer iframe
-  // reloaded under us — e.g. a persistent surface re-parented when its anchor
-  // remounted. That new document has no view and our bridge still points at
-  // the old window, so each count rebuilds the bridge (below), which re-sends
-  // the resource. 0 = the proxy has not loaded yet.
-  const [sandboxProxyGeneration, setSandboxProxyGeneration] = useState(0);
   // Where the proxy mounted the view, reported once per mount. Surfaced as the
   // Sandbox Stack "View origin" chip.
   const [viewMount, setViewMount] = useState<{
@@ -3880,19 +3874,17 @@ export function MCPAppsRendererSurface({
     ]
   );
 
-  const bridgeTransportReadyRef = useRef(bridgeTransportReady);
-  bridgeTransportReadyRef.current = bridgeTransportReady;
-  const hasWidgetHtmlRef = useRef(hasWidgetHtml);
-  hasWidgetHtmlRef.current = hasWidgetHtml;
-  // Stable identity: SandboxedIframe calls this per proxy load, and every call
-  // now rebuilds the bridge, so it must not change on every render.
-  const handleSandboxProxyReady = useCallback(() => {
-    setSandboxProxyGeneration((generation) => generation + 1);
-    logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", {
-      bridgeTransportReady: bridgeTransportReadyRef.current,
-      hasWidgetHtml: hasWidgetHtmlRef.current,
-    });
-  }, [logWidgetDebug]);
+  // Bumps on every proxy load; the bridge effect below keys on it so a
+  // reloaded proxy gets a fresh bridge and the resource again.
+  const {
+    generation: sandboxProxyGeneration,
+    onReady: handleSandboxProxyReady,
+  } = useSandboxProxyGeneration({
+    bridgeTransportReady,
+    hasWidgetHtml,
+    logReady: (details) =>
+      logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", details),
+  });
 
   useEffect(() => {
     if (!widgetHtml) return;
