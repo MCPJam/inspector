@@ -424,7 +424,7 @@ export async function runReplayStep(
  * The shim source injected into the guest `srcdoc` (an IIFE). Serializes the
  * capture (`generateLocator`/`eventToStep`) AND replay
  * (`resolveLocator`/`runReplayStep`) functions so the injected code is exactly
- * what the tests exercise. Order matters: callees before `recorderBootstrap`,
+ * what the tests exercise. Order matters: callees before `installRecorder`,
  * which references them by name from the shared IIFE scope.
  */
 export const RECORDER_SHIM_JS: string = [

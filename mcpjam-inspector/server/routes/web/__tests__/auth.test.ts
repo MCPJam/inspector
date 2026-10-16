@@ -113,7 +113,9 @@ describe("web routes — auth enforcement", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
     expect(body).toContain('const RECORDER_SHIM = "(function(){');
-    expect(body).toContain("recorderBootstrap();");
+    expect(body).toContain(
+      "installRecorder(generateLocator, eventToStep, runReplayStep);"
+    );
     expect(body).not.toContain('const RECORDER_SHIM = "__MCPJAM_RECORDER_SHIM__";');
   });
 

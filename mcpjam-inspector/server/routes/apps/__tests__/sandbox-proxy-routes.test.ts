@@ -19,7 +19,9 @@ describe("Sandbox proxy routes", () => {
     expect(body).toContain("color-scheme: light dark");
     expect(body).toContain("ui/notifications/sandbox-color-scheme-changed");
     expect(body).toContain('const RECORDER_SHIM = "(function(){');
-    expect(body).toContain("recorderBootstrap();");
+    expect(body).toContain(
+      "installRecorder(generateLocator, eventToStep, runReplayStep);"
+    );
     expect(body).toContain("var __name = function(target) { return target; };");
     expect(body).toContain('(guardScript || "") +');
     expect(body).toContain("cspMeta +");
