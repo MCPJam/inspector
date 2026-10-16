@@ -8,6 +8,7 @@ import {
 } from "@/hooks/useActivePlugins";
 import { useEnsureAdhocEnvironment } from "@/hooks/useProjectEnvironments";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { usePluginServerNotices } from "@/hooks/use-plugin-server-notices";
 import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
 import { useProjectSecrets } from "@/hooks/useProjectSecrets";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
@@ -139,6 +140,7 @@ export function usePlaygroundHiddenEnvironment(
     runtimeVenue: HIDDEN_ENVIRONMENT_VENUE,
   });
   const plugins = active.plugins;
+  usePluginServerNotices(plugins);
   // No authoritative answer yet: who this is, or which plugins it has. An
   // empty list here is not "no plugins". Only for a chat that could have
   // plugins at all (the flag is on, a real project and a client).
