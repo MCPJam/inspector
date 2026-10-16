@@ -341,9 +341,9 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     // target stays refused until its own evidence lands (D8).
     nativePlatforms: ["darwin", "linux"],
     nativeTargets: ["darwin-arm64", "linux-x64"],
-    // No target has passed the unattended sandbox probe on the pinned binary
-    // yet, so unattended local Codex is refused everywhere.
-    unattendedSandboxTargets: [],
+    // Linux x64 passed workspace/TMPDIR write and outside-write/network denial.
+    // Other targets stay refused until their own sandbox evidence exists.
+    unattendedSandboxTargets: ["linux-x64"],
     unattendedSandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY,
     isolatedBackends: {},
     // From the generated record, like Claude Code's: dark until the Codex
