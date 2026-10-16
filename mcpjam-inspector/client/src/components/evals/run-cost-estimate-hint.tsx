@@ -43,6 +43,9 @@ export function RunCostEstimateHint({
   align?: "start" | "center" | "end";
 }) {
   const summary = formatRunCostEstimate(state);
+  const harnessCost =
+    state.status === "ready" ? state.estimate?.harnessCost : undefined;
+  const range = harnessCost?.clientAiCreditsRange;
   const detailLines =
     state.status === "ready" && state.estimate
       ? state.estimate.lines.filter((line) => line.units > 0)
@@ -78,7 +81,28 @@ export function RunCostEstimateHint({
         className="max-w-[20rem] px-2.5 py-2"
       >
         <div className="space-y-1 text-xs leading-snug">
+          {harnessCost ? (
+            <p className="font-medium">Partial harness estimate</p>
+          ) : null}
           <p className="font-medium">{summary}</p>
+          {harnessCost ? (
+            <div className="space-y-1 text-muted-foreground">
+              <p>
+                {range
+                  ? `Likely client AI range: ${formatCredits(
+                      range.low,
+                    )} to ${formatCredits(range.high)} credits, based on ${
+                      range.sampleCount
+                    } recent samples.`
+                  : "Not enough priced history for a reliable client AI range."}
+              </p>
+              <p>
+                The range excludes computer time, other models and tool provider
+                fees. The total can be higher or lower. This estimate is not a
+                spending limit.
+              </p>
+            </div>
+          ) : null}
           {detailLines.length > 0 ? (
             <ul className="space-y-0.5 text-muted-foreground">
               {/* Labels are display strings and CAN repeat (two environments
