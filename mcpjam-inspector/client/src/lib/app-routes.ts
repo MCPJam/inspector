@@ -244,6 +244,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   },
   { path: "prompts", kind: "screen", surfaceId: "prompts", scope: "project" },
   { path: "tasks", kind: "screen", surfaceId: "tasks", scope: "project" },
+  { path: "events", kind: "screen", surfaceId: "events", scope: "project" },
   { path: "skills", kind: "screen", surfaceId: "skills", scope: "project" },
   // Project-scoped despite the generic name, per the pre-commit audit: a
   // lesson LAUNCHES an agent session into the active project
@@ -361,6 +362,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     path: "playground",
     kind: "screen",
     surfaceId: "playground",
+    scope: "project",
+  },
+  {
+    path: "triggers",
+    kind: "screen",
+    surfaceId: "triggers",
     scope: "project",
   },
   {

@@ -33,6 +33,9 @@ export default defineConfig({
     // Framework-free public-API wire contract (error codes + envelopes) shared
     // by the Inspector gateway and (eventually) the Convex backend.
     "src/public-api/index.ts",
+    // MCP Events (triggers): wire, coordinator, identities, profiles —
+    // runtime-agnostic, shared by the inspector server, client and CLI.
+    "src/events/index.ts",
     // Framework-free widget/app runtime building blocks (SEP-1865).
     "src/widget-runtime/index.ts",
     // Shared host-compatibility verdict engine (UI / CLI / API / MCP).

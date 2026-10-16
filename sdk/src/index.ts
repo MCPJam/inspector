@@ -125,6 +125,44 @@ export {
   withSkillsExtensionCapability,
 } from "./mcp-client-manager/index.js";
 
+// MCP Events (triggers), draft@28ec35e. The full surface — coordinator,
+// identities, profiles, Standard Webhooks, the in-memory inbox — is the
+// `@mcpjam/sdk/events` subpath; the root re-exports what a manager caller
+// needs to branch on.
+export {
+  MCPEventsWireError,
+  isMCPEventsWireError,
+  InvalidEventsPayloadError,
+  isInvalidEventsPayloadError,
+  classifyEventsRpcError,
+  EVENTS_ERROR_CODES,
+} from "./mcp-client-manager/events-ext-guards.js";
+export type {
+  EventsSupport,
+  CapturedEventsCapability,
+} from "./mcp-client-manager/events-capability-capture.js";
+export type {
+  EventDescriptorWire,
+  EventOccurrenceWire,
+  EventsListResultWire,
+  EventsPollResultWire,
+  EventsSubscribeResultWire,
+} from "./mcp-client-manager/events-ext-schemas.js";
+
+// MCP Events conformance (profile-aware; Node-only receiver).
+export {
+  runEventsConformance,
+  startEventsConformanceReceiver,
+  EVENTS_CHECK_IDS,
+} from "./events-conformance/index.js";
+export type {
+  EventsConformanceConfig,
+  EventsConformanceReceiver,
+  EventsConformanceResult,
+  EventsCheckResult,
+  EventsCheckId,
+} from "./events-conformance/index.js";
+
 // io.modelcontextprotocol/skills (SEP-2640).
 export {
   MCP_SKILLS_EXTENSION_ID,

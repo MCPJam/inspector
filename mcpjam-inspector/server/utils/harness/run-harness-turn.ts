@@ -1872,7 +1872,7 @@ export async function runHarnessTurn(
       // native requests in MCPJam, so toggle changes preserve the fingerprint
       // and any waiting approval. Unattended profiles and hosted modes retain
       // their existing mapping.
-      const localScope = sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended";
+      const localScope = sourceType === "eval" || sourceType === "swarm" || sourceType === "event" ? "unattended" : "attended";
       const localPermissionMode =
         harnessExecutionTarget != null
           ? localPermissionModeFor(
@@ -1990,7 +1990,7 @@ export async function runHarnessTurn(
           ? "scenario-chat"
           : sourceType === "swarm"
           ? "swarm-chat"
-          : sourceType === "eval" || sourceType === "sandbox"
+          : sourceType === "eval" || sourceType === "sandbox" || sourceType === "event"
           ? undefined
           : "direct-chat";
       // FAIL CLOSED on incomplete swarm continuity identity. The `swarm-chat`
@@ -2205,7 +2205,7 @@ export async function runHarnessTurn(
         }
         const preparation = await org.prepareLocal({
           target: harnessExecutionTarget,
-          scope: sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
+          scope: sourceType === "eval" || sourceType === "swarm" || sourceType === "event" ? "unattended" : "attended",
           harnessId: harnessAdapter.id,
           modelId,
           runId: localRunId,

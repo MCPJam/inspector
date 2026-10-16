@@ -1,0 +1,199 @@
+---
+title: "MCP Events"
+description: "List, poll, watch, subscribe to and conformance-check MCP Events (triggers) from the CLI: push, poll and webhook delivery, judged by the draft or the ChatGPT profile"
+icon: "bell"
+---
+
+The `events` commands exercise a server's MCP Events (triggers) from the terminal: see what it declares, poll it, hold a stream open, or register a webhook, and print what arrives.
+
+They follow the working-group draft pinned at [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md). The lifecycle rules come from the same SDK coordinator the Inspector's Events tab uses, so a `watch` subscribes, refreshes, polls and unsubscribes exactly as the app does.
+
+<Note>
+  Every events command connects directly to the server you name, like `tools call`, and takes the same connection flags (`--url`, `--header`, `--access-token`, `--credentials-file`, `--command`, …).
+</Note>
+
+## Profiles
+
+`--profile` selects the rulebook a run is judged by:
+
+| Profile | Id | Delivery modes | Default `ttlMs` on subscribe |
+|---|---|---|---|
+| `draft` (default) | `draft@28ec35e` | push, poll, webhook | one hour (MCPJam policy) |
+| `chatgpt` | `chatgpt@2026-09-30` | webhook only | omitted (ChatGPT's value is unobserved) |
+
+The profile decides which delivery modes `watch` may use, the default `ttlMs` a subscription requests, and how `events conformance` grades each check. It changes nothing else about what the server is sent.
+
+## What does the server declare?
+
+```bash
+mcpjam events list --url https://your-server.com/mcp
+```
+
+```json
+{
+  "support": { "handshakeObserved": true, "declared": true, "listChanged": true, "capability": { "listChanged": true }, "source": "server/discover" },
+  "rawCapabilities": { "tools": {}, "events": { "listChanged": true } },
+  "profile": "draft@28ec35e",
+  "events": [
+    { "name": "comment.created", "delivery": ["webhook", "poll", "push"], "inputSchema": { "type": "object" } }
+  ]
+}
+```
+
+`support` and `rawCapabilities` are read from the raw handshake: the official client drops capability keys it does not know, so its parsed capabilities never show `events`. `events` holds every page of `events/list`.
+
+Against a server that did not declare `capabilities.events`, every events command except `conformance` exits `2` with `EVENTS_NOT_DECLARED` and sends no `events/*` request. Pass `--force` to send the request anyway, for example to probe how an undeclared server answers. (`conformance` reports the missing declaration as a failed check instead.)
+
+## Poll once
+
+```bash
+mcpjam events poll comment.created \
+  --url https://your-server.com/mcp \
+  --event-args '{"document_id":"doc_1"}'
+```
+
+With no `--cursor` the request carries `cursor: null`, which means "start from now". The answer has no events, only the cursor to poll from next:
+
+```json
+{ "events": [], "cursor": "c7", "hasMore": false, "nextPollMs": 1000 }
+```
+
+Pass that cursor back with `--cursor c7` to receive what happened since. `--max-events` and `--max-age-ms` go on the request as `maxEvents` and `maxAgeMs`.
+
+## Watch
+
+`watch` keeps a subscription alive and streams every journal entry to stdout as one JSON line:
+
+```bash
+mcpjam events watch comment.created \
+  --url https://your-server.com/mcp \
+  --event-args '{"document_id":"doc_1"}' \
+  --duration 60
+```
+
+```json
+{"seq":1,"kind":"event","origin":"push","eventId":"evt_17","name":"comment.created","timestamp":"2026-09-30T11:12:15.483Z","data":{"document_id":"doc_1","comment_id":"c1","text":"hi"},"cursor":"c17"}
+```
+
+stdout carries only these lines, in both output formats, so it can be piped into `jq`. Status messages go to stderr. `kind` is `event`, `gap` (the server could not replay everything since the cursor) or `terminated`. `origin` is the delivery mode that carried the entry.
+
+The watch stops on Ctrl-C, after `--duration <seconds>`, or after `--max-events <n>` delivered events. It then removes the subscription through the coordinator, which for webhook mode means `events/unsubscribe`, and exits `0`. It exits `1` if the subscription fails for good (for example `paused_auth`, a non-retryable error, or a `terminated` envelope) or if the unsubscribe could not be confirmed.
+
+### Choosing a delivery mode
+
+| `--mode` | How | Needs |
+|---|---|---|
+| `push` | Holds an `events/stream` request open. It reconnects from the last cursor when the stream drops or goes quiet, and rolls over before the request timer can fire. | The event advertises `push` |
+| `poll` | Calls `events/poll` in a loop, honouring `nextPollMs` with a 1 s floor | The event advertises `poll` |
+| `webhook` | Starts a local receiver and registers it with `events/subscribe`, refreshing before `refreshBefore` | `--public-url` or `--insecure-local-receiver` |
+
+Without `--mode` the CLI uses `webhook` when any receiver flag (`--public-url`, `--listen`, `--insecure-local-receiver`) is given. Otherwise it uses `push` if the event offers it, then `poll`, in the draft's preference order. A mode that the event or the profile does not allow exits `2` with `EVENTS_NO_COMPATIBLE_DELIVERY_MODE`. For example, the `chatgpt` profile is webhook-only.
+
+### Webhook mode
+
+The draft requires `https` callback URLs, so the receiver needs a public `https` origin in front of it, usually a tunnel:
+
+```bash
+mcpjam events watch comment.created \
+  --url https://your-server.com/mcp \
+  --event-args '{"document_id":"doc_1"}' \
+  --listen 127.0.0.1:8787 \
+  --public-url https://your-tunnel.example.com
+```
+
+The receiver listens on `--listen` (default `127.0.0.1:0`) and accepts `POST /i/<inbox>/s/<slot>`. Every callback URL is `<public-url>/i/<inbox>/s/<slot>`, so the tunnel must forward that path. If `--public-url` has a path prefix, the tunnel may keep or strip it; the receiver matches the `/i/<inbox>/s/<slot>` ending. Each delivery is verified against its Standard Webhooks signature using the raw request bytes. The receiver answers the server's verification challenge only when it is correctly signed, and rejects bad or stale signatures with `401`.
+
+The webhook secret is generated per run and never printed.
+
+<Warning>
+  `--insecure-local-receiver` lets the server call a plain-`http` URL. With no `--public-url` it uses the receiver's own address. This is a **non-conformant development mode**: a conformant server must refuse an `http` callback, and a run in this mode never counts as a conformance pass. The CLI prints a warning to stderr every time.
+</Warning>
+
+## Subscribe a receiver you run yourself
+
+`subscribe` sends a single `events/subscribe` for a receiver you already operate, then exits:
+
+```bash
+mcpjam events subscribe comment.created \
+  --url https://your-server.com/mcp \
+  --event-args '{"document_id":"doc_1"}' \
+  --callback-url https://hooks.example.com/mcp-events \
+  --secret-file ./webhook.secret
+```
+
+```json
+{ "id": "sub_927bf850b0688dee", "refreshBefore": "2026-09-30T12:12:29.814Z", "cursor": "c27", "truncated": false }
+```
+
+The secret is handled like this:
+
+- If `--secret-file` names a missing or empty file, the CLI generates a new secret and writes it there with mode `0600` **before** sending the request. Your receiver can then read it in time to answer the verification challenge.
+- If the file already holds a secret, the CLI reads it instead. Re-running the same command refreshes the same subscription with the same secret.
+- The secret is never printed to stdout or stderr. Without `--secret-file` it is generated and discarded, so your receiver cannot verify deliveries, and the CLI warns about that.
+
+`--ttl-ms <ms>` requests a lifetime and `--no-expiry` requests `ttlMs: null`. The default comes from the profile. A plain-`http` `--callback-url` is refused (exit `2`) unless you pass `--insecure-callback`, which is the same labelled non-conformant development mode as above.
+
+## Unsubscribe
+
+```bash
+mcpjam events unsubscribe comment.created \
+  --url https://your-server.com/mcp \
+  --event-args '{"document_id":"doc_1"}' \
+  --callback-url https://hooks.example.com/mcp-events
+```
+
+This prints `{"outcome": "removed"}`. Running it again prints `{"outcome": "already-gone"}`, because the server's `NotFound` for a subscription that no longer exists is the outcome you wanted. The subscription is identified by the event name, the arguments and the callback URL, so pass the same values you subscribed with.
+
+## Conformance
+
+`events conformance` runs the SDK's MCP Events conformance checks against a server. It judges them by the profile you pick: a MUST violation fails the run, and a SHOULD violation only warns.
+
+```bash
+mcpjam events conformance \
+  --url https://your-server.com/mcp \
+  --event-args 'comment.created={"document_id":"doc_1"}' \
+  --tls-cert ./cert.pem --tls-key ./key.pem \
+  --trigger-tool add_comment --trigger-args '{"document_id":"doc_1","text":"hi"}'
+```
+
+The result JSON goes to stdout, and a table goes to stderr:
+
+```
+MCP Events conformance — profile draft@28ec35e, protocol 2026-07-28
+  PASS  MUST    events-capability-declared               Server declares top-level capabilities.events
+  PASS  MUST    events-subscribe-rejects-http-callback   Non-https callback URLs are rejected
+  SKIP  MUST    events-delivery-signature                Deliveries are signed per Standard Webhooks — could-not-run: provide triggerEvent to cause a delivery
+  …
+Outcome: incomplete (14 passed, 0 failed, 0 warned, 7 skipped)
+```
+
+The exit code is `0` when the run passed, `1` when it failed, and `3` when it was incomplete. This is the same mapping as every other conformance suite. An incomplete run means some applicable check could not run, so it is neither a pass nor a spec violation.
+
+| Flag | Description |
+|---|---|
+| `--profile <profile>` | `draft` (default) or `chatgpt`. The `chatgpt` profile adds the readiness checks (webhook delivery listed, protocol `2026-07-28`) and makes the 256 KiB body limit a MUST. |
+| `--event-args <name>=<json>` | Subscription arguments for one event type. Repeat it for several types. The runner never invents arguments, so a type whose schema requires fields you did not supply is reported `could-not-run`. |
+| `--tls-cert <path>` / `--tls-key <path>` | Serve the webhook receiver over https with this certificate. The server under test must trust it. |
+| `--public-url <origin>` | An https origin (a tunnel) that forwards to the receiver. Paths are not rewritten. |
+| `--listen <host:port>` | Where the receiver listens (default `127.0.0.1:0`) |
+| `--insecure-local-receiver` | A plain-http receiver. The run reports `overrides: ["insecure-local-receiver"]` and can never pass. |
+| `--trigger-tool <name>` / `--trigger-args <json>` | A tool whose call makes the server emit a matching event. Without it, the delivery checks (signature, `webhook-id`, `X-MCP-Subscription-Id`, content type, body size) report `could-not-run`. |
+| `--wait-ms <ms>` | How long to wait for that delivery (default `5000`) |
+| `--checks <ids>` | Comma-separated check ids to run. The default is every check except `events-push-heartbeat`. |
+| `--heartbeat-wait-ms <ms>` | The wait window for `events-push-heartbeat` (default `65000`) |
+
+With no receiver flags, the capability, list, poll and subscribe-refusal checks still run. The webhook checks report `could-not-run`, so the outcome is `incomplete`. Every subscription the run makes is unsubscribed before it exits.
+
+## Errors
+
+The draft's error codes map to stable CLI codes (exit `1`):
+
+| Server code | CLI code |
+|---|---|
+| `-32011` NotFound | `EVENTS_NOT_FOUND` |
+| `-32012` Forbidden | `EVENTS_FORBIDDEN` |
+| `-32013` ResourceExhausted | `EVENTS_RESOURCE_EXHAUSTED` |
+| `-32014` Unsupported | `EVENTS_UNSUPPORTED` |
+| `-32015` CallbackEndpointError | `EVENTS_CALLBACK_ENDPOINT_ERROR` |
+
+Anything that looks like a webhook secret is removed from error messages before they are printed, even when the server quotes one back.
