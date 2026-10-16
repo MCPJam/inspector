@@ -982,10 +982,10 @@ export interface MCPJamHandlerOptions {
    * field would enter persisted transcripts. It is never stored, never logged,
    * and never leaves this process.
    *
-   * Absent ⇒ the hosted path, byte for byte as before this existed.
    */
   harnessExecutionTarget?: {
     kind: "local-native";
+    scope?: "unattended";
     workspaceGrantId: string;
     runtimeId: string;
     machineId: string;
@@ -996,7 +996,6 @@ export interface MCPJamHandlerOptions {
      *  from the request body. Consent binds to a user, so a user the caller
      *  names is a user the caller chose. */
     actingUserId: string;
-    /** Server scheduler-owned session identity; never parsed from renderer input. */
     localSessionId?: string;
     targetId?: string;
     sessionIdx?: number;

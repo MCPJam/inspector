@@ -1,5 +1,8 @@
 import { HOSTED_MODE } from "../../config.js";
 import { serverLabelsFor, wantsNoTools, shouldReleaseLease } from "./chat-turn-options.js";
+import { platformExecutionTargetBodySchema } from "@mcpjam/sdk/platform";
+import { LOCAL_HARNESS_GRANT_HEADER } from "../../utils/harness/local/grants.js";
+import { assertPlatformExecutionVenue, preflightLocalExecution } from "./local-execution-preflight.js";
 import { executionReceipt } from "@/shared/execution-receipt";
 import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
@@ -23,65 +26,7 @@ import {
   redactBrowserEvidenceTree,
   type BrowserScreenshotEvidence,
 } from "../../services/browser-tool-evidence";
-/**
- * `POST /api/v1/chat-sessions/messages` — one agent Playground turn.
- *
- * Send a message, get back the assistant's reply PLUS everything a
- * participant in the conversation could not see: which tools the model
- * picked, the arguments it sent, what each server actually returned, how long
- * each call took, and the turn's token usage. Pass the returned `sessionId`
- * back to continue; omit it to start a new session.
- *
- * WHY NOT `/api/web/chat-v2`. That route already runs this loop, and it speaks
- * a streaming AI-SDK UI-message protocol with a Hono `Context` baked through
- * it. De-streaming it would fork the one handler the product's own Playground
- * depends on. Instead this clones the SYNCHRONOUS-JSON packaging that
- * `routes/v1/agent.ts` already proved (wall clock, per-org concurrency,
- * `runUnifiedAssistantTurn` with `streamSink: "none"`) and points it at the
- * caller's project servers with persistence ON.
- *
- * SPEND SAFETY IS THE DESIGN, not a mitigation. A synchronous endpoint that
- * spends money is exposed to the oldest failure in HTTP: the client times out,
- * retries, and pays twice. Three things stop that, in this order:
- *
- *   1. `idempotencyKey` is REQUIRED. Not optional-with-a-fallback like the
- *      agent route's — there is no legacy caller to preserve, and a spend
- *      endpoint that lets you skip the safety is a spend endpoint that will be
- *      called without it.
- *   2. A Convex TURN LEASE is claimed BEFORE any model call. Same key on a
- *      completed turn replays the answer instead of re-running it; a second
- *      concurrent turn on one session is refused rather than interleaved.
- *      Cross-replica by construction, because the hosted plane has no
- *      affinity and an in-process map would be decorative.
- *   3. The version-conflict 409 is the BACKSTOP, not the mechanism. It fires
- *      after the spend, which makes it a damage report; the lease is what
- *      prevents the damage.
- *
- * TOOL EFFECTS ARE A SEPARATE AXIS FROM SPEND. `toolMode` defaults to
- * `read_only`, which advertises only tools the server annotated
- * `readOnlyHint: true`. That hint is server-asserted — a server may mislabel a
- * mutating tool — so this is a policy the host applies, not a guarantee it can
- * verify, and the operation description says so. `auto` advertises everything
- * and may cause real side effects through arbitrary third-party tools.
- *
- * HOST TARGETING SAYS WHICH ENGINE RUNS. A turn may name a saved host — by
- * `hostId`, or implicitly through the environment that pins one — and the
- * server re-fetches that host's authoritative runtime config to decide between
- * MCPJam's emulated engine and a real agent harness. `harness`/`computer` are
- * never read from the request body. When a harness-declaring target cannot run
- * here the turn is REFUSED before it spends, never quietly downgraded, and
- * every response names the engine it ran on. See `chat-session-host-target.ts`
- * for the rules and why each refusal exists. `hostId` is per-turn and cannot
- * be pinned, so a continuation of a host-established session must re-send it —
- * omitting it is `HOST_TARGET_REQUIRED`, never a quiet fall back to emulated.
- *
- * CONFIG IS FIRST-TURN-ONLY. Model, target, system prompt and tool mode pin at
- * session creation and are stored in `resumeConfig`; a continuation that
- * resends any of them is refused with `CONFIG_ON_CONTINUATION` rather than
- * silently repinned. The backend enforces the same thing at the ingest
- * boundary (`preserveAgentResumePins`), which is the actual guarantee — this
- * check is the friendly error.
- */
+
 import { createHash, randomUUID } from "node:crypto";
 import type { Hono } from "hono";
 import type { Context } from "hono";
@@ -240,6 +185,7 @@ const CONFIG_FIELDS = [
 
 const turnSchema = z
   .strictObject({
+    executionTarget: platformExecutionTargetBodySchema.optional(),
     projectId: z.string().min(1).optional(),
     sessionId: z.string().min(1).optional(),
     /**
@@ -993,7 +939,7 @@ async function handleTurn(c: Context): Promise<Response> {
     return v1Error(
       c,
       "FEATURE_NOT_SUPPORTED",
-      "Agent Playground turns require a hosted MCPJam deployment.",
+      "Agent Playground turns require a configured MCPJam backend.",
     );
   }
 
@@ -1008,6 +954,7 @@ async function handleTurn(c: Context): Promise<Response> {
   let runtimeChatSessionId: string;
   let priorMessages: ModelMessage[] = [];
   let expectedVersion: number | undefined;
+  let executionVenue = body.executionTarget?.kind ?? "hosted";
   let pins: {
     modelId: string;
     toolMode: AgentTurnToolMode;
@@ -1131,6 +1078,10 @@ async function handleTurn(c: Context): Promise<Response> {
         { reason: "HOST_TARGET_REQUIRED" },
       );
     }
+    executionVenue = assertPlatformExecutionVenue(
+      existing.resumeConfig?.executionVenue ?? (configuring ? undefined : "hosted"),
+      body.executionTarget?.kind,
+    );
     priorMessages = (await loadResumeHistory(existing)) as ModelMessage[];
   } else {
     if (!body.projectId) {
@@ -1225,12 +1176,30 @@ async function handleTurn(c: Context): Promise<Response> {
   else requestSignal.addEventListener("abort", onRequestAbort, { once: true });
 
   try {
+    const fetchTarget = () => resolveTarget(
+      client,
+      projectId,
+      {
+        ...(pins.environmentId ? { environmentId: pins.environmentId } : {}),
+        ...(pins.serverIds ? { serverIds: pins.serverIds } : {}),
+        // Per-turn, off the BODY on every turn including continuations — it is
+        // not a resume pin (see the schema's note on why it cannot be one).
+        ...(body.hostId ? { hostId: body.hostId } : {}),
+      },
+      // The turn's own controller, so a host fetch stops with the turn rather
+      // than running on to its own timeout after the caller has gone.
+      { authHeader, signal: abortController.signal },
+    );
+    const localTarget = body.executionTarget?.kind === "local-native" ? await fetchTarget() : undefined;
+    const localExecution = body.executionTarget?.kind === "local-native"
+      ? await preflightLocalExecution({ target: body.executionTarget, grantToken: c.req.header(LOCAL_HARNESS_GRANT_HEADER), bearer: authHeader, projectId, hostConfig: localTarget?.host?.runtimeConfig })
+      : undefined;
     // --- The lease. Before ANY model call. --------------------------------
     let lease: LeaseResult;
     try {
       lease = await claimTurnLease(client, {
         idempotencyKey: body.idempotencyKey,
-        ...(body.browser || existing?.apiConfigState === "unconfigured"
+        ...(body.browser || body.executionTarget || existing?.apiConfigState === "unconfigured"
           ? {
               requestFingerprint: createHash("sha256")
                 .update(JSON.stringify(body))
@@ -1317,20 +1286,7 @@ async function handleTurn(c: Context): Promise<Response> {
     }
 
     // --- Target + model ---------------------------------------------------
-    const target = await resolveTarget(
-      client,
-      projectId,
-      {
-        ...(pins.environmentId ? { environmentId: pins.environmentId } : {}),
-        ...(pins.serverIds ? { serverIds: pins.serverIds } : {}),
-        // Per-turn, off the BODY on every turn including continuations — it is
-        // not a resume pin (see the schema's note on why it cannot be one).
-        ...(body.hostId ? { hostId: body.hostId } : {}),
-      },
-      // The turn's own controller, so a host fetch stops with the turn rather
-      // than running on to its own timeout after the caller has gone.
-      { authHeader, signal: abortController.signal },
-    );
+    const target = localTarget ?? await fetchTarget();
     // A host-only turn deliberately pins NOTHING here. Pinning the resolved
     // server set would look like a convenience and behave like a trap twice
     // over: a bare continuation would then have a target, run the emulated
@@ -1423,6 +1379,7 @@ async function handleTurn(c: Context): Promise<Response> {
     // The effort the turn runs at is recorded with it (begin_model and failure
     // persistence included), so a failed turn still leaves its pin.
     const turnPins = {
+      executionVenue,
       ...(turnTemperature === undefined ? pinsWithoutTemperature : pins),
       ...(turnReasoningEffort !== undefined
         ? { reasoningEffort: turnReasoningEffort }
@@ -1437,6 +1394,7 @@ async function handleTurn(c: Context): Promise<Response> {
     // motivated the whole change: running the emulated engine and reporting a
     // 200, which is a wrong answer attributed to the wrong runtime.
     const engineDecision = resolveChatSessionEngine({
+      localExecution: !!localExecution,
       ...(target.host ? { hostTarget: target.host } : {}),
       model: {
         id: String(modelDefinition.id),
@@ -1816,7 +1774,7 @@ async function handleTurn(c: Context): Promise<Response> {
     // never on a persistent computer: no `resolveHarnessSandbox`, no
     // `projectComputers` row. Acquired before the model call so a refused box
     // spends nothing.
-    if (engine.kind === "harness") {
+    if (engine.kind === "harness" && !localExecution) {
       // A harness that signs in with the customer's own account (Cursor) is
       // on the box for its credential, as in the Playground.
       const boxReason: PlaygroundBoxReason = harnessUsesExternalAccount(
@@ -1935,6 +1893,7 @@ async function handleTurn(c: Context): Promise<Response> {
       streamSink: "none",
       persistMode: "caller",
       approvalMode: "auto-deny",
+      ...(localExecution ? { harnessExecutionTarget: localExecution, requireToolApproval: false } : {}),
       messages: inputMessages,
       modelDefinition,
       systemPrompt: prepared.enhancedSystemPrompt,
@@ -1954,7 +1913,7 @@ async function handleTurn(c: Context): Promise<Response> {
       // the hosted chat routes resolve: this route builds an ephemeral
       // authorized manager exactly as they do, and deriving a different
       // strategy is how a sandbox ends up pointed at the wrong manager.
-      ...(engine.kind === "harness"
+      ...(engine.kind === "harness" && !localExecution
         ? { harnessMcpProxy: resolveWebAuthorizedHarnessStrategy() }
         : {}),
       ...(engine.kind === "harness" && conversationBox
@@ -2042,6 +2001,7 @@ async function handleTurn(c: Context): Promise<Response> {
           sourceType: "direct",
           origin: "api",
           sessionMessages: result.messages,
+          ...(result.harnessSessionCommit ? { harnessSessionCommit: result.harnessSessionCommit } : {}),
           startedAt: existing?.startedAt ?? startedAt,
           lastActivityAt: Date.now(),
           resumeConfig: turnPins,
@@ -2124,6 +2084,7 @@ async function handleTurn(c: Context): Promise<Response> {
 
     // --- Persist ----------------------------------------------------------
     const resumeConfig: ResumeConfig = {
+      executionVenue,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
       ...(turnTemperature !== undefined
         ? { temperature: turnTemperature }
@@ -2155,6 +2116,7 @@ async function handleTurn(c: Context): Promise<Response> {
         sourceType: "direct",
         origin: "api",
         sessionMessages: result.messages,
+        ...(result.harnessSessionCommit ? { harnessSessionCommit: result.harnessSessionCommit } : {}),
         startedAt: existing?.startedAt ?? startedAt,
         lastActivityAt: Date.now(),
         resumeConfig,

@@ -1344,8 +1344,8 @@ export async function runHarnessTurn(
     };
 
     try {
-      if (harnessExecutionTarget?.permissionProfile === "unrestricted" && sourceType !== "eval" && sourceType !== "swarm") {
-        throw new Error("Unrestricted local execution requires an authorized eval or swarm session");
+      if (harnessExecutionTarget?.permissionProfile === "unrestricted" && harnessExecutionTarget.scope !== "unattended" && sourceType !== "eval" && sourceType !== "swarm") {
+        throw new Error("Unrestricted local execution requires an authorized unattended session");
       }
       if (!projectId) {
         throw new Error(
@@ -2207,7 +2207,7 @@ export async function runHarnessTurn(
         }
         const preparation = await org.prepareLocal({
           target: harnessExecutionTarget,
-          scope: sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
+          scope: harnessExecutionTarget.scope ?? (sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended"),
           harnessId: harnessAdapter.id,
           modelId,
           runId: localRunId,

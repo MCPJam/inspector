@@ -1,3 +1,5 @@
+import { parseJsonInputRecord } from "../lib/json-input.js";
+import { platformExecutionTargetSchema } from "@mcpjam/sdk/platform";
 import type { Command } from "commander";
 import { authorizeLocalExecutionOperation } from "@mcpjam/sdk/platform";
 import {
@@ -40,4 +42,11 @@ export function registerLocalExecutionCommands(sessions: Command): void {
         workspaceGrantId: options.workspaceGrant,
       }),
   );
+}
+
+export function parseExecutionTargetFlag(value: string | undefined) {
+  if (value === undefined) return undefined;
+  if (value === "hosted") return { kind: "hosted" as const };
+  const input = parseJsonInputRecord(value, "--execution-target");
+  return platformExecutionTargetSchema.parse(input?.target ?? input);
 }

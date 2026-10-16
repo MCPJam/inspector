@@ -57,13 +57,10 @@ vi.mock("@ai-sdk/harness/agent", () => ({
       text: Promise.resolve(harnessState.finalText),
     }));
   },
-  // WS3: no trailing tool-approval-response parts in these prompts.
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => harnessState.continuations),
 }));
 
 vi.mock("../registry.js", () => ({
-  // Broker-only credential delivery (COMP-23): the turn builds dummy auth
-  // pointed at the broker proxy; there is no per-adapter resolveAuth anymore.
   buildBrokerDummyAuth: vi.fn(() => ({
     anthropic: {
       apiKey: "",
@@ -383,7 +380,6 @@ describe("runHarnessTurn local continuity", () => {
   });
 
   it("maps HarnessAgent's nested approval toolCall onto the UI approval", async () => {
-    // HarnessAgent's fullStream shape; the flat `toolCallId` is adapter-level.
     harnessState.streamParts = [{
       type: "tool-approval-request", approvalId: "approval-1",
       toolCall: { toolCallId: "call-1", toolName: "bash", input: { command: "ls" } },
@@ -429,8 +425,6 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.continuations = [
       { type: "tool-approval-response", approvalId: "approval-1", approved: false },
     ];
-    // The bare response names only the approval; the call id comes from the
-    // assistant's earlier approval request.
     const options = baseOptions();
     options.messages.push(
       {
@@ -542,6 +536,12 @@ describe("runHarnessTurn local continuity", () => {
     await runHarnessTurn(options as any, "none");
     expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
     expect(harnessState.create).not.toHaveBeenCalled();
+  });
+
+  it("runs an explicitly authorized unattended API turn", async () => {
+    const options = baseOptions();
+    await runHarnessTurn({ ...options, harnessExecutionTarget: { ...options.harnessExecutionTarget, scope: "unattended", permissionProfile: "unrestricted" } } as never, "none");
+    expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(expect.objectContaining({ scope: "unattended" }));
   });
 
   it("refuses unrestricted direct turns before preparing a local runtime", async () => {

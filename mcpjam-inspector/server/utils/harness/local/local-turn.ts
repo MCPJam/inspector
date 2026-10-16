@@ -101,6 +101,7 @@ import { createRequire } from "node:module";
  */
 export interface LocalHarnessExecutionTarget {
   kind: "local-native";
+  scope?: "unattended";
   workspaceGrantId: string;
   runtimeId: string;
   machineId: string;
@@ -110,7 +111,6 @@ export interface LocalHarnessExecutionTarget {
   grantToken: string;
   /** The acting user, resolved by the route from the verified bearer. */
   actingUserId: string;
-  /** Server scheduler-owned session identity; never parsed from renderer input. */
   localSessionId?: string;
   targetId?: string;
   sessionIdx?: number;

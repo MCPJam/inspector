@@ -1,5 +1,5 @@
 import { trimmedOrUndefined } from "./header-value.js";
-import type { LocalExecutionAuthorization, PlatformLocalExecutionGrant } from "./local-execution.js";
+import { executionTargetRequest, type PlatformExecutionTarget, type LocalExecutionAuthorization, type PlatformLocalExecutionGrant } from "./local-execution.js";
 import type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
@@ -1278,6 +1278,7 @@ export class PlatformApiClient {
       sessionId?: string;
       modelId?: string;
       hostId?: string;
+      executionTarget?: PlatformExecutionTarget;
       environmentId?: string;
       serverIds?: string[];
       systemPrompt?: string;
@@ -1297,11 +1298,14 @@ export class PlatformApiClient {
     // params object would turn a valid request into a 400 — and forwarding an
     // unknown key is exactly how a client starts depending on a field the
     // contract never promised.
+    const execution = executionTargetRequest(params.executionTarget);
     return this.request(
       "POST",
       "/chat-sessions/messages",
       {
+        localHarnessGrant: execution.grantToken,
         body: {
+          ...(execution.body ? { executionTarget: execution.body } : {}),
           idempotencyKey: params.idempotencyKey,
           message: params.message,
           ...(params.browser !== undefined ? { browser: params.browser } : {}),
@@ -6395,25 +6399,13 @@ export class PlatformApiClient {
   }
 
   private async request<T>(
-    // PUT is here for idempotent creates — `publishScenario` is the first:
-    // publishing an environment that is already published returns the existing
-    // scenario rather than minting a second, which is PUT's semantics and not
-    // POST's.
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
     init: {
       query?: QueryParams;
       body?: unknown;
-      /**
-       * Send the declared launch context. Opt-in per call rather than global:
-       * these headers describe a RUN's origin, and stamping them onto every
-       * read and every unrelated write would put a claim on requests that
-       * create nothing to claim.
-       *
-       * The one non-run caller is `sendFeedback`: a report is stored with the
-       * client that filed it, as a label beside the verified attribution, and
-       * this is the header that says which client that was.
-       */
+      localHarnessGrant?: string;
+      /** Opt in to caller-declared run attribution. */
       declareLaunch?: boolean;
     },
     options?: RequestOptions
@@ -6431,6 +6423,7 @@ export class PlatformApiClient {
       ...(this.extraHeaders ?? {}),
       authorization: `Bearer ${await this.getAuth()}`,
     };
+    if (init.localHarnessGrant) headers["x-mcpjam-local-harness-grant"] = init.localHarnessGrant;
     if (init.body !== undefined) {
       headers["content-type"] = "application/json";
     }
