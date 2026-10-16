@@ -188,6 +188,7 @@ import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
   createSuiteRunRecorder,
+  asBillingRouteError,
   type SuiteRunRecorder,
 } from "./evals/recorder";
 import { finalizeAiSdkTraceOnFailure } from "./evals/eval-trace-capture";
@@ -1962,18 +1963,15 @@ async function createIterationDirectly(
     iterationNumber: number;
     startedAt: number;
     /**
-     * A hosted HARNESS iteration keys its disposable computer to this row, and
-     * a harness with no box falls back to the member's personal computer. So a
-     * failed record refuses the run, carrying the backend's reason, instead of
-     * being swallowed.
+     * A hosted harness needs this row to own its disposable computer.
+     * Refuse a failed record so it cannot fall back to a personal computer.
      */
     requireRecord?: boolean;
   },
 ): Promise<string | undefined> {
   let iterationId: string | undefined;
   try {
-    // ACTION, not the mutation — same starter-pool contention as the suite
-    // path above, retried server-side.
+    // The action retries starter-pool contention before returning a record.
     const result = await convexClient.action(
       "testSuites:startQuickRunIteration" as any,
       {
@@ -2002,6 +2000,8 @@ async function createIterationDirectly(
 
     iterationId = result?.iterationId as string | undefined;
   } catch (error) {
+    const billing = asBillingRouteError(error);
+    if (billing) throw billing;
     logger.error("[evals] Failed to create iteration:", error);
     if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
     if (params.requireRecord) {
@@ -4128,13 +4128,8 @@ export const runEvalSuiteWithAiSdk = async ({
     (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
       orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
       { scope: "unattended" }) ? "local" : "hosted");
-  // One resolution for the whole run. When the launch response carried frozen
-  // budgets we consume them verbatim — they are the decision, already made,
-  // against the platform ceilings; org ceilings apply once the backend
-  // freezes them. Without a frozen snapshot, resolve `{ authored: undefined }`,
-  // which yields
-  // the platform defaults byte-for-byte. Same code path either way; the only
-  // difference is which rung each field came from.
+  // Frozen launch budgets already include platform and organization ceilings.
+  // Legacy launches without a snapshot use the platform defaults.
   const budgets: ResolvedExecutionBudgets =
     executionBudgets ?? defaultEvalExecutionBudgets();
   // Resolved inside the setup `try` below: a refused or unreadable override
@@ -4679,7 +4674,8 @@ export const runEvalSuiteWithAiSdk = async ({
       } else {
         if (
           runId === null &&
-          result.reason instanceof HarnessIterationRecordError
+          (result.reason instanceof HarnessIterationRecordError ||
+            result.reason instanceof WebRouteError)
         ) {
           throw result.reason;
         }

@@ -1,5 +1,6 @@
 export type ConvexErrorData = {
   code?: unknown;
+  organizationId?: unknown;
   minimumVersion?: unknown;
   docsUrl?: unknown;
   message?: unknown;

@@ -1,3 +1,5 @@
+import { translatePlatformFeeError } from "../../routes/v1/platform-fee-errors.js";
+import { convexErrorData } from "../../routes/v1/convex-error-data.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
@@ -51,17 +53,10 @@ type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
 type ExecutionType = "model" | "model_free" | "harness";
 const RUNTIME_TELEMETRY_TIMEOUT_MS = 2_000;
 
-/**
- * When a Convex mutation rejects because a billing/entitlement cap was hit
- * (e.g. `maxEvalIterationsPerMonth`), the structured payload lives on
- * `ConvexError.data`. Re-emit it as a 402 `WebRouteError` carrying that exact
- * payload in `details`, so the route serializes it onto the JSON body and the
- * client can rebuild a ConvexError and render the proper upgrade message —
- * instead of collapsing it into a generic 500 where the billing fields are
- * lost. Returns null for any non-billing error so callers fall through to
- * their normal handling.
- */
+/** Preserve billing refusals before recorder setup can turn them into outages. */
 export function asBillingRouteError(error: unknown): WebRouteError | null {
+  const fee = translatePlatformFeeError(convexErrorData(error));
+  if (fee) return fee;
   if (!(error instanceof ConvexError)) {
     return null;
   }
@@ -939,7 +934,8 @@ export const startSuiteRunWithRecorder = async ({
     });
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error);
-    logger.error("[evals] Failed to pre-create suite run iterations", error, {
+    const billing = asBillingRouteError(error);
+    if (!billing || billing.status >= 500) logger.error("[evals] Failed to pre-create suite run iterations", error, {
       suiteId,
       runId,
     });
@@ -967,7 +963,6 @@ export const startSuiteRunWithRecorder = async ({
     // exhaust the cap can still trip the reserve here. Preserve the billing
     // payload so the client renders the proper upgrade message; the run was
     // already finalized failed above, so no pending group is left behind.
-    const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
     }
