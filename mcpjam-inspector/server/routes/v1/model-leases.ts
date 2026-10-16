@@ -43,6 +43,8 @@ const PROXY_TIMEOUT_MS = 15_000;
 const BROKER_STATUS_TO_V1: Record<number, V1ErrorCode> = {
   400: "VALIDATION_ERROR",
   401: "UNAUTHORIZED",
+  402: "PAYMENT_REQUIRED",
+  426: "UPGRADE_REQUIRED",
   403: "FORBIDDEN",
   404: "NOT_FOUND",
   409: "CONFLICT",
@@ -112,7 +114,13 @@ async function callBroker(
       headers: {
         "content-type": "application/json",
         ...inspectorAiRequestHeaders("v1-harness"),
-        ...(c.req.header("x-mcpjam-client-version") ? { "x-mcpjam-client-version": c.req.header("x-mcpjam-client-version")! } : {}),
+        ...(c.req.header("x-mcpjam-client-version")
+          ? {
+              "x-mcpjam-client-version": c.req.header(
+                "x-mcpjam-client-version",
+              )!,
+            }
+          : {}),
         authorization: `Bearer ${bearer}`,
       },
       body: JSON.stringify(payload),
@@ -127,19 +135,50 @@ async function callBroker(
     const code =
       BROKER_STATUS_TO_V1[response.status] ??
       (response.status >= 500 ? "SERVER_UNREACHABLE" : "INTERNAL_ERROR");
-    const message = backendFailureText({
-      source: "model-leases",
-      status: response.status,
-      detail: body.error,
-      fallback: "Could not complete the model lease operation",
-    });
+    const domainCode =
+      typeof body.domainCode === "string" ? body.domainCode : undefined;
+    const admissionError =
+      domainCode &&
+      [
+        "platform_fee_refused",
+        "platform_fee_unavailable",
+        "client_upgrade_required",
+        "ADMISSION_CONFLICT",
+        "ADMISSION_CLOSED",
+        "NOT_FOUND",
+      ].includes(domainCode);
+    const message =
+      admissionError && typeof body.error === "string"
+        ? body.error
+        : backendFailureText({
+            source: "model-leases",
+            status: response.status,
+            detail: body.error,
+            fallback: "Could not complete the model lease operation",
+          });
     // `retryAfter` is seconds, and the spec documents `Retry-After` on every
     // 429 — pass it through rather than promising a header we never send.
     const retryAfter =
       typeof body.retryAfter === "number" && Number.isFinite(body.retryAfter)
         ? { "Retry-After": String(Math.max(0, Math.ceil(body.retryAfter))) }
         : undefined;
-    return v1Error(c, code, message, undefined, retryAfter);
+    return v1Error(
+      c,
+      admissionError && domainCode === "platform_fee_unavailable"
+        ? "INTERNAL_ERROR"
+        : code,
+      message,
+      admissionError
+        ? {
+            code: domainCode,
+            ...(typeof body.code === "string" ? { reason: body.code } : {}),
+            ...(body.details && typeof body.details === "object"
+              ? body.details
+              : {}),
+          }
+        : undefined,
+      retryAfter,
+    );
   } catch (error) {
     if (isAbortError(error)) {
       return v1Error(c, "TIMEOUT", "Model lease operation timed out");
@@ -182,12 +221,36 @@ modelLeases.post("/projects/:projectId/model-leases", async (c) => {
   // smuggled into the body, which the path segment overrides so the URL is
   // always the single source of truth. Same rule as `eval-ingest`, so a lease
   // and the results it produces always land in the same project.
+  for (const key of ["executionAdmissionId", "attemptAdmissionId"]) {
+    if (
+      payload[key] !== undefined &&
+      (typeof payload[key] !== "string" ||
+        !payload[key] ||
+        (payload[key] as string).length > 256)
+    ) {
+      return v1Error(
+        c,
+        "VALIDATION_ERROR",
+        "Check the run authorization identifier and try again.",
+      );
+    }
+  }
   const projectId = c.req.param("projectId");
   const result = await callBroker(c, "start", {
+    ...(payload.executionAdmissionId
+      ? { executionAdmissionId: payload.executionAdmissionId }
+      : {}),
+    ...(payload.attemptAdmissionId
+      ? { attemptAdmissionId: payload.attemptAdmissionId }
+      : {}),
     delivery: "sdk-direct",
     modelId: model.trim(),
-    ...(payload.modelSelection !== undefined ? { modelSelection: payload.modelSelection } : {}),
-    ...(payload.reasoningEffort !== undefined ? { reasoningEffort: payload.reasoningEffort } : {}),
+    ...(payload.modelSelection !== undefined
+      ? { modelSelection: payload.modelSelection }
+      : {}),
+    ...(payload.reasoningEffort !== undefined
+      ? { reasoningEffort: payload.reasoningEffort }
+      : {}),
     ...(typeof runId === "string" ? { runId: runId.trim() } : {}),
     ...(typeof maxOutputTokens === "number" ? { maxOutputTokens } : {}),
     ...(projectId && projectId !== "default" ? { projectId } : {}),

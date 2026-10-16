@@ -67,6 +67,14 @@ describe("v1 eval-ingest proxies", () => {
     }
   });
 
+  it.each(["admit", "ensure-steps"])("forwards %s through the public project route", async (operation) => {
+    const fetchMock = vi.fn().mockResolvedValue(backendResponse(200, { ok: true, executionId: "execution" }));
+    global.fetch = fetchMock;
+    const res = await request(makeApp(), `/api/v1/projects/default/eval-ingest/${operation}`, JSON.stringify({ executionKey: "run" }));
+    expect(res.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`https://convex-http.example.com/v1/evals/ingest/${operation}`);
+  });
+
   it("forwards the body to the backend ingest route and passes the response through", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       backendResponse(200, {

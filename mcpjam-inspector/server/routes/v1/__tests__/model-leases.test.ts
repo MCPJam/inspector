@@ -78,6 +78,24 @@ describe("v1 model leases", () => {
     }
   });
 
+  it.each([
+    [402, "platform_fee_refused", "PAYMENT_REQUIRED"],
+    [426, "client_upgrade_required", "UPGRADE_REQUIRED"],
+    [503, "platform_fee_unavailable", "INTERNAL_ERROR"],
+  ])("preserves a %s admission refusal", async (status, domainCode, code) => {
+    global.fetch = vi.fn().mockResolvedValue(backendResponse(status as number, { ok: false, code: "insufficient_credits", domainCode, error: "The original recovery message." }));
+    const res = await request(makeApp(), "/api/v1/projects/default/model-leases", { model: "openai/gpt-5" });
+    expect(res.status).toBe(status);
+    expect(await res.json()).toMatchObject({ code, message: "The original recovery message.", details: { code: domainCode } });
+  });
+
+  it("forwards admission proof with a lease request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(backendResponse(200, MINTED));
+    global.fetch = fetchMock;
+    await request(makeApp(), "/api/v1/projects/default/model-leases", { model: "openai/gpt-5", executionAdmissionId: "execution", attemptAdmissionId: "attempt" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ executionAdmissionId: "execution", attemptAdmissionId: "attempt" });
+  });
+
   it("asks the broker for an sdk-direct lease and returns it", async () => {
     const fetchMock = vi.fn().mockResolvedValue(backendResponse(200, MINTED));
     global.fetch = fetchMock as never;
