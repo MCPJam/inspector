@@ -12,6 +12,24 @@ function app(data: Record<string, unknown>) {
 }
 
 describe("platform admission transport", () => {
+  it.each([
+    [
+      { minimumVersion: "10.0.0", docsUrl: "https://docs.mcpjam.com" },
+      { minimumVersion: "10.0.0", docsUrl: "https://docs.mcpjam.com" },
+    ],
+    [{ minimumVersion: 10, docsUrl: false }, {}],
+  ])("forwards only typed upgrade guidance: %j", async (guidance, expected) => {
+    const response = await app({
+      code: "client_upgrade_required",
+      message: "Upgrade the SDK.",
+      ...guidance,
+    }).request("/");
+    expect(await response.json()).toEqual({
+      code: "UPGRADE_REQUIRED",
+      message: "Upgrade the SDK.",
+      details: { code: "client_upgrade_required", ...expected },
+    });
+  });
   it.each(["insufficient_credits", "spend_budget_reached", "wallet_locked"])(
     "preserves a terminal payment refusal: %s",
     async (reason) => {
