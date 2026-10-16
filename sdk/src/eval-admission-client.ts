@@ -1,66 +1,15 @@
-import { z } from "zod";
-import { SdkError, type SdkErrorOptions } from "./errors.js";
 import {
-  reportingRequest,
-  ReportingHttpError,
-} from "./eval-reporting-transport.js";
+  admissionError,
+  EvalAdmissionError,
+  receiptSchema,
+  type AdmissionReceipt,
+  type AdmitInput,
+} from "./eval-admission-contract.js";
+import { reportingRequest } from "./eval-reporting-transport.js";
 
 export const ADMISSION_OPERATION_TIMEOUT_MS = 10_000;
 export const ADMISSION_REQUEST_TIMEOUT_MS = 3_000;
 export const ADMISSION_RETRY_DELAYS_MS = [100, 300];
-const receiptSchema = z.object({
-  executionId: z.string().min(1),
-  state: z.enum(["active", "closed", "expired"]),
-  expiresAt: z.number().finite(),
-  iterationId: z.string().optional(),
-  attemptId: z.string().optional(),
-  grantedSteps: z.number().int().nonnegative().optional(),
-  feeMode: z.enum(["off", "shadow", "enforce"]).optional(),
-  rateCardId: z.string().optional(),
-});
-export type AdmissionReceipt = z.infer<typeof receiptSchema>;
-export type AdmitInput = {
-  executionKey: string;
-  externalRunId: string;
-  purpose: "eval" | "inference";
-  iterationKey?: string;
-  attemptIndex?: number;
-  initialSteps?: number;
-  planFingerprint?: string;
-};
-export class EvalAdmissionError extends SdkError {
-  constructor(
-    message: string,
-    code: string,
-    public readonly details?: Record<string, unknown>,
-    public readonly receipt?: AdmissionReceipt,
-    options?: SdkErrorOptions
-  ) {
-    super(message, code, options);
-  }
-}
-
-function admissionErrorCode(
-  status: number,
-  details?: Record<string, unknown>
-): string {
-  return status === 402
-    ? "BILLING_REFUSED"
-    : status === 426
-    ? "CLIENT_UPGRADE_REQUIRED"
-    : status === 409
-    ? String(details?.code ?? "ADMISSION_CONFLICT")
-    : status === 401
-    ? "CREDENTIALS_MISSING"
-    : status === 404
-    ? "NOT_FOUND"
-    : status === 429
-    ? details?.code === "billing_limit_reached"
-      ? "BILLING_LIMIT_REACHED"
-      : "RATE_LIMITED"
-    : "PLATFORM_UNAVAILABLE";
-}
-
 export class EvalAdmissionClient {
   constructor(
     private readonly config: {
@@ -91,6 +40,7 @@ export class EvalAdmissionClient {
     signal?: AbortSignal
   ): Promise<AdmissionReceipt> {
     signal?.throwIfAborted();
+    const deadlineAt = Date.now() + ADMISSION_OPERATION_TIMEOUT_MS;
     const url = new URL(
       `/api/v1/projects/${encodeURIComponent(
         this.config.project ?? "default"
@@ -102,6 +52,7 @@ export class EvalAdmissionClient {
         {
           timeoutMs: ADMISSION_REQUEST_TIMEOUT_MS,
           operationTimeoutMs: ADMISSION_OPERATION_TIMEOUT_MS,
+          deadlineAt,
           retryDelaysMs: ADMISSION_RETRY_DELAYS_MS,
           maxResponseBytes: 16_384,
           signal,
@@ -118,12 +69,14 @@ export class EvalAdmissionClient {
         (body) => receiptSchema.parse(body),
         (error) =>
           (error.status === 429 &&
+            (error.retryAfterMs ?? 0) < deadlineAt - Date.now() &&
             !(
               typeof error.body.details === "object" &&
               error.body.details !== null &&
               "code" in error.body.details &&
               error.body.details.code === "billing_limit_reached"
-            )) || error.status >= 500
+            )) ||
+          error.status >= 500
       );
       signal?.throwIfAborted();
       if (receipt.state !== "active" || receipt.expiresAt <= Date.now())
@@ -136,32 +89,7 @@ export class EvalAdmissionClient {
       return receipt;
     } catch (error) {
       signal?.throwIfAborted();
-      if (error instanceof EvalAdmissionError) throw error;
-      if (error instanceof ReportingHttpError) {
-        const body = error.body;
-        const details =
-          body.details &&
-          typeof body.details === "object" &&
-          !Array.isArray(body.details)
-            ? (body.details as Record<string, unknown>)
-            : undefined;
-        throw new EvalAdmissionError(
-          typeof body.message === "string"
-            ? body.message
-            : "Could not confirm billing with MCPJam, so this eval did not run. Try again in a few minutes.",
-          admissionErrorCode(error.status, details),
-          details,
-          undefined,
-          { cause: error }
-        );
-      }
-      throw new EvalAdmissionError(
-        "Could not confirm billing with MCPJam, so this eval did not run. Try again in a few minutes.",
-        "PLATFORM_UNAVAILABLE",
-        undefined,
-        undefined,
-        { cause: error }
-      );
+      throw admissionError(error);
     }
   }
 }
