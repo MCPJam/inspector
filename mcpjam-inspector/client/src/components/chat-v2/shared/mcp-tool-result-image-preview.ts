@@ -23,10 +23,26 @@ export interface ResolveMcpToolResultImagePreviewsOptions {
 }
 
 export type McpToolResultImagePreviewState =
-  | { status: "idle"; previews: McpToolResultImagePreview[] }
-  | { status: "loading"; previews: McpToolResultImagePreview[] }
-  | { status: "ready"; previews: McpToolResultImagePreview[] }
-  | { status: "empty"; previews: McpToolResultImagePreview[] };
+  | {
+      status: "idle";
+      previews: McpToolResultImagePreview[];
+      omittedImageCount: number;
+    }
+  | {
+      status: "loading";
+      previews: McpToolResultImagePreview[];
+      omittedImageCount: number;
+    }
+  | {
+      status: "ready";
+      previews: McpToolResultImagePreview[];
+      omittedImageCount: number;
+    }
+  | {
+      status: "empty";
+      previews: McpToolResultImagePreview[];
+      omittedImageCount: number;
+    };
 
 export interface UseMcpToolResultImagePreviewsOptions {
   serverId?: string;
@@ -57,6 +73,25 @@ function unwrapJsonEnvelope(value: unknown): unknown {
     current = current.value;
   }
   return current;
+}
+
+function countImagesOmittedForLimits(value: unknown): number {
+  const content = unwrapJsonEnvelope(value);
+  if (
+    !isRecord(content) ||
+    content.type !== "content" ||
+    !Array.isArray(content.value)
+  ) {
+    return 0;
+  }
+  return content.value.filter(
+    (part) =>
+      isRecord(part) &&
+      part.type === "text" &&
+      typeof part.text === "string" &&
+      part.text.startsWith("[image omitted:") &&
+      (part.text.includes(" exceeds ") || part.text.includes(" exceed "))
+  ).length;
 }
 
 // A persisted tool result that has been round-tripped through the AI SDK
@@ -175,7 +210,12 @@ export function hasMcpToolResultImageCandidate(
   // direct/embedded/linked origin, so honor the policy at the coarsest safe
   // granularity — render only when tool-image rendering is enabled at all,
   // otherwise a disabled policy would still leak images.
-  if (asModelOutputImageContent(result)) return rendersAnyToolImages(policy);
+  if (
+    asModelOutputImageContent(result) ||
+    countImagesOmittedForLimits(result) > 0
+  ) {
+    return rendersAnyToolImages(policy);
+  }
   if (!isRecord(result) || !Array.isArray(result.content)) return false;
   return result.content.some((block) => {
     if (!isRecord(block)) return false;
@@ -217,6 +257,7 @@ export function getMcpToolResultImagePreviewKey(
   ];
 
   const modelOutputContent = asModelOutputImageContent(result);
+  const omittedImageCount = countImagesOmittedForLimits(result);
   if (modelOutputContent) {
     modelOutputContent.value.forEach((part) => {
       const image = readModelOutputImage(part);
@@ -226,6 +267,12 @@ export function getMcpToolResultImagePreviewKey(
         );
       }
     });
+    keyParts.push(`omitted:${omittedImageCount}`);
+    return keyParts.join("|");
+  }
+
+  if (omittedImageCount > 0) {
+    keyParts.push(`omitted:${omittedImageCount}`);
     return keyParts.join("|");
   }
 
@@ -297,15 +344,33 @@ export async function resolveMcpToolResultImagePreviews(
   result: unknown,
   options: ResolveMcpToolResultImagePreviewsOptions = {}
 ): Promise<McpToolResultImagePreview[]> {
+  const resolved = await resolveMcpToolResultImagePreviewDetails(
+    result,
+    options
+  );
+  return resolved.previews;
+}
+
+async function resolveMcpToolResultImagePreviewDetails(
+  result: unknown,
+  options: ResolveMcpToolResultImagePreviewsOptions = {}
+): Promise<{
+  previews: McpToolResultImagePreview[];
+  omittedImageCount: number;
+}> {
   if (!hasMcpToolResultImageCandidate(result, options.renderingPolicy)) {
-    return [];
+    return { previews: [], omittedImageCount: 0 };
   }
 
   // Reloaded transcripts arrive already in the model-facing output shape —
   // render directly from the surviving media parts (no SDK round-trip).
   const modelOutputContent = asModelOutputImageContent(result);
-  if (modelOutputContent) {
-    return mediaPartsToPreviews(modelOutputContent);
+  const persistedOmissionCount = countImagesOmittedForLimits(result);
+  if (modelOutputContent || persistedOmissionCount > 0) {
+    return {
+      previews: mediaPartsToPreviews(modelOutputContent),
+      omittedImageCount: persistedOmissionCount,
+    };
   }
 
   try {
@@ -324,9 +389,12 @@ export async function resolveMcpToolResultImagePreviews(
             modelVisibleMcpToolResults,
           });
 
-    return mediaPartsToPreviews(modelOutput);
+    return {
+      previews: mediaPartsToPreviews(modelOutput),
+      omittedImageCount: countImagesOmittedForLimits(modelOutput),
+    };
   } catch {
-    return [];
+    return { previews: [], omittedImageCount: 0 };
   }
 }
 
@@ -345,11 +413,15 @@ export function useMcpToolResultImagePreviews(
     renderingPolicy: options.renderingPolicy,
   });
   const previewCacheRef = useRef(
-    new Map<string, McpToolResultImagePreview[]>()
+    new Map<
+      string,
+      { previews: McpToolResultImagePreview[]; omittedImageCount: number }
+    >()
   );
   const [state, setState] = useState<McpToolResultImagePreviewState>({
     status: "idle",
     previews: [],
+    omittedImageCount: 0,
   });
 
   latestResolveArgsRef.current = {
@@ -362,21 +434,21 @@ export function useMcpToolResultImagePreviews(
     let cancelled = false;
 
     if (!previewKey) {
-      setState({ status: "idle", previews: [] });
+      setState({ status: "idle", previews: [], omittedImageCount: 0 });
       return () => {
         cancelled = true;
       };
     }
 
-    const cachedPreviews = previewCacheRef.current.get(previewKey);
-    if (cachedPreviews) {
-      setState({ status: "ready", previews: cachedPreviews });
+    const cachedResult = previewCacheRef.current.get(previewKey);
+    if (cachedResult) {
+      setState({ status: "ready", ...cachedResult });
       return () => {
         cancelled = true;
       };
     }
 
-    setState({ status: "loading", previews: [] });
+    setState({ status: "loading", previews: [], omittedImageCount: 0 });
 
     const {
       result: resultToResolve,
@@ -384,26 +456,26 @@ export function useMcpToolResultImagePreviews(
       renderingPolicy,
     } = latestResolveArgsRef.current;
 
-    resolveMcpToolResultImagePreviews(resultToResolve, {
+    resolveMcpToolResultImagePreviewDetails(resultToResolve, {
       readResource: serverId
         ? (uri) => readResourceApi(serverId, uri)
         : undefined,
       renderingPolicy,
     })
-      .then((previews) => {
+      .then((resolved) => {
         if (cancelled) return;
-        if (previews.length > 0) {
-          previewCacheRef.current.set(previewKey, previews);
+        if (resolved.previews.length > 0 || resolved.omittedImageCount > 0) {
+          previewCacheRef.current.set(previewKey, resolved);
         }
         setState(
-          previews.length > 0
-            ? { status: "ready", previews }
-            : { status: "empty", previews: [] }
+          resolved.previews.length > 0 || resolved.omittedImageCount > 0
+            ? { status: "ready", ...resolved }
+            : { status: "empty", previews: [], omittedImageCount: 0 }
         );
       })
       .catch(() => {
         if (cancelled) return;
-        setState({ status: "empty", previews: [] });
+        setState({ status: "empty", previews: [], omittedImageCount: 0 });
       });
 
     return () => {

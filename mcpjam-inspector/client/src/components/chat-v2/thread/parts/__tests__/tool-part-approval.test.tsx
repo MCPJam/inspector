@@ -1,6 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { mcpCallToolResultToModelOutput } from "@mcpjam/sdk/browser";
 import { ToolPart } from "../tool-part";
 
 vi.mock("lucide-react", () => {
@@ -326,6 +327,53 @@ describe("ToolPart approval expansion", () => {
     expect(screen.getByTestId("json-editor")).toHaveTextContent(
       JSON.stringify(output)
     );
+  });
+
+  it("shows an omitted-only image warning in the expanded panel", async () => {
+    const user = userEvent.setup();
+    const output = mcpCallToolResultToModelOutput(
+      { content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }] },
+      { maxImageBytes: 2 }
+    );
+
+    render(
+      <ToolPart
+        part={{ ...basePart, input: undefined, output } as any}
+        uiType="mcp-apps"
+        mcpToolResultImageRendering={{ placement: "collapsed" }}
+      />
+    );
+
+    const headerButton = getHeaderButton();
+    expect(headerButton).toBeTruthy();
+    if (headerButton) await user.click(headerButton);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "1 image was omitted because image size or count limits were exceeded."
+    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("shows an omitted-only image warning in the inline preview", async () => {
+    const output = {
+      type: "content",
+      value: [
+        { type: "text", text: "[image omitted: image/png exceeds 10 MB limit]" },
+      ],
+    };
+
+    render(
+      <ToolPart
+        part={{ ...basePart, input: undefined, output } as any}
+        uiType="mcp-apps"
+        mcpToolResultImageRendering={{ placement: "inline" }}
+      />
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "1 image was omitted because image size or count limits were exceeded."
+    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
   it("renders raw embedded MCP image resources in the expanded panel even when part output is absent", async () => {
