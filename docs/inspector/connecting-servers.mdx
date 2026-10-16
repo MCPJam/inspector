@@ -61,7 +61,11 @@ To add another account, click **Connect another account** at the bottom of the l
 
 Shared OAuth servers remain single-account and do not show the **Connect another account** button.
 
-When two or more accounts are live, chat exposes a required `link_id` selector so you (or the model) can choose which credential each tool call uses. The selector is named to match what ChatGPT injects, so servers have one reserved argument name to avoid rather than one per host. If a tool's own schema already declares `link_id`, chat exposes per-account variants of that tool instead of merging them. Changing the default mid-conversation does not redirect tool calls that are already in flight.
+When two or more accounts are live, chat exposes a required `link_id` selector so you (or the model) can choose which credential each tool call uses. The selector is named to match what ChatGPT injects, so servers have one reserved argument name to avoid rather than one per host.
+
+The selector's description includes a structured descriptor for each account — covering the account name, email, and nickname when the server provides them — so the model can tell accounts apart by name rather than by guessing from an email address. If the server exposes a profile (for example, via a `whoami` tool), those fields are included; absent fields are omitted rather than sent as empty. The model is also instructed to ask which account to use before making a write call when the intended account is not clear from the conversation.
+
+If a tool's own schema already declares `link_id`, chat exposes per-account variants of that tool instead of merging them. Changing the default mid-conversation does not redirect tool calls that are already in flight.
 
 Rerunning a tool call from the trace view is disabled for calls that ran on a specific account, because rerun resolves a server rather than a connection and would replay through the default credential instead.
 
