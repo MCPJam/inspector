@@ -5,12 +5,12 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { verifyFlowEvidence, evidenceFailure } from './hosted-harness-flow-evidence.mjs';
 
-export function invokeCli(config, args) {
+export function invokeCli(config, args, { timeoutMs = 60_000 } = {}) {
   const env = { ...process.env };
   for (const key of ['WORKOS_API_KEY', 'STAGING_WORKOS_API_KEY', 'ASK_MCPJAM_CANARY_PASSWORD', 'HARNESS_PRODUCT_STUDY_TOKENS']) delete env[key];
   const result = spawnSync('npx', ['--yes', `--package=@mcpjam/cli@${config.cliVersion}`, 'mcpjam', ...args,
-    '--api-url', config.apiUrl, '--project', config.projectId, '--format', 'json', '--timeout', '45000'],
-  { cwd: tmpdir(), env, encoding: 'utf8', timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
+    '--api-url', config.apiUrl, '--project', config.projectId, '--format', 'json', '--timeout', String(timeoutMs - 15_000)],
+  { cwd: tmpdir(), env, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 });
   if (result.error || result.status !== 0) throw Object.assign(new Error('cli_did_not_complete'), { exitCode: result.status ?? 4 });
   return JSON.parse(result.stdout);
 }

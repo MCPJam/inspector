@@ -59,10 +59,10 @@ export function verifyTurn(turn, client, probe, previous) {
 
 function send(config, client, message, key, sessionId) {
   const args = ['cloud', 'sessions', 'send', '--client', client.clientId,
-    '--message', message, '--idempotency-key', key, '--format', 'json'];
+    '--message', message, '--idempotency-key', key];
   if (sessionId) args.push('--session', sessionId);
   else args.push('--model', client.modelId, '--tool-mode', 'auto');
-  return invokeCli(config, args);
+  return invokeCli(config, args, { timeoutMs: 360_000 });
 }
 
 export function runCanary(config, invoke = send) {
