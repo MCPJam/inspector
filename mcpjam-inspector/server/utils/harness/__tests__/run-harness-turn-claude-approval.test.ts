@@ -22,6 +22,9 @@ const state = vi.hoisted(() => ({
   alive: false,
   resumed: 0,
   executions: 0,
+  currentApproval: 1,
+  maxApprovals: 1,
+  harnessId: "claude-code" as "claude-code" | "codex",
   teardown: vi.fn(),
   hold: vi.fn(),
   create: vi.fn(),
@@ -36,7 +39,7 @@ vi.mock("@ai-sdk/harness/agent", async (original) => ({
         sessionId: options.sessionId,
         suspendTurn: async () => ({
           type: "continue-turn",
-          harnessId: "claude-code",
+          harnessId: state.harnessId,
           specificationVersion: "harness-v1",
           data: {
             bridge: {
@@ -51,36 +54,46 @@ vi.mock("@ai-sdk/harness/agent", async (original) => ({
         stop: async () => ({}),
       };
     }
-    async stream() {
+    private result(completedCall?: number) {
+      const pending = state.currentApproval;
       return {
         fullStream: (async function* () {
-          yield {
-            type: "tool-call",
-            toolCallId: "call-1",
-            toolName: "bash",
-            input: JSON.stringify({ command: "touch example" }),
-            providerExecuted: true,
-          };
-          yield {
-            type: "tool-approval-request",
-            approvalId: "a1",
-            toolCallId: "call-1",
-          };
+          if (completedCall !== undefined)
+            yield {
+              type: "tool-result",
+              toolCallId: `call-${completedCall}`,
+              toolName: "bash",
+              result: "Done",
+            };
+          if (pending <= state.maxApprovals) {
+            yield {
+              type: "tool-call",
+              toolCallId: `call-${pending}`,
+              toolName: "bash",
+              input: JSON.stringify({ command: `touch example-${pending}` }),
+              providerExecuted: true,
+            };
+            yield {
+              type: "tool-approval-request",
+              approvalId: `a${pending}`,
+              toolCallId: `call-${pending}`,
+            };
+          } else yield { type: "finish", finishReason: "stop" };
         })(),
-        text: Promise.resolve(""),
+        text: Promise.resolve(pending > state.maxApprovals ? "Done" : ""),
       };
+    }
+    async stream() {
+      return this.result();
     }
     async continueStream(options: {
       toolApprovalContinuations: { approved: boolean }[];
     }) {
       state.resumed++;
-      if (options.toolApprovalContinuations[0]?.approved) state.executions++;
-      return {
-        fullStream: (async function* () {
-          yield { type: "finish", finishReason: "stop" };
-        })(),
-        text: Promise.resolve("Done"),
-      };
+      const approved = options.toolApprovalContinuations[0]?.approved;
+      if (approved) state.executions++;
+      const previous = state.currentApproval++;
+      return this.result(approved ? previous : undefined);
     }
   },
 }));
@@ -175,6 +188,7 @@ vi.mock("../local/local-turn.js", () => ({
         sandboxWorkDir: "project",
         skillsBaseDir: "/local/home/.claude/skills",
         permissionMode: "allow-reads",
+        timings: { localRuntimeVerifyMs: 0, localGatewayReadyMs: 0 },
         sessionStateExists: true,
         teardown: () => endLocalHarnessSession(args.sessionId),
         discardState: async () => {},
@@ -263,6 +277,9 @@ beforeEach(() => {
   state.alive = false;
   state.resumed = 0;
   state.executions = 0;
+  state.currentApproval = 1;
+  state.maxApprovals = 1;
+  state.harnessId = "claude-code";
   resetApprovalParkForTests();
   resetLocalHarnessRegistryForTests();
   vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
@@ -286,7 +303,8 @@ describe("Claude approval through the turn runner's pause and teardown", () => {
       });
       expect(state.hold).toHaveBeenCalledOnce();
       expect(state.teardown).not.toHaveBeenCalled();
-      await answer(approved);
+      const continuation = await answer(approved);
+      expect(continuation).not.toContain('"type":"error"');
       expect(state.resumed).toBe(1);
       expect(state.executions).toBe(Number(approved));
       expect(state.create).toHaveBeenLastCalledWith(
@@ -326,3 +344,5 @@ describe("Claude approval through the turn runner's pause and teardown", () => {
     expect(state.resumed).toBe(0);
   });
 });
+
+export { state as localApprovalFixture, options as localApprovalOptions };
