@@ -241,12 +241,17 @@ jobs:
             echo "::warning::AXIOM_ANNOTATIONS_TOKEN is not set, so this deploy is not marked in Axiom."
             exit 0
           fi
+          # The header goes through a file (mktemp: mode 0600, printf: a builtin)
+          # so the token never appears in a process's command line.
+          auth="$(mktemp)"
+          trap 'rm -f "$auth"' EXIT
+          printf 'Authorization: Bearer %s\n' "$AXIOM_TOKEN" > "$auth"
           jq -n --arg datasets "$DATASETS" --arg time "$STARTED_AT" --arg end "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg description "${DEPLOY_SHA:0:9} by $GITHUB_TRIGGERING_ACTOR, $STATUS" --arg url "$RUN_URL" \
             '{datasets: ($datasets | split(",")), type: "deploy", title: "Webapp prod deploy",
               time: $time, endTime: $end, description: $description, url: $url}' \
             | curl -fsS --max-time 20 --retry 2 -o /dev/null -X POST https://api.axiom.co/v2/annotations \
-                -H "Authorization: Bearer $AXIOM_TOKEN" -H 'Content-Type: application/json' -d @-
+                -H @"$auth" -H 'Content-Type: application/json' -d @-
 
   smoke:
     needs: deploy

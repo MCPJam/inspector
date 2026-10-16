@@ -1154,9 +1154,12 @@ jobs:
           set -uo pipefail
           [ -n "${SLACK_WEBHOOK_URL:-}" ] || exit 0
           mins=$(( ( $(date -u +%s) - ${STARTED_AT:-$(date -u +%s)} ) / 60 ))
-          failed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
-            --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')" || failed=""
-          if [ -n "$failed" ]; then
+          # A failed lookup is not "no failed jobs": `finalize` can succeed while
+          # a deploy it does not require failed, so say the outcome is unknown.
+          if ! failed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')"; then
+            text="⚠️ Release $NAME ended (${mins}m), job results unreadable · <$RUN_URL|run>"
+          elif [ -n "$failed" ]; then
             text="❌ Release $NAME failed (${mins}m) at $failed · <$RUN_URL|run>"
           elif [ "$FINALIZE" = success ]; then
             text="✅ Release $NAME done (${mins}m) · <$RUN_URL|run>"
