@@ -1250,7 +1250,7 @@ async function handleTurn(c: Context): Promise<Response> {
     );
     const localTarget = body.executionTarget?.kind === "local-native" ? await fetchTarget() : undefined;
     const localExecution = body.executionTarget?.kind === "local-native"
-      ? await preflightLocalExecution({ target: body.executionTarget, grantToken: c.req.header(LOCAL_HARNESS_GRANT_HEADER), bearer: authHeader, projectId, hostConfig: localTarget?.host?.runtimeConfig })
+      ? await preflightLocalExecution({ target: body.executionTarget, grantToken: c.req.header(LOCAL_HARNESS_GRANT_HEADER), bearer: authHeader, projectId, hostConfig: localTarget?.host?.runtimeConfig, requestedBrowser: body.browser })
       : undefined;
     // --- The lease. Before ANY model call. --------------------------------
     let lease: LeaseResult;

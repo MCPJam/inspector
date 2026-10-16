@@ -27,6 +27,7 @@ export function assertPlatformExecutionVenue(
 function assertLocalCapabilities(
   harnessId: string,
   hostConfig: Record<string, unknown>,
+  requestedBrowser: unknown,
 ) {
   const refusal = localHarnessCapabilityRefusal(harnessId, {
     builtInToolIds: Array.isArray(hostConfig.builtInToolIds)
@@ -34,7 +35,7 @@ function assertLocalCapabilities(
           (id): id is string => typeof id === "string",
         )
       : [],
-    browserToolPolicy: hostConfig.browserToolPolicy,
+    browserToolPolicy: requestedBrowser ?? hostConfig.browserToolPolicy,
   });
   if (refusal)
     throw new WebRouteError(422, ErrorCode.FEATURE_NOT_SUPPORTED, refusal, {
@@ -49,6 +50,7 @@ export async function preflightLocalExecution(args: {
   bearer: string;
   projectId: string;
   hostConfig: Record<string, unknown> | undefined;
+  requestedBrowser?: unknown;
 }) {
   const { target, grantToken, bearer, projectId, hostConfig } = args;
   if (!grantToken)
@@ -74,7 +76,7 @@ export async function preflightLocalExecution(args: {
       { reason: "ATTENDED_APPROVAL_REQUIRED" },
     );
   }
-  assertLocalCapabilities(target.harnessId, hostConfig);
+  assertLocalCapabilities(target.harnessId, hostConfig, args.requestedBrowser);
   const actor = await verifyLocalHarnessMember(
     bearer,
     projectId,

@@ -97,6 +97,16 @@ describe("local execution preflight", () => {
       expect(availability).not.toHaveBeenCalled();
     },
   );
+  it("refuses a per-turn browser before actor or runtime work", async () => {
+    await expect(
+      preflightLocalExecution({ ...args, requestedBrowser: {} }),
+    ).rejects.toMatchObject({
+      status: 422,
+      details: { reason: "LOCAL_CAPABILITY_UNSUPPORTED" },
+    });
+    expect(member).not.toHaveBeenCalled();
+    expect(runtime).not.toHaveBeenCalled();
+  });
   it("accepts an ordinary client without cloud-only requirements", async () => {
     await expect(
       preflightLocalExecution({
