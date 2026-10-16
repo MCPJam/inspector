@@ -264,8 +264,7 @@ export function SubscribeForm({
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
               <p>
                 Make sure the server can reach this machine over plain http.
-                Runs that use local webhooks do not count as conformance
-                passes.
+                Runs that use a local receiver are not counted as passing.
               </p>
             </div>
             <div className="flex items-center gap-2">

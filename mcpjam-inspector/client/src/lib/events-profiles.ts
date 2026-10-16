@@ -36,14 +36,15 @@ export const EVENTS_PROFILES: readonly EventsProfileOption[] = [
   {
     id: DRAFT_EVENTS_PROFILE_ID,
     label: `Draft (${EVENTS_DRAFT_DATE})`,
-    description: "The working-group draft: poll, push and webhook delivery.",
+    description:
+      "The working-group draft covers poll, push and webhook delivery.",
     deliveryModes: ["poll", "push", "webhook"],
   },
   {
     id: CHATGPT_EVENTS_PROFILE_ID,
     label: "ChatGPT (2026-09-30)",
     description:
-      "What OpenAI documents for ChatGPT as of 2026-09-30: webhook delivery only.",
+      "ChatGPT as OpenAI documents it on 2026-09-30, with webhook delivery only.",
     deliveryModes: ["webhook"],
   },
 ];

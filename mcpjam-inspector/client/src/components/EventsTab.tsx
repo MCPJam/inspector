@@ -481,7 +481,7 @@ export function EventsTab({
           icon={Radio}
           className="py-12"
           title="This server does not declare events"
-          description="MCPJam sends it no events requests. Ask the server's maintainer to enable events."
+          description="MCPJam won't send it event requests. Ask the server's maintainer to enable events."
         />
         <div className="mx-auto w-full max-w-2xl px-5 pb-8">
           <CapabilityPanel catalog={catalog} />
