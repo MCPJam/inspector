@@ -32,6 +32,7 @@ export interface RawHarnessTargetInput {
   machineId?: unknown;
   permissionProfile?: unknown;
   policyVersion?: unknown;
+  localStudySessionId?: unknown;
 }
 
 export type HarnessTargetParse =

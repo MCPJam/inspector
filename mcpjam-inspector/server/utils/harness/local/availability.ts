@@ -30,6 +30,7 @@
  * point: a grant can only match terms that were independently re-derived.
  */
 import { HOSTED_MODE, LOCAL_HARNESS_ENABLED } from "../../../config.js";
+import type { LocalStudyGrantBinding } from "./study-grant-binding.js";
 import {
   resolveLocalCompatibility,
   type LocalCompatibilityStatus,
@@ -120,6 +121,8 @@ export interface LocalHarnessAvailabilityQuery {
   target: LocalHarnessExecutionTarget;
   actor: LocalHarnessActor;
   scope?: "attended" | "unattended";
+  /** Supplied only after server-side study reservation validation. */
+  study?: LocalStudyGrantBinding;
   userId: string;
   projectId: string;
   /** Plaintext capability from the request header; never persisted. */
@@ -192,7 +195,9 @@ export async function resolveLocalHarnessAvailability(
         "(MCPJAM_LOCAL_HARNESS_ENABLED)",
     );
   }
-  if (!isActorEligibleForLocalHarness(query.actor, query.scope)) {
+  const studyActor = query.study !== undefined && query.scope !== "unattended" &&
+    query.actor.isScenarioSession && !query.actor.isGuest && !query.actor.isJourneySession;
+  if (!studyActor && !isActorEligibleForLocalHarness(query.actor, query.scope)) {
     return unavailable(
       "actor-not-eligible",
       "local execution requires an attended, signed-in member running their " +
@@ -327,6 +332,7 @@ export async function resolveLocalHarnessAvailability(
 
   const binding: HarnessGrantBinding = {
     scope: query.scope ?? "attended",
+    ...(query.study ? { study: query.study } : {}),
     userId: query.userId,
     machineId: target.machineId,
     projectId: query.projectId,

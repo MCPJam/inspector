@@ -192,12 +192,10 @@ export type LocalHarnessTurnPreparation =
  * alive.
  */
 let sharedSupervisor: LocalHarnessSupervisor | null = null;
-
 export function localHarnessSupervisor(): LocalHarnessSupervisor {
   sharedSupervisor ??= new LocalHarnessSupervisor();
   return sharedSupervisor;
 }
-
 export interface PrepareLocalHarnessTurnArgs {
   target: LocalHarnessExecutionTarget;
   harnessId: HarnessId;
@@ -246,13 +244,11 @@ export interface PrepareLocalHarnessTurnArgs {
   modelSelection?: ModelSelection | null;
   signal?: AbortSignal;
 }
-
 /** What a user calls each local harness, for refusals they read. */
 const LOCAL_HARNESS_DISPLAY_NAME: Readonly<Record<SupportedLocalHarnessId, string>> = {
   "claude-code": "Claude Code",
   codex: "Codex",
 };
-
 function asLocalHarnessId(harnessId: string): SupportedLocalHarnessId | null {
   return (SUPPORTED_LOCAL_HARNESS_IDS as readonly string[]).includes(harnessId)
     ? (harnessId as SupportedLocalHarnessId)
@@ -480,6 +476,7 @@ async function prepareWithReservedRuntime(outer: {
     },
     actor: args.actor,
     scope: args.scope,
+    study: args.target.study,
     // Server-derived, never from a request body: consent binds to a user, and
     // a user the caller names is a user the caller chose.
     userId: args.target.actingUserId,
@@ -523,6 +520,7 @@ async function prepareWithReservedRuntime(outer: {
   }
   const broker = await startLoopbackModelBroker({
     projectId: args.projectId,
+    localStudySessionId: args.target.localStudySessionId,
     evalIterationId: args.evalIterationId,
     journeyRunId: args.journeyRunId,
     targetId: args.targetId,
@@ -870,6 +868,7 @@ async function adoptParkedLocalTurn(
     },
     actor: args.actor,
     scope: args.scope,
+    study: args.target.study,
     userId: args.target.actingUserId,
     projectId: args.projectId,
     grantToken: args.target.grantToken,
@@ -920,6 +919,7 @@ async function adoptParkedLocalTurn(
   const gatewayStartedAt = Date.now();
   const broker = await startLoopbackModelBroker({
     projectId: args.projectId,
+    localStudySessionId: args.target.localStudySessionId,
     evalIterationId: args.evalIterationId,
     journeyRunId: args.journeyRunId,
     targetId: args.targetId,

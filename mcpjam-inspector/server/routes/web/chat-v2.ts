@@ -46,6 +46,7 @@ import {
 import { webmcpPageToolsMode } from "../../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
+import { resolveLocalStudyTarget } from "../../utils/harness/local/study-target.js";
 import { ranTurnSelection } from "../../utils/session-model-selection.js";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
@@ -242,9 +243,7 @@ import {
   applyPluginExtensionsToClientCapabilities,
   resolvePluginExtensions,
 } from "@mcpjam/sdk/host-config/internal";
-
 const chatV2 = new Hono();
-
 /**
  * Parse + shape-validate the browser's `mrtrResume` descriptor (§12.5). Reads
  * `serverId` (which server the continuation is bound to; the browser has it
@@ -254,7 +253,6 @@ const chatV2 = new Hono();
  * server-side against the durable record — this only rejects a broken body.
  */
 const parseMrtrResumeRequest = parseMrtrChatResumeRequest;
-
 chatV2.post("/", async (c) => {
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
   // returns a streaming Response. Wrapping it in handleRoute → c.json() would
@@ -282,7 +280,6 @@ chatV2.post("/", async (c) => {
       );
     }
     rpcCollector = createHostedRpcLogCollector(rawBody);
-
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
     if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
@@ -312,7 +309,6 @@ chatV2.post("/", async (c) => {
           409,
         );
     }
-
     const { initializePins, mcpProtocolVersionsByServerId } =
       extractMcpInitializeOptions(rawBody);
     const body = rawBody as unknown as ChatV2Request & {
@@ -339,7 +335,6 @@ chatV2.post("/", async (c) => {
       executionTarget?: unknown;
       environmentOverrides?: unknown;
     };
-
     const {
       messages,
       model,
@@ -1106,18 +1101,22 @@ chatV2.post("/", async (c) => {
     // runtime isn't available on this server — never silently degrade to the
     // emulated engine. Capability-driven (computer / approval / MCP / model
     // eligibility), so a new harness gets the right gates for free.
-    // The LOCAL harness target is parsed here too — by the same shared parser
-    // the /api/mcp route uses — precisely so it can be REFUSED rather than
-    // ignored.
-    //
-    // This route serves the hosted product and the org-aware path. A hosted
-    // replica running a vendor agent on ITS machine is the structural thing the
-    // whole local design forbids, so `serverEnabled` is false here by
-    // construction (HOSTED_MODE forces the kill switch off) and an explicit ask
-    // gets a 400 saying so. Dropping the field silently would leave a
-    // misconfigured client believing its turn ran locally.
+    // Explicit study targets require their own backend reservation and local grant.
     let harnessExecutionTarget: LocalHarnessExecutionTarget | undefined;
-    if ((await shouldUseLocalHarness(resolvedExecution.harness, bearerToken, hostedBody.projectId)) && !c.get("guestId") && !isScenarioSession) {
+    if (isScenarioSession && rawBody.harnessTarget != null) {
+      const harnessId = localHarnessIdOf(resolvedExecution.harness);
+      if (!harnessId || !scenarioId || typeof accessVersion !== "number" || !body.chatSessionId || !hostedBody.projectId) return c.json({ error: "A current study conversation and supported client are required for local preview" }, 400);
+      try {
+        harnessExecutionTarget = await resolveLocalStudyTarget({
+          bearer: bearerToken, projectId: hostedBody.projectId, harnessId,
+          study: { scenarioId, accessVersion, chatSessionId: body.chatSessionId },
+          rawTarget: rawBody.harnessTarget as RawHarnessTargetInput,
+          grantToken: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
+        });
+      } catch (error) {
+        return c.json({ error: error instanceof Error ? error.message : "Local study authorization failed" }, 409);
+      }
+    } else if ((await shouldUseLocalHarness(resolvedExecution.harness, bearerToken, hostedBody.projectId)) && !c.get("guestId") && !isScenarioSession) {
       const localHarnessId = localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
       const localHarnessName = LOCAL_HARNESS_DISPLAY_NAMES[localHarnessId];
       if (!hostedBody.projectId) return c.json({ error: `A project is required for local ${localHarnessName}` }, 400);

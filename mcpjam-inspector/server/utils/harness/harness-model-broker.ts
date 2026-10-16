@@ -392,6 +392,7 @@ export async function registerLocalInstance(args: {
  */
 export async function startLoopbackModelBroker(args: {
   projectId: string;
+  localStudySessionId?: string;
   harnessId: HarnessId;
   modelId: string;
   machineId: string;
@@ -440,6 +441,7 @@ export async function startLoopbackModelBroker(args: {
         // computerId. No box fields travel — the backend refuses a local
         // request that carries one.
         delivery: "inspector-loopback-gateway",
+        ...(args.localStudySessionId ? { localStudySessionId: args.localStudySessionId } : {}),
         projectId: args.projectId,
         harnessId: args.harnessId,
         ...harnessRuntimeVersionField(args.harnessId),

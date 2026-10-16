@@ -266,7 +266,7 @@ describe("startHarnessModelBroker", () => {
 });
 
 describe("startLoopbackModelBroker", () => {
-  it("names the pinned harness runtime version on a loopback start", async () => {
+  it("names the pinned harness runtime and study reservation on a loopback start", async () => {
     let seenBody: any = {};
     mockFetch((_url, init) => {
       seenBody = JSON.parse(String(init.body));
@@ -274,12 +274,14 @@ describe("startLoopbackModelBroker", () => {
     });
     await startLoopbackModelBroker({
       projectId: "p1",
+      localStudySessionId: "study-reservation",
       harnessId: "claude-code",
       modelId: "anthropic/claude-sonnet-4.5",
       machineId: "m1",
       keyId: "k1",
       bearer: "t",
     });
+    expect(seenBody.localStudySessionId).toBe("study-reservation");
     expect(seenBody.delivery).toBe("inspector-loopback-gateway");
     expect(seenBody.harnessRuntimeVersion).toBe(
       HARNESS_PINNED_VERSIONS["claude-code"]

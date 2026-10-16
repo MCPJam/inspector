@@ -90,6 +90,42 @@ const ATTENDED: LocalHarnessActor = {
   isJourneySession: false,
 };
 
+it("requires a separate study grant for a signed-in scenario actor", async () => {
+  const study = {
+    scenarioId: "study",
+    accessVersion: 1,
+    chatSessionId: "chat",
+  };
+  const actor = { ...ATTENDED, isScenarioSession: true };
+  const ordinary = await grantLocalHarnessConsent(binding(target()));
+  expect(
+    (await query({ actor, study, grantToken: ordinary.token })).available,
+  ).toBe(false);
+  const owned = await grantLocalHarnessConsent({ ...binding(target()), study });
+  expect(
+    (await query({ actor, study, grantToken: owned.token })).available,
+  ).toBe(true);
+  expect(
+    (
+      await query({
+        actor: { ...actor, isGuest: true },
+        study,
+        grantToken: owned.token,
+      })
+    ).available,
+  ).toBe(false);
+  expect(
+    (
+      await query({
+        actor,
+        scope: "unattended",
+        study,
+        grantToken: owned.token,
+      })
+    ).available,
+  ).toBe(false);
+});
+
 async function query(overrides: Record<string, unknown> = {}) {
   return resolveLocalHarnessAvailability({
     target: target(),
