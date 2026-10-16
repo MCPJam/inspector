@@ -10,6 +10,8 @@ test('eval file bounds the target, iteration, judging and two authored prompts',
   const file = evalFile(client, probe);
   assert.deepEqual(file.target, { environment: 'env' });
   assert.equal(file.defaults.iterations, 1);
+  assert.equal(file.defaults.passThreshold, 1);
+  assert.deepEqual(file.defaults.validity, {});
   assert.deepEqual(file.defaults.judge, { enabled: false });
   assert.equal(file.cases.length, 1);
   assert.equal(file.cases[0].steps.length, 2);

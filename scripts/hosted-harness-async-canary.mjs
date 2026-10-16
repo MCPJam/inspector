@@ -28,7 +28,7 @@ export function evalFile(client, probe) {
     suite: { id: `canary_${probe.id}`, name: `Harness canary ${probe.id}` },
     target: { environment: client.environmentId },
     defaults: { model: client.modelId, provider: client.harness === 'codex' ? 'openai' : 'anthropic',
-      iterations: 1, temperature: 0, judge: { enabled: false } },
+      iterations: 1, passThreshold: 1, validity: {}, temperature: 0, judge: { enabled: false } },
     cases: [{ id: 'native_fixture', title: 'Native and exact MCP continuation',
       steps: probePrompts(client, probe).map((prompt, index) => ({ id: `turn_${index}`, kind: 'prompt', prompt })) }],
   };
