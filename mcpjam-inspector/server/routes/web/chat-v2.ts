@@ -1109,7 +1109,7 @@ chatV2.post("/", async (c) => {
       try {
         harnessExecutionTarget = await resolveLocalStudyTarget({
           bearer: bearerToken, projectId: hostedBody.projectId, harnessId,
-          study: { scenarioId, accessVersion, chatSessionId: body.chatSessionId },
+          study: { scenarioId, accessVersion, chatSessionId: body.chatSessionId, requireToolApproval: resolvedExecution.requireToolApproval },
           rawTarget: rawBody.harnessTarget as RawHarnessTargetInput,
           grantToken: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
         });

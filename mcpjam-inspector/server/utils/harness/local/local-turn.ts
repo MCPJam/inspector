@@ -313,7 +313,7 @@ export async function prepareLocalHarnessTurn(
   if (hasParkedLocalSession(args.sessionId)) {
     await invalidateParkedLocalSession(args.sessionId, "superseded");
   }
-  if (args.scope !== "unattended" && args.requireToolApproval === false) {
+  if (args.scope !== "unattended" && args.requireToolApproval === false && args.target.study?.requireToolApproval !== false) {
     const authorization = await readLocalHarnessAuthorization(args.target.actingUserId, args.target.machineId, args.projectId, harnessId);
     if (!authorization?.autoApproveAcknowledgedAt) {
       return { ok: false, status: "auto-approve-consent-required", message: "Allow commands without asking before turning Tool Approval off on this computer." };

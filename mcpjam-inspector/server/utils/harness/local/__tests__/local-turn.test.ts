@@ -780,3 +780,11 @@ it.each([true, false])("keeps attended ask mode with Tool Approval=%s", async re
   expect(result.prepared.permissionMode).toBe("allow-reads");
   await result.prepared.teardown();
 });
+it("uses the study-bound automatic policy without inheriting project consent", async () => {
+  vi.mocked(readLocalHarnessAuthorization).mockResolvedValueOnce(null);
+  const args = turnArgs();
+  const result = await prepareLocalHarnessTurn({ ...args, requireToolApproval: false, target: { ...args.target, study: { scenarioId: "study", accessVersion: 1, chatSessionId: "chat", requireToolApproval: false } } });
+  if (!result.ok) throw new Error(result.message);
+  expect(readLocalHarnessAuthorization).not.toHaveBeenCalled();
+  await result.prepared.teardown();
+});

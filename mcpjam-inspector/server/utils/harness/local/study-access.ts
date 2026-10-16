@@ -7,6 +7,14 @@ const reservationSchema = z.object({
   chatSessionId: z.string().min(1),
   accessVersion: z.number().int().nonnegative(),
   expiresAt: z.number(),
+  admission: z
+    .object({
+      actorRole: z.enum(["owner", "participant"]),
+      harnessId: z.enum(["claude-code", "codex"]),
+      modelId: z.string().min(1),
+      modelSourceReady: z.boolean(),
+    })
+    .optional(),
 });
 export type LocalStudyReservation = z.infer<typeof reservationSchema>;
 type StudyAccessRequest =

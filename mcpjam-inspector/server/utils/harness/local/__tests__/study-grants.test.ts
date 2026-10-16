@@ -178,3 +178,13 @@ describe("study-owned local grants", () => {
     ).resolves.toMatchObject({ ok: false, reason: "absent" });
   });
 });
+
+it("binds automatic commands to the exact study approval policy", async () => {
+  const automatic = { ...study, study: { scenarioId: "study-a", accessVersion: 1, chatSessionId: "chat-a", requireToolApproval: false } };
+  const prompted = { ...automatic, study: { ...automatic.study, requireToolApproval: true } };
+  const grant = await grantLocalHarnessConsent(automatic, { now });
+  expect((await verifyLocalHarnessGrant(grant.token, automatic, { now })).ok).toBe(true);
+  expect((await verifyLocalHarnessGrant(grant.token, prompted, { now })).ok).toBe(false);
+  expect((await verifyLocalHarnessGrant(grant.token, study, { now })).ok).toBe(false);
+  expect(isLocalStudyGrantBinding({ ...automatic.study, requireToolApproval: "false" })).toBe(false);
+});

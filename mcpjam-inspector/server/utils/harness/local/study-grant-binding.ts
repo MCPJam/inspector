@@ -3,6 +3,7 @@ export interface LocalStudyGrantBinding {
   scenarioId: string;
   accessVersion: number;
   chatSessionId: string;
+  requireToolApproval?: boolean;
 }
 
 export function isLocalStudyGrantBinding(
@@ -17,6 +18,7 @@ export function isLocalStudyGrantBinding(
     binding.chatSessionId.trim().length > 0 &&
     typeof binding.accessVersion === "number" &&
     Number.isSafeInteger(binding.accessVersion) &&
-    binding.accessVersion >= 0
+    binding.accessVersion >= 0 &&
+    (binding.requireToolApproval === undefined || typeof binding.requireToolApproval === "boolean")
   );
 }

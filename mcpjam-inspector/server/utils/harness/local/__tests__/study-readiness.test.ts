@@ -80,7 +80,7 @@ it("derives the member, project and client before minting a separate study grant
   expect(mocks.workspace).toHaveBeenCalledWith({
     userId: "actual-user",
     projectId: "canonical-project",
-    study: { scenarioId: "study", accessVersion: 2, chatSessionId: "chat" },
+    study: { scenarioId: "study", accessVersion: 2, chatSessionId: "chat", requireToolApproval: true },
   });
   expect(mocks.ready).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -88,7 +88,7 @@ it("derives the member, project and client before minting a separate study grant
       scope: "attended",
       workspaceGrantId: "private-workspace",
       localStudySessionId: "reservation",
-      study: { scenarioId: "study", accessVersion: 2, chatSessionId: "chat" },
+      study: { scenarioId: "study", accessVersion: 2, chatSessionId: "chat", requireToolApproval: true },
     }),
   );
   expect(result.target).toEqual({

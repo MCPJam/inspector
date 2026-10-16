@@ -1,14 +1,13 @@
-import { getLocalMachineId, verifyLocalHarnessGrant } from "./grants.js";
+import { verifyLocalHarnessGrant } from "./grants.js";
 import {
-  getRegisteredKeyId,
-  readLocalInstanceIdentity,
-} from "./instance-key.js";
-import { verifyLocalHarnessMember } from "./readiness.js";
+  verifyLocalHarnessMember,
+  localHarnessAccountEnabled,
+} from "./readiness.js";
+import { verifyLocalStudyActor } from "./study-actor.js";
 import {
   parseHarnessExecutionTarget,
   type RawHarnessTargetInput,
 } from "./request-target.js";
-import { requestLocalStudyReservation } from "./study-access.js";
 import type { LocalStudyGrantBinding } from "./study-grant-binding.js";
 import { prepareLocalStudyWorkspace } from "./study-workspace.js";
 import type { SupportedLocalHarnessId } from "./targets.js";
@@ -22,50 +21,27 @@ interface StudyTargetRequest {
   grantToken: string | undefined;
 }
 
-async function verifyReservation(
-  args: StudyTargetRequest,
-  reservationId: string,
-  machineId: string,
-) {
-  const identity = await readLocalInstanceIdentity();
-  const keyId = identity.keyId ?? getRegisteredKeyId();
-  if (!keyId)
-    throw new Error(
-      "Set up this local client before authorizing a study preview.",
-    );
-  const reservation = await requestLocalStudyReservation(args.bearer, {
-    action: "validate",
-    reservationId,
-    machineId,
-    keyId,
-  });
-  if (
-    reservation.reservationId !== reservationId ||
-    reservation.projectId !== args.projectId ||
-    reservation.scenarioId !== args.study.scenarioId ||
-    reservation.accessVersion !== args.study.accessVersion ||
-    reservation.chatSessionId !== args.study.chatSessionId
-  ) {
-    throw new Error(
-      "This local authorization belongs to another study conversation.",
-    );
-  }
-  return keyId;
-}
-
 /** Resolves only an explicit study request; a missing grant never falls back. */
 export async function resolveLocalStudyTarget(args: StudyTargetRequest) {
-  const actor = await verifyLocalHarnessMember(
-    args.bearer,
-    args.projectId,
-    undefined,
-    args.harnessId,
-  );
   const reservationId = args.rawTarget.localStudySessionId;
   if (typeof reservationId !== "string" || !reservationId)
     throw new Error(
       "Authorize this study conversation before running locally.",
     );
+  const { actor, machineId, keyId } = await verifyLocalStudyActor(
+    { ...args, reservationId },
+    {
+      member: () =>
+        verifyLocalHarnessMember(
+          args.bearer,
+          args.projectId,
+          undefined,
+          args.harnessId,
+        ),
+      rollout: () =>
+        localHarnessAccountEnabled(args.bearer, undefined, args.harnessId),
+    },
+  );
   const parsed = parseHarnessExecutionTarget({
     body: { harnessTarget: args.rawTarget },
     grantTokenHeader: args.grantToken,
@@ -80,12 +56,10 @@ export async function resolveLocalStudyTarget(args: StudyTargetRequest) {
         : "A local study target is required.",
     );
   const target = parsed.target;
-  const machineId = await getLocalMachineId();
   if (target.machineId !== machineId)
     throw new Error(
       "This study authorization belongs to another installation.",
     );
-  const keyId = await verifyReservation(args, reservationId, machineId);
   const grant = await verifyLocalHarnessGrant(target.grantToken, {
     scope: "attended",
     study: args.study,

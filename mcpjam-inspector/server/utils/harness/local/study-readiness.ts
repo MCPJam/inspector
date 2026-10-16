@@ -94,6 +94,7 @@ export async function setupLocalStudyPreview(args: StudySetupRequest) {
     scenarioId: config.scenarioId,
     accessVersion: config.accessVersion,
     chatSessionId: args.chatSessionId,
+    requireToolApproval: config.requireToolApproval,
   };
   const workspace = await prepareLocalStudyWorkspace({
     userId: actor.userId,

@@ -166,7 +166,8 @@ export function hashGrantBinding(binding: HarnessGrantBinding): string {
         : []),
       // Omitted metadata must preserve existing project grant hashes.
       ...(binding.study ? ["study", binding.study.scenarioId,
-        binding.study.accessVersion, binding.study.chatSessionId] : []),
+        binding.study.accessVersion, binding.study.chatSessionId,
+        ...(binding.study.requireToolApproval === undefined ? [] : ["tool-approval", binding.study.requireToolApproval])] : []),
     ]),
   );
 }

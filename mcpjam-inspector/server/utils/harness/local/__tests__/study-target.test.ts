@@ -6,8 +6,11 @@ const mocks = vi.hoisted(() => ({
   reservation: vi.fn(),
   workspace: vi.fn(),
   member: vi.fn(),
+  rollout: vi.fn(),
 }));
-vi.mock("../readiness.js", () => ({ verifyLocalHarnessMember: mocks.member }));
+vi.mock("../readiness.js", () => ({ verifyLocalHarnessMember: mocks.member, localHarnessAccountEnabled: mocks.rollout }));
+vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, LOCAL_HARNESS_ENABLED: true }));
+vi.mock("../acting-user.js", () => ({ resolveLocalHarnessActor: async () => ({ ok: true, actor: { userId: "actual-user" } }) }));
 vi.mock("../instance-key.js", () => ({
   readLocalInstanceIdentity: async () => ({ keyId: "key" }),
   getRegisteredKeyId: () => null,
@@ -54,6 +57,7 @@ beforeEach(async () => {
   vi.stubEnv("HOME", home);
   vi.clearAllMocks();
   mocks.member.mockResolvedValue({ userId: "actual-user" });
+  mocks.rollout.mockResolvedValue(true);
   mocks.reservation.mockResolvedValue({
     ...study,
     projectId: "project",
@@ -152,4 +156,29 @@ it("refuses a workspace that no longer belongs to this Inspector session", async
   await expect(resolveLocalStudyTarget(request(grant.token))).rejects.toThrow(
     "after restarting",
   );
+});
+
+it("admits only the participant's own study grant under backend admission", async () => {
+  mocks.member.mockRejectedValue(new Error("Not a project member"));
+  mocks.reservation.mockResolvedValue({ ...study, projectId: "project", reservationId: "reservation", admission: { actorRole: "participant", harnessId: "codex", modelId: "openai/gpt-5", modelSourceReady: true } });
+  const grant = await grantLocalHarnessConsent(binding);
+  expect((await resolveLocalStudyTarget(request(grant.token))).actingUserId).toBe("actual-user");
+  expect(mocks.member).not.toHaveBeenCalled();
+});
+it.each([{ harnessId: "claude-code" }, { modelSourceReady: false }])("rejects a changed or unconfigured participant client %j", async (change) => {
+  mocks.reservation.mockResolvedValue({ ...study, projectId: "project", reservationId: "reservation", admission: { actorRole: "participant", harnessId: "codex", modelSourceReady: true, ...change } });
+  const grant = await grantLocalHarnessConsent(binding);
+  await expect(resolveLocalStudyTarget(request(grant.token))).rejects.toThrow();
+  expect(mocks.workspace).not.toHaveBeenCalled();
+});
+it("keeps nonmembers closed when the backend predates participant admission", async () => {
+  mocks.member.mockRejectedValue(new Error("Not a project member"));
+  const grant = await grantLocalHarnessConsent(binding);
+  await expect(resolveLocalStudyTarget(request(grant.token))).rejects.toThrow("Not a project member");
+});
+it("honors the current participant rollout", async () => {
+  mocks.reservation.mockResolvedValue({ ...study, projectId: "project", reservationId: "reservation", admission: { actorRole: "participant", harnessId: "codex", modelSourceReady: true } });
+  mocks.rollout.mockResolvedValue(false);
+  const grant = await grantLocalHarnessConsent(binding);
+  await expect(resolveLocalStudyTarget(request(grant.token))).rejects.toThrow("not available for this account");
 });
