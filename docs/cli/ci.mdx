@@ -479,16 +479,16 @@ runners is supported in this first version.
 ```
 
 <Note>
-**Runs launched from Actions badge as GitHub, and show GitHub provenance columns.** The CLI
-declares what it is on every launch, so a run started from a workflow shows
-**GitHub** in the Runs table rather than the generic **API** that every hosted
-launch used to show. Filtering the Runs table by the **GitHub** source reveals
-separate **Commit**, **PR**, and **Branch** columns populated from the standard
-`GITHUB_*` environment — nothing to configure. Outside CI the same command
-declares **CLI**.
+**Runs launched from Actions badge as CLI.** The CLI always declares `CLI`,
+even inside a GitHub Actions workflow. The **GitHub** badge in the Runs table
+means the MCPJam GitHub App — a check run MCPJam built and ran itself — not
+your own workflow calling `mcpjam cloud eval run`. Where the run came from is
+still recorded: the CI envelope carries the provider, commit SHA, PR, and
+branch from the standard `GITHUB_*` environment, and those populate the
+provenance columns in the Runs table — nothing to configure.
 
 That commit is also what `eval compare --baseline-sha` resolves against, so a
-run launched by the CLI in CI can now be compared to a previous commit's run the
+run launched by the CLI in CI can be compared to a previous commit's run the
 same way an SDK-reported one can.
 
 This is a *declared* label, deliberately: the platform still stamps the run's
