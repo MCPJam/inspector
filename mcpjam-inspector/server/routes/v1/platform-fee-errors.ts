@@ -22,6 +22,8 @@ export function translatePlatformFeeError(
   )
     return undefined;
   const details: Record<string, unknown> = { code };
+  if (typeof data.organizationId === "string")
+    details.organizationId = data.organizationId;
   if (typeof data.reason === "string") details.reason = data.reason;
   if (
     code === "platform_fee_refused" ||
