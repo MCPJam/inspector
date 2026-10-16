@@ -11,15 +11,19 @@ import { pathToFileURL } from "node:url";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DAYS = 31;
 const MERGER_UNKNOWN = "(merger unknown)";
+const APPROVER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 /**
  * Whether `pr` merged with an approval that counts. Like the ruleset, it reads
  * each reviewer's latest non-COMMENTED review submitted by the merge, so a
  * later CHANGES_REQUESTED or a dismissal replaces an earlier approval. One of
  * those stances must be APPROVED, from a human account (bot approvals such as
- * review assistants do not satisfy the control) other than the author. The
- * comparison is inclusive because auto-merge lands the approval and the merge
- * in the same second.
+ * review assistants do not satisfy the control) other than the author, whose
+ * association with the repository is owner, org member or collaborator. The
+ * ruleset ignores approvals from accounts without write access; association is
+ * the closest signal the reviews list carries, and an org member whose base
+ * permission is read still passes it. The comparison is inclusive because
+ * auto-merge lands the approval and the merge in the same second.
  */
 export function hasQualifyingApproval(pr, reviews) {
   const mergedAt = Date.parse(pr.merged_at);
@@ -46,7 +50,8 @@ export function hasQualifyingApproval(pr, reviews) {
     (review) =>
       review.state === "APPROVED" &&
       review.user.type === "User" &&
-      review.user.login !== pr.user.login,
+      review.user.login !== pr.user.login &&
+      APPROVER_ASSOCIATIONS.has(review.author_association),
   );
 }
 
