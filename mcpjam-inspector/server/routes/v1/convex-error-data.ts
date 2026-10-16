@@ -8,7 +8,11 @@ type ConvexErrorData = {
   feature?: unknown;
 };
 
-
+/**
+ * Wrappers can preserve a message without copying the structured refusal data.
+ * Walk the cause chain nearest first so they cannot erase a coded refusal.
+ * Four errors bound the traversal even for self-referential causes.
+ */
 export function convexErrorData(error: unknown): ConvexErrorData | null {
   let current: unknown = error;
   for (let depth = 0; depth < 4 && current; depth += 1) {
@@ -20,4 +24,3 @@ export function convexErrorData(error: unknown): ConvexErrorData | null {
   }
   return null;
 }
-

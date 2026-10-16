@@ -96,21 +96,6 @@ const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "gate_waiver_expiry_too_far",
 ]);
 
-/**
- * The structured payload a `ConvexError` carried, THROUGH any wrapper.
- *
- * `CaseBatchPartialFailureError` (and anything else that adds context by
- * rethrowing) copies the message but not the `data` — `super(cause.message)`
- * loses the payload — so a coded refusal reaching this file inside a wrapper
- * matched no branch below and fell all the way to the terminal 500. That is
- * exactly backwards: a wrapper exists to ADD what landed, not to erase why it
- * did not. So the `cause` chain is walked, nearest first.
- *
- * Bounded, and by depth rather than by a seen-set: a self-referential `cause`
- * is a bug worth surviving, and three links is already more nesting than any
- * path here has.
- */
-
 /** Strip Convex's own framing so it cannot reach a public response body. */
 function cleanConvexMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
