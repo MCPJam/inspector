@@ -2,10 +2,7 @@
  * MCP tools over the shared platform operation catalog. Each tool is a thin
  * adapter: parse args with the operation's schema, call the Platform API
  * with the request's bearer token, and emit the payload as both text and
- * structured content. Operations listed in `PLATFORM_TOOL_WIDGET_VIEWS`
- * additionally register the shared MCP Apps bundle as their UI resource. The
- * widget-backed `show_servers` tool lives in `showServers.ts` and reuses the
- * helpers here.
+ * structured content. Widget operations also register their UI resource.
  */
 import type {
   SwarmJourneyFinding,
@@ -79,6 +76,7 @@ import {
   listStudiesOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
+  authorizeLocalExecutionOperation,
   sendChatMessageOperation,
   driveChatSessionBrowserOperation,
   observeChatSessionBrowserOperation,
@@ -452,6 +450,7 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   // The two reads are here while `list_chat_sessions`/`search_sessions`
   // remain deliberately narrow elsewhere, because taking an id the caller
   // produced is not the same claim as enumerating an org's conversations.
+  authorizeLocalExecutionOperation,
   sendChatMessageOperation,
   driveChatSessionBrowserOperation,
   observeChatSessionBrowserOperation,

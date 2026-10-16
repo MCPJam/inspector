@@ -1,3 +1,4 @@
+import { createLocalExecutionAuthorizationOperation } from "./local-execution-operation.js";
 import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
 import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
 import {
@@ -18,13 +19,6 @@ import { platformBrowserToolPolicySchema } from "./browser-policy.js";
 import { BROWSER_AGENT_ACT_VERBS } from "./browser-agent-contract.js";
 import type { PlatformSessionBrowserCommand } from "./types.js";
 import type { PlatformSessionBrowserOperationResult } from "./types.js";
-/**
- * Curated, task-shaped operations over the Platform API. Each operation is
- * defined once and adapted per surface: MCP worker tools, CLI commands, and
- * (later) in-product agent tools. Names follow the built-in tool id
- * convention (`^[a-z][a-z0-9_]{0,63}$`) so they can be registered in the
- * product catalog unchanged.
- */
 import { z } from "zod";
 import { stableStringifyJson } from "../widget-runtime/json-utils.js";
 import { comparisonKey } from "../host-config/reasoning-effort.js";
@@ -9363,6 +9357,8 @@ export const listChatSessionsOperation: PlatformOperation<
 // different claim: "show me the session I just created" is not "show me what
 // everyone in this org has been talking about".
 
+export const authorizeLocalExecutionOperation = createLocalExecutionAuthorizationOperation(resolveProjectOrThrow);
+
 const sendChatMessageInput = z.object({
   browser: z
     .object({
@@ -9496,16 +9492,8 @@ export const sendChatMessageOperation: PlatformOperation<
   description:
     "Send one message to a project's MCP servers and get the model's reply PLUS the telemetry a participant could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage. Pass the returned sessionId back to continue the conversation. SPENDS model credits per call. Configuration (model, target, system prompt, tool mode) pins on the first turn; a continuation that resends it is refused. Tools default to read_only; toolMode:'auto' may cause real external side effects. Pass hostId (or target an environment, which pins its own host) to run a saved host — including one that declares a real agent harness; the response's `engine` field always names what actually ran.",
   readOnly: false,
-  // Unknowable upstream of the call in the SAME sense `call_server_tool` is:
-  // under `auto` this executes arbitrary third-party tools, and softening the
-  // destructive default would claim a safety the host cannot verify.
   mayBeDestructive: true,
   risk: "spend",
-  // `projectId` off the RESULT, not the resolved scope: a continuation skips
-  // `resolveProjectOrThrow` on purpose (see `execute`), so there is no scope
-  // receipt to fall back on and the link would be dropped after every
-  // successful continuation — silently, since a permalink that cannot be
-  // built is reported and skipped rather than thrown.
   permalink: derivePermalinks((result) =>
     result.sessionId
       ? [
@@ -19577,6 +19565,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getStudyOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
+  authorizeLocalExecutionOperation,
   sendChatMessageOperation,
   driveChatSessionBrowserOperation,
   observeChatSessionBrowserOperation,

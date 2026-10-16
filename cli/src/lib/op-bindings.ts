@@ -306,6 +306,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_studies: { command: "cloud studies list" },
   list_chat_sessions: { command: "cloud sessions list" },
   search_sessions: { command: "cloud sessions search" },
+  authorize_local_execution: { command: "cloud sessions authorize-local" },
   send_chat_message: { command: "cloud sessions send" },
   drive_chat_session_browser: { command: "cloud sessions browser open" },
   observe_chat_session_browser: { command: "cloud sessions browser observe" },

@@ -1,3 +1,4 @@
+import type { LocalExecutionAuthorization, PlatformLocalExecutionGrant } from "./local-execution.js";
 import type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
@@ -1275,6 +1276,9 @@ export class PlatformApiClient {
   ): Promise<PlatformSessionBrowserOpened> {
     return this.request("POST", "/chat-sessions/browser", { body }, options);
   }
+  authorizeLocalExecution(projectId: string, body: LocalExecutionAuthorization, options?: RequestOptions): Promise<PlatformLocalExecutionGrant> {
+    return this.request("POST", `/projects/${encodeURIComponent(projectId)}/local-execution-grants`, { body }, options);
+  }
   sendChatMessage(
     params: {
       idempotencyKey: string;
@@ -1298,11 +1302,7 @@ export class PlatformApiClient {
     },
     options?: RequestOptions
   ): Promise<PlatformChatTurn> {
-    // Built field by field rather than forwarded wholesale. The route's body
-    // schema is STRICT, so any extra key a caller happens to carry on its own
-    // params object would turn a valid request into a 400 — and forwarding an
-    // unknown key is exactly how a client starts depending on a field the
-    // contract never promised.
+    // The route is strict: forward only fields in the public contract.
     return this.request(
       "POST",
       "/chat-sessions/messages",

@@ -67,6 +67,7 @@ import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
 import browserSessions from "./browser-sessions.js";
 import tunnels from "./tunnels.js";
+import localExecution from "./local-execution.js";
 import readiness from "./readiness.js";
 import conformanceRuns from "./conformance-runs.js";
 import { v1Error, v1OnError } from "./envelope.js";
@@ -141,6 +142,7 @@ for (const family of ["tools", "resources", "prompts"] as const) {
 
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
+v1.route("/", localExecution);
 // Server groups (immutable standalone server snapshots). Guest-DENIED: the
 // Convex reads are membership-gated and creating one is a member write, so
 // there is no share-link flow that needs them.
