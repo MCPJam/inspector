@@ -1,6 +1,7 @@
+vi.mock("../study-actor.js", () => ({ verifyLocalStudyActor: mocks.studyActor }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
-  query: vi.fn(), actor: vi.fn(), authorization: vi.fn(), grant: vi.fn(), rollout: vi.fn(),
+  studyActor: vi.fn(), query: vi.fn(), actor: vi.fn(), authorization: vi.fn(), grant: vi.fn(), rollout: vi.fn(),
   status: vi.fn(), install: vi.fn(), register: vi.fn(),
   workspace: vi.fn(async () => ({ ok: true, grant: { workspaceGrantId: "set-up-workspace" } })),
   background: vi.fn(async () => ({ kind: "started" })), policy: vi.fn(() => "auto"),
@@ -29,6 +30,7 @@ beforeEach(() => {
   mocks.actor.mockResolvedValue({ ok: true, actor });
   mocks.query.mockImplementation(async (name: string) => name === "projects:getMyProjects" ? [{ _id: "project" }] : { externalId: "user" });
   mocks.rollout.mockResolvedValue(true);
+  mocks.studyActor.mockResolvedValue({ actor });
   mocks.authorization.mockResolvedValue({ workspaceGrantId: "saved-workspace" });
   mocks.status.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime", packVersion: "1" });
   mocks.register.mockResolvedValue({ ok: true, keyId: "registered" });
@@ -172,4 +174,13 @@ describe("an update never widens permissions (invariant 3)", () => {
     // No new consent was recorded: the durable authorization carries over.
     expect(authorizeLocalHarness).not.toHaveBeenCalled();
   });
+});
+
+it("mints explicit attended study consent without inheriting durable project consent", async () => {
+  mocks.authorization.mockResolvedValue(null);
+  const study = { scenarioId: "study", accessVersion: 1, chatSessionId: "chat", requireToolApproval: false };
+  const ready = await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended", studyAccepted: true, study, localStudySessionId: "reservation", workspaceGrantId: "study-folder", requireToolApproval: false });
+  expect(ready.target.workspaceGrantId).toBe("study-folder");
+  expect(mocks.grant).toHaveBeenCalledWith(expect.objectContaining({ study, scope: "attended" }), expect.any(Object));
+  await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "unattended", studyAccepted: true, study, localStudySessionId: "reservation", workspaceGrantId: "study-folder" })).rejects.toThrow("Explicit attended");
 });

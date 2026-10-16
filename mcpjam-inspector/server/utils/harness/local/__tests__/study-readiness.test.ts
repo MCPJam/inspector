@@ -1,4 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
+vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, LOCAL_HARNESS_ENABLED: true }));
+vi.mock("../acting-user.js", () => ({ resolveLocalHarnessActor: async () => ({ ok: true, actor: { userId: "actual-user" } }) }));
 const mocks = vi.hoisted(() => ({
   config: vi.fn(),
   reserve: vi.fn(),
@@ -20,6 +22,7 @@ vi.mock("../instance-key.js", () => ({
 vi.mock("../readiness.js", () => ({
   ensureLocalHarnessTarget: mocks.ready,
   verifyLocalHarnessMember: mocks.member,
+  localHarnessAccountEnabled: async () => true,
 }));
 vi.mock("../run-resources.js", () => ({
   localHarnessIdOf: (id: string) =>
@@ -111,7 +114,7 @@ it.each([
   await expect(setupLocalStudyPreview(args)).rejects.toThrow(
     "Local study preview",
   );
-  expect(mocks.reserve).not.toHaveBeenCalled();
+  expect(mocks.workspace).not.toHaveBeenCalled();
   expect(mocks.ready).not.toHaveBeenCalled();
 });
 
@@ -132,7 +135,7 @@ it.each([
   expect(mocks.ready).not.toHaveBeenCalled();
 });
 
-it("preserves the existing local client authorization requirement", async () => {
+it("surfaces runtime setup failures", async () => {
   mocks.ready.mockRejectedValue(new Error("Set up Codex from Add client"));
   await expect(setupLocalStudyPreview(args)).rejects.toThrow(
     "Set up Codex from Add client",
@@ -151,5 +154,15 @@ it.each([
   await expect(setupLocalStudyPreview(args)).rejects.toThrow(
     "Choose and save a model source",
   );
-  expect(mocks.reserve).not.toHaveBeenCalled();
+  expect(mocks.workspace).not.toHaveBeenCalled();
+});
+
+it("reserves before resolving participant runtime and never borrows project consent", async () => {
+  mocks.reserve.mockResolvedValue({ reservationId: "reservation", projectId: "canonical-project", ...args, admission: { actorRole: "participant", harnessId: "codex", modelId: "openai/gpt-5", modelSourceReady: true } });
+  mocks.config.mockResolvedValue({ ok: true, config: { ...config, modelSelection: undefined, accessKind: "swarm_grant", executionScope: { kind: "swarm", projectId: "canonical-project" } } });
+  await setupLocalStudyPreview(args);
+  expect(mocks.member).not.toHaveBeenCalled();
+  expect(mocks.config).toHaveBeenCalledWith(expect.objectContaining({ localStudy: { localStudySessionId: "reservation", machineId: "machine", keyId: "key", chatSessionId: "chat" } }));
+  expect(mocks.reserve.mock.invocationCallOrder[0]).toBeLessThan(mocks.config.mock.invocationCallOrder[0]);
+  expect(mocks.ready).toHaveBeenCalledWith(expect.objectContaining({ studyAccepted: true, scope: "attended" }));
 });

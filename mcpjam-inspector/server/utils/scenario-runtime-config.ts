@@ -1,13 +1,11 @@
+import type { LocalStudyRuntimeProof } from "./harness/local/study-runtime-proof.js";
 /**
  * Fetch the live runtime execution config for a scenario.
  *
  * The chat-v2 endpoints call this when a request carries a `scenarioId` so
  * the server can override client-supplied `model` / `systemPrompt` /
  * `temperature` / `requireToolApproval` with whatever the scenario's host
- * currently resolves to. Without this re-resolution the inspector trusts
- * the client body verbatim — which lets a stale playgroundSession or a
- * tampered request route a scenario session through a different model or
- * skip tool approval. The host's `hostConfigs` row is the source of truth.
+ * currently resolves to. The host config is authoritative for model and approval.
  *
  * Backed by `convex/http.ts:/web/scenario/runtime-config`, which in turn
  * walks `scenario → host → hostConfig` via `internalGetScenarioRuntimeConfig`.
@@ -110,6 +108,7 @@ export type ScenarioRuntimeConfig = RuntimeExecutionFields & {
   accessVersion: number;
   modelId: string;
   modelSelection?: unknown;
+  localStudyAdmission?: { harnessId: "claude-code" | "codex"; modelSourceReady: boolean };
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
@@ -539,6 +538,7 @@ export async function fetchScenarioRuntimeConfig(args: {
    * provision — is told the participant has no harness, exactly as before.
    */
   harnessBox?: boolean;
+  localStudy?: LocalStudyRuntimeProof;
   signal?: AbortSignal;
 }): Promise<ScenarioRuntimeConfigResult> {
   const url = new URL(
@@ -559,6 +559,7 @@ export async function fetchScenarioRuntimeConfig(args: {
       },
       body: JSON.stringify({
         scenarioId: args.scenarioId,
+        ...args.localStudy,
         ...(typeof args.accessVersion === "number"
           ? { accessVersion: args.accessVersion }
           : {}),

@@ -1,3 +1,4 @@
+import { verifyLocalStudyActor } from "./study-actor.js";
 /** Shared setup and launch authorization for every local harness surface. */
 import { ConvexHttpClient } from "convex/browser";
 import { createHash } from "node:crypto";
@@ -83,6 +84,7 @@ export async function ensureLocalHarnessTarget(args: {
   workspaceGrantId?: string;
   study?: LocalStudyGrantBinding;
   localStudySessionId?: string;
+  studyAccepted?: true;
   waitForInstall?: boolean;
   requireToolApproval?: boolean;
   /** Verified once at the signed-in launch; only trusted schedulers pass this. */
@@ -97,11 +99,18 @@ export async function ensureLocalHarnessTarget(args: {
   const harnessId = args.harnessId ?? "claude-code";
   const name = LOCAL_HARNESS_DISPLAY_NAMES[harnessId];
   if (args.study && (!args.workspaceGrantId || !args.localStudySessionId)) throw new Error("A study grant requires its isolated workspace and backend reservation");
-  const actor = await verifyLocalHarnessMember(args.bearer, args.projectId, args.trustedActor, harnessId);
+  if (args.study && (args.studyAccepted !== true || args.scope !== "attended")) throw new Error("Explicit attended study authorization is required");
+  if (args.study && args.study.requireToolApproval !== args.requireToolApproval) throw new Error("Study command policy changed; authorize setup again");
+  const actor = args.study && args.localStudySessionId
+    ? (await verifyLocalStudyActor({ bearer: args.bearer, projectId: args.projectId, harnessId, study: args.study, reservationId: args.localStudySessionId }, {
+        member: () => verifyLocalHarnessMember(args.bearer, args.projectId, undefined, harnessId),
+        rollout: () => localHarnessAccountEnabled(args.bearer, undefined, harnessId),
+      })).actor
+    : await verifyLocalHarnessMember(args.bearer, args.projectId, args.trustedActor, harnessId);
   const machineId = await getLocalMachineId();
   const authorization = await readLocalHarnessAuthorization(actor.userId, machineId, args.projectId, harnessId);
-  if (!authorization) throw new Error(`Set up ${name} from Add client to allow it to run on this computer`);
-  if (args.scope === "attended" && args.requireToolApproval === false && !authorization.autoApproveAcknowledgedAt) {
+  if (!authorization && !args.study) throw new Error(`Set up ${name} from Add client to allow it to run on this computer`);
+  if (args.scope === "attended" && args.requireToolApproval === false && !authorization?.autoApproveAcknowledgedAt && !args.study) {
     throw new LocalAutoApproveConsentRequiredError();
   }
   noteRuntimeMetricsActor(actor.subject);
@@ -140,7 +149,8 @@ export async function ensureLocalHarnessTarget(args: {
     runtimeRoot: status.runtimeRoot, platform,
   });
   if (!runtime.ok) throw new Error(runtime.message);
-  const workspaceGrantId = args.workspaceGrantId ?? authorization.workspaceGrantId;
+  const workspaceGrantId = args.workspaceGrantId ?? authorization?.workspaceGrantId;
+  if (!workspaceGrantId) throw new Error("A local working folder is required");
   const workspace = await resolveWorkspaceGrant(workspaceGrantId);
   if (!workspace.ok) throw new Error(workspace.message);
   const identity = await readLocalInstanceIdentity();

@@ -59,3 +59,14 @@ describe("fetchScenarioRuntimeConfig — harness-box declaration", () => {
     expect(SCENARIO_HARNESS_BOX_VERSION).toBe(1);
   });
 });
+
+it("forwards the server-owned local study proof", async () => {
+  vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+  const request = vi.fn(async () => Response.json({ ok: true, config: {} }));
+  vi.stubGlobal("fetch", request);
+  const localStudy = { localStudySessionId: "reservation", machineId: "machine", keyId: "key", chatSessionId: "chat" };
+  try {
+    await fetchScenarioRuntimeConfig({ scenarioId: "study", accessVersion: 1, bearer: "token", localStudy });
+    expect(request).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: JSON.stringify({ scenarioId: "study", ...localStudy, accessVersion: 1 }) }));
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+});

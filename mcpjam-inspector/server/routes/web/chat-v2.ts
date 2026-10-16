@@ -1,3 +1,4 @@
+import { localStudyRuntimeProof } from "../../utils/harness/local/study-runtime-proof.js";
 import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
 import { hasServiceCredential } from "../../services/service-credential.js";
 import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
@@ -534,10 +535,8 @@ chatV2.post("/", async (c) => {
       const runtime = await fetchScenarioRuntimeConfig({
         scenarioId,
         bearer: bearerToken,
-        // Opt this turn into backend version enforcement. A caller whose
-        // cached version is behind the row's is running against a config
-        // that has since moved (rebind, mode change, republish); it must
-        // re-redeem rather than have its stale view honored.
+        localStudy: await localStudyRuntimeProof(rawBody.harnessTarget, body.chatSessionId),
+        // Backend rechecks both the access version and any local reservation.
         accessVersion,
         // Only a server that can provision the conversation's box may be
         // told a participant's harness runs on one; anyone else would have
