@@ -31,6 +31,7 @@ import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
+import { UnavailableOrganizationDialog } from "./components/organization/UnavailableOrganizationDialog";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import {
@@ -385,7 +386,6 @@ import {
   buildOrganizationSwitchTarget,
   buildProjectSettingsTarget,
   buildProjectSwitchTarget,
-  getInvalidOrganizationRouteNavigationTarget,
   isDebugOAuthCallbackPath,
   navigationTargetToPath,
   navigateApp,
@@ -5699,51 +5699,10 @@ export default function App() {
     [setSelectedMCPConfigs],
   );
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      return;
-    }
-
-    // A pending delete holds the route only while the org is still listed, so
-    // Back to an org that is already gone still redirects.
-    if (
-      routeOrganizationId &&
-      ((deletingOrganizationIds.includes(routeOrganizationId) &&
-        sortedOrganizations.some((org) => org._id === routeOrganizationId)) ||
-        optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
-    ) {
-      return;
-    }
-
-    const navigationTarget = getInvalidOrganizationRouteNavigationTarget({
-      routeTab: activeTab,
-      routeOrganizationId,
-      isLoadingOrganizations,
-      hasRouteOrganization,
-    });
-    if (!navigationTarget) {
-      return;
-    }
-
+  const handleUnavailableOrganizationContinue = useCallback(() => {
     setActiveOrganizationId(undefined);
-    if (navigationTarget === routePaths.servers) {
-      navigateToServers({ replace: true });
-    } else {
-      navigateToTarget(navigationTarget, { replace: true });
-    }
-  }, [
-    activeTab,
-    deletingOrganizationIds,
-    hasRouteOrganization,
-    isAuthenticated,
-    isLoadingOrganizations,
-    navigateToServers,
-    navigateToTarget,
-    optimisticallyDeletedOrganizationIds,
-    routeOrganizationId,
-    setActiveOrganizationId,
-    sortedOrganizations,
-  ]);
+    navigateToServers({ replace: true });
+  }, [navigateToServers, setActiveOrganizationId]);
 
   const handleOrganizationDeleted = useCallback(
     (deletedOrganizationId: string) => {
@@ -6730,6 +6689,28 @@ export default function App() {
             <Toaster />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <UnavailableOrganizationDialog
+              isAuthenticated={isAuthenticated}
+              routeTab={activeTab}
+              routeOrganizationId={routeOrganizationId}
+              isLoadingOrganizations={isLoadingOrganizations}
+              hasRouteOrganization={hasRouteOrganization}
+              isDeletionPending={
+                !!routeOrganizationId &&
+                ((deletingOrganizationIds.includes(routeOrganizationId) &&
+                  sortedOrganizations.some(
+                    (org) => org._id === routeOrganizationId,
+                  )) ||
+                  optimisticallyDeletedOrganizationIds.includes(
+                    routeOrganizationId,
+                  ))
+              }
+              isSeatPending={sortedOrganizations.some(
+                (org) => org._id === routeOrganizationId && org.seatPending,
+              )}
+              accountEmail={currentUser?.email || workOsUser?.email}
+              onContinue={handleUnavailableOrganizationContinue}
+            />
             <SessionRefreshBanner />
             <GuestSessionRefusedBanner />
             <div
