@@ -201,3 +201,23 @@ it("requires a new conversation for cloud after local setup and retains revoke",
     screen.getByRole("button", { name: "Revoke local access" }),
   ).toBeEnabled();
 });
+
+it("keeps a revoked bound conversation unavailable for sending", () => {
+  render(
+    <LocalStudyControls
+      controller={controller({ isBoundConversation: () => true })}
+      revocation={{
+        ...revocation,
+        reservationId: "reservation",
+        revoked: true,
+        cleanupComplete: true,
+      }}
+      chatSessionId="chat"
+      disabled={false}
+    />,
+  );
+  expect(screen.getByText("Unavailable")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Use cloud" }),
+  ).not.toBeInTheDocument();
+});

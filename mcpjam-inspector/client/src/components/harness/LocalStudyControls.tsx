@@ -20,22 +20,19 @@ interface LocalStudyControlsProps {
   allowSetup?: boolean;
 }
 export function LocalStudyControls(props: LocalStudyControlsProps) {
-  const {
-    controller,
-    revocation,
-    chatSessionId,
-    disabled,
-    allowSetup = true,
-  } = props;
+  const { controller, revocation, chatSessionId, disabled } = props;
+  const allowSetup = props.allowSetup ?? true;
   const [open, setOpen] = useState(false);
   const ready = controller.resolveSendTarget(chatSessionId ?? undefined);
   const busy = disabled || controller.loading || Boolean(revocation?.pending);
   const bound = controller.isBoundConversation(chatSessionId);
+  const setupDisabled = busy || !chatSessionId || Boolean(revocation?.reservationId);
+  const harnessName = ready?.target.harnessId === "codex" ? "Codex" : undefined;
   const target =
     controller.requested || bound ? (ready ? "local-native" : null) : "hosted";
   const phase = controller.loading
     ? "loading"
-    : controller.requested && !ready
+    : (controller.requested || bound) && !ready
     ? "unavailable"
     : "ready";
   return (
@@ -46,17 +43,13 @@ export function LocalStudyControls(props: LocalStudyControlsProps) {
           target={target}
           phase={phase}
           hostedAvailable={true}
-          harnessName={
-            ready?.target.harnessId === "codex" ? "Codex" : undefined
-          }
+          harnessName={harnessName}
         />
         {allowSetup && (
           <Button
             variant="ghost"
             size="sm"
-            disabled={
-              busy || !chatSessionId || Boolean(revocation?.reservationId)
-            }
+            disabled={setupDisabled}
             onClick={() => setOpen(true)}
           >
             {controller.requested ? "Local setup" : "Run on this machine"}
@@ -92,7 +85,7 @@ export function LocalStudyControls(props: LocalStudyControlsProps) {
       <LocalStudyDialog
         open={open}
         onOpenChange={setOpen}
-        disabled={busy || !chatSessionId || Boolean(revocation?.reservationId)}
+        disabled={setupDisabled}
         onConfirm={async () => {
           if (chatSessionId) await controller.setup(chatSessionId);
           setOpen(false);
