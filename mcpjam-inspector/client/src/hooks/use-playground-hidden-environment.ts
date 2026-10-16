@@ -9,6 +9,8 @@ import {
 import { useEnsureAdhocEnvironment } from "@/hooks/useProjectEnvironments";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { usePluginServerNotices } from "@/hooks/use-plugin-server-notices";
+import { usePluginServerSignIn } from "@/hooks/usePluginServerSignIn";
+import { registerPluginNoticeSignIn } from "@/lib/plugins/plugin-notice-display";
 import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
 import { useProjectSecrets } from "@/hooks/useProjectSecrets";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
@@ -140,6 +142,20 @@ export function usePlaygroundHiddenEnvironment(
     runtimeVenue: HIDDEN_ENVIRONMENT_VENUE,
   });
   const plugins = active.plugins;
+  // The chat's plugin notices offer the same Sign in as the server's card, for
+  // the members whose plugins they name. Registered before the notices below
+  // replay, so a notice a remount replays already carries it.
+  const pluginSignIn = usePluginServerSignIn(
+    eligible && isMember ? projectId : null,
+  );
+  const { available: canSignIn, signIn } = pluginSignIn;
+  useEffect(
+    () =>
+      canSignIn
+        ? registerPluginNoticeSignIn((binding) => void signIn(binding))
+        : undefined,
+    [canSignIn, signIn],
+  );
   usePluginServerNotices(plugins);
   // No authoritative answer yet: who this is, or which plugins it has. An
   // empty list here is not "no plugins". Only for a chat that could have

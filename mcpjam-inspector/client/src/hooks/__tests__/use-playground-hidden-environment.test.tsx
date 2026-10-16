@@ -14,6 +14,10 @@ const state = vi.hoisted(() => ({
   secretsProjectIds: [] as Array<string | null | undefined>,
   ensure: vi.fn(),
   query: vi.fn(),
+  signInAvailable: false,
+  signIn: vi.fn(),
+  signInProjectIds: [] as Array<string | null>,
+  toastInfo: vi.fn(),
 }));
 
 vi.mock("@/hooks/useActivePlugins", async (importOriginal) => {
@@ -60,11 +64,27 @@ vi.mock("@/hooks/useProjectSecrets", () => ({
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query: state.query }),
 }));
+vi.mock("@/hooks/usePluginServerSignIn", () => ({
+  usePluginServerSignIn: (projectId: string | null) => {
+    state.signInProjectIds.push(projectId);
+    return {
+      available: state.signInAvailable && !!projectId,
+      pendingKey: null,
+      signIn: state.signIn,
+    };
+  },
+}));
+vi.mock("@/lib/toast", () => ({ toast: { info: state.toastInfo } }));
 
 import {
   HIDDEN_ENVIRONMENT_WAIT_MS,
   usePlaygroundHiddenEnvironment,
 } from "../use-playground-hidden-environment";
+import {
+  resetShownPluginNotices,
+  showPluginNotice,
+} from "@/lib/plugins/plugin-notice-display";
+import { usePluginServerNoticeStore } from "@/stores/plugin-server-notice-store";
 
 const PROJECT_ID = "j57abcdefghijklmnopqrstuvwxyz012";
 
@@ -117,6 +137,74 @@ function render(
     },
   );
 }
+
+describe("the chat notice's Sign in", () => {
+  beforeEach(() => {
+    state.plugins = [];
+    state.isMember = true;
+    state.activeLoading = false;
+    state.activeFailed = false;
+    state.signInAvailable = true;
+    state.signIn.mockReset();
+    state.signInProjectIds = [];
+    state.toastInfo.mockReset();
+    state.ensure.mockReset();
+    state.ensure.mockResolvedValue({
+      environment: { environmentId: "env_1" },
+      created: true,
+    });
+    resetShownPluginNotices();
+  });
+
+  it("is on a notice a remount replays, and leaves with the Playground", () => {
+    state.plugins = [
+      plugin("bits", {
+        servers: [
+          {
+            serverId: "srv_bits",
+            name: "bits-server",
+            componentKey: "server:api",
+            placement: "remote",
+            unavailable: "needs_auth",
+          },
+        ],
+      }),
+    ];
+    // Reported while the Playground was away.
+    usePluginServerNoticeStore
+      .getState()
+      .report("chat-away", [{ serverId: "srv_bits", reason: "needs_auth" }]);
+    const { unmount } = render();
+    const action = state.toastInfo.mock.calls.at(-1)?.[1]?.action;
+    expect(action?.label).toBe("Sign in");
+    action.onClick();
+    expect(state.signIn).toHaveBeenCalledWith({
+      pluginVersionId: "ver_bits",
+      componentKey: "server:api",
+    });
+    unmount();
+    showPluginNotice("chat-after", {
+      kind: "skipped",
+      plugins: [
+        {
+          pluginId: "plg_bits",
+          name: "bits",
+          displayName: "BITS",
+          reason: "needs_auth",
+          partial: true,
+          signIn: { pluginVersionId: "ver_bits", componentKey: "server:api" },
+        },
+      ],
+    });
+    expect(state.toastInfo.mock.calls.at(-1)).toHaveLength(1);
+  });
+
+  it("is not offered to someone who is not a member", () => {
+    state.isMember = false;
+    render();
+    expect(state.signInProjectIds.every((id) => id === null)).toBe(true);
+  });
+});
 
 describe("usePlaygroundHiddenEnvironment", () => {
   beforeEach(() => {

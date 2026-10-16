@@ -15,6 +15,7 @@ import {
   PLUGINS_UNAVAILABLE_MESSAGE,
   describePluginNotice,
   pluginNoticeKey,
+  registerPluginNoticeSignIn,
   resetShownPluginNotices,
   showPluginNotice,
   type PluginNoticeData,
@@ -250,5 +251,99 @@ describe("showPluginNotice", () => {
       false,
     );
     expect(toastInfo).not.toHaveBeenCalled();
+  });
+});
+
+describe("a notice's Sign in", () => {
+  const binding = { pluginVersionId: "ver_bits", componentKey: "cad" };
+  const needsSignIn: PluginNoticeData = {
+    kind: "skipped",
+    plugins: [
+      {
+        ...bitsNeedsAuth.plugins[0],
+        partial: true,
+        signIn: binding,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    toastInfo.mockClear();
+    resetShownPluginNotices();
+  });
+
+  it("offers the registered Sign in for the server the notice names", () => {
+    const signIn = vi.fn();
+    const unregister = registerPluginNoticeSignIn(signIn);
+    showPluginNotice("chat-1", needsSignIn);
+    const action = toastInfo.mock.calls.at(-1)?.[1]?.action;
+    expect(action?.label).toBe("Sign in");
+    action.onClick();
+    expect(signIn).toHaveBeenCalledWith(binding);
+    unregister();
+  });
+
+  it("offers nothing without a registered Sign in, or a server to sign in to", () => {
+    showPluginNotice("chat-1", needsSignIn);
+    expect(toastInfo.mock.calls.at(-1)).toHaveLength(1);
+
+    const unregister = registerPluginNoticeSignIn(vi.fn());
+    showPluginNotice("chat-2", bitsNeedsAuth);
+    expect(toastInfo.mock.calls.at(-1)).toHaveLength(1);
+    unregister();
+  });
+
+  it("offers Sign in only for the one named plugin that needs it", () => {
+    const plugin = (name: string, signIn?: typeof binding) => ({
+      ...bitsNeedsAuth.plugins[0],
+      pluginId: `plg_${name}`,
+      name,
+      displayName: name,
+      ...(signIn ? { signIn } : {}),
+    });
+    const other = { ...binding, componentKey: "other" };
+    const signIn = vi.fn();
+    const unregister = registerPluginNoticeSignIn(signIn);
+    const actionFor = (chat: string, plugins: PluginNoticeData) => {
+      showPluginNotice(chat, plugins);
+      return toastInfo.mock.calls.at(-1)?.[1]?.action;
+    };
+
+    // Third of three: the text names only the first.
+    expect(
+      actionFor("chat-1", {
+        kind: "skipped",
+        plugins: [plugin("a"), plugin("b"), plugin("c", binding)],
+      }),
+    ).toBeUndefined();
+    // Two to sign in to: one button cannot cover both.
+    expect(
+      actionFor("chat-2", {
+        kind: "skipped",
+        plugins: [plugin("a", binding), plugin("b", other)],
+      }),
+    ).toBeUndefined();
+    // Second of two is named, and the only one that needs it.
+    const action = actionFor("chat-3", {
+      kind: "skipped",
+      plugins: [plugin("a"), plugin("b", other)],
+    });
+    expect(action?.label).toBe("Sign in");
+    action.onClick();
+    expect(signIn).toHaveBeenCalledWith(other);
+    unregister();
+  });
+
+  it("keeps a newer registration when an older one unregisters", () => {
+    const older = vi.fn();
+    const newer = vi.fn();
+    const unregisterOlder = registerPluginNoticeSignIn(older);
+    const unregisterNewer = registerPluginNoticeSignIn(newer);
+    unregisterOlder();
+    showPluginNotice("chat-1", needsSignIn);
+    toastInfo.mock.calls.at(-1)?.[1]?.action.onClick();
+    expect(newer).toHaveBeenCalledWith(binding);
+    expect(older).not.toHaveBeenCalled();
+    unregisterNewer();
   });
 });
