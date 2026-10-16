@@ -98,8 +98,7 @@ export function RunCostEstimateHint({
               </p>
               <p>
                 The range excludes computer time, other models and tool provider
-                fees. The total can be higher or lower. This estimate is not a
-                spending limit.
+                fees. This estimate is not a spending limit.
               </p>
             </div>
           ) : null}

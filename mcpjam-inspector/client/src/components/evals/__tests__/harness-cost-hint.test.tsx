@@ -42,18 +42,16 @@ describe("harness cost context", () => {
       screen.getAllByText("Partial harness estimate").length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getAllByText(/Client AI range: 400 to 1,400 credits/)
-        .length,
+      screen.getAllByText(/Client AI range: 400 to 1,400 credits/).length,
     ).toBeGreaterThan(0);
     expect(
       screen.getAllByText(
         /excludes computer time, other models and tool provider fees/,
       ).length,
     ).toBeGreaterThan(0);
-    expect(
-      screen.getAllByText(/total can be higher or lower.*not a spending limit/)
-        .length,
-    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/not a spending limit/).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("does not invent a range when history is insufficient", () => {
