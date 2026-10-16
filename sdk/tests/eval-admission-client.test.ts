@@ -30,6 +30,69 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("local admission transport", () => {
+  it("rejects an expired authorization during construction", () => {
+    expect(
+      () => new AttemptStepGuard(client(), {
+        ...receipt,
+        expiresAt: Date.now(),
+      })
+    ).toThrow(expect.objectContaining({ code: "ADMISSION_CLOSED" }));
+  });
+  it("rejects an active receipt already expired when it arrives", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      Response.json({ ...receipt, expiresAt: Date.now() - 1 })
+    ));
+    await expect(client().admit(input)).rejects.toMatchObject({ code: "ADMISSION_CLOSED" });
+  });
+  it("preserves the original transport failure for diagnosis", async () => {
+    vi.useFakeTimers();
+    const cause = new Error("connection reset");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(cause));
+    const result = expect(client().admit(input)).rejects.toMatchObject({
+      code: "PLATFORM_UNAVAILABLE", cause,
+    });
+    await vi.runAllTimersAsync();
+    await result;
+  });
+  it("rejects cached grants at expiry without contacting the server", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const expiresAt = Date.now() + 1_000;
+    const guard = new AttemptStepGuard(client(), {
+      ...receipt,
+      state: "active",
+      grantedSteps: 5,
+      expiresAt,
+    });
+    await guard.beforePrompt();
+    vi.setSystemTime(expiresAt);
+    await expect(guard.beforePrompt()).rejects.toMatchObject({
+      code: "ADMISSION_CLOSED",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rejects a grant that arrives after the attempt expires", async () => {
+    vi.useFakeTimers();
+    const expiresAt = Date.now() + 1_000;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        vi.setSystemTime(expiresAt);
+        return Response.json({ ...receipt, grantedSteps: 2, expiresAt });
+      })
+    );
+    const guard = new AttemptStepGuard(client(), {
+      ...receipt,
+      state: "active",
+      expiresAt,
+    });
+    await guard.beforePrompt();
+    await expect(guard.beforePrompt()).rejects.toMatchObject({
+      code: "ADMISSION_CLOSED",
+    });
+  });
+
   it("requires credentials without making a request", () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
