@@ -7,7 +7,7 @@ import { verifyFlowEvidence, evidenceFailure } from './hosted-harness-flow-evide
 
 export function invokeCli(config, args) {
   const env = { ...process.env };
-  for (const key of ['WORKOS_API_KEY', 'STAGING_WORKOS_API_KEY', 'ASK_MCPJAM_CANARY_PASSWORD']) delete env[key];
+  for (const key of ['WORKOS_API_KEY', 'STAGING_WORKOS_API_KEY', 'ASK_MCPJAM_CANARY_PASSWORD', 'HARNESS_PRODUCT_STUDY_TOKENS']) delete env[key];
   const result = spawnSync('npx', ['--yes', `--package=@mcpjam/cli@${config.cliVersion}`, 'mcpjam', ...args,
     '--api-url', config.apiUrl, '--project', config.projectId, '--format', 'json', '--timeout', '45000'],
   { cwd: tmpdir(), env, encoding: 'utf8', timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
@@ -44,7 +44,7 @@ async function waitForRun(kind, runId, invoke, pause) {
   throw new Error('run_deadline');
 }
 
-async function readSession(sessionId, invoke) {
+export async function readSession(sessionId, invoke) {
   const detail = await invoke(['cloud', 'sessions', 'show', '--session', sessionId, '--limit', '200']);
   const trace = await invoke(['cloud', 'sessions', 'trace', '--session', sessionId, '--limit', '3']);
   if (detail.nextCursor || detail.transcriptUnavailable || trace.turns?.some(turn => turn.spansUnavailable || turn.spansTruncated)) {
