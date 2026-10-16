@@ -25,6 +25,7 @@ import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { track } from "@/lib/analytics";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
+import { ProjectClientInitNotice } from "@/components/hosts/ProjectClientInitNotice";
 import { getCatalogHost } from "@mcpjam/sdk/host-compat";
 import { clientDisplayName } from "@/lib/client-display-name";
 
@@ -179,8 +180,13 @@ export function HostCanvasSelector({
   // SETTLED answer — no clients yet, or an `activeHostId` pointing at a
   // deleted one — and pulsing at the reader forever is a worse lie than
   // showing nothing. `activeHostId` is nullable since the Servers view
-  // started passing its previewed id straight through.
-  if (!active) return null;
+  // started passing its previewed id straight through. An empty project says
+  // whether its first client is on the way.
+  if (!active) {
+    return hosts.length === 0 ? (
+      <ProjectClientInitNotice projectId={projectId} />
+    ) : null;
+  }
 
   return (
     <div
