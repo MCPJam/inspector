@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { invokeCli } from './hosted-harness-async-canary.mjs';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { writeFileSync } from 'node:fs';
@@ -58,16 +58,11 @@ export function verifyTurn(turn, client, probe, previous) {
 }
 
 function send(config, client, message, key, sessionId) {
-  const args = ['--yes', `--package=@mcpjam/cli@${config.cliVersion}`, 'mcpjam', 'cloud', 'sessions', 'send',
-    '--api-url', config.apiUrl, '--project', config.projectId, '--client', client.clientId,
+  const args = ['cloud', 'sessions', 'send', '--client', client.clientId,
     '--message', message, '--idempotency-key', key, '--format', 'json'];
   if (sessionId) args.push('--session', sessionId);
   else args.push('--model', client.modelId, '--tool-mode', 'auto');
-  const result = spawnSync('npx', args, { encoding: 'utf8', timeout: 360_000, maxBuffer: 8 * 1024 * 1024 });
-  if (result.error || result.status !== 0) {
-    throw Object.assign(new Error('cli_did_not_complete'), { exitCode: result.status ?? 4 });
-  }
-  return JSON.parse(result.stdout);
+  return invokeCli(config, args);
 }
 
 export function runCanary(config, invoke = send) {

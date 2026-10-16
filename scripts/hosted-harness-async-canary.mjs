@@ -11,7 +11,7 @@ export function invokeCli(config, args) {
   const result = spawnSync('npx', ['--yes', `--package=@mcpjam/cli@${config.cliVersion}`, 'mcpjam', ...args,
     '--api-url', config.apiUrl, '--project', config.projectId, '--format', 'json', '--timeout', '45000'],
   { cwd: tmpdir(), env, encoding: 'utf8', timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
-  if (result.error || result.status !== 0) throw new Error('cli_did_not_complete');
+  if (result.error || result.status !== 0) throw Object.assign(new Error('cli_did_not_complete'), { exitCode: result.status ?? 4 });
   return JSON.parse(result.stdout);
 }
 
