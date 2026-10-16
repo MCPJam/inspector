@@ -725,6 +725,7 @@ export function revokeLocalHarnessGrants(selector?: {
   userId?: string;
   projectId?: string;
   grantId?: string;
+  workspaceGrantId?: string;
   binding?: HarnessGrantBinding;
 }): Promise<number> {
   return withGrantLock(async () => {
@@ -737,6 +738,10 @@ export function revokeLocalHarnessGrants(selector?: {
     } else if (selector.grantId) {
       state.harnessGrants = state.harnessGrants.filter(
         (g) => g.grantId !== selector.grantId,
+      );
+    } else if (selector.workspaceGrantId) {
+      state.harnessGrants = state.harnessGrants.filter(
+        (g) => g.binding.workspaceGrantId !== selector.workspaceGrantId,
       );
     } else if (selector.binding) {
       const hash = hashGrantBinding(selector.binding);

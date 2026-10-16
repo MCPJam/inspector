@@ -376,6 +376,15 @@ describe("harness consent", () => {
     expect(await revokeLocalHarnessGrants()).toBe(2);
   });
 
+  it("revokes only the selected workspace's execution credentials", async () => {
+    const own = await grantLocalHarnessConsent(binding());
+    const otherBinding = binding({ userId: "user_2", workspaceGrantId: "ws_other" });
+    const other = await grantLocalHarnessConsent(otherBinding);
+    expect(await revokeLocalHarnessGrants({ workspaceGrantId: "ws_1" })).toBe(1);
+    expect((await verifyLocalHarnessGrant(own.token, binding())).ok).toBe(false);
+    expect((await verifyLocalHarnessGrant(other.token, otherBinding)).ok).toBe(true);
+  });
+
   it("prunes expired grants", async () => {
     const now = Date.now();
     await grantLocalHarnessConsent(binding(), { ttlMs: 1_000, now });
