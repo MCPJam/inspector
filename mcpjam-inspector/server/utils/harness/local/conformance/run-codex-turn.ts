@@ -26,6 +26,9 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { running, descendants, listeners } from "./process-observations.js";
+import { codexConformanceCommands } from "./codex-commands.js";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { tool } from "ai";
@@ -171,28 +174,6 @@ const freePort = () =>
     });
   });
 
-async function running(pid: number): Promise<boolean> {
-  let state: string;
-  try {
-    state = (await execFileP("ps", ["-o", "stat=", "-p", String(pid)])).stdout.trim();
-  } catch {
-    return false;
-  }
-  return state.length > 0 && !state.startsWith("Z");
-}
-async function descendants(pid: number): Promise<number[]> {
-  const out: number[] = [];
-  const walk = async (p: number) => {
-    let kids = "";
-    try { kids = (await execFileP("pgrep", ["-P", String(p)])).stdout; } catch { return; }
-    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
-      out.push(k);
-      await walk(k);
-    }
-  };
-  await walk(pid);
-  return out;
-}
 async function psEnv(pid: number) {
   try { return (await execFileP("ps", ["-E", "-o", "command=", "-p", String(pid)])).stdout; }
   catch { return ""; }
@@ -201,14 +182,6 @@ async function readProcEnv(pid: number) {
   // `ps -E` is not universal; /proc is authoritative on Linux.
   try { return (await readFile(`/proc/${pid}/environ`, "utf8")).replace(/\0/g, "\n"); }
   catch { return psEnv(pid); }
-}
-async function listeners(pid: number) {
-  try {
-    return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
-      .split("\n").slice(1).filter(Boolean).map((l) => l.split(/\s+/).slice(-2).join(" "));
-  } catch {
-    return [];
-  }
 }
 
 type TurnResult = {
@@ -267,7 +240,6 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
 }
 
 async function main() {
-  if (WIN) throw new Error("the Codex conformance leg has no Windows arm yet (Windows is not a Codex native target)");
   mark("start");
   const mock = await startChild("mock-responses.mjs", { MOCK_POP_SECRET: POP_SECRET, MOCK_UPSTREAM_KEY: UPSTREAM_KEY_CANARY });
   const gw = await startChild("local-gateway.mjs", {
@@ -275,6 +247,11 @@ async function main() {
     GW_UPSTREAM_KEY: UPSTREAM_KEY_CANARY, GW_POP_SECRET: POP_SECRET,
   });
   const gatewayUrl = `http://127.0.0.1:${gw.port}`;
+  const outsidePath = join(tmpdir(), `mcpjam-codex-outside-${randomBytes(6).toString("hex")}`);
+  const commands = codexConformanceCommands({
+    platform: process.platform, outsidePath, gatewayPort: gw.port,
+    upstreamKeyCanary: UPSTREAM_KEY_CANARY,
+  });
   mark("gateway_ready");
 
   await mkdir(WORKSPACE, { recursive: true });
@@ -408,23 +385,22 @@ async function main() {
   const ranCommand = (t: TurnResult) => t.tools.some((name) => name.toLowerCase() === "bash");
 
   if (!UNATTENDED) {
-    turns.read = await runTurn("attended-read", agent, sessionRef, "SHELL cat hello.txt");
+    turns.read = await runTurn("attended-read", agent, sessionRef, `SHELL ${commands.read}`);
     if (AUTO_APPROVE ? turns.read.approvals !== 0 : turns.read.approvals < 1) failures.push(`attended: unexpected approval count with auto-approve=${AUTO_APPROVE}`);
     if (!ranCommand(turns.read)) failures.push(`attended: no command tool call (tools=${JSON.stringify(turns.read.tools)})`);
     if (!turns.read.text.includes("hello from the codex conformance workspace")) failures.push("attended: the approved command's output did not come back through the model");
     if (AUTO_APPROVE) {
       await writeFile(join(WORKSPACE, "attended-off-marker.txt"), "");
-      turns.marker = await runTurn("attended-off-marker", agent, sessionRef, "SHELL printf 'run\\n' >> attended-off-marker.txt");
+      turns.marker = await runTurn("attended-off-marker", agent, sessionRef, `SHELL ${commands.marker}`);
       if (turns.marker.approvals !== 0) failures.push("attended Off asked for native approval");
       if ((await readFile(join(WORKSPACE, "attended-off-marker.txt"), "utf8")) !== "run\n") failures.push("attended Off marker command did not execute exactly once");
       await rm(join(WORKSPACE, "attended-off-marker.txt"));
     }
   } else {
-    const outsidePath = join("/tmp", `mcpjam-codex-outside-${randomBytes(6).toString("hex")}`);
-    turns.inside = await runTurn("unattended-write-inside", agent, sessionRef, "SHELL echo inside > inside.txt && echo WROTE_INSIDE");
-    turns.tmpdir = await runTurn("unattended-write-tmpdir", agent, sessionRef, 'SHELL echo private > "$TMPDIR/private.txt" && cat "$TMPDIR/private.txt" && echo TMPDIR_OK');
-    turns.outside = await runTurn("unattended-write-outside", agent, sessionRef, `SHELL echo outside > ${outsidePath}; echo EXIT=$?`);
-    turns.network = await runTurn("unattended-network", agent, sessionRef, `SHELL bash -c 'exec 3<>/dev/tcp/127.0.0.1/${gw.port} && echo NET_OPEN || echo NET_BLOCKED'`);
+    turns.inside = await runTurn("unattended-write-inside", agent, sessionRef, `SHELL ${commands.inside}`);
+    turns.tmpdir = await runTurn("unattended-write-tmpdir", agent, sessionRef, `SHELL ${commands.tmpdir}`);
+    turns.outside = await runTurn("unattended-write-outside", agent, sessionRef, `SHELL ${commands.outside}`);
+    turns.network = await runTurn("unattended-network", agent, sessionRef, `SHELL ${commands.network}`);
     for (const [label, turn] of Object.entries(turns)) {
       if (turn.approvals > 0) failures.push(`unattended ${label}: asked for approval with nobody there to answer`);
       if (!ranCommand(turn)) failures.push(`unattended ${label}: no command ran (tools=${JSON.stringify(turn.tools)})`);
@@ -451,8 +427,15 @@ async function main() {
   // Process tree and hygiene while the session is live.
   const kids = await descendants(bridgePid);
   const tree = [bridgePid, ...kids];
-  const envDump = (await Promise.all(tree.map(readProcEnv))).join("\n");
-  if (envDump.includes(UPSTREAM_KEY_CANARY)) failures.push("the upstream model key reached a child process's environment");
+  if (WIN) {
+    turns.environment = await runTurn("child-environment", agent, sessionRef, `SHELL ${commands.environment}`);
+    if (!turns.environment.text.includes("NO_UPSTREAM_KEY") || turns.environment.text.includes("UPSTREAM_KEY_LEAK")) {
+      failures.push("the Windows command inherited the upstream model key");
+    }
+  } else {
+    const envDump = (await Promise.all(tree.map(readProcEnv))).join("\n");
+    if (envDump.includes(UPSTREAM_KEY_CANARY)) failures.push("the upstream model key reached a child process's environment");
+  }
   const bridgeListeners = (await Promise.all(tree.map(listeners))).flat();
   const offLoopback = bridgeListeners.filter((l) => !/^(127\.|\[?::1\]?:)/.test(l));
   if (offLoopback.length > 0) failures.push(`a supervised process listened off loopback: ${JSON.stringify(offLoopback)}`);

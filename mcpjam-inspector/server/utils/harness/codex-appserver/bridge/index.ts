@@ -45,6 +45,7 @@ import type {
 } from "./app-server-protocol.js";
 import { createApprovalController } from "./approval-controller.js";
 import { foreignMcpServerOverrides } from "./mcp-isolation.js";
+import { setupWindowsSandbox } from "./windows-sandbox-setup.js";
 import { buildHostToolCatalog } from "./host-tool-catalog.js";
 import { prepareCodexHome, untrustedProjectPathsFor } from "./codex-home.js";
 import { startHostToolRelay, type HostToolRelay } from "./host-tool-relay.js";
@@ -392,6 +393,16 @@ async function main(): Promise<void> {
       },
     });
     client.notify("initialized", {});
+    if (process.platform === "win32") {
+      try {
+        await setupWindowsSandbox(spawned, args.workdir);
+      } catch (error) {
+        // A later turn must not reuse a process whose sandbox never initialized.
+        await spawned.kill();
+        if (client === spawned) client = undefined;
+        throw error;
+      }
+    }
   };
 
   await runBridge<StartMessage>({
