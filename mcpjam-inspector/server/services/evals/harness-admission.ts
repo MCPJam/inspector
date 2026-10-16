@@ -1,3 +1,4 @@
+import { localHarnessCapabilityRefusal } from "@/shared/harness-capability-support";
 import type { ConvexHttpClient } from "convex/browser";
 import type { SuiteRunRecorder } from "./recorder.js";
 import { logger } from "../../utils/logger.js";
@@ -6,37 +7,11 @@ import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js"
  * Admission gate for eval runs whose resolved host config selects a HARNESS
  * (Claude Code | Codex) rather than the emulated engine.
  *
- * WHY THIS EXISTS. A host config carrying `harness` runs the REAL runtime in
- * chat (`routes/web/chat-v2.ts`) and in swarms (`sessionSimulation/
- * swarm-runner.ts`), both of which pre-flight `checkHarnessRuntimeAvailable`
- * and refuse rather than degrade. Eval runs forwarded `resolvedExecution.
- * harness` into `prepareChatV2` but never pre-flighted anything and never
- * supplied a `harnessMcpProxy` — and since an eval suite ALWAYS has servers,
- * `runHarnessTurn` could not have run even if it had been reached. The
- * observable result was a run that quietly executed on the emulated engine and
- * reported GREEN, which is the worst possible answer: the suite claims it
- * measured Claude Code and it measured something else.
+ * Uses the same runtime gate as chat and swarms, so a new capability rule
+ * applies to all surfaces before execution can start.
  *
- * So: a harness-hosted eval run either passes the SAME gate chat and swarms
- * use, or it fails with the gate's reason. Never emulated, never silent.
- *
- * DELIBERATELY NOT A RE-DERIVED SUBSET. `checkHarnessRuntimeAvailable` is
- * called directly (the swarm-runner's own note at its call site is the
- * governing rationale): a rule added to the shared gate later must apply here
- * too, and calling the same function is the only way to guarantee that.
- *
- * TWO HALVES, because the batch-launch route needs one of them early:
- *   - `checkEvalHarnessAdmission` — the full decision, made once the run's
- *     cases (and therefore their models) are known.
- *   - `checkEvalHarnessStaticAdmission` — everything knowable from the host
- *     config alone, so `POST /eval-run-groups` can reject a bad target during
- *     its all-target dry run BEFORE any sibling starts spending.
- *
- * ── And one gate that is NOT about harnesses ───────────────────────────────
- * `checkEvalExecutionAdmission` runs for EVERY eval run, harness or emulated.
- * It cannot live inside the two above: both return `{ ok: true }` immediately
- * when the host selects no harness, which is the overwhelming majority of runs
- * — exactly the ones its rule is about.
+ * Static admission checks client configuration before fan-out. Full admission
+ * also checks frozen cases. Execution admission covers non-harness clients too.
  */
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
@@ -70,6 +45,7 @@ export type EvalHarnessAdmission =
  *  `config.tests` rows, so callers pass those straight through. */
 export interface EvalHarnessCase {
   title?: string;
+  attachments?: readonly unknown[];
   model?: string;
   provider?: string;
   /**
@@ -282,6 +258,16 @@ export function checkEvalHarnessStaticAdmission(args: {
   const harness = harnessOfHostConfig(args.hostConfig);
   if (!harness) return { ok: true };
   const hostConfig = args.hostConfig as Record<string, unknown>;
+  const capabilityRefusal =
+    args.localExecution &&
+    localHarnessCapabilityRefusal(harness, {
+      builtInToolIds: Array.isArray(hostConfig.builtInToolIds)
+        ? hostConfig.builtInToolIds
+        : [],
+      browserToolPolicy: hostConfig.browserToolPolicy,
+    });
+  if (capabilityRefusal)
+    return { ok: false, harness, reason: capabilityRefusal };
 
   const hasSelectedMcpServers = hasSelectedMcpServersForAdmission(args);
 
@@ -382,6 +368,19 @@ export function checkEvalHarnessAdmission(args: {
   const harness = harnessOfHostConfig(args.hostConfig);
   if (!harness) return { ok: true };
   const hostConfig = args.hostConfig as Record<string, unknown>;
+  const capabilityRefusal =
+    args.localExecution &&
+    localHarnessCapabilityRefusal(harness, {
+      builtInToolIds: Array.isArray(hostConfig.builtInToolIds)
+        ? hostConfig.builtInToolIds
+        : [],
+      browserToolPolicy: hostConfig.browserToolPolicy,
+      hasSeededAttachments: args.cases.some(
+        (test) => (test.attachments?.length ?? 0) > 0,
+      ),
+    });
+  if (capabilityRefusal)
+    return { ok: false, harness, reason: capabilityRefusal };
 
   const hasSelectedMcpServers = hasSelectedMcpServersForAdmission(args);
   const xaaEnterprisePolicyOn =
@@ -607,6 +606,16 @@ export function checkEvalExecutionAdmission(args: {
 }): { ok: true } | { ok: false; reason: string } {
   const singleCase = args.surface === "single-case";
   const harness = harnessOfHostConfig(args.hostConfig);
+  if (harness && args.localExecution) {
+    const refusal = localHarnessCapabilityRefusal(harness, {
+      pinnedComputerImageId: args.pinnedComputerImageId,
+      builtInToolIds: Array.isArray(args.hostConfig?.builtInToolIds)
+        ? args.hostConfig.builtInToolIds
+        : [],
+      browserToolPolicy: args.hostConfig?.browserToolPolicy,
+    });
+    if (refusal) return { ok: false, reason: refusal };
+  }
 
   const ids = args.hostConfig?.builtInToolIds;
   if (!Array.isArray(ids) || ids.length === 0) return { ok: true };

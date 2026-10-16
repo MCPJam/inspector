@@ -1,3 +1,4 @@
+import { localHarnessCapabilityRefusal } from "@/shared/harness-capability-support";
 import type { LocalHarnessActor } from "./acting-user.js";
 import { stopLocalHarnessWorkspace } from "./session-registry.js";
 import { sessionStateDirFor, resolveGitBashPath } from "./supervised-provider.js";
@@ -148,11 +149,16 @@ export async function withLocalHarnessSlot<T>(run: () => Promise<T>, signal?: Ab
 }
 
 export function assertLocalHarnessCapabilities(args: { builtInToolIds?: readonly string[]; computerEnvironmentId?: string; hasAttachments?: boolean; browserToolPolicy?: unknown; harnessId?: string }) {
-  const unsupported = args.builtInToolIds?.filter(id => ["bash", "browser", "computer", "desktop", "video"].includes(id)) ?? [];
-  if (args.computerEnvironmentId || args.hasAttachments || args.browserToolPolicy || unsupported.length) {
-    const name = args.harnessId === "codex" ? "Codex" : "Claude Code";
-    throw new Error(`This client requires cloud computer features. Local ${name} supports its own file and command tools, but cannot use a pinned computer image, seeded attachments, or injected browser/desktop/bash tools.`);
-  }
+  const refusal = localHarnessCapabilityRefusal(
+    args.harnessId ?? "claude-code",
+    {
+      builtInToolIds: args.builtInToolIds,
+      pinnedComputerImageId: args.computerEnvironmentId,
+      hasSeededAttachments: args.hasAttachments,
+      browserToolPolicy: args.browserToolPolicy,
+    },
+  );
+  if (refusal) throw new Error(refusal);
 }
 
 /**

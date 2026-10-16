@@ -1110,12 +1110,7 @@ chatV2.post("/", async (c) => {
     // the /api/mcp route uses — precisely so it can be REFUSED rather than
     // ignored.
     //
-    // This route serves the hosted product and the org-aware path. A hosted
-    // replica running a vendor agent on ITS machine is the structural thing the
-    // whole local design forbids, so `serverEnabled` is false here by
-    // construction (HOSTED_MODE forces the kill switch off) and an explicit ask
-    // gets a 400 saying so. Dropping the field silently would leave a
-    // misconfigured client believing its turn ran locally.
+    // Hosted replicas refuse local execution; they never run on the user's machine.
     let harnessExecutionTarget: LocalHarnessExecutionTarget | undefined;
     if ((await shouldUseLocalHarness(resolvedExecution.harness, bearerToken, hostedBody.projectId)) && !c.get("guestId") && !isScenarioSession) {
       const localHarnessId = localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
@@ -1134,6 +1129,10 @@ chatV2.post("/", async (c) => {
     if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
+        capabilities: {
+          builtInToolIds: resolvedExecution.builtInToolIds,
+          browserToolPolicy: resolvedExecution.browserToolPolicy,
+        },
         localExecution: Boolean(harnessExecutionTarget),
         // Refused before any spend when the adapter has not verified it.
         ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
