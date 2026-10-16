@@ -92,16 +92,47 @@ describe("McpjamAgentThread refusal copy", () => {
 
   it("explains oversized input and restores the rejected prompt for editing", () => {
     sessionState.messages = [{ id: "rejected", role: "user", parts: [] }];
-    const body = { code: "guest_input_too_large", estimatedInputTokens: 37002, limit: 32000 };
+    const body = {
+      code: "guest_input_too_large",
+      estimatedInputTokens: 37002,
+      limit: 32000,
+    };
     renderWithError(body);
-    expect(screen.getByText(
-      "This conversation is too large to send. Shorten your message, start a new chat, or disconnect servers and try again.",
-    )).toBeTruthy();
+    expect(
+      screen.getByText(
+        "This conversation is too large to send. Shorten your message, start a new chat, or disconnect servers and try again.",
+      ),
+    ).toBeTruthy();
     expect(screen.queryByText(JSON.stringify(body))).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Edit message" }));
     expect(sessionState.editRejectedMessage).toHaveBeenCalledOnce();
     expect(screen.getByRole("textbox")).toHaveValue("Debug this failure");
     expect(screen.getByRole("textbox")).toHaveFocus();
+  });
+
+  it("does not offer to erase a turn with completed tool activity", () => {
+    sessionState.messages = [
+      {
+        id: "request",
+        role: "user",
+        parts: [{ type: "text", text: "Create a server" }],
+      },
+      {
+        id: "tool-reply",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-ui_create_server",
+            toolCallId: "create-server",
+            state: "output-available",
+            input: {},
+            output: { serverId: "created-server" },
+          },
+        ],
+      },
+    ];
+    renderWithError({ code: "guest_input_too_large" });
+    expect(screen.queryByRole("button", { name: "Edit message" })).toBeNull();
   });
 
   it("shows the same line for the per-user turn cap", () => {

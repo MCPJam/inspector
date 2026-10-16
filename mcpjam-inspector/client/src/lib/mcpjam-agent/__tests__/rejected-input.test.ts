@@ -55,6 +55,25 @@ describe("oversized agent input recovery", () => {
     ).toEqual(history);
   });
 
+  it("preserves a turn whose tool already ran before a later size refusal", () => {
+    const toolReply: UIMessage = {
+      id: "tool-reply",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-ui_create_server",
+          toolCallId: "create-server",
+          state: "output-available",
+          input: { name: "My server" },
+          output: { serverId: "created-server" },
+        },
+      ],
+    };
+    expect(
+      rejectedInputTurn([...history, rejected, toolReply], refusal),
+    ).toBeNull();
+  });
+
   it("handles an empty transcript without deleting anything", () => {
     expect(rejectedInputTurn([], refusal)).toBeNull();
     expect(rejectedInputTurn([history[1]], refusal)).toBeNull();

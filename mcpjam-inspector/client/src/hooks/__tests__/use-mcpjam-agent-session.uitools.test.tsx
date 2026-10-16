@@ -163,9 +163,14 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
   it("removes rejected input before sending a shorter replacement", async () => {
     const { result } = render();
     const completed = { id: "completed", role: "assistant", parts: [] };
-    mockState.lastChatInstance.messages = [completed, {
-      id: "rejected", role: "user", parts: [{ type: "text", text: "too long" }],
-    }];
+    mockState.lastChatInstance.messages = [
+      completed,
+      {
+        id: "rejected",
+        role: "user",
+        parts: [{ type: "text", text: "too long" }],
+      },
+    ];
     mockState.lastChatInstance.error = new Error(
       JSON.stringify({ code: "guest_input_too_large" }),
     );
@@ -175,24 +180,68 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     await act(() => result.current.submit("shorter"));
     expect(mockState.setMessages).toHaveBeenCalledWith([completed]);
     expect(mockState.clearError).toHaveBeenCalledOnce();
-    expect(mockState.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      parts: expect.arrayContaining([{ type: "text", text: "shorter" }]),
-    }));
+    expect(mockState.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parts: expect.arrayContaining([{ type: "text", text: "shorter" }]),
+      }),
+    );
     expect(mockState.setMessages.mock.invocationCallOrder[0]).toBeLessThan(
       mockState.sendMessage.mock.invocationCallOrder[0],
     );
   });
 
+  it("preserves executed tools when a later step hits the size limit", async () => {
+    const { result } = render();
+    const messages: UIMessage[] = [
+      {
+        id: "request",
+        role: "user",
+        parts: [{ type: "text", text: "Create a server" }],
+      },
+      {
+        id: "tool-reply",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-ui_create_server",
+            toolCallId: "create-server",
+            state: "output-available",
+            input: {},
+            output: { serverId: "created-server" },
+          },
+        ],
+      },
+    ];
+    mockState.lastChatInstance.messages = messages;
+    mockState.lastChatInstance.error = new Error(
+      JSON.stringify({ code: "guest_input_too_large" }),
+    );
+    act(() => {
+      expect(result.current.editRejectedMessage()).toBeNull();
+    });
+    await act(() => result.current.submit("What already happened?"));
+    expect(mockState.lastChatInstance.messages).toBe(messages);
+    expect(mockState.setMessages).not.toHaveBeenCalled();
+    expect(mockState.clearError).not.toHaveBeenCalled();
+    expect(mockState.sendMessage).toHaveBeenCalledOnce();
+  });
+
   it("returns a rejected message for editing without sending it", async () => {
     const { result } = render();
-    mockState.lastChatInstance.messages = [{
-      id: "rejected", role: "user", parts: [{ type: "text", text: "original" }],
-    }];
+    mockState.lastChatInstance.messages = [
+      {
+        id: "rejected",
+        role: "user",
+        parts: [{ type: "text", text: "original" }],
+      },
+    ];
     mockState.lastChatInstance.error = new Error(
       JSON.stringify({ code: "guest_input_too_large" }),
     );
     let draft: string | null = null;
-    act(() => { draft = result.current.editRejectedMessage(); });
+    act(() => {
+      draft = result.current.editRejectedMessage();
+    });
     expect(draft).toBe("original");
     expect(mockState.setMessages).toHaveBeenCalledWith([]);
     expect(mockState.clearError).toHaveBeenCalledOnce();
