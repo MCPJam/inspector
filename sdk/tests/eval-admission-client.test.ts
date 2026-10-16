@@ -30,42 +30,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("local admission transport", () => {
-  it("rejects an expired authorization during construction", () => {
-    expect(
-      () => new AttemptStepGuard(client(), {
-        ...receipt,
-        expiresAt: Date.now(),
-      })
-    ).toThrow(expect.objectContaining({ code: "ADMISSION_CLOSED" }));
-  });
-
-  it.each([
-    [400, "VALIDATION_ERROR"],
-    [401, "UNAUTHORIZED"],
-    [403, "FORBIDDEN"],
-    [402, "PAYMENT_REQUIRED"],
-    [426, "UPGRADE_REQUIRED"],
-    [409, "CONFLICT"],
-  ])("preserves the public wire error code %s/%s", async (status, code) => {
-    const details = { code: "admission_domain" };
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          Response.json(
-            { code, message: "Original remedy.", details },
-            { status: Number(status) }
-          )
-        )
-    );
-    await expect(client().admit(input)).rejects.toMatchObject({
-      code,
-      details,
-      message: "Original remedy.",
-    });
-    expect(fetch).toHaveBeenCalledTimes(1);
-  });
   it("distinguishes a rejected key from missing credentials without an envelope", async () => {
     vi.stubGlobal(
       "fetch",
@@ -95,26 +59,27 @@ describe("local admission transport", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(Date.now()).toBe(startedAt + 8_000);
   });
+
+  it("rejects an expired authorization during construction", () => {
+    expect(
+      () => new AttemptStepGuard(client(), {
+        ...receipt,
+        expiresAt: Date.now(),
+      })
+    ).toThrow(expect.objectContaining({ code: "ADMISSION_CLOSED" }));
+  });
   it("rejects an active receipt already expired when it arrives", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          Response.json({ ...receipt, expiresAt: Date.now() - 1 })
-        )
-    );
-    await expect(client().admit(input)).rejects.toMatchObject({
-      code: "ADMISSION_CLOSED",
-    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      Response.json({ ...receipt, expiresAt: Date.now() - 1 })
+    ));
+    await expect(client().admit(input)).rejects.toMatchObject({ code: "ADMISSION_CLOSED" });
   });
   it("preserves the original transport failure for diagnosis", async () => {
     vi.useFakeTimers();
     const cause = new Error("connection reset");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(cause));
     const result = expect(client().admit(input)).rejects.toMatchObject({
-      code: "PLATFORM_UNAVAILABLE",
-      cause,
+      code: "PLATFORM_UNAVAILABLE", cause,
     });
     await vi.runAllTimersAsync();
     await result;
@@ -184,6 +149,7 @@ describe("local admission transport", () => {
     await result;
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
   it("requires credentials without making a request", () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
@@ -196,18 +162,31 @@ describe("local admission transport", () => {
     ).toThrowError(expect.objectContaining({ code: "CREDENTIALS_MISSING" }));
     expect(fetch).not.toHaveBeenCalled();
   });
-  it.each([402, 409, 426])(
-    "never retries terminal status %s",
-    async (status) => {
+  it.each([
+    [400, "VALIDATION_ERROR"],
+    [401, "UNAUTHORIZED"],
+    [403, "FORBIDDEN"],
+    [402, "PAYMENT_REQUIRED"],
+    [409, "CONFLICT"],
+    [426, "UPGRADE_REQUIRED"],
+  ])(
+    "preserves terminal wire errors without retrying HTTP %s",
+    async (status, code) => {
+      const details = { code: "admission_domain" };
       const fetch = vi
         .fn()
         .mockResolvedValue(
-          Response.json({ message: "The original remedy." }, { status })
+          Response.json(
+            { code, message: "The original remedy.", details },
+            { status: Number(status) }
+          )
         );
       vi.stubGlobal("fetch", fetch);
-      await expect(client().admit(input)).rejects.toThrow(
-        "The original remedy."
-      );
+      await expect(client().admit(input)).rejects.toMatchObject({
+        code,
+        message: "The original remedy.",
+        details,
+      });
       expect(fetch).toHaveBeenCalledTimes(1);
     }
   );
