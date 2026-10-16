@@ -19,7 +19,7 @@ import {
   peekPageToolsForChatTurn,
   pageToolsSnapshotFrom,
 } from "./browserd/page-tools-peek.js";
-import { webmcpPageToolsMode } from "../config.js";
+import { HOSTED_MODE, webmcpPageToolsMode } from "../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { type ModelMessage } from "ai";
 import {
@@ -1962,10 +1962,7 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
-    /**
-     * A hosted harness needs this row to own its disposable computer.
-     * Refuse a failed record so it cannot fall back to a personal computer.
-     */
+    /** A hosted harness needs this row to own its disposable computer. */
     requireRecord?: boolean;
   },
 ): Promise<string | undefined> {
@@ -1977,10 +1974,7 @@ async function createIterationDirectly(
       {
         ...(params.namedHostId ? { namedHostId: params.namedHostId } : {}),
         ...(params.runtimeVenue ? { runtimeVenue: params.runtimeVenue } : {}),
-        // A local quick run declares the one harness it runs here, so the
-        // backend stamps it local exactly when this runner executes it locally
-        // (quick runs declared nothing before, which the backend reads as a
-        // runner for which "local" means Claude Code alone).
+        // Declare the harness this local quick run actually executes.
         ...(params.runtimeVenue === "local" && params.localHarnessId
           ? {
               runnerCapabilities: [
@@ -1999,10 +1993,14 @@ async function createIterationDirectly(
     );
 
     iterationId = result?.iterationId as string | undefined;
+    if (!iterationId && HOSTED_MODE) throw new Error("Eval setup returned no iteration.");
   } catch (error) {
-    const billing = asBillingRouteError(error);
+    const billing = asBillingRouteError(error) ?? (HOSTED_MODE
+      ? new WebRouteError(503, ErrorCode.INTERNAL_ERROR,
+          "Could not record this eval, so it did not run. Try again in a few minutes.",
+          { code: "platform_fee_unavailable" }) : null);
+    if (!billing || billing.status >= 500) logger.error("[evals] Failed to create iteration:", error);
     if (billing) throw billing;
-    logger.error("[evals] Failed to create iteration:", error);
     if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
     if (params.requireRecord) {
       throw new HarnessIterationRecordError(
@@ -3775,6 +3773,7 @@ const executeTestCase = async (params: {
         const id = await createIterationDirectly(convexClient, iterationParams);
         precreatedIterationIds.push(id);
       } catch (error) {
+        if (error instanceof WebRouteError) throw error;
         logger.warn(
           "[evals] Failed to precreate iteration row; falling back to per-loop create",
           {
