@@ -364,3 +364,22 @@ describe("pack release boundaries", () => {
     expect(jobs.report.permissions.issues).toBe("write");
   });
 });
+
+
+it("gates Codex conformance evidence on unattended containment and retains failed outcomes", () => {
+  const steps: Array<{
+    id?: string; name?: string; run?: string; if?: string;
+    "continue-on-error"?: boolean;
+  }> = workflow("local-harness-conformance").jobs["codex-scenarios"].steps;
+  const unattended = steps.find((step) => step.id === "unattended")!;
+  expect(unattended["continue-on-error"]).toBeUndefined();
+  const record = steps.find((step) => step.name === "Record the unattended outcome")!;
+  expect(record.if).toBe("always()");
+  expect(record.run).toContain('"unattended-outcome.json"');
+  expect(record.run).toContain("result: process.env.OUTCOME");
+  const evidence = steps.find((step) => step.name === "Record conformance evidence")!;
+  expect(evidence.if).toBeUndefined();
+  expect(evidence.run).toContain("--scenarios attended,attended-off,unattended");
+  const upload = steps.find((step) => step.name === "Upload conformance evidence")!;
+  expect(upload.if).toBe("always()");
+});
