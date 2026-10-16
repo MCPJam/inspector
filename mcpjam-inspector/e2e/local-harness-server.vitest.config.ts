@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     ...base.test,
     root: fileURLToPath(new URL("..", import.meta.url)),
-    include: ["e2e/fixtures/local-harness-server.test.ts"],
+    include: ["e2e/fixtures/local-harness-server.fixture.ts"],
     setupFiles: [
       fileURLToPath(new URL("../server/test/setup.ts", import.meta.url)),
     ],
