@@ -18,6 +18,7 @@ export function FindingsSummaryCard({
   recommendation,
   narration,
   launchReason,
+  footnotes = [],
 }: {
   sessionCount: number;
   /** 1–4 sentences, joined into one paragraph here. */
@@ -41,6 +42,7 @@ export function FindingsSummaryCard({
    * never ran needs (#5188). Swarm only.
    */
   launchReason?: string | null;
+  footnotes?: readonly string[];
 }) {
   // Filtered before joining so an empty or whitespace-only sentence cannot
   // leave a double space mid-paragraph. The composers do not emit one today;
@@ -100,6 +102,14 @@ export function FindingsSummaryCard({
               </p>
             </div>
           ) : null}
+          {[...new Set(footnotes)].map((note) => (
+            <p
+              key={note}
+              className="text-sm leading-relaxed text-muted-foreground"
+            >
+              {note}
+            </p>
+          ))}
           {fix ? (
             // Own block, not a child of the summary paragraph:
             // `SectionLabel` renders a <p>, and a paragraph inside a

@@ -420,6 +420,30 @@ export type RequestEventMap = {
     totalMs: number;
     spans: Record<string, { count: number; totalMs: number; maxMs: number }>;
   };
+  /**
+   * One plugin onboarding turn (the Playground's Run onboarding or Set up),
+   * from its request to its terminal result. `phases` holds the ms since the
+   * request at which each phase was first reached. IDs, codes, counts and
+   * timings only; never skill text, credentials or tool arguments.
+   */
+  "plugin.onboarding.turn": {
+    attemptId: string;
+    pluginVersionId: string;
+    outcome: "success" | "error" | "cancelled";
+    code?: string;
+    statusCode: number;
+    totalMs: number;
+    phases: Record<string, number>;
+    unavailableServers: number;
+  };
+  /** The same turn, unfinished when its watchdog fired: where it stopped. */
+  "plugin.onboarding.turn.stalled": {
+    attemptId: string;
+    pluginVersionId: string;
+    lastPhase: string;
+    elapsedMs: number;
+    phases: Record<string, number>;
+  };
   "mcp.tool.execution.failed": {
     toolName: string;
     serverId?: string;

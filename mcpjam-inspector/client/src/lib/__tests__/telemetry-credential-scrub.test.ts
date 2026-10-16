@@ -117,22 +117,22 @@ describe("replay callbacks", () => {
 
     const text = recording.maskTextFn(`Share link: ${encoded}`);
     expect(text).not.toContain(SECRET);
-    expect(text).toContain("Share link: %2Fresults%2F");
-    const attribute = recording.maskAttributeFn("data-link", encoded);
-    expect(attribute).not.toContain(SECRET);
-    expect(attribute).toContain("%2Fresults%2F");
+    expect(text).toMatch(/^\*+ \*+ \*+$/);
+    expect(recording.maskAttributeFn("data-link", encoded)).toBe("***");
+    const kept = recording.maskAttributeFn("class", `btn ${encoded}`);
+    expect(kept).not.toContain(SECRET);
+    expect(kept).toContain("btn %2Fresults%2F");
   });
 
-  it("attributes keep their content at full, minus credentials", async () => {
-    const { maskReplayAttributeFull, maskReplayAttribute } =
-      await loadAt("full");
-    expect(maskReplayAttributeFull("class", "btn primary")).toBe("btn primary");
+  it("attributes keep only layout values at full, minus credentials", async () => {
+    const { maskReplayAttribute } = await loadAt("full");
+    expect(maskReplayAttribute("class", "btn primary")).toBe("btn primary");
     expect(
-      maskReplayAttributeFull(
+      maskReplayAttribute(
         "src",
         `/user-testing/acme/${SECRET}?surface=preview`,
       ),
-    ).toBe("/user-testing/acme/[redacted]?surface=preview");
+    ).toBe("***");
     expect(maskReplayAttribute("href", `/results/${SECRET}`)).toBe("***");
     expect(
       maskReplayAttribute("style", `background:url(/results/${SECRET})`),
