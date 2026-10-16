@@ -313,7 +313,7 @@ function notVerifiedReason(
   const version =
     typeof runtimeVersion === "string" && runtimeVersion.trim()
       ? runtimeVersion.trim()
-      : "(unknown version)";
+      : "unknown version";
   return `This model has not been verified for the ${harnessDisplayName(harnessId)} client (${version}). Choose a verified model or another client.`;
 }
 

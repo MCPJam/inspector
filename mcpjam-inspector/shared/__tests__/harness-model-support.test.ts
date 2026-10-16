@@ -159,7 +159,7 @@ describe("harnessModelSupport — semantics", () => {
       expect(verdict.reason).toBe(
         runtimeVersion === "nightly"
           ? "This model has not been verified for the Codex client (nightly). Choose a verified model or another client."
-          : "This model has not been verified for the Codex client ((unknown version)). Choose a verified model or another client.",
+          : "This model has not been verified for the Codex client (unknown version). Choose a verified model or another client.",
       );
     }
   });
