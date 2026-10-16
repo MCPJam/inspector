@@ -283,7 +283,8 @@ export function LocalHarnessTrustDialog({
                 folder is where it starts, not a sandbox — anything you can read
                 or change, it can. With Tool Approval on, commands and changes ask for
                 approval in chat. Turning it off requires a separate confirmation
-                to run without asking.
+                to run without asking. Models use MCPJam credits or your
+                organization's API key, not a personal Claude subscription.
               </>
             )}
           </DialogDescription>

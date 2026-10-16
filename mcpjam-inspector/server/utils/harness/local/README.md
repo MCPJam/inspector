@@ -463,9 +463,9 @@ resolution and exec is REFUSED — never healed under a session.
 
 ## Enabling it
 
-`MCPJAM_LOCAL_HARNESS_ENABLED=true`, and only on a non-hosted server. Default
-off, unlike the local computer engine's flag: a local bash command is discrete
-and separately approved, a local harness is a long-lived agent process.
+Local harness execution defaults on for a non-hosted server. Set
+`MCPJAM_LOCAL_HARNESS_ENABLED=false` to disable it. Hosted servers always disable
+local execution; account rollout, authorization and conformance still apply.
 
 The flag alone is not enough, and deliberately so. Every shipped manifest entry
 carries an empty `lifecycleConformanceVersion`, so
