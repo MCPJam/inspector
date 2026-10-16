@@ -1188,6 +1188,8 @@ export function PlaygroundMain({
   });
   const localHarnessRequested =
     localHarnessInScope && localHarness.requestedTarget === "local-native";
+  const localHarnessIntendedLocal = localHarnessInScope &&
+    !(localHarness.requestedTarget === "hosted" && localHarness.hostedAvailable === true);
   const localHarnessResolveSendTarget = localHarness.resolveSendTarget;
   const localHarnessExecutionOption = useMemo(
     () => ({
@@ -1218,8 +1220,6 @@ export function PlaygroundMain({
   const [localHarnessDialog, setLocalHarnessDialog] = useState<{
     trigger: "first_send" | "chip";
   } | null>(null);
-  // Set after a COLD install finishes, so the composer can say what to do next
-  // rather than leaving the user to guess whether anything happened.
   const [localHarnessJustReady, setLocalHarnessJustReady] = useState(false);
   const [localHarnessPreparing, setLocalHarnessPreparing] = useState(false);
   const localHarnessPreparingRef = useRef(false);
@@ -3180,7 +3180,7 @@ export function PlaygroundMain({
   // Unavailable local clients must explain the disabled Send even before
   // authorization exists. Setup remains reachable from an enabled Send.
   const localHarnessBlocksSend =
-    localHarnessInScope &&
+    localHarnessIntendedLocal &&
     (localHarness.phase === "unavailable" ||
       localHarness.phase === "loading" || localHarness.phase === "needs-signin" ||
       (localHarnessRequested &&
@@ -4809,7 +4809,7 @@ export function PlaygroundMain({
   // Refresh launch credentials without changing durable user authorization.
   const ensureLocalHarnessReadyForSend =
     useCallback(async (setup = false): Promise<boolean> => {
-      if (!setup && localHarnessInScope) {
+      if (!setup && localHarnessIntendedLocal) {
         if (localHarness.phase === "unavailable" || localHarness.phase === "loading" || localHarness.phase === "needs-signin") return false;
         if (!localHarnessRequested || localHarness.phase === "needs-consent" || localHarness.phase === "needs-workspace") {
           setLocalHarnessDialog({ trigger: "first_send" });
@@ -4848,7 +4848,7 @@ export function PlaygroundMain({
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessInScope, localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
+    }, [localHarnessIntendedLocal, localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
 
   const extensionOwnerScope = JSON.stringify([
     currentUserForSender?._id,
@@ -6133,7 +6133,7 @@ export function PlaygroundMain({
    * it rather than replacing it. Overwriting it would disable the visible Send
    * and hide the control that re-enables it.
    */
-  const localHarnessNotice = localHarnessInScope ? (
+  const localHarnessNotice = localHarnessIntendedLocal ? (
       <LocalHarnessComposerNotice
         controller={
           localHarnessPreparing

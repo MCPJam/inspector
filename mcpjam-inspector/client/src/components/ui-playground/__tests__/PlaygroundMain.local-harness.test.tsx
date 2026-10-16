@@ -908,8 +908,6 @@ describe("PlaygroundMain — local Claude Code", () => {
     });
 
     it("is not offered on a harness this machine cannot run locally", () => {
-      // What the controller answers when that harness's rollout is off or it
-      // has no runtime for this platform.
       mockHarnessState.harnessId = "codex";
       mockLocalHarness.state.phase = "unavailable";
       render(<PlaygroundMain {...defaultProps} />);
@@ -966,9 +964,6 @@ describe("PlaygroundMain — local Claude Code", () => {
       expect(screen.getByTestId("chat-input-field")).toHaveValue("keep my draft");
     });
     it("sets up on a machine that never authorized it — Set up is what creates the request", async () => {
-      // First run on this computer: no durable authorization yet, so the
-      // controller requests nothing (`preferredVenue` is not "local"). Set up
-      // must still reach setup; it used to return before sending anything.
       const state = mockLocalHarness.state as Record<string, unknown>;
       const requested = state.requestedTarget;
       state.requestedTarget = null;
@@ -1097,8 +1092,16 @@ describe("PlaygroundMain — local Claude Code", () => {
   });
 
   describe("Send", () => {
+    it.each(["needs-consent", "unavailable"])("preserves explicit hosted selection while local is %s", async (phase) => {
+      Object.assign(mockLocalHarness.state, { phase, requestedTarget: "hosted", hostedAvailable: true });
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(mockChatInputProps.mock.calls.at(-1)?.[0].submitDisabled).toBe(false);
+      type("hosted turn"); await submit();
+      expect(ensureReadyMock).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("local-harness-setup-dialog")).not.toBeInTheDocument();
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledOnce();
+    });
     it("is NOT disabled for missing consent — that is how setup starts", () => {
-      // Missing consent must leave the first-send setup gate reachable.
       render(<PlaygroundMain {...defaultProps} />);
       type("pwd");
       const props = mockChatInputProps.mock.calls.at(-1)?.[0] as {
@@ -1124,8 +1127,6 @@ describe("PlaygroundMain — local Claude Code", () => {
         submitDisabled?: boolean;
       };
       expect(props.submitDisabled).toBe(true);
-      // A disabled Send with no reason on screen is the failure this pairs
-      // against.
       expect(
         screen.getByTestId("local-harness-composer-notice"),
       ).toHaveTextContent("win32 has no local harness runtime");
@@ -1140,7 +1141,6 @@ describe("PlaygroundMain — local Claude Code", () => {
         screen.queryByTestId("local-harness-trust-dialog"),
       ).not.toBeInTheDocument();
       expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
-      // Ready means no readiness round trip and no consent check with On.
       expect(ensureReadyMock).not.toHaveBeenCalled();
       expect(autoConsentMocks.fetch).not.toHaveBeenCalled();
     });
