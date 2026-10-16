@@ -227,7 +227,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
           afterRef.current = Math.max(afterRef.current, page.nextAfter);
           setError(null);
         } catch (err) {
-          if (!disposed) setError(errorMessage(err, "Feed unavailable"));
+          if (!disposed) setError(errorMessage(err, "Feed unavailable. Try again."));
         }
         if (!disposed) timer = setTimeout(tick, POLL_INTERVAL_MS);
       };
@@ -317,7 +317,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
           if (disposed) return;
           // Expired or revoked: the next tick fetches a new token.
           if (eventsErrorCode(err) === "unauthorized") token = null;
-          else setError(errorMessage(err, "Feed unavailable"));
+          else setError(errorMessage(err, "Feed unavailable. Try again."));
         }
         if (!disposed) later(() => void tick(), POLL_INTERVAL_MS);
       };

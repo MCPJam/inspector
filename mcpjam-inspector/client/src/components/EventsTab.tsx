@@ -553,7 +553,7 @@ export function EventsTab({
           title="Subscriptions"
           description={
             hosted
-              ? "This server's subscriptions in the project registry. MCPJam's keeper keeps each one refreshed."
+              ? "This server's subscriptions in the project registry. MCPJam refreshes each one automatically."
               : "This server's subscriptions in the local events runtime."
           }
         >

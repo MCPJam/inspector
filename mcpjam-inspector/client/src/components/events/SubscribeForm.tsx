@@ -36,9 +36,9 @@ const MODE_LABELS: Record<EventsDeliveryModeView, string> = {
 };
 
 const MODE_HINTS: Record<EventsDeliveryModeView, string> = {
-  poll: "MCPJam calls events/poll on the server's suggested interval.",
-  push: "MCPJam holds an events/stream open and the server pushes events.",
-  webhook: "The server POSTs each event to a callback URL MCPJam registers.",
+  poll: "MCPJam checks for new events at the server's suggested interval.",
+  push: "MCPJam keeps a connection open and the server pushes events.",
+  webhook: "The server sends each event to a callback URL MCPJam registers.",
 };
 
 function parseOptionalMs(
@@ -263,9 +263,9 @@ export function SubscribeForm({
             <div className="flex items-start gap-2 text-xs text-foreground">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
               <p>
-                Locally, webhooks go to the inspector's development receiver
-                over plain http, so the server must be able to reach this
-                machine. Runs that use it are not conformance passes.
+                Make sure the server can reach this machine over plain http.
+                Runs that use local webhooks do not count as conformance
+                passes.
               </p>
             </div>
             <div className="flex items-center gap-2">
