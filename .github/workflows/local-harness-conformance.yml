@@ -693,9 +693,9 @@ jobs:
           npm run build:sdk -w @mcpjam/inspector
           npm run pretest -w @mcpjam/inspector
 
-      # Playground profile: a command pauses for approval and runs only once
-      # approved; a host-executed MCP tool runs through MCPJam's relay; the
-      # thread survives detach + resume; Stop leaves nothing behind.
+      - name: Prepare Linux Codex command sandbox
+        if: runner.os == 'Linux'
+        run: bash mcpjam-inspector/scripts/prepare-local-harness-linux-sandbox.sh "$RUNNER_TEMP/conformance/evidence/linux-sandbox-prerequisite.json"
       - name: Attended turn
         working-directory: mcpjam-inspector
         env:

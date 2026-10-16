@@ -383,3 +383,15 @@ it("gates Codex conformance evidence on unattended containment and retains faile
   const upload = steps.find((step) => step.name === "Upload conformance evidence")!;
   expect(upload.if).toBe("always()");
 });
+
+it("prepares the Linux sandbox without disabling the host's namespace restrictions", () => {
+  const steps = workflow("local-harness-conformance").jobs["codex-scenarios"].steps;
+  const setup = steps.find((step: { name?: string }) => step.name === "Prepare Linux Codex command sandbox");
+  expect(setup.if).toBe("runner.os == 'Linux'");
+  expect(setup.run).toContain("prepare-local-harness-linux-sandbox.sh");
+  const script = readFileSync(new URL("../../../../../scripts/prepare-local-harness-linux-sandbox.sh", import.meta.url), "utf8");
+  expect(script).toContain("bubblewrap apparmor-profiles");
+  expect(script).toContain("extra-profiles/bwrap-userns-restrict");
+  expect(script).toContain("/usr/bin/bwrap --unshare-user --unshare-net");
+  expect(script).not.toMatch(/sudo \/usr\/bin\/bwrap|sysctl -w|systemctl stop/);
+});
