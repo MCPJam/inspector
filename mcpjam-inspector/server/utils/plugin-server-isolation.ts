@@ -10,6 +10,7 @@ import {
   type PluginServerUnavailableReason,
 } from "@/shared/plugin-server-unavailable";
 import { WebRouteError } from "../routes/web/errors.js";
+import { markOnboardingPhase } from "../services/plugin-host/onboarding-trace.js";
 import { logger } from "./logger.js";
 
 /**
@@ -84,25 +85,37 @@ export function createTurnToolLister(args: {
   const { manager, serverIds, toolOptions, within } = args;
   const isolatedKeys = new Set(args.isolatedServers.flatMap(args.keysOf));
   const failed = new Map<string, unknown>();
-  const byServer = async (): Promise<ToolsByServer> => {
-    if (isolatedKeys.size === 0) {
-      return within(manager.getToolsForAiSdkByServer(serverIds, toolOptions));
-    }
-    const listed = await listToolsByServerIsolating({
-      list: (keys) =>
-        within(manager.getToolsForAiSdkByServer(keys, toolOptions)),
-      keys: serverIds ?? manager.listServers(),
-      isolatedKeys,
-    });
-    listed.failed.forEach((error, key) => failed.set(key, error));
-    return listed.byServer;
+  // The manager exists, so its servers are authorized. Connecting happens
+  // while their tools are listed.
+  markOnboardingPhase("authorization");
+  const listing = async <T>(list: () => Promise<T>): Promise<T> => {
+    markOnboardingPhase("connection");
+    const tools = await list();
+    markOnboardingPhase("tools");
+    return tools;
   };
+  const byServer = (): Promise<ToolsByServer> =>
+    listing(async () => {
+      if (isolatedKeys.size === 0) {
+        return within(manager.getToolsForAiSdkByServer(serverIds, toolOptions));
+      }
+      const listed = await listToolsByServerIsolating({
+        list: (keys) =>
+          within(manager.getToolsForAiSdkByServer(keys, toolOptions)),
+        keys: serverIds ?? manager.listServers(),
+        isolatedKeys,
+      });
+      listed.failed.forEach((error, key) => failed.set(key, error));
+      return listed.byServer;
+    });
   return {
     byServer,
     /** Every server's tools in one set, as `getToolsForAiSdk` returns them. */
     flat: async (): ReturnType<MCPClientManager["getToolsForAiSdk"]> =>
       isolatedKeys.size === 0
-        ? within(manager.getToolsForAiSdk(serverIds, toolOptions))
+        ? listing(() =>
+            within(manager.getToolsForAiSdk(serverIds, toolOptions)),
+          )
         : Object.assign({}, ...Object.values(await byServer())),
     /** Each isolated server the turn runs without, by id, with its error. */
     unavailable: (): Map<string, unknown> => {

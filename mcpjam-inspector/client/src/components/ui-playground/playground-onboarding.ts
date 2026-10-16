@@ -9,7 +9,11 @@ import {
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
 import type { UseChatSessionReturn } from "@/hooks/use-chat-session";
 import type { useChatThreadTransition } from "@/hooks/use-chat-thread-transition";
-import type { PluginOnboardingSpec } from "@/shared/plugin-onboarding";
+import { logPluginExtensionIssue } from "@/lib/plugin-extension-logs";
+import type {
+  PluginOnboardingIntent,
+  PluginOnboardingSpec,
+} from "@/shared/plugin-onboarding";
 
 /**
  * Running a plugin's packaged onboarding skill in the Playground's chat. The
@@ -135,11 +139,24 @@ export function createPluginOnboardingSend({
     ]) as UIMessage[];
     setMessages((previous) => [...previous, ...skillMessages]);
     trackSendMessage({ single_model_send: true });
+    // One id per try. The server traces the turn under it, and Logs show
+    // it, so a stalled try can be found even after a later one works.
+    const pluginOnboarding: PluginOnboardingIntent = {
+      pluginVersionId: fresh.spec.pluginVersionId,
+      attemptId: crypto.randomUUID(),
+    };
     const sent = await sendMessage({
       text: "Run the attached onboarding skill.",
-      metadata: outgoingSenderMetadata,
+      metadata: { ...outgoingSenderMetadata, pluginOnboarding },
     });
     if (!sent) throw new Error("Onboarding could not start. Try again.");
+    logPluginExtensionIssue({
+      code: "PLUGIN_ONBOARDING_STARTED",
+      level: "info",
+      message: `Started ${fresh.spec.name} onboarding.`,
+      detail: pluginOnboarding,
+      dedupeKey: `onboarding:${pluginOnboarding.attemptId}`,
+    });
     onFirstMessageSent?.();
   };
 }
