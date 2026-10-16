@@ -190,6 +190,28 @@ describe("organization AI provider refusals", () => {
     }
   });
 
+  it("reads the runner's refused-selection row", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", {
+          status: "setup_failed",
+          error:
+            "Model selection refused — credential_missing: the saved org connection is gone.",
+        }),
+        null,
+      ),
+    ).toBe("orgProviders");
+  });
+
+  it("leaves a tool error that looks like a refusal with the MCP server", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", { error: "credential_missing: set GITHUB_TOKEN" }),
+        toolErrorChain,
+      ),
+    ).toBe("serverError");
+  });
+
   it("groups the run under one titled cause with the backend's reason", () => {
     expect(
       buildRunErrorBreakdown({

@@ -73,6 +73,10 @@ describe("RunErrorBreakdownDescription — organization AI provider refusals", (
       },
     ],
   };
+  beforeEach(() => {
+    handoff.orgId.mockClear();
+    handoff.manage = undefined;
+  });
 
   it("links an org admin to the organization's AI providers", () => {
     const manage = vi.fn();

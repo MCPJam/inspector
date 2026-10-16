@@ -18,7 +18,7 @@ import {
 import type { EvalIteration } from "../evals/types";
 import {
   describeOrgKeysRefusal,
-  orgKeysRefusalCodeInText,
+  runRefusalCodeInText,
 } from "@/lib/org-keys-refusal";
 import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
 
@@ -164,11 +164,15 @@ function classifyReason(
 
   // The organization has no usable provider for the model: adding or
   // reconnecting one in Organization → AI providers lifts it. The code may
-  // sit only in the iteration's diagnostics.
-  const refusal = orgKeysRefusalCodeInText(
-    error,
-    error === iteration.error ? iteration.errorDetails : undefined,
-  );
+  // sit only in the iteration's diagnostics. A failure the chain pins on the
+  // MCP server stays the server's, whatever its text looks like.
+  const refusal =
+    reasonCause === "serverUnreachable" || reasonCause === "serverError"
+      ? undefined
+      : runRefusalCodeInText(
+          error,
+          error === iteration.error ? iteration.errorDetails : undefined,
+        );
   if (
     refusal &&
     describeOrgKeysRefusal(refusal).remediation === "add_org_provider"

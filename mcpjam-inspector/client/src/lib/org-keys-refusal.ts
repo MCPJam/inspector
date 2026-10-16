@@ -46,19 +46,8 @@ const ORG_KEYS_REFUSAL_CODE_SET: ReadonlySet<string> = new Set(
   ORG_KEYS_REFUSAL_CODES,
 );
 
-/**
- * `/stream/org` and the org resolver answer `provider_not_configured` when the
- * organization has no such provider turned on: the same missing provider, and
- * the same fix, as `credential_missing`.
- */
-const ORG_KEYS_REFUSAL_ALIASES: Readonly<Record<string, OrgKeysRefusalCode>> = {
-  provider_not_configured: "credential_missing",
-};
-
 function normalizeCode(code: unknown): string | undefined {
-  if (typeof code !== "string") return undefined;
-  const key = code.trim().toLowerCase();
-  return ORG_KEYS_REFUSAL_ALIASES[key] ?? key;
+  return typeof code === "string" ? code.trim().toLowerCase() : undefined;
 }
 
 /** True for one of {@link ORG_KEYS_REFUSAL_CODES} (case and spacing tolerant). */
@@ -128,10 +117,15 @@ export function orgKeysRefusalCodeFromError(
   return orgKeysRefusalCodeOf(prefix);
 }
 
+/** The eval runner's refused-selection row (`describeModelRefusalForIteration`). */
+const MODEL_SELECTION_REFUSED_ROW =
+  /^Model selection refused\s*—\s*([a-z_]+)\s*:/i;
+
 /**
  * The org-key refusal code anywhere in a stored failure: its own code field,
- * a `"<code>: …"` prefix, or a policy code named inside the text (a run row
- * such as "Model selection refused — org_keys_required: …").
+ * a `"<code>: …"` prefix, the code leading a run row such as
+ * "Model selection refused — credential_missing: …", or a policy code named
+ * inside the text.
  */
 export function orgKeysRefusalCodeInText(
   ...texts: Array<string | null | undefined>
@@ -139,10 +133,38 @@ export function orgKeysRefusalCodeInText(
   for (const text of texts) {
     if (!text) continue;
     const code =
-      orgKeysRefusalCodeFromError(text) ?? findOrgKeyPolicyRefusalCode(text);
+      orgKeysRefusalCodeFromError(text) ??
+      orgKeysRefusalCodeOf(
+        MODEL_SELECTION_REFUSED_ROW.exec(text.trim())?.[1],
+      ) ??
+      findOrgKeyPolicyRefusalCode(text);
     if (code) return code;
   }
   return undefined;
+}
+
+/**
+ * `/stream/org` and the org resolver answer `provider_not_configured` when the
+ * organization has no such provider turned on. Distinctive enough to read out
+ * of free text, like the policy codes.
+ */
+const PROVIDER_NOT_CONFIGURED = /\bprovider_not_configured\b/i;
+
+/**
+ * {@link orgKeysRefusalCodeInText} for a run's stored failure, which also reads
+ * `provider_not_configured` as `credential_missing`: the same missing org
+ * provider, with the same fix. Chat still shows that code as the backend's own
+ * sentence.
+ */
+export function runRefusalCodeInText(
+  ...texts: Array<string | null | undefined>
+): string | undefined {
+  return (
+    orgKeysRefusalCodeInText(...texts) ??
+    (texts.some((text) => text && PROVIDER_NOT_CONFIGURED.test(text))
+      ? "credential_missing"
+      : undefined)
+  );
 }
 
 /**

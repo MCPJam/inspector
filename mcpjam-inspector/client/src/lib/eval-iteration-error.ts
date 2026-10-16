@@ -2,7 +2,7 @@ import { describeError, type NormalizedError } from "@mcpjam/sdk/browser";
 import type { EvalIteration } from "@/components/evals/types";
 import {
   describeOrgKeysRefusal,
-  orgKeysRefusalCodeInText,
+  runRefusalCodeInText,
   orgKeysRefusalNextStep,
 } from "@/lib/org-keys-refusal";
 
@@ -25,7 +25,7 @@ export function describeEvalIterationError(
   // model turn leaves the iteration completed with a failed result.
   const refusalCode =
     setup || iteration.status === "failed" || iteration.result === "failed"
-      ? orgKeysRefusalCodeInText(iteration.error, iteration.errorDetails)
+      ? runRefusalCodeInText(iteration.error, iteration.errorDetails)
       : undefined;
   if (!timeout && !setup && !cancelled && !iteration.error && !refusalCode)
     return null;
