@@ -1104,6 +1104,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYS_WEBHOOK_URL }}
           NAME: ${{ needs.preflight.outputs.release_tag || inputs.versions || 'packages' }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
           BACKEND: ${{ inputs.deploy_backend_prod }}
           WEBAPP: ${{ inputs.deploy_webapp }}
           DESKTOP: ${{ needs.preflight.outputs.build_inspector_artifacts }}
@@ -1121,7 +1122,10 @@ jobs:
           [ "$BACKEND" = true ] && parts="backend + $parts"
           who="by $GITHUB_TRIGGERING_ACTOR"
           case "$GITHUB_TRIGGERING_ACTOR" in *"[bot]") who="automatically" ;; esac
-          prev="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)" || prev=""
+          # Not `releases/latest`: `finalize` may already have published this
+          # release, so skip its own tag and take the newest one before it.
+          prev="$(TAG="$RELEASE_TAG" gh api "repos/$GITHUB_REPOSITORY/releases?per_page=10" \
+            --jq '[.[] | select(.draft == false and .prerelease == false and .tag_name != env.TAG)][0].tag_name // empty')" || prev=""
           count=""
           if [ -n "$prev" ]; then
             count="$(gh api "repos/$GITHUB_REPOSITORY/compare/$prev...$GITHUB_SHA" --jq .total_commits)" || count=""
