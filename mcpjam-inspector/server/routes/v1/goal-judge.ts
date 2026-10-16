@@ -46,23 +46,18 @@ export const goalJudgeWriteSchema = z
 
 export type GoalJudgeWrite = z.infer<typeof goalJudgeWriteSchema>;
 
-function isGoalJudgeWrite(value: unknown): value is GoalJudgeWrite {
-  return typeof value === "object" && value !== null;
-}
+const parsedJudgeSchema = goalJudgeWriteSchema.nullable().optional();
 
 /**
  * The judge off a parsed goal body, whichever surface parsed it. The
  * surface-specific count key on those schemas is computed, which widens
- * every parsed field to the union of them all; the body was accepted by a
- * schema that admits only {@link goalJudgeWriteSchema} (or `null`) under
- * this key, so an object here is one.
+ * every parsed field to the union of them all, so the field is narrowed
+ * back through the schema that already accepted it rather than cast.
  */
 export function judgeOf(body: {
   judge?: unknown;
 }): GoalJudgeWrite | null | undefined {
-  const { judge } = body;
-  if (judge === null) return null;
-  return isGoalJudgeWrite(judge) ? judge : undefined;
+  return parsedJudgeSchema.parse(body.judge);
 }
 
 /** The stored slot, as `journeys:getJourney` serializes it. */
