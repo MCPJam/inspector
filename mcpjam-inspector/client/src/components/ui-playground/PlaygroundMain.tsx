@@ -1,3 +1,4 @@
+import { clientServerIds } from "@mcpjam/sdk/host-config/internal";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
@@ -1653,14 +1654,13 @@ export function PlaygroundMain({
     const cfg = previewedHost.config;
 
     // Map host's required + optional server ids to project server names.
-    // Servers the host references but the project no longer has are
-    // dropped — selectedMultipleServers must contain valid names.
+    // Drop stale references: selectedMultipleServers must contain valid names.
     //
     // Guard the dedupe-ref commit on this resolution: if the host references
     // servers but `serversById` hasn't hydrated yet (empty map on first pass),
     // bail without marking the (hostId, configId) seeded so a later render
     // with a populated map can finish the seed.
-    const ids = [...(cfg.serverIds ?? []), ...(cfg.optionalServerIds ?? [])];
+    const ids = clientServerIds(cfg);
     if (ids.length > 0 && serversById.size === 0) return;
 
     // The first seed of this mount (a page reload, or coming back to a host

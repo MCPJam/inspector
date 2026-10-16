@@ -1,4 +1,5 @@
 import { PlatformApiError } from "./errors.js";
+import { resolveClientEnvironment } from "../host-config/target-resolution.js";
 import type { PlatformApiClient } from "./client.js";
 import type {
   PlatformProject,
@@ -92,17 +93,15 @@ async function clientEnvironment(
         `project "${project.name}"`
       ).id;
   }
-  const matches = attached.filter(
-    (environment) => environment.hostId === clientId
-  );
-  if (matches.length > 1) {
+  const match = resolveClientEnvironment(clientId, attached);
+  if (match.kind === "ambiguous") {
     throw operationInputError(
       `TARGET_REQUIRED — Client "${selector}" has several attached environments: ${formatResourceList(
-        matches
+        match.environments
       )}. Select one with environment.`
     );
   }
-  const environment = matches[0];
+  const environment = match.kind === "unique" ? match.environment : undefined;
   return environment
     ? {
         id: environment.id,
