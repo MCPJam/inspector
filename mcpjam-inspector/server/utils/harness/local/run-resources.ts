@@ -1,6 +1,6 @@
 import type { LocalHarnessActor } from "./acting-user.js";
-import { stopLocalHarnessWorkspace } from "./session-registry.js";
-import { sessionStateDirFor, resolveGitBashPath } from "./supervised-provider.js";
+import { resolveGitBashPath } from "./supervised-provider.js";
+import { cleanupLocalHarnessScratch } from "./scratch-cleanup.js";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, dirname, basename } from "node:path";
@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 import { HOSTED_MODE, LOCAL_HARNESS_ENABLED } from "../../../config.js";
 import { ensureLocalHarnessTarget } from "./readiness.js";
-import { localHarnessStateRoot, registerWorkspaceGrant, forgetWorkspaceGrant } from "./grants.js";
+import { registerWorkspaceGrant, forgetWorkspaceGrant } from "./grants.js";
 import { mkdir } from "node:fs/promises";
 
 import { expectedPackFor } from "./runtime-install.js";
@@ -17,7 +17,6 @@ import { LOCAL_HARNESS_MANIFEST } from "./compatibility.js";
 import { localHarnessManifestsForDevelopment } from "./availability.js";
 import { localHarnessAccountEnabled } from "./readiness.js";
 import { scratchRoot, recordScratchOwner, forgetScratchOwner } from "./scratch-janitor.js";
-import { logger } from "../../logger.js";
 
 /** Narrow an untrusted harness id to one with a local runtime, or null. */
 export function localHarnessIdOf(harness: string | undefined): SupportedLocalHarnessId | null {
@@ -190,15 +189,9 @@ export async function prepareLocalHarnessRun(args: { bearer: string; projectId: 
     await recordScratchOwner(basename(directory), workspaceGrantId);
     const ready = await ensureLocalHarnessTarget({ ...args, harnessId, scope: "unattended", workspaceGrantId });
     const localSessionId = `local-${randomUUID()}`;
-    return { target: { ...ready.target, localSessionId }, cleanup: async () => {
-      try {
-      if (!(await stopLocalHarnessWorkspace(workspace.grant.workspaceGrantId))) { logger.warn("[local-harness] Process did not stop; retaining workspace"); return; }
-      await rm(sessionStateDirFor(localHarnessStateRoot(), localSessionId), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-      await forgetWorkspaceGrant(workspace.grant.workspaceGrantId);
-      await forgetScratchOwner(basename(directory));
-      } catch (error) { logger.warn("[local-harness] Workspace cleanup failed", { error: String(error) }); }
-    } };
+    return { target: { ...ready.target, localSessionId }, cleanup: () => cleanupLocalHarnessScratch({
+      name: basename(directory), workspaceGrantId: workspace.grant.workspaceGrantId, localSessionId,
+    }) };
   } catch (error) {
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     if (workspaceGrantId) await forgetWorkspaceGrant(workspaceGrantId);

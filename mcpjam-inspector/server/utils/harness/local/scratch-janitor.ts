@@ -16,7 +16,15 @@ export async function recordScratchOwner(name: string, workspaceGrantId: string)
   const owner = await probeProcess(process.pid);
   if (owner.state !== "alive") throw new Error("Cannot establish scratch workspace ownership");
   await mkdir(ownersRoot(), { recursive: true, mode: 0o700 });
-  await writeFile(join(ownersRoot(), name), JSON.stringify({ pid: process.pid, birth: owner.identity, workspaceGrantId }), { mode: 0o600, flag: "wx" });
+  const path = join(ownersRoot(), name);
+  const body = JSON.stringify({ pid: process.pid, birth: owner.identity, workspaceGrantId });
+  try {
+    await writeFile(path, body, { mode: 0o600, flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    // Repeated turns may retain a folder, but never take over another owner.
+    if (await readFile(path, "utf8") !== body) throw new Error("Scratch workspace belongs to another owner");
+  }
 }
 export async function forgetScratchOwner(name: string) {
   if (validName(name)) await rm(join(ownersRoot(), name), { force: true });
