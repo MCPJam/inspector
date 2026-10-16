@@ -85,7 +85,11 @@ async function readBoundedBody(request: Request, maxBytes: number): Promise<Uint
     if (done) break;
     total += value.byteLength;
     if (total > maxBytes) {
-      await reader.cancel().catch(() => undefined);
+      try {
+        await reader.cancel();
+      } catch {
+        // The body is refused either way; the cancel only stops reading it.
+      }
       return null;
     }
     chunks.push(value);
@@ -395,7 +399,9 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
           opened.close();
           try {
             controller.close();
-          } catch {}
+          } catch {
+            // Already closed: the client went away first.
+          }
         }
         cleanup = close;
         controller.enqueue(encoder.encode(`retry: 1500\n\n`));

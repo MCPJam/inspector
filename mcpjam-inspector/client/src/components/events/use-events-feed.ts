@@ -16,6 +16,7 @@ import {
   normalizeFeedEntry,
   parseGap,
 } from "@/lib/apis/mcp-events-api";
+import { errorMessage } from "./event-utils";
 
 /** Entries kept in memory for the feed view (newest win). */
 export const MAX_FEED_ENTRIES = 500;
@@ -69,10 +70,6 @@ function parseData(data: unknown): unknown {
   } catch {
     return null;
   }
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 /**
@@ -184,13 +181,13 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
 
     const handleFrame = (raw: unknown) => {
       if (!isRecord(raw)) return;
-      const frame = raw as Partial<EventsStreamFrame> & Record<string, unknown>;
+      // The local route sends `EventsStreamFrame`s; each field is still
+      // checked before use, so a malformed frame is dropped.
+      const frame = raw as Partial<EventsStreamFrame>;
       switch (frame.type) {
         case "snapshot":
           if (Array.isArray(frame.subscriptions)) {
-            callbacksRef.current.onSubscriptionsSnapshot?.(
-              frame.subscriptions as EventsSubscriptionView[],
-            );
+            callbacksRef.current.onSubscriptionsSnapshot?.(frame.subscriptions);
           }
           return;
         case "entry": {
@@ -200,14 +197,12 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
         }
         case "subscription":
           if (isRecord(frame.subscription)) {
-            callbacksRef.current.onSubscription?.(
-              frame.subscription as unknown as EventsSubscriptionView,
-            );
+            callbacksRef.current.onSubscription?.(frame.subscription);
           }
           return;
         case "rejection":
           if (isRecord(frame.rejection)) {
-            const rejection = frame.rejection as unknown as EventsRejectionView;
+            const rejection = frame.rejection;
             setRejections((previous) =>
               [rejection, ...previous].slice(0, MAX_REJECTIONS),
             );
@@ -343,7 +338,12 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
       } catch (err) {
         if (disposed) return;
         setStatus("error");
-        setError(errorMessage(err, "Could not authorize the feed"));
+        setError(
+          errorMessage(
+            err,
+            "Could not authorize the feed. Check that you are signed in and a member of this project.",
+          ),
+        );
         tokenFailures += 1;
         later(() => void connect(true), Math.min(30_000, 2000 * tokenFailures));
         return;

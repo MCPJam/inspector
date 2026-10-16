@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -41,15 +41,20 @@ export function SimulatePanel({
   );
 
   // Prefill the payload from the event's payload schema whenever the target
-  // subscription (and so the event type) changes.
+  // subscription (and so the event type) changes. The catalog is read through
+  // a ref so a refresh of it does not wipe what the user typed.
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
   const selectedEventName = selected?.eventName;
+  const selectedId = selected?.id;
   useEffect(() => {
     if (!selectedEventName) return;
-    const descriptor = events.find((event) => event.name === selectedEventName);
+    const descriptor = eventsRef.current.find(
+      (event) => event.name === selectedEventName,
+    );
     setDataJson(safeJson(simulationDataFromSchema(descriptor?.payloadSchema)));
     setError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEventName, selected?.id]);
+  }, [selectedEventName, selectedId]);
 
   if (subscriptions.length === 0) {
     return (
@@ -66,7 +71,11 @@ export function SimulatePanel({
     try {
       data = JSON.parse(dataJson || "{}");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid JSON.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "The event data is not valid JSON. Check it and try again.",
+      );
       return;
     }
     if (typeof data !== "object" || data === null || Array.isArray(data)) {

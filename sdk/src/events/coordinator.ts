@@ -14,7 +14,8 @@
  * discarded. Credentials never enter this module: they live behind the
  * `rpc` port, bound to the subscription's connection binding.
  *
- * Draft rules encoded here (section names from draft@28ec35e):
+ * Draft rules encoded here and in `coordinator-removal.ts` (section names
+ * from draft@28ec35e):
  *   - Absent cursor means `null`; a fresh subscription starts from now.
  *     (*Cursor Lifecycle*)
  *   - An empty poll batch still advances the cursor. (*Cursor advancement*)
@@ -27,239 +28,54 @@
  *   - A second unsubscribe answering NotFound is "already gone".
  */
 
-import { isAuthError } from "../mcp-client-manager/errors.js";
-import {
-  classifyEventsRpcError,
-  isInvalidEventsPayloadError,
-} from "../mcp-client-manager/events-ext-guards.js";
 import { normalizeCursor } from "../mcp-client-manager/events-ext-schemas.js";
 import { DEFAULT_POLL_FLOOR_MS } from "../mcp-client-manager/events-ext.js";
-import { canonicalJson, sha256Hex } from "../contract/canonical.js";
+import {
+  BASE_BACKOFF_MS,
+  COORDINATOR_DEFAULTS,
+  IDLE_NEXT_ACTION_AT,
+  MAX_SLOT_REPLACEMENTS_PER_STEP,
+  classifyStepFailure,
+  computeBackoffMs,
+  computePollBatchId,
+  computeRefreshAt,
+  computeSlotAllocationKey,
+  parseRefreshBefore,
+  type EventsCoordinatorOptions,
+  type ResolvedCoordinatorOptions,
+  type StepOutcome,
+} from "./coordinator-policy.js";
+import {
+  stepPause,
+  stepRemoval,
+  type CoordinatorStepContext,
+} from "./coordinator-removal.js";
 import { getEventsProfile } from "./profiles.js";
 import {
   InboxBackpressureError,
-  type EventsRpcPort,
   type InboxAppendEntry,
-  type InboxPort,
   type InboxSlotAllocation,
-  type SubscriptionFailure,
   type SubscriptionPatch,
   type SubscriptionRecord,
 } from "./types.js";
 
-export interface EventsCoordinatorOptions {
-  clock?: { now(): number };
-  /** Resolve the MCP port for a subscription's connection binding. */
-  rpc(record: SubscriptionRecord): Promise<EventsRpcPort>;
-  /** The inbox for a subscription's project. */
-  inbox(record: SubscriptionRecord): Promise<InboxPort>;
-  /** Poll pages drained per step before yielding (fairness). Default 5. */
-  maxPagesPerStep?: number;
-  /** Default poll interval when the server gives no `nextPollMs`. 30 s. */
-  defaultPollMs?: number;
-  /** Health-check cadence for `refreshBefore: null` grants. 6 h. */
-  healthCheckIntervalMs?: number;
-  /**
-   * The longest a refresh can be in flight — after an unsubscribe the keeper
-   * unsubscribes once more after this window, in case a refresh already on
-   * the wire resurrects the subscription (contract C4). 2 min.
-   */
-  lateRefreshWindowMs?: number;
-  /** Retry cap for transient failures. 30 min. */
-  maxBackoffMs?: number;
-  /** `challenge_failed` attempts before giving up. 5. */
-  maxChallengeFailures?: number;
-  /** `maxEvents` sent on poll. Server default when omitted. */
-  maxEventsPerPoll?: number;
-}
-
-export interface StepOutcome {
-  patch: SubscriptionPatch;
-  nextActionAt: number;
-  /** Events appended to the inbox during this step. */
-  appended: number;
-  /** What happened, for the caller's log line. Never contains secrets. */
-  action: StepAction;
-  failure?: SubscriptionFailure;
-}
-
-export type StepAction =
-  | "idle"
-  | "subscribed"
-  | "refreshed"
-  | "rotated"
-  | "polled"
-  | "unsubscribed"
-  | "removal_settled"
-  | "paused"
-  | "failed";
-
-/** A time far enough in the future to mean "nothing to do". */
-export const IDLE_NEXT_ACTION_AT = Number.MAX_SAFE_INTEGER;
-
-const DEFAULTS = {
-  maxPagesPerStep: 5,
-  defaultPollMs: 30_000,
-  healthCheckIntervalMs: 6 * 60 * 60 * 1000,
-  lateRefreshWindowMs: 2 * 60 * 1000,
-  maxBackoffMs: 30 * 60 * 1000,
-  maxChallengeFailures: 5,
-};
-
-const BASE_BACKOFF_MS = 5_000;
-
-/**
- * Replacements of an expired slot one step may chain (a replayed allocation
- * can itself come back expired). Removal walks further: see
- * {@link EventsCoordinator.unrecordedAllocations}.
- */
-const MAX_SLOT_REPLACEMENTS_PER_STEP = 3;
-const MAX_UNRECORDED_SLOTS = 16;
-
-/**
- * The idempotency key of one receiver slot incarnation (contract C3): the
- * subscription's first slot (`replaces: null`), or the slot that replaces the
- * expired `replaces`.
- *
- * It is derived only from what the registry held BEFORE the allocation —
- * never from the generation — so when the commit of a step that allocated is
- * lost (a crash, a lost response, a user edit that wins the compare-and-set),
- * the retry asks for the same incarnation and the inbox answers with the same
- * slot, URL and secret. A fresh URL would be a different upstream
- * subscription that nothing records and so nothing ever unsubscribes.
- */
-export function computeSlotAllocationKey(args: {
-  logicalSubscriptionId: string;
-  replaces: string | null;
-}): string {
-  return sha256Hex(
-    canonicalJson({
-      v: 1,
-      kind: "slot-allocation",
-      logicalSubscriptionId: args.logicalSubscriptionId,
-      replaces: args.replaces,
-    })
-  );
-}
-
-/**
- * When to refresh a webhook grant: `max(60 s, 10% of the remaining grant)`
- * before `refreshBefore`, never in the past, and on the health-check cadence
- * for a no-expiry grant.
- */
-export function computeRefreshAt(args: {
-  now: number;
-  refreshBefore: number | null;
-  healthCheckIntervalMs: number;
-}): number {
-  if (args.refreshBefore === null) {
-    return args.now + args.healthCheckIntervalMs;
-  }
-  const remaining = args.refreshBefore - args.now;
-  if (remaining <= 0) return args.now;
-  const lead = Math.max(60_000, Math.floor(remaining * 0.1));
-  return Math.max(args.now + 1_000, args.refreshBefore - lead);
-}
-
-/** Exponential backoff shared in spirit with tasks' pure backoff helpers. */
-export function computeBackoffMs(failures: number, maxBackoffMs: number): number {
-  const exponent = Math.min(Math.max(failures - 1, 0), 20);
-  return Math.min(maxBackoffMs, BASE_BACKOFF_MS * 2 ** exponent);
-}
-
-function parseRefreshBefore(value: string | null | undefined): number | null {
-  if (value === null || value === undefined) return null;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-function describe(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.length > 300 ? `${message.slice(0, 300)}…` : message;
-}
-
-/**
- * Classify a failure as terminal, auth-lost or retryable. Every failure is
- * exactly one of these — there is no "retry forever" path for anything that
- * a retry cannot fix.
- */
-export function classifyStepFailure(
-  method: string,
-  error: unknown,
-  now: number
-): SubscriptionFailure & { authLost: boolean } {
-  if (error instanceof InboxBackpressureError) {
-    return {
-      kind: "inbox_backpressure",
-      message: describe(error),
-      at: now,
-      retryable: true,
-      authLost: false,
-    };
-  }
-  if (isAuthError(error).isAuth) {
-    return {
-      kind: "authorization_lost",
-      message: describe(error),
-      at: now,
-      retryable: false,
-      authLost: true,
-    };
-  }
-  const classified = classifyEventsRpcError(method, error);
-  if (classified) {
-    const reason = (classified.data as { reason?: unknown } | undefined)?.reason;
-    const kind =
-      classified.kind === "CallbackEndpointError" && typeof reason === "string"
-        ? `callback_${reason}`
-        : classified.kind;
-    return {
-      kind,
-      message: classified.message || describe(error),
-      at: now,
-      // challenge_failed is retried a bounded number of times by the caller.
-      retryable:
-        classified.retryable ||
-        (classified.kind === "CallbackEndpointError" &&
-          reason === "challenge_failed"),
-      authLost: classified.kind === "Forbidden",
-    };
-  }
-  if (isInvalidEventsPayloadError(error)) {
-    return {
-      kind: "invalid_server_response",
-      message: describe(error),
-      at: now,
-      retryable: true,
-      authLost: false,
-    };
-  }
-  // Network failures, timeouts, 5xx: the OUTCOME is unknown. Every events
-  // request is safe to repeat with the same key (subscribe is idempotent,
-  // poll re-reads from the persisted cursor), so unknown means retry.
-  return {
-    kind: "transient",
-    message: describe(error),
-    at: now,
-    retryable: true,
-    authLost: false,
-  };
-}
-
-/** Deterministic batch id: the same page re-appended is the same batch. */
-export function computePollBatchId(args: {
-  logicalSubscriptionId: string;
-  generation: number;
-  cursorBefore: string | null;
-  eventIds: string[];
-  gap: boolean;
-}): string {
-  return sha256Hex(canonicalJson({ v: 1, kind: "poll-batch", ...args }));
-}
+export {
+  IDLE_NEXT_ACTION_AT,
+  applySubscriptionPatch,
+  classifyStepFailure,
+  computeBackoffMs,
+  computePollBatchId,
+  computeRefreshAt,
+  computeSlotAllocationKey,
+} from "./coordinator-policy.js";
+export type {
+  EventsCoordinatorOptions,
+  StepAction,
+  StepOutcome,
+} from "./coordinator-policy.js";
 
 export class EventsCoordinator {
-  private readonly options: EventsCoordinatorOptions &
-    typeof DEFAULTS & { clock: { now(): number } };
+  private readonly options: ResolvedCoordinatorOptions;
 
   constructor(options: EventsCoordinatorOptions) {
     // An option passed as `undefined` means "the default", not "undefined"
@@ -268,19 +84,30 @@ export class EventsCoordinator {
       Object.entries(options).filter(([, value]) => value !== undefined)
     );
     this.options = {
-      ...DEFAULTS,
+      ...COORDINATOR_DEFAULTS,
       clock: { now: () => Date.now() },
       ...given,
-    } as EventsCoordinator["options"];
+    } as ResolvedCoordinatorOptions;
   }
 
   private now(): number {
     return this.options.clock.now();
   }
 
+  /** The coordinator as the pause and removal steps see it. */
+  private context(): CoordinatorStepContext {
+    return {
+      options: this.options,
+      now: () => this.now(),
+      idle: () => this.idle(),
+      fail: (record, method, error, extraPatch) =>
+        this.fail(record, method, error, extraPatch),
+    };
+  }
+
   /** Perform the next lifecycle transition for `record`. */
   async step(record: SubscriptionRecord): Promise<StepOutcome> {
-    if (record.desiredState === "removed") return this.stepRemoval(record);
+    if (record.desiredState === "removed") return stepRemoval(this.context(), record);
     // A terminal observed state waits for the USER (reauthorize, resubscribe),
     // never for a timer: these are exactly the states that must not be
     // retried forever.
@@ -291,7 +118,7 @@ export class EventsCoordinator {
     ) {
       return this.idle();
     }
-    if (record.desiredState === "paused") return this.stepPause(record);
+    if (record.desiredState === "paused") return stepPause(this.context(), record);
     switch (record.mode) {
       case "webhook":
         return this.stepWebhook(record);
@@ -650,214 +477,4 @@ export class EventsCoordinator {
       action: "polled",
     };
   }
-
-  // -------------------------------------------------------------------------
-  // Pause and removal
-  // -------------------------------------------------------------------------
-
-  private async stepPause(record: SubscriptionRecord): Promise<StepOutcome> {
-    if (record.observedState === "paused") return this.idle();
-    if (record.mode === "webhook" && record.callbackUrl && record.serverSubscriptionId) {
-      try {
-        const rpc = await this.options.rpc(record);
-        await rpc.unsubscribe({
-          name: record.eventName,
-          arguments: record.arguments,
-          delivery: { url: record.callbackUrl },
-        });
-      } catch (error) {
-        return this.fail(record, "events/unsubscribe", error);
-      }
-      // The server's id died with the unsubscribe, and the draft does not
-      // promise resume gets it back: unbind the slot (secret and URL kept)
-      // so resume binds whatever id it returns instead of a conflict. A retry
-      // after a failed unbind unsubscribes again, which is "already gone".
-      if (record.slotId) {
-        try {
-          const inbox = await this.options.inbox(record);
-          await inbox.unbind(record.slotId);
-        } catch (error) {
-          return this.fail(record, "inbox/unbind", error);
-        }
-      }
-    }
-    return {
-      patch: {
-        observedState: "paused",
-        consecutiveFailures: 0,
-        lastError: undefined,
-        // A paused webhook keeps its slot and cursor, so resume re-subscribes
-        // at the same URL (same draft key) and replays from the cursor.
-        serverSubscriptionId: undefined,
-      },
-      nextActionAt: IDLE_NEXT_ACTION_AT,
-      appended: 0,
-      action: "paused",
-    };
-  }
-
-  /**
-   * Removal (contract C4). The registry wrote the tombstone before this runs,
-   * so deliveries that race it are journalled but never scheduled. Then:
-   * unsubscribe → tombstone the slot → wait out any refresh still in flight →
-   * unsubscribe AGAIN → settled. A delivery that lands on the removed slot
-   * meanwhile makes the registry reschedule this step immediately.
-   *
-   * A webhook's receivers are the recorded slot plus any the inbox holds
-   * under this subscription's allocation keys that the registry never
-   * recorded (a commit lost after allocating, perhaps after subscribing), so
-   * removal leaves no live URL upstream however the earlier steps ended.
-   */
-  private async stepRemoval(record: SubscriptionRecord): Promise<StepOutcome> {
-    const now = this.now();
-    if (record.observedState === "removed" && record.settledRemovalAt !== undefined) {
-      return this.idle();
-    }
-    const settled: StepOutcome = {
-      patch: { observedState: "removed", settledRemovalAt: now },
-      nextActionAt: IDLE_NEXT_ACTION_AT,
-      appended: 0,
-      action: "removal_settled",
-    };
-    if (record.mode !== "webhook") {
-      // Poll and push hold no server-side subscription: stopping is removal.
-      if (record.slotId) {
-        try {
-          const inbox = await this.options.inbox(record);
-          await inbox.remove(record.slotId);
-        } catch (error) {
-          return this.fail(record, "inbox/remove", error);
-        }
-      }
-      return settled;
-    }
-
-    let inbox: InboxPort;
-    const receivers: Array<{ slotId?: string; callbackUrl: string }> = [];
-    try {
-      inbox = await this.options.inbox(record);
-      if (record.callbackUrl) {
-        receivers.push({
-          ...(record.slotId ? { slotId: record.slotId } : {}),
-          callbackUrl: record.callbackUrl,
-        });
-      }
-      for (const allocation of await this.unrecordedAllocations(record, inbox)) {
-        receivers.push(allocation);
-      }
-    } catch (error) {
-      return this.fail(record, "inbox/allocation", error);
-    }
-    if (receivers.length === 0) {
-      // No URL was ever handed out, so no server can be delivering to one.
-      if (record.slotId) {
-        try {
-          await inbox.remove(record.slotId);
-        } catch (error) {
-          return this.fail(record, "inbox/remove", error);
-        }
-      }
-      return settled;
-    }
-
-    try {
-      const rpc = await this.options.rpc(record);
-      for (const receiver of receivers) {
-        await rpc.unsubscribe({
-          name: record.eventName,
-          arguments: record.arguments,
-          delivery: { url: receiver.callbackUrl },
-        });
-      }
-    } catch (error) {
-      const failure = classifyStepFailure("events/unsubscribe", error, now);
-      if (failure.authLost) {
-        // Without credentials there is nothing more we can do remotely; the
-        // server's TTL reaps it. Settle locally rather than retry forever.
-        return {
-          ...settled,
-          patch: {
-            ...settled.patch,
-            lastError: { ...failure, retryable: false },
-          },
-        };
-      }
-      return this.fail(record, "events/unsubscribe", error);
-    }
-
-    if (record.removalUnsubscribedAt === undefined) {
-      for (const receiver of receivers) {
-        if (!receiver.slotId) continue;
-        try {
-          await inbox.remove(receiver.slotId);
-        } catch (error) {
-          return this.fail(record, "inbox/remove", error, {
-            removalUnsubscribedAt: now,
-            observedState: "removing",
-          });
-        }
-      }
-      return {
-        patch: {
-          observedState: "removing",
-          removalUnsubscribedAt: now,
-          consecutiveFailures: 0,
-        },
-        nextActionAt: now + this.options.lateRefreshWindowMs,
-        appended: 0,
-        action: "unsubscribed",
-      };
-    }
-    return {
-      patch: {
-        observedState: "removed",
-        settledRemovalAt: now,
-        consecutiveFailures: 0,
-        lastError: undefined,
-      },
-      nextActionAt: IDLE_NEXT_ACTION_AT,
-      appended: 0,
-      action: "removal_settled",
-    };
-  }
-
-  /**
-   * Slots the inbox allocated for this subscription that the registry never
-   * recorded: the next incarnation after the recorded slot (or the first
-   * slot, when none is recorded), then the one after that, and so on. Only
-   * the last can be live — every earlier one was replaced for having
-   * expired — but each is cleaned up the same way.
-   */
-  private async unrecordedAllocations(
-    record: SubscriptionRecord,
-    inbox: InboxPort
-  ): Promise<InboxSlotAllocation[]> {
-    const found: InboxSlotAllocation[] = [];
-    let replaces = record.slotId ?? null;
-    while (found.length < MAX_UNRECORDED_SLOTS) {
-      const next = await inbox.findAllocation(
-        computeSlotAllocationKey({ logicalSubscriptionId: record.id, replaces })
-      );
-      if (!next || next.slotId === record.slotId) break;
-      found.push(next);
-      replaces = next.slotId;
-    }
-    return found;
-  }
-}
-
-/** Apply a step patch to a record (for local stores and tests). */
-export function applySubscriptionPatch(
-  record: SubscriptionRecord,
-  outcome: Pick<StepOutcome, "patch" | "nextActionAt">
-): SubscriptionRecord {
-  const next: SubscriptionRecord = { ...record, nextActionAt: outcome.nextActionAt };
-  for (const [key, value] of Object.entries(outcome.patch)) {
-    if (value === undefined) {
-      delete (next as unknown as Record<string, unknown>)[key];
-    } else {
-      (next as unknown as Record<string, unknown>)[key] = value;
-    }
-  }
-  return next;
 }

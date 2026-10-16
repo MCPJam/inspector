@@ -253,6 +253,9 @@ export interface EventsBackendClientOptions {
   timeoutMs?: number;
 }
 
+/** A route's JSON object answer; `null` when it sent none. */
+type BackendBody = Record<string, unknown> | null;
+
 export class EventsBackendClient {
   private readonly config: () => { convexUrl: string; serviceToken: string };
   private readonly doFetch: typeof fetch;
@@ -268,7 +271,7 @@ export class EventsBackendClient {
   private async post(
     route: string,
     body: unknown,
-  ): Promise<{ status: number; body: any }> {
+  ): Promise<{ status: number; body: BackendBody }> {
     const { convexUrl, serviceToken } = this.config();
     const response = await this.doFetch(
       `${convexUrl.replace(/\/+$/, "")}${EVENTS_BACKEND_PREFIX}/${route}`,
@@ -283,16 +286,19 @@ export class EventsBackendClient {
         signal: AbortSignal.timeout(this.timeoutMs),
       },
     );
-    let parsed: any = null;
+    let parsed: unknown = null;
     try {
       parsed = await response.json();
     } catch {
       parsed = null;
     }
-    return { status: response.status, body: parsed };
+    return {
+      status: response.status,
+      body: parsed !== null && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null,
+    };
   }
 
-  private fail(route: string, status: number, body: any): never {
+  private fail(route: string, status: number, body: BackendBody): never {
     const code = body?.error;
     throw new EventsBackendError(
       route,
@@ -302,7 +308,7 @@ export class EventsBackendClient {
   }
 
   /** Throws the typed 409s every lease-fenced route shares. */
-  private leaseFenced(route: string, status: number, body: any): void {
+  private leaseFenced(route: string, status: number, body: BackendBody): void {
     if (status !== 409) return;
     const code = body?.error;
     if (code === "tool_outcome_unknown") throw new ToolOutcomeUnknownError(route);

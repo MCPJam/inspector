@@ -392,7 +392,9 @@ describe("EventsTab (local)", () => {
     expect(within(entry).getByTestId("namespace-badge")).toHaveTextContent(
       "simulation",
     );
-    expect(within(entry).getByText("ID conflict")).toBeInTheDocument();
+    expect(
+      within(entry).getByText("Subscription mismatch"),
+    ).toBeInTheDocument();
     expect(within(entry).getByText("evt_1")).toBeInTheDocument();
     expect(within(entry).getByText("pending")).toBeInTheDocument();
 

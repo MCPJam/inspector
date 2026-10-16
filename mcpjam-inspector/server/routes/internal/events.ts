@@ -122,10 +122,13 @@ export function createInternalEventsRouter(deps: InternalEventsRouterDeps = {}):
     if (!isAuthorizedInboxDispatch(c)) {
       return c.json({ error: "unauthorized" }, 401);
     }
-    const body = (await c.req.json().catch(() => null)) as {
-      inboxId?: unknown;
-      deliveries?: unknown;
-    } | null;
+    let body: { inboxId?: unknown; deliveries?: unknown } | null;
+    try {
+      body = await c.req.json();
+    } catch {
+      // Unparseable JSON is answered below as `invalid_request`.
+      body = null;
+    }
     if (
       !body ||
       typeof body.inboxId !== "string" ||

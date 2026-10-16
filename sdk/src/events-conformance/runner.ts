@@ -576,20 +576,27 @@ export async function runEventsConformance(
     };
     manager.addNotificationHandler(serverId, "notifications/events/heartbeat", handler as never);
     const waitMs = config.pushHeartbeatWaitMs ?? 65_000;
-    const stream = manager
-      .openEventsStream(
-        serverId,
-        { name: descriptor.name, arguments: args, cursor: null },
-        {
-          signal: controller.signal,
-          timeout: waitMs + 30_000,
-          onRequestId: (id) => {
-            requestId = id;
-          },
-          onRequestStreamEnd: () => {},
-        }
-      )
-      .catch(() => undefined);
+    let streamError: unknown;
+    const stream = (async () => {
+      try {
+        await manager.openEventsStream(
+          serverId,
+          { name: descriptor.name, arguments: args, cursor: null },
+          {
+            signal: controller.signal,
+            timeout: waitMs + 30_000,
+            onRequestId: (id) => {
+              requestId = id;
+            },
+            onRequestStreamEnd: () => {},
+          }
+        );
+      } catch (error) {
+        // The abort below is how this check ends the stream; only a failure
+        // before it explains a missing heartbeat.
+        if (!controller.signal.aborted) streamError = error;
+      }
+    })();
     const deadline = Date.now() + waitMs;
     while (heartbeats.length < 2 && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -598,7 +605,13 @@ export async function runEventsConformance(
     await stream;
     manager.removeNotificationHandler(serverId, "notifications/events/heartbeat", handler as never);
     if (heartbeats.length === 0) {
-      record("events-push-heartbeat", "violation", `no heartbeat within ${waitMs} ms`, { startedAt });
+      const cause =
+        streamError === undefined
+          ? ""
+          : `; the stream failed: ${streamError instanceof Error ? streamError.message : String(streamError)}`;
+      record("events-push-heartbeat", "violation", `no heartbeat within ${waitMs} ms${cause}`, {
+        startedAt,
+      });
       return;
     }
     const firstGap = heartbeats[0]! - startedAt;

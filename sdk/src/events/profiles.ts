@@ -6,9 +6,10 @@
  * "stricter draft", it is a different, dated product surface:
  *
  *   - `draft@28ec35e` — the pinned working-group draft.
- *   - `chatgpt@2026-09-30` — what OpenAI documents for ChatGPT, plus what we
- *     have observed ourselves (dated), plus MCPJam policy where ChatGPT's
- *     internals cannot be observed. Every field says which of those it is.
+ *   - {@link CHATGPT_PROFILE_ID} (dated by the OpenAI docs it follows) — what
+ *     OpenAI documents for ChatGPT, plus what we have observed ourselves
+ *     (dated), plus MCPJam policy where ChatGPT's internals cannot be
+ *     observed. Every field says which of those it is.
  *
  * Development overrides (e.g. the plain-http fixture mode) are NOT a profile:
  * they are recorded on the run, always labelled, and never count as a pass.

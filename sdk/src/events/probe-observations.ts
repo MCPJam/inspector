@@ -12,13 +12,23 @@
 
 import type { ProfileFact } from "./profiles.js";
 
+/** A field sent with a type the draft does not allow, kept as it arrived. */
+export interface UnexpectedProbeValue {
+  /** `typeof` the value as parsed from JSON. */
+  unexpectedType: string;
+  json: string;
+}
+
 export type ProbeObservation =
   | {
       kind: "subscribe";
       at: string;
       protocolVersion?: string;
-      /** `"omitted"` when the field was absent; `null` when sent as null. */
-      ttlMs: number | null | "omitted";
+      /**
+       * `"omitted"` when the field was absent; `null` when sent as null; any
+       * other non-number value as an {@link UnexpectedProbeValue}.
+       */
+      ttlMs: number | null | "omitted" | UnexpectedProbeValue;
       /** Decoded byte length of `delivery.secret` — the value is never kept. */
       secretBytes: number | null;
       cursorSent: "null" | "omitted" | "value";
@@ -75,7 +85,8 @@ function observed<T>(value: T, date: string): ProfileFact<T> {
 }
 
 export interface ObservedChatgptFacts {
-  requestedTtlMs?: ProfileFact<number | null | "omitted">;
+  /** An unexpected `ttlMs` is reported as seen, for a person to judge. */
+  requestedTtlMs?: ProfileFact<number | null | "omitted" | UnexpectedProbeValue>;
   secretBytes?: ProfileFact<number>;
   refreshLead?: ProfileFact<string>;
   unsubscribesOnEnd?: ProfileFact<boolean>;

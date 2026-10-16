@@ -60,6 +60,11 @@ export function formatCountdown(
   return `${seconds}s`;
 }
 
+/** A thrown error's message, or `fallback` when it carries none. */
+export function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export function formatTime(value: number | string | undefined | null): string {
   if (value === undefined || value === null || value === "") return "";
   const date = new Date(value);

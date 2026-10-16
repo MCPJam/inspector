@@ -137,12 +137,12 @@ export function subscriptionRecordFromRow(
     nextActionAt: row.nextActionAt,
     consecutiveFailures: row.consecutiveFailures ?? 0,
   };
-  const target = record as unknown as Record<string, unknown>;
+  const optional: Record<string, unknown> = {};
   for (const field of OPTIONAL_RECORD_FIELDS) {
-    const value = (row as Record<string, unknown>)[field];
-    if (value !== undefined) target[field] = value;
+    const value = row[field];
+    if (value !== undefined) optional[field] = value;
   }
-  return record;
+  return Object.assign(record, optional);
 }
 
 /** The backend's `lastError` validator takes exactly these four fields. */
@@ -249,7 +249,17 @@ async function connectAsOwner(
       subscribe: (params) => manager.subscribeServerEvents(serverId, params),
       unsubscribe: (params) => manager.unsubscribeServerEvents(serverId, params),
     },
-    close: () => manager.disconnectAllServers().catch(() => undefined),
+    close: async () => {
+      try {
+        await manager.disconnectAllServers();
+      } catch (error) {
+        // The step is already settled; a transport that will not close
+        // cleanly changes nothing about it.
+        logger.debug("[events-keeper] disconnect failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
   };
 }
 

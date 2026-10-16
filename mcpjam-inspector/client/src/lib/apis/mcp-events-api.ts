@@ -159,7 +159,7 @@ export async function loadEventsCatalog(
       }>(
         "/api/mcp/events/support",
         { method: "POST", body: { serverId: serverName } },
-        "Events support check failed",
+        "Could not check events support. Try again.",
       );
       const undeclared: EventsListResponse = {
         events: [],
@@ -182,7 +182,7 @@ export async function loadEventsCatalog(
               ...(cursor !== undefined ? { cursor } : {}),
             },
           },
-          "Listing events failed",
+          "Could not load events. Try again.",
         );
         return {
           ...list,
@@ -207,7 +207,7 @@ export async function listLocalEventSubscriptions(
   }>(
     `/api/mcp/events/subscriptions?serverId=${encodeURIComponent(serverName)}`,
     { method: "GET" },
-    "Listing subscriptions failed",
+    "Could not load subscriptions. Try again.",
   );
   return body.subscriptions ?? [];
 }
@@ -220,7 +220,7 @@ export async function createLocalEventSubscription(
   }>(
     "/api/mcp/events/subscriptions",
     { method: "POST", body: request },
-    "Subscribing failed",
+    "Could not subscribe. Try again.",
   );
   return body.subscription;
 }
@@ -234,7 +234,7 @@ export async function setLocalEventSubscriptionState(
   }>(
     `/api/mcp/events/subscriptions/${encodeURIComponent(subscriptionId)}/state`,
     { method: "POST", body: { desiredState } },
-    "Updating the subscription failed",
+    "Could not update the subscription. Try again.",
   );
   return body.subscription;
 }
@@ -247,7 +247,7 @@ export async function rotateLocalEventSubscriptionSecret(
   }>(
     `/api/mcp/events/subscriptions/${encodeURIComponent(subscriptionId)}/rotate`,
     { method: "POST" },
-    "Rotating the secret failed",
+    "Could not rotate the secret. Try again.",
   );
   return body.subscription;
 }
@@ -277,7 +277,7 @@ export async function simulateEvent(options: {
       const body = await localEventsRequest<{ entry?: unknown }>(
         "/api/mcp/events/simulate",
         { method: "POST", body: options.request },
-        "Simulating the event failed",
+        "Could not simulate the event. Try again.",
       );
       const entry = normalizeFeedEntry(body.entry);
       return entry ? { entry } : {};
@@ -335,7 +335,7 @@ export async function fetchLocalEventsFeed(after: number): Promise<{
   }>(
     `/api/mcp/events/feed?after=${after}`,
     { method: "GET" },
-    "Reading the events feed failed",
+    "Could not read the events feed. Try again.",
   );
   const entries = (body.entries ?? [])
     .map(normalizeFeedEntry)
@@ -403,12 +403,16 @@ export async function fetchHostedEventsFeed(options: {
     if (response.status === 401) {
       throw new EventsApiError(
         (isRecord(body) && typeof body.reason === "string" && body.reason) ||
-          "The feed token expired.",
+          "The feed token expired. The feed fetches a new one on its own; reopen the Events tab if it stops updating.",
         "unauthorized",
         401,
       );
     }
-    throw routeError(response, body, "Reading the events feed failed");
+    throw routeError(
+      response,
+      body,
+      "Could not read the events feed. Try again.",
+    );
   }
   const record = isRecord(body) ? body : {};
   const entries = (Array.isArray(record.entries) ? record.entries : [])

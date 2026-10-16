@@ -467,4 +467,20 @@ describe("ChatGPT probe observations (phase 0)", () => {
     expect(facts.verificationEcho?.value).toBe(true);
     expect(JSON.stringify(facts)).not.toContain("whsec_");
   });
+
+  it("reports a ttlMs of an unexpected type as it was sent", async () => {
+    const { summarizeProbeObservations } = await import("../probe-observations.js");
+    const facts = summarizeProbeObservations([
+      {
+        kind: "subscribe",
+        at: "2026-10-01T10:00:00Z",
+        ttlMs: { unexpectedType: "string", json: '"600000"' },
+        secretBytes: 32,
+        cursorSent: "null",
+        callbackUrlShape: "https://x/{id}",
+        isRefresh: false,
+      },
+    ]);
+    expect(facts.requestedTtlMs?.value).toEqual({ unexpectedType: "string", json: '"600000"' });
+  });
 });

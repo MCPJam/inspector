@@ -12,17 +12,9 @@ import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
-import { cn } from "@mcpjam/design-system/cn";
-import {
-  AlertCircle,
-  Loader2,
-  PanelLeftClose,
-  Radio,
-  RefreshCw,
-} from "lucide-react";
+import { AlertCircle, Loader2, Radio, RefreshCw } from "lucide-react";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { EmptyState } from "./ui/empty-state";
-import { JsonEditor } from "@/components/ui/json-editor";
 import { track } from "@/lib/analytics";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import {
@@ -36,25 +28,16 @@ import {
   fetchEventsSlotState,
   hostedSubscriptionRowToView,
   listLocalEventSubscriptions,
-  loadEventsCatalog,
   resolveHostedEventsServerId,
   rotateLocalEventSubscriptionSecret,
   setLocalEventSubscriptionState,
   simulateEvent,
 } from "@/lib/apis/mcp-events-api";
-import {
-  DRAFT_EVENTS_PROFILE_ID,
-  EVENTS_DRAFT_COMMIT,
-  EVENTS_DRAFT_SOURCE_URL,
-  EVENTS_PROFILES,
-  getEventsProfile,
-  usableDeliveryModes,
-} from "@/lib/events-profiles";
+import { DRAFT_EVENTS_PROFILE_ID } from "@/lib/events-profiles";
 import { logEventsFeedEntries } from "@/lib/events-traffic";
 import type {
   EventDescriptorView,
   EventsFeedEntryView,
-  EventsListResponse,
   EventsProfileIdView,
   EventsRejectionView,
   EventsSimulateRequest,
@@ -69,8 +52,16 @@ import {
 } from "./events/SubscriptionsPanel";
 import { SimulatePanel } from "./events/SimulatePanel";
 import { EventsFeedPanel, RejectionsPanel } from "./events/EventsFeedPanel";
+import {
+  DeliveryChips,
+  DraftHeader,
+  SchemaViewer,
+  Section,
+} from "./events/EventsTabSections";
+import { EventTypesSidebar } from "./events/EventTypesSidebar";
+import { useEventsCatalog } from "./events/use-events-catalog";
 import { useEventsFeed } from "./events/use-events-feed";
-import { logicalIdOf } from "./events/event-utils";
+import { errorMessage, logicalIdOf } from "./events/event-utils";
 
 interface EventsTabProps {
   serverConfig?: MCPServerConfig;
@@ -80,157 +71,6 @@ interface EventsTabProps {
   connectionStatus?: string;
   /** The Convex project (hosted registry, viewer tokens, simulations). */
   projectId?: string | null;
-}
-
-type CatalogState = "idle" | "loading" | "ready" | "error";
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function Section({
-  title,
-  description,
-  actions,
-  children,
-}: {
-  title: string;
-  description?: React.ReactNode;
-  actions?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="space-y-3 border-b border-border px-5 py-5 last:border-b-0">
-      <header className="flex items-start justify-between gap-3">
-        <div className="space-y-0.5">
-          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-          {description ? (
-            <p className="text-xs text-muted-foreground">{description}</p>
-          ) : null}
-        </div>
-        {actions}
-      </header>
-      {children}
-    </section>
-  );
-}
-
-/**
- * "Draft" is a label, not a gate (per the events plan): the extension is a
- * working-group draft pinned at one commit, and every result is judged by a
- * named profile.
- */
-function DraftHeader({
-  profileId,
-  onProfileChange,
-}: {
-  profileId: EventsProfileIdView;
-  onProfileChange: (profileId: EventsProfileIdView) => void;
-}) {
-  const profile = getEventsProfile(profileId);
-  return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
-      <Radio className="h-4 w-4 text-muted-foreground" />
-      <h2 className="text-sm font-semibold text-foreground">Events</h2>
-      <a
-        href={EVENTS_DRAFT_SOURCE_URL}
-        target="_blank"
-        rel="noreferrer"
-        className="rounded-sm border border-pending/40 bg-pending/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:underline"
-        title="MCP Events is a working-group draft; MCPJam implements the commit it is pinned to."
-        data-testid="events-draft-badge"
-      >
-        Draft · {EVENTS_DRAFT_COMMIT}
-      </a>
-      <div className="ml-auto flex items-center gap-2">
-        <label
-          htmlFor="events-profile"
-          className="text-[11px] text-muted-foreground"
-        >
-          Profile
-        </label>
-        <select
-          id="events-profile"
-          aria-label="Events profile"
-          value={profileId}
-          onChange={(e) =>
-            onProfileChange(e.target.value as EventsProfileIdView)
-          }
-          className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-          title={profile.description}
-        >
-          {EVENTS_PROFILES.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </div>
-    </div>
-  );
-}
-
-function DeliveryChips({
-  delivery,
-  profileId,
-}: {
-  delivery: string[];
-  profileId: EventsProfileIdView;
-}) {
-  const usable = new Set<string>(usableDeliveryModes(delivery, profileId));
-  return (
-    <div className="flex flex-wrap gap-1">
-      {delivery.map((mode) => (
-        <span
-          key={mode}
-          className={cn(
-            "rounded-sm border px-1.5 py-0.5 font-mono text-[10px]",
-            usable.has(mode)
-              ? "border-border bg-secondary text-secondary-foreground"
-              : "border-border text-muted-foreground line-through",
-          )}
-          title={
-            usable.has(mode)
-              ? undefined
-              : `Not used by the ${getEventsProfile(profileId).label} profile`
-          }
-        >
-          {mode}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function SchemaViewer({
-  label,
-  schema,
-}: {
-  label: string;
-  schema?: Record<string, unknown>;
-}) {
-  if (!schema) {
-    return (
-      <p className="text-[11px] text-muted-foreground">
-        {label}: none declared
-      </p>
-    );
-  }
-  return (
-    <details className="text-[11px]">
-      <summary className="cursor-pointer text-muted-foreground">
-        {label}
-      </summary>
-      <div className="mt-1 max-h-72 overflow-auto rounded-md border border-border">
-        <JsonEditor
-          value={schema}
-          viewOnly
-          collapsible
-          defaultExpandDepth={3}
-        />
-      </div>
-    </details>
-  );
 }
 
 export function EventsTab({
@@ -252,14 +92,6 @@ export function EventsTab({
   const [profileId, setProfileId] = useState<EventsProfileIdView>(
     DRAFT_EVENTS_PROFILE_ID,
   );
-  const [catalog, setCatalog] = useState<EventsListResponse | null>(null);
-  const [catalogState, setCatalogState] = useState<CatalogState>("idle");
-  const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [catalogAttempt, setCatalogAttempt] = useState(0);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [selectedEventName, setSelectedEventName] = useState<string | null>(
-    null,
-  );
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const [subscribing, setSubscribing] = useState(false);
   const [busySubscriptionId, setBusySubscriptionId] = useState<string | null>(
@@ -275,71 +107,30 @@ export function EventsTab({
   const [registryError, setRegistryError] = useState<string | null>(null);
 
   // ── catalog ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!hasServer || !serverName || !connected) return;
-    let cancelled = false;
-    setCatalogState("loading");
-    setCatalogError(null);
-    loadEventsCatalog(serverName)
-      .then((result) => {
-        if (cancelled) return;
-        setCatalog(result);
-        setCatalogState("ready");
-        setSelectedEventName((previous) =>
-          result.events.some((event) => event.name === previous)
-            ? previous
-            : (result.events[0]?.name ?? null),
-        );
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setCatalog(null);
-        setCatalogState("error");
-        setCatalogError(errorMessage(error, "Could not read events support."));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [hasServer, serverName, connected, catalogAttempt]);
-
+  const {
+    catalog,
+    catalogState,
+    catalogError,
+    retry: retryCatalog,
+    loadingMore,
+    loadMoreEvents,
+    selectedEventName,
+    setSelectedEventName,
+  } = useEventsCatalog({ hasServer, serverName, connected });
   const declared =
     catalogState === "ready" && catalog?.support.declared === true;
 
-  const loadMoreEvents = useCallback(async () => {
-    if (!serverName || !catalog?.nextCursor) return;
-    setLoadingMore(true);
-    try {
-      const page = await loadEventsCatalog(serverName, catalog.nextCursor);
-      setCatalog((previous) =>
-        previous
-          ? {
-              ...previous,
-              events: [...previous.events, ...page.events],
-              nextCursor: page.nextCursor,
-            }
-          : page,
-      );
-    } catch (error) {
-      toast.error(errorMessage(error, "Could not load more events."));
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [serverName, catalog?.nextCursor]);
-
   // ── registry ────────────────────────────────────────────────────────────
   // The hosted server id comes from the API context, which fills in after
-  // bootstrap; re-read it whenever that context changes.
-  const apiContextRevision = useSyncExternalStore(
+  // bootstrap; subscribing re-renders on every change, and the id is read
+  // fresh each render (a map lookup).
+  useSyncExternalStore(
     subscribeApiContext,
     getApiContextRevision,
     getApiContextRevision,
   );
-  const hostedServerId = useMemo(
-    () =>
-      hosted && serverName ? resolveHostedEventsServerId(serverName) : null,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [hosted, serverName, apiContextRevision],
-  );
+  const hostedServerId =
+    hosted && serverName ? resolveHostedEventsServerId(serverName) : null;
   const hostedRows = useQuery(
     EVENT_SUBSCRIPTIONS_API.list,
     hosted && projectId && declared ? { projectId } : "skip",
@@ -375,7 +166,7 @@ export function EventsTab({
       .catch((error) => {
         if (!cancelled) {
           setRegistryError(
-            errorMessage(error, "Could not list subscriptions."),
+            errorMessage(error, "Could not load subscriptions. Try again."),
           );
         }
       });
@@ -547,7 +338,7 @@ export function EventsTab({
       });
       toast.success(`Subscribed to ${event.name}`);
     } catch (error) {
-      toast.error(errorMessage(error, "Subscribing failed."));
+      toast.error(errorMessage(error, "Could not subscribe. Try again."));
     } finally {
       setSubscribing(false);
     }
@@ -608,7 +399,9 @@ export function EventsTab({
         }
       }
     } catch (error) {
-      toast.error(errorMessage(error, "The subscription update failed."));
+      toast.error(
+        errorMessage(error, "Could not update the subscription. Try again."),
+      );
     } finally {
       setBusySubscriptionId(null);
     }
@@ -625,7 +418,9 @@ export function EventsTab({
           : "Simulated event accepted; it will appear in the feed",
       );
     } catch (error) {
-      toast.error(errorMessage(error, "Simulating the event failed."));
+      toast.error(
+        errorMessage(error, "Could not simulate the event. Try again."),
+      );
     } finally {
       setSimulating(false);
     }
@@ -656,14 +451,12 @@ export function EventsTab({
     return (
       <EmptyState
         icon={AlertCircle}
-        title="Couldn't read events support"
-        description={catalogError ?? "The events check failed."}
+        title="Could not read events support. Reconnect the server and try again."
+        description={
+          catalogError ?? "Could not check events support. Try again."
+        }
       >
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setCatalogAttempt((attempt) => attempt + 1)}
-        >
+        <Button variant="outline" size="sm" onClick={retryCatalog}>
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
           Retry
         </Button>
@@ -688,7 +481,7 @@ export function EventsTab({
           icon={Radio}
           className="py-12"
           title="This server does not declare events"
-          description="The handshake carried no capabilities.events, so MCPJam sends no events requests to it. A server opts in by declaring capabilities.events in its initialize (or server/discover) result."
+          description="MCPJam sends it no events requests. Ask the server's maintainer to enable events."
         />
         <div className="mx-auto w-full max-w-2xl px-5 pb-8">
           <CapabilityPanel catalog={catalog} />
@@ -698,86 +491,16 @@ export function EventsTab({
   }
 
   const sidebarContent = (
-    <div className="flex h-full flex-col border-r border-border bg-background">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-xs font-semibold text-foreground">
-          Event types
-        </span>
-        <div className="flex items-center gap-0.5 text-muted-foreground">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0"
-            title="Refresh events"
-            aria-label="Refresh events"
-            onClick={() => setCatalogAttempt((attempt) => attempt + 1)}
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0"
-            title="Hide sidebar"
-            onClick={() => setIsSidebarVisible(false)}
-          >
-            <PanelLeftClose className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-4 p-3 pb-16">
-          <CapabilityPanel catalog={catalog} />
-          {catalog.events.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              The server declares events but lists no event types.
-            </p>
-          ) : (
-            <ul className="space-y-1" data-testid="event-types">
-              {catalog.events.map((event) => (
-                <li key={event.name}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedEventName(event.name)}
-                    aria-pressed={event.name === selectedEventName}
-                    className={cn(
-                      "w-full space-y-1 rounded-md border px-2.5 py-2 text-left",
-                      event.name === selectedEventName
-                        ? "border-primary/50 bg-primary/5"
-                        : "border-transparent hover:bg-accent",
-                    )}
-                  >
-                    <span className="block font-mono text-xs font-medium text-foreground">
-                      {event.name}
-                    </span>
-                    {event.description ? (
-                      <span className="line-clamp-2 block text-[11px] text-muted-foreground">
-                        {event.description}
-                      </span>
-                    ) : null}
-                    <DeliveryChips
-                      delivery={event.delivery}
-                      profileId={profileId}
-                    />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {catalog.nextCursor ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full text-xs"
-              disabled={loadingMore}
-              onClick={() => void loadMoreEvents()}
-            >
-              {loadingMore ? "Loading…" : "Load more"}
-            </Button>
-          ) : null}
-        </div>
-      </ScrollArea>
-    </div>
+    <EventTypesSidebar
+      catalog={catalog}
+      profileId={profileId}
+      selectedEventName={selectedEventName}
+      loadingMore={loadingMore}
+      onSelectEvent={setSelectedEventName}
+      onLoadMore={loadMoreEvents}
+      onRefresh={retryCatalog}
+      onHide={() => setIsSidebarVisible(false)}
+    />
   );
 
   const hostedRegistryNotice =

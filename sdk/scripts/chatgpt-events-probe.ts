@@ -39,6 +39,7 @@ import {
   callbackUrlShape,
   summarizeProbeObservations,
   type ProbeObservation,
+  type UnexpectedProbeValue,
 } from "../src/events/probe-observations.js";
 
 const args = new Map<string, string>();
@@ -108,6 +109,28 @@ async function post(
 
 const loose = z.looseObject({});
 
+/** `params.delivery`, read leniently: the probe records what it was sent. */
+function readDelivery(params: Record<string, unknown>): { url: unknown; secret: unknown } {
+  const delivery = params.delivery;
+  if (typeof delivery !== "object" || delivery === null) {
+    return { url: undefined, secret: undefined };
+  }
+  return {
+    url: "url" in delivery ? delivery.url : undefined,
+    secret: "secret" in delivery ? delivery.secret : undefined,
+  };
+}
+
+/** `params.ttlMs` as sent; a value of an unexpected type is recorded, not rejected. */
+function readTtlMs(
+  params: Record<string, unknown>
+): number | null | "omitted" | UnexpectedProbeValue {
+  if (!("ttlMs" in params)) return "omitted";
+  const value = params.ttlMs;
+  if (value === null || typeof value === "number") return value;
+  return { unexpectedType: typeof value, json: JSON.stringify(value) };
+}
+
 function buildServer(ctx: { requestInfo?: Request }) {
   const protocolVersion = ctx.requestInfo?.headers.get("mcp-protocol-version") ?? undefined;
   const server = new Server(
@@ -148,10 +171,11 @@ function buildServer(ctx: { requestInfo?: Request }) {
       ],
     };
   });
-  server.setRequestHandler("events/subscribe", { params: loose }, async (params: any) => {
-    const secret = params.delivery?.secret;
+  server.setRequestHandler("events/subscribe", { params: loose }, async (params) => {
+    const delivery = readDelivery(params);
+    const secret = delivery.secret;
     const secretBytes = typeof secret === "string" ? decodeWebhookSecret(secret)?.length ?? null : null;
-    const url = String(params.delivery?.url ?? "");
+    const url = String(delivery.url ?? "");
     const id = `sub_${Buffer.from(url).toString("base64url").slice(-16)}`;
     const existing = subscriptions.get(id);
     const now = Date.now();
@@ -159,7 +183,7 @@ function buildServer(ctx: { requestInfo?: Request }) {
       kind: "subscribe",
       at: new Date(now).toISOString(),
       ...(protocolVersion ? { protocolVersion } : {}),
-      ttlMs: "ttlMs" in params ? params.ttlMs : "omitted",
+      ttlMs: readTtlMs(params),
       secretBytes,
       cursorSent: !("cursor" in params) ? "omitted" : params.cursor === null ? "null" : "value",
       callbackUrlShape: callbackUrlShape(url),
@@ -196,8 +220,8 @@ function buildServer(ctx: { requestInfo?: Request }) {
     subscriptions.set(id, subscription);
     return { id, refreshBefore: new Date(subscription.refreshBefore).toISOString(), cursor: null, truncated: false };
   });
-  server.setRequestHandler("events/unsubscribe", { params: loose }, async (params: any) => {
-    const url = String(params.delivery?.url ?? "");
+  server.setRequestHandler("events/unsubscribe", { params: loose }, async (params) => {
+    const url = String(readDelivery(params).url ?? "");
     record({ kind: "unsubscribe", at: new Date().toISOString(), callbackUrlShape: callbackUrlShape(url) });
     subscriptions.delete(`sub_${Buffer.from(url).toString("base64url").slice(-16)}`);
     return {};

@@ -104,13 +104,13 @@ function FeedEntryRow({
           </span>
         ) : null}
         {entry.idConflict ? (
-          <Flag title="Delivered under a server subscription id that differs from the reconciled one.">
-            ID conflict
+          <Flag title="Delivered under a subscription id that does not match the current subscription.">
+            Subscription mismatch
           </Flag>
         ) : null}
         {entry.webhookIdMismatch ? (
-          <Flag title="The webhook-id header did not match the event id.">
-            webhook-id mismatch
+          <Flag title="The server labeled this delivery with an id that differs from the event inside it. The event was still recorded.">
+            Delivery id mismatch
           </Flag>
         ) : null}
         {entry.quarantined || entry.kind === "quarantined" ? (

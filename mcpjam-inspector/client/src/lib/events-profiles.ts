@@ -36,8 +36,7 @@ export const EVENTS_PROFILES: readonly EventsProfileOption[] = [
   {
     id: DRAFT_EVENTS_PROFILE_ID,
     label: `Draft (${EVENTS_DRAFT_COMMIT})`,
-    description:
-      "The working-group draft pinned at 28ec35e: poll, push and webhook delivery.",
+    description: "The working-group draft: poll, push and webhook delivery.",
     deliveryModes: ["poll", "push", "webhook"],
   },
   {

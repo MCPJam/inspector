@@ -28,6 +28,7 @@
 
 import type {
   JSONRPCMessage,
+  JSONRPCRequest,
   MessageExtraInfo,
   Transport,
   TransportSendOptions,
@@ -58,26 +59,20 @@ export class EventsStreamTap {
   take(message: JSONRPCMessage):
     | { message: JSONRPCMessage; registration: EventsStreamRegistration; id: string | number }
     | undefined {
-    const record = message as {
-      id?: string | number;
-      method?: unknown;
-      params?: { _meta?: Record<string, unknown> };
-    };
-    if (record.method !== "events/stream" || record.id === undefined) return undefined;
-    const meta = record.params?._meta;
+    // A request is the only message with both a method and an id.
+    if (!("method" in message) || !("id" in message)) return undefined;
+    if (message.method !== "events/stream") return undefined;
+    const meta = message.params?._meta;
     const key = meta?.[EVENTS_STREAM_KEY_META];
-    if (typeof key !== "string") return undefined;
+    if (meta === undefined || typeof key !== "string") return undefined;
     const registration = this.registrations.get(key);
-    const { [EVENTS_STREAM_KEY_META]: _private, ...rest } = meta!;
-    const stripped = {
-      ...(message as Record<string, unknown>),
-      params: {
-        ...record.params,
-        ...(Object.keys(rest).length > 0 ? { _meta: rest } : { _meta: {} }),
-      },
-    } as unknown as JSONRPCMessage;
-    if (!registration) return { message: stripped, registration: NOOP, id: record.id };
-    return { message: stripped, registration, id: record.id };
+    const { [EVENTS_STREAM_KEY_META]: _private, ...rest } = meta;
+    const stripped: JSONRPCRequest = {
+      ...message,
+      params: { ...message.params, _meta: rest },
+    };
+    if (!registration) return { message: stripped, registration: NOOP, id: message.id };
+    return { message: stripped, registration, id: message.id };
   }
 }
 
@@ -108,30 +103,26 @@ export function wrapTransportForEventStreams(
     }
 
     async start(): Promise<void> {
-      if (typeof (this.inner as any).start === "function") {
-        await (this.inner as any).start();
+      if (typeof this.inner.start === "function") {
+        await this.inner.start();
       }
     }
 
     async send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
       const ours = tap.take(message);
       if (!ours) {
-        await this.inner.send(message as any, options as any);
+        await this.inner.send(message, options);
         return;
       }
       ours.registration.onRequestId(ours.id);
-      const original = (options as { onRequestStreamEnd?: () => void } | undefined)
-        ?.onRequestStreamEnd;
-      await this.inner.send(
-        ours.message as any,
-        {
-          ...options,
-          onRequestStreamEnd: () => {
-            original?.();
-            ours.registration.onRequestStreamEnd();
-          },
-        } as any
-      );
+      const original = options?.onRequestStreamEnd;
+      await this.inner.send(ours.message, {
+        ...options,
+        onRequestStreamEnd: () => {
+          original?.();
+          ours.registration.onRequestStreamEnd();
+        },
+      });
     }
 
     async close(): Promise<void> {
@@ -139,7 +130,7 @@ export function wrapTransportForEventStreams(
     }
 
     get sessionId(): string | undefined {
-      return (this.inner as any).sessionId;
+      return this.inner.sessionId;
     }
 
     /**
@@ -149,7 +140,7 @@ export function wrapTransportForEventStreams(
      * cancellation of one push stream depends on it.
      */
     get hasPerRequestStream(): boolean | undefined {
-      return (this.inner as any).hasPerRequestStream;
+      return this.inner.hasPerRequestStream;
     }
 
     setProtocolVersion?(version: string): void {

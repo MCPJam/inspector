@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Input } from "@mcpjam/design-system/input";
@@ -83,8 +83,12 @@ export function SubscribeForm({
   const [noExpiry, setNoExpiry] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Keyed on the event's identity alone, so a catalog refresh does not wipe
+  // what the user typed: the schema is read through a ref.
+  const inputSchemaRef = useRef(event.inputSchema);
+  inputSchemaRef.current = event.inputSchema;
   useEffect(() => {
-    const next = generateFormFieldsFromSchema(event.inputSchema);
+    const next = generateFormFieldsFromSchema(inputSchemaRef.current);
     setFields(next);
     setRawMode(next.length === 0);
     setRawJson("{}");
@@ -93,9 +97,6 @@ export function SubscribeForm({
     setTtlMs("");
     setNoExpiry(false);
     setFormError(null);
-    // Keyed on the event's identity alone, so a catalog refresh does not wipe
-    // what the user typed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event.name]);
 
   const modes = useMemo(
@@ -143,7 +144,11 @@ export function SubscribeForm({
         }
         args = parsed as Record<string, unknown>;
       } catch (error) {
-        setFormError(error instanceof Error ? error.message : "Invalid JSON.");
+        setFormError(
+          error instanceof Error
+            ? error.message
+            : "The arguments are not valid JSON. Check them and try again.",
+        );
         return;
       }
     } else {
@@ -258,10 +263,9 @@ export function SubscribeForm({
             <div className="flex items-start gap-2 text-xs text-foreground">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
               <p>
-                Locally, webhooks go to the inspector's development receiver:
-                plain http on this machine. The server must be able to reach it,
-                and a run that uses it is labelled as a development override and
-                never counts as a conformance pass.
+                Locally, webhooks go to the inspector's development receiver
+                over plain http, so the server must be able to reach this
+                machine. Runs that use it are not conformance passes.
               </p>
             </div>
             <div className="flex items-center gap-2">

@@ -170,7 +170,11 @@ export class HttpInboxClient implements InboxPort {
     });
     if (response.status === 503) {
       // Drain without reading into anything that could be logged.
-      await response.body?.cancel().catch(() => undefined);
+      try {
+        await response.body?.cancel();
+      } catch {
+        // The 503 is reported below whether or not the body drains.
+      }
       throw new InboxBackpressureError(
         parseRetryAfterMs(response.headers.get("retry-after")),
       );

@@ -184,9 +184,14 @@ export class EventsPushRuntime {
       // Frames of one stream are processed strictly in order, each only while
       // the request it arrived on is still the current one.
       const controller = state.controller;
-      state.queue = state.queue
-        .then(() => this.handleFrame(state, controller, notification))
-        .catch(() => undefined);
+      state.queue = state.queue.then(async () => {
+        try {
+          await this.handleFrame(state, controller, notification);
+        } catch {
+          // A failed append already reopens the stream; what is left to throw
+          // is a caller's callback, which must not stall the frames behind it.
+        }
+      });
     };
     for (const method of [
       EventsActiveNotificationMethod,
@@ -441,8 +446,16 @@ export function createManagerPushPort(
     ) => Promise<unknown>
       ? (serverId: string, params: P, options: O) => Promise<unknown>
       : never;
-    addNotificationHandler(serverId: string, method: string, handler: (n: any) => void): void;
-    removeNotificationHandler(serverId: string, method: string, handler: (n: any) => void): void;
+    addNotificationHandler(
+      serverId: string,
+      method: string,
+      handler: (notification: { method: string; params?: Record<string, unknown> }) => void
+    ): void;
+    removeNotificationHandler(
+      serverId: string,
+      method: string,
+      handler: (notification: { method: string; params?: Record<string, unknown> }) => void
+    ): void;
   },
   serverId: string
 ): PushConnectionPort {

@@ -1,9 +1,10 @@
 /**
  * MCP Events conformance — profile-aware, MUST vs SHOULD.
  *
- * Every result names its PROFILE (`draft@28ec35e` or `chatgpt@2026-09-30`),
- * each check's STRENGTH (a MUST violation fails the run, a SHOULD violation
- * only warns), and the protocol pin the run used. Checks that would fail
+ * Every result names its PROFILE (an {@link EventsProfileId}: the pinned
+ * draft or the dated ChatGPT surface), each check's STRENGTH (a MUST
+ * violation fails the run, a SHOULD violation only warns), and the protocol
+ * pin the run used. Checks that would fail
  * behaviour the draft ALLOWS are written to pass the allowed alternatives:
  * consent by any of the four methods, a second unsubscribe answering either
  * `{}` or NotFound, a grant clamped UP to a server minimum.
