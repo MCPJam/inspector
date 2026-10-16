@@ -24,6 +24,7 @@ import type { Context } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { backendFailureText } from "../../utils/backend-failure-text.js";
+import { PLATFORM_FEE_ERROR_CODES } from "./platform-fee-errors.js";
 import { v1Error } from "./envelope.js";
 import type { V1ErrorCode } from "./contract.js";
 
@@ -138,15 +139,7 @@ async function callBroker(
     const domainCode =
       typeof body.domainCode === "string" ? body.domainCode : undefined;
     const admissionError =
-      domainCode &&
-      [
-        "platform_fee_refused",
-        "platform_fee_unavailable",
-        "client_upgrade_required",
-        "ADMISSION_CONFLICT",
-        "ADMISSION_CLOSED",
-        "NOT_FOUND",
-      ].includes(domainCode);
+      domainCode && PLATFORM_FEE_ERROR_CODES.includes(domainCode);
     const message =
       admissionError && typeof body.error === "string"
         ? body.error
@@ -170,11 +163,13 @@ async function callBroker(
       message,
       admissionError
         ? {
-            code: domainCode,
-            ...(typeof body.code === "string" ? { reason: body.code } : {}),
             ...(body.details && typeof body.details === "object"
               ? body.details
               : {}),
+            ...(typeof body.code === "string" && body.code !== domainCode
+              ? { reason: body.code }
+              : {}),
+            code: domainCode,
           }
         : undefined,
       retryAfter,
@@ -215,12 +210,6 @@ modelLeases.post("/projects/:projectId/model-leases", async (c) => {
     );
   }
 
-  // `default` is the zero-config alias: omit projectId so the backend resolves
-  // the key org's Default project. Anything else is forwarded and validated
-  // (org scope + membership) backend-side — including an id the caller
-  // smuggled into the body, which the path segment overrides so the URL is
-  // always the single source of truth. Same rule as `eval-ingest`, so a lease
-  // and the results it produces always land in the same project.
   for (const key of ["executionAdmissionId", "attemptAdmissionId"]) {
     if (
       payload[key] !== undefined &&
@@ -231,10 +220,16 @@ modelLeases.post("/projects/:projectId/model-leases", async (c) => {
       return v1Error(
         c,
         "VALIDATION_ERROR",
-        "Check the run authorization identifier and try again.",
+        `${key} must contain 1 to 256 characters.`,
       );
     }
   }
+  // `default` is the zero-config alias: omit projectId so the backend resolves
+  // the key org's Default project. Anything else is forwarded and validated
+  // (org scope + membership) backend-side — including an id the caller
+  // smuggled into the body, which the path segment overrides so the URL is
+  // always the single source of truth. Same rule as `eval-ingest`, so a lease
+  // and the results it produces always land in the same project.
   const projectId = c.req.param("projectId");
   const result = await callBroker(c, "start", {
     ...(payload.executionAdmissionId

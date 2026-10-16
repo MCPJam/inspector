@@ -75,6 +75,19 @@ describe("v1 eval-ingest proxies", () => {
     expect(String(fetchMock.mock.calls[0][0])).toBe(`https://convex-http.example.com/v1/evals/ingest/${operation}`);
   });
 
+  it.each(["admit", "ensure-steps"])("forwards Retry-After for %s", async (operation) => {
+    const response = backendResponse(429, {
+      code: "RATE_LIMITED", message: "Daily eval quota reached.",
+      details: { code: "billing_limit_reached" },
+    });
+    response.headers.set("Retry-After", "60");
+    global.fetch = vi.fn().mockResolvedValue(response);
+    const res = await request(makeApp(), `/api/v1/projects/default/eval-ingest/${operation}`, "{}");
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("60");
+    expect(await res.json()).toMatchObject({ details: { code: "billing_limit_reached" } });
+  });
+
   it("forwards the body to the backend ingest route and passes the response through", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       backendResponse(200, {

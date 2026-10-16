@@ -66,29 +66,21 @@
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
 import { redactForLog } from "./redact-log-message.js";
-
-import { cleanConvexMessage, preconditionDetails, billingDetails, retryAfterFromResetsAt, retryAfterFromMs } from "./convex-error-details.js";
 import { translatePlatformFeeError } from "./platform-fee-errors.js";
-import { convexErrorData } from "./convex-error-data.js";
 
-/**
- * The five `gate_waiver_*` refusal codes, mirrored from `GATE_WAIVER_REFUSAL`
- * in mcpjam-backend `convex/lib/gateWaivers.ts`.
- *
- * Enumerated rather than matched with a `gate_waiver_` prefix test. A prefix
- * would silently adopt every future code the backend adds under that
- * namespace, mapping it to 400 before anyone here decided that is right — the
- * "a predicate over names exempts whatever it did not anticipate" failure,
- * running in the other direction. An unlisted code falls through to the
- * translator's terminal 500, which is logged, which is how we would find out.
- */
-/**
- * The backend's refusal code for a write to a CI-owned suite. Spelled here
- * rather than imported: this repo does not depend on the backend's source, and
- * a hand-mirrored constant with the reason written down beats a string literal
- * buried in a conditional.
- */
-import { CI_OWNED_SUITE_READ_ONLY_CODE, GATE_WAIVER_REFUSAL_CODES } from "./convex-error-data.js";
+import {
+  convexErrorData,
+  type TranslateConvexWriteErrorOptions,
+  CI_OWNED_SUITE_READ_ONLY_CODE,
+  GATE_WAIVER_REFUSAL_CODES,
+} from "./convex-error-data.js";
+import {
+  cleanConvexMessage,
+  preconditionDetails,
+  billingDetails,
+  retryAfterFromResetsAt,
+  retryAfterFromMs,
+} from "./convex-error-details.js";
 
 /**
  * An import-ineligibility refusal, translated — or `undefined` for anything else.
