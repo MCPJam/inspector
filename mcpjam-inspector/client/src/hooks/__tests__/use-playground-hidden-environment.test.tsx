@@ -8,6 +8,8 @@ const state = vi.hoisted(() => ({
   activePluginsVenues: [] as Array<string | undefined>,
   activeLoading: false,
   activeFailed: false,
+  hostedMode: false,
+  clientRunsHere: false,
   pluginsEnabled: true,
   isMember: true as boolean | undefined,
   secrets: undefined as unknown,
@@ -46,6 +48,15 @@ vi.mock("@/hooks/useActivePlugins", async (importOriginal) => {
     },
   };
 });
+vi.mock("@/lib/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/config")>()),
+  get HOSTED_MODE() {
+    return state.hostedMode;
+  },
+}));
+vi.mock("@/hooks/useLocalHarnessTarget", () => ({
+  useLocalHarnessRunsHere: () => state.clientRunsHere,
+}));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useEnsureAdhocEnvironment: () => state.ensure,
 }));
@@ -213,6 +224,8 @@ describe("usePlaygroundHiddenEnvironment", () => {
     state.activePluginsVenues = [];
     state.activeLoading = false;
     state.activeFailed = false;
+    state.hostedMode = false;
+    state.clientRunsHere = false;
     state.pluginsEnabled = true;
     state.isMember = true;
     state.secrets = undefined;
@@ -374,11 +387,142 @@ describe("usePlaygroundHiddenEnvironment", () => {
     expect(state.secretsProjectIds.every((id) => id === null)).toBe(true);
   });
 
-  describe("only remote components, in every build", () => {
+  describe("the venue", () => {
+    const localPlugin = () =>
+      plugin("local", {
+        servers: [
+          {
+            serverId: "srv_local",
+            name: "local-server",
+            componentKey: "server",
+            placement: "local",
+          },
+        ],
+      });
+
     it("reads the plugins for the hosted venue even where this build is local", () => {
       state.plugins = [plugin("bits")];
       render();
       expect(state.activePluginsVenues.at(-1)).toBe("hosted");
+    });
+
+    it("runs a local component for a client the member runs here", async () => {
+      state.clientRunsHere = true;
+      state.plugins = [localPlugin(), plugin("bits")];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(state.activePluginsVenues.at(-1)).toBe("local");
+      expect(result.current.venue).toBe("local");
+      expect(state.ensure.mock.calls[0][0].pluginVersionIds).toEqual([
+        "ver_local",
+        "ver_bits",
+      ]);
+      expect(result.current.pluginServerIds).toEqual(["srv_local", "srv_bits"]);
+    });
+
+    it("keeps a plugin whose local server waits on setup, running its remote one", async () => {
+      state.clientRunsHere = true;
+      state.plugins = [
+        plugin("waiting", {
+          servers: [
+            {
+              serverId: "srv_w",
+              name: "w",
+              componentKey: "w",
+              placement: "local",
+              unavailable: "needs_setup",
+            },
+            {
+              serverId: "srv_wr",
+              name: "wr",
+              componentKey: "wr",
+              placement: "remote",
+            },
+          ],
+        }),
+        plugin("bits"),
+      ];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(result.current.venue).toBe("local");
+      expect(state.ensure.mock.calls[0][0].pluginVersionIds).toEqual([
+        "ver_waiting",
+        "ver_bits",
+      ]);
+      expect(result.current.pluginServerIds).toEqual(["srv_wr", "srv_bits"]);
+    });
+
+    it("stays hosted for that client when no plugin needs this machine", async () => {
+      state.clientRunsHere = true;
+      state.plugins = [plugin("bits")];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(result.current.venue).toBe("hosted");
+    });
+
+    it("never runs here from the hosted app", async () => {
+      state.hostedMode = true;
+      state.clientRunsHere = true;
+      state.plugins = [localPlugin(), plugin("bits")];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(state.activePluginsVenues.at(-1)).toBe("hosted");
+      expect(result.current.venue).toBe("hosted");
+      expect(state.ensure.mock.calls[0][0].pluginVersionIds).toEqual([
+        "ver_bits",
+      ]);
+    });
+
+    it("recovers for the venue it composed for", async () => {
+      state.clientRunsHere = true;
+      state.plugins = [localPlugin()];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      state.query.mockResolvedValue({
+        enabled: true,
+        plugins: [localPlugin()],
+      });
+
+      await act(async () => {
+        await result.current.recover();
+      });
+
+      expect(state.query).toHaveBeenCalledWith(
+        "plugins:resolveActivePlugins",
+        expect.objectContaining({ runtimeVenue: "local" }),
+      );
+      expect(state.ensure.mock.calls[1][0].pluginVersionIds).toEqual([
+        "ver_local",
+      ]);
+    });
+
+    it("recovers a hosted composition into a plugin that now runs here", async () => {
+      state.clientRunsHere = true;
+      state.plugins = [plugin("bits")];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(result.current.venue).toBe("hosted");
+      // Only a read for this client admits the new version's local component.
+      state.query.mockImplementation(
+        async (_name: string, args: { runtimeVenue?: string }) => ({
+          enabled: true,
+          plugins:
+            args.runtimeVenue === "local"
+              ? [plugin("bits"), localPlugin()]
+              : [plugin("bits")],
+        }),
+      );
+
+      let recovery: unknown;
+      await act(async () => {
+        recovery = await result.current.recover();
+      });
+
+      expect(recovery).toMatchObject({ ok: true, environmentId: "env_2" });
+      expect(state.ensure.mock.calls[1][0].pluginVersionIds).toEqual([
+        "ver_bits",
+        "ver_local",
+      ]);
     });
 
     it("pins a remote plugin and skips a local one, which the chat names", async () => {

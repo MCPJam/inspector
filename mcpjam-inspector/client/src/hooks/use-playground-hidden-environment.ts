@@ -8,12 +8,14 @@ import {
 } from "@/hooks/useActivePlugins";
 import { useEnsureAdhocEnvironment } from "@/hooks/useProjectEnvironments";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { useLocalHarnessRunsHere } from "@/hooks/useLocalHarnessTarget";
 import { usePluginServerNotices } from "@/hooks/use-plugin-server-notices";
 import { usePluginServerSignIn } from "@/hooks/usePluginServerSignIn";
 import { registerPluginNoticeSignIn } from "@/lib/plugins/plugin-notice-display";
 import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
 import { useProjectSecrets } from "@/hooks/useProjectSecrets";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { HOSTED_MODE } from "@/lib/config";
 import type { HiddenEnvironmentRecovery } from "@/lib/hosted-runtime-context";
 import type {
   ActivePluginRow,
@@ -21,9 +23,12 @@ import type {
 } from "@/lib/plugins/active-plugins-types";
 import {
   hiddenEnvironmentCompositionKey,
+  hiddenEnvironmentVenue,
   isRunnablePlugin,
+  needsLocalVenue,
   runnablePluginServerIds,
   runnablePluginVersionIds,
+  type HiddenEnvironmentVenue,
 } from "@/lib/plugins/hidden-environment";
 import {
   externalAccountCredentialFor,
@@ -46,15 +51,6 @@ import {
  * or if the read fails, the chat runs as a plain client turn and says its
  * plugins couldn't load.
  */
-
-/**
- * The venue the hidden composition is resolved for, in EVERY build. Only
- * remote components are composed: a plugin with a component that would start
- * a process on this computer (or in a computer) is skipped as `placement`,
- * because the member never chose to run it. An environment they pick
- * explicitly is how such a plugin runs.
- */
-export const HIDDEN_ENVIRONMENT_VENUE = "hosted" as const;
 
 /** How long sends wait for the plugin read before running without plugins. */
 export const HIDDEN_ENVIRONMENT_WAIT_MS = 5000;
@@ -82,6 +78,10 @@ export interface PlaygroundHiddenEnvironmentInput {
 export interface PlaygroundHiddenEnvironmentState {
   /** Every installed plugin as a chat would see it, active or skipped. */
   plugins: ActivePluginRow[];
+  /** At least one of them runs in this chat's venue. */
+  hasRunnablePlugins: boolean;
+  /** Where the composed plugins run (see `hiddenEnvironmentVenue`). */
+  venue: HiddenEnvironmentVenue;
   /** The runnable plugins' servers, labelled with their plugin. */
   pluginServers: ActivePluginServer[];
   /** True when the chat has runnable plugins and should carry them. */
@@ -103,6 +103,9 @@ type Composition = {
   key: string;
   projectId: string;
   hostId: string;
+  venue: HiddenEnvironmentVenue;
+  /** The member runs this chat's client here: what both venues come from. */
+  clientRunsHere: boolean;
   pluginVersionIds: string[];
   pluginServerIds: string[];
   secretSelection?: { mode: "explicit"; secretIds: string[] };
@@ -138,10 +141,24 @@ export function usePlaygroundHiddenEnvironment(
   const pluginsEnabled = usePluginsEnabled();
   const memberActor = useIsMemberActor();
   const isMember = memberActor === true;
+  // The member's own choice to run this chat's client here. The plugins are
+  // read for that venue, so one that starts a process here comes back
+  // runnable rather than skipped. The composition takes the venue only when
+  // such a plugin is there to run.
+  const clientRunsHere = useLocalHarnessRunsHere({ projectId, harnessId });
   const active = useActivePlugins(eligible && isMember ? projectId : null, {
-    runtimeVenue: HIDDEN_ENVIRONMENT_VENUE,
+    runtimeVenue: hiddenEnvironmentVenue({
+      hostedMode: HOSTED_MODE,
+      clientRunsHere,
+      needsLocal: true,
+    }),
   });
   const plugins = active.plugins;
+  const venue = hiddenEnvironmentVenue({
+    hostedMode: HOSTED_MODE,
+    clientRunsHere,
+    needsLocal: plugins.some(needsLocalVenue),
+  });
   // The chat's plugin notices offer the same Sign in as the server's card, for
   // the members whose plugins they name. Registered before the notices below
   // replay, so a notice a remount replays already carries it.
@@ -168,14 +185,17 @@ export function usePlaygroundHiddenEnvironment(
     (memberActor === undefined || (isMember && active.isLoading));
   const readFailed = eligible && isMember && active.failed;
 
-  const runnable = useMemo(() => plugins.filter(isRunnablePlugin), [plugins]);
+  const runnable = useMemo(
+    () => plugins.filter((plugin) => isRunnablePlugin(plugin, venue)),
+    [plugins, venue],
+  );
   const pluginVersionIds = useMemo(
-    () => runnablePluginVersionIds(runnable),
-    [runnable],
+    () => runnablePluginVersionIds(runnable, venue),
+    [runnable, venue],
   );
   const pluginServerIds = useMemo(
-    () => runnablePluginServerIds(runnable),
-    [runnable],
+    () => runnablePluginServerIds(runnable, venue),
+    [runnable, venue],
   );
   const pluginServers = useMemo(
     () => (runnable.length > 0 ? activePluginServers(runnable) : EMPTY_SERVERS),
@@ -230,9 +250,12 @@ export function usePlaygroundHiddenEnvironment(
         hostId,
         pluginVersionIds,
         secretIds: secretSelection?.secretIds,
+        venue,
       }),
       projectId,
       hostId,
+      venue,
+      clientRunsHere,
       pluginVersionIds,
       pluginServerIds,
       ...(secretSelection ? { secretSelection } : {}),
@@ -244,6 +267,8 @@ export function usePlaygroundHiddenEnvironment(
     projectId,
     hostId,
     hostResolved,
+    venue,
+    clientRunsHere,
     pluginVersionIds,
     pluginServerIds,
     credential,
@@ -358,12 +383,20 @@ export function usePlaygroundHiddenEnvironment(
       );
     };
     try {
+      // Read and composed as the subscription does, so a plugin that now
+      // starts a process here moves a hosted composition to this client.
+      const venueFor = (needsLocal: boolean) =>
+        hiddenEnvironmentVenue({
+          hostedMode: HOSTED_MODE,
+          clientRunsHere: target.clientRunsHere,
+          needsLocal,
+        });
       // A fresh read, not the subscription's last answer: the refusal says
       // the plugins changed, and the reactive copy may not have caught up.
       const args = {
         projectId: target.projectId,
         content: false,
-        runtimeVenue: HIDDEN_ENVIRONMENT_VENUE,
+        runtimeVenue: venueFor(true),
       };
       const read = (extra: object) =>
         convex.query(
@@ -379,12 +412,13 @@ export function usePlaygroundHiddenEnvironment(
           ? fresh.plugins
           : [];
       if (superseded()) return { ok: false };
-      const versionIds = runnablePluginVersionIds(rows);
+      const venue = venueFor(rows.some(needsLocalVenue));
+      const versionIds = runnablePluginVersionIds(rows, venue);
       if (versionIds.length === 0) {
         setComposed({ key: target.key, status: "none" });
         return { ok: true, environmentId: null };
       }
-      const serverIds = runnablePluginServerIds(rows);
+      const serverIds = runnablePluginServerIds(rows, venue);
       const environmentId = await ensureFor(target, versionIds);
       if (superseded()) return { ok: false };
       // Held under the CURRENT key until the subscription moves on, at which
@@ -418,6 +452,8 @@ export function usePlaygroundHiddenEnvironment(
 
   return {
     plugins,
+    hasRunnablePlugins: runnable.length > 0,
+    venue,
     pluginServers: wanted ? pluginServers : EMPTY_SERVERS,
     wanted,
     environmentId: current?.status === "ready" ? current.environmentId : null,

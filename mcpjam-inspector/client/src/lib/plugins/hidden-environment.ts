@@ -17,34 +17,87 @@ import type { PluginServerUnavailable } from "@/shared/plugin-server-unavailable
  * Only a project with at least one runnable plugin takes this path. Every other
  * chat keeps today's client turn, request body included.
  *
- * Only REMOTE components are ever composed. The plugins are read for the
- * hosted venue in every build, so a plugin with a component that would run on
- * this computer (or in a computer) is skipped as `placement`: nothing the
- * member did not pick starts a process on their machine. An environment they
- * choose explicitly is still how such a plugin runs.
+ * Where those plugins run is the composition's VENUE (see
+ * {@link hiddenEnvironmentVenue}). Hosted composes remote components only, so
+ * a plugin with a component that would start a process is skipped as
+ * `placement`. Local also composes components that start a process on this
+ * machine, and only follows the member's own choice to run this chat's client
+ * here. An environment they choose explicitly is the other way such a plugin
+ * runs.
  */
 
 /**
+ * `hosted`: remote components only. `local`: remote components, plus ones
+ * that start a process on this machine.
+ */
+export type HiddenEnvironmentVenue = "hosted" | "local";
+
+/**
+ * The venue a Playground chat's plugins are composed for.
+ *
+ * `local` only when ALL of these hold:
+ * - this is not the hosted app, which can never reach the member's machine;
+ * - the member chose to run this chat's client here and authorized it
+ *   (`clientRunsHere`);
+ * - a plugin needs it (`needsLocal`).
+ *
+ * A local build alone is not that choice, and neither is a client profile
+ * named after a desktop app. Without a plugin that needs it, the chat keeps
+ * the route it had.
+ */
+export function hiddenEnvironmentVenue(args: {
+  hostedMode: boolean;
+  clientRunsHere: boolean;
+  needsLocal: boolean;
+}): HiddenEnvironmentVenue {
+  return !args.hostedMode && args.clientRunsHere && args.needsLocal
+    ? "local"
+    : "hosted";
+}
+
+/**
  * A plugin whose active version contributes to a turn right now. Every one of
- * its servers must be remote: the hosted-venue read already skips the rest,
+ * its servers must be able to run in `venue`. The read already skips the rest,
  * and this holds the line if a read ever did not.
  */
-export function isRunnablePlugin(plugin: ActivePluginRow): boolean {
+export function isRunnablePlugin(
+  plugin: ActivePluginRow,
+  venue: HiddenEnvironmentVenue = "hosted",
+): boolean {
   return (
     plugin.status === "active" &&
     !!plugin.pluginVersionId &&
-    plugin.servers.every((server) => server.placement === "remote")
+    plugin.servers.every(
+      (server) =>
+        server.placement === "remote" ||
+        (venue === "local" && server.placement === "local"),
+    )
+  );
+}
+
+/**
+ * A plugin that runs only once the venue is `local`: runnable there, with a
+ * server that starts a process on this machine. One whose local server still
+ * waits on setup counts too. Its remote servers and skills run there, and it
+ * runs without that server and says so. Composed hosted, the whole plugin
+ * would drop, depending on which other plugins are installed.
+ */
+export function needsLocalVenue(plugin: ActivePluginRow): boolean {
+  return (
+    isRunnablePlugin(plugin, "local") &&
+    plugin.servers.some((server) => server.placement === "local")
   );
 }
 
 /** The runnable plugins' active versions, in plugin order, deduped. */
 export function runnablePluginVersionIds(
   plugins: readonly ActivePluginRow[],
+  venue: HiddenEnvironmentVenue = "hosted",
 ): string[] {
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const plugin of plugins) {
-    if (!isRunnablePlugin(plugin)) continue;
+    if (!isRunnablePlugin(plugin, venue)) continue;
     const id = plugin.pluginVersionId as string;
     if (seen.has(id)) continue;
     seen.add(id);
@@ -59,11 +112,12 @@ export function runnablePluginVersionIds(
  */
 export function runnablePluginServerIds(
   plugins: readonly ActivePluginRow[],
+  venue: HiddenEnvironmentVenue = "hosted",
 ): string[] {
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const plugin of plugins) {
-    if (!isRunnablePlugin(plugin)) continue;
+    if (!isRunnablePlugin(plugin, venue)) continue;
     for (const server of plugin.servers) {
       if (server.unavailable || seen.has(server.serverId)) continue;
       seen.add(server.serverId);
@@ -79,17 +133,20 @@ export function runnablePluginServerIds(
  * re-ensured only when this changes — never per message.
  *
  * Order is kept, not sorted: the backend's fingerprint treats array order as
- * meaningful, and plugin order is stable in the active-plugins read.
+ * meaningful, and plugin order is stable in the active-plugins read. A local
+ * venue is part of the key, so a change of venue always recomposes.
  */
 export function hiddenEnvironmentCompositionKey(input: {
   hostId: string;
   pluginVersionIds: readonly string[];
   secretIds?: readonly string[];
+  venue?: HiddenEnvironmentVenue;
 }): string {
   return JSON.stringify([
     input.hostId,
     input.pluginVersionIds,
     input.secretIds ?? [],
+    ...(input.venue === "local" ? ["local"] : []),
   ]);
 }
 
