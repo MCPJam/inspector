@@ -12,7 +12,9 @@
  *   overlay (OpenAI's rule: replace, never merge). An overlay cannot move
  *   portable components out of `skills/` and `mcp.json`.
  * - Without a root manifest, the first of `.codex-plugin/`, `.agent-plugin/`
- *   and `.claude-plugin/` is the manifest, read by the root rules.
+ *   and `.claude-plugin/` is the manifest, read by the root rules. Its MCP
+ *   servers come from the file or inline object its `mcpServers` names, else
+ *   from `.mcp.json`, through `legacy-mcp.ts`.
  *
  * Legacy features MCPJam does not run (hooks, commands) are reported, never run.
  */
@@ -22,6 +24,7 @@ import {
   PLUGIN_MANIFEST_PATH,
   PLUGIN_MANIFEST_SCHEMAS,
 } from "./manifest.js";
+import type { PluginSkippedComponent } from "./mcp-config.js";
 import { resolveContainedPath } from "./paths.js";
 import { PluginIssueCollector } from "./validation.js";
 import type {
@@ -34,6 +37,9 @@ export const CODEX_MANIFEST_PATH = ".codex-plugin/plugin.json";
 export const AGENT_LEGACY_MANIFEST_PATH = ".agent-plugin/plugin.json";
 export const CLAUDE_MANIFEST_PATH = ".claude-plugin/plugin.json";
 
+/** A legacy package's MCP configuration when its manifest names none. */
+export const LEGACY_MCP_CONFIG_PATH = ".mcp.json";
+
 /** Legacy manifest locations, in the order a rootless bundle tries them. */
 export const LEGACY_MANIFEST_LOCATIONS: ReadonlyArray<{
   path: string;
@@ -44,10 +50,18 @@ export const LEGACY_MANIFEST_LOCATIONS: ReadonlyArray<{
   { path: CLAUDE_MANIFEST_PATH, layout: "claude" },
 ];
 
+/** Where a legacy package declares its MCP servers. */
+export type LegacyMcpSource =
+  | { kind: "file"; path: string }
+  | { kind: "inline"; path: string; document: Record<string, unknown> };
+
 export interface ResolvedManifestSource {
   interpretation: PluginBundleInterpretation;
   /** Portable-shaped input for `normalizePluginManifest`. */
   record: unknown;
+  legacyMcp?: LegacyMcpSource;
+  /** A declared MCP location that is itself invalid. */
+  skipped?: PluginSkippedComponent;
 }
 
 export interface ResolveManifestSourceInput {
@@ -61,6 +75,7 @@ export interface ResolveManifestSourceInput {
 /** Legacy fields read here; they never reach the portable normalizer. */
 const LEGACY_FIELDS = new Set([
   "skills",
+  "mcpServers",
   "apps",
   "interface",
   "onboardingSkill",
@@ -147,6 +162,44 @@ function reportUnsupportedFeatures(
   }
 }
 
+function legacyMcpSource(
+  declared: unknown,
+  manifestPath: string,
+  { filePaths, issues }: ResolveManifestSourceInput
+): Pick<ResolvedManifestSource, "legacyMcp" | "skipped"> {
+  if (declared === undefined) {
+    return filePaths.has(LEGACY_MCP_CONFIG_PATH)
+      ? { legacyMcp: { kind: "file", path: LEGACY_MCP_CONFIG_PATH } }
+      : {};
+  }
+  if (isPlainRecord(declared)) {
+    return {
+      legacyMcp: { kind: "inline", path: manifestPath, document: declared },
+    };
+  }
+  const resolved =
+    typeof declared === "string" ? resolveContainedPath("", declared) : null;
+  if (resolved === null || !resolved.ok) {
+    // An escaping or malformed location invalidates the MCP component type.
+    const reason = `"mcpServers" in ${manifestPath}: ${
+      resolved === null ? "must be a path or an object" : resolved.message
+    }`;
+    issues.warn(resolved?.code ?? "MCP_INVALID_CONFIG", reason, {
+      path: manifestPath,
+    });
+    return { skipped: { kind: "mcp-config", key: manifestPath, reason } };
+  }
+  if (!filePaths.has(resolved.path)) {
+    issues.warn(
+      "MANIFEST_MISSING_FILE",
+      `"mcpServers" in ${manifestPath} names "${resolved.path}", which is not in the bundle`,
+      { path: resolved.path }
+    );
+    return {};
+  }
+  return { legacyMcp: { kind: "file", path: resolved.path } };
+}
+
 function adaptLegacyManifest(
   raw: Record<string, unknown>,
   interpretation: PluginBundleInterpretation,
@@ -186,7 +239,11 @@ function adaptLegacyManifest(
     );
   }
   reportUnsupportedFeatures(raw, path, issues);
-  return { interpretation, record };
+  return {
+    interpretation,
+    record,
+    ...legacyMcpSource(raw.mcpServers, path, input),
+  };
 }
 
 /** Only OpenAI's namespace crosses from an overlay; the rest is the root's. */
