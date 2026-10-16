@@ -442,7 +442,7 @@ export function EventsTab({
       <EmptyState
         icon={Radio}
         title="Waiting for the server"
-        description="Events support is read from the handshake, so the server has to finish connecting first."
+        description="Wait for the server to finish connecting."
       />
     );
   }

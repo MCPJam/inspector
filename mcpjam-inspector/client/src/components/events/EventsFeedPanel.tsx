@@ -239,8 +239,8 @@ export function RejectionsPanel({
   if (rejections.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        No rejected deliveries. A delivery with a bad signature, a stale
-        timestamp, or an unknown or expired slot shows up here.
+        No rejected deliveries. Deliveries with a bad signature, a stale
+        timestamp, or an unknown or expired subscription appear here.
       </p>
     );
   }

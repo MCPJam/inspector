@@ -2,7 +2,7 @@ import { cn } from "@mcpjam/design-system/cn";
 import { Radio } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
-  EVENTS_DRAFT_COMMIT,
+  EVENTS_DRAFT_DATE,
   EVENTS_DRAFT_SOURCE_URL,
   EVENTS_PROFILES,
   getEventsProfile,
@@ -59,10 +59,10 @@ export function DraftHeader({
         target="_blank"
         rel="noreferrer"
         className="rounded-sm border border-pending/40 bg-pending/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:underline"
-        title="MCP Events is a working-group draft; MCPJam implements the commit it is pinned to."
+        title={`MCP Events is a working-group draft. MCPJam implements its ${EVENTS_DRAFT_DATE} revision.`}
         data-testid="events-draft-badge"
       >
-        Draft · {EVENTS_DRAFT_COMMIT}
+        Draft · {EVENTS_DRAFT_DATE}
       </a>
       <div className="ml-auto flex items-center gap-2">
         <label

@@ -11,7 +11,7 @@ describe("events profiles", () => {
       "draft@28ec35e",
       "chatgpt@2026-09-30",
     ]);
-    expect(getEventsProfile("draft@28ec35e").label).toBe("Draft (28ec35e)");
+    expect(getEventsProfile("draft@28ec35e").label).toBe("Draft (2026-09-04)");
     expect(getEventsProfile("chatgpt@2026-09-30").label).toBe(
       "ChatGPT (2026-09-30)",
     );

@@ -200,7 +200,7 @@ describe("EventsTab (local)", () => {
     ).toBeInTheDocument();
     // Labelled Draft, and the raw handshake capabilities stay inspectable.
     expect(screen.getByTestId("events-draft-badge")).toHaveTextContent(
-      "Draft · 28ec35e",
+      "Draft · 2026-09-04",
     );
     expect(screen.getByText("Raw capabilities")).toBeInTheDocument();
     // Nothing subscribes to the feed of a server that declares nothing.

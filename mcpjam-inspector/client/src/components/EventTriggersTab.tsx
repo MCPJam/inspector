@@ -348,7 +348,7 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
         icon={Zap}
         className="py-16"
         title="Run an agent when an event arrives"
-        description="A trigger runs the instructions you write, with a model and the project's servers, each time its subscription delivers an event. Runs are unattended, so any tool call that needs approval is refused."
+        description="A trigger runs your instructions with a model and the project's servers each time its subscription delivers an event. Tool calls that need approval are refused."
       >
         <Button size="sm" onClick={() => setSelection({ kind: "new" })}>
           <Plus className="mr-1.5 h-3.5 w-3.5" />

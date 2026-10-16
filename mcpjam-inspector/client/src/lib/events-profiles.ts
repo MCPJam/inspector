@@ -16,8 +16,8 @@ export const DRAFT_EVENTS_PROFILE_ID: EventsProfileIdView = "draft@28ec35e";
 export const CHATGPT_EVENTS_PROFILE_ID: EventsProfileIdView =
   "chatgpt@2026-09-30";
 
-/** The pinned working-group draft commit. */
-export const EVENTS_DRAFT_COMMIT = "28ec35e";
+/** The commit date of the pinned draft in {@link EVENTS_DRAFT_SOURCE_URL}: how the UI names it. */
+export const EVENTS_DRAFT_DATE = "2026-09-04";
 
 export const EVENTS_DRAFT_SOURCE_URL =
   "https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md";
@@ -35,7 +35,7 @@ export interface EventsProfileOption {
 export const EVENTS_PROFILES: readonly EventsProfileOption[] = [
   {
     id: DRAFT_EVENTS_PROFILE_ID,
-    label: `Draft (${EVENTS_DRAFT_COMMIT})`,
+    label: `Draft (${EVENTS_DRAFT_DATE})`,
     description: "The working-group draft: poll, push and webhook delivery.",
     deliveryModes: ["poll", "push", "webhook"],
   },
