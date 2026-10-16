@@ -110,10 +110,10 @@ jobs:
             --pack-version "$SOURCE_PACK_VERSION" \
             --node-tarball "$RUNNER_TEMP/node-runtime.zip" \
             --job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe" \
-            --out "$RUNNER_TEMP/codex conformance/runtime-src" \
+            --out "$RUNNER_TEMP/codex-runtime-src" \
             --skip-archive
           mkdir -p "$RUNNER_TEMP/codex conformance/runtime"
-          cp -R "$RUNNER_TEMP/codex conformance/runtime-src/codex" \
+          cp -R "$RUNNER_TEMP/codex-runtime-src/codex" \
             "$RUNNER_TEMP/codex conformance/runtime/codex"
 
       - name: Build Inspector adapter dependencies

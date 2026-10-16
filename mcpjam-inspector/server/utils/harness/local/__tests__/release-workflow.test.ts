@@ -383,6 +383,10 @@ it("runs Windows Codex qualification without advertising native support", () => 
   const native = steps.find((step) => step.name === "Native Codex scenarios")!;
   expect(native.run).toContain("for mode in attended attended-off unattended");
   expect(JSON.stringify(job)).toContain("/codex conformance");
+  const build = steps.find((step) => step.name === "Build the pack")!;
+  expect(build.run).toContain('--out "$RUNNER_TEMP/codex-runtime-src"');
+  expect(build.run).toContain('cp -R "$RUNNER_TEMP/codex-runtime-src/codex"');
+  expect(build.run).toContain('"$RUNNER_TEMP/codex conformance/runtime/codex"');
   expect(steps.some((step) => step.run?.includes("--job-launcher"))).toBe(true);
   const evidence = steps.find((step) => step.name === "Record Windows Codex conformance evidence")!;
   expect(evidence.if).toBeUndefined();
