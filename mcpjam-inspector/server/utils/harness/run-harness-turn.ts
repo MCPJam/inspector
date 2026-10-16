@@ -65,10 +65,8 @@ import {
   type ToolSet,
   type UIMessageChunk,
 } from "ai";
-import {
-  HarnessAgent,
-  collectHarnessAgentToolApprovalContinuations,
-} from "@ai-sdk/harness/agent";
+import { HarnessAgent } from "@ai-sdk/harness/agent";
+import { pendingApprovalContinuations } from "./pending-approval-continuations.js";
 import {
   emitTraceSnapshot,
   getPromptIndex,
@@ -1368,10 +1366,7 @@ export async function runHarnessTurn(
       // Detect an approval-response resume up front (the inbound messages carry
       // the user's decision as trailing tool-approval-response parts); a resume
       // continues the paused turn rather than starting a new prompt.
-      const approvalContinuations =
-        collectHarnessAgentToolApprovalContinuations({
-          messages: messages as never,
-        });
+      const approvalContinuations = pendingApprovalContinuations(messages);
       const isApprovalResume = approvalContinuations.length > 0;
       // Composer attachments come OUT of the prompt here (no adapter takes a
       // file part), land on the session's disk in `onSandboxSession`, and reach
