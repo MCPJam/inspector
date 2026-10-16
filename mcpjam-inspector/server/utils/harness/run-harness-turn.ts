@@ -1538,7 +1538,6 @@ export async function runHarnessTurn(
           "harness turn has MCP servers but no harnessMcpProxy strategy — the caller route must set options.harnessMcpProxy",
         );
       }
-      startup("connecting-tools");
       const pluginServerOrigins = effectiveCapabilities
         ? pluginOriginByServerId(effectiveCapabilities)
         : undefined;
@@ -2712,6 +2711,7 @@ export async function runHarnessTurn(
             }
           : {}),
         onSandboxSession: async ({ session, sessionWorkDir }) => {
+          startup("connecting-tools");
           // Capture the file-capable sandbox session for the turn-end adoption
           // pass (the finally's agent session has no file I/O). Stays valid until
           // the box is detached/destroyed, which happens AFTER adoption.
