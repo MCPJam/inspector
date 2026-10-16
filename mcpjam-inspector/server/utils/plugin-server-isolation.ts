@@ -1,5 +1,6 @@
 import {
   describeError,
+  extractInsufficientScopeChallenge,
   isInsufficientScopeError,
   type MCPClientManager,
 } from "@mcpjam/sdk";
@@ -212,7 +213,24 @@ export function emitPluginServersUnavailable(
     writer.write({
       type: PLUGIN_SERVER_UNAVAILABLE_DATA_PART_TYPE,
       data: {
-        servers: servers.map(({ serverId, reason }) => ({ serverId, reason })),
+        servers: servers.map(({ serverId, reason, error }) => {
+          const challenge = extractInsufficientScopeChallenge(error);
+          const scopeChallenge = challenge && {
+            ...(challenge.requiredScope
+              ? { requiredScope: challenge.requiredScope }
+              : {}),
+            ...(challenge.resourceMetadataUrl
+              ? { resourceMetadataUrl: challenge.resourceMetadataUrl }
+              : {}),
+          };
+          return {
+            serverId,
+            reason,
+            ...(scopeChallenge && Object.keys(scopeChallenge).length > 0
+              ? { scopeChallenge }
+              : {}),
+          };
+        }),
         ...(chatSessionId ? { chatSessionId } : {}),
       },
       transient: true,

@@ -5,8 +5,8 @@
  * servers and skills instead of failing whole. The browser says so through
  * the plugin notice and Logs.
  *
- * Carries ids and a categorical reason only, never the error's text: a
- * server's error can quote its URL or a credential.
+ * Carries ids, a categorical reason and an optional scope challenge. Raw
+ * error text stays private because it can quote a credential.
  */
 export const PLUGIN_SERVER_UNAVAILABLE_DATA_PART_TYPE =
   "data-plugin-server-unavailable" as const;
@@ -14,9 +14,16 @@ export const PLUGIN_SERVER_UNAVAILABLE_DATA_PART_TYPE =
 /** `needs_auth` when signing in again is the fix; `unreachable` otherwise. */
 export type PluginServerUnavailableReason = "needs_auth" | "unreachable";
 
+/** Non-secret fields from an insufficient-scope challenge, bound to this server. */
+export interface PluginServerScopeChallenge {
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+}
+
 export interface PluginServerUnavailable {
   serverId: string;
   reason: PluginServerUnavailableReason;
+  scopeChallenge?: PluginServerScopeChallenge;
 }
 
 export interface PluginServerUnavailableDataPart {
@@ -30,6 +37,20 @@ export interface PluginServerUnavailableDataPart {
 
 const REASONS: ReadonlySet<string> = new Set(["needs_auth", "unreachable"]);
 
+function isScopeChallenge(value: unknown): value is PluginServerScopeChallenge {
+  if (!value || typeof value !== "object") return false;
+  const challenge = value as Record<string, unknown>;
+  return (
+    (challenge.requiredScope === undefined ||
+      typeof challenge.requiredScope === "string") &&
+    (challenge.resourceMetadataUrl === undefined ||
+      typeof challenge.resourceMetadataUrl === "string") &&
+    Boolean(
+      challenge.requiredScope?.trim() || challenge.resourceMetadataUrl?.trim(),
+    )
+  );
+}
+
 function isEntry(value: unknown): value is PluginServerUnavailable {
   if (!value || typeof value !== "object") return false;
   const entry = value as Record<string, unknown>;
@@ -37,7 +58,9 @@ function isEntry(value: unknown): value is PluginServerUnavailable {
     typeof entry.serverId === "string" &&
     entry.serverId.length > 0 &&
     typeof entry.reason === "string" &&
-    REASONS.has(entry.reason)
+    REASONS.has(entry.reason) &&
+    (entry.scopeChallenge === undefined ||
+      (entry.reason === "needs_auth" && isScopeChallenge(entry.scopeChallenge)))
   );
 }
 

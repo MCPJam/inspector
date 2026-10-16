@@ -303,3 +303,54 @@ describe("emitPluginServersUnavailable", () => {
     );
   });
 });
+
+ it("keeps healthy siblings and forwards only the failing server's scope challenge", async () => {
+   const refusal = Object.assign(new Error("secret-error-text"), {
+     name: "InsufficientScopeError",
+     requiredScope: "mail.write",
+     resourceMetadataUrl: new URL("https://mail.example/metadata"),
+     errorDescription: "secret-error-description",
+   });
+   const { manager } = fakeManager({
+     p1: new Error("wrapped", { cause: refusal }),
+   });
+   const lister = createTurnToolLister({
+     manager,
+     serverIds: ["a", "p1", "p2"],
+     isolatedServers: ["p1", "p2"],
+     keysOf: (id) => [id],
+     toolOptions: undefined,
+     within,
+   });
+   expect(Object.keys(await lister.byServer())).toEqual(["a", "p2"]);
+   const written: UIMessageChunk[] = [];
+   const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+   emitPluginServersUnavailable(
+     { write: (chunk) => written.push(chunk) },
+     "chat_1",
+     { serverIds: ["p1", "p2"], failed: lister.unavailable() },
+   );
+   expect(written).toEqual([
+     {
+       type: PLUGIN_SERVER_UNAVAILABLE_DATA_PART_TYPE,
+       data: {
+         chatSessionId: "chat_1",
+         servers: [
+           {
+             serverId: "p1",
+             reason: "needs_auth",
+             scopeChallenge: {
+               requiredScope: "mail.write",
+               resourceMetadataUrl: "https://mail.example/metadata",
+             },
+           },
+         ],
+       },
+       transient: true,
+     },
+   ]);
+   expect(isPluginServerUnavailableDataPart(written[0])).toBe(true);
+   expect(JSON.stringify([written, warn.mock.calls])).not.toContain(
+     "secret-error",
+   );
+ });

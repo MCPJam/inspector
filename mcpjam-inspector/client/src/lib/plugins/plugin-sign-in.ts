@@ -10,6 +10,13 @@ import {
   type OAuthResult,
 } from "@/lib/oauth/mcp-oauth";
 import { buildOAuthRequest } from "@/lib/oauth/oauth-request";
+import type { PluginSignInBinding } from "@/lib/hosted-oauth-callback";
+import type { PluginServerScopeChallenge } from "@/shared/plugin-server-unavailable";
+import { startPluginScopeStepUp } from "./plugin-scope-step-up";
+
+export interface PluginServerSignInRequest extends PluginSignInBinding {
+  scopeChallenge?: PluginServerScopeChallenge;
+}
 
 /**
  * Signing a member in to one plugin server, through the same hosted OAuth
@@ -52,6 +59,7 @@ export function pluginSignInFlowName(serverName: string): string {
  */
 export async function startPluginServerSignIn(args: {
   target: PluginServerSignInTarget;
+  scopeChallenge?: PluginServerScopeChallenge;
   projectId: string;
   organizationId: string | null;
   initiatingUserId: string | null;
@@ -61,23 +69,27 @@ export async function startPluginServerSignIn(args: {
   const { target } = args;
   const serverName = pluginSignInFlowName(target.serverName);
   const returnPath = args.returnPath ?? captureCurrentReturnPath();
-  clearHostedOAuthPendingState();
-  writeHostedOAuthPendingMarker({
-    surface: "project",
-    initiatingUserId: args.initiatingUserId,
-    organizationId: args.organizationId,
-    projectId: args.projectId,
-    serverId: target.serverId,
-    serverName,
-    serverUrl: target.serverUrl,
-    accessScope: "project_member",
-    returnPath,
-    pluginSignIn: {
-      pluginVersionId: target.pluginVersionId,
-      componentKey: target.componentKey,
-    },
-  });
-  if (returnPath) localStorage.setItem("mcp-oauth-return-hash", returnPath);
+  let started = false;
+  const beforeRedirect = () => {
+    started = true;
+    clearHostedOAuthPendingState();
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      initiatingUserId: args.initiatingUserId,
+      organizationId: args.organizationId,
+      projectId: args.projectId,
+      serverId: target.serverId,
+      serverName,
+      serverUrl: target.serverUrl,
+      accessScope: "project_member",
+      returnPath,
+      pluginSignIn: {
+        pluginVersionId: target.pluginVersionId,
+        componentKey: target.componentKey,
+      },
+    });
+    if (returnPath) localStorage.setItem("mcp-oauth-return-hash", returnPath);
+  };
   const request = buildOAuthRequest(
     {
       serverName,
@@ -87,8 +99,16 @@ export async function startPluginServerSignIn(args: {
     },
     { intent: "hosted-connect" },
   );
-  const result = await initiateOAuth(request);
-  if (!result.success) {
+  if (!args.scopeChallenge) beforeRedirect();
+  const result = args.scopeChallenge
+    ? await startPluginScopeStepUp(
+        target,
+        serverName,
+        args.scopeChallenge,
+        beforeRedirect,
+      )
+    : await initiateOAuth(request);
+  if (!result.success && started) {
     // Nothing is in flight, so nothing may be left for a later callback to
     // pair with: the cleanup every hosted flow does when it fails to start.
     clearHostedOAuthPendingState();
