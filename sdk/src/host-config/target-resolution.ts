@@ -17,12 +17,10 @@ export type ClientEnvironmentMatch<Environment> =
   | { kind: "ambiguous"; environments: Environment[] };
 
 /** Match only the attached environments supplied by the caller. */
-export function resolveClientEnvironment<
-  Environment extends { hostId?: string }
->(
+export function resolveClientEnvironment<Env extends { hostId?: string }>(
   clientId: string,
-  attachedEnvironments: readonly Environment[]
-): ClientEnvironmentMatch<Environment> {
+  attachedEnvironments: readonly Env[]
+): ClientEnvironmentMatch<Env> {
   const environments = attachedEnvironments.filter(
     (environment) => environment.hostId === clientId
   );
