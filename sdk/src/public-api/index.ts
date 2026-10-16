@@ -87,7 +87,8 @@ export interface V1Page<T> {
   nextCursor?: string;
 }
 
-/** Canonical code -> HTTP status mapping. */
+/** Default statuses; billing admission outages use HTTP 503 with INTERNAL_ERROR.
+ * Clients must use the response status when deciding whether to retry. */
 export const V1_ERROR_STATUS: Record<V1ErrorCode, number> = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
@@ -122,6 +123,7 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   PAYMENT_REQUIRED: "PAYMENT_REQUIRED",
   UPGRADE_REQUIRED: "UPGRADE_REQUIRED",
   platform_fee_refused: "PAYMENT_REQUIRED",
+  ORGANIZATION_SPEND_BUDGET_REACHED: "PAYMENT_REQUIRED",
   platform_fee_unavailable: "INTERNAL_ERROR",
   client_upgrade_required: "UPGRADE_REQUIRED",
   ADMISSION_CONFLICT: "CONFLICT",
