@@ -1,0 +1,233 @@
+---
+title: "Browser"
+description: "Drive this machine's browser from the CLI and read its session trace"
+icon: "globe"
+---
+
+Use `mcpjam browser` to drive the local browser that the Inspector's **Computer** tab shows, from outside the Playground. An agent running in a terminal can open a session, navigate, click, type, and read back what happened — through the same session the Inspector rail displays, so a person watching the browser can see every command the agent issued and take control at any time.
+
+Every command goes through the local Inspector's routes, which means the same auth check, lease gate, and queue that the Playground model uses apply here too. The CLI inherits the Inspector's session token rather than inventing a second way in.
+
+<Note>
+`mcpjam browser` drives the browser on **this machine** through the local Inspector. It is not a cloud command and does not accept `--api-key` or `--project` in the cloud sense. The hosted agent-browser surface (M2) is a separate feature that has not yet landed.
+</Note>
+
+## Before you start
+
+1. **Start the Inspector** — `mcpjam inspector open` (or the desktop app).
+2. **Open the local browser** in the Inspector's Computer tab and allow it when prompted.
+3. **Store the consent capability** the Inspector shows once:
+
+```bash
+mcpjam browser consent --token <capability-from-inspector>
+```
+
+The capability is stored in `~/.config/mcpjam/browser.json` (XDG) or `%APPDATA%\mcpjam\browser.json` (Windows) at mode `0600`. You can also pass it per-command with `--consent <token>` or set `MCPJAM_LOCAL_CONSENT`.
+
+The CLI never mints a consent capability itself. The Inspector's consent screen is where a person authorizes the agent browser, and a CLI that could grant its own capability would be that screen's own bypass.
+
+## Quick start
+
+```bash
+# 1. Store consent (once)
+mcpjam browser consent --token cap-abc123
+
+# 2. Open a session
+mcpjam browser open --project default
+
+# 3. Look at the page
+mcpjam browser observe
+
+# 4. Navigate
+mcpjam browser navigate https://example.com
+
+# 5. Act on the page (click a ref from the a11y tree)
+mcpjam browser act --verb click --ref e7
+
+# 6. Read the session trace
+mcpjam browser trace
+
+# 7. Close the session
+mcpjam browser close
+```
+
+## Common flags
+
+These flags are accepted by every `browser` subcommand except `consent`:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--inspector-url <url>` | `http://localhost:6274` | Local Inspector base URL. `http://` is allowed for loopback only; use `https://` for a remote Inspector. |
+| `--project <id>` | `default` | The local project key whose browser to drive. |
+| `--session <id>` | last opened | Browser session id. Defaults to the session `open` last remembered for this project. |
+| `--consent <token>` | stored / env | Local computer consent capability. Defaults to `MCPJAM_LOCAL_CONSENT`, then the stored value. |
+| `--client-id <id>` | `mcpjam-cli` | How this client appears in the session trace. |
+
+## Commands
+
+### `browser consent`
+
+Store the local computer capability granted in the Inspector UI.
+
+```bash
+mcpjam browser consent --token <capability>
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--token <token>` | Yes | The capability the Inspector showed once. |
+
+### `browser open`
+
+Open (or attach to) this project's browser session. Remembers the session id so subsequent commands do not need `--session`.
+
+```bash
+mcpjam browser open [options]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--profile <profile>` | `persistent` | `persistent` uses the project's real logged-in browser. `ephemeral` opens a throwaway profile. |
+| `--attach <mode>` | `prefer` | `prefer` attaches to an existing session if one is open; `never` always creates a new one; `require` fails if none exists. |
+| `--mode <mode>` | `allow_all` | Session policy: `allow_all`, `read_only`, or `allowlist`. |
+| `--origin <origin...>` | | Origins this session may visit (with `--mode allowlist`). |
+| `--tool <op...>` | | Operations this session may use (with `--mode allowlist`). |
+| `--observe <mode>` | | Take an initial observation: `a11y`, `screenshot`, or `none`. |
+| `--out-dir <dir>` | system temp | Where to write an initial screenshot (with `--observe screenshot`). |
+| `--run-key <key>` | | Names an ephemeral run so two concurrent runs never share a profile. |
+| `--no-screenshots` | | Keep a ledger without pictures for this session. |
+
+### `browser observe`
+
+Look at the current page.
+
+```bash
+mcpjam browser observe [options]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mode <mode>` | `a11y` | `a11y`, `screenshot`, `text`, `dom`, `console`, `url`, or `page_tools`. |
+| `--root-ref <ref>` | | Scope an a11y tree to a ref. |
+| `--root-selector <selector>` | | Scope an a11y tree to a CSS selector. |
+| `--filter <filter>` | | `interactive` or `all`. |
+| `--tab <tabId>` | | Which tab to observe. |
+| `--out-dir <dir>` | system temp | Where to write a screenshot. |
+| `--inline` | | Return screenshot bytes instead of a file path. |
+
+### `browser navigate`
+
+Go to a URL and return the page it landed on.
+
+```bash
+mcpjam browser navigate <url> [options]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--new-tab` | | Open in a new tab. |
+| `--tab <tabId>` | | Which tab to navigate. |
+| `--command-id <id>` | | Idempotency key: reuse it to retry safely after a transport failure. |
+| `--observe-after <mode>` | `a11y` | Fold in an observation after navigating: `a11y`, `screenshot`, or `none`. |
+
+### `browser act`
+
+Click, type, press, scroll, hover, drag, select, or move tabs.
+
+```bash
+mcpjam browser act --verb <verb> [target] [options]
+```
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--verb <verb>` | Yes | | `click`, `type`, `press`, `scroll`, `hover`, `drag`, `select`, `close_tab`, or `activate_tab`. |
+| `--ref <ref>` | One of | | Target a ref from the last a11y observation. |
+| `--selector <selector>` | One of | | Target a CSS selector. |
+| `--x <x>` / `--y <y>` | One of | | Target coordinates in the 1024×768 observation viewport. |
+| `--value <value>` | | | Text to type, key to press, or option to select. |
+| `--expected-state <token>` | | | Refuse if the page has moved since this state token was issued. |
+| `--tab <tabId>` | | | Which tab to act on. |
+| `--command-id <id>` | | | Idempotency key: reuse it to retry safely after a transport failure. |
+| `--observe-after <mode>` | | `a11y` | Fold in an observation after acting: `a11y`, `screenshot`, or `none`. |
+| `--out-dir <dir>` | | system temp | Where to write a screenshot. |
+
+Exactly one of `--ref`, `--selector`, or `--x`/`--y` must be given when a target is needed. Passing two is a usage error rather than a silent pick — an ambiguous target looks exactly like a click that missed.
+
+`--observe-after` defaults to `a11y` so the refs for the next act come back with this one: one round trip, one ledger row, and no window in which the page moves between an act and the observation meant to describe it.
+
+### `browser note`
+
+Write a marker into the session trace.
+
+```bash
+mcpjam browser note "starting checkout flow"
+```
+
+### `browser trace`
+
+Read this session's command history.
+
+```bash
+mcpjam browser trace [options]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--after-seq <seq>` | | Only rows after this sequence number. |
+| `--command-id <id>` | | Find one command's row by its id. |
+| `--limit <n>` | `100` | How many rows to return. |
+
+### `browser close`
+
+Leave the session.
+
+```bash
+mcpjam browser close [options]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--terminate` | Close the browser itself, not just this participant. |
+
+## Command outcomes
+
+Every acting command (`navigate`, `act`) returns one of three outcomes:
+
+| Outcome | Meaning | Exit code |
+|---------|---------|-----------|
+| `executed` + `ok: true` | The command ran and succeeded. | `0` |
+| `executed` + `ok: false` | The command ran but failed (e.g. a click that found no button). | `1` |
+| `refused` | Nothing ran — the lease was held by someone else, or the session policy blocked it. Safe to retry. | `1` |
+| `unknown` | The command may or may not have run. Do **not** retry without reading the trace first. | `1` |
+
+`refused` and `unknown` are kept distinct because collapsing them into one error would tell a caller that a payment is safe to re-submit when it may have already gone through.
+
+## Screenshots
+
+Screenshots come back as file paths by default, not inline base64. A hundred kilobytes of JPEG in a terminal or an agent's context window is not a picture anybody can use. Pass `--inline` to get the bytes instead.
+
+```bash
+# File path (default)
+mcpjam browser observe --mode screenshot
+# → { "screenshotPath": "/tmp/mcpjam-browser-art_abc.jpg" }
+
+# Inline bytes
+mcpjam browser observe --mode screenshot --inline
+# → { "screenshot": "<base64>", "screenshotMediaType": "image/jpeg" }
+```
+
+## Idempotency
+
+`navigate` and `act` accept `--command-id <id>`. Pass the same id on a retry after a transport failure and the server returns the original result rather than running the command a second time.
+
+## Activity rail
+
+When the local browser is open in the Inspector, the **Activity** panel below the browser frame shows every command the session has received — from the Playground model, from the CLI, or from any other agent. The list reads the same session ledger the CLI's `trace` command reads, so it survives a page reload and shows commands that arrived before you opened the tab.
+
+Each row shows the command, who issued it (you, the model, or a named agent), the URL at the time, the duration, and the outcome. Refused commands and unknown outcomes are shown as distinct states rather than collapsed into a single failure indicator.
+
+## Session state file
+
+The CLI stores the consent capability and the last-opened session id in `~/.config/mcpjam/browser.json` (XDG) or `%APPDATA%\mcpjam\browser.json` (Windows). Override the path with `MCPJAM_BROWSER_STATE_FILE`.
+
+The file is written atomically at mode `0600`. A corrupt or missing file reads as empty — the recovery is to run `browser consent` again.
