@@ -161,8 +161,8 @@ describe("events keeper", () => {
 
     expect(backend.claimSubscriptions).toHaveBeenCalledWith({
       holder: "inspector-test",
-      limit: 10,
-      leaseMs: 60_000,
+      limit: 4,
+      leaseMs: 480_000,
     });
     // The project's inbox was ensured (the row had none) and persisted.
     expect(backend.ensureInbox).toHaveBeenCalledWith("proj_1");

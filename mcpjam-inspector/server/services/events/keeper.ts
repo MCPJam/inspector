@@ -51,13 +51,25 @@ import {
 import { defaultEventsHolder, isEventsKeeperEnabled } from "./config.js";
 import { HttpInboxClient } from "./inbox-client.js";
 import { asAuthorizationLost, pinnedConnectionIds } from "./owner-connection.js";
+import { EVENTS_STOP_GRACE_MS, settleWithin } from "./stop-grace.js";
 
 const POLL_INTERVAL_MS = 5_000;
 const POLL_JITTER_MS = 1_000;
 const ERROR_BACKOFF_MS = 30_000;
-const CLAIM_LIMIT = 10;
-const LEASE_MS = 60_000;
 const STEP_CONCURRENCY = 4;
+/**
+ * Claim only what is stepped at once. A claimed row queued behind slower
+ * steps would spend its lease before its own step began.
+ */
+const CLAIM_LIMIT = STEP_CONCURRENCY;
+/**
+ * Long enough to outlive the slowest step, so no other replica claims a row
+ * mid-step. A poll step can connect and list (30s each), poll
+ * `maxPagesPerStep` (5) pages at up to 30s each and make an inbox call per
+ * page (15s each): about 5 minutes. The cost is that a row whose replica died
+ * mid-step waits out the lease before it is claimed again.
+ */
+const LEASE_MS = 8 * 60_000;
 const MAX_FAILURE_BACKOFF_MS = 30 * 60 * 1000;
 
 /**
@@ -431,8 +443,11 @@ export async function runKeeperTick(
 // ---------------------------------------------------------------------------
 
 export interface EventsKeeperHandle {
-  /** Stops polling and resolves once the in-flight tick settles. */
-  stop(): Promise<void>;
+  /**
+   * Stops claiming, then waits at most `graceMs` for the in-flight tick. A
+   * step still running after that is abandoned to its lease.
+   */
+  stop(graceMs?: number): Promise<void>;
   /** Wake the loop now (e.g. a user just created a subscription). */
   kick(): void;
 }
@@ -507,9 +522,9 @@ export function startEventsKeeper(options?: {
   })();
 
   const handle: EventsKeeperHandle = {
-    stop: async () => {
+    stop: async (graceMs = EVENTS_STOP_GRACE_MS) => {
       abort.abort();
-      await loop;
+      await settleWithin(loop, graceMs);
       if (activeKeeper === handle) activeKeeper = undefined;
     },
     kick: () => {

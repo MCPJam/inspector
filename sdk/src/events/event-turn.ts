@@ -73,7 +73,38 @@ export function renderEventTurnMessages(input: EventTurnInput): {
   return { systemPrompt: EVENT_TURN_SYSTEM_PROMPT, userMessage: renderEventTurnMessage(input) };
 }
 
-let validator: DialectAwareJsonSchemaValidator | undefined;
+type PayloadCheck = ReturnType<DialectAwareJsonSchemaValidator["getValidator"]>;
+
+/** Compiled payload checks, least recently used first. */
+const compiledPayloadChecks = new Map<string, PayloadCheck>();
+const MAX_COMPILED_PAYLOAD_CHECKS = 64;
+
+/**
+ * The compiled check for one schema, keyed by the schema's own JSON. Each
+ * schema gets its own engine: the hosted enqueue route validates every
+ * project's server-supplied schemas in one process, and a shared Ajv resolves
+ * a schema by `$id` — another server declaring the same `$id` would then
+ * decide which payloads pass. Keying by content also recompiles a schema
+ * whose body changed under an unchanged `$id`, and the bound keeps a
+ * refetched (new-object) descriptor from growing the cache.
+ */
+function payloadCheckFor(payloadSchema: Record<string, unknown>): PayloadCheck {
+  const key = JSON.stringify(payloadSchema);
+  let check = compiledPayloadChecks.get(key);
+  if (check) {
+    compiledPayloadChecks.delete(key);
+  } else {
+    check = new DialectAwareJsonSchemaValidator().getValidator(
+      payloadSchema as never
+    );
+    if (compiledPayloadChecks.size >= MAX_COMPILED_PAYLOAD_CHECKS) {
+      const oldest = compiledPayloadChecks.keys().next().value;
+      if (oldest !== undefined) compiledPayloadChecks.delete(oldest);
+    }
+  }
+  compiledPayloadChecks.set(key, check);
+  return check;
+}
 
 /**
  * Validate an event's `data` against its descriptor's `payloadSchema` — the
@@ -85,8 +116,7 @@ export function validateEventPayload(
   data: unknown
 ): { valid: true } | { valid: false; errorMessage: string } {
   if (!payloadSchema) return { valid: true };
-  validator ??= new DialectAwareJsonSchemaValidator();
-  const result = validator.getValidator(payloadSchema as never)(data);
+  const result = payloadCheckFor(payloadSchema)(data);
   return result.valid
     ? { valid: true }
     : { valid: false, errorMessage: result.errorMessage ?? "payload does not match payloadSchema" };

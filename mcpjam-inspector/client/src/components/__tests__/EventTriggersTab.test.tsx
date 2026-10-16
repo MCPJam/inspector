@@ -40,6 +40,7 @@ vi.mock("sonner", () => ({
 import { EventTriggersTab, PARKED_EXPLANATION } from "../EventTriggersTab";
 import { EVENT_SUBSCRIPTIONS_API } from "@/lib/apis/mcp-events-api";
 import {
+  CURRENT_USER_QUERY,
   EVENT_TRIGGER_RUNS_API,
   EVENT_TRIGGERS_API,
 } from "@/lib/apis/event-triggers-api";
@@ -49,6 +50,7 @@ const subscription = {
   logicalId: "esub_1",
   projectId: "proj_1",
   binding: { serverId: "srv_1" },
+  ownerUserId: "user_1",
   locality: "hosted",
   profile: "draft@28ec35e",
   eventName: "issue.created",
@@ -93,6 +95,7 @@ describe("EventTriggersTab", () => {
     vi.clearAllMocks();
     queryResults.clear();
     mutations.clear();
+    queryResults.set(CURRENT_USER_QUERY, { _id: "user_1" });
     queryResults.set(EVENT_SUBSCRIPTIONS_API.list, [
       subscription,
       // A local subscription is never delivered to the hosted runner.
@@ -101,6 +104,13 @@ describe("EventTriggersTab", () => {
         _id: "sub_local",
         locality: "local",
         eventName: "local.only",
+      },
+      // A teammate's: only its owner can set up its triggers.
+      {
+        ...subscription,
+        _id: "sub_teammate",
+        ownerUserId: "user_2",
+        eventName: "teammate.event",
       },
     ]);
   });
@@ -263,6 +273,41 @@ describe("EventTriggersTab", () => {
       "<img src=x onerror=alert(1)>",
     );
     expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("shows a teammate's trigger read-only, but still lets it be turned off", async () => {
+    queryResults.set(EVENT_TRIGGERS_API.list, [
+      { ...trigger, subscriptionId: "sub_teammate" },
+    ]);
+    queryResults.set(EVENT_TRIGGER_RUNS_API.listForTrigger, []);
+    render(<EventTriggersTab projectId="proj_1" isSignedInMember />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Triage new issues/ }));
+    expect(
+      await screen.findByText(
+        "Only the subscription's owner can edit or turn on this trigger.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    const toggle = screen.getByRole("switch");
+    expect(toggle).not.toBeDisabled();
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(mutations.get(EVENT_TRIGGERS_API.setEnabled)).toHaveBeenCalledWith(
+        { triggerId: "trg_1", enabled: false },
+      ),
+    );
+  });
+
+  it("does not offer turning on a teammate's disabled trigger", async () => {
+    queryResults.set(EVENT_TRIGGERS_API.list, [
+      { ...trigger, subscriptionId: "sub_teammate", enabled: false },
+    ]);
+    queryResults.set(EVENT_TRIGGER_RUNS_API.listForTrigger, []);
+    render(<EventTriggersTab projectId="proj_1" isSignedInMember />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Triage new issues/ }));
+    expect(await screen.findByRole("switch")).toBeDisabled();
   });
 
   it("toggles a trigger off through setEnabled", async () => {

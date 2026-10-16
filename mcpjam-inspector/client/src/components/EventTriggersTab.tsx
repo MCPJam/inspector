@@ -14,6 +14,7 @@ import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
 import { EVENT_SUBSCRIPTIONS_API } from "@/lib/apis/mcp-events-api";
 import {
+  CURRENT_USER_QUERY,
   EVENT_TRIGGERS_API,
   microsToDollars,
   type EventTriggerRow,
@@ -49,6 +50,9 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
   const subscriptionRows = useQuery(EVENT_SUBSCRIPTIONS_API.list, {
     projectId,
   });
+  // The caller as the backend sees them. Only a subscription's owner can set
+  // up, edit or enable its triggers (runs use the owner's credentials).
+  const currentUserId = useQuery(CURRENT_USER_QUERY, {})?._id;
   const createTrigger = useMutation(EVENT_TRIGGERS_API.create);
   const updateTrigger = useMutation(EVENT_TRIGGERS_API.update);
   const setTriggerEnabled = useMutation(EVENT_TRIGGERS_API.setEnabled);
@@ -60,15 +64,17 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   // Triggers run on the hosted runner, so only hosted, live subscriptions
-  // can feed one.
+  // can feed one, and only the caller's own.
   const eligibleSubscriptions = useMemo(
     () =>
       (subscriptionRows ?? []).filter(
         (row) =>
+          currentUserId !== undefined &&
+          row.ownerUserId === currentUserId &&
           (row.locality ?? "hosted") === "hosted" &&
           row.desiredState !== "removed",
       ),
-    [subscriptionRows],
+    [subscriptionRows, currentUserId],
   );
   const subscriptionsById = useMemo(
     () => new Map((subscriptionRows ?? []).map((row) => [row._id, row])),
@@ -243,6 +249,11 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
     );
   } else if (selectedTrigger) {
     const subscription = subscriptionsById.get(selectedTrigger.subscriptionId);
+    // Another member's trigger: the owner or a project admin may still stop
+    // or delete it, but only the owner may edit or enable it.
+    const ownsTrigger =
+      currentUserId !== undefined &&
+      subscription?.ownerUserId === currentUserId;
     detail = (
       <div className="space-y-6 p-5">
         <header className="flex flex-wrap items-center gap-3">
@@ -253,6 +264,7 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
             <Switch
               id="trigger-enabled"
               checked={selectedTrigger.enabled}
+              disabled={!ownsTrigger && !selectedTrigger.enabled}
               onCheckedChange={(checked) =>
                 void handleToggle(selectedTrigger, checked)
               }
@@ -262,15 +274,17 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
             </Label>
           </div>
           <div className="ml-auto flex gap-1">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              onClick={() => setEditing((value) => !value)}
-            >
-              <Pencil className="mr-1 h-3 w-3" />
-              {editing ? "Close editor" : "Edit"}
-            </Button>
+            {ownsTrigger ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => setEditing((value) => !value)}
+              >
+                <Pencil className="mr-1 h-3 w-3" />
+                {editing ? "Close editor" : "Edit"}
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="ghost"
@@ -282,6 +296,11 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
             </Button>
           </div>
         </header>
+        {ownsTrigger || currentUserId === undefined ? null : (
+          <p className="text-[11px] text-muted-foreground">
+            Only the subscription's owner can edit or turn on this trigger.
+          </p>
+        )}
         <dl className="grid grid-cols-2 gap-2 text-[11px] md:grid-cols-4">
           <div>
             <dt className="text-muted-foreground">Event</dt>
@@ -307,7 +326,7 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
             </dd>
           </div>
         </dl>
-        {editing ? (
+        {editing && ownsTrigger ? (
           <TriggerForm
             trigger={selectedTrigger}
             subscriptions={eligibleSubscriptions}

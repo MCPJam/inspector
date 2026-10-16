@@ -66,6 +66,27 @@ describe("event turn prompt (shared by executor and evals)", () => {
     expect(EVENT_TURN_SYSTEM_PROMPT).toMatch(/no extra authority/);
   });
 
+  it("validates each schema on its own, even when two declare the same $id", () => {
+    const $id = "https://example.test/event.json";
+    const rejectsAll = { $id, not: {} };
+    const requiresText = {
+      $id,
+      type: "object",
+      properties: { text: { type: "string" } },
+      required: ["text"],
+    };
+    expect(validateEventPayload(rejectsAll, { text: "t" }).valid).toBe(false);
+    // Another server's schema with the same $id is not looked up by $id.
+    expect(validateEventPayload(requiresText, { text: "t" })).toEqual({
+      valid: true,
+    });
+    expect(validateEventPayload(requiresText, {}).valid).toBe(false);
+    // A schema whose body changed under the same $id is recompiled.
+    expect(validateEventPayload({ ...requiresText, required: [] }, {})).toEqual(
+      { valid: true }
+    );
+  });
+
   it("validates canned events against the versioned payloadSchema", async () => {
     expect(validateEventPayload(payloadSchema, { comment_id: "c", text: "t" })).toEqual({ valid: true });
     expect(validateEventPayload(payloadSchema, { comment_id: 1 }).valid).toBe(false);

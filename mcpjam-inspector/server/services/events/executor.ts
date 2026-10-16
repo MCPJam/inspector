@@ -79,6 +79,7 @@ import {
   summarizeEventRun,
   type EventRunResultSummary,
 } from "./run-turn.js";
+import { EVENTS_STOP_GRACE_MS, settleWithin } from "./stop-grace.js";
 import { EventRunHaltError, readOnlyToolNames, wrapToolsForEventRun } from "./tool-journal.js";
 
 export {
@@ -463,7 +464,12 @@ export async function executeClaimedEventRun(
 // ---------------------------------------------------------------------------
 
 export interface EventsExecutorHandle {
-  stop(): Promise<void>;
+  /**
+   * Stops claiming, then waits at most `graceMs` for the in-flight run. A run
+   * still going after that is abandoned to its lease: its heartbeat stops,
+   * the lease lapses and run recovery hands it to the next claim.
+   */
+  stop(graceMs?: number): Promise<void>;
   kick(): void;
 }
 
@@ -540,10 +546,10 @@ export function startEventsExecutor(options?: {
   };
   const unregister = registerEventsExecutorBell(kick);
   return {
-    stop: async () => {
+    stop: async (graceMs = EVENTS_STOP_GRACE_MS) => {
       unregister();
       abort.abort();
-      await loop;
+      await settleWithin(loop, graceMs);
     },
     kick,
   };

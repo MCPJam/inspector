@@ -201,7 +201,7 @@ export function TriggerForm({
             className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-60"
           >
             {subscriptions.length === 0 ? (
-              <option value="">No hosted subscriptions yet</option>
+              <option value="">You have no hosted subscriptions</option>
             ) : null}
             {subscriptions.map((subscription) => (
               <option key={subscription._id} value={subscription._id}>
@@ -212,7 +212,8 @@ export function TriggerForm({
           </select>
           {subscriptions.length === 0 ? (
             <p className="text-[11px] text-muted-foreground">
-              Subscribe to an event in the Events tab first.
+              Subscribe to an event in the Events tab first. A trigger can use
+              only your own subscriptions.
             </p>
           ) : null}
         </div>

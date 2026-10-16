@@ -1107,8 +1107,9 @@ async function shutdown() {
     await githubChecksWorker?.stop();
     await benchWorker?.stop();
     await productionChecksWorker.stop();
-    await eventsKeeper?.stop();
-    await eventsExecutor?.stop();
+    // Each waits at most a second: an in-flight keeper step or trigger run is
+    // lease-recoverable, and the teardowns below are not.
+    await Promise.all([eventsKeeper?.stop(), eventsExecutor?.stop()]);
     stopRevokedSessionCache();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded

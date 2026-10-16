@@ -87,6 +87,16 @@ export type EventTriggerFields = {
   spendCapMicrosPerDay: number;
 };
 
+/**
+ * `users:getCurrentUser`: the caller as the backend sees them. Only a
+ * subscription's owner may set up, edit or enable its triggers.
+ */
+export const CURRENT_USER_QUERY = makeFunctionReference<
+  "query",
+  Record<string, never>,
+  { _id: string } | null
+>("users:getCurrentUser");
+
 export const EVENT_TRIGGERS_API = {
   list: makeFunctionReference<
     "query",

@@ -463,6 +463,8 @@ export interface HostedEventSubscriptionRow {
   projectId: string;
   environmentId?: string;
   binding?: { serverId: string };
+  /** The user whose credentials the subscription uses; only they set up its triggers. */
+  ownerUserId: string;
   locality?: "hosted" | "local";
   profile: EventsProfileIdView;
   protocolVersion?: string;
