@@ -2624,9 +2624,8 @@ export async function prepareEvalRun(
         : await resolveEnvironmentForLaunch(convexClient, {
             serverSource: EVAL_LAUNCH_SERVER_SOURCE,
             runtimeVenue: requestedVenue,
-            ...(environmentLocalHarness
-              ? { runnerCapabilities: localHarnessCapabilities([environmentLocalHarness]) }
-              : {}),
+            ...(environmentLocalHarness ? { runnerCapabilities: localHarnessCapabilities([environmentLocalHarness]) } : {}),
+            ...(provenance.source === "github_check" ? { serversReplaced: true } : {}),
             projectId,
             environmentId,
           }).catch((error) => {

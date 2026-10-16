@@ -154,6 +154,23 @@ it("current-config replays select the current suite harness instead of the sourc
   await prepared.cleanup();
 });
 
+// A GitHub check replaces every server with the PR's temporary one, so a
+// deleted server left in the environment's group must not refuse it.
+it.each([["github_check", true], ["api", undefined]] as const)("a %s environment launch sends serversReplaced=%s", async (source, expected) => {
+  mocks.available.mockResolvedValue(false);
+  await prepareEvalRun({
+    listServers: () => ["s1"], hasServer: () => true, getConnectionStatus: () => "connected",
+    getServerNames: () => ({ s1: "s1" }), getServerReplayConfigs: () => [],
+    listTools: async () => ({ tools: [] }),
+  } as any, {
+    suiteId: "suite-1", suiteRerun: true, projectId: "project-1", environmentId: "env-1",
+    serverIds: ["s1"], serverNames: ["pr-server"], tests: [], convexAuthToken: "token",
+    source, orgModelConfig: { providers: [] },
+  } as any);
+  const resolveArgs = mocks.query.mock.calls.find(([name]) => name === "projectEnvironments:resolveEnvironmentForLaunch")![1];
+  expect(resolveArgs.serversReplaced).toBe(expected);
+});
+
 it("refuses a suite launch when its authorization project cannot be resolved", async () => {
   mocks.query.mockRejectedValue(new Error("project lookup unavailable"));
   await expect(prepareEvalRun({} as any, {
