@@ -27397,15 +27397,15 @@
           },
           "model": {
             "type": "string",
-            "description": "COMPUTED from `judgeSelection` when the goal stores one, else the stored model id, else the managed default."
+            "description": "COMPUTED from `modelSelection` when the goal stores one, else the stored model id, else the managed default."
           },
-          "judgeSelection": {
+          "modelSelection": {
             "$ref": "#/components/schemas/RequestedModelSelection"
           },
-          "judgeSelectionOrigin": {
+          "modelSelectionOrigin": {
             "type": "string",
             "enum": ["backfill"],
-            "description": "Present when a conversion, not a person, chose `judgeSelection`."
+            "description": "Present when a conversion, not a person, chose `modelSelection`."
           },
           "autoRun": {
             "type": "boolean",
@@ -27423,7 +27423,7 @@
         "type": "object",
         "additionalProperties": false,
         "minProperties": 1,
-        "description": "The goal's judge on a write, in the vocabulary `EvalSuiteUpdateRequest.settings.judge` uses. Every field is optional: a create that omits the judge gets the managed defaults, and an update changes only the fields it names, merged onto the stored judge.",
+        "description": "The goal's judge on a write: the same keys `GoalJudge` returns, so a read can be sent back as is. Every field is optional: a create that omits the judge gets the managed defaults, and an update changes only the fields it names, merged onto the stored judge.",
         "properties": {
           "enabled": {
             "type": "boolean",
@@ -27440,10 +27440,15 @@
           "modelSelection": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/ModelSelection"
+                "$ref": "#/components/schemas/RequestedModelSelection"
               }
             ],
-            "description": "The judge's saved model choice (source, connection, effort). Must name `model` when both are sent — a mismatch is a `400` — and sent alone it names the model. A new `model` without a selection drops a stored selection unless it names the same model."
+            "description": "The judge's saved model choice (source, connection, effort). Must name `model` when both are sent — a mismatch is a `400` — and sent alone it names the model. A STORED legacy selection is accepted so a read can be sent back. A new `model` without a selection drops a stored selection unless it names the same model."
+          },
+          "modelSelectionOrigin": {
+            "type": "string",
+            "enum": ["backfill"],
+            "description": "Read-only. Accepted so a `GoalJudge` read can be sent back, and changes nothing: the marker stays only while the stored selection is sent back unchanged."
           },
           "threshold": {
             "type": "number",

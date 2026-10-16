@@ -18,31 +18,39 @@ import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 import { judgeModelIdInputSchema, judgeRunOverride } from "./judge-model-id.js";
 import {
   computedModelId,
-  modelSelectionSchema,
+  requestedModelSelectionSchema,
+  sameRequestedSelection,
   selectionOriginField,
 } from "./model-selection-schema.js";
 
 /**
- * The judge fields a goal write takes. Every one optional, so a PATCH can
- * move a single field; `null` for the whole object (on PATCH) clears the
- * goal's judge back to the managed defaults, as it does upstream.
+ * The judge fields a goal write takes: the same keys a read of `goal.judge`
+ * returns, so a caller can send back what it read. Every one optional, so a
+ * PATCH can move a single field; `null` for the whole object (on PATCH)
+ * clears the goal's judge back to the managed defaults, as it does upstream.
  *
  * `model` is checked but not normalized here: the rewrite of a hosted
  * `mcpjam/` id depends on the selection it is sent with, which is
- * {@link judgeRunOverride}'s job. An empty object is refused rather than
- * stored as a judge that says nothing.
+ * {@link judgeRunOverride}'s job. `modelSelection` takes a STORED legacy
+ * selection too, because a read can return one. `modelSelectionOrigin` is a
+ * read-only marker, accepted only so a read round-trips; it never sets
+ * anything (see {@link judgeConfigForWrite}). A body with no field that
+ * changes anything is refused rather than stored as a judge that says
+ * nothing.
  */
 export const goalJudgeWriteSchema = z
   .strictObject({
     enabled: z.boolean().optional(),
     autoRun: z.boolean().optional(),
     model: judgeModelIdInputSchema.optional(),
-    modelSelection: modelSelectionSchema.optional(),
+    modelSelection: requestedModelSelectionSchema.optional(),
+    modelSelectionOrigin: z.literal("backfill").optional(),
     threshold: z.number().min(0).max(1).optional(),
   })
-  .refine((value) => Object.keys(value).length > 0, {
-    message: "Provide at least one judge field.",
-  });
+  .refine(
+    (value) => Object.keys(value).some((key) => key !== "modelSelectionOrigin"),
+    { message: "Provide at least one judge field." },
+  );
 
 export type GoalJudgeWrite = z.infer<typeof goalJudgeWriteSchema>;
 
@@ -97,7 +105,9 @@ export type GoalJudgeRowFields = {
  *
  * A model change replaces the stored selection: a selection belongs to the
  * model it was chosen for, so it is kept only while it still names the new
- * model, and its conversion marker goes with it. Same rule as the suite PATCH.
+ * model. The conversion marker describes the STORED selection, so it survives
+ * only while that exact selection is what is written back. Same rules as the
+ * suite execution-config PATCH.
  */
 export function judgeConfigForWrite(
   judge: GoalJudgeWrite | null,
@@ -117,11 +127,17 @@ export function judgeConfigForWrite(
       judge.modelSelection,
     );
     goalCompletion.judgeModel = judgeModel;
-    if (judgeSelection !== undefined) {
-      goalCompletion.judgeSelection = judgeSelection;
-      delete goalCompletion.judgeSelectionOrigin;
-    } else if (stored?.judgeSelection?.modelId !== judgeModel) {
-      delete goalCompletion.judgeSelection;
+    const storedSelection = stored?.judgeSelection;
+    const nextSelection =
+      judgeSelection ??
+      (storedSelection?.modelId === judgeModel ? storedSelection : undefined);
+    if (nextSelection === undefined) delete goalCompletion.judgeSelection;
+    else goalCompletion.judgeSelection = nextSelection;
+    if (
+      nextSelection === undefined ||
+      storedSelection === undefined ||
+      !sameRequestedSelection(nextSelection, storedSelection)
+    ) {
       delete goalCompletion.judgeSelectionOrigin;
     }
   }
@@ -133,7 +149,8 @@ export function judgeConfigForWrite(
  * `settings.judge`: every field layered over the managed defaults, so a
  * caller reads what a run would actually grade with and can echo it back.
  * The backend's own resolution (`judgePolicy.effective`) wins when the row
- * carries it.
+ * carries it. The saved choice is named as it is on the write
+ * (`modelSelection`, `modelSelectionOrigin`), not by its storage name.
  */
 export function toGoalJudgeDto(row: GoalJudgeRowFields) {
   const stored = row.judgeConfig?.goalCompletion;
@@ -146,12 +163,12 @@ export function toGoalJudgeDto(row: GoalJudgeRowFields) {
       effective?.judgeModel ??
       GOAL_COMPLETION_DEFAULTS.judgeModel,
     ...(stored?.judgeSelection
-      ? { judgeSelection: stored.judgeSelection }
+      ? { modelSelection: stored.judgeSelection }
       : {}),
     ...(stored?.judgeSelection &&
     selectionOriginField(stored.judgeSelectionOrigin)
       ? {
-          judgeSelectionOrigin: selectionOriginField(
+          modelSelectionOrigin: selectionOriginField(
             stored.judgeSelectionOrigin,
           ),
         }

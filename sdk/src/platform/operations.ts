@@ -13510,10 +13510,28 @@ const goalJudgeInput = z
       .describe(
         "Judge model id. `mcpjam/<vendor>/<model>` names a hosted model."
       ),
-    modelSelection: modelSelectionInput
+    modelSelection: z
+      .union([
+        modelSelectionInput,
+        // A STORED legacy selection, as get_goal can return one: accepted so
+        // a read can be sent back, never a way to pick a new judge.
+        z
+          .object({
+            source: z.literal("legacy"),
+            modelId: z.string().trim().min(1),
+            provider: z.string().min(1).optional(),
+          })
+          .strict(),
+      ])
       .optional()
       .describe(
         "The judge's saved model choice (source, connection, effort). Must name `model` when both are sent; sent alone, it names the model."
+      ),
+    modelSelectionOrigin: z
+      .literal("backfill")
+      .optional()
+      .describe(
+        "Read-only marker from get_goal. Accepted so a read can be sent back; it changes nothing."
       ),
     threshold: z
       .number()
@@ -13523,11 +13541,12 @@ const goalJudgeInput = z
       .describe("Advisory pass threshold, 0–1."),
   })
   .strict()
-  // The API refuses an empty judge; refusing it here reports that before
-  // the request goes out.
-  .refine((value) => Object.keys(value).length > 0, {
-    message: "Provide at least one judge field.",
-  });
+  // The API refuses a judge that changes nothing; refusing it here reports
+  // that before the request goes out.
+  .refine(
+    (value) => Object.keys(value).some((key) => key !== "modelSelectionOrigin"),
+    { message: "Provide at least one judge field." }
+  );
 
 const createGoalInput = z.object({
   project: z

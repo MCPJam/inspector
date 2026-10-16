@@ -1077,6 +1077,107 @@ describe("goal judge", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
+  it("reads the saved choice under its public name and takes the read back on PATCH", async () => {
+    const stored = journeyRow({
+      judgeConfig: {
+        goalCompletion: {
+          enabled: true,
+          autoRun: true,
+          judgeModel: "anthropic/claude-haiku-4.5",
+          judgeSelection: hostedSelection,
+          judgeSelectionOrigin: "backfill",
+          threshold: 0.8,
+        },
+      },
+    });
+    queryMock.mockResolvedValue(stored);
+    const read = (await (
+      await get(`/projects/${PROJECT}/goals/${JOURNEY}`)
+    ).json()) as { judge: Record<string, unknown> };
+    expect(read.judge).toEqual({
+      enabled: true,
+      model: "anthropic/claude-haiku-4.5",
+      modelSelection: hostedSelection,
+      modelSelectionOrigin: "backfill",
+      autoRun: true,
+      threshold: 0.8,
+    });
+    expect(read.judge).not.toHaveProperty("judgeSelection");
+
+    mutationMock.mockResolvedValue(stored);
+    expect((await patch({ judge: read.judge })).status).toBe(200);
+    // Sent back unchanged, so nothing moved — the conversion marker included.
+    expect(mutationMock.mock.calls[0][1].judgeConfig).toEqual({
+      goalCompletion: stored.judgeConfig.goalCompletion,
+    });
+  });
+
+  it("round-trips a stored legacy selection", async () => {
+    const legacy = { source: "legacy", modelId: "openai/gpt-4o" };
+    const stored = journeyRow({
+      judgeConfig: {
+        goalCompletion: { judgeModel: "openai/gpt-4o", judgeSelection: legacy },
+      },
+    });
+    queryMock.mockResolvedValue(stored);
+    mutationMock.mockResolvedValue(stored);
+    const read = (await (
+      await get(`/projects/${PROJECT}/goals/${JOURNEY}`)
+    ).json()) as { judge: Record<string, unknown> };
+    expect(read.judge.modelSelection).toEqual(legacy);
+    expect((await patch({ judge: read.judge })).status).toBe(200);
+    expect(
+      mutationMock.mock.calls[0][1].judgeConfig.goalCompletion.judgeSelection,
+    ).toEqual(legacy);
+  });
+
+  it("drops the conversion marker when a different selection is sent", async () => {
+    queryMock.mockResolvedValue(
+      journeyRow({
+        judgeConfig: {
+          goalCompletion: {
+            judgeModel: "anthropic/claude-haiku-4.5",
+            judgeSelection: hostedSelection,
+            judgeSelectionOrigin: "backfill",
+          },
+        },
+      }),
+    );
+    mutationMock.mockResolvedValue(journeyRow());
+    const withEffort = {
+      ...hostedSelection,
+      settings: { reasoningEffort: "low" },
+    };
+    expect(
+      (
+        await patch({
+          judge: {
+            modelSelection: withEffort,
+            modelSelectionOrigin: "backfill",
+          },
+        })
+      ).status,
+    ).toBe(200);
+    const written = mutationMock.mock.calls[0][1].judgeConfig.goalCompletion;
+    expect(written.judgeSelection).toEqual(withEffort);
+    expect(written).not.toHaveProperty("judgeSelectionOrigin");
+  });
+
+  it("refuses a judge that only echoes the read-only marker", async () => {
+    queryMock.mockResolvedValue(journeyRow());
+    expect(
+      (await patch({ judge: { modelSelectionOrigin: "backfill" } })).status,
+    ).toBe(400);
+    expect(
+      (
+        await patch({
+          judge: { judgeSelection: hostedSelection },
+        })
+      ).status,
+    ).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
   it("takes the same judge on the deprecated alias", async () => {
     queryMock.mockResolvedValue([{ _id: "persona_1", projectId: PROJECT }]);
     mutationMock.mockResolvedValue(journeyRow());
