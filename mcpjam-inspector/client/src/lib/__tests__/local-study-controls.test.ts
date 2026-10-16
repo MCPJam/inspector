@@ -18,5 +18,5 @@ it("sends only the opaque reservation when revoking", async () => {
 });
 it("refuses to claim successful cleanup from malformed response", async () => {
   fetch.mockResolvedValue(Response.json({ revoked: true }));
-  await expect(revokeLocalStudyAccess("reservation")).rejects.toThrow("could not be confirmed");
+  await expect(revokeLocalStudyAccess("reservation")).rejects.toThrow("Could not confirm revocation");
 });

@@ -49,7 +49,7 @@ export function useLocalStudyRevocation(
           error:
             error instanceof Error
               ? error.message
-              : "Local revocation failed. Retry revocation.",
+              : "Could not revoke this study's local access. Try again.",
         });
     }
   };

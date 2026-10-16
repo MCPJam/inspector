@@ -22,7 +22,7 @@ async function post(
     throw new Error(
       error.success
         ? error.data.error
-        : "Local study control failed. Retry after signing in.",
+        : "Could not update local study access. Sign in and try again.",
     );
   }
   return data;
@@ -46,7 +46,7 @@ export async function revokeLocalStudyAccess(
     .safeParse(await post("revoke", { reservationId }));
   if (!parsed.success)
     throw new Error(
-      "Local revocation could not be confirmed. Retry revocation.",
+      "Could not confirm revocation. Check your connection and try again.",
     );
   return parsed.data;
 }
