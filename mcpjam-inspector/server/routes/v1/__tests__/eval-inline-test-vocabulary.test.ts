@@ -166,6 +166,52 @@ describe("v1 inline-test vocabulary", () => {
   });
 
   describe("POST /eval-suites — the negative-test inversion", () => {
+    it.each([
+      [true, true],
+      [false, true],
+      [true, false],
+    ])(
+      "returns the persisted axis (environment=%s, explicit client=%s)",
+      async (environmentBased, explicitClient) => {
+        const projectId = "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        convexQueryMock.mockImplementation(async (fn: string) => {
+          if (fn === "hosts:listHosts")
+            return [{ hostId: "client1", name: "Codex" }];
+          if (fn === "testSuites:getTestSuite")
+            return {
+              _id: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
+              projectId,
+              name: "Fresh suite",
+              environmentIds: environmentBased ? ["env1"] : [],
+            };
+          return null;
+        });
+        const res = await request(
+          "POST",
+          `/api/v1/projects/${projectId}/eval-suites`,
+          {
+            ...suiteBody({}),
+            serverNames: ["Echo"],
+            ...(explicitClient ? { hosts: [{ host: "client1" }] } : {}),
+          },
+        );
+        expect(res.status).toBe(201);
+        if (explicitClient)
+          expect(authorEvalSuiteMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+              environmentHostAttachments: [{ namedHostId: "client1" }],
+            }),
+          );
+        expect(await res.json()).toMatchObject({
+          hosts: environmentBased ? [] : [{ id: "client1" }],
+          environmentIds: environmentBased ? ["env1"] : [],
+        });
+        expect(convexMutationMock).toHaveBeenCalledTimes(
+          environmentBased ? 0 : 1,
+        );
+      },
+    );
+
     // THE bug. A 201 that stored the opposite of what was sent: a case that
     // must pass when the tool is NOT called, persisted as an ordinary positive
     // case, with nothing anywhere saying so.

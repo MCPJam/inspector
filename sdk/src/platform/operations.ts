@@ -5339,10 +5339,10 @@ function foldCaseCheckAlias(
 export type CreateEvalSuiteResult = {
   project: SelectedProjectInfo;
   suite: { id: string; name: string | null };
-  /** The HTTP servers the suite was configured against. */
   servers: Array<{ id: string; name?: string }>;
-  /** The clients (hosts) attached to the suite; empty when none were named. */
+  /** Saved target axes; environment-based suites have no direct hosts. */
   hosts: Array<{ id: string; name?: string }>;
+  environmentIds: string[];
   caseUpsert: PlatformEvalSuiteCreated["caseUpsert"];
 };
 
@@ -5387,11 +5387,7 @@ export const createEvalSuiteOperation: PlatformOperation<
             : {}),
           model: input.model,
           ...(input.provider ? { provider: input.provider } : {}),
-          // Ergonomic case shape; the backend normalizes per-case defaults
-          // (runs, model/provider fill, tool-call mapping) into the run schema.
-          // `checks` folds onto the wire's `predicates` here, so an older
-          // deployment that has never heard the canonical word still gets a
-          // body it understands.
+          // Fold checks onto predicates for deployments using that spelling.
           tests: input.cases.map(foldCaseCheckAlias),
         },
       },
@@ -5405,6 +5401,7 @@ export const createEvalSuiteOperation: PlatformOperation<
         name: server.name,
       })),
       hosts: created.hosts ?? [],
+      environmentIds: created.environmentIds ?? [],
       caseUpsert: created.caseUpsert,
     };
   },

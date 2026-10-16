@@ -1763,12 +1763,12 @@ export interface PlatformEvalRunGroupCreated {
  */
 export interface PlatformEvalSuiteCreated {
   suiteId: string;
-  /** Suite name as persisted; echoes the request name. */
   name: string;
   /** The HTTP servers the suite was configured against. */
   servers?: Array<{ id: string; name?: string }>;
-  /** The clients (hosts) attached at create time; empty when none were named. */
+  /** Persisted clients; environment-based suites have no host attachments. */
   hosts?: Array<{ id: string; name?: string }>;
+  environmentIds?: string[];
   /** Per-case create outcomes, mirroring eval-run caseUpsert. */
   caseUpsert: {
     committed?: Array<{ id?: string; name?: string }>;
