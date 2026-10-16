@@ -214,7 +214,7 @@ export function EventsFeedPanel({
       {newestFirst.length === 0 ? (
         <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
           <Inbox className="h-4 w-4" />
-          No deliveries yet. Events appear here as the inbox journals them.
+          No deliveries yet. Events appear here as they arrive.
         </div>
       ) : (
         <ul>

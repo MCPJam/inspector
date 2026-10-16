@@ -254,8 +254,8 @@ export function SubscribeForm({
         ) : null}
         {mode === "webhook" && hosted ? (
           <p className="text-[11px] text-muted-foreground">
-            Deliveries go to MCPJam's public inbox, which verifies each
-            signature before anything is journalled.
+            Deliveries go to MCPJam's public inbox, which checks each
+            signature.
           </p>
         ) : null}
         {needsAcknowledgement ? (

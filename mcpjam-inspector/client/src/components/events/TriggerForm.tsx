@@ -307,8 +307,7 @@ export function TriggerForm({
           ))}
         </select>
         <p className="text-[11px] text-muted-foreground">
-          Nobody is watching an unattended run, so any tool call that would need
-          approval is refused.
+          Runs are unattended, so tool calls that need approval are refused.
         </p>
       </div>
       {error ? (

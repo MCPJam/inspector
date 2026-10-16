@@ -255,7 +255,7 @@ describe("EventTriggersTab", () => {
 
     fireEvent.click(within(history).getByRole("button"));
     const detail = await screen.findByTestId("run-detail");
-    expect(detail).toHaveTextContent("MCPJam never repeats an unknown write");
+    expect(detail).toHaveTextContent(PARKED_EXPLANATION);
     expect(within(detail).getByText("github.add_label")).toBeInTheDocument();
     expect(within(detail).getByText("outcome unknown")).toBeInTheDocument();
     // Event data is untrusted: text, never markup.

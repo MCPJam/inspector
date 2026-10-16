@@ -10,7 +10,7 @@ import { EventDataView } from "./EventsFeedPanel";
 import { formatTime, safeJson } from "./event-utils";
 
 export const PARKED_EXPLANATION =
-  "A tool call's outcome is unknown, so the run stopped instead of retrying. MCPJam never repeats an unknown write.";
+  "The run stopped because a tool call's outcome is unknown. Check whether the tool made its change.";
 
 function runStatusTone(status: string): string {
   switch (status) {
@@ -199,7 +199,7 @@ export function RunDetail({ runId }: { runId: string }) {
           </>
         ) : (
           <p className="text-[11px] text-muted-foreground">
-            The frozen input is no longer retained.
+            This run's input is no longer kept.
           </p>
         )}
       </div>
@@ -207,7 +207,7 @@ export function RunDetail({ runId }: { runId: string }) {
       {input?.trigger ? (
         <details className="text-[11px]">
           <summary className="cursor-pointer text-muted-foreground">
-            Trigger snapshot (frozen when the run was scheduled)
+            Trigger settings when the run was scheduled
           </summary>
           <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-2 font-mono text-[11px] text-foreground">
             {safeJson(input.trigger)}

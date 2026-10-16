@@ -382,7 +382,7 @@ export function EventTriggersTab({
         description={
           HOSTED_MODE
             ? "Sign in and open a project to create triggers. A trigger runs an agent unattended each time a subscribed MCP event arrives."
-            : "Triggers run unattended on MCPJam's hosted runner, against a project's hosted event subscriptions. Sign in and open a hosted project to create them."
+            : "Sign in and open a hosted project to create triggers."
         }
       />
     );

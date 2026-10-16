@@ -222,7 +222,7 @@ function SubscriptionCard({
       {slotState ? (
         <div className="space-y-1 rounded-md border border-border p-2 text-[11px]">
           <p className="text-muted-foreground">
-            Slot state: <span className="font-mono">{slotState.state}</span>
+            Inbox state: <span className="font-mono">{slotState.state}</span>
             {slotState.observedSubscriptionIds?.length
               ? ` · observed ids ${slotState.observedSubscriptionIds.join(", ")}`
               : ""}
@@ -303,7 +303,7 @@ function SubscriptionCard({
               disabled={busy}
               onClick={() => onAction({ kind: "slot-state" })}
             >
-              Check slot
+              Check inbox
             </Button>
           ) : null}
           <Button

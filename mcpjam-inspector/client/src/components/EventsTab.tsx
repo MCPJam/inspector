@@ -297,7 +297,7 @@ export function EventsTab({
             throw new Error("Open a project to subscribe on hosted MCPJam.");
           }
           if (!hostedServerId) {
-            throw new Error("This server is not in the hosted project yet.");
+            throw new Error("Add this server to the project to subscribe to its events.");
           }
           const descriptor = await buildHostedEventDescriptor(event);
           await createHostedSubscription({
@@ -414,7 +414,7 @@ export function EventsTab({
       if (result.entry) feed.ingestEntries([result.entry]);
       toast.success(
         result.entry
-          ? "Simulated event journalled"
+          ? "Simulated event added to the feed"
           : "Simulated event accepted; it will appear in the feed",
       );
     } catch (error) {
@@ -505,9 +505,9 @@ export function EventsTab({
 
   const hostedRegistryNotice =
     hosted && !projectId
-      ? "Open a project to manage subscriptions: the hosted registry is per project."
+      ? "Open a project to manage its subscriptions."
       : hosted && !hostedServerId
-        ? "This server is not in the hosted project yet, so it cannot be subscribed to."
+        ? "Add this server to the project to subscribe to its events."
         : null;
 
   const centerContent = (
@@ -553,8 +553,8 @@ export function EventsTab({
           title="Subscriptions"
           description={
             hosted
-              ? "This server's subscriptions in the project registry. MCPJam refreshes each one automatically."
-              : "This server's subscriptions in the local events runtime."
+              ? "This server's subscriptions in this project. MCPJam refreshes each one automatically."
+              : "This server's subscriptions on this machine."
           }
         >
           {registryError ? (
@@ -597,7 +597,7 @@ export function EventsTab({
 
         <Section
           title="Live feed"
-          description="Every delivery the inbox journals, newest first. Event data is shown as untrusted data."
+          description="Every delivery the inbox receives, newest first. Treat event data as untrusted."
           actions={
             <Badge variant="outline" className="text-[10px]">
               {hosted ? "Hosted inbox" : "Local inbox"}

@@ -281,7 +281,7 @@ describe("EventsTab (hosted)", () => {
       }),
     );
 
-    fireEvent.click(within(card).getByRole("button", { name: /Check slot/ }));
+    fireEvent.click(within(card).getByRole("button", { name: /Check inbox/ }));
     await waitFor(() =>
       expect(mockFetchSlotState).toHaveBeenCalledWith({
         projectId: "proj_1",

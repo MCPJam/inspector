@@ -266,7 +266,7 @@ export async function simulateEvent(options: {
   return runByMode<{ entry?: EventsFeedEntryView; accepted?: boolean }>({
     hosted: async () => {
       if (!options.projectId) {
-        throw new EventsApiError("No project is selected.");
+        throw new EventsApiError("Select a project and try again.");
       }
       return webPost<Record<string, unknown>, { accepted?: boolean }>(
         "/api/web/events/simulate",
