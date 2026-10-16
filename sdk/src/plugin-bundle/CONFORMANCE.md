@@ -144,6 +144,13 @@ its `__tests__/`.
   box; a persistent Computer keeps it.
 - **Materialized-bundle containment** in `bundle-cache.ts` and the node file
   sources.
+- **Executable bits survive extraction.** The local cache writes a file the
+  archive marks executable as 0755 and every other file as at most 0644 (the
+  umask can narrow it), never a special bit (`bundle-cache.ts`). A filesystem
+  that stores no modes keeps no bit, which is logged. A hosted box gets the
+  same bits after the upload (`computer-stdio.ts`). A browser folder selection carries no
+  modes, so a folder import runs its executables through an interpreter; a
+  ZIP keeps them.
 
 - **Playground chat isolates a failing plugin server.** `chat-v2.ts` passes
   only the turn's plugin server IDs to `createAuthorizedManager` through
@@ -153,12 +160,11 @@ its `__tests__/`.
 
 ## Known gaps
 
-- **Archive permission bits are recorded but not yet applied.** File sources
-  report POSIX modes, the parser lists `executableFiles`, and
-  `executionDigest` covers them, but extraction still writes every file with
-  the default umask, so a bundled executable run as `./bin/server` fails with
-  `EACCES` on POSIX. Interpreter commands (`node`, `python`) are unaffected,
-  and a browser folder selection carries no modes at all.
+- **A cache hit is not checked against a pinned execution digest.** The
+  backend pins a version's `bundleHash` but not yet its `executionDigest`, so
+  a reused cache entry is verified by content only. Each entry belongs to one
+  immutable version, and entries laid out before executables kept their bit
+  are never reused.
 
 - **Non-secret configured headers can follow a cross-origin redirect.**
   Stored credential headers are attached only to the origins the backend
