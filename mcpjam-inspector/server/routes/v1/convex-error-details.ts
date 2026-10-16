@@ -10,18 +10,6 @@ export function cleanConvexMessage(error: unknown): string {
 }
 
 /**
- * The actionable fields off a billing ConvexError, forwarded as `details`.
- *
- * `limit` says WHICH cap, `plan` and `upgradePlan` say what would lift it, and
- * `currentValue`/`allowedValue` say by how much. Without them a caller gets
- * "Plan limit reached" and has to guess — and an agent has nothing to tell a
- * human beyond that something is capped.
- *
- * Copied field by field rather than passed through: the payload is the
- * backend's internal error shape, and spreading it would publish whatever it
- * gains next without anyone deciding to.
- */
-/**
  * The current value a compare-and-set precondition disagreed with.
  *
  * Forwarded so a 409 is RECOVERABLE without a second round-trip: a caller that
@@ -50,6 +38,18 @@ export function preconditionDetails(
   return Object.keys(details).length > 0 ? details : undefined;
 }
 
+/**
+ * The actionable fields off a billing ConvexError, forwarded as `details`.
+ *
+ * `limit` says WHICH cap, `plan` and `upgradePlan` say what would lift it, and
+ * `currentValue`/`allowedValue` say by how much. Without them a caller gets
+ * "Plan limit reached" and has to guess — and an agent has nothing to tell a
+ * human beyond that something is capped.
+ *
+ * Copied field by field rather than passed through: the payload is the
+ * backend's internal error shape, and spreading it would publish whatever it
+ * gains next without anyone deciding to.
+ */
 export function billingDetails(
   data: Record<string, unknown> | null | undefined
 ): Record<string, unknown> | undefined {
@@ -62,12 +62,8 @@ export function billingDetails(
     "upgradePlan",
     "currentValue",
     "allowedValue",
-    // WHEN the cap lifts — epoch ms of the UTC midnight a daily limit rolls
-    // at. Documented on `BILLING_LIMIT_REACHED` in `web/errors.ts` since that
-    // code existed, and dropped here the whole time, which left "Plan limit
-    // reached" as advice a caller could act on only by guessing. It is also
-    // the input the 429 below turns into `Retry-After`, so dropping it cost
-    // the header as well as the field.
+    // The reset instant documented by BILLING_LIMIT_REACHED in web/error-codes.ts.
+    // The translator in convex-errors.ts uses it for the 429 Retry-After header.
     "resetsAt",
   ]) {
     if (data[key] !== undefined) details[key] = data[key];

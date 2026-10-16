@@ -28,13 +28,14 @@ import {
 } from "./contract.js";
 import { translateStructuredConvexRefusal } from "./convex-errors.js";
 
-/** Canonical error response. */
+/** Billing outages use retryable 503; INTERNAL_ERROR defaults to 500 otherwise. */
 function errorStatus(code: V1ErrorCode, details?: Record<string, unknown>) {
   return code === "INTERNAL_ERROR" && details?.code === "platform_fee_unavailable"
     ? 503
     : V1_ERROR_STATUS[code];
 }
 
+/** Canonical error response. */
 export function v1Error(
   c: Context,
   code: V1ErrorCode,

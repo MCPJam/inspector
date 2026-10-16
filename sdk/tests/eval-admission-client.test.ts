@@ -30,6 +30,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("local admission transport", () => {
+  it("rejects an expired authorization during construction", () => {
+    expect(
+      () => new AttemptStepGuard(client(), {
+        ...receipt,
+        expiresAt: Date.now(),
+      })
+    ).toThrow(expect.objectContaining({ code: "ADMISSION_CLOSED" }));
+  });
   it("rejects an active receipt already expired when it arrives", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
       Response.json({ ...receipt, expiresAt: Date.now() - 1 })
@@ -111,6 +119,7 @@ describe("local admission transport", () => {
     await result;
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
   it("requires credentials without making a request", () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
