@@ -331,8 +331,7 @@ describe("hosted chat turn (MJ-001)", () => {
     expect(payload.code).toBe("TIMEOUT");
     expect(payload.message).toMatch(/MCP server ".*" timed out/);
     expect(disconnectAll).toHaveBeenCalled();
-    // The fetch mock observes transport cancellation asynchronously.
-    await vi.waitFor(() => expect(aborted).toBe(true));
+    expect(aborted).toBe(true);
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     disconnectAll.mockRestore();
   });
