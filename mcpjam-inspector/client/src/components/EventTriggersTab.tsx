@@ -348,7 +348,7 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
         icon={Zap}
         className="py-16"
         title="Run an agent when an event arrives"
-        description="A trigger runs your instructions with a model and the project's servers each time its subscription delivers an event. Tool calls that need approval are refused."
+        description="A trigger runs your instructions each time its subscription delivers an event. Tool calls that need approval are refused."
       >
         <Button size="sm" onClick={() => setSelection({ kind: "new" })}>
           <Plus className="mr-1.5 h-3.5 w-3.5" />
@@ -381,7 +381,7 @@ export function EventTriggersTab({
         title="Triggers run on MCPJam's hosted runner"
         description={
           HOSTED_MODE
-            ? "Sign in and open a project to create triggers. A trigger runs an agent unattended each time a subscribed MCP event arrives."
+            ? "Sign in and open a project to create triggers."
             : "Sign in and open a hosted project to create triggers."
         }
       />

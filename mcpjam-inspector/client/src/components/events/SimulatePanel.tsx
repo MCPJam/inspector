@@ -115,7 +115,7 @@ export function SimulatePanel({
         </div>
         <div className="space-y-1">
           <Label htmlFor="simulate-event-id" className="text-xs">
-            eventId (optional)
+            Event id (optional)
           </Label>
           <Input
             id="simulate-event-id"

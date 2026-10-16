@@ -246,7 +246,7 @@ describe("EventsTab (local)", () => {
     const repo = await screen.findByPlaceholderText("Enter repo");
     fireEvent.change(repo, { target: { value: "octo/hello" } });
     expect(screen.getByRole("radio", { name: /Poll/ })).toBeChecked();
-    fireEvent.change(screen.getByLabelText("maxAgeMs (optional)"), {
+    fireEvent.change(screen.getByLabelText("Maximum event age in ms (optional)"), {
       target: { value: "60000" },
     });
     fireEvent.click(screen.getByRole("checkbox", { name: /No expiry/ }));

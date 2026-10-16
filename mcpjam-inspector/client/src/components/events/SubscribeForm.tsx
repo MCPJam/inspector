@@ -285,7 +285,7 @@ export function SubscribeForm({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-max-age`} className="text-xs">
-            maxAgeMs (optional)
+            Maximum event age in ms (optional)
           </Label>
           <Input
             id={`${idPrefix}-max-age`}
@@ -299,7 +299,7 @@ export function SubscribeForm({
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-ttl`} className="text-xs">
-            ttlMs (optional)
+            Expires after, in ms (optional)
           </Label>
           <Input
             id={`${idPrefix}-ttl`}
@@ -321,7 +321,7 @@ export function SubscribeForm({
               htmlFor={`${idPrefix}-no-expiry`}
               className="text-[11px] text-muted-foreground"
             >
-              No expiry (ttlMs: null)
+              No expiry
             </Label>
           </div>
         </div>
