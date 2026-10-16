@@ -42,7 +42,7 @@ describe("harness cost context", () => {
       screen.getAllByText("Partial harness estimate").length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getAllByText(/Likely client AI range: 400 to 1,400 credits/)
+      screen.getAllByText(/Client AI range: 400 to 1,400 credits/)
         .length,
     ).toBeGreaterThan(0);
     expect(
@@ -63,7 +63,7 @@ describe("harness cost context", () => {
         "Not enough priced history to show a client AI range. Choose a priced model and run more evals or swarms to build history.",
       ).length,
     ).toBeGreaterThan(0);
-    expect(screen.queryByText(/Likely client AI range/)).toBeNull();
+    expect(screen.queryByText(/Client AI range/)).toBeNull();
   });
 
   it("preserves estimates without harness metadata", () => {

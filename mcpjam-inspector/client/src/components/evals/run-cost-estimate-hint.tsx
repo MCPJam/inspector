@@ -89,7 +89,7 @@ export function RunCostEstimateHint({
             <div className="space-y-1 text-muted-foreground">
               <p>
                 {range
-                  ? `Likely client AI range: ${formatCredits(
+                  ? `Client AI range: ${formatCredits(
                       range.low,
                     )} to ${formatCredits(range.high)} credits, based on ${
                       range.sampleCount
