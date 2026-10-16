@@ -71,17 +71,43 @@ jobs:
                 .trim();
             }
 
+            // A Kestral task URL, or a bare task id like PP-96 / MSI-26.
+            const TASK_REF = /app\.kestral\.ai\/\S*\/task\/\S+|\b[A-Z]{2,6}-\d+\b/;
+
             const missing = [];
             for (const name of FIELDS) {
               const value = valueOf(name);
+              const isTask = name === 'Kestral task';
+
               if (value === null) {
                 missing.push(`\`${name}\` — line is not in the description`);
-              } else if (!value) {
+                continue;
+              }
+              if (!value) {
                 missing.push(`\`${name}\` — empty, or still the placeholder`);
-              } else if (/^none\s*:?\s*(?:<reason>)?$/i.test(value)) {
-                // "None" on its own is not an answer; the reason is the point.
-                // "None:" with nothing after it, or the template's literal
-                // "<reason>" copied over, is the same non-answer.
+                continue;
+              }
+
+              // Task and the other two are held to different standards on
+              // purpose. Every change gets a task, a one-line fix included —
+              // "None: small fix" is the opt-out this is meant to close, so it
+              // does not pass here even though it passes for Spec and Plan.
+              if (isTask) {
+                if (!TASK_REF.test(value)) {
+                  missing.push(
+                    `\`${name}\` — needs a task id or link (e.g. \`PP-96\`). ` +
+                      `Every change gets a task, including a one-line fix; ` +
+                      `make one if it does not exist yet.`,
+                  );
+                }
+                continue;
+              }
+
+              // Spec and Plan: plenty of changes genuinely need neither, so
+              // "None: <reason>" is a real answer. Only a non-answer is not —
+              // a bare "None", "None:" with nothing after it, or the
+              // template's literal "<reason>" copied over.
+              if (/^none\s*:?\s*(?:<reason>)?$/i.test(value)) {
                 missing.push(`\`${name}\` — says "None" with no reason after it`);
               }
             }

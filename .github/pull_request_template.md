@@ -1,10 +1,15 @@
 ## Task, spec and plan
 
-<!-- All three lines stay. Where one genuinely does not apply — a one-line fix, a
-revert, a dependency bump — write `None: <reason>` rather than deleting the line.
-A non-blocking check comments when a line is empty or still a placeholder. -->
+<!-- All three lines stay. A non-blocking check comments when one is blank.
 
-- **Kestral task:** <!-- https://app.kestral.ai/workspace/yhNILB2/task/… or None: <reason> -->
+Every change gets a task, including a one-line fix. If there isn't one, make one —
+it takes a few seconds and it is how the work becomes findable later.
+
+Spec and Plan are different: plenty of changes genuinely need neither. Write
+`None: <reason>` for those. A bug fix, a revert, a dependency bump, a copy tweak
+and a mechanical refactor are all good reasons, and nobody will query them. -->
+
+- **Kestral task:** <!-- PP-96, or https://app.kestral.ai/workspace/yhNILB2/task/… — required -->
 - **Spec:** <!-- link to the spec this implements, or None: <reason> -->
 - **Plan:** <!-- link, or 3 to 6 bullets of the approach you agreed before writing code, or None: <reason> -->
 
