@@ -13,10 +13,17 @@ const pr = {
   user: { login: "author" },
   merged_at: "2026-10-05T12:00:00Z",
 };
-const review = (login, state, submitted_at, type = "User") => ({
+const review = (
+  login,
+  state,
+  submitted_at,
+  type = "User",
+  author_association = "MEMBER",
+) => ({
   user: { login, type },
   state,
   submitted_at,
+  author_association,
 });
 
 test("an approval from another person before the merge counts", () => {
@@ -43,6 +50,30 @@ test("a bot approval does not satisfy the control", () => {
       review("coderabbitai[bot]", "APPROVED", "2026-10-05T11:00:00Z", "Bot"),
     ]),
     false,
+  );
+});
+
+test("an approval from an account without write access does not count", () => {
+  assert.equal(
+    hasQualifyingApproval(pr, [
+      review("outsider", "APPROVED", "2026-10-05T11:00:00Z", "User", "NONE"),
+    ]),
+    false,
+  );
+});
+
+test("an approval from an outside collaborator counts", () => {
+  assert.equal(
+    hasQualifyingApproval(pr, [
+      review(
+        "contractor",
+        "APPROVED",
+        "2026-10-05T11:00:00Z",
+        "User",
+        "COLLABORATOR",
+      ),
+    ]),
+    true,
   );
 });
 
