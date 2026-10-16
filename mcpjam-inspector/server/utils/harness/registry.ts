@@ -318,12 +318,10 @@ type HarnessRuntimeAdapterBase = {
   /**
    * Does a PENDING approval live in the runtime PROCESS rather than on disk?
    *
-   * Claude Code's conversation is on disk, so a local turn paused on an
-   * approval can be torn down and re-driven. Codex app-server's pending
-   * approval is an open JSON-RPC request inside one live process (and, for a
-   * host tool, an open relay call), so a local pause must PARK that process
-   * (`local/approval-park.ts`) and the decision must be delivered to it —
-   * never replayed into a new one.
+   * Claude Code's canUseTool and Codex app-server approvals wait inside the
+   * live bridge. Local pauses must park that process and deliver the decision
+   * to it; restarting from the conversation on disk would rerun the prompt
+   * rather than answer the pending call.
    */
   liveApprovalRuntime?: boolean;
   /**
@@ -877,6 +875,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY["claude-code"],
   // …through the SDK session configuration, without writing into the workspace.
   mcpNativeDelivery: "session-config",
+  liveApprovalRuntime: true,
   supportsSkills: true,
   skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
   // Mirrors `writeClaudeCodeSkills` in `@ai-sdk/harness-claude-code`.
