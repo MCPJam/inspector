@@ -1,3 +1,4 @@
+import { running, stillRunning, descendants, psLine, listeners } from "./process-observations.js";
 import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
 import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
 import { diskResumeState } from "../resume-state.js";
@@ -301,84 +302,6 @@ const freePort = () =>
  * parent/child tree. Still deliberately NOT the code under test.
  */
 const WIN = process.platform === "win32";
-const powershell = (script: string) =>
-  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], {
-    windowsHide: true,
-  });
-
-async function running(pid: number): Promise<boolean> {
-  if (WIN) {
-    try {
-      const { stdout } = await execFileP("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"]);
-      return stdout.includes(`"${pid}"`);
-    } catch {
-      return false;
-    }
-  }
-  let state: string;
-  try {
-    state = (await execFileP("ps", ["-o", "stat=", "-p", String(pid)])).stdout.trim();
-  } catch {
-    return false; // `ps` exits non-zero for a pid that does not exist.
-  }
-  if (state.length === 0) return false;
-  return !state.startsWith("Z");
-}
-
-/** Which of these pids are still running — zombies do not count. */
-async function stillRunning(pids: readonly number[]): Promise<number[]> {
-  const states = await Promise.all(pids.map(running));
-  return pids.filter((_, i) => states[i]);
-}
-async function descendants(pid: number): Promise<number[]> {
-  const out: number[] = [];
-  const walk = async (p: number) => {
-    let kids = "";
-    try {
-      kids = WIN
-        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
-        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
-    } catch {
-      return;
-    }
-    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
-      out.push(k);
-      await walk(k);
-    }
-  };
-  await walk(pid);
-  return out;
-}
-async function psLine(pid: number, withEnv = false) {
-  try {
-    const args = withEnv ? ["-E", "-o", "command=", "-p", String(pid)] : ["-o", "command=", "-p", String(pid)];
-    return (await execFileP("ps", args)).stdout.trim();
-  } catch {
-    return "";
-  }
-}
-async function listeners(pid: number) {
-  if (WIN) {
-    // `  TCP    127.0.0.1:53123    0.0.0.0:0    LISTENING    1234`, for v4 and
-    // v6 alike (`[::1]:53123`). Shaped like the lsof answer below so the
-    // loopback verdict's regex reads both.
-    try {
-      return (await execFileP("netstat", ["-ano"])).stdout
-        .split(/\r?\n/)
-        .map((l) => l.trim().split(/\s+/))
-        .filter((f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid))
-        .map((f) => `${f[1]} (LISTEN)`);
-    } catch {
-      return [];
-    }
-  }
-  try {
-    return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
-      .split("\n").slice(1).filter(Boolean).map((l) => l.split(/\s+/).slice(-2).join(" "));
-  } catch {
-    return [];
-  }
-}
 
 type TurnResult = { text: string; parts: Record<string, number>; firstPartMs: number; firstTextMs: number; finishMs: number; approvals: number; errors: string[]; tools: string[] };
 async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt: string): Promise<TurnResult> {
