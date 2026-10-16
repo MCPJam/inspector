@@ -13522,7 +13522,12 @@ const goalJudgeInput = z
       .optional()
       .describe("Advisory pass threshold, 0–1."),
   })
-  .strict();
+  .strict()
+  // The API refuses an empty judge; refusing it here reports that before
+  // the request goes out.
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "Provide at least one judge field.",
+  });
 
 const createGoalInput = z.object({
   project: z

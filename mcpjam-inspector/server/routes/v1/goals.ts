@@ -939,7 +939,11 @@ both(
               }
             : {}),
           // `null` clears, as above; a partial judge is merged onto the
-          // stored slot because the backend replaces it wholesale.
+          // stored slot because the backend replaces it wholesale. The merge
+          // reads the preflight's snapshot, so two concurrent partial judge
+          // PATCHes can lose one caller's field, the same exposure the suite
+          // judge PATCH has. Closing it means merging inside
+          // `journeys:updateJourney`, which is the backend's change to make.
           ...(judge !== undefined
             ? {
                 judgeConfig: judgeConfigForWrite(

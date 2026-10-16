@@ -27327,7 +27327,6 @@
           "environmentIds",
           "iterations",
           "maxTurns",
-          "judge",
           "createdAt",
           "updatedAt"
         ],
