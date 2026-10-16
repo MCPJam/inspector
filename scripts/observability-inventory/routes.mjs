@@ -43,10 +43,11 @@ function walkRouter(context, info, receiver, prefix, entrypoint, chain = [], inh
       }
     }
     for (const r of info.mounts.filter(r => r.receiver === receiver)) {
-      if (typeof r.path !== 'string' || !r.argument) { unresolved.push({ file: info.file, reason: 'dynamic mount', entrypoint }); continue; }
+      const line = r.node.getSourceFile().getLineAndCharacterOfPosition(r.node.getStart()).line + 1;
+      if (typeof r.path !== 'string' || !r.argument) { unresolved.push({ file: info.file, line, reason: 'dynamic mount', entrypoint }); continue; }
       const symbol = ts.isCallExpression(r.argument) ? r.argument.expression.getText() : r.argument.getText();
       const target = resolve(modules, info, symbol);
-      if (!target) { unresolved.push({ file: info.file, symbol, mount: r.path, reason: 'unresolved router mount', entrypoint }); continue; }
+      if (!target) { unresolved.push({ file: info.file, line, symbol, mount: r.path, reason: 'unresolved router mount', entrypoint }); continue; }
       walkRouter(context, target.info, target.symbol, join(prefix, r.path), entrypoint, chain, [...inheritedConditions, ...conditions(r.node)]);
     }
     for (const helper of info.helpers.filter(h => h.receiver === receiver)) {

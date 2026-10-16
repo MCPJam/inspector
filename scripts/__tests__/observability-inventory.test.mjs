@@ -27,9 +27,17 @@ test('joins nested Hono mounts, resolves constants/arrays/helpers and retains in
   assert.equal(r.unresolved.length, 0);
 }));
 test('reports unresolved mounts and dynamic paths instead of dropping or verifying them', () => fixture({
-  'inspector/mcpjam-inspector/server/index.ts': `const app = new Hono(); app.route('/external', unknownRouter()); app.get(computePath(), handler);`,
+  'inspector/mcpjam-inspector/server/index.ts': `const app = new Hono();
+app.route('/external', unknownRouter());
+app.route(computeMount(), router);
+app.get(computePath(), handler);`,
 }, r => {
-  assert.equal(r.unresolved.length, 2);
+  assert.equal(r.unresolved.length, 3);
+  assert.deepEqual(r.unresolved.map(({ reason, line }) => ({ reason, line })).sort((a, b) => a.line - b.line), [
+    { reason: 'unresolved router mount', line: 2 },
+    { reason: 'dynamic mount', line: 3 },
+    { reason: 'dynamic route path/method', line: 4 },
+  ]);
   assert.equal(r.rows.filter(x => x.verified).length, 0);
 }));
 test('expands finite template/conditional route loops without inventing unreachable branches', () => fixture({
