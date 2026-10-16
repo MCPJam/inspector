@@ -80,6 +80,7 @@ import {
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
+  onlyStoresCredential,
   readHostedOAuthPendingMarker,
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
@@ -3078,13 +3079,13 @@ export function useServerState({
           localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         }
 
-        if (!result.success && hostedCallbackContext?.connectionIntent) {
+        if (!result.success && onlyStoresCredential(hostedCallbackContext)) {
           if (!suppressErrorToast) {
             toast.error(result.error ?? "Could not connect the account");
           }
           return;
         }
-        if (result.success && hostedCallbackContext?.connectionIntent) {
+        if (result.success && onlyStoresCredential(hostedCallbackContext)) {
           if (!HOSTED_MODE && result.serverName) {
             const existing =
               appStateServersRef.current[result.serverName] ??
@@ -3093,9 +3094,7 @@ export function useServerState({
               await guardedReconnectServer(result.serverName, existing.config);
           }
           notifyOAuthConnectionsChanged();
-          if (!suppressSuccessToast) {
-            toast.success("Account connected");
-          }
+          if (!suppressSuccessToast) toast.success("Account connected");
           return;
         }
         if (result.success && result.serverConfig && result.serverName) {
