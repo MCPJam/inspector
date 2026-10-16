@@ -39,6 +39,20 @@ describe("describePluginNotice", () => {
     );
   });
 
+  it("says a plugin ran without one of its servers, and what to do", () => {
+    const partial = (reason: "needs_auth" | "needs_setup") =>
+      describePluginNotice({
+        kind: "skipped",
+        plugins: [{ ...bitsNeedsAuth.plugins[0], reason, partial: true }],
+      });
+    expect(partial("needs_auth")).toBe(
+      "Bits & Bolts ran without one of its servers: sign in to that server to use it.",
+    );
+    expect(partial("needs_setup")).toBe(
+      "Bits & Bolts ran without one of its servers: finish that server's setup to use it.",
+    );
+  });
+
   describe("a plugin skipped for where it runs", () => {
     const placement = (where?: "local" | "computer") =>
       describePluginNotice({
@@ -141,6 +155,18 @@ describe("pluginNoticeKey", () => {
         ],
       }),
     );
+  });
+});
+
+describe("pluginNoticeKey for a partial skip", () => {
+  it("differs from the same plugin skipped whole for the same reason", () => {
+    const [whole] = bitsNeedsAuth.plugins;
+    expect(
+      pluginNoticeKey("chat-1", {
+        kind: "skipped",
+        plugins: [{ ...whole, partial: true }],
+      }),
+    ).not.toBe(pluginNoticeKey("chat-1", bitsNeedsAuth));
   });
 });
 

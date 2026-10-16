@@ -22,6 +22,8 @@ export interface PluginNoticePlugin {
   reason: ActivePluginSkipReason;
   /** For a `placement` skip: where the component would have run. */
   placement?: "local" | "computer";
+  /** The plugin ran, but without a server whose `reason` this is. */
+  partial?: boolean;
 }
 
 /**
@@ -83,7 +85,16 @@ function placementCopy(plugin: PluginNoticePlugin): string {
     : "it runs on this computer and isn't started automatically";
 }
 
+const PARTIAL_COPY: Record<string, string> = {
+  needs_auth: "sign in to that server to use it",
+  needs_setup: "finish that server's setup to use it",
+};
+
 function describeSkip(plugin: PluginNoticePlugin): string {
+  if (plugin.partial) {
+    const action = PARTIAL_COPY[plugin.reason] ?? "it isn't available yet";
+    return `${noticeLabel(plugin)} ran without one of its servers: ${action}.`;
+  }
   const reason =
     plugin.reason === "placement"
       ? placementCopy(plugin)
@@ -111,7 +122,10 @@ export function pluginNoticeKey(
   const signature =
     data.kind === "skipped"
       ? data.plugins
-          .map((plugin) => `${plugin.pluginId}:${plugin.reason}`)
+          .map(
+            (plugin) =>
+              `${plugin.pluginId}:${plugin.reason}${plugin.partial ? ":partial" : ""}`,
+          )
           .sort()
           .join(",")
       : data.kind === "off"
@@ -173,6 +187,7 @@ export function showPluginNotice(
                 pluginId: plugin.pluginId,
                 name: noticeLabel(plugin),
                 reason: plugin.reason,
+                ...(plugin.partial ? { partial: true } : {}),
               })),
             }
           : {}),

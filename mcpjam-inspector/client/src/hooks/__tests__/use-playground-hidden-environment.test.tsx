@@ -415,6 +415,51 @@ describe("usePlaygroundHiddenEnvironment", () => {
     });
   });
 
+  describe("a server joining or leaving under the same composition", () => {
+    const twoServers = (unavailable?: "needs_auth") =>
+      plugin("bits", {
+        servers: [
+          {
+            serverId: "srv_bits",
+            name: "bits-server",
+            componentKey: "server",
+            placement: "remote",
+          },
+          {
+            serverId: "srv_crm",
+            name: "crm-server",
+            componentKey: "crm",
+            placement: "remote",
+            ...(unavailable ? { unavailable } : {}),
+          },
+        ],
+      });
+
+    it("names a server once the member signs in, without recomposing", async () => {
+      state.plugins = [twoServers("needs_auth")];
+      const { result, rerender } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(result.current.pluginServerIds).toEqual(["srv_bits"]);
+
+      state.plugins = [twoServers()];
+      rerender(PROPS_FOR_PENDING);
+      expect(result.current.pluginServerIds).toEqual(["srv_bits", "srv_crm"]);
+      expect(result.current.environmentId).toBe("env_1");
+      expect(state.ensure).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops naming a server the member can no longer use", async () => {
+      state.plugins = [twoServers()];
+      const { result, rerender } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+
+      state.plugins = [twoServers("needs_auth")];
+      rerender(PROPS_FOR_PENDING);
+      expect(result.current.pluginServerIds).toEqual(["srv_bits"]);
+      expect(state.ensure).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("recover", () => {
     it("re-reads the plugins and recomposes", async () => {
       state.plugins = [plugin("bits")];
@@ -434,6 +479,7 @@ describe("usePlaygroundHiddenEnvironment", () => {
         projectId: PROJECT_ID,
         content: false,
         runtimeVenue: "hosted",
+        componentAdmission: true,
       });
       expect(recovery).toEqual({
         ok: true,
@@ -447,6 +493,38 @@ describe("usePlaygroundHiddenEnvironment", () => {
       expect(result.current.environmentId).toBe("env_2");
       expect(result.current.pluginServerIds).toEqual(["srv_cad"]);
     });
+
+    it.each([
+      [
+        "development",
+        "ArgumentValidationError: Object contains extra field `componentAdmission` that is not in the validator.",
+      ],
+      [
+        "production",
+        "[CONVEX Q(plugins:resolveActivePlugins)] [Request ID: 6f2c3a9b1d4e5f60] Server Error\n  Called by client",
+      ],
+    ])(
+      "asks a backend from before component admission the old way (%s)",
+      async (_deployment, message) => {
+        state.plugins = [plugin("bits")];
+        const { result } = render();
+        await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+        state.query
+          .mockRejectedValueOnce(new Error(message))
+          .mockResolvedValueOnce({ enabled: true, plugins: [plugin("cad")] });
+
+        let recovery: unknown;
+        await act(async () => {
+          recovery = await result.current.recover();
+        });
+
+        expect(state.query).toHaveBeenLastCalledWith(
+          "plugins:resolveActivePlugins",
+          { projectId: PROJECT_ID, content: false, runtimeVenue: "hosted" },
+        );
+        expect(recovery).toMatchObject({ ok: true, environmentId: "env_2" });
+      },
+    );
 
     it("turns the chat back into a client turn when nothing is runnable", async () => {
       state.plugins = [plugin("bits")];

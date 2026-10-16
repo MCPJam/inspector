@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import {
   activePluginServers,
+  refusesComponentAdmission,
   useActivePlugins,
   type ActivePluginServer,
 } from "@/hooks/useActivePlugins";
@@ -110,12 +111,22 @@ type Composed =
       status: "ready";
       environmentId: string;
       pluginServerIds: string[];
+      /**
+       * The live read's server ids when this was composed. Once they change,
+       * the live ids win: a sign-in changes which servers run without
+       * changing the composition key.
+       */
+      liveServerIds: string[];
     }
   /** No plugin is runnable after a re-read: a plain client turn. */
   | { key: string; status: "none" }
   | { key: string; status: "failed" };
 
 const EMPTY_SERVERS: ActivePluginServer[] = [];
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
 
 export function usePlaygroundHiddenEnvironment(
   input: PlaygroundHiddenEnvironmentInput,
@@ -294,6 +305,7 @@ export function usePlaygroundHiddenEnvironment(
           status: "ready",
           environmentId,
           pluginServerIds: target.pluginServerIds,
+          liveServerIds: target.pluginServerIds,
         });
       },
       (error: unknown) => {
@@ -330,14 +342,20 @@ export function usePlaygroundHiddenEnvironment(
     try {
       // A fresh read, not the subscription's last answer: the refusal says
       // the plugins changed, and the reactive copy may not have caught up.
-      const fresh = (await convex.query(
-        "plugins:resolveActivePlugins" as never,
-        {
-          projectId: target.projectId,
-          content: false,
-          runtimeVenue: HIDDEN_ENVIRONMENT_VENUE,
-        } as never,
-      )) as ActivePluginsResult | null | undefined;
+      const args = {
+        projectId: target.projectId,
+        content: false,
+        runtimeVenue: HIDDEN_ENVIRONMENT_VENUE,
+      };
+      const read = (extra: object) =>
+        convex.query(
+          "plugins:resolveActivePlugins" as never,
+          { ...args, ...extra } as never,
+        ) as Promise<ActivePluginsResult | null | undefined>;
+      const fresh = await read({ componentAdmission: true }).catch((error) => {
+        if (refusesComponentAdmission(error)) return read({});
+        throw error;
+      });
       const rows =
         fresh?.enabled === true && Array.isArray(fresh.plugins)
           ? fresh.plugins
@@ -358,6 +376,7 @@ export function usePlaygroundHiddenEnvironment(
         status: "ready",
         environmentId,
         pluginServerIds: serverIds,
+        liveServerIds: target.pluginServerIds,
       });
       return { ok: true, environmentId, pluginServerIds: serverIds };
     } catch (error) {
@@ -385,7 +404,10 @@ export function usePlaygroundHiddenEnvironment(
     wanted,
     environmentId: current?.status === "ready" ? current.environmentId : null,
     pluginServerIds:
-      current?.status === "ready" ? current.pluginServerIds : pluginServerIds,
+      current?.status === "ready" &&
+      sameIds(current.liveServerIds, pluginServerIds)
+        ? current.pluginServerIds
+        : pluginServerIds,
     failed: current?.status === "failed" || waitTimedOut || readFailed,
     recover,
   };

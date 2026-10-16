@@ -92,6 +92,28 @@ describe("runnable plugins", () => {
       "srv_a",
     ]);
   });
+
+  it("leaves out a server the member can't use yet, keeping its plugin", () => {
+    const partial = row("p", {
+      servers: [
+        {
+          serverId: "srv_p",
+          name: "p",
+          componentKey: "p",
+          placement: "remote",
+        },
+        {
+          serverId: "srv_crm",
+          name: "crm",
+          componentKey: "crm",
+          placement: "remote",
+          unavailable: "needs_auth",
+        },
+      ],
+    });
+    expect(runnablePluginVersionIds([partial])).toEqual(["ver_p"]);
+    expect(runnablePluginServerIds([partial])).toEqual(["srv_p"]);
+  });
 });
 
 describe("hiddenEnvironmentCompositionKey", () => {
@@ -148,6 +170,35 @@ describe("skippedPluginsForNotice", () => {
         name: "auth",
         displayName: "Auth",
         reason: "needs_auth",
+      },
+    ]);
+  });
+
+  it("names an active plugin running without a server, as a partial skip", () => {
+    const partial = row("p", {
+      servers: [
+        {
+          serverId: "srv_p",
+          name: "p",
+          componentKey: "p",
+          placement: "remote",
+        },
+        {
+          serverId: "srv_k",
+          name: "k",
+          componentKey: "k",
+          placement: "remote",
+          unavailable: "needs_setup",
+        },
+      ],
+    });
+    expect(skippedPluginsForNotice([row("a"), partial])).toEqual([
+      {
+        pluginId: "plg_p",
+        name: "p",
+        displayName: null,
+        reason: "needs_setup",
+        partial: true,
       },
     ]);
   });

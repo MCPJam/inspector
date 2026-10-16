@@ -52,7 +52,10 @@ export function runnablePluginVersionIds(
   return ids;
 }
 
-/** The runnable plugins' server ids, in plugin order, deduped. */
+/**
+ * The runnable plugins' server ids, in plugin order, deduped. A server this
+ * member can't use yet is left out: naming it would connect it and fail.
+ */
 export function runnablePluginServerIds(
   plugins: readonly ActivePluginRow[],
 ): string[] {
@@ -61,7 +64,7 @@ export function runnablePluginServerIds(
   for (const plugin of plugins) {
     if (!isRunnablePlugin(plugin)) continue;
     for (const server of plugin.servers) {
-      if (seen.has(server.serverId)) continue;
+      if (server.unavailable || seen.has(server.serverId)) continue;
       seen.add(server.serverId);
       ids.push(server.serverId);
     }
@@ -113,28 +116,39 @@ export function hiddenEnvironmentServerOverride(
 }
 
 /**
- * The installed plugins a turn skips for a reason the member can act on.
- * A plugin someone disabled on purpose is not news, so `disabled` never
- * appears.
+ * The installed plugins a turn skips, whole or in part, for a reason the
+ * member can act on. A plugin someone disabled on purpose is not news, so
+ * `disabled` never appears.
  */
 export function skippedPluginsForNotice(
   plugins: readonly ActivePluginRow[],
 ): PluginNoticePlugin[] {
-  return plugins.flatMap((plugin) =>
-    plugin.status === "skipped" && plugin.reason && plugin.reason !== "disabled"
+  return plugins.flatMap((plugin): PluginNoticePlugin[] => {
+    const identity = {
+      pluginId: plugin.pluginId,
+      name: plugin.name,
+      displayName: plugin.displayName,
+    };
+    if (plugin.status === "active") {
+      const reason = plugin.servers.find(
+        (server) => server.unavailable,
+      )?.unavailable;
+      return reason ? [{ ...identity, reason, partial: true }] : [];
+    }
+    return plugin.status === "skipped" &&
+      plugin.reason &&
+      plugin.reason !== "disabled"
       ? [
           {
-            pluginId: plugin.pluginId,
-            name: plugin.name,
-            displayName: plugin.displayName,
+            ...identity,
             reason: plugin.reason,
             ...(plugin.reason === "placement"
               ? { placement: skippedPlacement(plugin) }
               : {}),
           },
         ]
-      : [],
-  );
+      : [];
+  });
 }
 
 /** Where the component a `placement` skip names would have run. */
