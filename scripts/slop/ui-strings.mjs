@@ -25,8 +25,11 @@ const NOT_COPY_BEFORE =
 /** Code before `>` that makes it the end of a JSX tag rather than an operator. */
 const TAG_BEFORE = /<\/?[A-Za-z][\w.:-]*(?:[^<>]|=>)*$/;
 
-/** Inside a JSX-text candidate, these mean it was code after an operator. */
-const JSX_CODE = /\/\/|\/\*|[[\]]|\n\s*\w+\s*:/;
+/**
+ * Inside a JSX-text candidate, these mean it was code after an operator. A
+ * leading `)` closes a parenthesized branch (`</p>\n) : hint ? (`).
+ */
+const JSX_CODE = /^\s*\)|\/\/|\/\*|[[\]]|\n\s*\w+\s*:/;
 
 /** Code before `/` that makes it the start of a regex literal. */
 const REGEX_BEFORE = /(?:^|[(,=:[!&|?{};]|return|typeof|case|=>)\s*$/;
