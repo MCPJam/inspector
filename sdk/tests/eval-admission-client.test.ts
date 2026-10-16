@@ -30,6 +30,36 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("local admission transport", () => {
+  it("distinguishes a rejected key from missing credentials without an envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({}, { status: 401 }))
+    );
+    await expect(client().admit(input)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+  });
+  it("returns a throttle immediately when Retry-After exceeds the remaining budget", async () => {
+    vi.useFakeTimers();
+    const startedAt = Date.now();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        vi.setSystemTime(startedAt + 8_000);
+        return Response.json(
+          { code: "RATE_LIMITED", message: "Retry after three seconds." },
+          { status: 429, headers: { "Retry-After": "3" } }
+        );
+      })
+    );
+    await expect(client().admit(input)).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+      message: "Retry after three seconds.",
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(Date.now()).toBe(startedAt + 8_000);
+  });
+
   it("rejects an expired authorization during construction", () => {
     expect(
       () => new AttemptStepGuard(client(), {
@@ -105,18 +135,29 @@ describe("local admission transport", () => {
     ).toThrowError(expect.objectContaining({ code: "CREDENTIALS_MISSING" }));
     expect(fetch).not.toHaveBeenCalled();
   });
-  it.each([402, 409, 426])(
-    "never retries terminal status %s",
-    async (status) => {
+  it.each([
+    [400, "VALIDATION_ERROR"],
+    [401, "UNAUTHORIZED"],
+    [403, "FORBIDDEN"],
+    [402, "PAYMENT_REQUIRED"],
+    [409, "CONFLICT"],
+    [426, "UPGRADE_REQUIRED"],
+  ])(
+    "preserves terminal wire errors without retrying HTTP %s",
+    async (status, code) => {
       const fetch = vi
         .fn()
         .mockResolvedValue(
-          Response.json({ message: "The original remedy." }, { status })
+          Response.json(
+            { code, message: "The original remedy." },
+            { status: Number(status) }
+          )
         );
       vi.stubGlobal("fetch", fetch);
-      await expect(client().admit(input)).rejects.toThrow(
-        "The original remedy."
-      );
+      await expect(client().admit(input)).rejects.toMatchObject({
+        code,
+        message: "The original remedy.",
+      });
       expect(fetch).toHaveBeenCalledTimes(1);
     }
   );
