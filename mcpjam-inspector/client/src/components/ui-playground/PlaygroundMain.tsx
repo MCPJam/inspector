@@ -262,7 +262,7 @@ import {
   type ConversationExecutionTarget,
 } from "@/lib/conversation-execution-target";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useComputersEnabled, useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
 import { useBrowserTools } from "@/hooks/useBrowserTools";
 import { useComputerAttachmentUpload } from "@/hooks/useComputerAttachmentUpload";
 import {
@@ -1149,7 +1149,7 @@ export function PlaygroundMain({
     ownerUserId: loadedThreadOwnerUserId,
     currentUserId: currentUserForSender?._id,
   });
-  const localHarnessInScope = isLocalHarnessScope({
+  const localHarnessInScope = useLocalHarnessEnabled() && isLocalHarnessScope({
     harnessId: previewedHarnessId,
     hostedMode: HOSTED_MODE,
     environmentId: isEnvironmentMode
