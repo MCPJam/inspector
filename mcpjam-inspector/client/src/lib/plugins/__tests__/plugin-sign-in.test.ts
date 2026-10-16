@@ -90,6 +90,26 @@ describe("startPluginServerSignIn", () => {
     expect(localStorage.getItem("mcp-oauth-return-hash")).toBeNull();
   });
 
+  it("returns where the caller asks, instead of where the member is", async () => {
+    initiateOAuth.mockImplementation(async () => {
+      expect(readHostedOAuthPendingMarker()?.returnPath).toBe(
+        "/p/abcdefghijklmnop/playground",
+      );
+      return { success: true };
+    });
+    await startPluginServerSignIn({
+      target,
+      projectId: "ws_1",
+      organizationId: "org_1",
+      initiatingUserId: "user_1",
+      returnPath: "/p/abcdefghijklmnop/playground",
+    });
+    expect(initiateOAuth).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem("mcp-oauth-return-hash")).toBe(
+      "/p/abcdefghijklmnop/playground",
+    );
+  });
+
   it("keeps the flow's browser state apart from a project server of the same name", () => {
     expect(pluginSignInFlowName("mail")).not.toBe("mail");
   });

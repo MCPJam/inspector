@@ -14,7 +14,6 @@ Object.assign(env, {
   VITE_DISABLE_POSTHOG_LOCAL: "true",
   SENTRY_AUTH_TOKEN: "",
   POSTHOG_PERSONAL_API_KEY: "",
-  METICULOUS_RECORDING_TOKEN: "",
 });
 // The capture fixture serves the production iframe sandbox, whose generated
 // module is absent on a fresh checkout.

@@ -33,6 +33,8 @@ export interface ActivePluginsState {
    * empty, so a caller that must not mistake this for "no plugins" checks it.
    */
   failed: boolean;
+  /** The read came back with this project's answer: the lists are it. */
+  answered: boolean;
 }
 
 const EMPTY_ROWS: ActivePluginRow[] = [];
@@ -158,6 +160,7 @@ export function useActivePlugins(
       activeServers: activePluginServers(plugins),
       isLoading: ready && data === undefined && error === undefined,
       failed: ready && error !== undefined,
+      answered: ready && data !== undefined && error === undefined,
     };
   }, [plugins, ready, data, error]);
 }

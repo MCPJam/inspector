@@ -2,7 +2,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { toast } from "@/lib/toast";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import type { ActivePluginSkipReason } from "@/lib/plugins/active-plugins-types";
-import type { PluginSignInBinding } from "@/lib/hosted-oauth-callback";
+import type { PluginServerSignInRequest } from "./plugin-sign-in";
 
 /**
  * What a Playground chat says about the project's installed plugins it did not
@@ -26,7 +26,7 @@ export interface PluginNoticePlugin {
   /** The plugin ran, but without a server whose `reason` this is. */
   partial?: boolean;
   /** The server to sign in to, when signing in is the fix. */
-  signIn?: PluginSignInBinding;
+  signIn?: PluginServerSignInRequest;
 }
 
 /**
@@ -125,7 +125,7 @@ export function describePluginNotice(data: PluginNoticeData): string {
     : `${text} ${data.plugins.length - 1} more plugins were skipped; see Logs for details.`;
 }
 
-/** Chat id + what the notice says (sorted `pluginId:reason` pairs for skips). */
+/** Chat, skip reason and the permissions its Sign in action will request. */
 export function pluginNoticeKey(
   chatSessionId: string,
   data: PluginNoticeData,
@@ -135,7 +135,7 @@ export function pluginNoticeKey(
       ? data.plugins
           .map(
             (plugin) =>
-              `${plugin.pluginId}:${plugin.reason}${plugin.partial ? ":partial" : ""}`,
+              `${plugin.pluginId}:${plugin.reason}${plugin.partial ? ":partial" : ""}${plugin.signIn?.scopeChallenge ? `:${JSON.stringify(plugin.signIn)}` : ""}`,
           )
           .sort()
           .join(",")
@@ -151,7 +151,7 @@ function logMethod(data: PluginNoticeData): string {
   return "plugins/unavailable";
 }
 
-type PluginSignIn = (binding: PluginSignInBinding) => void;
+type PluginSignIn = (binding: PluginServerSignInRequest) => void;
 let signInHandler: PluginSignIn | null = null;
 
 /**
@@ -214,7 +214,7 @@ export function showPluginNotice(
   else toast.info(message);
   try {
     useTrafficLogStore.getState().addMcpServerLog({
-      id: `plugins:notice:${key}`,
+      id: `plugins:notice:${crypto.randomUUID()}`,
       serverId: "plugins",
       serverName: "Plugins",
       direction: "RECEIVE",
