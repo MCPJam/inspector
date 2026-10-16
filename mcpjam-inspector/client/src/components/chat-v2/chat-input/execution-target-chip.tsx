@@ -89,7 +89,7 @@ function chipFace(data: ExecutionTargetChipData): {
       label: "Cloud",
       icon: Cloud,
       tone: "normal",
-      title: `This host's ${name} runs in a cloud computer`,
+      title: `This client's ${name} runs in a cloud computer`,
     };
   }
   switch (data.phase) {
