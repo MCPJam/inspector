@@ -10,6 +10,7 @@ describe("read-only execution venue", () => {
     ["local-native", "ready", "This machine"],
     [null, "loading", "Checking…"],
     [null, "unavailable", "Unavailable"],
+    ["local-native", "unavailable", "Unavailable"],
   ] as const)(
     "shows %s/%s without offering a control",
     (target, phase, label) => {

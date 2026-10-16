@@ -62,7 +62,12 @@ function chipFace(data: ExecutionTargetChipData): {
   title: string;
 } {
   const name = data.harnessName ?? "Claude Code";
-  if (data.readOnly && data.target === null && data.phase !== "loading") {
+  if (
+    data.readOnly &&
+    data.target !== "hosted" &&
+    (data.phase === "unavailable" ||
+      (data.target === null && data.phase !== "loading"))
+  ) {
     return {
       label: "Unavailable",
       icon: TriangleAlert,
