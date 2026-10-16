@@ -15,6 +15,7 @@ import {
 } from "./access-link.mjs";
 import { launchWorkspaceCandidate } from "./launch-workspace.mjs";
 import { computeInstanceEnv } from "./runtime-profile.mjs";
+import { selectStartPort, StartPortUnavailableError } from "./start-port.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -970,7 +971,8 @@ async function main() {
   // Apply parsed environment variables to process.env first
   Object.assign(process.env, envVars);
 
-  // Port configuration (fixed default to 6274)
+  // Port configuration: --port is exact; without it, start at 6274 and take
+  // the next free port (see `selectStartPort`).
   const requestedPortValue = envVars.PORT || "6274";
   const requestedPort = Number(requestedPortValue);
   let PORT;
@@ -989,26 +991,24 @@ async function main() {
     // Check if user explicitly set a port via --port flag
     const hasExplicitPort = envVars.PORT !== undefined;
 
-    if (hasExplicitPort) {
-      if (await isPortAvailable(requestedPort)) {
-        PORT = requestedPort.toString();
-      } else {
-        logError(`Explicitly requested port ${requestedPort} is not available`);
-        logInfo(
-          "Use a different port with --port <number> or let the system find one automatically",
-        );
-        throw new Error(`Port ${requestedPort} is already in use`);
-      }
-    } else {
-      // Fixed port policy: use default port 6274 and fail fast if unavailable
-      if (await isPortAvailable(requestedPort)) {
-        PORT = requestedPort.toString();
-      } else {
-        logError(
-          `Default port ${requestedPort} is already in use. Please free the port`,
-        );
-        throw new Error(`Port ${requestedPort} is already in use`);
-      }
+    try {
+      PORT = String(
+        await selectStartPort({
+          requestedPort,
+          explicit: hasExplicitPort,
+          isPortAvailable,
+        }),
+      );
+    } catch (error) {
+      if (!(error instanceof StartPortUnavailableError)) throw error;
+      logError(error.message);
+      logInfo(error.hint);
+      throw new Error(`Port ${requestedPort} is already in use`);
+    }
+    if (Number(PORT) !== requestedPort) {
+      logInfo(
+        `Port ${requestedPort} is in use (another MCPJam Inspector or the desktop app?), starting on ${PORT}`,
+      );
     }
 
     // Update environment variables with the final port
