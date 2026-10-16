@@ -368,6 +368,25 @@ describe("invalid declarations skip only their entry", () => {
       { type: "oauth", resource: "https://a.example.com/sk-live-p4ss01/mcp" },
     ],
     [
+      "an endpoint with a percent-encoded key in its path",
+      {
+        type: "oauth",
+        resource: "https://a.example.com/sk%2Dlive%2Dp4ss01/mcp",
+      },
+    ],
+    [
+      "an endpoint with a key whose first letter is percent-encoded",
+      { type: "oauth", tokenUrl: "https://a.example.com/%73k-live-p4ss01/t" },
+    ],
+    [
+      "an endpoint with a key of letters only in its path",
+      {
+        type: "oauth",
+        resource:
+          "https://a.example.com/QhZkWbRtYpLmNcXvAsDfGhJkLqWeRtYuIoPaSdFgHj/mcp",
+      },
+    ],
+    [
       "an endpoint with an empty fragment",
       { type: "oauth", tokenUrl: "https://a.example.com/t#" },
     ],
