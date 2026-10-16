@@ -69,7 +69,13 @@ export class EvalAdmissionClient {
         (body) => receiptSchema.parse(body),
         (error) =>
           (error.status === 429 &&
-            (error.retryAfterMs ?? 0) < deadlineAt - Date.now()) ||
+            (error.retryAfterMs ?? 0) < deadlineAt - Date.now() &&
+            !(
+              typeof error.body.details === "object" &&
+              error.body.details !== null &&
+              "code" in error.body.details &&
+              error.body.details.code === "billing_limit_reached"
+            )) ||
           error.status >= 500
       );
       signal?.throwIfAborted();
