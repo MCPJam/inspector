@@ -1,7 +1,22 @@
-import { test, expect, type APIRequestContext } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Page,
+  type APIRequestContext,
+} from "@playwright/test";
 const api = "http://127.0.0.1:6315";
 async function stats(request: APIRequestContext) {
   return (await request.get(`${api}/stats`)).json();
+}
+async function ready(page: Page) {
+  await expect(page.getByRole("status")).toHaveText("ready");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+}
+async function chatAction(page: Page, name: "Send" | "Approve" | "Deny") {
+  const response = page.waitForResponse((r) => r.url().endsWith("/api/chat"));
+  await page.getByRole("button", { name, exact: true }).click();
+  expect(await (await response).finished()).toBeNull();
+  await ready(page);
 }
 for (const harness of ["claude-code", "codex"]) {
   test.describe(harness, () => {
@@ -17,10 +32,10 @@ for (const harness of ["claude-code", "codex"]) {
         if (req.url().endsWith("/api/chat")) replay = req.postData();
       });
       await page.goto("/");
-      await page.getByRole("button", { name: "Send", exact: true }).click();
-      await page.getByRole("button", { name: "Approve", exact: true }).click();
+      await chatAction(page, "Send");
+      await chatAction(page, "Approve");
       await expect.poll(() => stats(request)).toMatchObject({ executions: 1 });
-      await page.getByRole("button", { name: "Approve", exact: true }).click();
+      await chatAction(page, "Approve");
       await expect
         .poll(() => stats(request))
         .toMatchObject({ executions: 2, resumed: 2 });
@@ -31,7 +46,9 @@ for (const harness of ["claude-code", "codex"]) {
       });
       const refusal = await duplicate.text();
       expect(refusal).toContain('"type":"error"');
-      expect(refusal).toContain("local session holding this approval has ended");
+      expect(refusal).toContain(
+        "local session holding this approval has ended",
+      );
       expect(await stats(request)).toMatchObject({ executions: 2, resumed: 2 });
       await expect(
         page.getByRole("button", { name: "Approve", exact: true }),
@@ -40,8 +57,8 @@ for (const harness of ["claude-code", "codex"]) {
     test("denial does not execute the command", async ({ page, request }) => {
       await request.post(`${api}/reset`, { data: { harness, count: 1 } });
       await page.goto("/");
-      await page.getByRole("button", { name: "Send", exact: true }).click();
-      await page.getByRole("button", { name: "Deny", exact: true }).click();
+      await chatAction(page, "Send");
+      await chatAction(page, "Deny");
       await expect
         .poll(() => stats(request))
         .toMatchObject({ executions: 0, resumed: 1 });
@@ -52,7 +69,7 @@ for (const harness of ["claude-code", "codex"]) {
     test("reload restores the pending approval", async ({ page, request }) => {
       await request.post(`${api}/reset`, { data: { harness, count: 1 } });
       await page.goto("/");
-      await page.getByRole("button", { name: "Send", exact: true }).click();
+      await chatAction(page, "Send");
       await expect(
         page.getByRole("button", { name: "Approve", exact: true }),
       ).toBeVisible();
@@ -60,14 +77,14 @@ for (const harness of ["claude-code", "codex"]) {
         .poll(async () => (await request.get(`${api}/history`)).json())
         .toHaveProperty("pending.0.approvalId", "a1");
       await page.reload();
-      await page.getByRole("button", { name: "Approve", exact: true }).click();
+      await chatAction(page, "Approve");
       await expect
         .poll(() => stats(request))
         .toMatchObject({ executions: 1, resumed: 1 });
     });
     test("Stop clears the pending runtime", async ({ page, request }) => {
       await page.goto("/");
-      await page.getByRole("button", { name: "Send", exact: true }).click();
+      await chatAction(page, "Send");
       await expect(
         page.getByRole("button", { name: "Approve", exact: true }),
       ).toBeVisible();
