@@ -3,7 +3,11 @@ import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { appContextBlock, useAppContext } from "../use-app-context";
 import { pluginContextAttachments } from "@/shared/plugin-model-context";
-import type { ThreadAppHandle, ThreadAppScope } from "../thread-app-api";
+import {
+  ThreadAppError,
+  type ThreadAppHandle,
+  type ThreadAppScope,
+} from "../thread-app-api";
 const { context } = vi.hoisted(() => ({ context: vi.fn() }));
 vi.mock("../thread-app-api", async (original) => ({
   ...(await original<typeof import("../thread-app-api")>()),
@@ -185,6 +189,46 @@ describe("retained App composer context", () => {
       expect.any(AbortSignal),
     );
   });
+
+  it.each([
+    "PLUGIN_CONTEXT_TOO_LARGE",
+    "PLUGIN_CONTEXT_MEMORY_LIMIT",
+    "INSTANCE_CONTEXT_RATE_LIMITED",
+    "INSTANCE_CONTEXT_TOO_LARGE",
+    "INVALID_INSTANCE_CONTEXT",
+  ])(
+    "answers a %s refusal with -32000 and sends the next update at once",
+    async (code) => {
+      context
+        .mockReset()
+        .mockRejectedValueOnce(new ThreadAppError(code))
+        .mockResolvedValueOnce({
+          _meta: { "openai/modelContext": { updateId: "u2" } },
+          snapshot: { revision: 2, sequence: 2, state: view("Smaller", "u2") },
+        });
+      const { result } = renderHook(() =>
+        useAppContext(scope, opened(view("Selected view"))),
+      );
+      let refused: unknown;
+      await act(async () => {
+        refused = await result.current
+          .update({ content: [{ type: "text", text: "Larger" }] })
+          .catch((error: unknown) => error);
+      });
+      expect(refused).toMatchObject({
+        code: -32000,
+        message: "The host could not persist the model context update",
+      });
+      // The composer keeps the last acknowledged context.
+      expect(result.current.snapshot.state).toEqual(view("Selected view"));
+      await act(async () => {
+        await result.current.update({
+          content: [{ type: "text", text: "Smaller" }],
+        });
+      });
+      expect(result.current.snapshot.state).toEqual(view("Smaller", "u2"));
+    },
+  );
 
   it("removes all after an earlier change failed, without a separate read", async () => {
     // An App update whose outcome is unknown refuses later updates, but a

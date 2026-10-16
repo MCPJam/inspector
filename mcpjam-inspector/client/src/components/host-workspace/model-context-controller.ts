@@ -1,15 +1,58 @@
 import {
   parsePluginModelContext,
   pluginContextRemoveAllResultSchema,
+  PluginModelContextError,
   type PluginModelContextParams,
   pluginContextSnapshotSchema,
   type PluginContextSnapshot,
 } from "@/shared/plugin-model-context";
+import type { PluginContextExcess } from "@/shared/plugin-diagnostics";
 
 export class PluginContextUpdateRejected extends Error {}
 /** The person removed this App's context; its own updates stay refused until
  * they use the App again. */
 export class PluginContextHeld extends PluginContextUpdateRejected {}
+/**
+ * The host refused the update before storing it (a size, rate or memory
+ * budget) and kept the App's last accepted context, so the next, smaller
+ * update can go at once. The App gets JSON-RPC -32000 with this message,
+ * which is what ChatGPT answers; the MCP SDK forwards an integer `code`.
+ */
+export class PluginContextNotPersisted extends PluginContextUpdateRejected {
+  readonly code = -32000;
+  constructor(
+    readonly reason: string,
+    readonly excess?: PluginContextExcess,
+  ) {
+    super("The host could not persist the model context update");
+  }
+}
+/** Server refusals that mean the update was not stored. */
+export const PLUGIN_CONTEXT_NOT_PERSISTED_CODES: ReadonlySet<string> = new Set([
+  "PLUGIN_CONTEXT_TOO_LARGE",
+  "PLUGIN_CONTEXT_MEMORY_LIMIT",
+  "INSTANCE_CONTEXT_RATE_LIMITED",
+  "INSTANCE_CONTEXT_TOO_LARGE",
+  "INVALID_INSTANCE_CONTEXT",
+]);
+/** Refuse an update over a budget before it is sent, as the server would. */
+function parseUpdate(
+  value: unknown,
+  onRefused?: (refusal: PluginContextNotPersisted) => void,
+): PluginModelContextParams {
+  try {
+    return parsePluginModelContext(value);
+  } catch (error) {
+    if (
+      !(error instanceof PluginModelContextError) ||
+      error.message !== "PLUGIN_CONTEXT_TOO_LARGE"
+    )
+      throw error;
+    const refusal = new PluginContextNotPersisted(error.message, error.excess);
+    onRefused?.(refusal);
+    throw refusal;
+  }
+}
 /** Serialize replaces. An uncertain delivery cannot silently retry or reorder state. */
 export function createModelContextController({
   requireLive,
@@ -19,6 +62,7 @@ export function createModelContextController({
   onSnapshot,
   userAttaching,
   onHeld,
+  onRefused,
 }: {
   requireLive: () => void;
   send: (request: {
@@ -40,6 +84,8 @@ export function createModelContextController({
    */
   userAttaching?: () => boolean;
   onHeld?: (error: PluginContextHeld) => void;
+  /** An update this controller refused itself, before sending it. */
+  onRefused?: (refusal: PluginContextNotPersisted) => void;
 }) {
   let sequence = 0;
   let uncertain = false;
@@ -89,7 +135,7 @@ export function createModelContextController({
     return pending;
   };
   const update = (value: unknown) => {
-    const params = parsePluginModelContext(value);
+    const params = parseUpdate(value, onRefused);
     const user = userAttaching?.() === true;
     return enqueue(async () => {
       if (held && !user) {
