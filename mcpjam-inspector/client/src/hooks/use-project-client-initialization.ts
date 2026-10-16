@@ -13,11 +13,13 @@ import { reportCaught } from "@/lib/error-reporting";
 
 /** Waits before the 2nd, 3rd and 4th attempt; then the user gets a Retry. */
 const RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
+/** `setTimeout` fires at once past 2^31-1 ms, so a backend hint is capped. */
+const MAX_RETRY_AFTER_MS = 60_000;
 
 const NO_ACCESS_MESSAGE =
   "You don't have access to set up clients in this project.";
 
-export type ProjectClientInitIntent = "default";
+export type ProjectClientInitIntent = "default" | "comparison";
 
 export type ProjectClientInitState =
   | { status: "idle" }
@@ -33,12 +35,32 @@ const DONE: ProjectClientInitState = { status: "done" };
 
 type Failure = { refused: boolean; message: string; retryAfterMs?: number };
 
+/**
+ * A deployment behind the browser rejects an argument it has not learnt yet
+ * (`initializeComparison` before mcpjam-backend#1996) before the function
+ * runs. Convex discloses this one in production, unlike a throw from the
+ * function itself, so the text can be matched: a browser ahead of its backend
+ * then settles for what the backend can do instead of retrying and reporting
+ * on every visit.
+ */
+function isArgumentUnknownToBackend(error: Error): boolean {
+  const message = typeof error.message === "string" ? error.message : "";
+  return (
+    message.includes("ArgumentValidationError") &&
+    message.includes("extra field")
+  );
+}
+
 function classifyFailure(error: unknown): Failure {
   if (isAuthorizationRefusal(error)) {
     return { refused: true, message: NO_ACCESS_MESSAGE };
   }
-  // A backend without the function: retrying and reporting cannot help.
-  if (error instanceof Error && isConvexQueryUnavailable(error)) {
+  // A backend without the function, or without an argument this browser
+  // sends: retrying and reporting cannot help.
+  if (
+    error instanceof Error &&
+    (isConvexQueryUnavailable(error) || isArgumentUnknownToBackend(error))
+  ) {
     return {
       refused: true,
       message: "Client setup isn't available right now. Try again later.",
@@ -68,11 +90,14 @@ function classifyFailure(error: unknown): Failure {
     };
   }
   if (data?.code === "rate_limited") {
+    const hint = data.retryAfterMs;
     return {
       refused: false,
       message: "",
       retryAfterMs:
-        typeof data.retryAfterMs === "number" ? data.retryAfterMs : undefined,
+        typeof hint === "number" && Number.isFinite(hint)
+          ? Math.min(Math.max(hint, 0), MAX_RETRY_AFTER_MS)
+          : undefined,
     };
   }
   // Drops refusals and auth churn itself; anything else is a real fault.
@@ -95,25 +120,30 @@ function afterFailure(
   return Math.max(RETRY_DELAYS_MS[attempt], failure.retryAfterMs ?? 0);
 }
 
-type Attempt = {
-  run: () => Promise<unknown>;
+type Attempt<T> = {
+  run: () => Promise<T>;
   /** False once the caller has moved to another project or unmounted. */
   isCurrent: () => boolean;
   isNeeded: () => boolean;
   nextAttempt: () => number;
   settle: (state: ProjectClientInitState) => void;
   retryIn: (delayMs: number) => void;
-  onDone: () => void;
+  /** Runs even after the caller left, so its result can still be saved. */
+  onSuccess: (result: T) => void;
 };
 
 /** One request, and what its outcome means for the next step. */
-function runAttempt(attempt: Attempt): Promise<void> {
+function runAttempt<T>(attempt: Attempt<T>): Promise<void> {
   return attempt.run().then(
-    () => {
-      if (!attempt.isCurrent()) return;
+    (result) => {
       // The list may have refreshed first; IDLE lets a later empty list ensure.
-      attempt.settle(attempt.isNeeded() ? DONE : IDLE);
-      attempt.onDone();
+      if (attempt.isCurrent()) attempt.settle(attempt.isNeeded() ? DONE : IDLE);
+      try {
+        attempt.onSuccess(result);
+      } catch (error) {
+        // The client exists; only saving the selection failed.
+        reportCaught(error, { source: "project-client-initialization" });
+      }
     },
     (error: unknown) => {
       if (!attempt.isCurrent()) return;
@@ -177,11 +207,13 @@ function useRetryTimer() {
   return { clear, schedule };
 }
 
-type InitOptions = {
+type InitOptions<T> = {
   projectId: string | null;
   intent: ProjectClientInitIntent;
   needed: boolean;
-  run: () => Promise<unknown>;
+  /** Called only with a project; `needed` gates when. */
+  run: (projectId: string) => Promise<T>;
+  onSuccess?: (result: T) => void;
 };
 
 /**
@@ -203,27 +235,30 @@ export function useProjectClientInitStatus(
  * Runs one project-initialization request while `needed` holds, with bounded
  * retries, and exposes its state.
  *
- * Tracked per project and intent. A request is never started twice for the
- * same key while one is in flight. The backend is what makes concurrent
- * callers in other components, tabs or devices converge; this only avoids
- * local repeats.
+ * Tracked per project and intent, so a finished default ensure never stands
+ * in for a comparison request. A request is never started twice for the same
+ * key while one is in flight. The backend is what makes concurrent callers in
+ * other components, tabs or devices converge; this only avoids local repeats.
  *
  * Transient failures retry after 1s, 4s and 10s, or after the backend's
- * `retryAfterMs` when that is longer, then stop with a Retry. Refusals do not
+ * `retryAfterMs` (capped at a minute) when that is longer, then stop with a
+ * Retry. Refusals do not
  * retry. When `needed` turns false (another caller's client arrived) pending
- * retries are cancelled and any error is cleared. A response for a project the
- * caller has left is dropped.
+ * retries are cancelled and any error is cleared. A failure for a project the
+ * caller has left is dropped; a success still reaches `onSuccess`, which
+ * decides what to save for that project and what to show for the current one.
  */
-export function useProjectClientInitialization({
+export function useProjectClientInitialization<T>({
   projectId,
   intent,
   needed,
   run,
-}: InitOptions): Published {
+  onSuccess,
+}: InitOptions<T>): Published {
   const key = projectId ? `${projectId}:${intent}` : null;
   const [entry, setEntry] = useState({ key, state: IDLE });
   const state = entry.key === key ? entry.state : IDLE;
-  const latest = useLatest({ run, needed });
+  const latest = useLatest({ run, onSuccess, needed });
   const keyRef = useRef(key);
   const attemptsRef = useRef(0);
   const inFlightRef = useRef(new Set<string>());
@@ -250,7 +285,7 @@ export function useProjectClientInitialization({
   }, [needed, clearTimer, resetTo]);
 
   useEffect(() => {
-    if (!key || !needed || state.status !== "idle") return;
+    if (!projectId || !key || !needed || state.status !== "idle") return;
     // Back on a key mid-request: PENDING so its retry timer's IDLE re-runs this.
     if (inFlightRef.current.has(key)) {
       resetTo(PENDING);
@@ -260,7 +295,7 @@ export function useProjectClientInitialization({
     resetTo(PENDING);
     const isCurrent = () => keyRef.current === key;
     void runAttempt({
-      run: latest.current.run,
+      run: () => latest.current.run(projectId),
       isCurrent,
       isNeeded: () => latest.current.needed,
       nextAttempt: () => attemptsRef.current++,
@@ -269,8 +304,9 @@ export function useProjectClientInitialization({
         schedule(() => {
           if (isCurrent()) resetTo(IDLE);
         }, delayMs),
-      onDone: () => {
-        attemptsRef.current = 0;
+      onSuccess: (result) => {
+        if (isCurrent()) attemptsRef.current = 0;
+        latest.current.onSuccess?.(result);
       },
     }).finally(() => {
       inFlightRef.current.delete(key);
