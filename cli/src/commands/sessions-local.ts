@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { authorizeLocalExecutionOperation } from "@mcpjam/sdk/platform";
-import { addProjectOption, bindOperation } from "../lib/platform-command.js";
+import { addProjectOption, bindOperation, type PlatformOptions } from "../lib/platform-command.js";
 
 export function registerLocalExecutionCommands(sessions: Command): void {
   bindOperation(
@@ -21,7 +21,7 @@ export function registerLocalExecutionCommands(sessions: Command): void {
         )
     ),
     authorizeLocalExecutionOperation,
-    (options: {
+    (options: PlatformOptions & {
       project?: string;
       harness: string;
       allowUnattended?: boolean;
