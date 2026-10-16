@@ -173,3 +173,23 @@ describe("usePluginServerSignIn", () => {
     expect(result.current.pendingKey).toBeNull();
   });
 });
+
+ it("resolves the authorized target before forwarding a notice's scope challenge", async () => {
+   state.query.mockResolvedValue(target);
+   state.start.mockResolvedValue({ success: true });
+   const scopeChallenge = {
+     requiredScope: "mail.write",
+     resourceMetadataUrl: "https://mail.example/metadata",
+   };
+   const { result } = renderHook(() => usePluginServerSignIn("ws_1"));
+   await act(async () => {
+     await result.current.signIn({ ...binding, scopeChallenge });
+   });
+   expect(state.query).toHaveBeenCalledWith(expect.anything(), {
+     projectId: "ws_1",
+     ...binding,
+   });
+   expect(state.start).toHaveBeenCalledWith(
+     expect.objectContaining({ target, scopeChallenge, projectId: "ws_1" }),
+   );
+ });

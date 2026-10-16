@@ -59,3 +59,30 @@ describe("plugin server unavailable data part", () => {
     expect(isPluginServerUnavailableDataPart(null)).toBe(false);
   });
 });
+
+ it("accepts only typed scope challenges for a server that needs auth", () => {
+   const scopeChallenge = {
+     requiredScope: "mail.write",
+     resourceMetadataUrl: "https://mail.example/metadata",
+   };
+   const data = (reason: string, challenge: unknown) =>
+     part({
+       servers: [{ serverId: "srv_mail", reason, scopeChallenge: challenge }],
+     });
+   expect(
+     isPluginServerUnavailableDataPart(data("needs_auth", scopeChallenge)),
+   ).toBe(true);
+   for (const invalid of [
+     null,
+     {},
+     { requiredScope: 4 },
+     { resourceMetadataUrl: [] },
+   ]) {
+     expect(
+       isPluginServerUnavailableDataPart(data("needs_auth", invalid)),
+     ).toBe(false);
+   }
+   expect(
+     isPluginServerUnavailableDataPart(data("unreachable", scopeChallenge)),
+   ).toBe(false);
+ });

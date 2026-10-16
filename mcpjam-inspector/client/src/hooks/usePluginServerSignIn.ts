@@ -4,11 +4,11 @@ import { makeFunctionReference } from "convex/server";
 import { useAuth } from "@workos-inc/authkit-react";
 import { HOSTED_MODE } from "@/lib/config";
 import { convexErrMessage, isConvexQueryUnavailable } from "@/lib/convex-error";
-import type { PluginSignInBinding } from "@/lib/hosted-oauth-callback";
 import { cancelOnboardingAfterSignIn } from "@/lib/plugin-onboarding-intent";
 import {
   startPluginServerSignIn,
   type PluginServerSignInTarget,
+  type PluginServerSignInRequest,
 } from "@/lib/plugins/plugin-sign-in";
 import { toast } from "@/lib/toast";
 import type { RemoteProject } from "./useProjects";
@@ -55,7 +55,7 @@ export function usePluginServerSignIn(projectId: string | null) {
 
   const signIn = useCallback(
     async (
-      binding: PluginSignInBinding,
+      binding: PluginServerSignInRequest,
       options?: {
         returnPath?: string;
         /** Set up's own sign-in, which the request it kept waits on. */
@@ -75,6 +75,9 @@ export function usePluginServerSignIn(projectId: string | null) {
         });
         const result = await startPluginServerSignIn({
           target,
+          ...(binding.scopeChallenge
+            ? { scopeChallenge: binding.scopeChallenge }
+            : {}),
           projectId,
           organizationId:
             projects?.find((project) => project._id === projectId)

@@ -228,9 +228,16 @@ function signInFor(
   plugin: ActivePluginRow,
   reason: string,
   componentKey: string | undefined,
+  scopeChallenge?: PluginServerUnavailable["scopeChallenge"],
 ): Pick<PluginNoticePlugin, "signIn"> {
   return reason === "needs_auth" && plugin.pluginVersionId && componentKey
-    ? { signIn: { pluginVersionId: plugin.pluginVersionId, componentKey } }
+    ? {
+        signIn: {
+          pluginVersionId: plugin.pluginVersionId,
+          componentKey,
+          ...(scopeChallenge ? { scopeChallenge } : {}),
+        },
+      }
     : {};
 }
 
@@ -260,7 +267,12 @@ export function unavailableServersForNotice(
         displayName: plugin.displayName,
         reason: chosen.reason,
         partial: true,
-        ...signInFor(plugin, chosen.reason, componentKey),
+        ...signInFor(
+          plugin,
+          chosen.reason,
+          componentKey,
+          chosen.scopeChallenge,
+        ),
       },
     ];
   });
