@@ -18,8 +18,8 @@ import {
 // tools run and denies only a tool that would need a person to approve it
 // (nobody is watching an unattended run), so it is the more permissive one.
 const APPROVAL_POLICY_LABELS: Record<EventTriggerApprovalPolicy, string> = {
-  deny_writes: "Read-only tools only (writes denied)",
-  auto_deny: "Allow writes (tools needing approval are denied)",
+  deny_writes: "Read-only tools only (writes refused)",
+  auto_deny: "Allow writes (tools needing approval are refused)",
 };
 
 interface TriggerFormValues {
