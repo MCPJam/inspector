@@ -30,6 +30,15 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("local admission transport", () => {
+  it("rejects an expired authorization during construction", () => {
+    expect(
+      () => new AttemptStepGuard(client(), {
+        ...receipt,
+        expiresAt: Date.now(),
+      })
+    ).toThrow(expect.objectContaining({ code: "ADMISSION_CLOSED" }));
+  });
+
   it.each([
     [400, "VALIDATION_ERROR"],
     [401, "UNAUTHORIZED"],

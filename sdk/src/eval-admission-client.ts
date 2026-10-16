@@ -166,6 +166,7 @@ export class EvalAdmissionClient {
 export class AttemptStepGuard {
   private ordinal = 0;
   private granted: number;
+  private expiresAt: number;
   private pending: Promise<void> = Promise.resolve();
   constructor(
     private readonly client: EvalAdmissionClient,
@@ -182,6 +183,8 @@ export class AttemptStepGuard {
         "ADMISSION_CONFLICT"
       );
     }
+    this.expiresAt = receipt.expiresAt;
+    this.requireActive();
     this.granted = receipt.grantedSteps;
   }
   beforePrompt(): Promise<void> {
@@ -202,6 +205,7 @@ export class AttemptStepGuard {
           );
         }
         this.granted = grant.grantedSteps;
+        this.expiresAt = grant.expiresAt;
       }
       this.signal?.throwIfAborted();
       this.requireActive();
@@ -209,7 +213,7 @@ export class AttemptStepGuard {
     return this.pending;
   }
   private requireActive(): void {
-    if (Date.now() >= this.receipt.expiresAt) {
+    if (Date.now() >= this.expiresAt) {
       throw new EvalAdmissionError(
         "This run authorization has expired or closed. Start a new run.",
         "ADMISSION_CLOSED",

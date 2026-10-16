@@ -1,3 +1,4 @@
+import type { TranslateConvexWriteErrorOptions } from "./convex-error-data.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
@@ -21,7 +22,6 @@ import {
   translateConvexWriteError,
   translateStructuredConvexRefusal,
 } from "./convex-errors.js";
-import type { TranslateConvexWriteErrorOptions } from "./convex-error-data.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 

@@ -66,7 +66,14 @@
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
 import { redactForLog } from "./redact-log-message.js";
+import { translatePlatformFeeError } from "./platform-fee-errors.js";
 
+import {
+  convexErrorData,
+  type TranslateConvexWriteErrorOptions,
+  CI_OWNED_SUITE_READ_ONLY_CODE,
+  GATE_WAIVER_REFUSAL_CODES,
+} from "./convex-error-data.js";
 import {
   cleanConvexMessage,
   preconditionDetails,
@@ -74,13 +81,6 @@ import {
   retryAfterFromResetsAt,
   retryAfterFromMs,
 } from "./convex-error-details.js";
-import { translatePlatformFeeError } from "./platform-fee-errors.js";
-import {
-  convexErrorData,
-  type TranslateConvexWriteErrorOptions,
-  CI_OWNED_SUITE_READ_ONLY_CODE,
-  GATE_WAIVER_REFUSAL_CODES,
-} from "./convex-error-data.js";
 
 /**
  * An import-ineligibility refusal, translated — or `undefined` for anything else.
