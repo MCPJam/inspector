@@ -2562,6 +2562,7 @@ function captureTurnEvent(
 }
 
 export const __testing = {
+  resolveTarget,
   assertUnambiguousModelId,
   capToolCalls,
   narrowTarget,
@@ -2574,5 +2575,4 @@ export const __testing = {
   CONFIG_FIELDS,
   turnSchema,
 };
-
 export type { TurnBody };
