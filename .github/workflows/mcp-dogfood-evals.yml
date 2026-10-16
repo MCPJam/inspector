@@ -118,8 +118,13 @@ jobs:
       # `set +e` and an explicit output: `eval run --wait` owns a six-code
       # contract, and reading it through a pipe would report the pipe's status
       # instead. Only `1` is a measured eval failure.
+      #
+      # Outside the checkout: in it, `npx @mcpjam/cli@<v>` resolves this repo's
+      # own unbuilt `cli` workspace whenever <v> is its version, and fails with
+      # "mcpjam: not found" (exit 127) instead of fetching the published CLI.
       - name: Sync the suite file and run it
         id: run
+        working-directory: ${{ runner.temp }}
         env:
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
           SUITE_FILE: ${{ inputs.suite_file }}
@@ -136,7 +141,7 @@ jobs:
           else file="$DEFAULT_SUITE_FILE"; fi
           echo "Suite file: $file"
           args=(cloud eval run
-            --file "$file"
+            --file "$GITHUB_WORKSPACE/$file"
             --project "$MCPJAM_PROJECT"
             --wait
             --notes "dogfood @ ${GITHUB_SHA} (${GITHUB_EVENT_NAME}, $file)"
@@ -169,6 +174,8 @@ jobs:
       - name: Gate the run and write JUnit
         id: gate
         if: ${{ always() && steps.run.outputs.run_id != '' }}
+        # Outside the checkout, for the same reason as the run step.
+        working-directory: ${{ runner.temp }}
         env:
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
         run: |
