@@ -704,6 +704,19 @@ describe("transcriptToUIMessages", () => {
 
 describe("persisted supplied App image", () => {
   const image = "data:image/png;base64,AAAA";
+  it("restores a stored image larger than the default update budget", () => {
+    // Admitted under the client's policy when it was stored.
+    const large = "data:image/png;base64," + "AAAA".repeat(100000);
+    const messages = transcriptToUIMessages([
+      {
+        role: "user",
+        content: [{ type: "file", mediaType: "image/png", data: large }],
+      },
+    ]);
+    expect(messages[0].parts).toEqual([
+      { type: "file", mediaType: "image/png", url: large },
+    ]);
+  });
   it("restores the actual model file/data shape as a UI file/url part", () => {
     const messages = transcriptToUIMessages([
       {
@@ -725,8 +738,9 @@ describe("persisted supplied App image", () => {
     { mediaType: "image/png", data: "data:image/png;base64,%%%" },
     { mediaType: "image/png", data: { 0: 1, 1: 2 } },
     {
+      // Past the ceiling any client policy may admit.
       mediaType: "image/png",
-      data: "data:image/png;base64," + "AAAA".repeat(100000),
+      data: "data:image/png;base64," + "AAAA".repeat(1_100_000),
     },
   ])("refuses unqualified stored image representations %#", (part) => {
     const messages = transcriptToUIMessages([

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { MODEL_CONTEXT_POLICY_DEFAULTS } from "@mcpjam/sdk/host-config/internal";
 import {
   parsePluginModelContext,
   type PluginContextSnapshot,
@@ -933,7 +934,11 @@ export class McpAppBrowserHarness {
           this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
         if (!capabilities.updateModelContext)
           throw new Error("App context is unavailable");
-        const params = parsePluginModelContext(payload.params);
+        // Eval turns keep MCPJam's default budgets.
+        const params = parsePluginModelContext(
+          payload.params,
+          MODEL_CONTEXT_POLICY_DEFAULTS,
+        );
         const previous = this.modelContexts.get(payload.widgetId);
         if ((previous?.sequence ?? 0) >= 2048)
           throw new Error("App context update limit exceeded");
