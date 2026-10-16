@@ -803,9 +803,7 @@ jobs:
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:
-      # The value the record carries. It names the RUN that produced the
-      # evidence, so a recorded conformance version can always be traced back to
-      # the scenarios that justified it.
+      # Keep the stamp traceable to the run that produced its evidence.
       - id: stamp
         env:
           PUBLISHED_PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
