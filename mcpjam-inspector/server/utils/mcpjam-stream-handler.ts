@@ -1,3 +1,4 @@
+import type { LocalHarnessExecutionTarget } from "./harness/local/local-turn.js";
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -984,23 +985,7 @@ export interface MCPJamHandlerOptions {
    *
    * Absent ⇒ the hosted path, byte for byte as before this existed.
    */
-  harnessExecutionTarget?: {
-    kind: "local-native";
-    workspaceGrantId: string;
-    runtimeId: string;
-    machineId: string;
-    permissionProfile: "read-only" | "workspace-edits" | "unrestricted";
-    policyVersion: string;
-    grantToken: string;
-    /** The acting user, resolved by the ROUTE from the verified bearer — never
-     *  from the request body. Consent binds to a user, so a user the caller
-     *  names is a user the caller chose. */
-    actingUserId: string;
-    /** Server scheduler-owned session identity; never parsed from renderer input. */
-    localSessionId?: string;
-    targetId?: string;
-    sessionIdx?: number;
-  };
+  harnessExecutionTarget?: LocalHarnessExecutionTarget;
   authHeader?: string;
   scenarioId?: string;
   accessVersion?: number;

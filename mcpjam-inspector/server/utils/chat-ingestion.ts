@@ -9,7 +9,6 @@ import type {
   RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import type {
-  Harness,
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
