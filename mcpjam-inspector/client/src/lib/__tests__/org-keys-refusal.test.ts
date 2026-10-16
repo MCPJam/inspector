@@ -9,6 +9,7 @@ import {
   orgKeysRefusalCodeOf,
   orgKeysRefusalSentence,
   ORG_KEYS_REFUSAL_CODES,
+  runRefusalCodeInText,
   VISITOR_ANALYSIS_UNAVAILABLE,
 } from "../org-keys-refusal";
 
@@ -61,6 +62,29 @@ describe("org-keys refusal helpers", () => {
     expect(orgKeysRefusalCodeFromError(new Error("Something else"))).toBe(
       undefined,
     );
+  });
+
+  it("reads a run's provider_not_configured as credential_missing: the same missing org provider", () => {
+    // `/stream/org`'s 422 envelope, and the org resolver's prefixed message.
+    expect(
+      runRefusalCodeInText(
+        "The provider isn't turned on for your organization.",
+        JSON.stringify({ ok: false, code: "provider_not_configured" }),
+      ),
+    ).toBe("credential_missing");
+    expect(
+      runRefusalCodeInText(
+        "provider_not_configured: anthropic is not enabled for this project/workspace organization",
+      ),
+    ).toBe("credential_missing");
+    expect(runRefusalCodeInText("org_keys_required: no")).toBe(
+      "org_keys_required",
+    );
+    expect(runRefusalCodeInText("Some other failure", undefined)).toBe(
+      undefined,
+    );
+    // Chat reads codes directly and keeps showing the backend's sentence.
+    expect(orgKeysRefusalCodeOf("provider_not_configured")).toBe(undefined);
   });
 
   it("reads the code an Error carries even when its message is generic", () => {
