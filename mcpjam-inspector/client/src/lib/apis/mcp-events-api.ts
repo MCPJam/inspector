@@ -173,7 +173,7 @@ export async function loadEventsCatalog(
       };
       if (!probe.support?.declared) return undeclared;
       try {
-        const list = await localEventsRequest<EventsListResponse>(
+        const list: EventsListResponse = await localEventsRequest(
           "/api/mcp/events/list",
           {
             method: "POST",

@@ -85,7 +85,9 @@ export function safeJson(value: unknown): string {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+type JsonObject = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -136,8 +138,8 @@ export function exampleFromSchema(schema: unknown, depth = 0): unknown {
 
 /** The payload a simulation starts from: an object built from the schema. */
 export function simulationDataFromSchema(
-  payloadSchema: Record<string, unknown> | undefined,
-): Record<string, unknown> {
+  payloadSchema?: JsonObject,
+): JsonObject {
   const example = exampleFromSchema(payloadSchema);
   return isRecord(example) ? example : {};
 }
