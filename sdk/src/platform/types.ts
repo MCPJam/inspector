@@ -657,23 +657,23 @@ export interface PlatformChatTurn {
   model?: { id: string; provider: string };
   toolMode?: PlatformToolMode;
   /**
-   * WHICH ENGINE RAN: `"emulated"` or `"harness:<id>"` (e.g.
-   * `"harness:claude-code"`).
-   *
-   * Read this field rather than inferring an engine from the model id. It is
-   * the only thing that reports which engine ran, and `hostId` is per-turn
-   * rather than pinned: a continuation that omits it is refused outright when
-   * the session named only a host, and cannot reach a harness at all when the
-   * session pinned a target of its own.
+   * Engine identity, e.g. `"emulated"` or `"harness:claude-code"`.
+   * Server-resolved. Host-only continuations must resend `hostId`.
    */
   engine?: string;
-  /** The saved host this turn executed as, when it named one. */
+  /** Server-owned execution evidence; absent on an idempotent replay. */
+  execution?: {
+    engine: string;
+    venue: "hosted" | "local-native";
+    runtimeVersion: string | null;
+    sessionId: string;
+    turnId: string;
+  };
   hostId?: string;
   advertisedToolCount?: number;
   excludedToolCount?: number;
   persisted: { outcome: string; version?: number };
   origin: string;
-  /** Set when an idempotencyKey replayed an already-completed turn. */
   replay?: true;
   message?: string;
 }

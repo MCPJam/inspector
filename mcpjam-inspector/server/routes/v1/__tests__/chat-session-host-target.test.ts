@@ -1,34 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-/**
- * HOST TARGETING on `POST /v1/chat-sessions/messages` — which ENGINE ran.
- *
- * Every property here is one whose violation is INVISIBLE in the response
- * body, which is exactly how the bug this file exists for reached production:
- * a turn aimed at a Cursor-harness environment answered 200, reported a plain
- * `anthropic/…` model, and had run MCPJam's emulated engine the whole time.
- *
- *   1. A HARNESS HOST DISPATCHES THE HARNESS. Reading the host's `harness`
- *      is not enough — the turn also has to reach `runHarnessTurn` with an MCP
- *      proxy strategy, which it THROWS without whenever servers are selected.
- *      Both are asserted, because either one missing is a silently emulated
- *      turn rather than an error.
- *   2. THE BODY NEVER SUPPLIES THE ENGINE. `harness` in the request is a 400,
- *      and the engine is read only off the config the server fetched.
- *   3. TWO POINTERS THAT DISAGREE ARE REFUSED. A `hostId` contradicting the
- *      environment's own host must not be resolved by precedence.
- *   4. AN UNAVAILABLE RUNTIME IS A NAMED PRE-STREAM REFUSAL. Never a fallback:
- *      the assertion is that no runtime was resolved and no turn was run, not
- *      merely that the status code was unhappy.
- *   5. EVERY TURN NAMES ITS ENGINE. Emulated turns too — a response that says
- *      nothing is indistinguishable from one that ran the harness.
- *
- * The availability gate itself is NOT mocked. It is driven through the real
- * environment (`E2B_API_KEY` and friends), so these tests exercise the same
- * `checkHarnessRuntimeAvailable` chat, swarms and eval admission call, and a
- * new rule added there shows up here.
- */
+
 
 const {
   queryMock,
@@ -256,7 +229,10 @@ beforeEach(() => {
     finalizeUsage: async () => {},
     classifyFailure: () => "failed",
   });
-  runUnifiedAssistantTurnMock.mockResolvedValue({
+  runUnifiedAssistantTurnMock.mockImplementation(async () => {
+    const harness = resolveTurnRuntimeMock.mock.calls.at(-1)?.[0]?.harness;
+    return {
+    ...(typeof harness === "string" ? { execution: { engine: `harness:${harness}`, venue: "hosted", runtimeVersion: "2.1.0" } } : {}),
     messages: [],
     assistantMessages: [
       { role: "assistant", content: [{ type: "text", text: "ok" }] },
@@ -267,6 +243,7 @@ beforeEach(() => {
     usage: { inputTokens: 1, outputTokens: 2 },
     finishReason: "stop",
     aborted: false,
+    };
   });
   persistChatSessionToConvexMock.mockResolvedValue({
     outcome: "saved",
@@ -320,6 +297,7 @@ describe("host targeting dispatches the real harness", () => {
     // The response SAYS which engine ran. This is the field whose absence let
     // a silently emulated turn look identical to a harness one.
     expect(body.engine).toBe("harness:claude-code");
+    expect(body.execution).toEqual({ engine: "harness:claude-code", venue: "hosted", runtimeVersion: "2.1.0", sessionId: body.chatSessionId, turnId: body.turnId });
     expect(body.hostId).toBe(HOST);
   });
 
@@ -1710,6 +1688,7 @@ describe("the turn deadline after a harness turn delivered", () => {
       });
   }
   const delivered = {
+    execution: { engine: "harness:claude-code", venue: "hosted", runtimeVersion: "2.1.0" },
     messages: [],
     assistantMessages: [
       { role: "assistant", content: [{ type: "text", text: "the plan" }] },

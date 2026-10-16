@@ -1,3 +1,4 @@
+import { localRuntimeVersion } from "./local/runtime-version.js";
 import {
   diskResumeState,
   sessionResumeStateFrom,
@@ -968,10 +969,9 @@ export async function runHarnessTurn(
   // external-account entitlement-wall check, which must never fire on a turn
   // that actually did work — see `external-account-plan-wall.ts`.
   let successfulToolCalls = 0;
-  // The runtime version this box actually installed, for adapters whose CLI is
-  // not version-pinned by the package pin. Telemetry only — see the capture in
-  // `onSandboxSession` and `runtimeVersionCommand` in the registry.
+  // Prefer the observed CLI version; otherwise use the adapter's verified pin.
   let installedRuntimeVersion: string | undefined;
+  let execution: import("@/shared/execution-receipt").RuntimeExecution | undefined;
   let capturedTurnTrace: PersistedTurnTrace | undefined;
   // A Stop or the caller's deadline ended a Claude Code background drain: the
   // answer was delivered, so the turn is committed as finished (see
@@ -2772,16 +2772,8 @@ export async function runHarnessTurn(
               mcpJson,
             });
           }
-          // VERSION CANARY. For an adapter whose CLI version is not pinned by
-          // the package pin (Cursor bootstraps `curl … | bash`, which always
-          // fetches the current build), ask the box what it actually installed
-          // and record it. Two known cursor-agent builds are four months of
-          // behaviour apart, so without this a silent upstream change presents
-          // as an unattributable regression.
-          //
-          // FAIL-SOFT in every direction: bounded by the turn's own signal plus
-          // a deadline, every error swallowed, and nothing downstream reads the
-          // result. A canary must never be able to fail a run.
+          // Prefer an observed version over the hosted artifact pin.
+          // Version probing is bounded; an unavailable probe retains the verified pin.
           if (harnessAdapter.runtimeVersionCommand) {
             try {
               const probe = await session.run({
@@ -3196,9 +3188,15 @@ export async function runHarnessTurn(
         } as unknown as UIMessageChunk);
       }
       tConnect = Date.now();
-      // Session is up: the finalizer + heartbeat now own the continuity lane, so
-      // the pre-session cleanup in onFinishEngine no longer needs to free it.
+      // Session finalization now owns the continuity lane.
       sessionEstablished = true;
+      execution = {
+        engine: `harness:${harnessAdapter.id}`,
+        venue: localPrepared ? "local-native" : "hosted",
+        runtimeVersion: localPrepared
+          ? await localRuntimeVersion(localPrepared.plan.runtime)
+          : installedRuntimeVersion ?? harnessAdapter.pinnedRuntimeVersion ?? null,
+      };
 
       // DELIVERY STAMP for the external-account credential — HERE, because this
       // is the first point at which the runtime has actually taken it: the
@@ -4779,6 +4777,7 @@ export async function runHarnessTurn(
   return {
     messageHistory,
     aborted,
+    ...(execution ? { execution } : {}),
     ...(capturedTurnTrace ? { turnTrace: capturedTurnTrace } : {}),
     ...(capturedTurnTrace && drainEndedByAbort
       ? { backgroundDrainEnded: true }

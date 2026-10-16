@@ -374,11 +374,10 @@ export interface RunAssistantTurnResult {
    */
   harnessSessionCommit?: HarnessSessionCommitPayload;
   /**
-   * A harness turn whose wait for Claude Code background agents was ended by
-   * a Stop or the caller's deadline AFTER its answer was delivered. The turn
-   * finished; a caller that treats its abort as a timeout must not.
+   * The harness delivered its answer before its background drain was stopped.
    */
   backgroundDrainEnded?: true;
+  execution?: import("@/shared/execution-receipt").RuntimeExecution;
 }
 
 function extractAssistantMessages(
@@ -780,6 +779,7 @@ export async function runAssistantTurn(
     ...(capturedHarnessCommit
       ? { harnessSessionCommit: capturedHarnessCommit }
       : {}),
+    ...(engineResult.execution ? { execution: engineResult.execution } : {}),
     ...(engineResult.backgroundDrainEnded
       ? { backgroundDrainEnded: true as const }
       : {}),

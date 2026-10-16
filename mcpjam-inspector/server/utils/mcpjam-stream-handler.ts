@@ -4864,11 +4864,10 @@ export interface ChatEngineLoopResult {
   turnTrace?: PersistedTurnTrace;
   aborted: boolean;
   /**
-   * Harness only: a Stop or the caller's deadline ended a Claude Code turn's
-   * wait for its background agents, after the answer was delivered. The turn
-   * finished and was kept; it was not cut short.
+   * Harness background drain ended after delivering its answer.
    */
   backgroundDrainEnded?: true;
+  execution?: import("@/shared/execution-receipt").RuntimeExecution;
 }
 
 /**

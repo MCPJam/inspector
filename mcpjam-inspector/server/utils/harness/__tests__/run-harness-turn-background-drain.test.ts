@@ -1,13 +1,4 @@
-/**
- * The server side of the Claude Code background drain
- * (`claude-code-background-drain.ts`): the bridge's `raw` drain parts become
- * transient `data-harness-background-task` chunks, a background agent's
- * follow-up is its own text part, and a Stop that lands while the bridge is
- * only WAITING ends the wait and keeps the delivered answer.
- *
- * The module mocks are the ones `run-harness-turn-hosted-resume.test.ts`
- * drives a turn with; the stream is scripted per test.
- */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
@@ -64,6 +55,7 @@ vi.mock("../registry.js", () => ({
     id: "claude-code",
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
+    pinnedRuntimeVersion: "2.1.0",
     supportsSkills: false,
     mcpDelivery: "host-executed",
     supportsModel: vi.fn(() => true),
@@ -229,6 +221,9 @@ describe("runHarnessTurn background drain", () => {
 
     const result = await runHarnessTurn(options() as any, "none");
     await result.response?.text();
+    expect(result.execution).toEqual({
+      engine: "harness:claude-code", venue: "hosted", runtimeVersion: "2.1.0",
+    });
 
     const createHarnessCalls = vi
       .mocked(getHarnessAdapter)
