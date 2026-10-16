@@ -108,6 +108,13 @@ tested in the inspector's local plugin runtime,
   the placeholder check.
 - **Bare commands resolve through platform executable search rules** — the
   local stdio materializer (`local-stdio.ts`).
+- **Launch checks after placeholders resolve** — `checkPluginLaunch`
+  (`launch-guards.ts`) refuses a working directory that is not the plugin
+  root, its data directory or inside one, judged where it really is on disk,
+  so a symlink in the writable data directory cannot lead out. It also names a
+  bare runtime missing from the PATH, or a bundle command that is missing or
+  not executable, instead of letting the spawn fail. A hosted box gets the
+  path rule only; the box reports its own missing commands.
 - **`PLUGIN_DATA` created before launch and preserved across plugin
   updates** — `plugin-data.ts` (see deviation 10 for hosted boxes).
 - **Continue loading when one server fails to start/connect/authenticate** —
