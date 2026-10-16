@@ -62,24 +62,33 @@ describe("local admission transport", () => {
 
   it("rejects an expired authorization during construction", () => {
     expect(
-      () => new AttemptStepGuard(client(), {
-        ...receipt,
-        expiresAt: Date.now(),
-      })
+      () =>
+        new AttemptStepGuard(client(), {
+          ...receipt,
+          expiresAt: Date.now(),
+        })
     ).toThrow(expect.objectContaining({ code: "ADMISSION_CLOSED" }));
   });
   it("rejects an active receipt already expired when it arrives", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
-      Response.json({ ...receipt, expiresAt: Date.now() - 1 })
-    ));
-    await expect(client().admit(input)).rejects.toMatchObject({ code: "ADMISSION_CLOSED" });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ ...receipt, expiresAt: Date.now() - 1 })
+        )
+    );
+    await expect(client().admit(input)).rejects.toMatchObject({
+      code: "ADMISSION_CLOSED",
+    });
   });
   it("preserves the original transport failure for diagnosis", async () => {
     vi.useFakeTimers();
     const cause = new Error("connection reset");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(cause));
     const result = expect(client().admit(input)).rejects.toMatchObject({
-      code: "PLATFORM_UNAVAILABLE", cause,
+      code: "PLATFORM_UNAVAILABLE",
+      cause,
     });
     await vi.runAllTimersAsync();
     await result;
@@ -172,7 +181,19 @@ describe("local admission transport", () => {
   ])(
     "preserves terminal wire errors without retrying HTTP %s",
     async (status, code) => {
-      const details = { code: "admission_domain" };
+      const details =
+        status === 402
+          ? { code: "platform_fee_refused", reason: "insufficient_credits" }
+          : status === 426
+            ? {
+                code: "client_upgrade_required",
+                minimumVersion:
+                  "@mcpjam/sdk 10, @mcpjam/cli 6, @mcpjam/vitest 0.3",
+                docsUrl: "https://docs.mcpjam.com/sdk/migration-v10",
+              }
+            : status === 409
+              ? { code: "ADMISSION_CONFLICT" }
+              : undefined;
       const fetch = vi
         .fn()
         .mockResolvedValue(
@@ -185,25 +206,33 @@ describe("local admission transport", () => {
       await expect(client().admit(input)).rejects.toMatchObject({
         code,
         message: "The original remedy.",
-        details,
+        ...(details ? { details } : {}),
       });
       expect(fetch).toHaveBeenCalledTimes(1);
     }
   );
-  it("reuses exact request identity after a transient response", async () => {
-    vi.useFakeTimers();
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
-      .mockResolvedValue(Response.json(receipt));
-    vi.stubGlobal("fetch", fetch);
-    const promise = client().admit(input);
-    const result = expect(promise).resolves.toMatchObject(receipt);
-    await vi.runAllTimersAsync();
-    await result;
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(fetch.mock.calls[0][1].body).toBe(fetch.mock.calls[1][1].body);
-  });
+  it.each([429, 503])(
+    "reuses exact request identity after transient HTTP %i",
+    async (status) => {
+      vi.useFakeTimers();
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            { code: status === 429 ? "RATE_LIMITED" : "INTERNAL_ERROR" },
+            { status, headers: { "Retry-After": "0" } }
+          )
+        )
+        .mockResolvedValue(Response.json(receipt));
+      vi.stubGlobal("fetch", fetch);
+      const promise = client().admit(input);
+      const result = expect(promise).resolves.toMatchObject(receipt);
+      await vi.runAllTimersAsync();
+      await result;
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(fetch.mock.calls[0][1].body).toBe(fetch.mock.calls[1][1].body);
+    }
+  );
   it("serializes concurrent prompt extensions with distinct ordinals", async () => {
     const targets: number[] = [];
     const fetch = vi.fn(async (_url, init) => {
@@ -223,8 +252,13 @@ describe("local admission transport", () => {
   it("stops queued and subsequent prompts after an authorization failure", async () => {
     const admission = client();
     const refusal = new Error("Authorization refused");
-    const extend = vi.spyOn(admission, "ensureSteps").mockRejectedValue(refusal);
-    const guard = new AttemptStepGuard(admission, { ...receipt, state: "active" });
+    const extend = vi
+      .spyOn(admission, "ensureSteps")
+      .mockRejectedValue(refusal);
+    const guard = new AttemptStepGuard(admission, {
+      ...receipt,
+      state: "active",
+    });
     await guard.beforePrompt();
     const blocked = guard.beforePrompt();
     const queued = guard.beforePrompt();
