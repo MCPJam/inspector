@@ -1,3 +1,5 @@
+import { useWidgetRecorder } from "./use-widget-recorder";
+import type { RecorderCaptureMode } from "@mcpjam/sdk/widget-runtime";
 import { useInitialRenderOutcome } from "./use-initial-render-outcome";
 import { WidgetFullscreenPlacementContext } from "./widget-fullscreen-placement";
 import {
@@ -363,7 +365,10 @@ export interface MCPAppsRendererProps {
    * preview sets these.
    */
   recordMode?: boolean;
-  onRecorderStep?: (step: unknown) => void;
+  recorderCaptureMode?: RecorderCaptureMode;
+  onRecorderStep?: (step: unknown, captureId?: string) => void;
+  onRecorderFlushReady?: (flush: (() => Promise<{ ok: boolean; reason?: string }>) | null) => void;
+  onRecorderPick?: (target: unknown) => void;
   onRecorderReady?: () => void;
   /**
    * Replay (inverse of recording): published when the guest shim is record-capable
@@ -553,19 +558,6 @@ function mapLogToLifecycle(
       ? details.url
       : undefined;
   return { kind, status, message, timestamp: Date.now() };
-}
-
-function recorderDebug(message: string, details?: Record<string, unknown>) {
-  try {
-    if (
-      typeof window !== "undefined" &&
-      window.localStorage?.getItem("mcpjam:recorder-debug") === "1"
-    ) {
-      console.info(`[recorder:renderer] ${message}`, details ?? {});
-    }
-  } catch {
-    // best-effort debug logging only
-  }
 }
 
 /**
@@ -806,6 +798,9 @@ export function MCPAppsRendererSurface({
   onWidgetStateChange,
   onInitialRenderOutcome,
   recordMode,
+  recorderCaptureMode,
+  onRecorderPick,
+  onRecorderFlushReady,
   onRecorderStep,
   onRecorderReady,
   onReplayControllerReady,
@@ -838,73 +833,7 @@ export function MCPAppsRendererSurface({
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
 
-  // Replay (host → guest): pending step requests keyed by a monotonic id. The
-  // guest posts `recorder:replay-result` back with the same id (handled in
-  // `handleSandboxMessage`), which resolves the matching promise. A timeout
-  // resolves a missing reply as a failed step so a stuck guest can't hang Run.
-  const replayIdRef = useRef(0);
-  const pendingReplaysRef = useRef<
-    Map<
-      number,
-      {
-        resolve: (r: {
-          ok: boolean;
-          reason?: string;
-          deferred?: string;
-        }) => void;
-        timer: ReturnType<typeof setTimeout>;
-      }
-    >
-  >(new Map());
-  const REPLAY_STEP_TIMEOUT_MS = 8000;
-  const replayStep = useCallback(
-    (
-      step: unknown
-    ): Promise<{ ok: boolean; reason?: string; deferred?: string }> =>
-      new Promise((resolve) => {
-        const id = (replayIdRef.current += 1);
-        const timer = setTimeout(() => {
-          pendingReplaysRef.current.delete(id);
-          resolve({ ok: false, reason: "replay step timed out" });
-        }, REPLAY_STEP_TIMEOUT_MS);
-        pendingReplaysRef.current.set(id, { resolve, timer });
-        sandboxRef.current?.postMessage({
-          type: "recorder:replay-step",
-          id,
-          step,
-        });
-      }),
-    []
-  );
-  // Publish the replay controller to the host while record-capable; retract it
-  // (null) when recording turns off or the widget truly unmounts, failing any
-  // in-flight steps so the orchestrator doesn't wait on a torn-down guest.
-  //
-  // `onReplayControllerReady` is recreated by the host on every render (it's an
-  // inline tagging wrapper), so it CANNOT be an effect dep — that would re-run
-  // the cleanup on every benign re-render (e.g. the thread updating after a
-  // replayed click fires a tool call) and abort the replay mid-sequence
-  // ("widget unmounted"). Read it through a ref; depend only on the actual
-  // lifecycle inputs (`recordMode`, the stable `replayStep`).
-  const onReplayControllerReadyRef = useRef(onReplayControllerReady);
-  onReplayControllerReadyRef.current = onReplayControllerReady;
-  useEffect(() => {
-    const publish = onReplayControllerReadyRef.current;
-    if (!recordMode) {
-      publish?.(null);
-      return;
-    }
-    publish?.(replayStep);
-    return () => {
-      onReplayControllerReadyRef.current?.(null);
-      const pending = pendingReplaysRef.current;
-      for (const { resolve, timer } of pending.values()) {
-        clearTimeout(timer);
-        resolve({ ok: false, reason: "widget unmounted" });
-      }
-      pending.clear();
-    };
-  }, [recordMode, replayStep]);
+  const { handleRecorderMessage } = useWidgetRecorder({ sandbox: sandboxRef, capable: recordMode, mode: recorderCaptureMode, onStep: onRecorderStep, onPick: onRecorderPick, onFlushReady: onRecorderFlushReady, onReady: onRecorderReady, onReplayReady: onReplayControllerReady });
   // Inspector adapter for the WidgetHost contract (environment + resolvers +
   // services + surface + debug). The renderer's ambient ENV reads and resolver
   // imports are routed through this boundary; all derivation below is unchanged.
@@ -4225,42 +4154,7 @@ export function MCPAppsRendererSurface({
       return;
     }
 
-    // Tier 2 recorder: forward captured steps + readiness to the host.
-    if (data.type === "recorder:step") {
-      recorderDebug("step from sandbox", {
-        toolName,
-        toolCallId,
-        recordMode: !!recordMode,
-      });
-      onRecorderStep?.(data.step);
-      return;
-    }
-    if (data.type === "recorder:ready") {
-      recorderDebug("ready from sandbox", {
-        toolName,
-        toolCallId,
-        recordMode: !!recordMode,
-      });
-      onRecorderReady?.();
-      return;
-    }
-    // Replay: resolve the pending step promise the guest is answering.
-    if (data.type === "recorder:replay-result") {
-      const pending =
-        typeof data.id === "number"
-          ? pendingReplaysRef.current.get(data.id)
-          : undefined;
-      if (pending) {
-        clearTimeout(pending.timer);
-        pendingReplaysRef.current.delete(data.id);
-        pending.resolve({
-          ok: !!data.ok,
-          reason: data.reason,
-          deferred: data.deferred,
-        });
-      }
-      return;
-    }
+    if (handleRecorderMessage(data)) return;
 
     // Defense-in-depth: if the live capability matrix has the file ops
     // disabled, drop incoming `openai:uploadFile` / `getFileDownloadUrl`

@@ -69,6 +69,7 @@ import { isFailedWidgetResult } from "./widget-result-policy";
 import {
   computeWidgetRecordMode,
   type RecorderReadyEvent,
+  type RecorderProps,
   type RecorderStepEvent,
   type RecordingTarget,
   type ReplayControllerEvent,
@@ -203,6 +204,9 @@ function LivePartSwitch({
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   recordCapable,
+  recorderCaptureMode,
+  onRecorderPick,
+  onRecorderFlushReady,
   recordingTarget,
   resolvePromptIndex,
   onRecorderStep,
@@ -243,8 +247,10 @@ function LivePartSwitch({
   widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
-  // Tier 3 recorder (default off — see recorder-types.ts).
   recordCapable?: boolean;
+  recorderCaptureMode?: RecorderProps["recorderCaptureMode"];
+  onRecorderFlushReady?: RecorderProps["onRecorderFlushReady"];
+  onRecorderPick?: RecorderProps["onRecorderPick"];
   recordingTarget?: RecordingTarget | null;
   resolvePromptIndex?: (toolCallId: string) => number | undefined;
   onRecorderStep?: (event: RecorderStepEvent) => void;
@@ -702,13 +708,6 @@ function LivePartSwitch({
               toolName={toolInfo.toolName}
               toolCallId={toolInfo.toolCallId}
               {...(() => {
-                // Tier 3 recorder. DECOUPLED from arming: on a record-capable
-                // surface (the eval preview) EVERY widget loads the shim on first
-                // render, so arming never reloads a widget. Reloading on arm would
-                // re-run the widget's `ui/initialize` without closing the previous
-                // App instance → a second AppBridge → misrouted handshake and no
-                // `recorder:ready`. Arming is a host-side SAVE gate (handled in the
-                // editor's onRecorderStep), not a reload trigger.
                 const tcid = toolInfo.toolCallId;
                 const widgetPromptIndex = tcid
                   ? resolvePromptIndex?.(tcid)
@@ -722,20 +721,14 @@ function LivePartSwitch({
                     widgetPromptIndex,
                   },
                 );
-                recorderDebug("part record decision", {
-                  toolName: toolInfo.toolName,
-                  toolCallId: tcid ?? null,
-                  hasToolCallId: !!tcid,
-                  recordCapable: !!recordCapable,
-                  recordMode,
-                  widgetPromptIndex: widgetPromptIndex ?? null,
-                  recordingTarget: recordingTarget ?? null,
-                });
                 if (!recordMode) return {};
                 const toolCallId = tcid as string;
                 return {
                   recordMode: true,
-                  onRecorderStep: (step: unknown) => {
+                  recorderCaptureMode,
+                  onRecorderFlushReady: (flush: Parameters<NonNullable<RecorderProps["onRecorderFlushReady"]>>[0]["flush"]) => onRecorderFlushReady?.({ toolCallId, flush }),
+                  onRecorderPick: (target: unknown) => onRecorderPick?.({ promptIndex: pi, toolName: toolInfo.toolName, toolCallId, target }),
+                  onRecorderStep: (step: unknown, captureId?: string) => {
                     recorderDebug("part recorder step", {
                       toolName: toolInfo.toolName,
                       toolCallId,
@@ -746,6 +739,7 @@ function LivePartSwitch({
                       toolName: toolInfo.toolName,
                       toolCallId,
                       step,
+                      captureId,
                     });
                   },
                   onRecorderReady: () => {
