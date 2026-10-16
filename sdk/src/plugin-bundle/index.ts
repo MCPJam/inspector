@@ -24,6 +24,7 @@ export { parsePluginBundle, MCP_CONFIG_PATH } from "./parse.js";
 
 export {
   DEFAULT_PLUGIN_BUNDLE_LIMITS,
+  PLUGIN_PARSER_REVISIONS,
   type ParsedPluginAsset,
   type ParsedPluginBundle,
   type ParsePluginBundleOptions,

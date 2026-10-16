@@ -27,10 +27,11 @@ import {
 import type { PluginSkippedComponent } from "./mcp-config.js";
 import { resolveContainedPath } from "./paths.js";
 import { PluginIssueCollector } from "./validation.js";
-import type {
-  PluginBundleInterpretation,
-  PluginBundleLayout,
-  PluginParserProfile,
+import {
+  PLUGIN_PARSER_REVISIONS,
+  type PluginBundleInterpretation,
+  type PluginBundleLayout,
+  type PluginParserProfile,
 } from "./types.js";
 
 export const CODEX_MANIFEST_PATH = ".codex-plugin/plugin.json";
@@ -317,6 +318,7 @@ function resolveRootManifest(
   const { profile, filePaths, readJson, issues } = input;
   const interpretation: PluginBundleInterpretation = {
     profile,
+    revision: PLUGIN_PARSER_REVISIONS[profile],
     layout: "agent-plugins",
     manifestPath: PLUGIN_MANIFEST_PATH,
   };
@@ -357,6 +359,7 @@ export function resolveManifestSource(
   reportIgnoredManifests(legacy.path, input);
   const interpretation: PluginBundleInterpretation = {
     profile,
+    revision: PLUGIN_PARSER_REVISIONS[profile],
     layout: legacy.layout,
     manifestPath: legacy.path,
   };

@@ -27,6 +27,12 @@ export interface PluginFileEntry {
    * the parser can reject them; omitted means `file`.
    */
   kind?: "file" | "directory" | "symlink" | "hardlink";
+  /**
+   * POSIX permission bits, when the source has them (a ZIP made on a POSIX
+   * system, a directory on disk). Only the executable bits are read; a browser
+   * folder selection has none, so its files are never executable.
+   */
+  mode?: number;
 }
 
 /**
@@ -130,9 +136,19 @@ export type PluginBundleLayout =
   | "agent-legacy"
   | "claude";
 
+/**
+ * Parser revision per profile. Bumped whenever the same bytes can normalize
+ * differently, so a stored version records which rules produced it.
+ */
+export const PLUGIN_PARSER_REVISIONS: Readonly<
+  Record<PluginParserProfile, number>
+> = Object.freeze({ strict: 2, "openai-compatible": 1 });
+
 /** How a bundle was read: the same files under another profile read differently. */
 export interface PluginBundleInterpretation {
   profile: PluginParserProfile;
+  /** `PLUGIN_PARSER_REVISIONS[profile]` at parse time. */
+  revision: number;
   layout: PluginBundleLayout;
   /** Bundle path the manifest was read from. */
   manifestPath: string;
@@ -151,6 +167,15 @@ export interface ParsedPluginBundle {
   schemaVersion: string;
   /** Deterministic content hash over every file (canonical path + bytes). */
   bundleHash: string;
+  /** Canonical paths of files carrying an executable bit, sorted. */
+  executableFiles: string[];
+  /**
+   * Identity of what a runtime materializes and runs: the bundle hash, the
+   * executable files, and the interpretation's profile and revision. Two
+   * parses that agree on all of these may share a version and a cache entry;
+   * ZIP timestamps and compression take no part.
+   */
+  executionDigest: string;
   /** SHA-256 hex of the raw bytes of the manifest file (`interpretation.manifestPath`). */
   manifestHash: string;
   skills: ParsedPluginSkill[];

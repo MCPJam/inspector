@@ -39,6 +39,7 @@ describe("strict profile", () => {
     const parsed = await parsePluginBundle(bundle(portableWithOverlayFiles()));
     expect(parsed.interpretation).toEqual({
       profile: "strict",
+      revision: 2,
       layout: "agent-plugins",
       manifestPath: "plugin.json",
     });
@@ -52,15 +53,16 @@ describe("openai-compatible profile: root manifest", () => {
   it("keeps a plain portable bundle exactly as strict reads it", async () => {
     const strict = await parsePluginBundle(minimalBundle());
     const parsed = await parsePluginBundle(minimalBundle(), compat);
-    expect({ ...parsed, interpretation: undefined }).toEqual({
-      ...strict,
-      interpretation: undefined,
-    });
+    const unread = { interpretation: undefined, executionDigest: undefined };
+    expect({ ...parsed, ...unread }).toEqual({ ...strict, ...unread });
     expect(parsed.interpretation).toEqual({
       profile: "openai-compatible",
+      revision: 1,
       layout: "agent-plugins",
       manifestPath: "plugin.json",
     });
+    // Same bytes under different rules never share an execution identity.
+    expect(parsed.executionDigest).not.toBe(strict.executionDigest);
   });
 
   it("applies the Codex overlay's OpenAI data to the root manifest", async () => {
@@ -186,6 +188,7 @@ describe("openai-compatible profile: legacy manifests", () => {
     const parsed = await parsePluginBundle(bundle(files), compat);
     expect(parsed.interpretation).toEqual({
       profile: "openai-compatible",
+      revision: 1,
       layout: "codex",
       manifestPath: ".codex-plugin/plugin.json",
     });
