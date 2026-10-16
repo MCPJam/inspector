@@ -311,20 +311,9 @@ function mergeHostedServerBatch<
 }
 
 /**
- * Billing/entitlement caps (HTTP 402): the server forwards the original
- * ConvexError payload on `details` (code "billing_limit_reached" /
- * "billing_feature_not_included" / "platform_fee_refused"). Rethrow it as a ConvexError so the shared
- * billing helpers (`extractBillingErrorPayload` / `getBillingErrorMessage`)
- * render the upgrade message + reset time instead of a generic failure. Shared
- * by the buffered (`postEvalRequest`) and streamed (`streamEvalTestCase`) eval
- * paths so single-case compare runs surface the same billing UX. No-op unless
- * the payload is a billing cap.
- *
- * Exported because the replay endpoint is called with a hand-rolled fetch
- * rather than `postEvalRequest`: without this the raw response body is thrown
- * whole, and the billing parser reads the outer envelope (`BILLING_LIMIT_
- * REACHED`) instead of the payload nested under `details` — so a cap there
- * looked like an ordinary failure.
+ * Notify the shared billing dialog once, then preserve the backend's remedy
+ * as a ConvexError. Buffered, streamed and replay callers share this boundary.
+ * Non-wallet refusals retain their message without opening a top-up dialog.
  */
 export function rethrowIfBillingError(errorBody: unknown): void {
   const billingPayload = (
@@ -336,7 +325,9 @@ export function rethrowIfBillingError(errorBody: unknown): void {
     ((billingPayload as { code?: unknown }).code === "billing_limit_reached" ||
       (billingPayload as { code?: unknown }).code ===
         "billing_feature_not_included" ||
-      (billingPayload as { code?: unknown }).code === "platform_fee_refused")
+      (billingPayload as { code?: unknown }).code === "platform_fee_refused" ||
+      (billingPayload as { code?: unknown }).code ===
+        "ORGANIZATION_SPEND_BUDGET_REACHED")
   ) {
     const domainMessage = (billingPayload as { message?: unknown }).message;
     const message =

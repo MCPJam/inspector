@@ -100,3 +100,54 @@ it.each([
   ).toThrow(ConvexError);
   expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
 });
+
+it.each([
+  "platform_fee_refused",
+  "billing_limit_reached",
+  "billing_feature_not_included",
+])("prefers a domain remedy over the outer message for %s", (code) => {
+  expect(() =>
+    rethrowIfBillingError({
+      message: "Outer remedy",
+      details: { code, message: "Domain remedy" },
+    }),
+  ).toThrowError(
+    expect.objectContaining({ data: { code, message: "Domain remedy" } }),
+  );
+});
+it.each(["billing_limit_reached", "billing_feature_not_included"])(
+  "preserves the outer legacy remedy for %s",
+  (code) => {
+    expect(() =>
+      rethrowIfBillingError({ message: "Legacy remedy", details: { code } }),
+    ).toThrowError(
+      expect.objectContaining({ data: { code, message: "Legacy remedy" } }),
+    );
+  },
+);
+it("keeps a spend-budget response terminal without offering credits", () => {
+  expect(() =>
+    rethrowIfBillingError({
+      message: "Ask an admin to raise the budget.",
+      details: { code: "ORGANIZATION_SPEND_BUDGET_REACHED" },
+    }),
+  ).toThrow(ConvexError);
+  expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+});
+it("opens top-up for the refused organization", () => {
+  expect(() =>
+    rethrowIfBillingError({
+      message: "Add credits.",
+      details: {
+        code: "platform_fee_refused",
+        reason: "insufficient_credits",
+        organizationId: "refused-org",
+      },
+    }),
+  ).toThrow(ConvexError);
+  expect(useMCPJamLimitDialogStore.getState()).toMatchObject({
+    isOpen: true,
+    organizationId: "refused-org",
+    outOfCreditsOrganizationId: "refused-org",
+  });
+});
