@@ -39,7 +39,7 @@ export default defineConfig({
   // local-access.spec.ts needs a browser that
   // has NOT been handed the access key seeded below, and a local server, so it
   // can neither run here nor against a deployed URL.
-  testIgnore: [/\/visual\//, /(oauth-debugger|local-access|local-harness)\.spec\.ts/],
+  testIgnore: [/\/visual\//, /(oauth-debugger|local-access)\.spec\.ts/],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

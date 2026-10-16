@@ -6,7 +6,7 @@ on:
       - "mcpjam-inspector/client/**"
       - "mcpjam-inspector/e2e/local-harness*"
       - "mcpjam-inspector/e2e/fixtures/local-harness*/*"
-      - "mcpjam-inspector/e2e/fixtures/local-harness-server.test.ts"
+      - "mcpjam-inspector/e2e/fixtures/local-harness-server.fixture.ts"
       - "package-lock.json"
       - ".github/workflows/local-harness-browser.yml"
   workflow_dispatch:

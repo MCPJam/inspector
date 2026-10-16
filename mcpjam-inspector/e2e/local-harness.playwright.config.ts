@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 const cwd = fileURLToPath(new URL("..", import.meta.url));
 export default defineConfig({
   testDir: ".",
-  testMatch: "local-harness.spec.ts",
+  testMatch: "local-harness.browser.ts",
   workers: 1,
   timeout: 60_000,
   reporter: [
