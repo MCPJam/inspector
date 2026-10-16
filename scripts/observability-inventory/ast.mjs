@@ -55,7 +55,11 @@ export function enclosingFunction(node) {
 }
 export function conditions(node) {
   const found = [];
-  for (let p = node.parent; p; p = p.parent) if (ts.isIfStatement(p)) found.push(p.expression.getText().slice(0, 180));
+  for (let child = node, p = node.parent; p; child = p, p = p.parent) {
+    if (!ts.isIfStatement(p) || (child !== p.thenStatement && child !== p.elseStatement)) continue;
+    const expression = p.expression.getText().slice(0, 180);
+    found.push(child === p.elseStatement ? `!(${expression})` : expression);
+  }
   return found.reverse();
 }
 export function signals(node) {

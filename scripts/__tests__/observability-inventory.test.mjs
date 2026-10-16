@@ -88,3 +88,68 @@ test('records SDK catalog, browser hooks and product surfaces; serialized output
   assert.equal(saved.rows.find(x => x.kind === 'product.screen').status, 'unknown');
   assert.match(fs.readFileSync(path.join(dir, 'report/inventory.csv'), 'utf8'), /"list_projects"/);
 }));
+
+test('keeps an unresolved Convex method unknown even when its path is literal', () => fixture({
+  'backend/convex/http.ts': `http.route({path:'/work',method:chooseMethod(),handler});
+http.route({path:'/ready',method:'GET',handler});`,
+}, r => {
+  const unknown = r.rows.find(x => x.path === '/work');
+  assert.equal(unknown.status, 'unknown');
+  assert.equal(unknown.method, null);
+  assert.equal(unknown.methodExpression, 'chooseMethod()');
+  assert.equal(r.rows.find(x => x.path === '/ready').status, 'instrumented-unverified');
+  assert.deepEqual(r.unresolved.map(({ reason, line, expression }) => ({ reason, line, expression })), [
+    { reason: 'dynamic Convex method', line: 1, expression: 'chooseMethod()' },
+  ]);
+}));
+test('retains unresolved external route helpers with their callsite', () => fixture({
+  'inspector/mcpjam-inspector/server/index.ts': `import { mountExternalRoutes } from 'external-package';
+const app = new Hono();
+mountExternalRoutes(app);`,
+}, r => {
+  assert.equal(r.counts['inspector.http'] ?? 0, 0);
+  assert.equal(r.unresolved.length, 1);
+  const unknown = r.unresolved[0];
+  assert.equal(unknown.reason, 'unresolved route helper');
+  assert.equal(unknown.helper, 'mountExternalRoutes');
+  assert.equal(unknown.line, 3);
+  assert.match(unknown.file, /server[/\\]index\.ts$/);
+}));
+test('tracks else polarity for direct routes, mounts and registration helpers', () => fixture({
+  'inspector/mcpjam-inspector/server/index.ts': `import router from './router.js';
+const app = new Hono();
+if (HOSTED_MODE) app.get('/api/hosted', handler);
+else {
+  app.get('/api/local', handler);
+  app.route('/api/mounted', router);
+  mountLocalRoutes(app);
+}
+function mountLocalRoutes(app) { app.get('/api/helper', handler); }`,
+  'inspector/mcpjam-inspector/server/router.ts': `const router = new Hono(); router.get('/child', handler); export default router;`,
+}, r => {
+  const routes = r.rows.filter(x => x.kind === 'inspector.http');
+  assert.deepEqual(routes.find(x => x.path === '/api/hosted').conditions, ['HOSTED_MODE']);
+  for (const route of ['/api/local', '/api/mounted/child', '/api/helper']) {
+    assert.deepEqual(routes.find(x => x.path === route).conditions, ['!(HOSTED_MODE)']);
+  }
+}));
+test('preserves distinct registrations of the same endpoint with source and mount evidence', () => fixture({
+  'inspector/mcpjam-inspector/server/index.ts': `import router from './router.js';
+const app = new Hono();
+if (HOSTED_MODE) app.get('/api/same', hostedHandler);
+else app.get('/api/same', localHandler);
+if (HOSTED_MODE) app.route('/api/mounted', router);
+else app.route('/api/mounted', router);`,
+  'inspector/mcpjam-inspector/server/router.ts': `const router = new Hono(); router.get('/same', handler); export default router;`,
+}, r => {
+  const routes = r.rows.filter(x => x.kind === 'inspector.http');
+  assert.equal(routes.length, 4);
+  assert.equal(new Set(routes.map(x => x.id)).size, 4);
+  assert.equal(new Set(routes.map(x => x.endpointId)).size, 2);
+  const direct = routes.filter(x => x.path === '/api/same');
+  assert.deepEqual(direct.map(x => x.line).sort(), [3, 4]);
+  assert.deepEqual(direct.map(x => x.conditions), [['HOSTED_MODE'], ['!(HOSTED_MODE)']]);
+  const mounted = routes.filter(x => x.path === '/api/mounted/same');
+  assert.deepEqual(mounted.map(x => x.mounts[0].line), [5, 6]);
+  assert.deepEqual(mounted.map(x => x.conditions), [['HOSTED_MODE'], ['!(HOSTED_MODE)']]);
+}));
