@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SdkError, type SdkErrorOptions } from "./errors.js";
+import { V1_ERROR_STATUS } from "./public-api/index.js";
 import {
   reportingRequest,
   ReportingHttpError,
@@ -42,23 +43,14 @@ export class EvalAdmissionError extends SdkError {
 
 function admissionErrorCode(
   status: number,
-  details?: Record<string, unknown>
+  body: Record<string, unknown>
 ): string {
-  return status === 402
-    ? "BILLING_REFUSED"
-    : status === 426
-    ? "CLIENT_UPGRADE_REQUIRED"
-    : status === 409
-    ? String(details?.code ?? "ADMISSION_CONFLICT")
-    : status === 401
-    ? "CREDENTIALS_MISSING"
-    : status === 404
-    ? "NOT_FOUND"
-    : status === 429
-    ? details?.code === "billing_limit_reached"
-      ? "BILLING_LIMIT_REACHED"
-      : "RATE_LIMITED"
-    : "PLATFORM_UNAVAILABLE";
+  if (typeof body.code === "string") return body.code;
+  return (
+    Object.entries(V1_ERROR_STATUS).find(
+      ([, value]) => value === status
+    )?.[0] ?? "INTERNAL_ERROR"
+  );
 }
 
 export class EvalAdmissionClient {
@@ -91,6 +83,7 @@ export class EvalAdmissionClient {
     signal?: AbortSignal
   ): Promise<AdmissionReceipt> {
     signal?.throwIfAborted();
+    const deadlineAt = Date.now() + ADMISSION_OPERATION_TIMEOUT_MS;
     const url = new URL(
       `/api/v1/projects/${encodeURIComponent(
         this.config.project ?? "default"
@@ -102,6 +95,7 @@ export class EvalAdmissionClient {
         {
           timeoutMs: ADMISSION_REQUEST_TIMEOUT_MS,
           operationTimeoutMs: ADMISSION_OPERATION_TIMEOUT_MS,
+          deadlineAt,
           retryDelaysMs: ADMISSION_RETRY_DELAYS_MS,
           maxResponseBytes: 16_384,
           signal,
@@ -118,12 +112,14 @@ export class EvalAdmissionClient {
         (body) => receiptSchema.parse(body),
         (error) =>
           (error.status === 429 &&
+            (error.retryAfterMs ?? 0) < deadlineAt - Date.now() &&
             !(
               typeof error.body.details === "object" &&
               error.body.details !== null &&
               "code" in error.body.details &&
               error.body.details.code === "billing_limit_reached"
-            )) || error.status >= 500
+            )) ||
+          error.status >= 500
       );
       signal?.throwIfAborted();
       if (receipt.state !== "active" || receipt.expiresAt <= Date.now())
@@ -149,7 +145,7 @@ export class EvalAdmissionClient {
           typeof body.message === "string"
             ? body.message
             : "Could not confirm billing with MCPJam, so this eval did not run. Try again in a few minutes.",
-          admissionErrorCode(error.status, details),
+          admissionErrorCode(error.status, body),
           details,
           undefined,
           { cause: error }

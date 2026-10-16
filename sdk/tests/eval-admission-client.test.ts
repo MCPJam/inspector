@@ -30,18 +30,82 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("local admission transport", () => {
+  it.each([
+    [400, "VALIDATION_ERROR"],
+    [401, "UNAUTHORIZED"],
+    [403, "FORBIDDEN"],
+    [402, "PAYMENT_REQUIRED"],
+    [426, "UPGRADE_REQUIRED"],
+    [409, "CONFLICT"],
+  ])("preserves the public wire error code %s/%s", async (status, code) => {
+    const details = { code: "admission_domain" };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(
+            { code, message: "Original remedy.", details },
+            { status: Number(status) }
+          )
+        )
+    );
+    await expect(client().admit(input)).rejects.toMatchObject({
+      code,
+      details,
+      message: "Original remedy.",
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("distinguishes a rejected key from missing credentials without an envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({}, { status: 401 }))
+    );
+    await expect(client().admit(input)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+  });
+  it("returns a throttle immediately when Retry-After exceeds the remaining budget", async () => {
+    vi.useFakeTimers();
+    const startedAt = Date.now();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        vi.setSystemTime(startedAt + 8_000);
+        return Response.json(
+          { code: "RATE_LIMITED", message: "Retry after three seconds." },
+          { status: 429, headers: { "Retry-After": "3" } }
+        );
+      })
+    );
+    await expect(client().admit(input)).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+      message: "Retry after three seconds.",
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(Date.now()).toBe(startedAt + 8_000);
+  });
   it("rejects an active receipt already expired when it arrives", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
-      Response.json({ ...receipt, expiresAt: Date.now() - 1 })
-    ));
-    await expect(client().admit(input)).rejects.toMatchObject({ code: "ADMISSION_CLOSED" });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ ...receipt, expiresAt: Date.now() - 1 })
+        )
+    );
+    await expect(client().admit(input)).rejects.toMatchObject({
+      code: "ADMISSION_CLOSED",
+    });
   });
   it("preserves the original transport failure for diagnosis", async () => {
     vi.useFakeTimers();
     const cause = new Error("connection reset");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(cause));
     const result = expect(client().admit(input)).rejects.toMatchObject({
-      code: "PLATFORM_UNAVAILABLE", cause,
+      code: "PLATFORM_UNAVAILABLE",
+      cause,
     });
     await vi.runAllTimersAsync();
     await result;
@@ -104,7 +168,7 @@ describe("local admission transport", () => {
       )
     );
     const result = expect(client().admit(input)).rejects.toMatchObject({
-      code: "BILLING_LIMIT_REACHED",
+      code: "RATE_LIMITED",
       details,
     });
     await vi.runAllTimersAsync();
