@@ -69,7 +69,7 @@ import { redactForLog } from "./redact-log-message.js";
 
 import { cleanConvexMessage, preconditionDetails, billingDetails, retryAfterFromResetsAt, retryAfterFromMs } from "./convex-error-details.js";
 import { translatePlatformFeeError } from "./platform-fee-errors.js";
-import { convexErrorData } from "./convex-error-data.js";
+import { convexErrorData, type TranslateConvexWriteErrorOptions } from "./convex-error-data.js";
 
 /**
  * The five `gate_waiver_*` refusal codes, mirrored from `GATE_WAIVER_REFUSAL`

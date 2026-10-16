@@ -30,6 +30,44 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("local admission transport", () => {
+  it("rejects cached prompt coverage at expiry without making a request", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const guard = new AttemptStepGuard(client(), {
+      ...receipt,
+      state: "active",
+      grantedSteps: 200,
+      expiresAt: Date.now() + 1000,
+    });
+    await guard.beforePrompt();
+    vi.advanceTimersByTime(1000);
+    await expect(guard.beforePrompt()).rejects.toMatchObject({
+      code: "ADMISSION_CLOSED",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rejects an active receipt that expired before its response arrived", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      Response.json({ ...receipt, expiresAt: Date.now() - 1 })
+    ));
+    await expect(client().admit(input)).rejects.toMatchObject({
+      code: "ADMISSION_CLOSED",
+    });
+  });
+  it("does not retry exhausted quota as a transient rate limit", async () => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({
+      code: "RATE_LIMITED",
+      message: "Daily eval quota reached.",
+      details: { code: "billing_limit_reached", resetsAt: Date.now() + 60_000 },
+    }, { status: 429 }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(client().admit(input)).rejects.toMatchObject({
+      code: "BILLING_LIMIT_REACHED",
+      details: { code: "billing_limit_reached" },
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("requires credentials without making a request", () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);

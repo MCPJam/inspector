@@ -501,6 +501,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
  * and it belongs in the map above with a method written for it.
  */
 const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
+  "post /projects/{projectId}/eval-ingest/admit":
+    "Execution authorization is owned by EvalAdmissionClient, which binds retries to the same attempt; a raw PlatformApiClient method would duplicate that protocol.",
+  "post /projects/{projectId}/eval-ingest/ensure-steps":
+    "Prompt coverage is owned by AttemptStepGuard through EvalAdmissionClient; callers must use its serialized ordinals rather than extend grants independently.",
   "get /projects/{projectId}/agent/jobs/{jobId}":
     "Durable headless-agent transport used by surface-core for Slack/Discord; the SDK does not expose the service-credential-only agent entry point.",
   "post /projects/{projectId}/agent/jobs/{jobId}/cancel":

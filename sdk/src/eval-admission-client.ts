@@ -39,6 +39,16 @@ export class EvalAdmissionError extends SdkError {
   }
 }
 
+function assertActiveReceipt(receipt: AdmissionReceipt): void {
+  if (receipt.state !== "active" || receipt.expiresAt <= Date.now())
+    throw new EvalAdmissionError(
+      "This run authorization has expired or closed. Start a new run.",
+      "ADMISSION_CLOSED",
+      undefined,
+      receipt
+    );
+}
+
 export class EvalAdmissionClient {
   constructor(
     private readonly config: {
@@ -94,16 +104,18 @@ export class EvalAdmissionClient {
           body: JSON.stringify(payload),
         },
         (body) => receiptSchema.parse(body),
-        (error) => error.status === 429 || error.status >= 500
+        (error) =>
+          (error.status === 429 &&
+            !(
+              typeof error.body.details === "object" &&
+              error.body.details !== null &&
+              "code" in error.body.details &&
+              error.body.details.code === "billing_limit_reached"
+            )) ||
+          error.status >= 500
       );
       signal?.throwIfAborted();
-      if (receipt.state !== "active")
-        throw new EvalAdmissionError(
-          "This run authorization has expired or closed. Start a new run.",
-          "ADMISSION_CLOSED",
-          undefined,
-          receipt
-        );
+      assertActiveReceipt(receipt);
       return receipt;
     } catch (error) {
       signal?.throwIfAborted();
@@ -123,6 +135,8 @@ export class EvalAdmissionClient {
             ? "CLIENT_UPGRADE_REQUIRED"
             : error.status === 409
             ? String(details?.code ?? "ADMISSION_CONFLICT")
+            : error.status === 429 && details?.code === "billing_limit_reached"
+            ? "BILLING_LIMIT_REACHED"
             : error.status === 401
             ? "CREDENTIALS_MISSING"
             : error.status === 404
@@ -170,6 +184,7 @@ export class AttemptStepGuard {
     const target = ++this.ordinal;
     this.pending = this.pending.then(async () => {
       this.signal?.throwIfAborted();
+      assertActiveReceipt(this.receipt);
       if (target > this.granted) {
         const grant = await this.client.ensureSteps(
           this.receipt.attemptId!,
@@ -185,6 +200,7 @@ export class AttemptStepGuard {
         this.granted = grant.grantedSteps;
       }
       this.signal?.throwIfAborted();
+      assertActiveReceipt(this.receipt);
     });
     return this.pending;
   }

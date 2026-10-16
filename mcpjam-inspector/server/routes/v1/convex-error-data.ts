@@ -61,5 +61,3 @@ export interface TranslateConvexWriteErrorOptions {
    */
   adminFailureIsForbidden?: boolean;
 }
-
-import { cleanConvexMessage, preconditionDetails, billingDetails, retryAfterFromResetsAt, retryAfterFromMs } from "./convex-error-details.js";
