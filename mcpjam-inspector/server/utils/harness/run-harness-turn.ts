@@ -2038,21 +2038,19 @@ export async function runHarnessTurn(
       ) {
         const owner: HarnessOwnerRef = {
           projectId,
-          // Lane key dimension: a Codex turn and a Claude Code turn for the same
-          // chat occupy SEPARATE lanes, so neither can resume the other's
-          // sidecar. The backend keys (projectId, harnessId, ownerType, ownerKey).
           harnessId: harnessAdapter.id,
           ownerType,
           chatSessionId,
           ...(scenarioId ? { scenarioId } : {}),
-          // Swarm continuity lane — the run + pinned host key the owner so a
-          // multi-turn swarm harness session resumes ONLY its own sidecar.
+          ...(harnessExecutionTarget?.study ? {
+            localStudySessionId: harnessExecutionTarget.localStudySessionId,
+            machineId: harnessExecutionTarget.machineId,
+            keyId: harnessExecutionTarget.localStudyKeyId,
+          } : {}),
           ...(ownerType === "swarm-chat" && journeyRunId
             ? { journeyRunId }
             : {}),
           ...(ownerType === "swarm-chat" && hostId ? { hostId } : {}),
-          // Phase 3: route owner resolution through resolveExecutionAccess so a
-          // host-funded swarm guest can claim/resume their OWN lane.
           ...(executionScope ? { executionScope } : {}),
         };
         const leaseId = crypto.randomUUID();
@@ -4468,6 +4466,11 @@ export async function runHarnessTurn(
               ...(continuity.owner.scenarioId
                 ? { scenarioId: continuity.owner.scenarioId }
                 : {}),
+              ...(continuity.owner.localStudySessionId ? {
+                localStudySessionId: continuity.owner.localStudySessionId,
+                machineId: continuity.owner.machineId,
+                keyId: continuity.owner.keyId,
+              } : {}),
               leaseId: continuity.leaseId,
               expectedStateVersion: continuity.stateVersion,
               harnessId: harnessAdapter.id,
@@ -4475,10 +4478,7 @@ export async function runHarnessTurn(
               resumeState: org.commitState(resumeState),
               computerId,
               runtimeFingerprint,
-              // Persist only a real (ok:true) hash; omit on failure so the
-              // backend keeps the prior stored hash (no empty-hash regression).
               ...(skillsHash !== undefined ? { skillsHash } : {}),
-              // Phase 3: the ingest commit re-resolves the guest's own lane.
               ...(executionScope ? { executionScope } : {}),
             };
           } else {

@@ -35,6 +35,9 @@ export type HarnessOwnerRef = {
   ownerType: HarnessOwnerType;
   chatSessionId?: string;
   scenarioId?: string;
+  localStudySessionId?: string;
+  machineId?: string;
+  keyId?: string;
   /** Swarm (`swarm-chat`) owner key dimensions: the journey run + pinned host.
    *  REQUIRED alongside `chatSessionId` when `ownerType === "swarm-chat"` — the
    *  backend `resolveHarnessOwnerScope` throws without them. Spread into every
@@ -72,6 +75,9 @@ export type HarnessSessionCommitPayload = {
   ownerType: "direct-chat" | "scenario-chat" | "swarm-chat";
   chatSessionId: string;
   scenarioId?: string;
+  localStudySessionId?: string;
+  machineId?: string;
+  keyId?: string;
   leaseId: string;
   expectedStateVersion: number;
   harnessId: Harness;

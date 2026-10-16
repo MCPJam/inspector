@@ -1,3 +1,4 @@
+import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
@@ -402,23 +403,7 @@ interface PersistChatSessionOptions {
    * the transcript write). Opaque pass-through. `harnessId` is a lane-key
    * dimension (the backend keys per-harness), so it carries the full union.
    */
-  harnessSessionCommit?: {
-    // `swarm-chat` is the journey-runner continuity lane; the backend derives
-    // its journeyRunId/hostId from this ingest's top-level swarm attribution.
-    ownerType: "direct-chat" | "scenario-chat" | "swarm-chat";
-    chatSessionId: string;
-    scenarioId?: string;
-    leaseId: string;
-    expectedStateVersion: number;
-    // The SDK union itself, not a copy: a stale copy here silently drops the
-    // session commit for a harness the rest of the stack already runs.
-    harnessId: Harness;
-    harnessSessionId: string;
-    resumeState: unknown;
-    computerId: string;
-    runtimeFingerprint: string;
-    skillsHash?: string;
-  };
+  harnessSessionCommit?: HarnessSessionCommitPayload;
   hostConfig?: DirectHostConfig;
   /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
   forwardHeaders?: Record<string, string>;

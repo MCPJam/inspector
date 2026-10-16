@@ -50,6 +50,7 @@ async function verifyReservation(
       "This local authorization belongs to another study conversation.",
     );
   }
+  return keyId;
 }
 
 /** Resolves only an explicit study request; a missing grant never falls back. */
@@ -84,7 +85,7 @@ export async function resolveLocalStudyTarget(args: StudyTargetRequest) {
     throw new Error(
       "This study authorization belongs to another installation.",
     );
-  await verifyReservation(args, reservationId, machineId);
+  const keyId = await verifyReservation(args, reservationId, machineId);
   const grant = await verifyLocalHarnessGrant(target.grantToken, {
     scope: "attended",
     study: args.study,
@@ -110,6 +111,7 @@ export async function resolveLocalStudyTarget(args: StudyTargetRequest) {
     ...target,
     study: args.study,
     localStudySessionId: reservationId,
+    localStudyKeyId: keyId,
     localSessionId: workspace.localSessionId,
   };
 }

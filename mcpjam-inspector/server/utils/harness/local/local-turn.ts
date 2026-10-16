@@ -113,6 +113,7 @@ export interface LocalHarnessExecutionTarget {
   /** Server-validated study ownership and backend reservation. */
   study?: LocalStudyGrantBinding;
   localStudySessionId?: string;
+  localStudyKeyId?: string;
   /** Server scheduler-owned session identity; never parsed from renderer input. */
   localSessionId?: string;
   targetId?: string;
@@ -254,7 +255,6 @@ function asLocalHarnessId(harnessId: string): SupportedLocalHarnessId | null {
     ? (harnessId as SupportedLocalHarnessId)
     : null;
 }
-
 /**
  * The child's model credential: the gateway, and a capability that means
  * nothing anywhere else. The lease is not in here and never will be.

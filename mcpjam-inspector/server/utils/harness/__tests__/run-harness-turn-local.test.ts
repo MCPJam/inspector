@@ -1,3 +1,4 @@
+import { registerLocalStudyContinuityTests } from "./local-study-continuity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../local/pack-bootstrap.js", () => ({ withLocalRuntimeBootstrap: async (adapter: unknown) => adapter }));
 const parkRegistry = vi.hoisted(() => ({ invalidate: vi.fn(async (_id: string, _reason: string) => {}) }));
@@ -6,10 +7,10 @@ vi.mock("../local/approval-park.js", async (importOriginal) => ({
   invalidateParkedLocalSession: parkRegistry.invalidate,
 }));
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-
 const harnessState = vi.hoisted(() => ({
   streamParts: [] as Array<Record<string, unknown> & { type?: string }>,
   finalText: "Done",
+  onStreamStart: undefined as (() => void) | undefined,
   stateExists: true,
   invokeSandboxCallback: false,
   supportsSkills: false,
@@ -32,7 +33,6 @@ const harnessState = vi.hoisted(() => ({
     destroy: vi.fn(async () => {}),
   },
 }));
-
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
     constructor(options: any) { harnessState.agentOptions = options; }
@@ -49,6 +49,7 @@ vi.mock("@ai-sdk/harness/agent", () => ({
     continueStream = async () => this.stream();
     stream = vi.fn(async () => ({
       fullStream: (async function* () {
+        harnessState.onStreamStart?.();
         if (harnessState.streamError) throw harnessState.streamError;
         for (const part of harnessState.streamParts) {
           yield part;
@@ -60,7 +61,6 @@ vi.mock("@ai-sdk/harness/agent", () => ({
   // WS3: no trailing tool-approval-response parts in these prompts.
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => harnessState.continuations),
 }));
-
 vi.mock("../registry.js", () => ({
   // Broker-only credential delivery (COMP-23): the turn builds dummy auth
   // pointed at the broker proxy; there is no per-adapter resolveAuth anymore.
@@ -92,32 +92,27 @@ vi.mock("../registry.js", () => ({
     ...harnessState.adapterOverrides,
   })),
 }));
-
 vi.mock("../resolve-sandbox.js", () => ({
   resolveHarnessSandbox: vi.fn(async () => ({
     computerId: "computer-1",
     sandboxId: "sandbox-1",
   })),
 }));
-
 vi.mock("../e2b-sandbox-provider.js", () => ({
   createE2BHarnessSandboxProvider: vi.fn(() => ({
     sandboxId: "sandbox-1",
   })),
 }));
-
 vi.mock("../runtime-skills.js", () => ({
   frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   fetchRuntimeSkillFiles: vi.fn(async () => ({ ok: true, files: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
-
 vi.mock("../reconcile-skill-dirs.js", () => ({
   reconcileSkillDirs: vi.fn(async () => {}),
   appendManagedSkills: vi.fn(async () => {}),
 }));
-
 vi.mock("../harness-session-state.js", async (importOriginal) => {
   const actual = await importOriginal<
     typeof import("../harness-session-state.js")
@@ -136,7 +131,6 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
     releaseHarnessSessionState: vi.fn(async () => {}),
   };
 });
-
 vi.mock("../harness-model-broker.js", () => ({
   reserveHarnessBox: vi.fn(async () => ({ ok: true })),
   renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
@@ -147,7 +141,6 @@ vi.mock("../harness-model-broker.js", () => ({
     proxyBaseUrl: "https://broker.example",
   })),
 }));
-
 vi.mock("../mcp-config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../mcp-config.js")>();
   return {
@@ -157,7 +150,6 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
     harnessServerKeyToName: vi.fn((key: string) => key),
   };
 });
-
 import {
   runHarnessTurn,
 } from "../run-harness-turn";
@@ -165,7 +157,6 @@ import { claimHarnessSessionState, commitHarnessSessionState, releaseHarnessSess
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { prepareLocalHarnessTurn } from "../local/local-turn.js";
 import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
-
 vi.mock("../local/local-turn.js", () => ({
   prepareLocalHarnessTurn: vi.fn(async () => ({
     ok: true,
@@ -182,7 +173,6 @@ vi.mock("../local/local-turn.js", () => ({
     },
   })),
 }));
-
 vi.mock("../local/evidence.js", () => ({
   localHarnessEvidence: vi.fn(async () => ({
     decision: { captureEnabled: false, gradingSource: "narration" },
@@ -260,6 +250,7 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.invokeSandboxCallback = false;
     harnessState.supportsSkills = false;
     harnessState.streamError = null;
+    harnessState.onStreamStart = undefined;
     harnessState.liveApprovalRuntime = false;
     harnessState.adapterOverrides = {};
     harnessState.park.mockReset().mockReturnValue(true);
@@ -280,6 +271,14 @@ describe("runHarnessTurn local continuity", () => {
     } as any);
   });
   afterEach(() => vi.unstubAllEnvs());
+  registerLocalStudyContinuityTests({
+    options: overrides => baseOptions(overrides) as MCPJamHandlerOptions,
+    selectHarness: id => { harnessState.adapterOverrides = { id }; },
+    onStreamStart: callback => { harnessState.onStreamStart = callback; },
+    createdSessions: () => harnessState.create.mock.calls,
+    teardownCalls: () => harnessState.teardown.mock.calls.length,
+    stoppedSessions: () => harnessState.session.stop.mock.calls.length + harnessState.session.destroy.mock.calls.length,
+  });
 
   function resume(awaitingApproval = false) {
     vi.mocked(claimHarnessSessionState).mockResolvedValue({
@@ -598,6 +597,7 @@ describe("runHarnessTurn local continuity", () => {
       expect(releaseHarnessSessionState).toHaveBeenCalled();
       expect(saved).toBe(firstState);
       harnessState.streamError = null;
+    harnessState.onStreamStart = undefined;
       persistFails = false;
 
       const result = await runHarnessTurn(options as any, "ui");

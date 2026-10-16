@@ -84,6 +84,7 @@ it("requires both the actual backend reservation and separately minted study gra
     actingUserId: "actual-user",
     study,
     localStudySessionId: "reservation",
+    localStudyKeyId: "key",
     localSessionId: "private-session",
   });
   expect(mocks.reservation).toHaveBeenCalledWith("bearer", {
