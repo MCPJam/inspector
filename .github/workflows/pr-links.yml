@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
   pull-requests: write
 
 concurrency:
@@ -39,6 +40,13 @@ jobs:
             // new one on every push. Keep the string stable.
             const MARKER = '<!-- pr-links-advisory -->';
             const FIELDS = ['Kestral task', 'Spec', 'Plan'];
+            // The label tracks the TASK only, not Spec or Plan. A task is the
+            // one field with no legitimate "None:" answer, so it is the only
+            // one worth seeing from the PR list without opening anything.
+            const LABEL = 'needs-task';
+            const LABEL_COLOR = 'e3a21a';
+            const LABEL_DESC =
+              'PR description does not name a Kestral task. Advisory; edit the description to clear it.';
             const body = context.payload.pull_request.body || '';
             const lines = body.split(/\r?\n/);
 
@@ -75,16 +83,21 @@ jobs:
             const TASK_REF = /app\.kestral\.ai\/\S*\/task\/\S+|\b[A-Z]{2,6}-\d+\b/;
 
             const missing = [];
+            // Tracked separately from `missing` because only this one drives
+            // the label; a blank Spec or Plan is a legitimate state.
+            let taskMissing = false;
             for (const name of FIELDS) {
               const value = valueOf(name);
               const isTask = name === 'Kestral task';
 
               if (value === null) {
                 missing.push(`\`${name}\` — line is not in the description`);
+                if (isTask) taskMissing = true;
                 continue;
               }
               if (!value) {
                 missing.push(`\`${name}\` — empty, or still the placeholder`);
+                if (isTask) taskMissing = true;
                 continue;
               }
 
@@ -94,6 +107,7 @@ jobs:
               // does not pass here even though it passes for Spec and Plan.
               if (isTask) {
                 if (!TASK_REF.test(value)) {
+                  taskMissing = true;
                   missing.push(
                     `\`${name}\` — needs a task id or link (e.g. \`PP-96\`). ` +
                       `Every change gets a task, including a one-line fix; ` +
@@ -113,6 +127,51 @@ jobs:
             }
 
             const { owner, repo } = context.repo;
+
+            // Add or remove the label. Wrapped so a labels failure can never
+            // fail the job — this check is advisory and must stay green.
+            async function syncLabel(issue_number) {
+              try {
+                if (taskMissing) {
+                  try {
+                    await github.rest.issues.getLabel({
+                      owner,
+                      repo,
+                      name: LABEL,
+                    });
+                  } catch (e) {
+                    if (e.status !== 404) throw e;
+                    // First PR to need it creates it, so the label does not
+                    // have to be set up by hand in either repo.
+                    await github.rest.issues.createLabel({
+                      owner,
+                      repo,
+                      name: LABEL,
+                      color: LABEL_COLOR,
+                      description: LABEL_DESC,
+                    });
+                  }
+                  await github.rest.issues.addLabels({
+                    owner,
+                    repo,
+                    issue_number,
+                    labels: [LABEL],
+                  });
+                  return;
+                }
+                await github.rest.issues.removeLabel({
+                  owner,
+                  repo,
+                  issue_number,
+                  name: LABEL,
+                });
+              } catch (e) {
+                // 404 on removal just means it was not there.
+                if (e.status !== 404) {
+                  core.warning(`label sync skipped: ${e.message}`);
+                }
+              }
+            }
             const issue_number = context.payload.pull_request.number;
             const comments = await github.paginate(
               github.rest.issues.listComments,
@@ -138,6 +197,7 @@ jobs:
                   body: `${MARKER}\n✅ Task, spec and plan are all filled in.`,
                 });
               }
+              await syncLabel(issue_number);
               core.info('All three fields are filled.');
               return;
             }
@@ -153,6 +213,14 @@ jobs:
               'Edit the description to add them. Where one genuinely does not ' +
                 'apply — a one-line fix, a revert, a dependency bump — write ' +
                 '`None: <reason>` and this comment will clear.',
+              ...(taskMissing
+                ? [
+                    '',
+                    `The \`${LABEL}\` label is on this PR so it is visible from ` +
+                      'the PR list. It comes off by itself once the description ' +
+                      'names a task — no need to remove it by hand.',
+                  ]
+                : []),
             ].join('\n');
 
             if (existing) {
@@ -170,4 +238,9 @@ jobs:
                 body: text,
               });
             }
-            core.info(`Flagged ${missing.length} field(s).`);
+            await syncLabel(issue_number);
+            core.info(
+              `Flagged ${missing.length} field(s); task ${
+                taskMissing ? 'missing' : 'present'
+              }.`,
+            );
