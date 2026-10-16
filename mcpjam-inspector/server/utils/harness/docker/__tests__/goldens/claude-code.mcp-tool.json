@@ -138,7 +138,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-3>",
-              "toolName": "ping"
+              "toolName": "ping",
+              "toolOrigin": "mcp"
             },
             {
               "category": "llm",
@@ -267,7 +268,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-3>",
-              "toolName": "ping"
+              "toolName": "ping",
+              "toolOrigin": "mcp"
             },
             {
               "category": "llm",
