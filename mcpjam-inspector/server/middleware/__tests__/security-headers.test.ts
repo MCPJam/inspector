@@ -407,15 +407,8 @@ describe("buildReportOnlyContentSecurityPolicy", () => {
       "https://snippet.meticulous.ai",
       "https://browser.sentry-cdn.com",
     ]);
-    expect(policy.get("style-src")).toEqual([
-      "'self'",
-      "'unsafe-inline'",
-      "https://fonts.googleapis.com",
-    ]);
-    expect(policy.get("font-src")).toEqual([
-      "https://fonts.gstatic.com",
-      "data:",
-    ]);
+    expect(policy.get("style-src")).toEqual(["'self'", "'unsafe-inline'"]);
+    expect(policy.get("font-src")).toEqual(["'self'", "data:"]);
     expect(policy.get("connect-src")).toEqual(
       expect.arrayContaining([
         "'self'",

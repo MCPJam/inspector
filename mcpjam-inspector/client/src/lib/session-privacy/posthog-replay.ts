@@ -3,10 +3,7 @@
  * options), its `set_config` argument, and `syncSessionRecording`, which
  * starts and stops the recorder.
  */
-import {
-  scrubCredentialsInText,
-  type LocationLike,
-} from "../../../../shared/credential-urls";
+import type { LocationLike } from "../../../../shared/credential-urls";
 import {
   MASKED_REPLAY_BLOCKED_TAGS,
   maskReplayAttribute,
@@ -24,61 +21,34 @@ import { maskReplayRequest, maskReplayRequestFull } from "./replay-network";
 export type PostHogProfile = "full" | "masked";
 
 /**
- * Replay masking at `full`.
- *
- * `maskAllInputs` covers every `<input>`. The inspector also renders secrets
- * as TEXT — OAuth access/refresh tokens in the flow logger, the one-time API
- * key reveal, the SDK quickstart snippet — which no input-level masking can
- * reach. Those already carry this repo's `ph-no-capture rr-block` +
- * `data-ph-no-capture` convention for autocapture, so text under the SAME
- * attribute is masked in replay too: annotate a credential surface once and
- * it is opted out of autocapture AND masked in replay.
+ * Marks a surface that shows a secret as TEXT: OAuth tokens in the flow
+ * logger, the one-time API key reveal, the SDK quickstart snippet. Those
+ * surfaces carry `ph-no-capture rr-block` alongside it for autocapture, and
+ * Sentry Replay blocks the attribute. PostHog replay masks every text node,
+ * so it needs no rule of its own here.
  */
 export const SECRET_SURFACE_ATTRIBUTE = "data-ph-no-capture";
 
-function isUnderSecretSurface(element: Element | null | undefined): boolean {
-  try {
-    return !!element?.closest?.(`[${SECRET_SURFACE_ATTRIBUTE}]`);
-  } catch {
-    return true;
-  }
-}
+/** Media rrweb would otherwise copy into the replay. Blocked at every level. */
+export const MASKED_BLOCK_SELECTOR = [...MASKED_REPLAY_BLOCKED_TAGS]
+  .map((tag) => (tag === "image" ? "svg image" : tag))
+  .join(", ");
 
 /**
- * `maskTextFn` at `full`. rrweb calls it only for text its `maskTextSelector`
- * matches, so the full profile matches every node (`*`) and decides here:
- * text under a secret surface is masked as before, and every other text node
- * keeps its words but loses any credential URL in it — a share link shown on
- * the page is a credential whatever the level.
+ * Replay at `full`. The page's words stay out at every level, as in Sentry
+ * Replay: a UI bug is reproduced from layout and actions, and on-screen text
+ * here is people's conversations and tool results. `full` differs from
+ * `masked` in network detail: request URLs keep their path, minus
+ * credentials.
  */
-export function maskReplayTextFull(text: string, element?: Element): string {
-  if (isUnderSecretSurface(element)) return maskReplayText(text);
-  // No pre-check here: the registry runs its own (`/`, `=`, `%` or `:`), and
-  // a narrower copy let `encodeURIComponent("/results/<token>")` through.
-  return scrubCredentialsInText(text);
-}
-
-/** `maskTextFn` at `masked`: every text node, as `maskTextSelector: "*"` did. */
-export function maskReplayTextMasked(text: string): string {
-  return maskReplayText(text);
-}
-
-/**
- * `maskAttributeFn` at `full`: attribute values keep their content, minus any
- * credential URL — the Preview iframe's `src`, a share button's `href` or
- * `title`.
- */
-export function maskReplayAttributeFull(_name: string, value: string): string {
-  return scrubCredentialsInText(value);
-}
-
 export const SESSION_RECORDING_OPTIONS = {
   maskAllInputs: true,
   maskInputOptions: { password: true },
-  // Every text node goes through `maskTextFn`; see `maskReplayTextFull`.
+  // `*` masks every text node; rrweb leaves `<style>` text alone.
   maskTextSelector: "*",
-  maskTextFn: maskReplayTextFull,
-  maskAttributeFn: maskReplayAttributeFull,
+  maskTextFn: maskReplayText,
+  blockSelector: MASKED_BLOCK_SELECTOR,
+  maskAttributeFn: maskReplayAttribute,
   // Explicit at every level: `false` wins over the project's remote network
   // settings, so a dashboard toggle can never widen what is captured.
   recordHeaders: false,
@@ -90,17 +60,12 @@ export const SESSION_RECORDING_OPTIONS = {
   compress_events: false,
 } as const;
 
-/** Media rrweb would otherwise copy into the replay. Blocked at `masked`. */
-export const MASKED_BLOCK_SELECTOR = [...MASKED_REPLAY_BLOCKED_TAGS]
-  .map((tag) => (tag === "image" ? "svg image" : tag))
-  .join(", ");
-
 export const MASKED_SESSION_RECORDING_OPTIONS = {
   maskAllInputs: true,
   maskInputOptions: { password: true },
   // `*` masks every text node; rrweb leaves `<style>` text alone.
   maskTextSelector: "*",
-  maskTextFn: maskReplayTextMasked,
+  maskTextFn: maskReplayText,
   blockSelector: MASKED_BLOCK_SELECTOR,
   maskAttributeFn: maskReplayAttribute,
   // `false` wins over the project's remote network settings.
@@ -146,9 +111,9 @@ export function posthogPrivacyConfig(
         capture_exceptions: isErrorCaptureSurface(),
         disable_surveys: false,
         enable_heatmaps: true,
-        // `null`, not `undefined` (posthog-js skips undefined in set_config):
-        // console capture follows the project setting, as it always has.
-        enable_recording_console_log: null,
+        // Pinned rather than left to the project setting: console output can
+        // carry the same conversation text the replay masks.
+        enable_recording_console_log: false,
         mask_all_text: false,
         mask_all_element_attributes: false,
       };

@@ -30,6 +30,7 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
+import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
 
 /** Where a connectable server in the resolved set came from. */
 export type RuntimeServerSource = "host_or_group" | "plugin" | "override";
@@ -383,7 +384,9 @@ export async function resolveEnvironmentForRuntime(
   } catch (error) {
     throw translateEnvironmentRuntimeError(error);
   }
-  return assertRuntimeInvariants(raw);
+  const spec = assertRuntimeInvariants(raw);
+  markOnboardingPhase("admission");
+  return spec;
 }
 
 // ── Projections used by the executing caller ────────────────────────────────

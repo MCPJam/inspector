@@ -1,8 +1,11 @@
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
-import type { PluginOnboardingSpec } from "@/shared/plugin-onboarding";
-import { createThreadAppApi } from "@/components/host-workspace/thread-app-api";
+import {
+  createPluginOnboardingRun,
+  createPluginOnboardingSend,
+  type SendPluginOnboarding,
+} from "./playground-onboarding";
 import { useComposerMentions } from "@/components/host-workspace/use-composer-mentions";
 import { usePluginIconsById } from "@/components/host-workspace/plugin-icon-directory";
 import { useProjectPlugins } from "@/hooks/usePluginImportApi";
@@ -10,10 +13,7 @@ import { usePlaygroundHiddenEnvironment } from "@/hooks/use-playground-hidden-en
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { ActivePluginServer } from "@/hooks/useActivePlugins";
 import { buildExtensionServers } from "./playground-plugins";
-import {
-  isRunnablePlugin,
-  skippedPluginsForNotice,
-} from "@/lib/plugins/hidden-environment";
+import { skippedPluginsForNotice } from "@/lib/plugins/hidden-environment";
 import {
   showPluginNotice,
   type PluginNoticeData,
@@ -1463,6 +1463,7 @@ export function PlaygroundMain({
                   hiddenEnvironment: {
                     environmentId: hiddenEnvironment.environmentId,
                     pluginServerIds: hiddenEnvironment.pluginServerIds,
+                    venue: hiddenEnvironment.venue,
                     recover: hiddenEnvironment.recover,
                   },
                 }
@@ -1891,15 +1892,7 @@ export function PlaygroundMain({
   const runPluginOnboardingRef = useRef<RunPluginOnboarding>(async () => {
     throw new Error("Onboarding is unavailable");
   });
-  const sendPluginOnboardingRef = useRef<
-    (
-      spec: PluginOnboardingSpec,
-      serverId: string,
-      threadId: string,
-      ownerKey: string,
-      sourceSignal?: AbortSignal,
-    ) => Promise<void>
-  >(async () => {
+  const sendPluginOnboardingRef = useRef<SendPluginOnboarding>(async () => {
     throw new Error("Onboarding is unavailable");
   });
   // In the Playground, extension state lives in ExtensionWorkspaceProvider
@@ -5033,7 +5026,7 @@ export function PlaygroundMain({
       // Compare columns each run a plain client turn: say so on the first
       // send of each comparison. Keyed by the chat and by the compare lanes'
       // generation, which a new or cleared chat moves on.
-      if (hiddenEnvironment.plugins.some(isRunnablePlugin)) {
+      if (hiddenEnvironment.hasRunnablePlugins) {
         showPluginNotice(
           `${chatSessionId}:compare:${multiModelSessionGeneration}`,
           { kind: "off", reason: "compare" },
@@ -5046,7 +5039,7 @@ export function PlaygroundMain({
     },
     [
       trackSendMessage,
-      hiddenEnvironment.plugins,
+      hiddenEnvironment.hasRunnablePlugins,
       chatSessionId,
       multiModelSessionGeneration,
     ],
@@ -5361,122 +5354,27 @@ export function PlaygroundMain({
     }
   }, [submitComposer, appMessageDraft.hold]);
 
-  sendPluginOnboardingRef.current = async (
-    spec,
-    serverId,
-    threadId,
-    ownerKey,
-    sourceSignal,
-  ) => {
-    const target = onboardingLiveRef.current;
-    const isCurrent = () => {
-      const live = onboardingLiveRef.current;
-      return (
-        !sourceSignal?.aborted &&
-        live.ownerKey === ownerKey &&
-        live.scope?.threadId === threadId &&
-        live.servers.some((server) => server.serverId === serverId)
-      );
-    };
-    if (
-      !target.scope ||
-      !isCurrent() ||
-      isCompareMode ||
-      sendBlocked ||
-      composerDisabled ||
-      conversationSendBlockedRef.current
-    ) {
-      throw new Error("Onboarding is unavailable");
-    }
-    if (
-      !(await ensureSelectedServerReadyForChat()) ||
-      !isCurrent() ||
-      !(await ensureThreadReadyForSend()) ||
-      !isCurrent() ||
-      !(await ensureLocalHarnessReadyForSend()) ||
-      !isCurrent()
-    ) {
-      throw new Error("Onboarding was cancelled");
-    }
-    const timeout = AbortSignal.timeout(30_000);
-    const signal = sourceSignal
-      ? AbortSignal.any([sourceSignal, timeout])
-      : timeout;
-    // Re-read the same saved source under the destination's current authority.
-    // The source menu's cached bytes are never used to send a new chat turn.
-    const fresh = await createThreadAppApi(target.scope).onboarding(
-      serverId,
-      true,
-      signal,
-    );
-    if (
-      !isCurrent() ||
-      !fresh.spec ||
-      !fresh.available ||
-      fresh.spec.pluginVersionId !== spec.pluginVersionId ||
-      fresh.spec.bundleHash !== spec.bundleHash ||
-      fresh.spec.skill.skillId !== spec.skill.skillId ||
-      fresh.spec.skill.contentHash !== spec.skill.contentHash
-    ) {
-      throw new Error("Onboarding changed. Open its menu again.");
-    }
-    const skillMessages = buildSkillContextMessages([
-      {
-        name: fresh.spec.skill.name,
-        description: fresh.spec.skill.description,
-        content: fresh.spec.skill.content,
-        path: fresh.spec.onboarding.modelRef,
-      },
-    ]) as UIMessage[];
-    setMessages((previous) => [...previous, ...skillMessages]);
-    trackSendMessage({ single_model_send: true });
-    const sent = await sendMessage({
-      text: "Run the attached onboarding skill.",
-      metadata: outgoingSenderMetadata,
-    });
-    if (!sent) throw new Error("Onboarding could not start");
-    onFirstMessageSent?.();
+  const onboardingDeps = {
+    onboardingLiveRef,
+    isCompareMode,
+    sendBlocked,
+    composerDisabled,
+    conversationSendBlockedRef,
+    ensureSelectedServerReadyForChat,
+    ensureThreadReadyForSend,
+    ensureLocalHarnessReadyForSend,
+    setMessages,
+    trackSendMessage,
+    sendMessage,
+    outgoingSenderMetadata,
+    onFirstMessageSent,
+    extensionThreadTransition,
   };
-  runPluginOnboardingRef.current = async (
-    spec,
-    conversation,
-    signal,
-    serverId,
-  ) => {
-    const source = onboardingLiveRef.current;
-    const isSourceCurrent = () =>
-      !signal.aborted &&
-      !!source.scope &&
-      onboardingLiveRef.current.ownerKey === source.ownerKey &&
-      onboardingLiveRef.current.scope?.threadId === source.scope.threadId;
-    try {
-      if (
-        !source.scope ||
-        !isSourceCurrent() ||
-        sendBlocked ||
-        isCompareMode ||
-        conversationSendBlockedRef.current
-      )
-        throw new Error("Onboarding is unavailable");
-      const targetThread =
-        conversation === "new"
-          ? await extensionThreadTransition.begin(isSourceCurrent)
-          : source.scope.threadId;
-      if (!targetThread) throw new Error("Onboarding was cancelled");
-      // A successful ordinary new-chat transition ends the source lifetime.
-      // The destination is freshly admitted above; do not reuse its aborted signal.
-      await sendPluginOnboardingRef.current(
-        spec,
-        serverId,
-        targetThread,
-        source.ownerKey,
-        conversation === "current" ? signal : undefined,
-      );
-    } catch (error) {
-      toast.error("Couldn’t run onboarding. Try again.");
-      throw error;
-    }
-  };
+  sendPluginOnboardingRef.current = createPluginOnboardingSend(onboardingDeps);
+  runPluginOnboardingRef.current = createPluginOnboardingRun({
+    ...onboardingDeps,
+    sendPluginOnboardingRef,
+  });
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
