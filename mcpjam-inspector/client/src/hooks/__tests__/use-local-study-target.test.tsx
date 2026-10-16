@@ -83,3 +83,14 @@ it("keeps an explicit local request blocked after expiry or failure", async () =
   act(() => result.current.useCloud());
   expect(result.current.requested).toBe(false);
 });
+
+it("keeps authorization visible for revocation when cloud is selected", async () => {
+  const { result } = renderHook(() => useLocalStudyTarget(identity));
+  await act(() => result.current.setup("chat"));
+  act(() => result.current.useCloud());
+  expect(result.current.requested).toBe(false);
+  expect(result.current.ready).toEqual(ready);
+  expect(result.current.resolveSendTarget("chat")).toBeNull();
+  act(() => result.current.clearGrant());
+  expect(result.current.ready).toBeUndefined();
+});

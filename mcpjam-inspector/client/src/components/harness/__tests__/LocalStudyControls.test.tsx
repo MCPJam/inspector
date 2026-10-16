@@ -13,6 +13,7 @@ const controller = (
   error: null,
   setup,
   useCloud: cloud,
+  clearGrant: vi.fn(),
   resolveSendTarget: () => null,
   ...extra,
 });
@@ -35,9 +36,10 @@ it("asks permission and performs setup only after explicit confirmation", async 
     "saved model source and billing",
   );
   expect(screen.getByRole("dialog")).toHaveTextContent("press Send");
+  expect(screen.getByRole("dialog")).toHaveTextContent("Revoke local access");
   expect(setup).not.toHaveBeenCalled();
   fireEvent.click(
-    screen.getByRole("button", { name: "Authorize local preview" }),
+    screen.getByRole("button", { name: "Authorize this conversation" }),
   );
   await waitFor(() => expect(setup).toHaveBeenCalledWith("chat"));
 });
@@ -80,4 +82,96 @@ it("prevents switching venues during an active turn", () => {
   );
   expect(screen.getByRole("button", { name: "Local setup" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Use cloud" })).toBeDisabled();
+});
+
+const localReady = {
+  state: "ready" as const,
+  token: "token",
+  expiresAt: "2999-01-01T00:00:00Z",
+  workspaceDisplayRoot: "~/study",
+  target: {
+    kind: "local-native" as const,
+    harnessId: "codex" as const,
+    machineId: "machine",
+    workspaceGrantId: "workspace",
+    runtimeId: "runtime",
+    permissionProfile: "workspace-edits",
+    policyVersion: "policy",
+    localStudySessionId: "reservation",
+  },
+};
+const revoke = vi.fn(async () => {});
+const revocation = {
+  key: "scope",
+  pending: false,
+  revoked: false,
+  cleanupComplete: false,
+  error: null,
+  revoke,
+};
+it("can revoke an active or expired local study grant", () => {
+  render(
+    <LocalStudyControls
+      controller={controller({
+        requested: true,
+        chatSessionId: "chat",
+        ready: localReady,
+      })}
+      revocation={revocation}
+      chatSessionId="chat"
+      disabled
+    />,
+  );
+  const button = screen.getByRole("button", { name: "Revoke local access" });
+  expect(button).not.toBeDisabled();
+  fireEvent.click(button);
+  expect(revoke).toHaveBeenCalledWith("reservation");
+});
+it("reports incomplete stopping and offers cleanup retry", () => {
+  render(
+    <LocalStudyControls
+      controller={controller()}
+      revocation={{
+        ...revocation,
+        reservationId: "reservation",
+        revoked: true,
+      }}
+      chatSessionId="chat"
+      disabled={false}
+    />,
+  );
+  expect(screen.getByText(/has not confirmed stopping/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retry cleanup" }));
+  expect(revoke).toHaveBeenCalledWith(undefined);
+  expect(
+    screen.getByRole("button", { name: "Run on this machine" }),
+  ).toBeDisabled();
+});
+it("never offers another conversation's grant for revocation", () => {
+  render(
+    <LocalStudyControls
+      controller={controller({ chatSessionId: "other", ready: localReady })}
+      revocation={revocation}
+      chatSessionId="chat"
+      disabled={false}
+    />,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Revoke local access" }),
+  ).not.toBeInTheDocument();
+});
+
+it("shows cloud without offering local execution to an ineligible study actor", () => {
+  render(
+    <LocalStudyControls
+      controller={controller()}
+      chatSessionId="chat"
+      disabled={false}
+      allowSetup={false}
+    />,
+  );
+  expect(screen.getByText("Cloud")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Run on this machine" }),
+  ).not.toBeInTheDocument();
 });

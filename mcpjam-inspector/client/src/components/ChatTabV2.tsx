@@ -1,3 +1,5 @@
+import { useLocalStudyAdmission } from "@/hooks/use-local-study-admission";
+import { useLocalStudyRevocation } from "@/hooks/use-local-study-revocation";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { LOCAL_CODEX_FEATURE_FLAG } from "@/hooks/useCodexHostEnabled";
 import { useLocalStudyTarget } from "@/hooks/use-local-study-target";
@@ -260,9 +262,10 @@ export function ChatTabV2({
   const { signUp, user } = useInspectorAuth();
   const localRollout = useLocalHarnessEnabled();
   const localCodexRollout = useFeatureFlagEnabled(LOCAL_CODEX_FEATURE_FLAG) === true;
-  const localStudyEnabled = localStudyPreview && !HOSTED_MODE && (localRollout || localCodexRollout) && Boolean(user);
   const localStudy = useLocalStudyTarget({ userId: user?.id, scenarioId: hostedContext?.scenarioId, accessVersion: hostedContext?.accessVersion });
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const admission = useLocalStudyAdmission({ key: localStudy.key, enabled: !HOSTED_MODE && isConvexAuthenticated && Boolean(user) && (localRollout || localCodexRollout), scenarioId: hostedContext?.scenarioId, accessVersion: hostedContext?.accessVersion });
+  const localStudyEnabled = !HOSTED_MODE && Boolean(user) && (((localRollout || localCodexRollout) && (localStudyPreview || admission?.modelSourceReady === true)) || localStudy.requested);
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
@@ -1827,6 +1830,7 @@ export function ChatTabV2({
     stop,
   });
   const historyRailStreaming = isStreamingActive;
+  const studyRevocation = useLocalStudyRevocation(JSON.stringify([localStudy.key, chatSessionId]), () => { const stopLocal = localStudy.requested; localStudy.clearGrant(); if (stopLocal) stopActiveChat(); });
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive,
     composerDisabled: submitBlocked || scenarioComposerBlocked || (localStudyEnabled && localStudy.requested && !localStudy.resolveSendTarget(chatSessionId ?? undefined)),
@@ -2388,11 +2392,7 @@ export function ChatTabV2({
     setFileAttachments([]);
   };
 
-  /**
-   * What Up/Down walk through in the composer (BB-183): this thread's own user
-   * messages, newest first. Derived from what is already on screen — no store,
-   * no query, and it follows a session restored from the history rail for free.
-   */
+  /** Composer history follows the current thread. */
   const chatInputHistory = useMemo(
     () => collectInputHistory(messages),
     [messages],
@@ -2504,7 +2504,7 @@ export function ChatTabV2({
 
   const surface = (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
-      {localStudyEnabled && <LocalStudyControls controller={localStudy} chatSessionId={chatSessionId} disabled={isStreamingActive} />}
+      {(hostedScenarioId || localStudyEnabled || Boolean(studyRevocation.reservationId)) && <LocalStudyControls controller={localStudy} revocation={studyRevocation} allowSetup={localStudyEnabled} chatSessionId={chatSessionId} disabled={isStreamingActive} />}
       <ResizablePanelGroup
         direction="horizontal"
         className="flex-1 min-h-0 h-full"

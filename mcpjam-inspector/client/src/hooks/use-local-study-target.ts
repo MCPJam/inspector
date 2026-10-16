@@ -38,6 +38,7 @@ export function useLocalStudyTarget(identity: StudyIdentity) {
   const state = stored.key === key ? stored : initial(key);
   const resolveSendTarget = (chatSessionId?: string) => {
     if (
+      !state.requested ||
       !state.ready ||
       state.chatSessionId !== chatSessionId ||
       Date.parse(state.ready.expiresAt) <= Date.now()
@@ -94,6 +95,10 @@ export function useLocalStudyTarget(identity: StudyIdentity) {
     setup,
     resolveSendTarget,
     useCloud: () => {
+      attempt.current++;
+      setStored({ ...state, requested: false, loading: false, error: null });
+    },
+    clearGrant: () => {
       attempt.current++;
       setStored(initial(key));
     },

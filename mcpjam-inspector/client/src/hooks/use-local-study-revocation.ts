@@ -29,9 +29,9 @@ export function useLocalStudyRevocation(
   const revoke = async (id = state.reservationId) => {
     if (!id) return;
     const attempt = ++sequence.current;
-    clearLocalTarget();
     update({ ...initial(key), pending: true, reservationId: id });
     try {
+      clearLocalTarget();
       const result = await revokeLocalStudyAccess(id);
       if (current.current === key && sequence.current === attempt)
         update({
