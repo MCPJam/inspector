@@ -43,6 +43,11 @@ const config = {
   scenarioId: "study",
   accessVersion: 2,
   harness: "codex",
+  modelSelection: {
+    source: "hosted",
+    modelId: "openai/gpt-5",
+    fallback: { model: "none", provider: "none" },
+  },
   accessKind: "project_member",
   actorKind: "signedIn",
   executionScope: { kind: "project", projectId: "canonical-project" },
@@ -132,4 +137,19 @@ it("preserves the existing local client authorization requirement", async () => 
   await expect(setupLocalStudyPreview(args)).rejects.toThrow(
     "Set up Codex from Add client",
   );
+});
+
+it.each([
+  undefined,
+  { source: "legacy", modelId: "openai/gpt-5" },
+  { modelId: "openai/gpt-5" },
+])("requires an explicitly saved model source: %j", async (modelSelection) => {
+  mocks.config.mockResolvedValue({
+    ok: true,
+    config: { ...config, modelSelection },
+  });
+  await expect(setupLocalStudyPreview(args)).rejects.toThrow(
+    "Choose and save a model source",
+  );
+  expect(mocks.reserve).not.toHaveBeenCalled();
 });

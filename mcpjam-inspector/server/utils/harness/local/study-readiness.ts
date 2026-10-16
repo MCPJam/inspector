@@ -1,3 +1,4 @@
+import { validateModelSelection } from "@mcpjam/sdk";
 import { fetchScenarioRuntimeConfig } from "../../scenario-runtime-config.js";
 import { registerLocalInstance } from "../harness-model-broker.js";
 import { getLocalMachineId } from "./grants.js";
@@ -37,6 +38,15 @@ async function resolveStudyPreview(args: StudySetupRequest) {
   ) {
     throw new Error(
       "Local study preview requires a current project member and a supported client.",
+    );
+  }
+  const selection = validateModelSelection(config.modelSelection);
+  if (
+    !selection.ok ||
+    !["hosted", "org"].includes(selection.selection.source)
+  ) {
+    throw new Error(
+      "Choose and save a model source for this client before running locally.",
     );
   }
   const actor = await verifyLocalHarnessMember(

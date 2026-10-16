@@ -109,6 +109,7 @@ export type ScenarioRuntimeConfig = RuntimeExecutionFields & {
   scenarioId: string;
   accessVersion: number;
   modelId: string;
+  modelSelection?: unknown;
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;

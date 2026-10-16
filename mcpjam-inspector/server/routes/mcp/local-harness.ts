@@ -79,6 +79,7 @@ import {
 import { registerLocalInstance } from "../../utils/harness/harness-model-broker.js";
 import { stopAllLocalHarnessSessions } from "../../utils/harness/local/session-registry.js";
 
+import localStudy from "./local-study.js";
 const localHarness = new Hono();
 
 /**
@@ -97,8 +98,7 @@ function harnessIdOf(value: unknown): SupportedLocalHarnessId | null {
 }
 
 /**
- * The ONE answer to "which harness" for a request, read by the rollout gate
- * and by every handler alike. A POST names it in the JSON body only (a query
+ * The rollout gate and handlers share this selection. POST reads JSON (a query
  * parameter on a POST is ignored), a GET in the query only: were the gate and
  * a handler to read different places, `?harnessId=claude-code` with a Codex
  * body would pass Claude Code's rollout and then install or authorize Codex.
@@ -138,8 +138,8 @@ localHarness.use("/*", async (c, next) => {
   return next();
 });
 
-// Setup is the Add client action. Readiness renews execution credentials from
-// durable server state and can resume an interrupted, already-authorized install.
+localHarness.route("/study", localStudy);
+// Setup records intent; readiness renews credentials and resumes installation.
 for (const path of ["/setup", "/readiness"] as const) {
   localHarness.post(path, async (c) => {
     if (!isAllowedRequestOrigin(c.req.header("origin"))) return c.json({ error: "Origin not allowed" }, 403);
