@@ -1,5 +1,6 @@
 // Must stay first; OAuth modules and SDKs retain window.fetch at load time.
 import "./lib/install-telemetry-transport";
+import { resolveProtectedPreviewAppUrl } from "./lib/oauth/constants";
 import {
   consumeAccessLinkFromUrl,
   watchForAccessLinks,
@@ -84,104 +85,108 @@ function FirstRunOAuthReturnBootScreen({ serverName }: { serverName: string }) {
   );
 }
 
-consumeAccessLinkFromUrl();
-watchForAccessLinks();
-// After the access link, whose `#token=` it would otherwise drop wholesale
-// along with any other fragment it cannot vouch for; before anything that
-// reads the callback (the desktop hand-off just below) and before
-// `app-bootstrap` starts Sentry and PostHog, so the one-time code never
-// reaches either. See `oauth-callback-inbox.ts`.
-captureOAuthCallbackFromUrl();
-
-// Reads the answer from the inbox, so the browser tab's URL is already
-// scrubbed whether or not this load hands off to the desktop app.
-const electronMcpReturnUrl = buildElectronMcpCallbackUrl();
-if (electronMcpReturnUrl) {
-  // The browser owns no app session here. Do not initialize auth, Convex,
-  // guest sessions or onboarding before handing this result to Electron.
-  appRoot.render(
-    <StrictMode>
-      <OAuthDesktopReturnNotice returnToElectronUrl={electronMcpReturnUrl} />
-    </StrictMode>,
-  );
+const protectedPreviewUrl = resolveProtectedPreviewAppUrl(window.location);
+if (protectedPreviewUrl) {
+  // Canonicalize before any origin-local state is created.
+  window.location.replace(protectedPreviewUrl);
 } else {
-  const firstRunOAuthReturnServerName = getFirstRunOAuthReturnServerName();
-  let oauthBootRoot: Root | null = null;
-  let oauthBootHost: HTMLDivElement | null = null;
-  let oauthBootTimeoutId: number | null = null;
-  let oauthBootErrorObserver: MutationObserver | null = null;
-  const dismissOAuthBootScreen = () => {
-    if (oauthBootTimeoutId !== null) {
-      window.clearTimeout(oauthBootTimeoutId);
-      oauthBootTimeoutId = null;
-    }
-    window.removeEventListener(
-      FIRST_RUN_OAUTH_OVERLAY_READY_EVENT,
-      dismissOAuthBootScreen,
-    );
-    oauthBootErrorObserver?.disconnect();
-    oauthBootErrorObserver = null;
-    const rootToUnmount = oauthBootRoot;
-    const hostToRemove = oauthBootHost;
-    oauthBootRoot = null;
-    oauthBootHost = null;
-    // The ready event fires from the app root's layout effect. Unmounting a
-    // different root in that commit triggers a React cross-root warning.
-    queueMicrotask(() => {
-      rootToUnmount?.unmount();
-      hostToRemove?.remove();
-    });
-  };
+  consumeAccessLinkFromUrl();
+  watchForAccessLinks();
+  captureOAuthCallbackFromUrl();
 
-  if (firstRunOAuthReturnServerName) {
-    oauthBootHost = document.createElement("div");
-    oauthBootHost.id = "first-run-oauth-boot-overlay";
-    document.body.append(oauthBootHost);
-    oauthBootRoot = createRoot(oauthBootHost);
-    oauthBootRoot.render(
-      <FirstRunOAuthReturnBootScreen
-        serverName={firstRunOAuthReturnServerName}
-      />,
-    );
-    window.addEventListener(
-      FIRST_RUN_OAUTH_OVERLAY_READY_EVENT,
-      dismissOAuthBootScreen,
-      { once: true },
-    );
-    const appHost = document.getElementById("root");
-    if (appHost) {
-      oauthBootErrorObserver = new MutationObserver(() => {
-        // An auth/bootstrap error must not sit behind the callback card.
-        if (appHost.querySelector('[role="alert"]')) dismissOAuthBootScreen();
-      });
-      oauthBootErrorObserver.observe(appHost, { childList: true, subtree: true });
-    }
-    // If auth or project setup fails before the onboarding overlay mounts,
-    // expose the app's recovery UI instead of covering it indefinitely.
-    oauthBootTimeoutId = window.setTimeout(dismissOAuthBootScreen, 20_000);
-  }
-
-  // Keep the callback card in its own root while the real app hydrates below
-  // it. The onboarding overlay dismisses that card only after its equivalent
-  // connection surface is mounted, avoiding a modal -> loader -> modal flash.
-  appRoot.render(<LoadingScreen />);
-  void import("./app-bootstrap").catch((error: unknown) => {
-    console.error("MCPJam app bootstrap failed", error);
-    dismissOAuthBootScreen();
+  const electronMcpReturnUrl = buildElectronMcpCallbackUrl();
+  if (electronMcpReturnUrl) {
+    // The browser owns no app session here. Do not initialize auth, Convex,
+    // guest sessions or onboarding before handing this result to Electron.
     appRoot.render(
-      <div
-        role="alert"
-        className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-4 text-foreground"
-      >
-        <p>MCPJam couldn't load. Check your connection and try again.</p>
-        <Button onClick={() => window.location.reload()}>Reload MCPJam</Button>
-      </div>,
+      <StrictMode>
+        <OAuthDesktopReturnNotice returnToElectronUrl={electronMcpReturnUrl} />
+      </StrictMode>,
     );
-    // Reporting must not prevent recovery if the network also blocks this chunk.
-    void import("./lib/error-reporting")
-      .then(({ reportCaught }) =>
-        reportCaught(error, { source: "app_bootstrap" }),
-      )
-      .catch(() => {});
-  });
+  } else {
+    const firstRunOAuthReturnServerName = getFirstRunOAuthReturnServerName();
+    let oauthBootRoot: Root | null = null;
+    let oauthBootHost: HTMLDivElement | null = null;
+    let oauthBootTimeoutId: number | null = null;
+    let oauthBootErrorObserver: MutationObserver | null = null;
+    const dismissOAuthBootScreen = () => {
+      if (oauthBootTimeoutId !== null) {
+        window.clearTimeout(oauthBootTimeoutId);
+        oauthBootTimeoutId = null;
+      }
+      window.removeEventListener(
+        FIRST_RUN_OAUTH_OVERLAY_READY_EVENT,
+        dismissOAuthBootScreen,
+      );
+      oauthBootErrorObserver?.disconnect();
+      oauthBootErrorObserver = null;
+      const rootToUnmount = oauthBootRoot;
+      const hostToRemove = oauthBootHost;
+      oauthBootRoot = null;
+      oauthBootHost = null;
+      // The ready event fires from the app root's layout effect. Unmounting a
+      // different root in that commit triggers a React cross-root warning.
+      queueMicrotask(() => {
+        rootToUnmount?.unmount();
+        hostToRemove?.remove();
+      });
+    };
+
+    if (firstRunOAuthReturnServerName) {
+      oauthBootHost = document.createElement("div");
+      oauthBootHost.id = "first-run-oauth-boot-overlay";
+      document.body.append(oauthBootHost);
+      oauthBootRoot = createRoot(oauthBootHost);
+      oauthBootRoot.render(
+        <FirstRunOAuthReturnBootScreen
+          serverName={firstRunOAuthReturnServerName}
+        />,
+      );
+      window.addEventListener(
+        FIRST_RUN_OAUTH_OVERLAY_READY_EVENT,
+        dismissOAuthBootScreen,
+        { once: true },
+      );
+      const appHost = document.getElementById("root");
+      if (appHost) {
+        oauthBootErrorObserver = new MutationObserver(() => {
+          // An auth/bootstrap error must not sit behind the callback card.
+          if (appHost.querySelector('[role="alert"]')) dismissOAuthBootScreen();
+        });
+        oauthBootErrorObserver.observe(appHost, {
+          childList: true,
+          subtree: true,
+        });
+      }
+      // If auth or project setup fails before the onboarding overlay mounts,
+      // expose the app's recovery UI instead of covering it indefinitely.
+      oauthBootTimeoutId = window.setTimeout(dismissOAuthBootScreen, 20_000);
+    }
+
+    // Keep the callback card in its own root while the real app hydrates below
+    // it. The onboarding overlay dismisses that card only after its equivalent
+    // connection surface is mounted, avoiding a modal -> loader -> modal flash.
+    appRoot.render(<LoadingScreen />);
+    void import("./app-bootstrap").catch((error: unknown) => {
+      console.error("MCPJam app bootstrap failed", error);
+      dismissOAuthBootScreen();
+      appRoot.render(
+        <div
+          role="alert"
+          className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-4 text-foreground"
+        >
+          <p>MCPJam couldn't load. Check your connection and try again.</p>
+          <Button onClick={() => window.location.reload()}>
+            Reload MCPJam
+          </Button>
+        </div>,
+      );
+      // Reporting must not prevent recovery if the network also blocks this chunk.
+      void import("./lib/error-reporting")
+        .then(({ reportCaught }) =>
+          reportCaught(error, { source: "app_bootstrap" }),
+        )
+        .catch(() => {});
+    });
+  }
 }

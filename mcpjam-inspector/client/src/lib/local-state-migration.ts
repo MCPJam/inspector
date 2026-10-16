@@ -29,6 +29,7 @@ import {
   type ServerWithName,
 } from "@/state/app-types";
 import { isProjectClientConfig } from "@/lib/client-config";
+import { readStoredOAuthConfig } from "@/lib/oauth/mcp-oauth";
 
 export const MIGRATION_FLAG_KEY = "mcp-inspector-migrated-to-convex";
 
@@ -492,22 +493,10 @@ function readLegacyOAuthForServer(name: string): {
   let oauthResourceUrl: string | undefined;
   let registryServerId: string | undefined;
   let useRegistryOAuthProxy: boolean | undefined;
-  try {
-    const raw = localStorage.getItem(`mcp-oauth-config-${name}`);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object") {
-        if (typeof parsed.resourceUrl === "string")
-          oauthResourceUrl = parsed.resourceUrl;
-        if (typeof parsed.registryServerId === "string")
-          registryServerId = parsed.registryServerId;
-        if (typeof parsed.useRegistryOAuthProxy === "boolean")
-          useRegistryOAuthProxy = parsed.useRegistryOAuthProxy;
-      }
-    }
-  } catch {
-    // ignore
-  }
+  const storedOAuthConfig = readStoredOAuthConfig(name);
+  oauthResourceUrl = storedOAuthConfig.resourceUrl;
+  registryServerId = storedOAuthConfig.registryServerId;
+  useRegistryOAuthProxy = storedOAuthConfig.useRegistryOAuthProxy;
 
   let serverUrl: string | undefined;
   try {
