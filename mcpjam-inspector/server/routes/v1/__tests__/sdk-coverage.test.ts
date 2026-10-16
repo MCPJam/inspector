@@ -551,6 +551,10 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "An interactive OAuth probe for the Inspector UI's connect flow, whose result only makes sense to something that can then open a browser.",
   "post /projects/{projectId}/servers/{serverId}/oauth/import-tokens":
     "Imports an OAuth grant obtained out of band. Deliberately hard to reach: an SDK method would make bulk credential injection the easy path.",
+  "post /projects/{projectId}/eval-ingest/admit":
+    "Owned by the internal EvalAdmissionClient; runtime activation remains gated.",
+  "post /projects/{projectId}/eval-ingest/ensure-steps":
+    "Owned by AttemptStepGuard through EvalAdmissionClient, alongside initial admission.",
   "post /projects/{projectId}/eval-ingest/capabilities":
     "Authenticated SDK reporting capability negotiation is owned by the reporter.",
   "post /projects/{projectId}/eval-ingest/runs/evaluations":

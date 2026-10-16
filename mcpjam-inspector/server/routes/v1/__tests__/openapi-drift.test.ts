@@ -84,6 +84,9 @@ const BODYLESS_WRITES = new Set([
 // The test enforces both directions — a new undocumented route fails, and a
 // baselined route that gets documented (or deleted) must lose its entry here.
 const KNOWN_UNDOCUMENTED = new Set([
+  // Internal SDK admission protocol; activation and runtime integration remain gated.
+  "post /projects/{projectId}/eval-ingest/admit",
+  "post /projects/{projectId}/eval-ingest/ensure-steps",
   // Deliberately internal: executing an action a human approved in Slack. The
   // route is reachable ONLY with the bot's `slk_` service credential (see
   // SLACK_ALLOWED_PATHS), its `actionId` is minted server-side per proposal,
