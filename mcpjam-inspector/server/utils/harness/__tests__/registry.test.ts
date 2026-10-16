@@ -185,7 +185,7 @@ describe("harness registry", () => {
     // unknown, which only Playground chat may run.
     expect(cc.modelSupport("anthropic/claude-fable-5")).toMatchObject({
       status: "unknown",
-      reason: `not verified for claude-code ${HARNESS_PINNED_VERSIONS["claude-code"]}`,
+      reason: `This model has not been verified for the Claude Code client (${HARNESS_PINNED_VERSIONS["claude-code"]}). Choose a verified model or another client.`,
     });
     expect(cc.supportsModel("anthropic/claude-fable-5")).toBe(false);
     expect(
