@@ -338,12 +338,19 @@ export function rethrowIfBillingError(errorBody: unknown): void {
         "billing_feature_not_included" ||
       (billingPayload as { code?: unknown }).code === "platform_fee_refused")
   ) {
-    const message = (billingPayload as { message?: unknown }).message;
+    const domainMessage = (billingPayload as { message?: unknown }).message;
+    const message =
+      typeof domainMessage === "string"
+        ? domainMessage
+        : (errorBody as { message?: unknown }).message;
     notifyMCPJamLimitError({
       details: errorBody,
       message: typeof message === "string" ? message : undefined,
     });
-    throw new ConvexError(billingPayload as Value);
+    throw new ConvexError({
+      ...billingPayload,
+      ...(typeof message === "string" ? { message } : {}),
+    } as Value);
   }
 }
 

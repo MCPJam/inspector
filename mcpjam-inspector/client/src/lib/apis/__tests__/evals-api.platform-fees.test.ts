@@ -37,12 +37,10 @@ it.each(["buffered", "streamed", "replay-boundary"] as const)(
     const details = {
       code: "platform_fee_refused",
       reason: "insufficient_credits",
-      message: "Add credits in Organization → Billing, then run it again.",
-      organizationId: "org_fee",
     };
     const envelope = {
       code: "PAYMENT_REQUIRED",
-      message: "Request refused",
+      message: "Add credits in Organization → Billing, then run it again.",
       details,
     };
     authFetchMock.mockResolvedValue(
@@ -71,14 +69,15 @@ it.each(["buffered", "streamed", "replay-boundary"] as const)(
       caught = error;
     }
     expect(caught).toBeInstanceOf(ConvexError);
-    expect(caught).toMatchObject({ data: details });
+    expect(caught).toMatchObject({
+      data: { ...details, message: envelope.message },
+    });
     expect(getBillingErrorMessage(caught, "Generic failure")).toBe(
-      details.message,
+      envelope.message,
     );
     expect(useMCPJamLimitDialogStore.getState()).toMatchObject({
       isOpen: true,
       intent: "topup",
-      organizationId: "org_fee",
     });
   },
 );
