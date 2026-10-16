@@ -132,6 +132,33 @@ export function ErrorBox({
     </div>;
   }
 
+  if (refusalCode === "free_tier_model_restricted") {
+    return (
+      <div
+        role="alert"
+        className="flex flex-col gap-2 rounded border border-warning bg-warning/20 p-4 text-warning-foreground"
+      >
+        <p>
+          This model is not included in the free allowance. Upgrade your plan or
+          use an organization API key.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {canTopUp && onTopUp && (
+            <Button variant="outline" onClick={onTopUp}>
+              {creditActionLabel}
+            </Button>
+          )}
+          {onManageOrgProviders && (
+            <Button variant="outline" onClick={onManageOrgProviders}>
+              {MANAGE_AI_PROVIDERS}
+            </Button>
+          )}
+        </div>
+        {!onManageOrgProviders && <p>{ASK_ORG_ADMIN}.</p>}
+      </div>
+    );
+  }
+
   const orgKeysCode = orgKeysRefusalCodeOf(refusalCode);
   if (orgKeysCode) {
     // The organization requires its own provider keys (or its provider

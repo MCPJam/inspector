@@ -91,9 +91,7 @@ export const HARNESS_BOX_MAX_HEARTBEAT_MS = 4 * 60 * MINUTE_MS;
 const RELEASE_REQUEST_TIMEOUT_MS = 15_000;
 
 const DATA_PLANE_REQUIREMENT =
-  "but this server isn't a computers data plane (deployed servers bootstrap " +
-  "credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) " +
-  "— it could provision a sandbox but not exec or release it.";
+  "but cloud execution is unavailable. Contact your organization admin to enable it.";
 
 /**
  * Can this server run a disposable box end to end? Provisioning needs only a

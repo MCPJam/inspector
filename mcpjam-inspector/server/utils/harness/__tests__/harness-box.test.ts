@@ -346,8 +346,8 @@ describe("harnessBoxUnavailableReason", () => {
     dataPlaneConfiguredMock.mockReturnValue(false);
     const reason = harnessBoxUnavailableReason("This eval runs on a harness");
     expect(reason).toMatch(
-      /^This eval runs on a harness, but this server isn't a computers data plane/,
+      /^This eval runs on a harness, but cloud execution is unavailable/,
     );
-    expect(reason).toContain("INSPECTOR_SERVICE_TOKEN");
+    expect(reason).toContain("Contact your organization admin");
   });
 });

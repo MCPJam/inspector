@@ -32,8 +32,8 @@ describe("harnessModelSupport — seed evidence", () => {
     });
     expect(verdict.status).toBe("unsupported");
     expect(verdict.reason).toBe(
-      "the Claude Code harness can't run this host's model — pick a " +
-        "Claude Code-compatible model to run the real runtime",
+      "The Claude Code client cannot run this model. " +
+        "Choose a model supported by Claude Code or another client.",
     );
     expect(verdict.evidence?.familyPattern).toBe(".*");
   });
@@ -45,7 +45,7 @@ describe("harnessModelSupport — seed evidence", () => {
       modelId: "anthropic/claude-haiku-4.5",
     });
     expect(verdict.status).toBe("unsupported");
-    expect(verdict.reason).toMatch(/Codex harness can't run this host's model/);
+    expect(verdict.reason).toMatch(/Codex client cannot run this model/);
   });
 
   it("claude-code has no verified native id for claude-fable-5", () => {
@@ -56,7 +56,7 @@ describe("harnessModelSupport — seed evidence", () => {
     });
     expect(verdict.status).toBe("unknown");
     expect(verdict.reason).toBe(
-      `not verified for claude-code ${PINNED_CLAUDE_CODE}`,
+      `This model has not been verified for the Claude Code client (${PINNED_CLAUDE_CODE}). Choose a verified model or another client.`,
     );
     expect(verdict.evidence?.familyPattern).toBe("^anthropic/");
   });
@@ -68,7 +68,7 @@ describe("harnessModelSupport — seed evidence", () => {
       modelId: "openai/gpt-5.6",
     });
     expect(verdict.status).toBe("unknown");
-    expect(verdict.reason).toBe("not verified for codex 0.160.0");
+    expect(verdict.reason).toBe("This model has not been verified for the Codex client (0.160.0). Choose a verified model or another client.");
   });
 
   it("codex 0.149.1 runs gpt-5.6 without tools, so it is unsupported", () => {
@@ -158,8 +158,8 @@ describe("harnessModelSupport — semantics", () => {
       expect(verdict.status).toBe("unknown");
       expect(verdict.reason).toBe(
         runtimeVersion === "nightly"
-          ? "not verified for codex nightly"
-          : "not verified for codex (unknown version)",
+          ? "This model has not been verified for the Codex client (nightly). Choose a verified model or another client."
+          : "This model has not been verified for the Codex client ((unknown version)). Choose a verified model or another client.",
       );
     }
   });
@@ -184,7 +184,7 @@ describe("harnessModelSupport — semantics", () => {
     });
     expect(verdict).toEqual({
       status: "unknown",
-      reason: "not verified for some-new-harness 1.0.0",
+      reason: "This model has not been verified for the some-new-harness client (1.0.0). Choose a verified model or another client.",
     });
   });
 
@@ -374,15 +374,15 @@ describe("harnessNoRunnableModelReason", () => {
 describe("harnessOrgProviderUnsupportedReason", () => {
   it("does not advertise platform funding when the organization policy is unknown", () => {
     expect(harnessOrgProviderUnsupportedReason("codex", null)).toBe(
-      "the Codex harness requires a supported model and an eligible OpenAI connection",
+      "The Codex client needs a supported model and an eligible OpenAI connection. Choose another model or contact your organization admin.",
     );
   });
   it("offers MCPJam models only while the key policy is off", () => {
     expect(harnessOrgProviderUnsupportedReason("codex")).toBe(
-      "the Codex harness runs MCPJam-provided models or your organization's OpenAI key",
+      "The Codex client needs an MCPJam model or your organization's OpenAI key. Choose a supported model.",
     );
     expect(
       harnessOrgProviderUnsupportedReason("codex", { requireOrgKeys: true }),
-    ).toBe("the Codex harness runs only on your organization's OpenAI key");
+    ).toBe("The Codex client requires your organization's OpenAI key. Choose an organization model or contact your organization admin.");
   });
 });

@@ -93,7 +93,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     );
     expect(result.ok).toBe(false);
     expect((result as { reason: string }).reason).toContain(
-      "enterprise-managed host",
+      "authorization policy",
     );
   });
 
@@ -113,7 +113,7 @@ describe("checkHarnessRuntimeAvailable", () => {
       args({ harnessId: "codex", model: { id: "anthropic/claude-haiku-4.5" } }),
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/can't run this host's model/);
+    if (!r.ok) expect(r.reason).toMatch(/cannot run this model/);
   });
 
   // The gpt-5.6 line is hosted, Codex-mappable by the OLD `gpt-5` prefix rule,
@@ -135,7 +135,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.kind).toBe("model-unsupported");
-      expect(r.reason).toMatch(/can't run this host's model/);
+      expect(r.reason).toMatch(/cannot run this model/);
     }
   });
 
@@ -158,7 +158,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     delete process.env.E2B_API_KEY;
     const r = checkHarnessRuntimeAvailable(args());
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/computers data plane/);
+    if (!r.ok) expect(r.reason).toMatch(/cloud computer/);
   });
 
   it("allows an approval host on Claude Code (WS3: native tool approval)", () => {
@@ -206,7 +206,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     delete process.env.E2B_API_KEY;
     const r = checkHarnessRuntimeAvailable(args({ harnessId: "codex" }));
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/Codex harness/);
+    if (!r.ok) expect(r.reason).toMatch(/Codex client/);
   });
 
   it("allows a Codex host with selected MCP servers (host-executed delivery)", () => {
@@ -285,7 +285,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
     const r = checkHarnessRuntimeAvailable(args());
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/MCPJAM_HARNESS_BROKER_DELIVERY/);
+    if (!r.ok) expect(r.reason).toMatch(/cannot access model credentials/);
   });
 
   it.each(["unset", "true"] as const)(
@@ -604,7 +604,7 @@ describe("harnessToolApprovalRefusalReason", () => {
             hasSelectedMcpServers,
             unattended: true,
           }),
-        ).toMatch(/can't pause for tool approval in an unattended run/);
+        ).toMatch(/cannot wait for tool approval in evals or swarms/);
       }
     },
   );
@@ -640,7 +640,7 @@ describe("harnessToolApprovalRefusalReason", () => {
         requireToolApproval: true,
         hasSelectedMcpServers: false,
       }),
-    ).toMatch(/doesn't support interactive tool approval/);
+    ).toMatch(/does not support interactive tool approval/);
   });
 
   it("allows Codex under approval, servers or not", () => {
@@ -696,7 +696,7 @@ describe("harnessToolApprovalRefusalReason", () => {
         requireToolApproval: true,
         hasSelectedMcpServers: true,
       }),
-    ).toMatch(/MCP-server tools/);
+    ).toMatch(/MCP server tools/);
     // …and only once a server is actually attached.
     expect(
       harnessToolApprovalRefusalReason({
@@ -725,7 +725,7 @@ describe("harnessToolApprovalRefusalReason", () => {
         requireToolApproval: true,
         hasSelectedMcpServers: true,
       }),
-    ).toMatch(/MCP-server tools/);
+    ).toMatch(/MCP server tools/);
     expect(codex.supportsMcpToolApproval).toBe(false);
     expect(
       harnessToolApprovalRefusalReason({
@@ -747,8 +747,8 @@ describe("version-keyed model support (evidence table)", () => {
       ok: false,
       kind: "model-unsupported",
       reason:
-        "the Claude Code harness can't run this host's model — pick a " +
-        "Claude Code-compatible model to run the real runtime",
+        "The Claude Code client cannot run this model. " +
+        "Choose a model supported by Claude Code or another client.",
     });
   });
 
@@ -764,7 +764,7 @@ describe("version-keyed model support (evidence table)", () => {
       expect(r.ok).toBe(false);
       if (!r.ok) {
         expect(r.kind).toBe("model-unverified");
-        expect(r.reason).toMatch(/^not verified for claude-code \d+\.\d+\.\d+$/);
+        expect(r.reason).toMatch(/has not been verified for the Claude Code client/);
       }
     }
   });
@@ -779,7 +779,7 @@ describe("version-keyed model support (evidence table)", () => {
     );
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.warning).toMatch(/^not verified for claude-code /);
+      expect(r.warning).toMatch(/has not been verified for the Claude Code client/);
     }
   });
 
@@ -919,7 +919,7 @@ describe("an effort the adapter applies but the model does not list", () => {
         reasoningEffort: "xhigh",
         modelEfforts: ["minimal", "low", "medium", "high"],
       }),
-    ).toContain('doesn\'t accept the "xhigh"');
+    ).toContain('does not support the "xhigh"');
     expect(
       harnessReasoningEffortRefusalReason({
         adapter,
@@ -1084,7 +1084,7 @@ describe("organization-key selections", () => {
       selection: orgSel("anthropic/claude-sonnet-4.5"),
       keyPolicy: { requireOrgKeys: true },
     });
-    expect(r.refusal?.reason).toBe("the Codex harness runs only on your organization's OpenAI key");
+    expect(r.refusal?.reason).toBe("The Codex client requires your organization's OpenAI key. Choose an organization model or contact your organization admin.");
   });
 
   it("reads evidence on the CANONICAL id, not the org row's native one", () => {

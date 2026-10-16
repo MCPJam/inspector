@@ -301,11 +301,8 @@ export function externalAccountHostModelRefusalReason(args: {
   if (adapter.modelAccess !== "external-account") return undefined;
   if (isRuntimeChosenModelSentinel(args.modelId)) return undefined;
   return (
-    `the ${adapter.displayName} harness chooses its own model on your ` +
-    `own account, so this host cannot pin one — it carries ` +
-    `"${args.modelId}", which the runtime would ignore while the session ` +
-    `recorded it as the model that ran. Reset this host's model, or pick a ` +
-    "harness that runs the model you chose"
+    `The ${adapter.displayName} client chooses its own model and cannot use "${args.modelId}". ` +
+    "Reset this client's model selection or choose a client that supports your model."
   );
 }
 
@@ -382,23 +379,22 @@ export function harnessReasoningEffortRefusalReason(args: {
   if (adapter.supportedReasoningEfforts.includes(reasoningEffort)) {
     if (modelEfforts && !modelEfforts.includes(reasoningEffort)) {
       return (
-        `this model doesn't accept the "${reasoningEffort}" reasoning effort` +
+        `This model does not support the "${reasoningEffort}" reasoning effort.` +
         (modelEfforts.length > 0
-          ? ` — it lists ${modelEfforts.map((level) => `"${level}"`).join(", ")}`
-          : " — it lists none")
+          ? ` Choose ${modelEfforts.map((level) => `"${level}"`).join(", ")}.`
+          : " Remove the reasoning effort from this model.")
       );
     }
     return undefined;
   }
   const name = adapter.displayName;
   return adapter.supportedReasoningEfforts.length === 0
-    ? `the ${name} harness can't apply a reasoning effort yet ` +
-        `("${reasoningEffort}") — remove the effort from this model, or use ` +
-        "the emulated engine"
-    : `the ${name} harness can't apply the "${reasoningEffort}" reasoning ` +
-        `effort — it supports ${adapter.supportedReasoningEfforts
+    ? `The ${name} client does not support the "${reasoningEffort}" reasoning effort. ` +
+        "Remove the reasoning effort from this model or choose another client."
+    : `The ${name} client does not support the "${reasoningEffort}" reasoning ` +
+        `effort. Choose ${adapter.supportedReasoningEfforts
           .map((level) => `"${level}"`)
-          .join(", ")}`;
+          .join(", ")}.`;
 }
 
 /**
@@ -438,16 +434,16 @@ export function harnessToolApprovalRefusalReason(args: {
   const name = args.adapter.displayName;
   if (args.unattended) {
     return (
-      `the ${name} harness can't pause for tool approval in an unattended ` +
-      "run (evals and swarms) — turn off requireToolApproval on this host"
+      `The ${name} client cannot wait for tool approval in evals or swarms. ` +
+      "Turn off tool approvals for this client to continue."
     );
   }
   // The runtime runs its own native tools in-sandbox. If it can't pause on
   // those, approval is unsound for the whole turn — servers or no servers.
   if (!args.adapter.supportsNativeToolApproval) {
     return (
-      `the ${name} harness doesn't support interactive tool approval yet — ` +
-      "turn off requireToolApproval on this host"
+      `The ${name} client does not support interactive tool approval. ` +
+      "Turn off tool approvals for this client or choose another client."
     );
   }
   const mcpToolApproval =
@@ -456,8 +452,8 @@ export function harnessToolApprovalRefusalReason(args: {
       : args.adapter.supportsHostExecutedToolApproval;
   if (args.hasSelectedMcpServers && !mcpToolApproval) {
     return (
-      `the ${name} harness can't pause for approval of MCP-server tools — ` +
-      "turn off requireToolApproval on this host"
+      `The ${name} client cannot wait for approval of MCP server tools. ` +
+      "Turn off tool approvals for this client or choose another client."
     );
   }
   return undefined;
@@ -641,10 +637,8 @@ export function checkHarnessRuntimeAvailable(args: {
       ok: false,
       kind: "broker-disabled",
       reason:
-        `the ${name} harness delivers model credentials via the broker, ` +
-        "and broker delivery is disabled on this server " +
-        "(MCPJAM_HARNESS_BROKER_DELIVERY=false) — re-enable it to run " +
-        "harness turns",
+        `The ${name} client cannot access model credentials right now. ` +
+        "Contact your organization admin or choose another client.",
     };
   }
 
@@ -653,11 +647,8 @@ export function checkHarnessRuntimeAvailable(args: {
       ok: false,
       kind: "enterprise-policy",
       reason:
-        `the ${name} harness can't run on an enterprise-managed host yet — ` +
-        "the harness reaches MCP servers through a signed proxy that can't " +
-        "carry the host's authorization policy, so a turn could bypass it. " +
-        "Turn off enterprise-managed authorization on this host, or use the " +
-        "emulated engine",
+        `The ${name} client does not support your organization's authorization policy. ` +
+        "Choose a client that supports this policy or contact your organization admin.",
     };
   }
 
@@ -670,9 +661,8 @@ export function checkHarnessRuntimeAvailable(args: {
       ok: false,
       kind: "computers-unconfigured",
       reason:
-        `the ${name} harness needs a computer, but this server is not a ` +
-        "computers data plane (deployed servers bootstrap credentials from " +
-        "INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md)",
+        `The ${name} client needs a cloud computer, which is unavailable right now. ` +
+        "Contact your organization admin to enable cloud execution.",
     };
   }
 
