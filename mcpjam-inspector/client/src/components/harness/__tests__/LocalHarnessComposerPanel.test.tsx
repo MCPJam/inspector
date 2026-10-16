@@ -44,6 +44,13 @@ describe("local setup panel", () => {
     expect(screen.getByText("Authorization: Allowed")).toBeVisible();
     expect(screen.getByText(/Install Git 2.31/)).toBeVisible();
   });
+  it("keeps stored authorization visible while the runtime is installing", () => {
+    const controller = state();
+    controller.phase = "installing";
+    show(controller, "Downloading Codex: 42%");
+    expect(screen.getByText("Authorization: Allowed")).toBeVisible();
+    expect(screen.getByText("Runtime: Downloading Codex: 42%")).toBeVisible();
+  });
   it("stops all sessions and reports refusal without claiming success", async () => {
     stopAll.mockResolvedValueOnce(false);
     show();

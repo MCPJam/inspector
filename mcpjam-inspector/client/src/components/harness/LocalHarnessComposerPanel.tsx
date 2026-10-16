@@ -58,7 +58,7 @@ export function LocalHarnessComposerPanel({
 }) {
   const { busy, error, control } = useLocalHarnessControls(controller);
   const git = controller.availability?.unattendedGit;
-  const authorized = controller.phase === "ready";
+  const authorized = controller.consent !== null;
   const canForget =
     controller.consent !== null ||
     controller.requestedTarget === "local-native" ||
