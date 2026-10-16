@@ -3,6 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { ConvexError } from "convex/values";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  isSignOutInProgress,
+  resetSignOutLatchForTests,
+} from "@/lib/auth/sign-out-latch";
+import { useSignOutStore } from "@/stores/sign-out-store";
+import {
   LegalAcceptanceGate,
   type LegalAcceptanceStatus,
 } from "../LegalAcceptanceGate";
@@ -16,6 +21,8 @@ const state = vi.hoisted(() => ({
   accept: vi.fn(),
   reportCaught: vi.fn(),
   toastError: vi.fn(),
+  workosSignOut: vi.fn(),
+  getAccessToken: vi.fn(),
 }));
 
 vi.mock("convex/react", async () =>
@@ -34,7 +41,11 @@ vi.mock("convex/react", async () =>
 );
 
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ user: state.workosUser }),
+  useAuth: () => ({
+    user: state.workosUser,
+    signOut: state.workosSignOut,
+    getAccessToken: state.getAccessToken,
+  }),
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -72,6 +83,31 @@ describe("LegalAcceptanceGate", () => {
     state.accept.mockReset();
     state.reportCaught.mockReset();
     state.toastError.mockReset();
+    state.workosSignOut.mockReset();
+    state.getAccessToken.mockReset();
+    resetSignOutLatchForTests();
+    useSignOutStore.setState({ isSigningOut: false });
+  });
+
+  it("signs the user out without recording acceptance", async () => {
+    signIn();
+    state.status = pending;
+    // No token: the sign-out sequence skips revocation and goes to WorkOS.
+    state.getAccessToken.mockRejectedValue(new Error("Login required"));
+    const user = userEvent.setup();
+    render(<LegalAcceptanceGate />);
+
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(useSignOutStore.getState().isSigningOut).toBe(true);
+    expect(isSignOutInProgress()).toBe(true);
+    await waitFor(() =>
+      expect(state.workosSignOut).toHaveBeenCalledWith({
+        returnTo: window.location.origin,
+        navigate: false,
+      }),
+    );
+    expect(state.accept).not.toHaveBeenCalled();
   });
 
   it("asks a signed-in user who has not accepted, with the backend's minimum age", () => {

@@ -14,6 +14,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Label } from "@mcpjam/design-system/label";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { useSignOut } from "@/hooks/use-sign-out";
 import { useSoftQuery } from "@/hooks/use-soft-query";
 import { describeConvexFailure } from "@/lib/convex-error";
 import { reportCaught } from "@/lib/error-reporting";
@@ -58,6 +59,10 @@ export function LegalAcceptanceGate() {
 
 function LegalAcceptanceDialog({ status }: { status: LegalAcceptanceStatus }) {
   const accept = useMutation(acceptRef);
+  // The way out for someone who does not accept. It runs without the
+  // runtime-server cleanup the sidebar passes in, because that cleanup lives
+  // in App and this gate renders above App.
+  const signOut = useSignOut();
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const ageCheckboxId = useId();
@@ -116,6 +121,9 @@ function LegalAcceptanceDialog({ status }: { status: LegalAcceptanceStatus }) {
           </Label>
         </div>
         <DialogFooter>
+          <Button variant="outline" disabled={saving} onClick={signOut}>
+            Sign out
+          </Button>
           <Button
             disabled={!ageConfirmed || saving}
             onClick={() => void submit()}
