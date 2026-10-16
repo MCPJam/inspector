@@ -15,9 +15,9 @@ describe("local harness capability support", () => {
   );
 
   it.each([
-    [{ pinnedComputerImageId: "image" }, "a pinned computer image"],
-    [{ hasSeededAttachments: true }, "seeded eval attachments"],
-    [{ browserToolPolicy: {} }, "a browser tool policy"],
+    [{ pinnedComputerImageId: "image" }, "a pinned computer image"] as const,
+    [{ hasSeededAttachments: true }, "seeded eval attachments"] as const,
+    [{ browserToolPolicy: {} }, "a browser tool policy"] as const,
     ...["bash", "browser", "computer", "desktop", "video"].map(
       (id) => [{ builtInToolIds: [id] }, `cloud tools (${id})`] as const,
     ),

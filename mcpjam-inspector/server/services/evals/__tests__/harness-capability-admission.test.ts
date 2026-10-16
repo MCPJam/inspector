@@ -1,3 +1,4 @@
+import { resolveChatSessionEngine } from "../../../routes/v1/chat-session-host-target";
 import { describe, expect, it } from "vitest";
 import { localHarnessCapabilityRefusal } from "@/shared/harness-capability-support";
 import { checkHarnessRuntimeAvailable } from "../../../utils/harness/harness-availability";
@@ -41,6 +42,20 @@ describe("capability admission uses the execution decision", () => {
       expect(() =>
         assertLocalHarnessCapabilities({ harnessId: harness, ...capabilities }),
       ).toThrow(reason);
+      expect(
+        resolveChatSessionEngine({
+          hostTarget: {
+            hostId: "client",
+            source: "host",
+            runtimeConfig: hostConfig,
+          },
+          localExecution: true,
+          model: { id: "invalid" },
+          hasSelectedMcpServers: false,
+          toolPolicy: { toolMode: "auto" },
+          sessionPinsOwnServerIds: false,
+        }),
+      ).toEqual({ ok: false, harness, kind: "capability-unsupported", reason });
     },
   );
 

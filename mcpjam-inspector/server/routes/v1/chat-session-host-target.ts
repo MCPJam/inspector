@@ -251,6 +251,7 @@ export function hostRoutingSelectionForModel(
 export function resolveChatSessionEngine(args: {
   /** Server-fetched host, or absent for a bare `serverIds` turn. */
   hostTarget?: ChatSessionHostTarget;
+  localExecution?: boolean;
   /** The turn's RESOLVED model definition (id + provider), never the raw pin. */
   model: {
     id: string;
@@ -308,6 +309,13 @@ export function resolveChatSessionEngine(args: {
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
+    localExecution: args.localExecution,
+    capabilities: {
+      builtInToolIds: Array.isArray(hostConfig.builtInToolIds)
+        ? hostConfig.builtInToolIds
+        : [],
+      browserToolPolicy: hostConfig.browserToolPolicy,
+    },
     requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
     model: args.model,
