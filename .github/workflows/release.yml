@@ -869,6 +869,8 @@ jobs:
     uses: ./.github/workflows/deploy-webapp.yml
     with:
       require_staging_green: false
+      # This run's own start and finish posts cover the webapp deploy.
+      announce: false
     secrets: inherit
 
   # The Slack bot renders the server's envelope, so a release redeploys it
@@ -1087,13 +1089,15 @@ jobs:
           draft: false
 
   # Tells #engineering a release is going out and how it ended, so an alert
-  # during or after it has context. The backend Deploy Production run this
-  # dispatches stays quiet, so a release posts once at each end. Only a run
+  # during or after it has context. The backend and webapp deploys it starts
+  # stay quiet, so a release posts once at each end. Only a run
   # that publishes something posts, and a Slack problem never fails it.
   announce-start:
     needs: preflight
     if: needs.preflight.outputs.publish_any == 'true'
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
     outputs:
       started_at: ${{ steps.post.outputs.started_at }}
     steps:
@@ -1123,10 +1127,11 @@ jobs:
           who="by $GITHUB_TRIGGERING_ACTOR"
           case "$GITHUB_TRIGGERING_ACTOR" in *"[bot]") who="automatically" ;; esac
           # Not `releases/latest`: `finalize` may already have published this
-          # release, so skip its own tag and take the newest published one by
-          # date. 30 reaches well past any drafts; a miss only drops the count.
+          # release, so skip its own tag and take the newest published Inspector
+          # release (`v*`, not a `local-harness-pack-*` one) by date. 30 reaches
+          # well past any drafts; a miss only drops the count.
           prev="$(TAG="$RELEASE_TAG" gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" \
-            --jq '[.[] | select(.draft == false and .prerelease == false and .tag_name != env.TAG)] | sort_by(.published_at) | last | .tag_name // empty')" || prev=""
+            --jq '[.[] | select(.draft == false and .prerelease == false and (.tag_name | test("^v[0-9]")) and .tag_name != env.TAG)] | sort_by(.published_at) | last | .tag_name // empty')" || prev=""
           count=""
           if [ -n "$prev" ]; then
             count="$(gh api "repos/$GITHUB_REPOSITORY/compare/$prev...$GITHUB_SHA" --jq .total_commits)" || count=""
@@ -1141,10 +1146,15 @@ jobs:
             | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
                 -d @- "$SLACK_WEBHOOK_URL"
 
+  # Waits for every job nothing else waits on, not just `finalize`: the image
+  # push, the hosted template roll-out and the evals action can each still be
+  # running, or fail, after `finalize` succeeds.
   announce-finish:
-    needs: [preflight, announce-start, finalize]
+    needs: [preflight, announce-start, finalize, docker-release, roll-out-hosted-template, publish-evals-action]
     if: always() && needs.announce-start.result == 'success'
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      actions: read
     steps:
       - name: Announce the result in Slack
         continue-on-error: true
@@ -1162,7 +1172,7 @@ jobs:
           # A failed lookup is not "no failed jobs": `finalize` can succeed while
           # a deploy it does not require failed, so say the outcome is unknown.
           if ! failed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
-            --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')"; then
+            --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(", ")')"; then
             text="⚠️ Release $NAME ended (${mins}m), job results unreadable · <$RUN_URL|run>"
           elif [ -n "$failed" ]; then
             text="❌ Release $NAME failed (${mins}m) at $failed · <$RUN_URL|run>"
