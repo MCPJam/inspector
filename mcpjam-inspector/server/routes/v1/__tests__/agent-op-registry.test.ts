@@ -1749,12 +1749,7 @@ describe("agent op registry", () => {
 });
 
 describe("tier derives from operation.risk", () => {
-  // The registry's own policy, made mechanical. The comments used to state
-  // the rule as prose while every `tier:` stayed a hand-placed literal, so a
-  // deviation was silent. Now the rule runs over the real catalog: every
-  // operation that declares `risk` must land on the tier its risk derives —
-  // or be NAMED in TIER_EXCEPTIONS below, with the reason a reviewer should
-  // read. The next silent deviation fails here instead of shipping.
+  // Every risk-classified operation follows its derived tier or a named exception.
 
   type Placement = "direct" | "gated" | "excluded";
   type Risk = NonNullable<(typeof ALL_OPERATIONS)[number]["risk"]>;
@@ -1778,6 +1773,11 @@ describe("tier derives from operation.risk", () => {
   const TIER_EXCEPTIONS: Readonly<
     Record<string, { tier: Placement; reason: string }>
   > = {
+    authorize_local_execution: {
+      tier: "excluded",
+      reason:
+        "Local execution consent belongs to the user; the agent must not authorize itself or propose that authorization.",
+    },
     cancel_goal_run: {
       tier: "gated",
       reason:

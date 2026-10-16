@@ -5808,6 +5808,45 @@
         }
       }
     },
+    "/projects/{projectId}/local-execution-grants": {
+      "post": {
+        "operationId": "authorizeLocalExecution",
+        "tags": ["Chat"],
+        "summary": "Authorize unattended local execution",
+        "description": "Available on a local Inspector only. Requires a verified user's AuthKit bearer session and explicit unattended consent; API keys cannot authorize a machine. Resolves project membership, workspace access and the selected Claude Code or Codex runtime before returning an expiring capability. Does not approve attended permission requests. Treat grantToken as a secret and include this target with every local turn.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LocalExecutionAuthorization" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The scoped local capability. Cache-Control: no-store.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["target", "expiresAt"],
+                  "properties": {
+                    "target": { "$ref": "#/components/schemas/LocalExecutionTarget" },
+                    "expiresAt": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
     "/projects/{projectId}/sessions": {
       "get": {
         "operationId": "listSessions",
@@ -31380,6 +31419,35 @@
           "totalTokens": {
             "type": "integer"
           }
+        }
+      },
+      "LocalExecutionAuthorization": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["harnessId", "allowUnattended"],
+        "properties": {
+          "harnessId": { "type": "string", "enum": ["claude-code", "codex"] },
+          "allowUnattended": { "type": "boolean", "const": true },
+          "workspacePath": { "type": "string", "minLength": 1 }
+        }
+      },
+      "LocalExecutionTarget": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind", "scope", "harnessId", "machineId", "workspaceGrantId",
+          "runtimeId", "permissionProfile", "policyVersion", "grantToken"
+        ],
+        "properties": {
+          "kind": { "type": "string", "const": "local-native" },
+          "scope": { "type": "string", "const": "unattended" },
+          "harnessId": { "type": "string", "enum": ["claude-code", "codex"] },
+          "machineId": { "type": "string", "minLength": 1 },
+          "workspaceGrantId": { "type": "string", "minLength": 1 },
+          "runtimeId": { "type": "string", "minLength": 1 },
+          "permissionProfile": { "type": "string", "const": "unrestricted" },
+          "policyVersion": { "type": "string", "minLength": 1 },
+          "grantToken": { "type": "string", "minLength": 16, "maxLength": 256 }
         }
       },
       "ChatTurn": {

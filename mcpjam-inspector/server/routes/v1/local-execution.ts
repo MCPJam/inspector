@@ -46,7 +46,7 @@ localExecution.post(
       });
       const { actingUserId: _actor, ...target } = grant.target;
       c.header("Cache-Control", "no-store");
-    return v1Resource(c, {
+      return v1Resource(c, {
         target: localExecutionTargetSchema.parse({
           ...target,
           harnessId: input.harnessId,
