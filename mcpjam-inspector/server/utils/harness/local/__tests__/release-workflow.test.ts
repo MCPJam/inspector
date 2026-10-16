@@ -369,6 +369,13 @@ describe("pack release boundaries", () => {
 it("runs Windows Codex qualification without advertising native support", () => {
   const caller = workflow("local-harness-conformance").jobs["codex-windows"];
   expect(caller.uses).toBe("./.github/workflows/local-codex-windows-conformance.yml");
+  expect(caller.if).toBe("needs.plan.outputs.run_codex == 'true'");
+  expect(caller.with.published_pack_version).toBe(
+    "${{ github.event_name != 'pull_request' && needs.plan.outputs.codex_pack_version || '' }}",
+  );
+  expect(workflow("local-harness-conformance").on.pull_request.paths).toContain(
+    ".github/workflows/local-codex-windows-conformance.yml",
+  );
   const job = workflow("local-codex-windows-conformance").jobs.qualification;
   expect(job["runs-on"]).toBe("windows-latest");
   expect(job["continue-on-error"]).toBe(true);

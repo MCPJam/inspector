@@ -13,10 +13,10 @@
 # `conformance-evidence-*` artifact. A release requires one for every pack it
 # may select (`check-local-harness-release.mjs --evidence`).
 #
-# On a pull request only Linux x64 runs, and it runs THIS PR's layer against
-# the PINNED published pack: nothing has to be published for it to pass, so a
-# bridge change can never deadlock on a pack only main can publish. Which legs
-# run where is `scripts/plan-local-harness-conformance.mjs`.
+# Pull requests run Linux x64 against the pinned published pack and experimental
+# Windows Codex against a source-built Windows pack, both with this PR's layer.
+# Source-pack evidence does not qualify the released pack. Other target legs
+# are selected by `scripts/plan-local-harness-conformance.mjs`.
 name: Local harness conformance
 
 on:
@@ -97,6 +97,7 @@ on:
       # anywhere before it merged.
       - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
       - ".github/workflows/local-harness-conformance.yml"
+      - ".github/workflows/local-codex-windows-conformance.yml"
 
 concurrency:
   # The versions AND the harness selection: a release calls this twice (its
@@ -783,10 +784,10 @@ jobs:
 
   codex-windows:
     needs: [unit, plan]
-    if: needs.plan.outputs.run_codex == 'true' && github.event_name != 'pull_request'
+    if: needs.plan.outputs.run_codex == 'true'
     uses: ./.github/workflows/local-codex-windows-conformance.yml
     with:
-      published_pack_version: ${{ needs.plan.outputs.codex_pack_version }}
+      published_pack_version: ${{ github.event_name != 'pull_request' && needs.plan.outputs.codex_pack_version || '' }}
       candidate: ${{ inputs.candidate || false }}
       pack_version: ${{ inputs.pack_version || 'conformance' }}
 
@@ -814,7 +815,6 @@ jobs:
 
   # Codex's own stamp, from Codex's own legs only. A Codex failure must not
   # withhold Claude Code's version, nor a Claude Code failure Codex's: each
-  # harness's evidence certifies that harness alone (D4).
   codex-summarize:
     name: codex conformance version
     needs: [codex-scenarios, plan]
