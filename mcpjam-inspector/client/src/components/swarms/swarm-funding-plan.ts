@@ -275,11 +275,9 @@ export function fundingReviewNotice(args: {
   now: FundingSplit;
   partial?: boolean;
 }): string {
-  return `Sponsored conversations${args.partial ? " for your existing goals" : ""} dropped from ${args.shown.toLocaleString()} to ${args.now.sponsored.toLocaleString()}, so ${plural(
-    args.now.credits,
-    "now uses",
-    "now use",
-  )} org credits. Nothing has launched yet. Press Continue to launch with this split.`;
+  return `${plural(args.now.credits, "conversation", "conversations")}${
+    args.partial ? " from existing goals" : ""
+  } will now use org credits. Press Continue to launch.`;
 }
 
 /**

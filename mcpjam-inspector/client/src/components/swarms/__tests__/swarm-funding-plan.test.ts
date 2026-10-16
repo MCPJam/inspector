@@ -497,14 +497,14 @@ describe("notices", () => {
         now: { sponsored: 3, credits: 2, total: 5 },
       }),
     ).toBe(
-      "Sponsored conversations dropped from 5 to 3, so 2 now use org credits. Nothing has launched yet. Press Continue to launch with this split.",
+      "2 conversations will now use org credits. Press Continue to launch.",
     );
     expect(
       fundingReviewNotice({
         shown: 1,
         now: { sponsored: 0, credits: 1, total: 1 },
       }),
-    ).toMatch(/dropped from 1 to 0, so 1 now uses org credits/);
+    ).toMatch(/1 conversation will now use org credits/);
   });
 
   it("a 409 notice separates none-launched from a partial launch and never says the rest will retry", () => {

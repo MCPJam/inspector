@@ -3454,7 +3454,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /dropped from 1 to 0[\s\S]*nothing has launched/i,
+      /1 conversation will now use org credits[\s\S]*press continue to launch/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
     expect(
@@ -3619,7 +3619,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /for your existing goals dropped from 1 to 0/i,
+      /1 conversation from existing goals will now use org credits/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
