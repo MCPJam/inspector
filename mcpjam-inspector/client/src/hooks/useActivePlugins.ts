@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
+import { describeConvexFailure } from "@/lib/convex-error";
 import type {
   ActivePluginRow,
   ActivePluginsResult,
@@ -43,7 +44,10 @@ export function pluginLabel(row: {
   return row.displayName?.trim() || row.name;
 }
 
-/** The servers of the plugins that contribute, deduped, in plugin order. */
+/**
+ * The servers of the plugins that contribute, deduped, in plugin order,
+ * without the ones this member can't use yet.
+ */
 export function activePluginServers(
   plugins: readonly ActivePluginRow[],
 ): ActivePluginServer[] {
@@ -52,7 +56,7 @@ export function activePluginServers(
   for (const plugin of plugins) {
     if (plugin.status !== "active") continue;
     for (const server of plugin.servers) {
-      if (seen.has(server.serverId)) continue;
+      if (server.unavailable || seen.has(server.serverId)) continue;
       seen.add(server.serverId);
       servers.push({
         serverId: server.serverId,
@@ -63,6 +67,24 @@ export function activePluginServers(
     }
   }
   return servers;
+}
+
+/**
+ * A backend from before component admission refuses the argument as an extra
+ * field. Callers ask it again without one rather than reading that refusal as
+ * "no plugins".
+ *
+ * A development deployment names the field. A production one redacts every
+ * error that isn't a `ConvexError` to `Server Error`, so there the refusal
+ * looks like any other failure of the read, and that gets the second read too.
+ * On a backend that has the argument, that read leaves out a plugin with a
+ * server the member can't use, as before admission. A `ConvexError` is the
+ * backend answering on purpose, never a validator refusal.
+ */
+export function refusesComponentAdmission(error: unknown): boolean {
+  if (!(error instanceof Error) || "data" in error) return false;
+  if (/extra field `componentAdmission`/.test(error.message)) return true;
+  return describeConvexFailure(error, "").redacted;
 }
 
 /**
@@ -101,16 +123,27 @@ export function useActivePlugins(
   const { isAuthenticated } = useConvexAuth();
   const ready =
     flagEnabled && isAuthenticated && shouldQueryProjectId(projectId);
-  const { data, error } = useSoftQuery<ActivePluginsResult>(
-    "plugins:resolveActivePlugins",
+  const args =
     ready && projectId
       ? {
           projectId,
           content: false,
           runtimeVenue: options?.runtimeVenue ?? activePluginsRuntimeVenue(),
         }
-      : "skip",
+      : null;
+  // A server this member can't use yet is left out alone, not its plugin.
+  const admitted = useSoftQuery<ActivePluginsResult>(
+    "plugins:resolveActivePlugins",
+    args ? { ...args, componentAdmission: true } : "skip",
   );
+  // Asked the old way only while that read is refused, so it answers again
+  // as soon as it can: one failure never pins the old view.
+  const refused = refusesComponentAdmission(admitted.error);
+  const legacy = useSoftQuery<ActivePluginsResult>(
+    "plugins:resolveActivePlugins",
+    args && refused ? args : "skip",
+  );
+  const { data, error } = refused ? legacy : admitted;
   const plugins =
     !error && data?.enabled === true && Array.isArray(data.plugins)
       ? data.plugins

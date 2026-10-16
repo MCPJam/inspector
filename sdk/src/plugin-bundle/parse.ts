@@ -19,10 +19,11 @@ import {
   hashCanonicalJson,
   sha256HexBytes,
 } from "./hashes.js";
+import { LEGACY_MCP_CONFIG_PATH, resolveManifestSource } from "./layout.js";
+import { adaptLegacyMcpConfig } from "./legacy-mcp.js";
 import {
   MCPJAM_EXTENSION_NAMESPACE,
   normalizePluginManifest,
-  PLUGIN_MANIFEST_PATH,
   type NormalizedPluginManifest,
 } from "./manifest.js";
 import {
@@ -277,28 +278,29 @@ export async function parsePluginBundle(
 
   // Phase 3 — manifest: `plugin.json` at the bundle root (fixed location;
   // nested plugin.json files are ordinary files, not manifests).
-  const manifestFile = byPath.get(PLUGIN_MANIFEST_PATH);
-  if (manifestFile === undefined) {
-    issues.error(
-      "MANIFEST_MISSING",
-      `bundle is missing "${PLUGIN_MANIFEST_PATH}" at its root`
-    );
+  const filePaths: ReadonlySet<string> = new Set(byPath.keys());
+  const resolved = resolveManifestSource({
+    profile: options?.profile ?? "strict",
+    filePaths,
+    readJson: (path, collector) => {
+      const file = byPath.get(path);
+      return file === undefined
+        ? null
+        : parseJsonFile(file, collector, "MANIFEST_INVALID_JSON");
+    },
+    issues,
+  });
+  if (resolved === null) throw new PluginBundleError(issues.issues());
+  const { interpretation } = resolved;
+  const manifestFile = byPath.get(interpretation.manifestPath);
+  const { manifest } =
+    resolved.record === null || manifestFile === undefined
+      ? { manifest: null as NormalizedPluginManifest | null }
+      : normalizePluginManifest(resolved.record, { filePaths, issues });
+  if (manifest === null || manifestFile === undefined) {
     throw new PluginBundleError(issues.issues());
   }
   const manifestHash = manifestFile.contentHash;
-  const manifestRaw = parseJsonFile(
-    manifestFile,
-    issues,
-    "MANIFEST_INVALID_JSON"
-  );
-  const filePaths: ReadonlySet<string> = new Set(byPath.keys());
-  const { manifest } =
-    manifestRaw === null
-      ? { manifest: null as NormalizedPluginManifest | null }
-      : normalizePluginManifest(manifestRaw, { filePaths, issues });
-  if (manifest === null) {
-    throw new PluginBundleError(issues.issues());
-  }
   issues.throwIfErrors();
 
   const skipped: PluginSkippedComponent[] = [];
@@ -393,25 +395,52 @@ export async function parsePluginBundle(
     skills.push(skill);
   }
 
-  // Phase 5 — MCP servers (root `mcp.json`; fixed location).
+  // Phase 5 — MCP servers: the root `mcp.json` (fixed location) when a root
+  // plugin.json is the manifest; otherwise whatever the legacy manifest
+  // names, rewritten into a strict document before the same normalizer runs.
   const mcpServers: ParsedPluginServer[] = [];
-  const mcpFile = byPath.get(MCP_CONFIG_PATH);
+  const legacyMcp = resolved.legacyMcp;
+  const mcpFile =
+    interpretation.layout === "agent-plugins"
+      ? byPath.get(MCP_CONFIG_PATH)
+      : legacyMcp?.kind === "file"
+        ? byPath.get(legacyMcp.path)
+        : undefined;
+  if (resolved.skipped !== undefined) skipped.push(resolved.skipped);
   for (const file of files) {
-    if (
-      file.path !== MCP_CONFIG_PATH &&
-      file.path.endsWith(`/${MCP_CONFIG_PATH}`) &&
-      !isPathInside(SKILLS_DIR, file.path)
-    ) {
+    const namedLikeMcpConfig =
+      (`/${file.path}`.endsWith(`/${MCP_CONFIG_PATH}`) &&
+        !isPathInside(SKILLS_DIR, file.path)) ||
+      // A legacy manifest's own `mcpServers` takes the place of `.mcp.json`.
+      (interpretation.layout !== "agent-plugins" &&
+        file.path === LEGACY_MCP_CONFIG_PATH);
+    if (file !== mcpFile && namedLikeMcpConfig) {
       issues.warn(
         "MCP_CONFIG_IGNORED",
-        `only the bundle root "${MCP_CONFIG_PATH}" is used; "${file.path}" is ignored`,
+        `"${file.path}" is not this bundle's MCP configuration; ignored`,
         { path: file.path }
       );
     }
   }
-  if (mcpFile !== undefined) {
+  const mcpPath = mcpFile?.path ?? legacyMcp?.path;
+  if (mcpPath !== undefined) {
     const docScoped = new PluginIssueCollector();
-    const mcpRaw = parseJsonFile(mcpFile, docScoped, "MCP_INVALID_CONFIG");
+    let mcpRaw =
+      mcpFile !== undefined
+        ? parseJsonFile(mcpFile, docScoped, "MCP_INVALID_CONFIG")
+        : legacyMcp?.kind === "inline"
+          ? legacyMcp.document
+          : null;
+    if (mcpRaw !== null && legacyMcp !== undefined) {
+      const adapted = adaptLegacyMcpConfig(mcpRaw, {
+        sourcePath: mcpPath,
+        issues,
+        maxServers: limits.maxMcpServers,
+      });
+      if (adapted.ok) skipped.push(...adapted.skipped);
+      else docScoped.error(adapted.code, adapted.reason, { path: mcpPath });
+      mcpRaw = adapted.ok ? adapted.document : null;
+    }
     if (mcpRaw === null) {
       // Unreadable/invalid JSON disables the MCP component type only.
       const reason = docScoped.firstErrorMessage() ?? "invalid mcp.json";
@@ -419,12 +448,12 @@ export async function parsePluginBundle(
       issues.warn(
         "COMPONENT_SKIPPED",
         `MCP servers are disabled for this bundle: ${reason}`,
-        { path: MCP_CONFIG_PATH }
+        { path: mcpPath }
       );
-      skipped.push({ kind: "mcp-config", key: MCP_CONFIG_PATH, reason });
+      skipped.push({ kind: "mcp-config", key: mcpPath, reason });
     } else {
       const normalized = normalizePluginMcpConfig(mcpRaw, {
-        sourcePath: MCP_CONFIG_PATH,
+        sourcePath: mcpPath,
         manifestSchemaVersion: manifest.schemaVersion,
         issues,
         // Declared-entry cap, enforced before entry isolation: a flood of
@@ -603,6 +632,7 @@ export async function parsePluginBundle(
 
   return {
     manifest,
+    interpretation,
     schemaVersion: manifest.schemaVersion,
     bundleHash,
     manifestHash,

@@ -626,7 +626,7 @@ describe("ensurePluginStdioRuntime", () => {
     ).toBe(false);
   });
 
-  it("omits `cwd` entirely for a component that declares no working directory", async () => {
+  it("runs a component that declares no working directory in the plugin root", async () => {
     stubBackend();
     const box = makeFakeBox();
 
@@ -634,8 +634,7 @@ describe("ensurePluginStdioRuntime", () => {
       client: stubClient(bundleHash),
       projectId: PROJECT_ID,
       serverId: SERVER_ID,
-      // No `workingDirectory`: the shim rejects unknown launch keys, so an
-      // absent one must be absent rather than present-and-undefined.
+      // No `workingDirectory`: the Agent Plugins default is the plugin root.
       spec: { command: "node", args: ["${PLUGIN_ROOT}/server/index.js"], env: {} },
       box: BOX,
       connect: async () => box.handle,
@@ -644,11 +643,11 @@ describe("ensurePluginStdioRuntime", () => {
 
     expect(result.ok).toBe(true);
     const launch = JSON.parse(box.starts[0].env.MCPJAM_SHIM_LAUNCH);
-    expect("cwd" in launch).toBe(false);
     expect(launch).toEqual({
       command: "node",
       args: [`${boxBundleRoot()}/server/index.js`],
       env: { PLUGIN_ROOT: boxBundleRoot(), PLUGIN_DATA: boxDataDir() },
+      cwd: boxBundleRoot(),
     });
   });
 

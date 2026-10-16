@@ -113,8 +113,29 @@ export type PluginSetupRequirement =
       timing?: "on_install" | "on_use";
     };
 
+/** `strict` is Agent Plugins 1.0; `openai-compatible` adds `layout.ts`'s rules. */
+export type PluginParserProfile = "strict" | "openai-compatible";
+
+/** Where the manifest came from. Only `agent-plugins` exists under `strict`. */
+export type PluginBundleLayout =
+  | "agent-plugins"
+  | "codex"
+  | "agent-legacy"
+  | "claude";
+
+/** How a bundle was read: the same files under another profile read differently. */
+export interface PluginBundleInterpretation {
+  profile: PluginParserProfile;
+  layout: PluginBundleLayout;
+  /** Bundle path the manifest was read from. */
+  manifestPath: string;
+  /** Set when `.codex-plugin/plugin.json` supplied OpenAI data to a root manifest. */
+  overlayPath?: string;
+}
+
 export interface ParsedPluginBundle {
   manifest: NormalizedPluginManifest;
+  interpretation: PluginBundleInterpretation;
   /**
    * Agent Plugins version both documents target (resolved locally from
    * `$schema`). Mirrors `manifest.schemaVersion` for consumers that never
@@ -123,7 +144,7 @@ export interface ParsedPluginBundle {
   schemaVersion: string;
   /** Deterministic content hash over every file (canonical path + bytes). */
   bundleHash: string;
-  /** SHA-256 hex of the raw `plugin.json` bytes. */
+  /** SHA-256 hex of the raw bytes of the manifest file (`interpretation.manifestPath`). */
   manifestHash: string;
   skills: ParsedPluginSkill[];
   mcpServers: ParsedPluginServer[];
@@ -144,4 +165,6 @@ export interface ParsedPluginBundle {
 export interface ParsePluginBundleOptions {
   /** Override individual archive/component limits (tests, paid plans). */
   limits?: Partial<PluginBundleLimits>;
+  /** Defaults to `strict`. */
+  profile?: PluginParserProfile;
 }
