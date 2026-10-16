@@ -30,6 +30,7 @@ import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
+import { useAuthExitCleanup } from "./hooks/use-sign-out";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
@@ -3567,9 +3568,8 @@ export default function App() {
       ),
     [serversById],
   );
-  // Keep this explicit sign-out cleanup even though useAppState also cleans up
-  // on auth-scope changes: WorkOS navigation can redirect before that effect
-  // gets a chance to run.
+  // Every sign-out runs this: WorkOS can redirect before useAppState's own
+  // auth-scope cleanup gets a chance to run.
   const disconnectRuntimeServersForAuthExit = useCallback(async () => {
     const inspection = useWebmcpInspectorStore.getState();
     if (
@@ -3601,6 +3601,7 @@ export default function App() {
       }
     }
   }, [appState.servers, handleDisconnect]);
+  useAuthExitCleanup(disconnectRuntimeServersForAuthExit);
   const handleInspectorScopeStepUp = useCallback(
     (event: {
       serverId: string;
@@ -6505,7 +6506,6 @@ export default function App() {
           billingGateEnforcementActive={billingGateEnforcementActive}
           isCreateProjectDisabled={isCreateProjectDisabled}
           createProjectDisabledReason={createProjectDisabledReason}
-          onBeforeSignOut={disconnectRuntimeServersForAuthExit}
         />
         <SettingsNavigation
           enabled={settingsShellActive}
