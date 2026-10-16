@@ -1,3 +1,4 @@
+import { noPermalink } from "./permalinks.js";
 import { z } from "zod";
 import {
   localExecutionAuthorizationSchema,
@@ -29,6 +30,7 @@ export function createLocalExecutionAuthorizationOperation(
     readOnly: false,
     mayBeDestructive: true,
     risk: "exposure",
+    permalink: noPermalink("mutation-only"),
     inputSchema,
     async execute(input, context) {
       const validated = inputSchema.parse(input);
