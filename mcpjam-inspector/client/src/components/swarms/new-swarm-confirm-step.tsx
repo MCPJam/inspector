@@ -36,6 +36,7 @@ import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allo
 import { useOutOfCreditsReason } from "@/hooks/useCreditBalance";
 import { DisabledReasonTooltip } from "@mcpjam/design-system/tooltip";
 import { SwarmFundingSummary } from "@/components/swarms/swarm-funding-summary";
+import { NewSwarmJudgeRow } from "@/components/swarms/new-swarm-judge-row";
 import {
   fundingPreviewRuns,
   fundingSplitOf,
@@ -117,6 +118,8 @@ export type LaunchTarget = {
    * counter's current value needs no per-run override). Created targets only.
    */
   bornIterations?: number;
+  /** A reused goal's own judge, so a swarm-picked model is layered onto it. */
+  judgeConfig?: GoalJudgeConfig;
 };
 
 export type ConfirmLaunchPayload = {
@@ -782,6 +785,7 @@ function ReusedPersonaJourneyLoader({
         hostIds: journey.hostIds ?? [],
         legacyServerAttachmentId: journey.serverAttachmentId ?? null,
         sessionsPerTarget: journey.config?.sessionsPerTarget ?? null,
+        ...(journey.judgeConfig ? { judgeConfig: journey.judgeConfig } : {}),
         ...(persona.avatarShape !== undefined
           ? { avatarShape: persona.avatarShape }
           : {}),
@@ -903,6 +907,8 @@ export function NewSwarmConfirmStep({
   onSaveReusedPersona,
   onSaveReusedGoal,
   projectId,
+  judgeConfig,
+  onJudgeConfigChange,
   createdTargets = null,
   fundingRefreshKey = 0,
   fundingNotice = null,
@@ -947,6 +953,12 @@ export function NewSwarmConfirmStep({
   onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
   /** The project the launch runs in; the sponsored split is read against it. */
   projectId?: string | null;
+  /**
+   * The judge every created goal is born with. Held by the flow so a trip
+   * back to Describe keeps the pick; undefined means the managed default.
+   */
+  judgeConfig: GoalJudgeConfig | undefined;
+  onJudgeConfigChange: (next: GoalJudgeConfig | undefined) => void;
   /**
    * Goals a previous launch attempt already created, in launch order. Once they
    * exist every run has an id, so the sponsored split can be shown for the
@@ -1620,6 +1632,12 @@ export function NewSwarmConfirmStep({
           ) : null}
         </div>
 
+        <NewSwarmJudgeRow
+          projectId={projectId}
+          value={judgeConfig}
+          onChange={onJudgeConfigChange}
+        />
+
         <div
           className="flex items-baseline justify-between gap-4 rounded-xl border border-border bg-muted/20 px-4 py-3"
           data-testid="new-swarm-conversation-total"
@@ -1694,6 +1712,9 @@ export function NewSwarmConfirmStep({
               onClick={() =>
                 onLaunch({
                   rubric: [],
+                  // Only when picked: an absent judge leaves a reused goal's
+                  // own judge alone and lets a new goal take the defaults.
+                  ...(judgeConfig ? { judgeConfig } : {}),
                   reusedTargets: activeReusedTargets,
                   reusedGrading: [],
                   funding: {

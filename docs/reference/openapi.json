@@ -27373,6 +27373,9 @@
             "type": "boolean",
             "description": "Whether prerequisite setup may create or modify workspace data before sessions run. Defaults to false."
           },
+          "judge": {
+            "$ref": "#/components/schemas/GoalJudge"
+          },
           "createdAt": {
             "type": "number",
             "description": "Epoch milliseconds."
@@ -27380,6 +27383,84 @@
           "updatedAt": {
             "type": "number",
             "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "GoalJudge": {
+        "type": "object",
+        "description": "The goal-completion judge that grades each session against the goal, RESOLVED over the managed defaults the way `EvalSuiteDetail.settings.judge` is — so this is what a run would actually grade with, and what to echo back on a write.",
+        "required": ["enabled", "model", "autoRun", "threshold"],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The judge is available on the goal. Does NOT by itself grade anything."
+          },
+          "model": {
+            "type": "string",
+            "description": "COMPUTED from `modelSelection` when the goal stores one, else the stored model id, else the managed default."
+          },
+          "modelSelection": {
+            "$ref": "#/components/schemas/RequestedModelSelection"
+          },
+          "modelSelectionOrigin": {
+            "type": "string",
+            "enum": ["backfill"],
+            "description": "Present when a conversion, not a person, chose `modelSelection`."
+          },
+          "autoRun": {
+            "type": "boolean",
+            "description": "The flag that makes grading HAPPEN: the judge fires as each run completes."
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Advisory pass threshold (`passed = score >= threshold`)."
+          }
+        }
+      },
+      "GoalJudgeWrite": {
+        "type": "object",
+        "additionalProperties": false,
+        "anyOf": [
+          { "required": ["enabled"] },
+          { "required": ["autoRun"] },
+          { "required": ["model"] },
+          { "required": ["modelSelection"] },
+          { "required": ["threshold"] }
+        ],
+        "description": "The goal's judge on a write: the same keys `GoalJudge` returns, so a read can be sent back as is. Each field is optional, but at least one besides `modelSelectionOrigin` is required. A create that omits the judge gets the managed defaults, and an update changes only the fields it names, merged onto the stored judge.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Make the judge available on this goal. On its own this grades nothing — `autoRun` is what makes grading happen."
+          },
+          "autoRun": {
+            "type": "boolean",
+            "description": "Grade every session automatically as each run completes. SPENDS on each run."
+          },
+          "model": {
+            "type": "string",
+            "description": "Judge model id. `mcpjam/<vendor>/<model>` names a hosted model and is stored as its catalog id."
+          },
+          "modelSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RequestedModelSelection"
+              }
+            ],
+            "description": "The judge's saved model choice (source, connection, effort). Must name `model` when both are sent — a mismatch is a `400` — and sent alone it names the model. A STORED legacy selection is accepted so a read can be sent back. A new `model` without a selection drops a stored selection unless it names the same model."
+          },
+          "modelSelectionOrigin": {
+            "type": "string",
+            "enum": ["backfill"],
+            "description": "Read-only. Accepted so a `GoalJudge` read can be sent back, and changes nothing: the marker stays only while the stored selection is sent back unchanged."
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Advisory pass threshold."
           }
         }
       },
@@ -27448,6 +27529,14 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 200
+          },
+          "judge": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GoalJudgeWrite"
+              }
+            ],
+            "description": "The goal-completion judge. Omit it for the managed defaults: enabled, automatic, the default judge model."
           }
         }
       },
@@ -27499,6 +27588,17 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 200
+          },
+          "judge": {
+            "description": "Only the judge fields named change, merged onto the stored judge; `null` clears the judge back to the managed defaults.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GoalJudgeWrite"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
