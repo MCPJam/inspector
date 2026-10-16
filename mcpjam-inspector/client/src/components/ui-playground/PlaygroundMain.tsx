@@ -6263,7 +6263,6 @@ export function PlaygroundMain({
 
   const sharedChatInputProps = {
     mentions: composerMentions.mentions,
-    // Forms take the composer's place whether or not mentions are on.
     formWorkspaceId: extensionScope?.pluginWorkspace.workspaceId,
     contextAttachments: [
       ...composerMentions.contextAttachments,
@@ -6278,6 +6277,7 @@ export function PlaygroundMain({
     stop: stopActiveChat,
     disabled: composerDisabled,
     isLoading: isStreamingActive,
+    startupChatSessionId: chatSessionId,
     placeholder,
     currentModel: selectedModel,
     availableModels,

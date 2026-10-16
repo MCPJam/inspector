@@ -1,3 +1,4 @@
+import { useHarnessStartupStore } from "@/stores/harness-startup-store";
 import {
   orgPolicyBlocksChatSend,
   orgPolicySendRefusal,
@@ -3593,6 +3594,7 @@ export function useChatSession(
 
   const handleChatError = useCallback(
     (chatError: Error) => {
+      useHarnessStartupStore.getState().clear(chatSessionIdRef.current);
       // Every chat failure used to end here and go no further: this handler
       // passed the error only to `notifyMCPJamLimitError`, a rate-limit filter
       // that no-ops everything else. A hosted 502 produced zero client
@@ -4151,12 +4153,9 @@ export function useChatSession(
     transport: proxyTransport,
     onData: handleStreamDataPart,
     onError: handleChatError,
-    // Records whether the turn was aborted, for `consumeTurnAborted`. Runs in
-    // the SDK's `finally` — after `setStatus({ status: "ready" })` but before
-    // React renders that status — so a post-stream effect reading it on the
-    // ready transition always sees THIS turn's answer. Same ordering guarantee
-    // the persist receipt already relies on.
+    // Clear transient startup state on every terminal path, including Stop.
     onFinish: ({ isAbort, message, finishReason }) => {
+      useHarnessStartupStore.getState().clear(chatSessionIdRef.current);
       turnAbortedRef.current = isAbort;
       lastFinishRef.current = {
         chatSessionId: chatSessionIdRef.current,
