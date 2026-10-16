@@ -130,10 +130,10 @@ function LocalStudyDialog({
             Model calls use the study’s saved model source and billing. Your
             personal Claude or Codex subscription is not used.
           </p>
+          <p>After setup, press Send to start the client.</p>
           <p>
-            Your draft stays here. After setup, press Send to start the client.
-            Stop in chat cancels the current turn. Revoke local access stops
-            this study and removes its local files.
+            Stop cancels the current turn. Revoke local access stops the study
+            and removes its local files.
           </p>
         </div>
         <DialogFooter>
