@@ -20,9 +20,8 @@
  * The tool policy MCPJam enforces is only meaningful if MCPJam's relay is the
  * only MCP surface the model has.
  *
- * Not covered, and said so in the docs rather than guessed at: macOS MDM
- * managed preferences and whatever system location Windows uses, which the
- * probes did not reach.
+ * Windows reads the effective config through Codex itself, avoiding assumptions
+ * about system config paths. macOS MDM managed preferences remain unmeasured.
  */
 import { readFileSync } from "node:fs";
 
@@ -66,6 +65,25 @@ export function mcpServerNamesInToml(text: string): string[] {
   return [...names].sort();
 }
 
+/** Server names in the pinned app-server's effective config response. */
+function effectiveServerNames(response: unknown): string[] {
+  if (!response || typeof response !== "object" || !("config" in response)) {
+    throw new Error(
+      "Cannot inspect Codex MCP configuration before starting a Windows thread",
+    );
+  }
+  const config = response.config;
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw new Error("Codex returned an invalid effective configuration");
+  }
+  if (!("mcp_servers" in config)) return [];
+  const servers = config.mcp_servers;
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
+    throw new Error("Codex returned an invalid MCP server configuration");
+  }
+  return Object.keys(servers);
+}
+
 /**
  * The `thread/start.config.mcp_servers` overrides that disable every server a
  * system or managed layer declares, except `keep` (the relay).
@@ -75,9 +93,16 @@ export function foreignMcpServerOverrides(options: {
   readFile?: (path: string) => string | null;
   paths?: readonly string[];
   platform?: NodeJS.Platform;
+  effectiveConfig?: unknown;
 }): Record<string, { enabled: false }> {
   const platform = options.platform ?? process.platform;
-  if (platform === "win32") return {};
+  if (platform === "win32") {
+    return Object.fromEntries(
+      effectiveServerNames(options.effectiveConfig)
+        .filter((name) => name !== options.keep)
+        .map((name) => [name, { enabled: false as const }]),
+    );
+  }
   const read =
     options.readFile ??
     ((path: string) => {
