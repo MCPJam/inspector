@@ -40,3 +40,7 @@ test('a single tee call cannot prove a separate write and read', () => {
   value.toolCalls[0].input = { command: 'echo native-content | tee file.txt' };
   assert.throws(() => verifyTurn(value, client, probe), /native_file_write/);
 });
+test('a missing runtime receipt is inconclusive rather than a task failure', () => {
+  const report = runCanary({ clients: [client] }, () => ({ ...turn(), execution: undefined }));
+  assert.equal(report.results[0].status, 'inconclusive');
+});
