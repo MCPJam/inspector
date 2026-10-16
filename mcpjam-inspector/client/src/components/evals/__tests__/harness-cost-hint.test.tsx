@@ -60,7 +60,7 @@ describe("harness cost context", () => {
     show({ ...base, harnessCost: { clientAiCreditsRange: null } });
     expect(
       screen.getAllByText(
-        "Not enough priced history for a reliable client AI range.",
+        "Not enough priced history to show a client AI range. Choose a priced model and run more evals or swarms to build history.",
       ).length,
     ).toBeGreaterThan(0);
     expect(screen.queryByText(/Likely client AI range/)).toBeNull();

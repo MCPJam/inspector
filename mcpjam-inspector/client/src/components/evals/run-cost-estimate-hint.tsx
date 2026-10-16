@@ -94,7 +94,7 @@ export function RunCostEstimateHint({
                     )} to ${formatCredits(range.high)} credits, based on ${
                       range.sampleCount
                     } recent samples.`
-                  : "Not enough priced history for a reliable client AI range."}
+                  : "Not enough priced history to show a client AI range. Choose a priced model and run more evals or swarms to build history."}
               </p>
               <p>
                 The range excludes computer time, other models and tool provider
