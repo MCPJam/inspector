@@ -80,17 +80,22 @@ it("keeps an explicit local request blocked after expiry or failure", async () =
   await act(() => result.current.setup("chat"));
   expect(result.current.error).toBe("Permission denied");
   expect(result.current.requested).toBe(true);
-  act(() => result.current.useCloud());
+  act(() => result.current.useCloud("chat"));
+  expect(result.current.requested).toBe(true);
+  act(() => result.current.useCloud("other"));
   expect(result.current.requested).toBe(false);
 });
 
-it("keeps authorization visible for revocation when cloud is selected", async () => {
+it("keeps bound chats blocked after revocation and permits cloud in a new chat", async () => {
   const { result } = renderHook(() => useLocalStudyTarget(identity));
   await act(() => result.current.setup("chat"));
-  act(() => result.current.useCloud());
-  expect(result.current.requested).toBe(false);
-  expect(result.current.ready).toEqual(ready);
-  expect(result.current.resolveSendTarget("chat")).toBeNull();
+  act(() => result.current.useCloud("chat"));
+  expect(result.current.requested).toBe(true);
   act(() => result.current.clearGrant());
   expect(result.current.ready).toBeUndefined();
+  expect(result.current.isBoundConversation("chat")).toBe(true);
+  expect(result.current.resolveSendTarget("chat")).toBeNull();
+  expect(result.current.isBoundConversation("new-chat")).toBe(false);
+  act(() => result.current.useCloud("new-chat"));
+  expect(result.current.requested).toBe(false);
 });

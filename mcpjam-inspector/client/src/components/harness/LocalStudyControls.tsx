@@ -30,11 +30,9 @@ export function LocalStudyControls(props: LocalStudyControlsProps) {
   const [open, setOpen] = useState(false);
   const ready = controller.resolveSendTarget(chatSessionId ?? undefined);
   const busy = disabled || controller.loading || Boolean(revocation?.pending);
-  const target = controller.requested
-    ? ready
-      ? "local-native"
-      : null
-    : "hosted";
+  const bound = controller.isBoundConversation(chatSessionId);
+  const target =
+    controller.requested || bound ? (ready ? "local-native" : null) : "hosted";
   const phase = controller.loading
     ? "loading"
     : controller.requested && !ready
@@ -64,17 +62,22 @@ export function LocalStudyControls(props: LocalStudyControlsProps) {
             {controller.requested ? "Local setup" : "Run on this machine"}
           </Button>
         )}
-        {controller.requested && (
+        {controller.requested && !bound && (
           <Button
             variant="ghost"
             size="sm"
             disabled={busy}
-            onClick={controller.useCloud}
+            onClick={() => controller.useCloud(chatSessionId)}
           >
             Use cloud
           </Button>
         )}
         <StudyStatus controller={controller} ready={Boolean(ready)} />
+        {bound && (
+          <span className="text-muted-foreground">
+            Start a new conversation to use cloud.
+          </span>
+        )}
         {revocation && (
           <StudyRevoke
             revocation={revocation}

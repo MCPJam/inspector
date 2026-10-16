@@ -1833,7 +1833,7 @@ export function ChatTabV2({
   const studyRevocation = useLocalStudyRevocation(JSON.stringify([localStudy.key, chatSessionId]), () => { const stopLocal = localStudy.requested; localStudy.clearGrant(); if (stopLocal) stopActiveChat(); });
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive,
-    composerDisabled: submitBlocked || scenarioComposerBlocked || (localStudyEnabled && localStudy.requested && !localStudy.resolveSendTarget(chatSessionId ?? undefined)),
+    composerDisabled: submitBlocked || scenarioComposerBlocked || ((localStudy.requested || localStudy.isBoundConversation(chatSessionId)) && !localStudy.resolveSendTarget(chatSessionId ?? undefined)),
   });
 
   let placeholder = minimalMode
@@ -2281,7 +2281,7 @@ export function ChatTabV2({
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (localStudyEnabled && localStudy.requested && !localStudy.resolveSendTarget(chatSessionId ?? undefined)) return;
+    if ((localStudy.requested || localStudy.isBoundConversation(chatSessionId)) && !localStudy.resolveSendTarget(chatSessionId ?? undefined)) return;
     const hasContent =
       input.trim() ||
       mcpPromptResults.length > 0 ||

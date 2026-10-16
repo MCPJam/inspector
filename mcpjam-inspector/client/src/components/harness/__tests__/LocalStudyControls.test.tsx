@@ -14,6 +14,7 @@ const controller = (
   setup,
   useCloud: cloud,
   clearGrant: vi.fn(),
+  isBoundConversation: () => false,
   resolveSendTarget: () => null,
   ...extra,
 });
@@ -174,4 +175,29 @@ it("shows cloud without offering local execution to an ineligible study actor", 
   expect(
     screen.queryByRole("button", { name: "Run on this machine" }),
   ).not.toBeInTheDocument();
+});
+
+it("requires a new conversation for cloud after local setup and retains revoke", () => {
+  render(
+    <LocalStudyControls
+      controller={controller({
+        requested: true,
+        chatSessionId: "chat",
+        ready: localReady,
+        isBoundConversation: () => true,
+      })}
+      revocation={revocation}
+      chatSessionId="chat"
+      disabled={false}
+    />,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Use cloud" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByText("Start a new conversation to use cloud."),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Revoke local access" }),
+  ).toBeEnabled();
 });
