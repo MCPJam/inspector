@@ -507,6 +507,19 @@ This line is only emitted in human format — `--format json` output is unchange
 
 Use `--wait-timeout <ms>` to replace the 35-minute default. `--out` defaults to the structured JSON format; add `--reporter junit-xml` to write JUnit XML instead, or `--reporter html` for a self-contained HTML page (decision summary + failures only — traces, parity, and history are paid tiers not included here). When `--reporter` is present, the same report is also written to stdout.
 
+<Tip>
+**`--file` runs need a higher `--timeout` in CI.** `--timeout` is a [global flag](/cli/reference#global-flags) that defaults to 30 seconds and does not appear in `eval run --help`. When you pass `--file`, the CLI resolves the project, negotiates capabilities, validates every tool reference against the live server, syncs the cases, and then launches — several sequential requests that can exceed 30 s on a cold runner. Pass `--timeout 180000` (three minutes) on both the `eval run` and `eval gate` steps to avoid a `TIMEOUT` exit 4 before evaluation starts.
+
+```bash
+npx -y @mcpjam/cli@latest cloud eval run \
+  --file .mcpjam/evals/suite.yaml \
+  --project "My project" \
+  --timeout 180000 \
+  --wait \
+  --out eval-report.json
+```
+</Tip>
+
 <Warning>
 **`eval run --wait` sets a verdict-based exit code.** `0` pass, `1` a completed run's verdict failed (the ONLY condition that produces `1`), `2` usage error or an invalid suite file, `3` auth failed (no credential, or the platform rejected it, at launch or mid-wait), `4` a connection/setup failure this CLI itself observed before evaluation ran (or a local `--out` write failure), `5` no valid verdict — `inconclusive`, a null/unrecognized result, a run status of failed/cancelled/timed-out, or a wait that hit its deadline. A multi-target launch merges these worst-of across every waited run, in the order `1 > 3 > 4 > 5 > 0`.
 
