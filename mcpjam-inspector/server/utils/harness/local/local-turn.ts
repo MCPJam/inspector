@@ -92,7 +92,7 @@ import { validateLocalHarnessSecretEnv } from "./session-env.js";
 import { mkdir, stat } from "node:fs/promises";
 import { reserveLoopbackPort } from "./bridge-endpoint.js";
 import { createRequire } from "node:module";
-
+import type { LocalStudyGrantBinding } from "./study-grant-binding.js";
 /**
  * The turn's declared local target — opaque ids only.
  *
@@ -110,12 +110,14 @@ export interface LocalHarnessExecutionTarget {
   grantToken: string;
   /** The acting user, resolved by the route from the verified bearer. */
   actingUserId: string;
+  /** Server-validated study ownership and backend reservation. */
+  study?: LocalStudyGrantBinding;
+  localStudySessionId?: string;
   /** Server scheduler-owned session identity; never parsed from renderer input. */
   localSessionId?: string;
   targetId?: string;
   sessionIdx?: number;
 }
-
 export interface PreparedLocalHarnessTurn {
   plan: LocalHarnessLaunchPlan;
   /** The AI SDK sandbox provider the turn assembles its harness over. */
@@ -178,11 +180,9 @@ export interface PreparedLocalHarnessTurn {
    *  this turn's own teardown. No-op when nothing was parked. */
   unpark: () => void;
 }
-
 export type LocalHarnessTurnPreparation =
   | { ok: true; prepared: PreparedLocalHarnessTurn }
   | { ok: false; status: string; message: string };
-
 /**
  * ONE supervisor per process, not per turn.
  *

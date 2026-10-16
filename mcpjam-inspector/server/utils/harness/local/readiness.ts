@@ -28,6 +28,7 @@ export const LOCAL_HARNESS_DISPLAY_NAMES: Readonly<Record<SupportedLocalHarnessI
   codex: "Codex",
 };
 import type { LocalHarnessExecutionTarget } from "./local-turn.js";
+import type { LocalStudyGrantBinding } from "./study-grant-binding.js";
 
 export function localHarnessBackend(bearer: string) {
   const url = process.env.CONVEX_URL;
@@ -80,6 +81,8 @@ export async function ensureLocalHarnessTarget(args: {
   bearer: string; projectId: string; scope: "attended" | "unattended";
   /** Registered session-owned scratch grant; supplied only by trusted schedulers. */
   workspaceGrantId?: string;
+  study?: LocalStudyGrantBinding;
+  localStudySessionId?: string;
   waitForInstall?: boolean;
   requireToolApproval?: boolean;
   /** Verified once at the signed-in launch; only trusted schedulers pass this. */
@@ -93,6 +96,7 @@ export async function ensureLocalHarnessTarget(args: {
 }) {
   const harnessId = args.harnessId ?? "claude-code";
   const name = LOCAL_HARNESS_DISPLAY_NAMES[harnessId];
+  if (args.study && (!args.workspaceGrantId || !args.localStudySessionId)) throw new Error("A study grant requires its isolated workspace and backend reservation");
   const actor = await verifyLocalHarnessMember(args.bearer, args.projectId, args.trustedActor, harnessId);
   const machineId = await getLocalMachineId();
   const authorization = await readLocalHarnessAuthorization(actor.userId, machineId, args.projectId, harnessId);
@@ -153,6 +157,7 @@ export async function ensureLocalHarnessTarget(args: {
     userId: actor.userId, machineId, projectId: args.projectId, workspaceGrantId,
     harnessId, targetKind: "local-native", runtimeId: runtime.runtime.runtimeId,
     permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION, scope: args.scope,
+    ...(args.study ? { study: args.study } : {}),
   }, { ttlMs: args.scope === "attended" ? 15 * 60_000 : 12 * 60 * 60_000 });
   return { grantId: granted.grantId, expiresAt: granted.expiresAt,
     workspaceDisplayRoot: (workspace.canonicalPath === homedir() || workspace.canonicalPath.startsWith(`${homedir()}${sep}`)) ? `~${workspace.canonicalPath.slice(homedir().length)}` : workspace.canonicalPath,
@@ -160,6 +165,7 @@ export async function ensureLocalHarnessTarget(args: {
     target: {
     kind: "local-native", machineId, workspaceGrantId, runtimeId: runtime.runtime.runtimeId,
     permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION, grantToken: granted.token, actingUserId: actor.userId,
+    ...(args.study ? { study: args.study, localStudySessionId: args.localStudySessionId } : {}),
   } satisfies LocalHarnessExecutionTarget };
 }
 
