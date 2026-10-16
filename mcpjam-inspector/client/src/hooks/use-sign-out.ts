@@ -11,7 +11,7 @@ import { startSessionRevocation } from "@/lib/auth/revoke-session";
 type AuthExitCleanup = () => void | Promise<void>;
 
 // Module scope rather than context: the Terms dialog that signs out renders
-// above App, which owns the connected servers this cleanup disconnects.
+// beside App, not inside it, and App owns the servers this cleanup disconnects.
 let authExitCleanup: AuthExitCleanup | null = null;
 
 /**
