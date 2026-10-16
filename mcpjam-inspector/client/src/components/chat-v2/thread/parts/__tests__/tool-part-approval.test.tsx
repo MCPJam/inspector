@@ -1,11 +1,14 @@
+import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToolPart } from "../tool-part";
 
-vi.mock("lucide-react", () => {
+vi.mock("lucide-react", async (original) => {
+  const actual = await original<typeof import("lucide-react")>();
   const s = (props: any) => <div {...props} />;
   return {
+    ...actual,
     Box: s,
     Check: s,
     ChevronDown: s,
@@ -579,4 +582,58 @@ describe("ToolPart approval expansion", () => {
     expect(getHeaderButton()).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("text-part")).not.toBeInTheDocument();
   });
+});
+
+
+describe("reloaded harness approval buttons", () => {
+  it.each(["approve", "deny"] as const)(
+    "delivers %s for the persisted pending call",
+    async (decision) => {
+      const messages = transcriptToUIMessages(
+        [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-reload",
+                toolName: "bash",
+                input: { command: "touch example" },
+              },
+            ],
+          },
+        ],
+        [
+          {
+            approvalId: "approval-reload",
+            toolCallId: "call-reload",
+            providerExecuted: true,
+          },
+        ],
+      );
+      const part = messages[0].parts[0];
+      if (part.type !== "dynamic-tool" || part.state !== "approval-requested")
+        throw new Error("expected a restored approval");
+      const onApprove = vi.fn();
+      const onDeny = vi.fn();
+      render(
+        <ToolPart
+          part={part}
+          approvalId={part.approval.id}
+          onApprove={onApprove}
+          onDeny={onDeny}
+        />,
+      );
+      await userEvent
+        .setup()
+        .click(
+          await screen.findByRole("button", {
+            name: new RegExp(`^${decision}$`, "i"),
+          }),
+        );
+      expect(decision === "approve" ? onApprove : onDeny).toHaveBeenCalledWith(
+        "approval-reload",
+      );
+    },
+  );
 });
