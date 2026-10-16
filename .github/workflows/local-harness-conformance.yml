@@ -618,15 +618,7 @@ jobs:
           path: ${{ runner.temp }}/conformance/published-conformance-input.json
           if-no-files-found: error
 
-  # Local Codex: its own pack (MCPJam's app-server bridge + the pinned
-  # `@openai/codex` platform binary), its own adapter and its own sandbox
-  # claims, so its own legs — against a mock OpenAI Responses upstream behind
-  # the same loopback gateway. Only the model is fake.
-  #
-  # D8: the targets Codex's manifest certifies (`nativeTargets`) block; the
-  # others run so their evidence stays visible without holding up a certified
-  # target's release. Windows has no leg: it is not a Codex native target, and
-  # its sandbox (`windowsSandbox/setupStart`) has no evidence yet.
+  # Uncertified Codex targets collect evidence without granting capabilities.
   codex-scenarios:
     name: codex ${{ matrix.platform_key }}
     needs: [unit, plan]
