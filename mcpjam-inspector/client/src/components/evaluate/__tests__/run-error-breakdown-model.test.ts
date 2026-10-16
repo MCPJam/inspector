@@ -168,8 +168,8 @@ describe("classifyIterationError", () => {
   });
 });
 
-// A BYOK run whose provider isn't turned on for the organization, as the
-// dev repro recorded it (PLB-135): the code is only in the diagnostics.
+// A BYOK run whose provider isn't turned on for the organization: the
+// iteration keeps the backend's sentence, and the code only in its diagnostics.
 const notTurnedOn =
   'The "anthropic" provider isn\'t turned on for your organization. An organization admin can add it under AI providers in organization settings, or you can pick a model from another provider.';
 const orgProviderRefusal = (code = "provider_not_configured") => ({
@@ -208,13 +208,14 @@ describe("organization AI provider refusals", () => {
     ]);
   });
 
-  it("keeps a refusal that lifts on its own where it was", () => {
+  it.each([
+    "provider_unavailable",
+    "org_runtime_unsupported",
+    "org_keys_required",
+  ])("keeps %s, which provider settings don't fix, where it was", (code) => {
     expect(
       classifyIterationError(
-        iteration(
-          "a",
-          orgProviderRefusal("provider_unavailable") as Partial<EvalIteration>,
-        ),
+        iteration("a", orgProviderRefusal(code) as Partial<EvalIteration>),
         providerErrorChain,
       ),
     ).toBe("platform");

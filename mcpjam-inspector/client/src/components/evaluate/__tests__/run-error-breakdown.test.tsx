@@ -92,7 +92,9 @@ describe("RunErrorBreakdownDescription — organization AI provider refusals", (
       screen.queryByRole("button", { name: "Manage AI providers" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText("Ask an organization admin to turn on the provider."),
+      screen.getByText(
+        "Ask an organization admin to add or reconnect a provider.",
+      ),
     ).toBeInTheDocument();
   });
 

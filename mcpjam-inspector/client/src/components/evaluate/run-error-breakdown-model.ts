@@ -17,7 +17,7 @@ import {
 } from "@/shared/steps";
 import type { EvalIteration } from "../evals/types";
 import {
-  isRetryableOrgKeysRefusal,
+  describeOrgKeysRefusal,
   orgKeysRefusalCodeInText,
 } from "@/lib/org-keys-refusal";
 import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
@@ -162,14 +162,18 @@ function classifyReason(
 
   if (reasonCause === undefined && !erroredByLifecycle) return null;
 
-  // The organization's AI provider settings refused the model. Only a change
-  // in Organization → AI providers lifts it, and the code may sit only in the
-  // iteration's diagnostics.
+  // The organization has no usable provider for the model: adding or
+  // reconnecting one in Organization → AI providers lifts it. The code may
+  // sit only in the iteration's diagnostics.
   const refusal = orgKeysRefusalCodeInText(
     error,
     error === iteration.error ? iteration.errorDetails : undefined,
   );
-  if (refusal && !isRetryableOrgKeysRefusal(refusal)) return "orgProviders";
+  if (
+    refusal &&
+    describeOrgKeysRefusal(refusal).remediation === "add_org_provider"
+  )
+    return "orgProviders";
 
   // A pinned call sends inputs the user wrote into the test, so a server
   // rejecting that call is first a question about those inputs.
