@@ -43,14 +43,30 @@ export const isUnsafeRawUrl = (
   [...raw].some((char) => char < " " || char === "\u007f");
 
 /**
- * Words joined by `-` or `_`, as in a docs slug
+ * Two or more words joined by `-` or `_`, as in a docs slug
  * (`getting-started-with-the-mcpjam-plugin`). The secret screen reads any long
- * run of these characters as a token, but a key in a URL mixes in digits.
+ * run of these characters as a token. One unbroken run of letters is not a
+ * slug, since a key can be written in letters only.
  */
-const WORD_SLUG = /^[a-z]+(?:[-_][a-z]+)*$/i;
+const WORD_SLUG = /^[a-z]+(?:[-_][a-z]+)+$/i;
 
+/**
+ * A part's ASCII percent escapes decoded, except `%2F`, which would join a
+ * path's segments into one run. Any other `%` stays as written.
+ */
+const decodeAsciiEscapes = (part: string): string =>
+  part.replace(/%(?!2f)([0-7][0-9a-f])/gi, (_escape, hex: string) =>
+    String.fromCharCode(Number.parseInt(hex, 16))
+  );
+
+/**
+ * `URL` keeps the percent escapes of a path and a fragment (`sk%2Dlive…`), so
+ * a part is read decoded too.
+ */
 function urlPartLooksSecret(part: string): boolean {
-  return isSecretLikeValue(part) && !WORD_SLUG.test(part);
+  return [part, decodeAsciiEscapes(part)].some(
+    (form) => isSecretLikeValue(form) && !WORD_SLUG.test(form)
+  );
 }
 
 /**

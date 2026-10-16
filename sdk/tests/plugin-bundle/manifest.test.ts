@@ -230,6 +230,15 @@ describe("plugin manifest validation", () => {
     expect(parsed.warnings).toEqual([]);
   });
 
+  it("does not store a metadata URL whose fragment is a key of letters only", async () => {
+    const key = "QhZkWbRtYpLmNcXvAsDfGhJkLqWeRtYuIoPaSdFgHj";
+    const parsed = await parsePluginBundle(
+      minimalBundle({}, { homepage: `https://example.com/docs#${key}` })
+    );
+    expect(parsed.manifest.homepage).toBeUndefined();
+    expect(JSON.stringify(parsed)).not.toContain(key);
+  });
+
   it("stores a metadata URL with a fragment as written", async () => {
     const homepage = "https://example.com/docs#install";
     const parsed = await parsePluginBundle(minimalBundle({}, { homepage }));

@@ -662,6 +662,14 @@ describe("conformance: MCP Support", () => {
     ["one slash after the scheme", "https:/mcp.example.com/mcp"],
     ["three slashes after the scheme", "https:///mcp.example.com/mcp"],
     ["a key in its path", "https://mcp.example.com/sk-live-p4ssw0rd01/mcp"],
+    [
+      "a percent-encoded key in its path",
+      "https://mcp.example.com/sk%2Dlive%2Dp4ssw0rd01/mcp",
+    ],
+    [
+      "a key of letters only in its path",
+      "https://mcp.example.com/QhZkWbRtYpLmNcXvAsDfGhJkLqWeRtYuIoPaSdFgHj/mcp",
+    ],
     ["a key in its query", "https://mcp.example.com/mcp?api_key=p4ssw0rd"],
     ["an empty fragment", "https://mcp.example.com/mcp#"],
     ["a backslash before @", "https://mcp.example.com\\@evil.example/mcp"],
@@ -689,6 +697,15 @@ describe("conformance: MCP Support", () => {
   it("keeps a remote URL with a long slug and an ordinary query, as written", async () => {
     const url =
       "https://mcp.example.com/workspaces/acme-corporation-platform-engineering-team/mcp?tenant=acme&ref=main";
+    const parsed = await parsePluginBundle(
+      withMcp({ ok: { type: "streamable-http", url } })
+    );
+    expect(parsed.mcpServers[0].config).toMatchObject({ url });
+  });
+
+  it("keeps a remote URL whose encoded slashes join long slug words", async () => {
+    const url =
+      "https://mcp.example.com/projects/platform-engineering%2Finfrastructure%2Fdeployment-tools/mcp";
     const parsed = await parsePluginBundle(
       withMcp({ ok: { type: "streamable-http", url } })
     );
