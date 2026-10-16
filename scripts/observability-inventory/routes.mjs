@@ -2,6 +2,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {ts,prop,enclosingFunction,conditions} from './ast.mjs';
 import { resolve, staticValue, routeBindings, routeValues } from './resolve.mjs';
+import { STATUS } from './statuses.mjs';
 const join=(a,b)=>('/'+(a+'/'+b).split('/').filter(Boolean).join('/'));
 export function collectConvexRoutes(context) {
  const {modules,backendRoot,unresolved,add}=context;
@@ -20,7 +21,7 @@ export function collectConvexRoutes(context) {
       add('backend', backendRoot, info.file, node, 'convex.http', `${methodLabel} ${validPath ? route : expression}`,
         { id: `backend:convex.http:${path.relative(backendRoot, info.file)}:${enclosingFunction(node)}:${methodLabel}:${valid ? route : expression + ':' + node.getStart()}`,
           method: validMethod ? verb : null, methodExpression: validMethod ? null : methodExpression, path: validPath ? route : null, pathExpression: validPath ? null : expression, scope: enclosingFunction(node),
-          status: valid ? 'instrumented-unverified' : 'unknown', reason: valid ? 'Convex execution backstop; returned HTTP status and handled outcome not proven' : 'Unresolved registration path or method requires review', prefix: Boolean(prop(obj, 'pathPrefix')) });
+          status: valid ? STATUS.INSTRUMENTED_UNVERIFIED : STATUS.UNKNOWN, reason: valid ? 'Convex execution backstop; returned HTTP status and handled outcome not proven' : 'Unresolved registration path or method requires review', prefix: Boolean(prop(obj, 'pathPrefix')) });
     }
   }
 }
@@ -54,7 +55,7 @@ function walkRouter(context, info, receiver, prefix, entrypoint, chain = [], inh
         const requestLogged = full.startsWith('/api/') && !health;
         add('inspector', inspectorRoot, info.file, r.node, 'inspector.http', `${verb} ${full}`,
           { id: `${endpointId}:${registrationId}`, endpointId, entrypoint, method: verb, path: full, conditions: guards, mounts, column: evidence.column, adapter: requestLogged ? 'requestLogContextMiddleware (/api/*)' : null,
-            status: requestLogged ? 'instrumented-unverified' : 'gap',
+            status: requestLogged ? STATUS.INSTRUMENTED_UNVERIFIED : STATUS.GAP,
             reason: requestLogged ? 'Request-completion adapter mounted; admission exits, terminal streams and live delivery still unverified' : 'No request-completion adapter at this path (health skips deliberate but exemption needs review)' });
       }
     }

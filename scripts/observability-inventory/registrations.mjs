@@ -1,5 +1,6 @@
 import path from 'node:path';
 import {ts,visit,method,literal,rootReceiver,callee,prop,enclosingFunction,resolveModule,parseFile} from './ast.mjs';
+import { STATUS } from './statuses.mjs';
 function collectImports(info, root) {
  const {sf,file}=info;
     for (const s of sf.statements) {
@@ -37,7 +38,7 @@ function collectDeclarations(node, context) {
           if (type && !/^custom(Query|Mutation|Action)$/.test(builder) && statement.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)) {
             const kind = /query/i.test(builder) ? 'query' : /mutation/i.test(builder) ? 'mutation' : 'action';
             add(repo, root, file, node, 'convex.function.' + kind, node.name.text,
-              { builder, status: 'instrumented-unverified', reason: 'Convex function_execution backstop; handled outcomes and configured Sentry integration unverified' });
+              { builder, status: STATUS.INSTRUMENTED_UNVERIFIED, reason: 'Convex function_execution backstop; handled outcomes and configured Sentry integration unverified' });
           }
         }
       }
@@ -59,7 +60,7 @@ function collectRuntimeCalls(node, context) {
         }
         if (backend && receiver === 'crons' && ['interval', 'hourly', 'daily', 'weekly', 'monthly', 'cron'].includes(m)) {
           add(repo, root, file, node, 'convex.cron', literal(node.arguments[0]) ?? '<dynamic>',
-            { schedule: node.arguments[1]?.getText(), target: node.arguments[2]?.getText(), status: 'instrumented-unverified', reason: 'Registration exists; per-target heartbeat/detector and live execution unverified' });
+            { schedule: node.arguments[1]?.getText(), target: node.arguments[2]?.getText(), status: STATUS.INSTRUMENTED_UNVERIFIED, reason: 'Registration exists; per-target heartbeat/detector and live execution unverified' });
         }
         if (backend && /\.scheduler\.(runAfter|runAt)$/.test(callee(node))) {
           add(repo, root, file, node, 'convex.scheduled', node.arguments[1]?.getText() ?? '<dynamic>', { scope: enclosingFunction(node), delay: node.arguments[0]?.getText() });
@@ -80,7 +81,7 @@ function collectSurfaceCalls(node, context) {
         if (rel.startsWith('cli/src/') && m === 'command') add(repo, root, file, node, 'cli.command', literal(node.arguments[0]) ?? '<dynamic>',
           { id: `${repo}:cli.command:${rel}:${enclosingFunction(node)}:${receiver}:${literal(node.arguments[0]) ?? node.getStart()}`,
             parentExpression: ts.isPropertyAccessExpression(node.expression) ? node.expression.expression.getText().slice(0, 100) : null,
-            status: 'instrumented-unverified', reason: 'CLI main captures command completion through PostHog; Axiom reliability and diagnostic requirements pending' });
+            status: STATUS.INSTRUMENTED_UNVERIFIED, reason: 'CLI main captures command completion through PostHog; Axiom reliability and diagnostic requirements pending' });
         if (rel.startsWith('mcp/src/') && ['registerTool', 'registerResource', 'setRequestHandler'].includes(m)) add(repo, root, file, node, 'mcp.registration', literal(node.arguments[0]) ?? node.arguments[0]?.getText() ?? '<dynamic>',
           { dynamic: literal(node.arguments[0]) === null, reason: 'Resolve dynamic operation catalog and caller inheritance; registration is not delivery proof' });
         if (rel.startsWith('slack-app/') && receiver === 'app' && ['event', 'action', 'command', 'view', 'message'].includes(m)) add(repo, root, file, node, 'slack.handler', literal(node.arguments[0]) ?? node.arguments[0]?.getText() ?? '<dynamic>');
@@ -112,7 +113,7 @@ function collectSurfaceDeclarations(node, context) {
       }
       if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
         if (/ErrorBoundary$/.test(node.tagName.getText())) add(repo, root, file, node, 'react.error-boundary', node.tagName.getText(),
-          { status: 'instrumented-unverified', reason: 'Error boundary mounted; reporter, eligible errors and received diagnostics unverified' });
+          { status: STATUS.INSTRUMENTED_UNVERIFIED, reason: 'Error boundary mounted; reporter, eligible errors and received diagnostics unverified' });
       }
 }
 export function collectModule(file, inspectorRoot, backendRoot, add) {

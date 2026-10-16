@@ -153,3 +153,24 @@ else app.route('/api/mounted', router);`,
   assert.deepEqual(mounted.map(x => x.mounts[0].line), [5, 6]);
   assert.deepEqual(mounted.map(x => x.conditions), [['HOSTED_MODE'], ['!(HOSTED_MODE)']]);
 }));
+
+test('the five statuses are defined once, and a source scan can only reach three of them', async () => {
+  const { STATUS, ALL_STATUSES, SOURCE_ASSIGNABLE, isStatus } =
+    await import('../observability-inventory/statuses.mjs');
+
+  // Pins the vocabulary. The coverage contract lives in Kestral, so nothing
+  // else fails a build when the two disagree; this is the one check that does.
+  assert.deepEqual([...ALL_STATUSES],
+    ['unknown', 'gap', 'instrumented-unverified', 'verified', 'exempt']);
+
+  // VERIFIED needs evidence from a deployed release and EXEMPT needs a named
+  // reviewer. Neither can be concluded by reading source, so neither may be
+  // assigned by this scanner.
+  assert.deepEqual([...SOURCE_ASSIGNABLE],
+    ['unknown', 'gap', 'instrumented-unverified']);
+  assert.ok(!SOURCE_ASSIGNABLE.includes(STATUS.VERIFIED));
+  assert.ok(!SOURCE_ASSIGNABLE.includes(STATUS.EXEMPT));
+
+  assert.ok(isStatus('gap'));
+  assert.ok(!isStatus('instrumented'));
+});

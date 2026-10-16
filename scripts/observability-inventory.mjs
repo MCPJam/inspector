@@ -5,6 +5,7 @@ import {pathToFileURL} from 'node:url';
 import { sourceFiles, signals, enclosingFunction, conditions } from './observability-inventory/ast.mjs';
 import {collectModule} from './observability-inventory/registrations.mjs';
 import {collectConvexRoutes,collectInspectorRoutes} from './observability-inventory/routes.mjs';
+import { STATUS } from './observability-inventory/statuses.mjs';
 export {sourceFiles,parseFile} from './observability-inventory/ast.mjs';
 function rowEmitter(rows) {
   return (repo, root, file, node, kind, name, extra = {}) => {
@@ -14,7 +15,7 @@ function rowEmitter(rows) {
     const column = node.getSourceFile().getLineAndCharacterOfPosition(node.getStart()).character + 1;
     const row = { id: `${repo}:${kind}:${relative}:${enclosingFunction(node)}:${candidate ? line + ':' + column + ':' : ''}${name}`, repo, kind, name,
       file: relative, line, owner: kind.startsWith('convex') ? 'backend domain maintainer' : relative.split('/')[0] + ' maintainer',
-      sourceSignals: signals(node), conditions: conditions(node), status: 'unknown', verified: false,
+      sourceSignals: signals(node), conditions: conditions(node), status: STATUS.UNKNOWN, verified: false,
       reason: 'Source discovery only; behavioral and deployed delivery proof pending', ...extra };
     rows.push(row); return row;
   };
