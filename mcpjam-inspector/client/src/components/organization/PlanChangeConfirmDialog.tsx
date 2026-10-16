@@ -221,7 +221,7 @@ export function PlanChangeConfirmDialog({
               : `Confirm ${entry.displayName}`}
           </Button>
         </DialogFooter>
-        <LegalConsentNotice />
+        {isNewSubscription ? <LegalConsentNotice /> : null}
       </DialogContent>
     </Dialog>
   );

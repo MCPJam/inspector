@@ -66,6 +66,14 @@ describe("PlanChangeConfirmDialog", () => {
     expectLegalConsentLinks();
   });
 
+  it("omits the consent notice when changing an existing subscription", () => {
+    renderDialog({ isNewSubscription: false, currentPlanName: "Pro" });
+
+    expect(
+      screen.queryByRole("link", { name: "Terms of Use" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("reports an interval change without confirming", () => {
     const { onIntervalChange, onConfirm } = renderDialog();
 
