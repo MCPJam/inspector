@@ -14,6 +14,7 @@ function props(overrides: Partial<Props> = {}): Props {
     isLoadingOrganizations: false,
     hasRouteOrganization: false,
     isDeletionPending: false,
+    isDeleted: false,
     isSeatPending: false,
     accountEmail: "member@example.com",
     onContinue: vi.fn(),
@@ -135,6 +136,13 @@ describe("UnavailableOrganizationDialog", () => {
     );
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("dialog")).not.toHaveTextContent("signed in as");
+  });
+
+  it("leaves an organization the user deleted without access advice", () => {
+    const input = props({ isDeleted: true });
+    render(<UnavailableOrganizationDialog {...input} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(input.onContinue).toHaveBeenCalledTimes(1);
   });
 
   it("preserves the fallback for an organization route without an ID", () => {

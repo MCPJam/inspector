@@ -17,6 +17,7 @@ interface UnavailableOrganizationDialogProps {
   isLoadingOrganizations: boolean;
   hasRouteOrganization: boolean;
   isDeletionPending: boolean;
+  isDeleted: boolean;
   isSeatPending: boolean;
   accountEmail?: string;
   onContinue: () => void;
@@ -29,10 +30,14 @@ export function UnavailableOrganizationDialog({
   isLoadingOrganizations,
   hasRouteOrganization,
   isDeletionPending,
+  isDeleted,
   isSeatPending,
   accountEmail,
   onContinue,
 }: UnavailableOrganizationDialogProps) {
+  // The person who deleted the org already knows why it is gone; access
+  // advice would only confuse them, so their fallback stays silent.
+  const isSilentFallback = !routeOrganizationId || isDeleted;
   const navigationTarget =
     isAuthenticated && !isDeletionPending
       ? getInvalidOrganizationRouteNavigationTarget({
@@ -44,10 +49,10 @@ export function UnavailableOrganizationDialog({
       : null;
 
   useEffect(() => {
-    if (navigationTarget && !routeOrganizationId) onContinue();
-  }, [navigationTarget, routeOrganizationId, onContinue]);
+    if (navigationTarget && isSilentFallback) onContinue();
+  }, [navigationTarget, isSilentFallback, onContinue]);
 
-  if (!navigationTarget || !routeOrganizationId) return null;
+  if (!navigationTarget || isSilentFallback) return null;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onContinue()}>

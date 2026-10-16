@@ -6705,6 +6705,10 @@ export default function App() {
                     routeOrganizationId,
                   ))
               }
+              isDeleted={
+                !!routeOrganizationId &&
+                deletingOrganizationIds.includes(routeOrganizationId)
+              }
               isSeatPending={sortedOrganizations.some(
                 (org) => org._id === routeOrganizationId && org.seatPending,
               )}

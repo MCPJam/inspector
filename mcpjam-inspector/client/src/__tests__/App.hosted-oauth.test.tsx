@@ -3418,7 +3418,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/servers");
   });
 
-  it("explains unavailable access before leaving an org whose delete already landed", async () => {
+  it("redirects Back to an org whose delete already landed", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-gone");
@@ -3452,10 +3452,10 @@ describe("App hosted OAuth callback handling", () => {
 
     try {
       render(<App />);
-      expect(await screen.findByRole("dialog")).toBeInTheDocument();
-      expect(window.location.pathname).toBe("/organizations/org-gone");
-      fireEvent.click(screen.getByRole("button", { name: "Go to your projects" }));
-      await waitFor(() => expect(window.location.pathname).toBe("/servers"));
+
+      await waitFor(() => {
+        expect(window.location.pathname).toBe("/servers");
+      });
     } finally {
       act(() => endOrganizationDeletion("org-gone"));
     }
