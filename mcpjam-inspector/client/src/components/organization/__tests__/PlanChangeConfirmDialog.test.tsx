@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PlanChangeConfirmDialog } from "../PlanChangeConfirmDialog";
 import type { PlanCatalogEntry } from "@/hooks/useOrganizationBilling";
+import { expectLegalConsentLinks } from "@/test/legal-consent";
 
 function makeEntry(overrides: Partial<PlanCatalogEntry> = {}): PlanCatalogEntry {
   return {
@@ -58,6 +59,11 @@ describe("PlanChangeConfirmDialog", () => {
     fireEvent.click(screen.getByTestId("plan-confirm-cta"));
 
     expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("links the Terms of Use and Privacy Policy next to checkout", () => {
+    renderDialog();
+    expectLegalConsentLinks();
   });
 
   it("reports an interval change without confirming", () => {

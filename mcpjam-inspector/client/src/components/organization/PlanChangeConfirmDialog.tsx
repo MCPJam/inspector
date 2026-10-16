@@ -19,6 +19,7 @@ import {
   formatCatalogPrice,
 } from "@/lib/pricing-catalog";
 import { cn } from "@/lib/utils";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 
 interface PlanChangeConfirmDialogProps {
   open: boolean;
@@ -220,6 +221,7 @@ export function PlanChangeConfirmDialog({
               : `Confirm ${entry.displayName}`}
           </Button>
         </DialogFooter>
+        <LegalConsentNotice />
       </DialogContent>
     </Dialog>
   );
