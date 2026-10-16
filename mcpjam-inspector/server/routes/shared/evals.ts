@@ -3214,7 +3214,7 @@ export async function prepareEvalRun(
       // The shared pin → skill-channel conversion (environment quick runs use
       // the same one): unreachable supporting files fail HERE, before the
       // model runs, and an empty pin set stays empty on both channels.
-      const pinServerNames = environmentLaunch
+      const pinServerNames = environmentLaunch && !githubCheckEnvironmentLaunch
         ? environmentServerNames(environmentLaunch)
         : serverNames;
       const built = await buildPinnedSkillSource({

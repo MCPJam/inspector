@@ -225,7 +225,11 @@ export async function resolveEnvironmentForLaunch(
     runtimeVenue?: "local" | "hosted";
     /** The launch's own declaration, when it has made one. */
     runnerCapabilities?: readonly string[];
-    /** GitHub check runs replace every server, so a deleted group server is not refused. */
+    /**
+     * GitHub check runs replace every server, so a deleted group server is not
+     * refused and the group comes back as stored: its ids may name deleted
+     * servers, so never connect them.
+     */
     serversReplaced?: boolean;
   },
 ): Promise<ResolvedEnvironmentForLaunch> {
