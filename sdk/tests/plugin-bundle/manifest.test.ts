@@ -136,10 +136,110 @@ describe("plugin manifest validation", () => {
     }
   );
 
-  it("requires HTTPS for metadata URLs", async () => {
+  it("does not store a non-HTTPS or malformed metadata URL, and does not reject the plugin for it", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle(
+        {},
+        {
+          homepage: "http://example.com",
+          repository: "not a url",
+          author: { name: "A", url: "ftp://example.com" },
+        }
+      )
+    );
+    expect(parsed.manifest.homepage).toBeUndefined();
+    expect(parsed.manifest.repository).toBeUndefined();
+    expect(parsed.manifest.author).toEqual({ name: "A" });
+    expect(parsed.warnings.map((issue) => issue.code).sort()).toEqual([
+      "MANIFEST_INSECURE_URL",
+      "MANIFEST_INSECURE_URL",
+      "MANIFEST_INVALID_FIELD",
+    ]);
+  });
+
+  it("does not store or repeat a metadata URL that carries a user name or password", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle(
+        {},
+        {
+          homepage: "https://u:p4ss@example.com",
+          repository: "https://ghs_abc123@github.com/o/r",
+          author: { name: "A", url: "https://:p4ss@example.com/a" },
+        }
+      )
+    );
+    expect(parsed.manifest.homepage).toBeUndefined();
+    expect(parsed.manifest.repository).toBeUndefined();
+    expect(parsed.manifest.author).toEqual({ name: "A" });
+    expect(parsed.warnings.map((issue) => issue.code)).toEqual([
+      "MANIFEST_SECRET_FIELD_OMITTED",
+      "MANIFEST_SECRET_FIELD_OMITTED",
+      "MANIFEST_SECRET_FIELD_OMITTED",
+    ]);
+    expect(JSON.stringify(parsed)).not.toMatch(/p4ss|ghs_abc123/);
+  });
+
+  it.each([
+    ["a backslash", "https://example.com\\@evil.example/"],
+    ["a tab", "https://exa\tmple.com"],
+    ["a leading space", " https://example.com"],
+    ["a line break", "https://example.com/\n"],
+    ["one slash after the scheme", "https:/example.com"],
+    ["no slashes after the scheme", "https:example.com"],
+    ["empty user info", "https://@example.com"],
+  ])(
+    "does not store or repeat a metadata URL with %s, which URL parsing rewrites",
+    async (_, homepage) => {
+      const parsed = await parsePluginBundle(minimalBundle({}, { homepage }));
+      expect(parsed.manifest.homepage).toBeUndefined();
+      expect(parsed.warnings.map((issue) => issue.code)).toEqual([
+        "MANIFEST_INVALID_FIELD",
+      ]);
+      expect(JSON.stringify(parsed.warnings)).not.toContain("example");
+    }
+  );
+
+  it.each([
+    ["its query", "https://example.com/?api_key=p4ss"],
+    ["its path", "https://example.com/sk-live-p4ss01/r"],
+    [
+      "its fragment, as a parameter",
+      "https://example.com/docs#access_token=p4ss01",
+    ],
+    [
+      "its fragment",
+      "https://example.com/#p4ss0123456789abcdef0123456789abcdef01234",
+    ],
+  ])(
+    "does not store or repeat a metadata URL with a key in %s",
+    async (_, homepage) => {
+      const parsed = await parsePluginBundle(minimalBundle({}, { homepage }));
+      expect(parsed.manifest.homepage).toBeUndefined();
+      expect(parsed.warnings.map((issue) => issue.code)).toEqual([
+        "MANIFEST_SECRET_FIELD_OMITTED",
+      ]);
+      expect(JSON.stringify(parsed)).not.toContain("p4ss");
+    }
+  );
+
+  it("keeps a metadata URL whose long path and fragment are word slugs", async () => {
+    const homepage =
+      "https://example.com/docs/getting-started-with-the-mcpjam-inspector-plugin#how-to-install-and-configure-the-plugin-locally";
+    const parsed = await parsePluginBundle(minimalBundle({}, { homepage }));
+    expect(parsed.manifest.homepage).toBe(homepage);
+    expect(parsed.warnings).toEqual([]);
+  });
+
+  it("stores a metadata URL with a fragment as written", async () => {
+    const homepage = "https://example.com/docs#install";
+    const parsed = await parsePluginBundle(minimalBundle({}, { homepage }));
+    expect(parsed.manifest.homepage).toBe(homepage);
+  });
+
+  it("rejects a metadata URL that is not a string (a schema violation)", async () => {
     await expectParseError(
-      minimalBundle({}, { homepage: "http://example.com" }),
-      "MANIFEST_INSECURE_URL"
+      minimalBundle({}, { homepage: 42 }),
+      "MANIFEST_INVALID_FIELD"
     );
   });
 

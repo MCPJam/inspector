@@ -10,43 +10,153 @@ import type {
   PluginEnvRequirement,
   PluginHeaderRequirement,
 } from "./mcp-config.js";
+import { resolveContainedPath } from "./paths.js";
 import {
   isSecretLikeValue,
   SECRET_FIELD_NAME,
   sanitizeUnknownRecord,
+  type PluginIssueCode,
   type PluginIssueCollector,
 } from "./validation.js";
 
 /** Loopback hosts, where plain HTTP is tolerated for local development. */
 export function isLoopbackHost(hostname: string): boolean {
-  return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(hostname);
+  return (
+    ["localhost", "[::1]", "::1"].includes(hostname) ||
+    /^127(?:\.\d{1,3}){3}$/.test(hostname)
+  );
 }
 
 /**
  * Userinfo, a fragment (even `https:@h/#`) or anything `URL` would rewrite,
  * including a host that does not follow exactly two slashes (`https:h`,
- * `https:/h`, `https:///h` all read as `https://h`).
+ * `https:/h`, `https:///h` all read as `https://h`). A link shown to members
+ * may keep its fragment.
  */
-export const isUnsafeRawUrl = (raw: string): boolean =>
+export const isUnsafeRawUrl = (
+  raw: string,
+  options?: { allowFragment?: boolean }
+): boolean =>
   !/^[^:/?#]+:\/\/[^\\/?#]/.test(raw) ||
-  /^[^:]*:[\\/]*[^\\/?#]*@|[#\\\s]/.test(raw) ||
+  /^[^:]*:[\\/]*[^\\/?#]*@|[\\\s]/.test(raw) ||
+  (options?.allowFragment !== true && raw.includes("#")) ||
   [...raw].some((char) => char < " " || char === "\u007f");
 
 /**
- * A path segment or query value that looks like a credential, or a query
- * parameter named like one: a personal MCP URL often carries its key in the
- * path, and `?api_key=…` in the query. Each part is tested on its own, since a
- * long path read whole would look like a token run.
+ * Words joined by `-` or `_`, as in a docs slug
+ * (`getting-started-with-the-mcpjam-plugin`). The secret screen reads any long
+ * run of these characters as a token, but a key in a URL mixes in digits.
+ */
+const WORD_SLUG = /^[a-z]+(?:[-_][a-z]+)*$/i;
+
+function urlPartLooksSecret(part: string): boolean {
+  return isSecretLikeValue(part) && !WORD_SLUG.test(part);
+}
+
+/**
+ * A path segment, query value or fragment that looks like a credential, or a
+ * query or fragment parameter named like one: a personal MCP URL often
+ * carries its key in the path, `?api_key=…` in the query, and an OAuth
+ * redirect `#access_token=…` in the fragment. Each part is tested on its own,
+ * since a long path read whole would look like a token run.
  */
 export function urlCarriesSecret(url: URL): boolean {
-  if (url.pathname.split("/").some((segment) => isSecretLikeValue(segment))) {
-    return true;
-  }
-  for (const [name, value] of url.searchParams) {
-    if (isSecretLikeValue(value)) return true;
-    if (value !== "" && SECRET_FIELD_NAME.test(name)) return true;
+  if (url.pathname.split("/").some(urlPartLooksSecret)) return true;
+  const fragment = url.hash.slice(1);
+  if (urlPartLooksSecret(fragment)) return true;
+  for (const params of [url.searchParams, new URLSearchParams(fragment)]) {
+    for (const [name, value] of params) {
+      if (urlPartLooksSecret(value)) return true;
+      if (value !== "" && SECRET_FIELD_NAME.test(name)) return true;
+    }
   }
   return false;
+}
+
+type ValueCheck<T> =
+  | ({ ok: true } & T)
+  | { ok: false; code: PluginIssueCode; message: string };
+
+/**
+ * A remote server URL: absolute, HTTPS unless loopback, with exactly two
+ * slashes before the host and nothing `URL` drops or rewrites (userinfo, a
+ * fragment, whitespace, a backslash), so the string stored is the one checked.
+ * A URL carrying a credential, as user info or in a path segment or query, is
+ * refused rather than stored, and no message repeats it.
+ */
+export function checkServerUrl(
+  url: string
+): ValueCheck<{ loopbackHttp: boolean }> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return {
+      ok: false,
+      code: "MCP_INVALID_SERVER",
+      message: `"url" is not a valid URL`,
+    };
+  }
+  if (isUnsafeRawUrl(url)) {
+    return {
+      ok: false,
+      code: "MCP_INVALID_SERVER",
+      message: `"url" must be an absolute https:// URL (or a loopback http:// one) without credentials, a fragment, whitespace or backslashes`,
+    };
+  }
+  if (urlCarriesSecret(parsed)) {
+    return {
+      ok: false,
+      code: "MCP_INVALID_SERVER",
+      message: `"url" looks like it carries a credential, which a plugin must not ship`,
+    };
+  }
+  if (parsed.protocol === "https:") return { ok: true, loopbackHttp: false };
+  if (parsed.protocol === "http:" && isLoopbackHost(parsed.hostname)) {
+    return { ok: true, loopbackHttp: true };
+  }
+  return {
+    ok: false,
+    code: "MCP_INSECURE_URL",
+    message: "remote MCP servers must use HTTPS",
+  };
+}
+
+/**
+ * A working directory in its canonical placeholder form, contained in the
+ * plugin root or data directory: `./x` becomes `${PLUGIN_ROOT}/x`, and a
+ * placeholder-rooted path is normalized under its placeholder, so a `..`
+ * that would leave either directory is refused.
+ */
+export function resolveWorkingDirectory(cwd: unknown): ValueCheck<{
+  value: string;
+}> {
+  if (typeof cwd !== "string") {
+    return {
+      ok: false,
+      code: "MCP_INVALID_SERVER",
+      message: `"cwd" must be a string`,
+    };
+  }
+  const match = /^(\.|\$\{PLUGIN_ROOT\}|\$\{PLUGIN_DATA\})(?:\/(.*))?$/s.exec(
+    cwd
+  );
+  if (match === null || (match[1] === "." && match[2] === undefined)) {
+    return {
+      ok: false,
+      code: "MCP_INVALID_WORKING_DIRECTORY",
+      message: `"cwd" must start with "./", "\${PLUGIN_ROOT}", or "\${PLUGIN_DATA}"`,
+    };
+  }
+  const root = match[1] === "." ? "${PLUGIN_ROOT}" : match[1];
+  const rest = match[2] ?? "";
+  if (rest.replace(/[/.]/g, "") === "" && !rest.includes("..")) {
+    return { ok: true, value: root };
+  }
+  const resolved = resolveContainedPath("", rest);
+  return resolved.ok
+    ? { ok: true, value: `${root}/${resolved.path}` }
+    : { ok: false, code: resolved.code, message: resolved.message };
 }
 
 /** `${SOME_VAR}`-style reference that must be resolved by the user at setup. */
@@ -192,9 +302,21 @@ export function normalizeHeaders(
     return null;
   }
   const requirements: PluginHeaderRequirement[] = [];
+  const seen = new Set<string>();
   for (const [name, value] of Object.entries(
     headers as Record<string, unknown>
   )) {
+    // Header names are case-insensitive: two casings of one name would leave
+    // the value actually sent up to whichever the HTTP stack keeps.
+    if (seen.has(name.toLowerCase())) {
+      issues.error(
+        "MCP_INVALID_HEADERS",
+        `server "${serverKey}": header "${name}" is declared more than once`,
+        { componentKey }
+      );
+      return null;
+    }
+    seen.add(name.toLowerCase());
     if (typeof value !== "string") {
       issues.error(
         "MCP_INVALID_HEADERS",
