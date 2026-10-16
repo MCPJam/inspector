@@ -25,10 +25,13 @@ for (const harness of ["claude-code", "codex"]) {
         .poll(() => stats(request))
         .toMatchObject({ executions: 2, resumed: 2 });
       expect(replay).not.toBeNull();
-      await request.post(`${api}/chat`, {
+      const duplicate = await request.post(`${api}/chat`, {
         data: replay!,
         headers: { "Content-Type": "application/json" },
       });
+      const refusal = await duplicate.text();
+      expect(refusal).toContain('"type":"error"');
+      expect(refusal).toContain("local session holding this approval has ended");
       expect(await stats(request)).toMatchObject({ executions: 2, resumed: 2 });
       await expect(
         page.getByRole("button", { name: "Approve", exact: true }),
