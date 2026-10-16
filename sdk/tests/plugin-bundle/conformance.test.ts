@@ -225,6 +225,28 @@ describe("conformance: Plugin Loader", () => {
     expect(parsed.manifest.extensions["com.example.other"]).toEqual(foreign);
   });
 
+  it("MUST NOT reject a plugin for failing a metadata URL check — the value is not stored (documented)", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({}, { homepage: "http://example.com", repository: "nope" })
+    );
+    expect(parsed.manifest.homepage).toBeUndefined();
+    expect(parsed.manifest.repository).toBeUndefined();
+  });
+
+  it("MUST type-check author fields: a non-string name is fatal, an unknown field is reported (documented)", async () => {
+    await expectParseError(
+      minimalBundle({}, { author: { name: 7 } }),
+      "MANIFEST_INVALID_FIELD"
+    );
+    const parsed = await parsePluginBundle(
+      minimalBundle({}, { author: { name: "A", handle: "@a" } })
+    );
+    expect(parsed.manifest.author).toEqual({ name: "A" });
+    expect(parsed.warnings.map((issue) => issue.code)).toEqual([
+      "MANIFEST_UNKNOWN_FIELD",
+    ]);
+  });
+
   it("MUST reject fatal manifest violations before component discovery", async () => {
     const error = await expectParseError(
       minimalBundle(
@@ -630,6 +652,110 @@ describe("conformance: MCP Support", () => {
       )
     ).toBe(true);
   });
+
+  it.each([
+    ["user info", "https://user:p4ssw0rd@mcp.example.com/mcp"],
+    ["a username alone", "https://user@mcp.example.com/mcp"],
+    ["a fragment", "https://mcp.example.com/mcp#section"],
+    ["empty user info", "https://@mcp.example.com/mcp"],
+    ["empty user info and no slashes", "https:@mcp.example.com/mcp"],
+    ["one slash after the scheme", "https:/mcp.example.com/mcp"],
+    ["three slashes after the scheme", "https:///mcp.example.com/mcp"],
+    ["a key in its path", "https://mcp.example.com/sk-live-p4ssw0rd01/mcp"],
+    ["a key in its query", "https://mcp.example.com/mcp?api_key=p4ssw0rd"],
+    ["an empty fragment", "https://mcp.example.com/mcp#"],
+    ["a backslash before @", "https://mcp.example.com\\@evil.example/mcp"],
+    ["a trailing space", "https://mcp.example.com/mcp "],
+    ["a control character", "https://mcp.example.com/m\u0001cp"],
+  ])(
+    "MUST reject a remote URL with %s — that entry only, and the URL is never stored",
+    async (_label, url) => {
+      const parsed = await parsePluginBundle(
+        withMcp({
+          bad: { type: "streamable-http", url },
+          ok: { type: "streamable-http", url: "https://ok.example.com/mcp" },
+        })
+      );
+      expect(parsed.mcpServers.map((server) => server.key)).toEqual(["ok"]);
+      // Compare in the serialized form: JSON escapes a backslash or a control
+      // character, so the raw URL would never match an echo of it.
+      expect(JSON.stringify(parsed)).not.toContain(
+        JSON.stringify(url).slice(1, -1)
+      );
+      expect(JSON.stringify(parsed)).not.toContain("p4ssw0rd");
+    }
+  );
+
+  it("keeps a remote URL with a long slug and an ordinary query, as written", async () => {
+    const url =
+      "https://mcp.example.com/workspaces/acme-corporation-platform-engineering-team/mcp?tenant=acme&ref=main";
+    const parsed = await parsePluginBundle(
+      withMcp({ ok: { type: "streamable-http", url } })
+    );
+    expect(parsed.mcpServers[0].config).toMatchObject({ url });
+  });
+
+  it("MUST allow plain HTTP for any loopback IP literal, and only for one", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        alt: { type: "streamable-http", url: "http://127.0.0.2:3100/mcp" },
+        v6: { type: "streamable-http", url: "http://[::1]:3100/mcp" },
+        // An @ in the path is not user info.
+        path: { type: "streamable-http", url: "http://127.0.0.1/u/@me/mcp" },
+        // Names that only start like loopback are remote.
+        suffix: {
+          type: "streamable-http",
+          url: "http://127.0.0.1.evil.example/mcp",
+        },
+        named: {
+          type: "streamable-http",
+          url: "http://localhost.evil.example/mcp",
+        },
+        mapped: {
+          type: "streamable-http",
+          url: "http://[::ffff:127.0.0.1]/mcp",
+        },
+      })
+    );
+    expect(parsed.mcpServers.map((server) => server.key).sort()).toEqual([
+      "alt",
+      "path",
+      "v6",
+    ]);
+  });
+
+  it("MUST treat header names case-insensitively — two casings of one name invalidate the entry", async () => {
+    const parsed = await parsePluginBundle(
+      withMcp({
+        dup: {
+          type: "streamable-http",
+          url: "https://a.example.com/mcp",
+          headers: { "X-Mode": "a", "x-mode": "b" },
+        },
+        ok: { type: "streamable-http", url: "https://ok.example.com/mcp" },
+      })
+    );
+    expect(parsed.mcpServers.map((server) => server.key)).toEqual(["ok"]);
+    expect(
+      parsed.warnings.some((issue) => issue.code === "MCP_INVALID_HEADERS")
+    ).toBe(true);
+  });
+
+  it.each(["${PLUGIN_ROOT}/../outside", "${PLUGIN_DATA}/a/../../escape"])(
+    "MUST enforce containment for placeholder-rooted cwd %j",
+    async (cwd) => {
+      const parsed = await parsePluginBundle(
+        withMcp({
+          bad: { type: "stdio", command: "node", cwd },
+          ok: { type: "stdio", command: "node", cwd: "${PLUGIN_DATA}/cache" },
+        })
+      );
+      expect(parsed.mcpServers.map((server) => server.key)).toEqual(["ok"]);
+      expect(
+        parsed.warnings.some((issue) => issue.code === "PATH_ESCAPES_ROOT")
+      ).toBe(true);
+    }
+  );
 
   it("MUST validate literal headers before connecting — secret-looking literals are never stored (documented deviation)", async () => {
     const parsed = await parsePluginBundle(

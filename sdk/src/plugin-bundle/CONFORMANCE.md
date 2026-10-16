@@ -1,153 +1,177 @@
 # Agent Plugins 1.0 conformance — `@mcpjam/sdk/plugin-bundle`
 
 Status of this parser against the client-implementers checklist at
-[agent-plugins.org/client-implementers/conformance](https://agent-plugins.org/client-implementers/conformance).
+[agent-plugins.org/client-implementers/conformance](https://agent-plugins.org/client-implementers/conformance)
+and the [specification](https://agent-plugins.org/specification).
 
 The load/parse-time requirements are asserted one-test-per-MUST in
 [`tests/plugin-bundle/conformance.test.ts`](../../tests/plugin-bundle/conformance.test.ts),
 whose `describe` blocks mirror the checklist's sections (Plugin Loader,
 Discovery and Isolation, MCP Support, Versioning). This file records what
-that suite cannot: MCPJam's deliberate deviations from the letter of the
-spec, and the runtime MUSTs that are satisfied (and tested) outside this
-package.
+that suite cannot: where MCPJam departs from the letter of the spec, which
+runtime MUSTs are met (and where), and which are not met yet.
 
-## Documented deviations
+## Profiles
 
-Each of these is intentional, spec-visible behavior. All are *stricter* than
-the spec or additive policy — none accepts input the spec forbids.
+`parsePluginBundle` has two profiles. Only `strict`, the default, is the
+Agent Plugins 1.0 reader this document grades.
+
+`openai-compatible` is a client-owned dialect adapter for the packaging
+OpenAI documents for Codex plugins (`layout.ts`, `legacy-mcp.ts`,
+`openai-auth.ts`): `.codex-plugin/` overlays and legacy manifest locations,
+legacy `.mcp.json` entries, an entry-level `extensions["com.openai"].auth`
+object, and OpenAI's keyed `.app.json`. It reads input the spec does not
+define (legacy locations) or forbids (entry `extensions`), so it is not
+Agent Plugins conformance and makes no claim to be. A root `plugin.json`
+and root `mcp.json` are read by the strict rules under both profiles.
+
+## Deviations that are stricter than the spec
+
+These reject or drop input the spec would accept.
 
 1. **Secret screening of literal values.** The spec passes configured `env`
    and `headers` values through to the runtime verbatim. MCPJam never
    persists a secret-looking literal (bearer/PEM/key-prefix/basic-auth/long
-   opaque runs — `SECRET_LIKE_VALUE` in `validation.ts`), in `env` values,
-   `headers` values, oauth metadata, or `extensions` namespaces at any
-   depth. A dropped literal becomes a *required* name-only setup
-   requirement (`MCP_ENV_VALUE_OMITTED` / `MCP_HEADER_VALUE_OMITTED` /
-   `*_SECRET_FIELD_OMITTED` warnings); screened non-secret literals
-   (`{"MODE": "production"}`, `X-Api-Version: 2`) are stored so portable
-   plugins run without a setup step. Rationale: parsed bundles land in
-   persisted, hashed DTOs — a credential must never ride into storage.
+   opaque runs — `SECRET_LIKE_VALUE` in `validation.ts`) in `env` values,
+   `headers` values, oauth metadata, or `extensions` namespaces at any depth.
+   A dropped literal becomes a required name-only setup requirement
+   (`MCP_ENV_VALUE_OMITTED` / `MCP_HEADER_VALUE_OMITTED` /
+   `*_SECRET_FIELD_OMITTED`); screened non-secret literals are stored, so
+   portable plugins run without a setup step. Parsed bundles land in
+   persisted, hashed DTOs, and a credential must never ride into storage.
 
-2. **Extension-namespace values are sanitized, not stored raw.** The spec
-   says unimplemented namespaces are ignored without validating their
-   values. MCPJam round-trips them, but through the same recursive secret
-   screen (secret-looking keys/values dropped, nesting depth-capped at 32
-   with `VALUE_TOO_DEEP`). Non-secret content is preserved byte-for-byte.
+2. **Extension-namespace values are sanitized, not stored raw.** The spec says
+   unimplemented namespaces are ignored without validating their values.
+   MCPJam round-trips them through the same recursive secret screen
+   (depth-capped at 32, `VALUE_TOO_DEEP`). Fields MCPJam reads with their own
+   validation (icon paths, the onboarding skill) are read from the raw value
+   and only the validated value is stored.
 
 3. **Symlink/hardlink archive entries are rejected outright**
-   (`PATH_LINK_ENTRY`). The spec's package boundary asks clients to resolve
-   links and verify the target stays inside the root; MCPJam refuses link
-   entries entirely — strictly stronger, and the only portable answer for a
-   parser that never touches a filesystem.
+   (`PATH_LINK_ENTRY`). The spec allows links whose target stays inside the
+   root; a parser that never touches a filesystem cannot resolve them.
 
-4. **Escaping archive entry paths are bundle-fatal.** The spec's failure
-   ladder allows "deny access" per path for some escapes. Any absolute,
-   traversing, or otherwise unsafe *entry* path rejects the whole bundle at
-   archive validation, before a single byte of content is read. Per-entry
-   escapes in *configuration* (`./` commands, `cwd`) do follow the spec's
-   narrow boundary: they skip only that server entry.
+4. **Escaping archive entry paths are bundle-fatal.** Any absolute, traversing,
+   or otherwise unsafe entry path rejects the bundle before any content is
+   read. Escapes in configuration (`./` commands, `cwd`) follow the spec's
+   narrow boundary and skip only their server entry.
 
-5. **Execution-ambiguous unknown manifest fields are rejected, not
-   report-and-ignored** (`MANIFEST_AMBIGUOUS_FIELD`: `scripts`, `command`,
-   `install`, `postinstall`, …). "Ignored" is exactly what an attacker
-   shipping an `install_script` field would want; other unknown fields get
-   the spec's report-and-ignore treatment.
+5. **Execution-ambiguous unknown manifest fields are rejected**
+   (`MANIFEST_AMBIGUOUS_FIELD`: `scripts`, `command`, `install`, …), rather
+   than reported and ignored as other unknown fields are.
 
-6. **`oauth` / `authentication` are accepted on http entries.** The
-   published entry schema is closed; MCPJam recognizes these two extra
-   fields as extension hints (auth timing, scopes, sanitized metadata)
-   instead of invalidating the entry.
+6. **Some spec-valid manifest values are rejected.** An unresolved
+   `[TODO: …]` placeholder in a kept manifest field (`MANIFEST_PLACEHOLDER`)
+   and an empty `version` string are fatal, although the spec checks these
+   fields by JSON type only.
 
-7. **HTTPS is required for remote URLs.** The spec requires URL validation
-   before connecting but does not mandate a scheme. MCPJam rejects
-   plain-HTTP remote URLs per entry (`MCP_INSECURE_URL`) and allows
-   plain-HTTP loopback with a warning (`MCP_INSECURE_URL_LOCALHOST`).
+7. **Archive and component limits.** Entry, byte, depth, skill and server
+   counts (`DEFAULT_PLUGIN_BUNDLE_LIMITS`), Windows/unicode portability rules,
+   case-fold collisions, and icon/logo magic-byte checks.
 
-8. **Alternate transport spellings are rejected on the plugin path.** The
-   entry `type` consts are exact (`stdio` | `streamable-http` | `sse`);
-   `streamable_http` / `streamableHttp` / `http` invalidate the entry. The
-   exported shape primitives (`selectPluginMcpServerMap`,
-   `detectPluginMcpTransport`) keep lenient folding for the inspector's
-   generic MCP-JSON import — a different consumer with a different policy.
+8. **Metadata URLs must be HTTPS to be stored.** A `homepage`, `repository` or
+   `author.url` that is malformed or not HTTPS is reported and not stored; the
+   plugin still loads, since the spec forbids rejecting a plugin for failing
+   a URL check. A non-string value is a schema violation and fatal.
 
-9. **Additive hygiene policy** beyond the schema: archive limits
-   (entries/bytes/depth/skill/server counts, `DEFAULT_PLUGIN_BUNDLE_LIMITS`),
-   `[TODO: …]` placeholder rejection in kept manifest fields, HTTPS-only
-   metadata URLs, icon/logo magic-byte checks, Windows/unicode path
-   portability rules, and duplicate/case-collision path rejection.
+## Deviations that accept more than the spec
 
-10. **`${PLUGIN_DATA}` on ephemeral hosted boxes lives for the box
-    lifetime.** The spec asks for a data directory "preserved across plugin
-    updates". The local runtime satisfies this (`~/.mcpjam/plugin-data`,
-    keyed by plugin identity, surviving bundle updates). When plugin
-    components run on an ephemeral hosted box, the directory is created
-    before launch per spec but persists only as long as the box does.
+These read or tolerate input the spec says to ignore or invalidate, under
+the strict profile too.
 
-## Requirements covered elsewhere (runtime)
+9. **`oauth` / `authentication` on HTTP entries.** The published entry schema
+   is closed, so such an entry is invalid by the letter of the spec. MCPJam
+   reads them as its own auth hints (timing, scopes, sanitized metadata).
 
-These MUSTs cannot be asserted by a pure parser. They are implemented and
-tested in the inspector's local plugin runtime,
-`mcpjam-inspector/server/services/plugins/` (tests under `__tests__/`:
-`plugin-root.test.ts`, `local-stdio.test.ts`, `local-stdio.desktop.test.ts`,
-`run-plugin-servers.test.ts`, `bundle-cache.test.ts`):
+10. **A top-level `interface` object is read**, for OpenAI's display name and
+    icons, instead of being reported and ignored as an unknown field.
 
-- **Placeholder expansion at launch** — `${PLUGIN_ROOT}`/`${PLUGIN_DATA}`
-  substitute only in `args`, `env` values, and `cwd`, in a single pass at
-  spawn time (`plugin-root.ts`); a leftover placeholder refuses the spawn so
-  a child process never sees a literal `${…}` token.
-- **Client-controlled variables cannot be shadowed** — `resolvePluginStdioLaunch`
-  writes the bundle's own `env` first and the client's `PLUGIN_ROOT`/
-  `PLUGIN_DATA` last (`plugin-root.ts`). The parser also rejects any bundle
-  whose `env` declares either key.
+11. **Unknown `author` fields are reported and ignored** (`MANIFEST_UNKNOWN_FIELD`)
+    rather than invalidating the manifest. A non-string `author.name` or
+    `author.email` is fatal, as the spec requires.
+
+12. **`${VAR}` in a header or env value is a setup requirement.** The spec
+    expands nothing in header values; MCPJam treats a whole-value `${VAR}` as
+    the name of a value the user supplies at setup, and never sends the
+    literal text.
+
+## Spec rules MCPJam follows that earlier revisions did not
+
+- Remote MCP URLs must be HTTPS unless the host is `localhost` or a loopback
+  literal (the whole `127.0.0.0/8` range or `::1`). The spec now states this
+  rule, so it is no longer a deviation.
+- A remote URL carrying userinfo or a fragment, even an empty one, or a
+  whitespace, backslash or control character (which `URL` would silently
+  rewrite), invalidates its entry, and the URL is neither stored nor repeated
+  in any issue.
+- Header names that differ only in case invalidate their entry
+  (`MCP_INVALID_HEADERS`).
+- A placeholder-rooted `cwd` (`${PLUGIN_ROOT}/…`, `${PLUGIN_DATA}/…`) is
+  normalized under its placeholder, and one that escapes it invalidates the
+  entry (`PATH_ESCAPES_ROOT`).
+- An invalid `*.app.json` (MCPJam's extension) skips only its own apps.
+
+## Runtime requirements and where they are met
+
+These MUSTs cannot be asserted by a pure parser. The inspector's local
+plugin runtime is `mcpjam-inspector/server/services/plugins/`, tested under
+its `__tests__/`.
+
+- **Placeholder expansion at launch.** `${PLUGIN_ROOT}`/`${PLUGIN_DATA}`
+  substitute only in `args`, `env` values and `cwd`, in a single pass at
+  spawn time (`plugin-root.ts`); a leftover placeholder refuses the spawn.
+- **Client-controlled variables cannot be shadowed.** The parser rejects any
+  bundle whose `env` declares `PLUGIN_ROOT` or `PLUGIN_DATA`
+  (`MCP_RESERVED_ENV_KEY`). `resolvePluginStdioLaunch` also writes the bundle's
+  own `env` first and the client's `PLUGIN_ROOT`/`PLUGIN_DATA` last.
 - **Every plugin stdio server goes through plugin preparation, and runs in
-  the plugin root unless it declares a `cwd`** — the backend marks a plugin's
+  the plugin root unless it declares a `cwd`.** The backend marks the
   component in the authorize result (`pluginComponent`), and
   `materializePluginStdioForConnect` (`local-stdio.ts`) routes on that as well
-  as on a placeholder, so the data directory and both variables never depend
-  on whether the entry mentions them. A backend without the flag falls back to
-  the placeholder check.
-- **Bare commands resolve through platform executable search rules** — the
-  local stdio materializer (`local-stdio.ts`).
-- **Launch checks after placeholders resolve** — `checkPluginLaunch`
-  (`launch-guards.ts`) refuses a working directory that is not the plugin
-  root, its data directory or inside one, judged where it really is on disk,
-  so a symlink in the writable data directory cannot lead out. It also names a
-  bare runtime missing from the PATH, or a bundle command that is missing or
-  not executable, instead of letting the spawn fail. A hosted box gets the
-  path rule only; the box reports its own missing commands.
-- **`PLUGIN_DATA` created before launch and preserved across plugin
-  updates** — `plugin-data.ts` (see deviation 10 for hosted boxes).
-- **Continue loading when one server fails to start/connect/authenticate** —
-  per-server failure isolation in `run-plugin-servers.ts`; authentication
-  failure is a connection failure, not invalid package configuration.
-- **Materialized-bundle boundary enforcement** — extraction and cache
-  containment in `bundle-cache.ts` / `bundle-file-sources.ts`.
+  as on a placeholder, so the data directory and both variables do not depend
+  on whether the entry mentions them. A backend without the flag falls back
+  to the placeholder check.
+- **Launch checks after placeholders resolve.** `checkPluginLaunch`
+  (`launch-guards.ts`) checks the real working directory is the plugin root,
+  its data directory or inside one, so a symlink cannot lead out. It also
+  identifies a missing runtime or a missing/non-executable bundle command.
+  Hosted boxes get the path rule and report their own missing commands.
+- **Bare commands resolve through platform executable search** in the local
+  stdio materializer (`local-stdio.ts`).
+- **`PLUGIN_DATA` is created before launch and preserved across plugin
+  updates** for components that reach the plugin launch path
+  (`plugin-data.ts`). On an ephemeral hosted box it lives only as long as the
+  box; a persistent Computer keeps it.
+- **Materialized-bundle containment** in `bundle-cache.ts` and the node file
+  sources.
 
-## Known gaps (runtime MUSTs not yet met, and guarantees not enforced)
+- **Playground chat isolates a failing plugin server.** `chat-v2.ts` passes
+  only the turn's plugin server IDs to `createAuthorizedManager` through
+  `tolerateServerRefusals`; `plugin-server-isolation.ts` leaves failed plugin
+  components out of the turn. Scenario and harness turns remain strict, as
+  do eval, swarm and journey runs that re-check pinned server snapshots.
 
-- **Archive permission bits are not preserved.** `extractInto`
-  (`bundle-cache.ts`) writes every entry with a bare
-  `writeFile(destination, bytes)` and the file-source contract carries no mode,
-  so extracted files land at the process umask default (typically `0644`) and
-  no `chmod` follows. A bundle shipping its own executable and declaring
-  `command: "./bin/server"` therefore fails to spawn with `EACCES` on POSIX;
-  the conformance test only asserts that the command rewrites to a
-  `${PLUGIN_ROOT}` path, not that the target is runnable. Interpreter commands
-  (`node`, `python`) with the script in `args` are unaffected. Carrying mode
-  bits through the file-source contract is an extraction behavior change, not
-  a docs change.
+## Known gaps
 
-- **`${PLUGIN_ROOT}` is not permission-enforced read-only.** The cache creates
-  its directories and files with ordinary `mkdir`/`writeFile` permissions and
-  spawns components under the same OS account, so a component can write to or
-  delete its own content-addressed cache entry. Containment and content
-  addressing are enforced; immutability is not. Documented here rather than
-  claimed, since the spec's package boundary is about *escape*, not about
-  hardening the root against the plugin itself.
+- **Archive permission bits are not preserved.** The file-source contract
+  carries no mode and extraction writes every file with the default umask, so
+  a bundled executable run as `./bin/server` fails with `EACCES` on POSIX.
+  Interpreter commands (`node`, `python`) are unaffected.
+
+- **Non-secret configured headers can follow a cross-origin redirect.**
+  Stored credential headers are attached only to the origins the backend
+  bound them to, hop by hop (`server/utils/credential-header-binding.ts`).
+  A plugin's screened non-secret literal headers (`X-Api-Version: 2`) are
+  not bound that way.
+
+- **`${PLUGIN_ROOT}` is not permission-enforced read-only.** Components run
+  under the same OS account as the cache, so a component can modify its own
+  content-addressed entry. Containment and content addressing are enforced;
+  immutability is not.
 
 ## Out of scope (per the spec's portable vs client-owned split)
 
 Installation sources, enablement/update/cache UX, permission and trust
-prompts, sandboxing, and skill *presentation* are explicitly client-owned
-and not conformance-bearing. MCPJam's choices there live in the inspector
-and backend, not in this package.
+prompts, sandboxing, and skill presentation are client-owned and not
+conformance-bearing. MCPJam's choices there live in the inspector and
+backend, not in this package.

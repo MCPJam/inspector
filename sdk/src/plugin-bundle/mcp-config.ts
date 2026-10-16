@@ -22,10 +22,11 @@
  */
 
 import {
-  isLoopbackHost,
+  checkServerUrl,
   normalizeEnv,
   normalizeHeaders,
   normalizeOAuthHint,
+  resolveWorkingDirectory,
 } from "./mcp-entry-values.js";
 import {
   readOpenAiServerAuth,
@@ -75,9 +76,6 @@ export function containsPluginPlaceholder(value: string): boolean {
 
 const SERVER_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-/** Agent Plugins cwd rule: `./…`, `${PLUGIN_ROOT}…`, or `${PLUGIN_DATA}…`. */
-const AP_CWD =
-  /^(?:\.\/|\$\{PLUGIN_ROOT\}(?:\/|$)|\$\{PLUGIN_DATA\}(?:\/|$))/;
 
 export interface PluginEnvRequirement {
   name: string;
@@ -375,46 +373,19 @@ function normalizeServer(
     );
     if (envRequirements === null) return null;
 
+    // `./` working directories canonicalize to the `${PLUGIN_ROOT}` form,
+    // same as commands: the bare relative string carries no placeholder,
+    // so nothing downstream would ever resolve it against the bundle.
     let workingDirectory: string | undefined;
     if (record.cwd !== undefined) {
-      const cwd = record.cwd;
-      if (typeof cwd !== "string") {
-        issues.error(
-          "MCP_INVALID_SERVER",
-          `server "${serverKey}": "cwd" must be a string`,
-          { componentKey }
-        );
+      const cwd = resolveWorkingDirectory(record.cwd);
+      if (!cwd.ok) {
+        issues.error(cwd.code, `server "${serverKey}": ${cwd.message}`, {
+          componentKey,
+        });
         return null;
       }
-      if (!AP_CWD.test(cwd)) {
-        issues.error(
-          "MCP_INVALID_WORKING_DIRECTORY",
-          `server "${serverKey}": "cwd" must start with "./", "\${PLUGIN_ROOT}", or "\${PLUGIN_DATA}"`,
-          { componentKey }
-        );
-        return null;
-      }
-      // `./` working directories canonicalize to the `${PLUGIN_ROOT}` form,
-      // same as commands: the bare relative string carries no placeholder,
-      // so nothing downstream would ever resolve it against the bundle.
-      if (cwd.startsWith("./")) {
-        if (cwd === "./") {
-          workingDirectory = PLUGIN_ROOT_PLACEHOLDER;
-        } else {
-          const resolved = resolveContainedPath("", cwd);
-          if (!resolved.ok) {
-            issues.error(
-              resolved.code,
-              `server "${serverKey}": ${resolved.message}`,
-              { componentKey }
-            );
-            return null;
-          }
-          workingDirectory = `${PLUGIN_ROOT_PLACEHOLDER}/${resolved.path}`;
-        }
-      } else {
-        workingDirectory = cwd;
-      }
+      workingDirectory = cwd.value;
     }
 
     return {
@@ -441,32 +412,19 @@ function normalizeServer(
     );
     return null;
   }
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(url);
-  } catch {
-    issues.error(
-      "MCP_INVALID_SERVER",
-      `server "${serverKey}": "url" is not a valid URL`,
-      { componentKey }
-    );
+  const urlCheck = checkServerUrl(url);
+  if (!urlCheck.ok) {
+    issues.error(urlCheck.code, `server "${serverKey}": ${urlCheck.message}`, {
+      componentKey,
+    });
     return null;
   }
-  if (parsedUrl.protocol !== "https:") {
-    if (parsedUrl.protocol === "http:" && isLoopbackHost(parsedUrl.hostname)) {
-      issues.warn(
-        "MCP_INSECURE_URL_LOCALHOST",
-        `server "${serverKey}": plain-HTTP loopback URL only works in local development`,
-        { componentKey }
-      );
-    } else {
-      issues.error(
-        "MCP_INSECURE_URL",
-        `server "${serverKey}": remote MCP servers must use HTTPS`,
-        { componentKey }
-      );
-      return null;
-    }
+  if (urlCheck.loopbackHttp) {
+    issues.warn(
+      "MCP_INSECURE_URL_LOCALHOST",
+      `server "${serverKey}": plain-HTTP loopback URL only works in local development`,
+      { componentKey }
+    );
   }
   const headerRequirements = normalizeHeaders(
     serverKey,

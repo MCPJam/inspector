@@ -13,6 +13,7 @@
  * client-extension model — never as top-level fields.
  */
 
+import { isUnsafeRawUrl, urlCarriesSecret } from "./mcp-entry-values.js";
 import { resolveContainedPath } from "./paths.js";
 import {
   MAX_VALUE_DEPTH,
@@ -194,6 +195,11 @@ function scanForPlaceholders(
   }
 }
 
+/**
+ * A metadata URL. The spec types these fields but forbids rejecting a plugin
+ * for failing a URL check, so a malformed or non-HTTPS value is reported and
+ * not stored; only a non-string is a schema violation.
+ */
 function readHttpsUrl(
   key: string,
   value: unknown,
@@ -210,16 +216,40 @@ function readHttpsUrl(
   try {
     parsed = new URL(value);
   } catch {
-    issues.error(
+    issues.warn(
       "MANIFEST_INVALID_FIELD",
-      `manifest field "${key}" is not a valid URL`
+      `manifest field "${key}" is not a valid URL; ignored`
+    );
+    return undefined;
+  }
+  // A user name or password in a link is a credential (a token often sits in
+  // the user name), as is a key in its path or query, and the manifest is
+  // stored and shown to every member.
+  if (
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    urlCarriesSecret(parsed)
+  ) {
+    issues.warn(
+      "MANIFEST_SECRET_FIELD_OMITTED",
+      `manifest field "${key}" carries a credential; ignored`
+    );
+    return undefined;
+  }
+  // `new URL` drops or rewrites these, so the stored string would not be the
+  // one checked: a backslash reads as `/`, whitespace and control characters
+  // are stripped, and the slashes after the scheme are normalized.
+  if (isUnsafeRawUrl(value, { allowFragment: true })) {
+    issues.warn(
+      "MANIFEST_INVALID_FIELD",
+      `manifest field "${key}" is not a URL as written; ignored`
     );
     return undefined;
   }
   if (parsed.protocol !== "https:") {
-    issues.error(
+    issues.warn(
       "MANIFEST_INSECURE_URL",
-      `manifest field "${key}" must use HTTPS`
+      `manifest field "${key}" must use HTTPS; ignored`
     );
     return undefined;
   }
@@ -518,6 +548,21 @@ export function normalizePluginManifest(
     if (author && typeof author === "object" && !Array.isArray(author)) {
       const authorRecord = author as Record<string, unknown>;
       const normalizedAuthor: PluginManifestAuthor = {};
+      for (const key of Object.keys(authorRecord)) {
+        if (key === "name" || key === "email" || key === "url") {
+          if (key !== "url" && typeof authorRecord[key] !== "string") {
+            issues.error(
+              "MANIFEST_INVALID_FIELD",
+              `manifest field "author.${key}" must be a string`
+            );
+          }
+          continue;
+        }
+        issues.warn(
+          "MANIFEST_UNKNOWN_FIELD",
+          `manifest field "author.${key}" is not part of Agent Plugins ${schemaVersion}; ignored`
+        );
+      }
       if (typeof authorRecord.name === "string") {
         normalizedAuthor.name = authorRecord.name;
       }
