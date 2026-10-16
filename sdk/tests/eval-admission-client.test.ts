@@ -191,6 +191,22 @@ describe("local admission transport", () => {
     await Promise.all(Array.from({ length: 5 }, () => guard.beforePrompt()));
     expect(targets).toEqual([2, 3, 4, 5]);
   });
+  it("stops queued and subsequent prompts after an authorization failure", async () => {
+    const admission = client();
+    const refusal = new Error("Authorization refused");
+    const extend = vi.spyOn(admission, "ensureSteps").mockRejectedValue(refusal);
+    const guard = new AttemptStepGuard(admission, { ...receipt, state: "active" });
+    await guard.beforePrompt();
+    const blocked = guard.beforePrompt();
+    const queued = guard.beforePrompt();
+    await Promise.all([
+      expect(blocked).rejects.toBe(refusal),
+      expect(queued).rejects.toBe(refusal),
+    ]);
+    await expect(guard.beforePrompt()).rejects.toBe(refusal);
+    expect(extend).toHaveBeenCalledTimes(1);
+    expect(extend).toHaveBeenCalledWith("attempt", 2, undefined);
+  });
   it("does not permit a late successful response after cancellation", async () => {
     const controller = new AbortController();
     let complete: (response: Response) => void = () => {
