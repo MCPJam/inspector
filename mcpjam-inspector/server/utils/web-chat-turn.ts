@@ -50,6 +50,7 @@ import { createRequestStreamFailureReporter } from "./stream-failure-reporter.js
 import type { FailureCapture } from "./agent-failure-capture.js";
 import { type SandboxNoticeReason } from "@/shared/sandbox-notice";
 import { emitHistoryNotice, emitSandboxNotices } from "./turn-notices.js";
+import { emitPluginServersUnavailable } from "./plugin-server-isolation.js";
 import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
@@ -524,6 +525,8 @@ export interface WebChatTurnPrepareInputs {
    * advertises zero, and never falls back to the project-wide pool.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /** Plugin servers whose failure leaves the turn running without them. */
+  isolatedServers?: import("./plugin-server-isolation.js").IsolatedServers;
 }
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
@@ -791,6 +794,7 @@ export async function streamWebChatTurn(
       mcpClientManager: manager,
       modelToolExecutor: prepare.modelToolExecutor,
       selectedServers: prepare.selectedServerIds,
+      isolatedServers: prepare.isolatedServers?.serverIds,
       modelDefinition: prepare.modelDefinition,
       systemPrompt: prepare.systemPrompt,
       temperature: prepare.temperature,
@@ -861,7 +865,16 @@ export async function streamWebChatTurn(
     progressivePlan,
     discoveryState,
     reservedAgainstPageTools,
+    unavailableServers,
   } = prepared;
+  // What the browser is told about this turn, once, on whichever engine runs.
+  const emitTurnNotices = (writer: ElicitationChunkWriter): void => {
+    emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+    emitPluginServersUnavailable(writer, persist.chatSessionId, {
+      ...prepare.isolatedServers,
+      failed: unavailableServers,
+    });
+  };
 
   // THE SAME COLLISION POLICY, APPLIED TO THE SET THE TURN GROWS INTO.
   //
@@ -1520,7 +1533,7 @@ export async function streamWebChatTurn(
             runtime.ackSandboxNotices,
             runtime.abortSignal,
           );
-          emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+          emitTurnNotices(writer);
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1581,7 +1594,7 @@ export async function streamWebChatTurn(
           runtime.ackSandboxNotices,
           runtime.abortSignal,
         );
-        emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+        emitTurnNotices(writer);
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1771,7 +1784,7 @@ export async function streamWebChatTurn(
         runtime.ackSandboxNotices,
         runtime.abortSignal,
       );
-      emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+      emitTurnNotices(writer);
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp
