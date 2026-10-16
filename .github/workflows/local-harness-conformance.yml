@@ -618,15 +618,7 @@ jobs:
           path: ${{ runner.temp }}/conformance/published-conformance-input.json
           if-no-files-found: error
 
-  # Local Codex: its own pack (MCPJam's app-server bridge + the pinned
-  # `@openai/codex` platform binary), its own adapter and its own sandbox
-  # claims, so its own legs — against a mock OpenAI Responses upstream behind
-  # the same loopback gateway. Only the model is fake.
-  #
-  # D8: the targets Codex's manifest certifies (`nativeTargets`) block; the
-  # others run so their evidence stays visible without holding up a certified
-  # target's release. Windows has no leg: it is not a Codex native target, and
-  # its sandbox (`windowsSandbox/setupStart`) has no evidence yet.
+  # Uncertified Codex targets collect evidence without granting capabilities.
   codex-scenarios:
     name: codex ${{ matrix.platform_key }}
     needs: [unit, plan]
@@ -789,21 +781,27 @@ jobs:
           path: ${{ runner.temp }}/conformance/evidence/*.json
           if-no-files-found: error
 
+  codex-windows:
+    needs: [unit, plan]
+    if: needs.plan.outputs.run_codex == 'true' && github.event_name != 'pull_request'
+    uses: ./.github/workflows/local-codex-windows-conformance.yml
+    with:
+      published_pack_version: ${{ needs.plan.outputs.codex_pack_version }}
+      candidate: ${{ inputs.candidate || false }}
+      pack_version: ${{ inputs.pack_version || 'conformance' }}
+
   summarize:
     name: conformance version
     # A conformance version records the evidence behind EVERY platform the
     # manifest calls native. Windows is one of them now, so its leg holds up
-    # the stamp exactly as the POSIX legs do: a version minted without it
-    # would certify a platform whose scenarios had not run.
+    # the stamp exactly as the POSIX legs do.
     needs: [scenarios, windows, plan]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:
-      # The value the record carries. It names the RUN that produced the
-      # evidence, so a recorded conformance version can always be traced back to
-      # the scenarios that justified it.
+      # Keep the stamp traceable to the run that produced its evidence.
       - id: stamp
         env:
           PUBLISHED_PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}

@@ -364,3 +364,23 @@ describe("pack release boundaries", () => {
     expect(jobs.report.permissions.issues).toBe("write");
   });
 });
+
+
+it("runs Windows Codex qualification without advertising native support", () => {
+  const caller = workflow("local-harness-conformance").jobs["codex-windows"];
+  expect(caller.uses).toBe("./.github/workflows/local-codex-windows-conformance.yml");
+  const job = workflow("local-codex-windows-conformance").jobs.qualification;
+  expect(job["runs-on"]).toBe("windows-latest");
+  expect(job["continue-on-error"]).toBe(true);
+  const steps: Array<{ name?: string; run?: string; if?: string }> = job.steps;
+  const native = steps.find((step) => step.name === "Native Codex scenarios")!;
+  expect(native.run).toContain("for mode in attended attended-off unattended");
+  expect(steps.some((step) => step.run?.includes("--job-launcher"))).toBe(true);
+  const evidence = steps.find((step) => step.name === "Record Windows Codex conformance evidence")!;
+  expect(evidence.if).toBeUndefined();
+  expect(evidence.run).toContain("--target win32-x64");
+  expect(evidence.run).toContain("windows-sandbox-setup");
+  const cleanup = steps.find((step) => step.name === "No supervised Codex process survived")!;
+  expect(cleanup.if).toBe("always()");
+  expect(cleanup.run).toContain("Get-CimInstance Win32_Process");
+});
