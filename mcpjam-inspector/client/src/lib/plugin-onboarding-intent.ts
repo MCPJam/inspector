@@ -20,6 +20,8 @@ export interface PluginOnboardingIntent {
   projectId: string;
   /** The plugin's materialized server ids; the first available one runs. */
   serverIds: string[];
+  /** The plugin itself, which onboards by itself when it has no server. */
+  pluginId: string;
   pluginName: string;
   /** "new" chat, or the "current" one when the import started in a chat. */
   conversation: "new" | "current";
@@ -51,12 +53,15 @@ export const usePluginOnboardingIntentStore =
       expiryTimer = setTimeout(() => {
         if (get().intent?.id !== intent.id) return;
         set({ intent: null });
-        const message = `Couldn't start ${intent.pluginName} setup. Open the Playground with a client that has OpenAI plugin extensions on and the plugin's server selected, then use Run onboarding from the server's menu.`;
+        const message =
+          intent.serverIds.length > 0
+            ? `Couldn't start ${intent.pluginName} setup. Open the Playground with a client that has OpenAI plugin extensions on and the plugin's server selected, then use Run onboarding from the server's menu.`
+            : `Couldn't start ${intent.pluginName} setup. Open the Playground with a client that has OpenAI plugin extensions on, then use Set up from the plugin's settings.`;
         logPluginExtensionIssue({
           code: "PLUGIN_ONBOARDING_NOT_STARTED",
           level: "warning",
           message,
-          detail: { serverIds: intent.serverIds },
+          detail: { serverIds: intent.serverIds, pluginId: intent.pluginId },
           dedupeKey: `onboarding:${intent.id}`,
         });
         toast.error(message);

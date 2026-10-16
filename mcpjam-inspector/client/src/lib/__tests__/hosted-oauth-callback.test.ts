@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  HOSTED_OAUTH_PENDING_STORAGE_KEY,
+  onlyStoresCredential,
   readHostedOAuthPendingMarker,
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
@@ -82,5 +84,60 @@ describe("hosted OAuth return paths", () => {
     );
 
     expect(readHostedOAuthPendingMarker()?.returnPath).toBe("/evals");
+  });
+});
+
+describe("a plugin server's sign-in marker", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  const marker = {
+    surface: "project" as const,
+    projectId: "ws_1",
+    serverId: "srv_mail",
+    serverName: "mail (plugin)",
+    serverUrl: "https://mail.example.com/mcp",
+    returnPath: "/servers",
+  };
+
+  it("survives the redirect and makes the callback store a credential only", () => {
+    writeHostedOAuthPendingMarker({
+      ...marker,
+      pluginSignIn: { pluginVersionId: "ver_mail", componentKey: "inbox" },
+    });
+    const read = readHostedOAuthPendingMarker();
+    expect(read?.pluginSignIn).toEqual({
+      pluginVersionId: "ver_mail",
+      componentKey: "inbox",
+    });
+    expect(onlyStoresCredential(read)).toBe(true);
+  });
+
+  it("drops a malformed binding, leaving an ordinary project callback", () => {
+    localStorage.setItem(
+      HOSTED_OAUTH_PENDING_STORAGE_KEY,
+      JSON.stringify({
+        ...marker,
+        pluginSignIn: { pluginVersionId: "ver_mail" },
+        startedAt: Date.now(),
+      }),
+    );
+    const read = readHostedOAuthPendingMarker();
+    expect(read?.serverId).toBe("srv_mail");
+    expect(read?.pluginSignIn).toBeUndefined();
+    expect(onlyStoresCredential(read)).toBe(false);
+  });
+
+  it("treats a connection change as credential-only too, and nothing else", () => {
+    expect(onlyStoresCredential({ ...marker, startedAt: 1 })).toBe(false);
+    expect(
+      onlyStoresCredential({
+        ...marker,
+        startedAt: 1,
+        connectionIntent: { kind: "add" },
+      }),
+    ).toBe(true);
+    expect(onlyStoresCredential(null)).toBe(false);
   });
 });

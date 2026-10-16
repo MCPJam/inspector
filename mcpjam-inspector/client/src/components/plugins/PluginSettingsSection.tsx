@@ -19,6 +19,7 @@ import {
   useServerMutations,
 } from "@/hooks/useProjects";
 import { useActivePlugins } from "@/hooks/useActivePlugins";
+import { usePluginServerSignIn } from "@/hooks/usePluginServerSignIn";
 import {
   PluginServerSetupEditor,
   hasPluginServerSetupEntries,
@@ -65,6 +66,7 @@ export function PluginSettingsSection({
   const setupStatus = usePluginSetupStatus(activeVersionId);
   const { plugins: activeRows } = useActivePlugins(projectId);
   const row = activeRows.find((plugin) => plugin.pluginId === pluginId);
+  const signIn = usePluginServerSignIn(projectId);
   const { isAuthenticated } = useConvexAuth();
   // The backend's plugin admin bar is `canManageProjectMembers`, which this
   // mirrors for anonymous owners too (the members list answers false for
@@ -120,10 +122,7 @@ export function PluginSettingsSection({
     component.materializedServerId ? [component.materializedServerId] : [],
   );
   const offersOnboarding =
-    !!projectId &&
-    detail.enabled &&
-    !!version?.onboarding &&
-    onboardingServerIds.length > 0;
+    !!projectId && detail.enabled && !!version?.onboarding;
   const lifecycleDisabled = !canManage || pending;
 
   const runAction = async (what: string, run: () => Promise<void>) => {
@@ -301,6 +300,12 @@ export function PluginSettingsSection({
                 hasPluginServerSetupEntries(component);
               const isConfiguring =
                 configuringComponentId === component.componentId;
+              const needsSignIn =
+                (row?.servers.find(
+                  (server) => server.componentKey === component.componentKey,
+                )?.unavailable ?? readiness) === "needs_auth" &&
+                signIn.available &&
+                !!activeVersionId;
               return (
                 <li key={component.componentId} className="space-y-1.5 text-xs">
                   <div className="flex items-center gap-2">
@@ -323,6 +328,26 @@ export function PluginSettingsSection({
                         >
                           {described.label}
                         </span>
+                      ) : null}
+                      {needsSignIn && activeVersionId ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          disabled={
+                            signIn.pendingKey === component.componentKey
+                          }
+                          onClick={() =>
+                            void signIn.signIn({
+                              pluginVersionId: activeVersionId,
+                              componentKey: component.componentKey,
+                            })
+                          }
+                          data-testid="plugin-component-sign-in"
+                        >
+                          Sign in
+                        </Button>
                       ) : null}
                       {canConfigure ? (
                         <Button
@@ -386,10 +411,12 @@ export function PluginSettingsSection({
               disabled={pending}
               onClick={() => {
                 // Same path as the import dialog's "Set up": the Playground
-                // runs the onboarding skill once one of these servers offers it.
+                // runs the onboarding skill once one of these servers offers
+                // it, or the plugin if it has none.
                 usePluginOnboardingIntentStore.getState().request({
                   projectId: projectId!,
                   serverIds: onboardingServerIds,
+                  pluginId,
                   pluginName: label,
                   conversation: "new",
                 });

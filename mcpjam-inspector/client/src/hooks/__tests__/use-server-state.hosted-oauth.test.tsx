@@ -523,6 +523,50 @@ describe("useServerState hosted OAuth callback guards", () => {
     });
   });
 
+  it("stores a plugin server's credential without adding a project server", async () => {
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      initiatingUserId: "user_1",
+      projectId: "ws_1",
+      serverId: "srv_plugin_mail",
+      serverName: "mail (plugin)",
+      serverUrl: "https://mail.example.com/mcp",
+      accessScope: "project_member",
+      returnPath: "/servers",
+      pluginSignIn: { pluginVersionId: "ver_mail", componentKey: "inbox" },
+    });
+    localStorage.setItem("mcp-oauth-pending", "mail (plugin)");
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "mail (plugin)",
+      serverConfig: {
+        url: "https://mail.example.com/mcp",
+        requestInit: { headers: {} },
+      },
+    });
+    const dispatch = vi.fn();
+
+    renderHostedServerState(dispatch);
+
+    await waitFor(() => {
+      expect(toastSuccess).toHaveBeenCalledWith("Account connected");
+    });
+    expect(mockHandleOAuthCallback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "srv_plugin_mail",
+        pluginSignIn: { pluginVersionId: "ver_mail", componentKey: "inbox" },
+      }),
+      "oauth-code",
+      expect.anything(),
+    );
+    expect(
+      dispatch.mock.calls.some(([action]) =>
+        ["CONNECT_SUCCESS", "CONNECT_REQUEST"].includes(action.type),
+      ),
+    ).toBe(false);
+    expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+  });
+
   it.each(["guest", "changed", "legacy", "membership"])(
     "blocks token completion after %s recovery",
     async (reason) => {

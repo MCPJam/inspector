@@ -23,6 +23,27 @@ const response = (value: unknown, status = 200) =>
 const signal = () => AbortSignal.timeout(1000);
 describe("thread App authenticated transport", () => {
   beforeEach(() => fetch.mockReset());
+  it("asks about a plugin with no server by plugin, never a made-up server", async () => {
+    fetch
+      .mockResolvedValueOnce(response({ available: false }))
+      .mockResolvedValueOnce(response({ available: false }));
+    const api = createThreadAppApi(scope);
+    await api.onboarding({ pluginId: "plugin" }, false, signal());
+    await api.onboarding("saved-server", false, signal());
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      projectId: "project",
+      pluginWorkspace: scope.pluginWorkspace,
+      pluginId: "plugin",
+      content: false,
+    });
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({
+      projectId: "project",
+      pluginWorkspace: scope.pluginWorkspace,
+      hostId: "client",
+      serverId: "saved-server",
+      content: false,
+    });
+  });
   it("discovers from a saved ID without an environment, bundle or selected tool", async () => {
     fetch.mockResolvedValueOnce(
       response({

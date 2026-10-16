@@ -22,6 +22,11 @@ const h = vi.hoisted(() => ({
   toastError: vi.fn(),
   requestOnboarding: vi.fn(),
   navigateApp: vi.fn(),
+  signIn: {
+    available: false,
+    pendingKey: null as string | null,
+    signIn: vi.fn(),
+  },
 }));
 
 vi.mock("@/hooks/usePluginImportApi", () => ({
@@ -54,6 +59,9 @@ vi.mock("@/hooks/useProjects", () => ({
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+}));
+vi.mock("@/hooks/usePluginServerSignIn", () => ({
+  usePluginServerSignIn: () => h.signIn,
 }));
 vi.mock("@/lib/analytics", () => ({ track: h.track }));
 vi.mock("@/lib/toast", () => ({ toast: { error: h.toastError } }));
@@ -110,6 +118,7 @@ function renderSection(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.signIn.available = false;
   h.updateServerWithClientSecret.mockResolvedValue(undefined);
   h.setEnabled.mockResolvedValue(undefined);
   h.activateVersion.mockResolvedValue(undefined);
@@ -344,10 +353,24 @@ describe("PluginSettingsSection", () => {
     expect(h.requestOnboarding).toHaveBeenCalledWith({
       projectId: "p_1",
       serverIds: ["s_1"],
+      pluginId: "pl_1",
       pluginName: "Demo",
       conversation: "new",
     });
     expect(h.navigateApp).toHaveBeenCalledWith("/playground");
+  });
+
+  it("offers onboarding for a plugin with no server, by plugin", () => {
+    h.version.value = {
+      ...baseVersion(),
+      servers: [],
+      onboarding: { componentId: "c_9", modelRef: "demo/onboarding" },
+    };
+    renderSection();
+    fireEvent.click(screen.getByTestId("plugin-onboarding-setup"));
+    expect(h.requestOnboarding).toHaveBeenCalledWith(
+      expect.objectContaining({ serverIds: [], pluginId: "pl_1" }),
+    );
   });
 });
 
@@ -365,6 +388,49 @@ describe("PluginSettingsSection — component setup", () => {
         },
       ],
     };
+  });
+
+  it("offers Sign in on a server this member still has to authorize", () => {
+    h.setupStatus.value = {
+      pluginVersionId: "pv_1",
+      status: "ready",
+      components: [
+        {
+          componentKey: "server:api",
+          placement: "remote",
+          authenticationPolicy: "on_install",
+          readiness: "needs_auth",
+        },
+      ],
+    };
+    h.version.value = baseVersion({});
+    h.signIn.available = true;
+    renderSection();
+
+    fireEvent.click(screen.getByTestId("plugin-component-sign-in"));
+
+    expect(h.signIn.signIn).toHaveBeenCalledWith({
+      pluginVersionId: "pv_1",
+      componentKey: "server:api",
+    });
+  });
+
+  it("offers no Sign in where this build can't store the credential", () => {
+    h.setupStatus.value = {
+      pluginVersionId: "pv_1",
+      status: "ready",
+      components: [
+        {
+          componentKey: "server:api",
+          placement: "remote",
+          authenticationPolicy: "on_install",
+          readiness: "needs_auth",
+        },
+      ],
+    };
+    h.version.value = baseVersion({});
+    renderSection();
+    expect(screen.queryByTestId("plugin-component-sign-in")).toBeNull();
   });
 
   it("labels needs_setup and saves the whole group through the credential-only write path", async () => {
