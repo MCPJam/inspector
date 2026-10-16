@@ -10,7 +10,11 @@ export type ConvexErrorData = {
   feature?: unknown;
 };
 
-
+/**
+ * Wrappers can preserve a message without copying the structured refusal data.
+ * Walk the cause chain nearest first so they cannot erase a coded refusal.
+ * Four errors bound the traversal even for self-referential causes.
+ */
 export function convexErrorData(error: unknown): ConvexErrorData | null {
   let current: unknown = error;
   for (let depth = 0; depth < 4 && current; depth += 1) {
@@ -23,9 +27,25 @@ export function convexErrorData(error: unknown): ConvexErrorData | null {
   return null;
 }
 
-
+/**
+ * The backend's refusal code for a write to a CI-owned suite. Spelled here
+ * rather than imported: this repo does not depend on the backend's source, and
+ * a hand-mirrored constant with the reason written down beats a string literal
+ * buried in a conditional.
+ */
 export const CI_OWNED_SUITE_READ_ONLY_CODE = "CI_OWNED_SUITE_READ_ONLY";
 
+/**
+ * The five `gate_waiver_*` refusal codes, mirrored from `GATE_WAIVER_REFUSAL`
+ * in mcpjam-backend `convex/lib/gateWaivers.ts`.
+ *
+ * Enumerated rather than matched with a `gate_waiver_` prefix test. A prefix
+ * would silently adopt every future code the backend adds under that
+ * namespace, mapping it to 400 before anyone here decided that is right — the
+ * "a predicate over names exempts whatever it did not anticipate" failure,
+ * running in the other direction. An unlisted code falls through to the
+ * translator's terminal 500, which is logged, which is how we would find out.
+ */
 export const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "gate_waiver_unscoped_suite",
   "gate_waiver_reason_empty",

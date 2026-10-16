@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SdkError } from "./errors.js";
+import { SdkError, type SdkErrorOptions } from "./errors.js";
 import {
   reportingRequest,
   ReportingHttpError,
@@ -33,9 +33,10 @@ export class EvalAdmissionError extends SdkError {
     message: string,
     code: string,
     public readonly details?: Record<string, unknown>,
-    public readonly receipt?: AdmissionReceipt
+    public readonly receipt?: AdmissionReceipt,
+    options?: SdkErrorOptions
   ) {
-    super(message, code);
+    super(message, code, options);
   }
 }
 
@@ -118,7 +119,7 @@ export class EvalAdmissionClient {
         (error) => error.status === 429 || error.status >= 500
       );
       signal?.throwIfAborted();
-      if (receipt.state !== "active")
+      if (receipt.state !== "active" || receipt.expiresAt <= Date.now())
         throw new EvalAdmissionError(
           "This run authorization has expired or closed. Start a new run.",
           "ADMISSION_CLOSED",
@@ -142,12 +143,17 @@ export class EvalAdmissionClient {
             ? body.message
             : "Could not confirm billing with MCPJam, so this eval did not run. Try again in a few minutes.",
           admissionErrorCode(error.status, details),
-          details
+          details,
+          undefined,
+          { cause: error }
         );
       }
       throw new EvalAdmissionError(
         "Could not confirm billing with MCPJam, so this eval did not run. Try again in a few minutes.",
-        "PLATFORM_UNAVAILABLE"
+        "PLATFORM_UNAVAILABLE",
+        undefined,
+        undefined,
+        { cause: error }
       );
     }
   }
@@ -157,6 +163,7 @@ export class EvalAdmissionClient {
 export class AttemptStepGuard {
   private ordinal = 0;
   private granted: number;
+  private expiresAt: number;
   private pending: Promise<void> = Promise.resolve();
   constructor(
     private readonly client: EvalAdmissionClient,
@@ -173,6 +180,8 @@ export class AttemptStepGuard {
         "ADMISSION_CONFLICT"
       );
     }
+    this.expiresAt = receipt.expiresAt;
+    this.requireActive();
     this.granted = receipt.grantedSteps;
   }
   beforePrompt(): Promise<void> {
@@ -193,6 +202,7 @@ export class AttemptStepGuard {
           );
         }
         this.granted = grant.grantedSteps;
+        this.expiresAt = grant.expiresAt;
       }
       this.signal?.throwIfAborted();
       this.requireActive();
@@ -200,7 +210,7 @@ export class AttemptStepGuard {
     return this.pending;
   }
   private requireActive(): void {
-    if (Date.now() >= this.receipt.expiresAt) {
+    if (Date.now() >= this.expiresAt) {
       throw new EvalAdmissionError(
         "This run authorization has expired or closed. Start a new run.",
         "ADMISSION_CLOSED",

@@ -7,8 +7,16 @@ import { Hono } from "hono";
 // lease SHOULD be minted — spend, membership, the model allowlist — is decided
 // backend-side and covered by mcpjam-backend's harnessModelBrokerStart tests.
 
-const { validateGuestTokenMock } = vi.hoisted(() => ({
+const { validateGuestTokenMock, hosted } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
+  hosted: { enabled: false },
+}));
+
+vi.mock("../../../config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../config.js")>()),
+  get HOSTED_MODE() {
+    return hosted.enabled;
+  },
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
@@ -64,6 +72,7 @@ describe("v1 model leases", () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+    hosted.enabled = false;
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
@@ -87,6 +96,62 @@ describe("v1 model leases", () => {
     const res = await request(makeApp(), "/api/v1/projects/default/model-leases", { model: "openai/gpt-5" });
     expect(res.status).toBe(status);
     expect(await res.json()).toMatchObject({ code, message: "The original recovery message.", details: { code: domainCode } });
+  });
+
+  it.each([
+    [402, "platform_fee_refused"],
+    [402, "ORGANIZATION_SPEND_BUDGET_REACHED"],
+    [426, "client_upgrade_required"],
+    [503, "platform_fee_unavailable"],
+  ])("retains an authored %s remedy on hosted", async (status, domainCode) => {
+    hosted.enabled = true;
+    global.fetch = vi.fn().mockResolvedValue(
+      backendResponse(Number(status), {
+        ok: false,
+        domainCode,
+        code:
+          domainCode === "ORGANIZATION_SPEND_BUDGET_REACHED"
+            ? "spend_budget_reached"
+            : domainCode,
+        error: "Ask an admin to raise the budget.",
+        details: { code: "must-not-overwrite-domain" },
+      }),
+    );
+    const res = await request(
+      makeApp(),
+      "/api/v1/projects/default/model-leases",
+      { model: "openai/gpt-5" },
+    );
+    const body = await res.json();
+    expect(body.message).toBe("Ask an admin to raise the budget.");
+    expect(body.details.code).toBe(domainCode);
+    expect(body.details.reason).toBe(
+      domainCode === "ORGANIZATION_SPEND_BUDGET_REACHED"
+        ? "spend_budget_reached"
+        : undefined,
+    );
+  });
+
+  it("withholds unrelated backend messages on hosted", async () => {
+    hosted.enabled = true;
+    global.fetch = vi.fn().mockResolvedValue(
+      backendResponse(404, {
+        ok: false,
+        domainCode: "NOT_FOUND",
+        error: "Private backend details",
+      }),
+    );
+    const res = await request(
+      makeApp(),
+      "/api/v1/projects/default/model-leases",
+      { model: "openai/gpt-5" },
+    );
+    const body = await res.json();
+    expect(body).toMatchObject({
+      code: "NOT_FOUND",
+      message: "Could not complete the model lease operation",
+    });
+    expect(JSON.stringify(body)).not.toContain("Private backend details");
   });
 
   it("forwards admission proof with a lease request", async () => {
@@ -213,6 +278,36 @@ describe("v1 model leases", () => {
     [
       { model: "anthropic/claude-sonnet-4.5", maxOutputTokens: "lots" },
       "maxOutputTokens must be",
+    ],
+    [
+      { model: "anthropic/claude-sonnet-4.5", executionAdmissionId: null },
+      "executionAdmissionId must contain",
+    ],
+    [
+      { model: "anthropic/claude-sonnet-4.5", executionAdmissionId: "" },
+      "executionAdmissionId must contain",
+    ],
+    [
+      {
+        model: "anthropic/claude-sonnet-4.5",
+        executionAdmissionId: "x".repeat(257),
+      },
+      "executionAdmissionId must contain",
+    ],
+    [
+      { model: "anthropic/claude-sonnet-4.5", attemptAdmissionId: null },
+      "attemptAdmissionId must contain",
+    ],
+    [
+      { model: "anthropic/claude-sonnet-4.5", attemptAdmissionId: "" },
+      "attemptAdmissionId must contain",
+    ],
+    [
+      {
+        model: "anthropic/claude-sonnet-4.5",
+        attemptAdmissionId: "x".repeat(257),
+      },
+      "attemptAdmissionId must contain",
     ],
   ])("rejects %j before calling the backend", async (body, message) => {
     const fetchMock = vi.fn();

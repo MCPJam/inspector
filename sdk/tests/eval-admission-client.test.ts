@@ -30,6 +30,30 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("local admission transport", () => {
+  it("rejects an expired authorization during construction", () => {
+    expect(
+      () => new AttemptStepGuard(client(), {
+        ...receipt,
+        expiresAt: Date.now(),
+      })
+    ).toThrow(expect.objectContaining({ code: "ADMISSION_CLOSED" }));
+  });
+  it("rejects an active receipt already expired when it arrives", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      Response.json({ ...receipt, expiresAt: Date.now() - 1 })
+    ));
+    await expect(client().admit(input)).rejects.toMatchObject({ code: "ADMISSION_CLOSED" });
+  });
+  it("preserves the original transport failure for diagnosis", async () => {
+    vi.useFakeTimers();
+    const cause = new Error("connection reset");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(cause));
+    const result = expect(client().admit(input)).rejects.toMatchObject({
+      code: "PLATFORM_UNAVAILABLE", cause,
+    });
+    await vi.runAllTimersAsync();
+    await result;
+  });
   it("rejects cached grants at expiry without contacting the server", async () => {
     vi.useFakeTimers();
     const fetch = vi.fn();
@@ -94,6 +118,7 @@ describe("local admission transport", () => {
     await vi.runAllTimersAsync();
     await result;
   });
+
   it("requires credentials without making a request", () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
