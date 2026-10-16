@@ -129,9 +129,14 @@ jobs:
           commit="<$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$DEPLOY_SHA|${DEPLOY_SHA:0:9}>"
           text="🚀 Webapp → prod started by $GITHUB_TRIGGERING_ACTOR · $commit · <$RUN_URL|run>"
           # `-f`: a 4xx/5xx from Slack must fail this step, not claim delivery.
+          # The webhook URL is a credential too, so curl reads it from a config
+          # file (mktemp: mode 0600) rather than from its command line.
+          cfg="$(mktemp)"
+          trap 'rm -f "$cfg"' EXIT
+          printf 'url = "%s"\n' "$SLACK_WEBHOOK_URL" > "$cfg"
           jq -n --arg text "$text" '{text: $text}' \
             | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
-                -d @- "$SLACK_WEBHOOK_URL"
+                -d @- -K "$cfg"
 
       - name: Require green staging run for the deployed SHA
         if: ${{ inputs.require_staging_green == true || inputs.require_staging_green == 'true' }}
@@ -311,9 +316,14 @@ jobs:
             cancelled) text="⚪ Webapp → prod cancelled (${mins}m) · <$RUN_URL|run>" ;;
             *) text="❌ Webapp → prod failed (${mins}m) · <$RUN_URL|run>" ;;
           esac
+          # The webhook URL is a credential too, so curl reads it from a config
+          # file (mktemp: mode 0600) rather than from its command line.
+          cfg="$(mktemp)"
+          trap 'rm -f "$cfg"' EXIT
+          printf 'url = "%s"\n' "$SLACK_WEBHOOK_URL" > "$cfg"
           jq -n --arg text "$text" '{text: $text}' \
             | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
-                -d @- "$SLACK_WEBHOOK_URL"
+                -d @- -K "$cfg"
 
   smoke:
     needs: deploy

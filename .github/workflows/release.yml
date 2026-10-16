@@ -1142,9 +1142,14 @@ jobs:
           fi
           text="🚀 Release $NAME started $who · $parts$changes · <$RUN_URL|run>"
           # `-f`: a 4xx/5xx from Slack must fail this step, not claim delivery.
+          # The webhook URL is a credential too, so curl reads it from a config
+          # file (mktemp: mode 0600) rather than from its command line.
+          cfg="$(mktemp)"
+          trap 'rm -f "$cfg"' EXIT
+          printf 'url = "%s"\n' "$SLACK_WEBHOOK_URL" > "$cfg"
           jq -n --arg text "$text" '{text: $text}' \
             | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
-                -d @- "$SLACK_WEBHOOK_URL"
+                -d @- -K "$cfg"
 
   # Waits for every job nothing else waits on, not just `finalize`: the image
   # push, the hosted template roll-out and the evals action can each still be
@@ -1181,6 +1186,11 @@ jobs:
           else
             text="⚪ Release $NAME stopped (${mins}m) · <$RUN_URL|run>"
           fi
+          # The webhook URL is a credential too, so curl reads it from a config
+          # file (mktemp: mode 0600) rather than from its command line.
+          cfg="$(mktemp)"
+          trap 'rm -f "$cfg"' EXIT
+          printf 'url = "%s"\n' "$SLACK_WEBHOOK_URL" > "$cfg"
           jq -n --arg text "$text" '{text: $text}' \
             | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
-                -d @- "$SLACK_WEBHOOK_URL"
+                -d @- -K "$cfg"
