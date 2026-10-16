@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useConvexAuth } from "convex/react";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import type { ModelDefinition } from "@/shared/types";
 import { useSharedAppState } from "@/state/app-state-context";
 import { findProjectByAnyId } from "@/state/app-types";
@@ -79,7 +79,7 @@ export function useAvailableModels(options?: {
     scopedProject?.sharedProjectId ?? options?.projectId ?? null;
   const organizationId = scopedProject?.organizationId ?? null;
 
-  const { isAuthenticated } = useConvexAuth();
+  const isMemberActor = useIsMemberActor();
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
     organizationId,
@@ -113,7 +113,7 @@ export function useAvailableModels(options?: {
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
-        isAuthenticated,
+        isAuthenticated: isMemberActor === true,
         isOllamaRunning,
         ollamaModels,
         hasToken,
@@ -127,7 +127,7 @@ export function useAvailableModels(options?: {
       }),
     [
       hostedOrgModelConfig,
-      isAuthenticated,
+      isMemberActor,
       isOllamaRunning,
       ollamaModels,
       hasToken,

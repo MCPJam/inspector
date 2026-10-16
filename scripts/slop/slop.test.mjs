@@ -188,6 +188,7 @@ describe("ui strings", () => {
           "if (a > b && c < d) return null;",
           "const re = /\"['\"]/g;",
           'function f(x: Foo<string>) { return g("Keep this label"); }',
+          "function runAttempt<T>(attempt: Attempt<T>): Promise<void> {",
           '{count > 0 ? <Empty label="No results yet" /> : "Loading your servers"}',
           '<span>{"—"}</span>',
           '<Button onClick={() => save()}>Save changes</Button>',

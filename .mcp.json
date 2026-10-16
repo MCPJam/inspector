@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "Meticulous": {
-      "type": "http",
-      "url": "https://app.meticulous.ai/api/mcp"
-    }
-  }
-}

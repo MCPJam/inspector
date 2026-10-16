@@ -22,8 +22,12 @@ export function isUiFile(path) {
 const NOT_COPY_BEFORE =
   /(?:^|[^\w.$])(?:className|class|cn|cva|clsx|twMerge|tw|data-[\w-]+|testId|key|id|href|src|to|from|import|export|require|type|variant|size|name|kind|event|track|capture|typeof|case|console\.\w+|logger\.\w+|log\.\w+|debug|trace|describe|it|test)\s*[(=:,]?\s*$/;
 
-/** Code before `>` that makes it the end of a JSX tag rather than an operator. */
-const TAG_BEFORE = /<\/?[A-Za-z][\w.:-]*(?:[^<>]|=>)*$/;
+/**
+ * Code before `>` that makes it the end of a JSX tag rather than an operator.
+ * An opening `<` right after an identifier is a type argument
+ * (`Promise<void>`), not a tag.
+ */
+const TAG_BEFORE = /(?:<\/|(?:^|[^\w$])<)[A-Za-z][\w.:-]*(?:[^<>]|=>)*$/;
 
 /**
  * Inside a JSX-text candidate, these mean it was code after an operator. A
