@@ -618,15 +618,7 @@ jobs:
           path: ${{ runner.temp }}/conformance/published-conformance-input.json
           if-no-files-found: error
 
-  # Local Codex: its own pack (MCPJam's app-server bridge + the pinned
-  # `@openai/codex` platform binary), its own adapter and its own sandbox
-  # claims, so its own legs — against a mock OpenAI Responses upstream behind
-  # the same loopback gateway. Only the model is fake.
-  #
-  # D8: the targets Codex's manifest certifies (`nativeTargets`) block; the
-  # others run so their evidence stays visible without holding up a certified
-  # target's release. Windows has no leg: it is not a Codex native target, and
-  # its sandbox (`windowsSandbox/setupStart`) has no evidence yet.
+  # Uncertified Codex targets collect evidence without granting capabilities.
   codex-scenarios:
     name: codex ${{ matrix.platform_key }}
     needs: [unit, plan]
@@ -701,9 +693,9 @@ jobs:
           npm run build:sdk -w @mcpjam/inspector
           npm run pretest -w @mcpjam/inspector
 
-      # Playground profile: a command pauses for approval and runs only once
-      # approved; a host-executed MCP tool runs through MCPJam's relay; the
-      # thread survives detach + resume; Stop leaves nothing behind.
+      - name: Prepare Linux Codex command sandbox
+        if: runner.os == 'Linux'
+        run: bash mcpjam-inspector/scripts/prepare-local-harness-linux-sandbox.sh "$RUNNER_TEMP/conformance/evidence/linux-sandbox-prerequisite.json"
       - name: Attended turn
         working-directory: mcpjam-inspector
         env:
@@ -722,16 +714,10 @@ jobs:
           MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
         run: npx tsx server/utils/harness/local/conformance/run-codex-turn.ts attended-off
 
-      # Eval/swarm profile (D2): `allow-all` inside Codex's command sandbox.
-      # EVIDENCE, not yet a gate: no target is recorded in
-      # `unattendedSandboxTargets`, and a runner where the sandbox cannot start
-      # (Ubuntu 24.04's AppArmor user-namespace restriction blocks bubblewrap)
-      # is exactly what this leg exists to surface. A target is recorded only
-      # after this passes on it; until then unattended local Codex is refused
-      # there.
-      - name: Unattended sandboxed turn (evidence)
+      # Eval/swarm profile: containment must pass before this leg can certify
+      # its pack and layer. Capability promotion still requires target evidence.
+      - name: Unattended sandboxed turn
         id: unattended
-        continue-on-error: true
         working-directory: mcpjam-inspector
         env:
           HOME: ${{ runner.temp }}/conformance/home
@@ -743,8 +729,23 @@ jobs:
         if: always()
         env:
           OUTCOME: ${{ steps.unattended.outcome }}
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          TARGET: ${{ matrix.platform_key }}
+          PACK_VERSION: ${{ needs.plan.outputs.codex_pack_version || 'source' }}
         run: |
           echo "### Codex unattended sandbox on ${{ matrix.platform_key }}: ${OUTCOME}" >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module <<'NODE'
+          import { mkdirSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          const dir = join(process.env.CONFORMANCE_ROOT, "evidence");
+          mkdirSync(dir, { recursive: true });
+          const name = `unattended-outcome-${process.env.TARGET}-${process.env.PACK_VERSION}.json`;
+          writeFileSync(join(dir, name), JSON.stringify({
+            harnessId: "codex", target: process.env.TARGET,
+            scenario: "unattended", result: process.env.OUTCOME,
+            commit: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID,
+          }, null, 2) + "\n");
+          NODE
 
       - name: No supervised process survived the run
         if: always()
@@ -780,9 +781,10 @@ jobs:
             --harness codex --target "${{ matrix.platform_key }}" \
             --runtime "$CONFORMANCE_ROOT/runtime/codex" \
             --out "$CONFORMANCE_ROOT/evidence" "${published[@]}" \
-            --scenarios attended,attended-off
+            --scenarios attended,attended-off,unattended
 
       - name: Upload conformance evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: conformance-evidence-codex-${{ matrix.platform_key }}-${{ needs.plan.outputs.codex_pack_version || 'source' }}
@@ -801,9 +803,7 @@ jobs:
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:
-      # The value the record carries. It names the RUN that produced the
-      # evidence, so a recorded conformance version can always be traced back to
-      # the scenarios that justified it.
+      # Keep the stamp traceable to the run that produced its evidence.
       - id: stamp
         env:
           PUBLISHED_PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
