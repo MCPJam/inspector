@@ -38,11 +38,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { useAppNavigate } from "@/lib/app-navigation";
 
-interface SidebarUserProps {
-  onBeforeSignOut?: () => void | Promise<void>;
-}
-
-export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
+export function SidebarUser() {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
@@ -64,7 +60,7 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const email = user?.email ?? "";
   const initials = getInitials(displayName);
 
-  const signOut = useSignOut(onBeforeSignOut);
+  const signOut = useSignOut();
 
   const handleSignOut = () => {
     setMenuOpen(false);

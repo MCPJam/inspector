@@ -7,6 +7,7 @@ import {
   resetSignOutLatchForTests,
 } from "@/lib/auth/sign-out-latch";
 import { useSignOutStore } from "@/stores/sign-out-store";
+import { useAuthExitCleanup } from "@/hooks/use-sign-out";
 import {
   LegalAcceptanceGate,
   type LegalAcceptanceStatus,
@@ -108,6 +109,34 @@ describe("LegalAcceptanceGate", () => {
       }),
     );
     expect(state.accept).not.toHaveBeenCalled();
+  });
+
+  it("disconnects App's servers before signing out from the dialog", async () => {
+    signIn();
+    state.status = pending;
+    state.getAccessToken.mockRejectedValue(new Error("Login required"));
+    const disconnectServers = vi.fn().mockResolvedValue(undefined);
+    // Stands in for App, which registers its runtime-server teardown and is
+    // mounted beside the gate in AuthBootstrap.
+    function AppTeardown() {
+      useAuthExitCleanup(disconnectServers);
+      return null;
+    }
+    const user = userEvent.setup();
+    render(
+      <>
+        <AppTeardown />
+        <LegalAcceptanceGate />
+      </>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(disconnectServers).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(state.workosSignOut).toHaveBeenCalled());
+    expect(disconnectServers.mock.invocationCallOrder[0]).toBeLessThan(
+      state.workosSignOut.mock.invocationCallOrder[0],
+    );
   });
 
   it("asks a signed-in user who has not accepted, with the backend's minimum age", () => {

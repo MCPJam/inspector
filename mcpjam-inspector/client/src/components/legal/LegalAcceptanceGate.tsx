@@ -59,9 +59,7 @@ export function LegalAcceptanceGate() {
 
 function LegalAcceptanceDialog({ status }: { status: LegalAcceptanceStatus }) {
   const accept = useMutation(acceptRef);
-  // The way out for someone who does not accept. It runs without the
-  // runtime-server cleanup the sidebar passes in, because that cleanup lives
-  // in App and this gate renders above App.
+  // The way out for someone who does not accept.
   const signOut = useSignOut();
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { showSignOutScreen } from "@/stores/sign-out-store";
 import {
@@ -7,14 +8,33 @@ import {
 import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
 import { startSessionRevocation } from "@/lib/auth/revoke-session";
 
+type AuthExitCleanup = () => void | Promise<void>;
+
+// Module scope rather than context: the Terms dialog that signs out renders
+// above App, which owns the connected servers this cleanup disconnects.
+let authExitCleanup: AuthExitCleanup | null = null;
+
+/**
+ * Registers the teardown every sign-out runs before the session is cleared,
+ * such as disconnecting the runtime servers App holds open.
+ */
+export function useAuthExitCleanup(cleanup: AuthExitCleanup): void {
+  useEffect(() => {
+    authExitCleanup = cleanup;
+    return () => {
+      if (authExitCleanup === cleanup) authExitCleanup = null;
+    };
+  }, [cleanup]);
+}
+
 /**
  * Signs the current WorkOS user out of this tab and revokes the session.
  *
- * `onBeforeSignOut` runs after the sign-out screen is up and before the
- * session is cleared. Sign-out proceeds whether it returns, throws or rejects:
- * a failed cleanup must not leave the user signed in.
+ * The registered auth-exit cleanup runs after the sign-out screen is up and
+ * before the session is cleared. Sign-out proceeds whether it returns, throws
+ * or rejects: a failed cleanup must not leave the user signed in.
  */
-export function useSignOut(onBeforeSignOut?: () => void | Promise<void>) {
+export function useSignOut() {
   const { signOut, getAccessToken } = useAuth();
 
   const signOutOfWorkOs = () => {
@@ -59,7 +79,7 @@ export function useSignOut(onBeforeSignOut?: () => void | Promise<void>) {
 
     let cleanupResult: void | Promise<void>;
     try {
-      cleanupResult = onBeforeSignOut?.();
+      cleanupResult = authExitCleanup?.();
     } catch (error) {
       // Cleanup is best effort; signing out matters more than its failure.
       console.debug("[sign-out] cleanup before sign-out failed", error);
