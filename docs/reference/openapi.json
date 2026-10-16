@@ -14704,6 +14704,8 @@
               "CONFLICT",
               "VALIDATION_ERROR",
               "RATE_LIMITED",
+              "PAYMENT_REQUIRED",
+              "UPGRADE_REQUIRED",
               "FEATURE_NOT_SUPPORTED",
               "SERVER_UNREACHABLE",
               "TIMEOUT",

@@ -66,6 +66,7 @@
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
 import { redactForLog } from "./redact-log-message.js";
+import { translatePlatformFeeError } from "./platform-fee-errors.js";
 
 import {
   convexErrorData,
@@ -74,8 +75,11 @@ import {
   GATE_WAIVER_REFUSAL_CODES,
 } from "./convex-error-data.js";
 import {
-  cleanConvexMessage, preconditionDetails, billingDetails,
-  retryAfterFromResetsAt, retryAfterFromMs,
+  cleanConvexMessage,
+  preconditionDetails,
+  billingDetails,
+  retryAfterFromResetsAt,
+  retryAfterFromMs,
 } from "./convex-error-details.js";
 
 /**
@@ -132,6 +136,8 @@ export function translateConvexWriteError(
   } = options;
 
   const data = convexErrorData(error);
+  const platformFeeError = translatePlatformFeeError(data);
+  if (platformFeeError) return platformFeeError;
   const code = typeof data?.code === "string" ? data.code : undefined;
   // A blank message is no copy: every branch then uses its own fallback.
   const structuredMessage =

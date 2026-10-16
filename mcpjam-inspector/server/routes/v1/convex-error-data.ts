@@ -1,5 +1,7 @@
 export type ConvexErrorData = {
   code?: unknown;
+  minimumVersion?: unknown;
+  docsUrl?: unknown;
   message?: unknown;
   kind?: unknown;
   /** The stable sub-code a coded refusal carries alongside its prose. */

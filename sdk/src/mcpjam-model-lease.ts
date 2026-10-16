@@ -100,7 +100,7 @@ export type McpjamLeaseRefusalKind =
  * limit rather than a provider's own throttle.
  */
 const BILLING_REFUSAL_CODE =
-  /^(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|organization_spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|spending_admission_invalid|insufficient_credits)$/i;
+  /^(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|platform_fee_refused|PAYMENT_REQUIRED|spend_budget_reached|organization_spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|spending_admission_invalid|insufficient_credits)$/i;
 
 /**
  * The organization AI-key policy's configuration refusals ("Use your keys for
