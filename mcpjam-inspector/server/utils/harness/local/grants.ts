@@ -53,6 +53,7 @@ import {
   type SupportedLocalHarnessId,
 } from "./targets.js";
 import { createLocalStateMutationLock } from "./local-state-lock.js";
+import { isLocalStudyGrantBinding, type LocalStudyGrantBinding } from "./study-grant-binding.js";
 
 export const LOCAL_HARNESS_GRANT_HEADER = "x-mcpjam-local-harness-grant";
 
@@ -83,6 +84,8 @@ export interface WorkspaceGrant {
 export interface HarnessGrantBinding {
   /** Server-derived use; never read from a client request. */
   scope?: "attended" | "unattended";
+  /** Study ownership is server-derived; an ordinary project grant omits it. */
+  study?: LocalStudyGrantBinding;
   userId: string;
   machineId: string;
   projectId: string;
@@ -161,6 +164,9 @@ export function hashGrantBinding(binding: HarnessGrantBinding): string {
       ...(binding.targetKind === "local-isolated"
         ? [binding.isolationPolicyVersion ?? null]
         : []),
+      // Omitted metadata must preserve existing project grant hashes.
+      ...(binding.study ? ["study", binding.study.scenarioId,
+        binding.study.accessVersion, binding.study.chatSessionId] : []),
     ]),
   );
 }
@@ -200,6 +206,7 @@ function isHarnessGrantBinding(value: unknown): value is HarnessGrantBinding {
     typeof binding.machineId === "string" &&
     binding.machineId.length > 0 &&
     (binding.scope === undefined || binding.scope === "attended" || binding.scope === "unattended") &&
+    (binding.study === undefined || isLocalStudyGrantBinding(binding.study)) &&
     typeof binding.projectId === "string" &&
     binding.projectId.length > 0 &&
     typeof binding.workspaceGrantId === "string" &&
@@ -567,6 +574,9 @@ export function grantLocalHarnessConsent(
   binding: HarnessGrantBinding,
   opts?: { ttlMs?: number; now?: number },
 ): Promise<MintedHarnessGrant> {
+  if (binding.study !== undefined && !isLocalStudyGrantBinding(binding.study)) {
+    throw new Error("Invalid local study grant ownership");
+  }
   return withGrantLock(async () => {
     const now = opts?.now ?? Date.now();
     // Clamped, never trusted: a caller asking for a longer life than the
@@ -620,6 +630,9 @@ export async function verifyLocalHarnessGrant(
   binding: HarnessGrantBinding,
   opts?: { now?: number },
 ): Promise<GrantVerification> {
+  if (binding.study !== undefined && !isLocalStudyGrantBinding(binding.study)) {
+    return { ok: false, reason: "binding-mismatch", message: "Invalid local study grant ownership" };
+  }
   if (!token || token.length < 16 || token.length > 256) {
     return {
       ok: false,
