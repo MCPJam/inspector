@@ -284,3 +284,11 @@ describe("normalizeFinishReason", () => {
     expect(normalizeFinishReason("SomethingNew")).toBe("somethingnew");
   });
 });
+
+
+it("preserves runtime evidence while validating the shared trace schema", () => {
+  const execution = { engine: "harness:codex", venue: "hosted", runtimeVersion: "0.149.1" };
+  const span = { id: "runtime", name: "LLM", category: "llm", startMs: 0, endMs: 1, execution };
+  expect(evalTraceSpanZ.parse(span).execution).toEqual(execution);
+  expect(evalTraceSpanZ.safeParse({ ...span, execution: { ...execution, venue: "requested" } }).success).toBe(false);
+});
