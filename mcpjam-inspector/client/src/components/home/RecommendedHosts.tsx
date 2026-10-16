@@ -1,3 +1,5 @@
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useState } from "react";
 import { toast } from "@/lib/toast";
 import { Loader2, Plus } from "lucide-react";
@@ -25,6 +27,13 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
   const navigate = useAppNavigate();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
+  const templateIds = [
+    ...RECOMMENDED_HOST_IDS,
+    ...(claudeCodeEnabled ? ["claude-code"] : []),
+    ...(codexEnabled ? ["codex"] : []),
+  ];
   const [creatingId, setCreatingId] = useState<string | null>(null);
   const { isAuthenticated } = useConvexAuth();
   // Creating a client is project-admin only (`hosts.ts` `requireAdminAccess`).
@@ -35,7 +44,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
 
   const recommended =
     catalogState.status === "live"
-      ? RECOMMENDED_HOST_IDS.flatMap((id) => {
+      ? templateIds.flatMap((id) => {
           const host = getCatalogHost(catalogState.catalog, id);
           return host ? [host] : [];
         })

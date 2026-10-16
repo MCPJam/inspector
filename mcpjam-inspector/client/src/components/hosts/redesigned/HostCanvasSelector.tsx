@@ -1,3 +1,5 @@
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useMemo, useState } from "react";
 import { ChevronsUpDown, Plus, Trash2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
@@ -62,6 +64,13 @@ export function HostCanvasSelector({
   const navigate = useAppNavigate();
   const { isAuthenticated } = useConvexAuth();
   const catalogState = useHostCatalog();
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
+  const templateIds = [
+    ...QUICK_ADD_TEMPLATES,
+    ...(claudeCodeEnabled ? ["claude-code"] : []),
+    ...(codexEnabled ? ["codex"] : []),
+  ];
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { deleteHost } = useHostMutations();
@@ -221,7 +230,7 @@ export function HostCanvasSelector({
             className="ml-0.5 flex shrink-0 items-center gap-0.5 pr-0.5"
             data-testid="host-canvas-quick-add"
           >
-            {QUICK_ADD_TEMPLATES.map((id) => {
+            {templateIds.map((id) => {
               const catalogHost =
                 catalogState.status === "live"
                   ? getCatalogHost(catalogState.catalog, id)
