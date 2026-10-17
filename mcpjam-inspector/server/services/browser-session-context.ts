@@ -1,3 +1,5 @@
+import { interactActionToScriptedStep } from "../../shared/steps";
+export { interactActionToScriptedStep } from "../../shared/steps";
 import { pluginModelContextMessage } from "../../shared/plugin-model-context.js";
 import type { HarnessPresentation } from "../../shared/unattended-workspace";
 /**
@@ -141,10 +143,12 @@ function scriptedKindToAction(step: ScriptedStep): EvalTraceBrowserAction {
           ? "right_click"
           : "left_click";
     case "type":
+    case "select":
       return "type";
     case "key":
       return "key";
     case "scroll":
+    case "scrollTo":
       return "scroll";
     case "wait":
       return "wait";
@@ -164,6 +168,8 @@ function describeLocator(t: ElementLocator): string {
 }
 
 function describeScriptedStep(step: ScriptedStep): string | undefined {
+  if (step.kind === "select") return `${describeLocator(step.target)} options=${JSON.stringify(step.values)}`;
+  if (step.kind === "scrollTo") return `${describeLocator(step.target)} position=${step.x},${step.y}`;
   if (step.kind === "click" || step.kind === "type")
     return describeLocator(step.target);
   if (step.kind === "key") return `key=${step.key}`;
@@ -174,39 +180,6 @@ function describeScriptedStep(step: ScriptedStep): string | undefined {
     return describeLocator(a.target);
   }
   return undefined;
-}
-
-/**
- * Map a unified-model `InteractAction` onto the legacy `ScriptedStep` the
- * harness already knows how to replay. The two vocabularies are intentionally
- * isomorphic for the action kinds (click/type/key/scroll/wait) — see
- * `shared/steps.ts`. The `assert` `ScriptedStep` kind has no `InteractAction`
- * counterpart (assertions are first-class `assert` steps, never inside
- * `interact`), so this never produces one.
- */
-export function interactActionToScriptedStep(
-  action: InteractAction,
-): ScriptedStep {
-  switch (action.kind) {
-    case "click":
-      return {
-        kind: "click",
-        target: action.target,
-        ...(action.clickType ? { clickType: action.clickType } : {}),
-      };
-    case "type":
-      return { kind: "type", target: action.target, text: action.text };
-    case "key":
-      return { kind: "key", key: action.key };
-    case "scroll":
-      return {
-        kind: "scroll",
-        direction: action.direction,
-        ...(action.amount ? { amount: action.amount } : {}),
-      };
-    case "wait":
-      return { kind: "wait", ms: action.ms };
-  }
 }
 
 /**
