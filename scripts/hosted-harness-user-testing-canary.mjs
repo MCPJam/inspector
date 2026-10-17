@@ -61,7 +61,7 @@ export async function runUserTesting(config, bearer, tokens, invoke, request = f
     const id = randomUUID();
     const probe = { id, file: `mcpjam-canary-${id}.txt`, nonce: randomUUID() };
     const post = (path, body) => request(new URL(path, config.webUrl), {
-      method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
+      method: 'POST', redirect: 'error', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
       body: JSON.stringify(body), signal: AbortSignal.timeout(180_000),
     });
     try {

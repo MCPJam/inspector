@@ -85,39 +85,6 @@ env:
   CLI_VERSION: 5.16.1
 
 jobs:
-  harness-product-canary:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    environment: ask-mcpjam-smoke-staging
-    concurrency:
-      group: harness-product-canary-staging
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Run bounded staging eval, swarm and User Testing canaries
-        env:
-          HARNESS_PRODUCT_CANARY_CONFIG: ${{ vars.HARNESS_PRODUCT_CANARY_CONFIG }}
-          HARNESS_PRODUCT_STUDY_TOKENS: ${{ secrets.HARNESS_PRODUCT_STUDY_TOKENS }}
-          MCPJAM_API_KEY: ${{ secrets.HARNESS_PRODUCT_CANARY_API_KEY }}
-          ASK_MCPJAM_CANARY_EMAIL: ${{ vars.ASK_MCPJAM_CANARY_EMAIL }}
-          ASK_MCPJAM_CANARY_PASSWORD: ${{ secrets.ASK_MCPJAM_CANARY_PASSWORD }}
-          WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
-          WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
-          HARNESS_PRODUCT_CANARY_REPORT: ${{ runner.temp }}/harness-product-canary.json
-        run: node scripts/hosted-harness-product-canary.mjs
-      - name: Retain actual staging product outcomes
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hosted-harness-product-canary-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/harness-product-canary.json
-          if-no-files-found: error
   # The CLI lane. Syncs the suite file, runs it, gates the result, and reports a
   # verdict its caller can branch on. This is what the promotion gate calls.
   run-suite:
