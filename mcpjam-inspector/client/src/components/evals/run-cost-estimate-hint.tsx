@@ -89,16 +89,18 @@ export function RunCostEstimateHint({
             <div className="space-y-1 text-muted-foreground">
               <p>
                 {range
-                  ? `Client AI range: ${formatCredits(
+                  ? `Typical client AI cost: ${formatCredits(
                       range.low,
-                    )} to ${formatCredits(range.high)} credits, based on ${
+                    )} to ${formatCredits(
+                      range.high,
+                    )} credits (middle half of ${
                       range.sampleCount
-                    } recent samples.`
+                    } past runs). Some runs cost more.`
                   : "Not enough priced history to show a client AI range. Choose a priced model and run more evals or swarms to build history."}
               </p>
               <p>
-                The range excludes computer time, other models and tool provider
-                fees. This estimate is not a spending limit.
+                This estimate leaves out tool provider fees, other models and
+                computer time. It is not a spending limit.
               </p>
             </div>
           ) : null}
