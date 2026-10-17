@@ -66,3 +66,9 @@ test('truncated observations and transport failures stay inconclusive', () => {
   assert.equal(evidenceFailure(new Error('private upstream details')).reason, 'request_did_not_complete');
   assert.equal(evidenceFailure(new Error('native_file_read_unproven')).status, 'task_failed');
 });
+
+test('rejects a mixed turn containing an unreceipted emulated span', () => {
+  const trace = fixture();
+  trace.trace.spans.push({ category: 'llm', promptIndex: 0 });
+  assert.throws(() => verifyFlowEvidence(trace, client, probe), /missing_execution_receipt/);
+});

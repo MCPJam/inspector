@@ -38,8 +38,8 @@ export function verifyFlowEvidence(envelope, client, probe) {
   requireThat(indices.length === 2, 'missing_two_turns');
   const calls = callsFrom(envelope.messages);
   const turns = indices.map((promptIndex, turn) => {
-    const records = executionSpans.filter(span => span.promptIndex === promptIndex && span.execution);
-    requireThat(records.length > 0, 'missing_execution_receipt');
+    const records = executionSpans.filter(span => span.promptIndex === promptIndex);
+    requireThat(records.length > 0 && records.every(span => span.execution), 'missing_execution_receipt');
     for (const { execution } of records) {
       requireThat(execution.engine === `harness:${client.harness}` && execution.venue === 'hosted', 'wrong_execution_target');
       requireThat(typeof execution.runtimeVersion === 'string' && execution.runtimeVersion.trim(), 'missing_runtime_version');
