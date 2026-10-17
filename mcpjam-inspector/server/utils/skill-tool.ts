@@ -1,5 +1,16 @@
-import { tool as aiTool } from "ai";
+import { tool as aiTool, type Tool, type ToolExecuteFunction } from "ai";
 
-/** Preserve AI SDK inference while tagging MCPJam's skill implementations. */
-export const skillTool: typeof aiTool = (definition) =>
-  Object.assign(aiTool(definition), { _toolOrigin: "builtin" as const });
+/** Skill tools always have executors; keep their schema and context types. */
+export function skillTool<
+  INPUT,
+  OUTPUT,
+  CONTEXT extends Record<string, unknown>,
+>(
+  definition: Tool<INPUT, OUTPUT, CONTEXT> & {
+    execute: ToolExecuteFunction<INPUT, OUTPUT, CONTEXT>;
+  },
+) {
+  return Object.assign(aiTool(definition), {
+    _toolOrigin: "builtin" as const,
+  });
+}
