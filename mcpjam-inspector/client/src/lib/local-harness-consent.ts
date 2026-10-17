@@ -694,13 +694,12 @@ export async function revokeLocalHarnessConsent(
   for (const id of Object.keys(LOCAL_HARNESS_CLIENT_NAMES) as LocalHarnessClientId[]) {
     persist(projectId, null, id);
   }
-  try {
-    await localHarnessRequest(
-      "consent/revoke",
-      { ...(stored ? { grantId: stored.grantId } : {}), projectId, forget: true },
-    );
-  } catch {
-    // Already forgotten locally; the TTL and the server's own sweep finish it.
+  const response = await localHarnessRequest(
+    "consent/revoke",
+    { ...(stored ? { grantId: stored.grantId } : {}), projectId, forget: true },
+  );
+  if (!response.ok) {
+    throw new Error("Local access could not be removed. Try again.");
   }
 }
 
