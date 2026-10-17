@@ -102,6 +102,48 @@ describe("launchJourneyRun and the shutdown drain", () => {
     await vi.waitFor(() => expect(drain.current?.counts()).toEqual({}));
   });
 
+  it("holds the drain while the run is still being created", async () => {
+    let created!: () => void;
+    const createRun = createRunMock.getMockImplementation();
+    createRunMock.mockImplementation(
+      () => new Promise((r) => (created = () => r(createRun?.()))),
+    );
+    startRunMock.mockResolvedValue(undefined);
+
+    const launch = launchJourneyRun(DEPS, INPUT);
+    await vi.waitFor(() => expect(createRunMock).toHaveBeenCalledTimes(1));
+    expect(drain.current?.counts()).toEqual({ swarm_run: 1 });
+
+    created();
+    await launch;
+    await vi.waitFor(() => expect(drain.current?.counts()).toEqual({}));
+  });
+
+  it.each([
+    [
+      "fails",
+      () => createRunMock.mockRejectedValue(new Error("backend 500")),
+      "rejected",
+    ],
+    [
+      "is deduped",
+      () => createRunMock.mockResolvedValue({ runId: "run_1", deduped: true }),
+      "fulfilled",
+    ],
+  ])(
+    "releases the drain when the launch %s",
+    async (_name, arrange, status) => {
+      arrange();
+
+      const [launch] = await Promise.allSettled([
+        launchJourneyRun(DEPS, INPUT),
+      ]);
+      expect(launch.status).toBe(status);
+      await vi.waitFor(() => expect(drain.current?.counts()).toEqual({}));
+      expect(startRunMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("releases the drain when the runner fails", async () => {
     startRunMock.mockRejectedValue(new Error("runner exploded"));
 
