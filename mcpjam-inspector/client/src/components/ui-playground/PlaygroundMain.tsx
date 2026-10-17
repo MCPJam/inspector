@@ -134,7 +134,6 @@ import {
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
@@ -376,8 +375,7 @@ import {
   isDynamicTool,
   getToolInfo,
 } from "@/components/chat-v2/thread/thread-helpers";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { artifactStableKey } from "@/lib/artifact-urls";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
@@ -808,9 +806,8 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -5051,22 +5048,6 @@ export function PlaygroundMain({
   useEffect(() => {
     onStreamingChange?.(isRunBusy);
   }, [isRunBusy, onStreamingChange]);
-
-  // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context),
-      );
-    },
-    [],
-  );
 
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
