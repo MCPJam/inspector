@@ -7,6 +7,8 @@ export type ConvexErrorData = {
   kind?: unknown;
   /** The stable sub-code a coded refusal carries alongside its prose. */
   reason?: unknown;
+  /** Why a fee refusal happened when the reason alone hides it (held credits). */
+  cause?: unknown;
   /** The gated feature's key, on a `FEATURE_UNAVAILABLE` refusal. */
   feature?: unknown;
 };
