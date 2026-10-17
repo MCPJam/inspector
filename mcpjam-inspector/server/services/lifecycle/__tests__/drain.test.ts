@@ -64,6 +64,53 @@ describe("drain coordinator", () => {
     await expect(drained).resolves.toMatchObject({ drained: true });
   });
 
+  it("waits for work registered before `registering` settles", async () => {
+    const drain = createDrainCoordinator();
+    const claim = deferred();
+    const job = deferred();
+    // A claim answered after the drain began starts its job; its loop stops
+    // once that job is done.
+    const loopStopped = claim.promise.then(() =>
+      drain.track("claimed_job", job.promise),
+    );
+
+    const drained = drain.drain(60_000, loopStopped);
+    let finished = false;
+    void drained.then(() => {
+      finished = true;
+    });
+    claim.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(finished).toBe(false);
+    expect(drain.counts()).toEqual({ claimed_job: 1 });
+    job.resolve();
+
+    await expect(drained).resolves.toMatchObject({
+      drained: true,
+      inFlightAtStart: {},
+      remaining: {},
+    });
+  });
+
+  it("ends the wait on a `registering` that fails or outlives the deadline", async () => {
+    const failed = deferred();
+    const drained = createDrainCoordinator().drain(60_000, failed.promise);
+    failed.reject(new Error("stop failed"));
+    await expect(drained).resolves.toMatchObject({ drained: true });
+
+    vi.useFakeTimers();
+    try {
+      const stuck = createDrainCoordinator().drain(
+        1_000,
+        new Promise<void>(() => {}),
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(stuck).resolves.toMatchObject({ drained: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops waiting at its deadline and reports what is still running", async () => {
     vi.useFakeTimers();
     try {
