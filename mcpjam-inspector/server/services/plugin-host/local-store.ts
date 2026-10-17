@@ -70,12 +70,14 @@ export class LocalPluginControlStore {
     };
   }
 
-  private view(row: ControlRow) {
+  /** As the backend: no `contextJson` unless it is newer than `known`. */
+  private view(row: ControlRow, known?: number) {
+    const omit = known !== undefined && (row.contextVersion ?? 0) <= known;
     return {
       snapshotJson: row.snapshotJson!,
       expiresAt: row.expiresAt,
       ...(row.contextToken ? { contextVersion: row.contextVersion ?? 0 } : {}),
-      ...(row.contextJson ? { contextJson: row.contextJson } : {}),
+      ...(row.contextJson && !omit ? { contextJson: row.contextJson } : {}),
     };
   }
 
@@ -88,6 +90,9 @@ export class LocalPluginControlStore {
 
   private control(c: Record<string, any>) {
     hash(c.identityHash);
+    const known = c.knownContextVersion;
+    if (known !== undefined && (!Number.isSafeInteger(known) || known < 0))
+      fail("INVALID_INSTANCE_CONTROL");
     const now = this.now();
     if (c.action === "read-activation") {
       hash(c.activationAnchorHash);
@@ -125,7 +130,7 @@ export class LocalPluginControlStore {
     if (c.action === "read") {
       if (!row) return { control: null };
       this.live(row, c.identityHash);
-      return { control: this.view(row) };
+      return { control: this.view(row, known) };
     }
     if (c.action === "close") {
       if (row) {
@@ -163,12 +168,12 @@ export class LocalPluginControlStore {
         fail("INVALID_INSTANCE_CONTEXT");
       const version = row!.contextVersion ?? 0;
       if (version === c.expectedVersion + 1 && row!.contextJson === c.contextJson)
-        return { control: this.view(row!) };
+        return { control: this.view(row!, known) };
       if (version !== c.expectedVersion) fail("INSTANCE_CONTEXT_CONFLICT");
       // No lifetime ceiling: versions only need to stay monotonic.
       row!.contextVersion = version + 1;
       row!.contextJson = c.contextJson;
-      return { control: this.view(row!) };
+      return { control: this.view(row!, known) };
     }
     if (c.action === "renew") {
       if (
@@ -206,7 +211,7 @@ export class LocalPluginControlStore {
         row!.pruneAt,
         c.expiresAt + INVOCATION_RECEIPT_RETENTION_MS,
       );
-      return { control: this.view(row!) };
+      return { control: this.view(row!, known) };
     }
     if (c.action !== "issue") return fail("INSTANCE_STORE_UNAVAILABLE");
     hash(c.ownerHash);
