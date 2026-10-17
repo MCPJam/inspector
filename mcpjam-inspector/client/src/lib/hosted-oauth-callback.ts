@@ -15,9 +15,16 @@ import {
   routePaths,
 } from "@/lib/app-navigation";
 
+/** The plugin server a sign-in is for (see `lib/plugins/plugin-sign-in.ts`). */
+export interface PluginSignInBinding {
+  pluginVersionId: string;
+  componentKey: string;
+}
+
 export interface HostedOAuthPendingMarker {
   chatAuthContinuationId?: string;
   connectionIntent?: ConnectionIntent;
+  pluginSignIn?: PluginSignInBinding;
   initiatingUserId?: string | null;
   surface: HostedOAuthSurface;
   organizationId?: string | null;
@@ -137,6 +144,7 @@ export function writeHostedOAuthPendingMarker(
         ...(marker.connectionIntent
           ? { connectionIntent: marker.connectionIntent }
           : {}),
+        ...(marker.pluginSignIn ? { pluginSignIn: marker.pluginSignIn } : {}),
         accessScope: marker.accessScope ?? null,
         scenarioId: marker.scenarioId ?? null,
         returnPath: normalizeHostedOAuthReturnPath(
@@ -190,6 +198,14 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
             },
           }
         : {}),
+      ...(isPluginSignInBinding(parsed.pluginSignIn)
+        ? {
+            pluginSignIn: {
+              pluginVersionId: parsed.pluginSignIn.pluginVersionId,
+              componentKey: parsed.pluginSignIn.componentKey,
+            },
+          }
+        : {}),
       organizationId:
         typeof parsed.organizationId === "string"
           ? parsed.organizationId
@@ -222,6 +238,27 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
     clearHostedOAuthPendingMarker();
     return null;
   }
+}
+
+function isPluginSignInBinding(value: unknown): value is PluginSignInBinding {
+  const binding = value as Partial<PluginSignInBinding> | null | undefined;
+  return (
+    typeof binding?.pluginVersionId === "string" &&
+    binding.pluginVersionId.length > 0 &&
+    typeof binding.componentKey === "string" &&
+    binding.componentKey.length > 0
+  );
+}
+
+/**
+ * A callback that only stores a credential: a change to a server's
+ * connections, or a plugin server's sign-in. It must never add or rewrite a
+ * project server, which is what the ordinary completion path does.
+ */
+export function onlyStoresCredential(
+  context: HostedOAuthPendingMarker | null | undefined,
+): boolean {
+  return !!(context?.connectionIntent || context?.pluginSignIn);
 }
 
 export function clearHostedOAuthPendingMarker(): void {

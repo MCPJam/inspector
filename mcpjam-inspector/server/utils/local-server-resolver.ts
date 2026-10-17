@@ -145,6 +145,12 @@ type LocalAuthorizeServerConfig =
        * materialization, immediately before the SDK config is built.
        */
       cwd?: string;
+      /**
+       * The backend's record that this row is a plugin's component, so it is
+       * prepared from its bundle even when its config names no placeholder.
+       * Absent on ordinary rows and from older backends.
+       */
+      pluginComponent?: true;
       hasEnv?: boolean;
       timeout?: number;
       clientCapabilities?: unknown;
@@ -1051,6 +1057,7 @@ async function applyLocalRuntimeResolution<
       serverName: args.managerKey,
       displayName: args.serverDisplayName ?? args.managerKey,
       onLease: args.onPluginLease,
+      pluginComponent: stdioConfig.pluginComponent === true,
       spec: {
         command: stdioConfig.command,
         args: stdioConfig.args ?? [],
@@ -1115,7 +1122,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
   accessScope?: "project_member" | "chat_v2";
   scenarioId?: string;
   accessVersion?: number;
-}): Promise<PluginStdioLaunchSpec> {
+}): Promise<PluginStdioLaunchSpec & { pluginComponent?: true }> {
   const result = await authorizeServerLocal(
     null,
     args.bearerToken,
@@ -1158,6 +1165,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
     args: config.args ?? [],
     env,
     ...(config.cwd !== undefined ? { workingDirectory: config.cwd } : {}),
+    ...(config.pluginComponent ? { pluginComponent: true as const } : {}),
   };
 }
 

@@ -133,6 +133,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
   "provider/mcpjam_limit_insufficient": "user_config",
+  // MCPJam retired the model the request names. Nothing failed: the backend
+  // refused before any provider work, and choosing a current model is the fix.
+  "provider/model_retired": "user_config",
   // The provider failed and the saved selection forbids a fallback. Whose
   // failure it was is not settled by the refusal itself — MCPJam's Gateway,
   // the upstream model provider, or a transient network fault — so it never
@@ -834,6 +837,19 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Add your own key for this provider under Settings → LLM Providers (BYOK) to run the model on your key instead of MCPJam's gateway.",
     ],
     "provider-not-allowlisted",
+    "warning",
+  ),
+  // The backend's `model_retired` code. Retrying meets the same refusal, so
+  // the only remedy is a newer model.
+  "provider/model_retired": entry(
+    "provider/model_retired",
+    "Model retired",
+    "This model has been retired and is no longer available on MCPJam. Choose a newer model.",
+    [
+      "The model saved on this chat, eval or suite has been retired from MCPJam.",
+    ],
+    ["Choose a newer model, then run again."],
+    "model-retired",
     "warning",
   ),
   // The backend refuses on one of two allowances and says which in its own

@@ -570,6 +570,22 @@ describe("applyToolCallStepUp: a bare insufficient_scope", () => {
     );
   });
 
+  it("keeps backend-projected scopes when a bare challenge widens through discovery", async () => {
+    readStoredDiscoveryScopesMock.mockReturnValue(["tasks:write"]);
+    const outcome = await applyToolCallStepUp(
+      createServer(),
+      {},
+      {
+        originalScopes: ["plugin:read"],
+        operation: { method: "tools/call", operation: "update_task" },
+      },
+    );
+    expect(outcome.scopes).toEqual(["plugin:read", "tasks:write"]);
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({ scopes: ["plugin:read", "tasks:write"] }),
+    );
+  });
+
   it("an error_description-only challenge is a bare challenge too", async () => {
     readStoredDiscoveryScopesMock.mockReturnValue(["tasks:write"]);
     const outcome = await applyToolCallStepUp(

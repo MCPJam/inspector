@@ -87,19 +87,6 @@ const STRIPE_CONNECT_SOURCES = [
   "https://r.stripe.com",
 ];
 
-// Meticulous session recorder, per
-// https://app.meticulous.ai/docs/session-recording/csp-exceptions. Only hosted
-// builds that set METICULOUS_RECORDING_TOKEN load it.
-const METICULOUS_SCRIPT_SOURCES = [
-  "https://snippet.meticulous.ai",
-  "https://browser.sentry-cdn.com",
-];
-const METICULOUS_FRAME_SOURCES = ["https://snippet.meticulous.ai"];
-const METICULOUS_CONNECT_SOURCES = [
-  "https://cognito-identity.us-west-2.amazonaws.com",
-  "https://user-events-v3.s3-accelerate.amazonaws.com",
-];
-
 const scriptNonces = new WeakMap<Context, string>();
 
 /**
@@ -157,7 +144,6 @@ function reportOnlyDirectives(
     `https://${workosHost}`,
     ...(sentry ? [sentry.origin] : []),
     ...STRIPE_CONNECT_SOURCES,
-    ...METICULOUS_CONNECT_SOURCES,
   ]);
   const frameSources = new Set<string>(["'self'"]);
   for (const host of sandboxHosts) {
@@ -167,7 +153,6 @@ function reportOnlyDirectives(
   for (const source of [
     ...STRIPE_FRAME_SOURCES,
     "https://www.youtube.com",
-    ...METICULOUS_FRAME_SOURCES,
   ]) {
     frameSources.add(source);
   }
@@ -184,14 +169,10 @@ function reportOnlyDirectives(
         "'self'",
         "'unsafe-eval'",
         ...STRIPE_SCRIPT_SOURCES,
-        ...METICULOUS_SCRIPT_SOURCES,
       ],
     ],
-    [
-      "style-src",
-      ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-    ],
-    ["font-src", ["https://fonts.gstatic.com", "data:"]],
+    ["style-src", ["'self'", "'unsafe-inline'"]],
+    ["font-src", ["'self'", "data:"]],
     ["connect-src", connectSources],
     ["frame-src", frameSources],
     ["img-src", ["'self'", "data:", "blob:", "https:"]],

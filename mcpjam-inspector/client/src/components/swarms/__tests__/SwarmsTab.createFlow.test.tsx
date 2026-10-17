@@ -3354,7 +3354,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     await openReusedConfirm();
 
     expect(await screen.findByTestId("new-swarm-funding-split")).toHaveTextContent(
-      "1 sponsored conversation · 1 uses org credits",
+      "1 sponsored · 1 uses org credits",
     );
     // Why some use credits: the allowance ran short.
     expect(
@@ -3391,7 +3391,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     await openReusedConfirm();
 
     expect(await screen.findByTestId("new-swarm-funding-split")).toHaveTextContent(
-      "0 sponsored conversations · 2 use org credits",
+      "2 conversations use org credits",
     );
     expect(
       screen.getByTestId("new-swarm-funding-explanation"),
@@ -3454,7 +3454,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /changed while you were reviewing[\s\S]*nothing was launched/i,
+      /1 conversation will now use org credits[\s\S]*press continue to launch/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
     expect(
@@ -3463,7 +3463,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     // The new split is on screen, and launching again goes ahead with it.
     await waitFor(() =>
       expect(screen.getByTestId("new-swarm-funding-split")).toHaveTextContent(
-        "0 sponsored conversations · 1 uses org credits",
+        "1 conversation uses org credits",
       ),
     );
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
@@ -3481,7 +3481,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /couldn't confirm the 1 sponsored conversation[\s\S]*nothing was launched/i,
+      /couldn't confirm the sponsored conversations[\s\S]*nothing has launched/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
@@ -3500,15 +3500,15 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /couldn't confirm the 1 sponsored conversation[\s\S]*nothing was launched/i,
+      /couldn't confirm the sponsored conversations[\s\S]*nothing has launched/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 
-  it("reveals the split of brand-new goals once they exist, before any run starts", async () => {
-    // New goals have no id until launch, so the split cannot be shown on
-    // Confirm. Once created, the split is read, and if any conversation would
-    // be sponsored the person sees it and launches again.
+  it("launches brand-new sponsored goals in one click", async () => {
+    // New goals have no id until launch, so no split is on screen for them.
+    // Once created, the split is read and each run launches with its
+    // sponsored count: no second Continue.
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
@@ -3522,23 +3522,28 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /can use sponsored conversations: 2 sponsored conversations · 0 use org credits/i,
-    );
-    expect(launchJourneyRunMock).not.toHaveBeenCalled();
-    // The goals were created, exactly once, and stay created.
-    expect(createJourneyMock).toHaveBeenCalledTimes(2);
-    await waitFor(() =>
-      expect(screen.getByTestId("new-swarm-funding-split")).toHaveTextContent(
-        "2 sponsored conversations · 0 use org credits",
-      ),
-    );
-
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
     expect(launchArgs().map((a) => a.expectedSponsored)).toEqual([1, 1]);
     await screen.findByTestId("new-swarm-running-step");
+    expect(
+      screen.queryByTestId("new-swarm-funding-notice"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("launches in one click when more conversations are sponsored than were shown", async () => {
+    fundingPreviewMock.mockResolvedValueOnce(supported([previewRun(0, 1)]));
+    await openReusedConfirm();
+    await screen.findByTestId("new-swarm-funding-split");
+
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    expect(launchArgs()[0].expectedSponsored).toBe(1);
+    expect(
+      screen.queryByTestId("new-swarm-funding-notice"),
+    ).not.toBeInTheDocument();
   });
 
   it("launches new goals straight away when none of their conversations would be sponsored", async () => {
@@ -3554,6 +3559,113 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
     expect(launchArgs().map((a) => a.expectedSponsored)).toEqual([0, 0]);
+  });
+
+  async function openMixedConfirm() {
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      { _id: "j-1", name: "Saved goal", goal: "Existing goal text" },
+    ];
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-confirm-add-existing"));
+    fireEvent.click(screen.getByRole("button", { name: /^add ana$/i }));
+    await screen.findByTestId("new-swarm-funding-split");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+    expect(screen.getByTestId("new-swarm-funding-pending")).toHaveTextContent(
+      "Doesn't include your 2 new goals yet.",
+    );
+  }
+
+  it.each([1, 2])(
+    "launches a mixed swarm in one click when the displayed goals keep or gain sponsorship (%i)",
+    async (actualSponsored) => {
+      fundingPreviewMock.mockImplementation(async (_projectId, runs) =>
+        supported(
+          runs.length === 1
+            ? [previewRun(1, 1)]
+            : [
+                previewRun(actualSponsored, 2 - actualSponsored),
+                previewRun(1, 0),
+                previewRun(1, 0),
+              ],
+        ),
+      );
+      await openMixedConfirm();
+
+      fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+      await screen.findByTestId("new-swarm-running-step");
+      expect(launchJourneyRunMock).toHaveBeenCalledTimes(3);
+      expect(launchArgs().map((args) => args.expectedSponsored)).toEqual([
+        actualSponsored,
+        1,
+        1,
+      ]);
+      expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("does not let new goals' sponsorship mask a loss for the displayed goals", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    await openMixedConfirm();
+
+    // The launch overall has MORE sponsored conversations than the display,
+    // but the existing goal would move onto credits. Compare only shown ids.
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(0, 1), previewRun(1, 0), previewRun(1, 0)]),
+    );
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /1 conversation from existing goals will now use org credits/i,
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-funding-split")).toHaveTextContent(
+        "2 sponsored · 1 uses org credits",
+      ),
+    );
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(launchArgs().map((args) => args.expectedSponsored)).toEqual([0, 1, 1]);
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not launch a mixed swarm unchecked when the displayed sponsorship cannot be verified", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    await openMixedConfirm();
+
+    fundingPreviewMock.mockRejectedValue(new Error("network down"));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /couldn't confirm the sponsored conversations/i,
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+  });
+
+  it("an unverified mixed launch still says a goal could not be created", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    createJourneyMock.mockReset();
+    createJourneyMock
+      .mockRejectedValueOnce(new Error("Goal service unavailable"))
+      .mockResolvedValueOnce({ _id: "journey-2" });
+    await openMixedConfirm();
+
+    fundingPreviewMock.mockRejectedValue(new Error("network down"));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /couldn't confirm the sponsored conversations/i,
+    );
+    await waitFor(() => expect(alertText()).toMatch(/Goal service unavailable/));
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 
   it("on a 409 for the first run: launches nothing more, keeps the goals, refreshes the split and explains", async () => {
@@ -3610,16 +3722,25 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
   }
+  /**
+   * Gets brand-new goals created and then stops on Confirm: the first run is
+   * refused (409), so the goals exist and nothing launched.
+   */
+  async function refuseFirstLaunchOfNewGoals() {
+    launchJourneyRunMock.mockRejectedValueOnce(funding409(1, 0, 1));
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+  }
   const alertText = () =>
     screen
       .queryAllByRole("alert")
       .map((node) => node.textContent ?? "")
       .join(" ");
 
-  // The review stop returns before the launch's own summary, so a goal that
-  // failed to create used to vanish from the screen: it was simply missing from
-  // the launch, with no message.
-  it("a split-review stop still says a goal could not be created", async () => {
+  // A goal that failed to create must not vanish from the screen when the
+  // rest of a sponsored launch goes ahead.
+  it("a sponsored one-click launch still says a goal could not be created", async () => {
     fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
     createJourneyMock.mockReset();
     createJourneyMock
@@ -3629,13 +3750,13 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(
-      await screen.findByTestId("new-swarm-funding-notice"),
-    ).toHaveTextContent(/can use sponsored conversations/i);
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    expect(launchArgs()[0].expectedSponsored).toBe(1);
     await waitFor(() =>
-      expect(alertText()).toMatch(/Goal service unavailable/),
+      expect(
+        [alertText(), ...vi.mocked(toast.warning).mock.calls.map((c) => String(c[0]))].join(" "),
+      ).toMatch(/Goal service unavailable/),
     );
-    expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 
   // Run N's expected count assumes every earlier run launched. When one failed
@@ -3691,15 +3812,13 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
   // editable. Lowering or raising a persona's iterations (the natural reaction
   // to "review the split") changed the estimate on screen but neither the split
   // that was previewed nor what launched, because both read the frozen targets.
-  it("applies iterations changed after the review stop to the preview and to the launch", async () => {
+  it("applies iterations changed after a launch stop to the preview and to the launch", async () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await screen.findByTestId("new-swarm-funding-notice");
+    await refuseFirstLaunchOfNewGoals();
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
-    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -3720,10 +3839,12 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(3));
     // The goals were created once and stay created.
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
-    expect(launchArgs().map((a) => a.sessionsPerTarget)).toEqual([
+    expect(launchArgs()
+      .slice(1)
+      .map((a) => a.sessionsPerTarget)).toEqual([
       2,
       undefined,
     ]);
@@ -3733,14 +3854,12 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await screen.findByTestId("new-swarm-funding-notice");
+    await refuseFirstLaunchOfNewGoals();
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(3));
     for (const args of launchArgs()) {
       expect(args).not.toHaveProperty("sessionsPerTarget");
     }
@@ -3755,6 +3874,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
+    launchJourneyRunMock.mockRejectedValueOnce(funding409(1, 0, 1));
     await openNewGoalsConfirm();
     // Before any goal exists the set is editable.
     expect(
@@ -3792,7 +3912,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     // What launched is what was shown: both goals, none created twice.
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(3));
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
   });
 
@@ -3800,9 +3920,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await screen.findByTestId("new-swarm-funding-notice");
+    await refuseFirstLaunchOfNewGoals();
 
     fireEvent.click(
       screen.getByRole("button", { name: /^view persona refund chaser/i }),
@@ -3825,21 +3943,19 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
   // The failure was said on the stop, then cleared by the next click: the launch
   // that followed ran only what was created and ended in a plain success toast,
   // so a goal that never existed vanished without a word.
-  it("still says a goal could not be created when the launch goes ahead after the review stop", async () => {
+  it("still says a goal could not be created when the launch goes ahead after a launch stop", async () => {
     fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
     createJourneyMock.mockReset();
     createJourneyMock
       .mockRejectedValueOnce(new Error("Goal service unavailable"))
       .mockResolvedValueOnce({ _id: "journey-2" });
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await screen.findByTestId("new-swarm-funding-notice");
+    await refuseFirstLaunchOfNewGoals();
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await screen.findByTestId("new-swarm-running-step");
-    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(2);
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalledWith(
       expect.stringMatching(/Launched 1 run\.[\s\S]*Goal service unavailable/i),
@@ -3927,11 +4043,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    expect(
-      await screen.findByTestId("new-swarm-funding-notice"),
-    ).toBeInTheDocument();
+    await refuseFirstLaunchOfNewGoals();
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -3952,9 +4064,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await screen.findByTestId("new-swarm-funding-notice");
+    await refuseFirstLaunchOfNewGoals();
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
 
     let release!: () => void;
@@ -3972,7 +4082,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     );
 
     await waitFor(() => expect(submitLaunchEnabled()).toBe(false));
-    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
 
     release();
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));

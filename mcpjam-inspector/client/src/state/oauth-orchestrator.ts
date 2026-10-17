@@ -194,11 +194,8 @@ function buildReconnectOAuthOptions(
    */
   stepUpScopes?: string[],
   /**
-   * SEP-2350 step-up: the `resource_metadata` URL a `403 insufficient_scope`
-   * challenge advertised, ALREADY validated same-origin by the caller. When
-   * present the fresh OAuth flow discovers protected-resource metadata from
-   * this URL instead of re-deriving it from the server URL — so a server that
-   * points its metadata elsewhere (Asana) is honored on re-authorization.
+   * Absolute HTTPS metadata hint validated by the step-up caller. The SDK
+   * checks outbound hosts and strips cross-origin resource credentials.
    */
   resourceMetadataUrl?: string,
   onTraceUpdate?: (trace: OAuthTrace) => void,
@@ -857,6 +854,8 @@ export async function applyToolCallStepUp(
     /** Defaults to `interactive` — the local tool runner drives a browser flow. */
     authMode?: StepUpAuthMode;
     maxRetries?: number;
+    /** The backend projection may supply scopes without a saved local profile. */
+    originalScopes?: string[];
     onTraceUpdate?: (trace: OAuthTrace) => void;
     beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
     /**
@@ -943,7 +942,7 @@ export async function applyToolCallStepUp(
     serverName: server.name,
     issuer,
     challengedScopes: scopesToWiden,
-    originalScopes: readOriginalOAuthScopes(server),
+    originalScopes: options?.originalScopes ?? readOriginalOAuthScopes(server),
     authMode: options?.authMode ?? "interactive",
     maxRetries: options?.maxRetries,
     operationKey,

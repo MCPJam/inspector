@@ -703,6 +703,19 @@ export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
  */
 const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
 
+/**
+ * Backend refusal code (convex `stream/routes.ts`): MCPJam retired the model
+ * the request names. Arrives as HTTP 400.
+ */
+const MODEL_RETIRED_CODE = "model_retired";
+
+/**
+ * Backend refusal code (convex `stream/orgRoutes.ts`): the organization's own
+ * provider connection does not serve this model (OpenRouter's selected models,
+ * Azure's deployments). Arrives as HTTP 400.
+ */
+const ORG_MODEL_NOT_ALLOWED_CODE = "model_not_allowed";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -753,6 +766,15 @@ export function describeBackendStreamFailure(
   if (code === FREE_TIER_MODEL_RESTRICTED_CODE) {
     return describeAsSlug("provider/mcpjam_limit", detail);
   }
+
+  // A 400 that refuses the user's own model choice: the model is retired, or
+  // the organization's provider does not allow it. Read by status alone it is
+  // `internal/unknown`, which the internal hop promotes to an MCPJam page. Both
+  // slugs are `user_config`, so neither pages.
+  if (code === MODEL_RETIRED_CODE)
+    return describeAsSlug("provider/model_retired", detail);
+  if (code === ORG_MODEL_NOT_ALLOWED_CODE)
+    return describeAsSlug("org/model_not_allowed", detail);
 
   if (status !== undefined && status >= 500) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };

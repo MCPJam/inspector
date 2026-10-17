@@ -16,13 +16,16 @@
 import { parsePluginAppConfig, type ParsedPluginApp } from "./app-config.js";
 import {
   computeAggregateHash,
+  computeExecutionDigest,
   hashCanonicalJson,
   sha256HexBytes,
 } from "./hashes.js";
+import { LEGACY_MCP_CONFIG_PATH, resolveManifestSource } from "./layout.js";
+import { adaptLegacyMcpConfig } from "./legacy-mcp.js";
 import {
+  applyOnboardingSkill,
   MCPJAM_EXTENSION_NAMESPACE,
   normalizePluginManifest,
-  PLUGIN_MANIFEST_PATH,
   type NormalizedPluginManifest,
 } from "./manifest.js";
 import {
@@ -274,31 +277,35 @@ export async function parsePluginBundle(
   const bundleHash = await computeAggregateHash(
     files.map((file) => ({ path: file.path, contentHash: file.contentHash }))
   );
+  const executableFiles = files
+    .filter((file) => file.executable)
+    .map((file) => file.path);
 
   // Phase 3 — manifest: `plugin.json` at the bundle root (fixed location;
   // nested plugin.json files are ordinary files, not manifests).
-  const manifestFile = byPath.get(PLUGIN_MANIFEST_PATH);
-  if (manifestFile === undefined) {
-    issues.error(
-      "MANIFEST_MISSING",
-      `bundle is missing "${PLUGIN_MANIFEST_PATH}" at its root`
-    );
+  const filePaths: ReadonlySet<string> = new Set(byPath.keys());
+  const resolved = resolveManifestSource({
+    profile: options?.profile ?? "strict",
+    filePaths,
+    readJson: (path, collector) => {
+      const file = byPath.get(path);
+      return file === undefined
+        ? null
+        : parseJsonFile(file, collector, "MANIFEST_INVALID_JSON");
+    },
+    issues,
+  });
+  if (resolved === null) throw new PluginBundleError(issues.issues());
+  const { interpretation } = resolved;
+  const manifestFile = byPath.get(interpretation.manifestPath);
+  const { manifest, onboardingSkill } =
+    resolved.record === null || manifestFile === undefined
+      ? { manifest: null as NormalizedPluginManifest | null }
+      : normalizePluginManifest(resolved.record, { filePaths, issues });
+  if (manifest === null || manifestFile === undefined) {
     throw new PluginBundleError(issues.issues());
   }
   const manifestHash = manifestFile.contentHash;
-  const manifestRaw = parseJsonFile(
-    manifestFile,
-    issues,
-    "MANIFEST_INVALID_JSON"
-  );
-  const filePaths: ReadonlySet<string> = new Set(byPath.keys());
-  const { manifest } =
-    manifestRaw === null
-      ? { manifest: null as NormalizedPluginManifest | null }
-      : normalizePluginManifest(manifestRaw, { filePaths, issues });
-  if (manifest === null) {
-    throw new PluginBundleError(issues.issues());
-  }
   issues.throwIfErrors();
 
   const skipped: PluginSkippedComponent[] = [];
@@ -393,25 +400,54 @@ export async function parsePluginBundle(
     skills.push(skill);
   }
 
-  // Phase 5 — MCP servers (root `mcp.json`; fixed location).
+  applyOnboardingSkill(manifest, onboardingSkill, skills, issues);
+
+  // Phase 5 — MCP servers: the root `mcp.json` (fixed location) when a root
+  // plugin.json is the manifest; otherwise whatever the legacy manifest
+  // names, rewritten into a strict document before the same normalizer runs.
   const mcpServers: ParsedPluginServer[] = [];
-  const mcpFile = byPath.get(MCP_CONFIG_PATH);
+  const legacyMcp = resolved.legacyMcp;
+  const mcpFile =
+    interpretation.layout === "agent-plugins"
+      ? byPath.get(MCP_CONFIG_PATH)
+      : legacyMcp?.kind === "file"
+        ? byPath.get(legacyMcp.path)
+        : undefined;
+  if (resolved.skipped !== undefined) skipped.push(resolved.skipped);
   for (const file of files) {
-    if (
-      file.path !== MCP_CONFIG_PATH &&
-      file.path.endsWith(`/${MCP_CONFIG_PATH}`) &&
-      !isPathInside(SKILLS_DIR, file.path)
-    ) {
+    const namedLikeMcpConfig =
+      (`/${file.path}`.endsWith(`/${MCP_CONFIG_PATH}`) &&
+        !isPathInside(SKILLS_DIR, file.path)) ||
+      // A legacy manifest's own `mcpServers` takes the place of `.mcp.json`.
+      (interpretation.layout !== "agent-plugins" &&
+        file.path === LEGACY_MCP_CONFIG_PATH);
+    if (file !== mcpFile && namedLikeMcpConfig) {
       issues.warn(
         "MCP_CONFIG_IGNORED",
-        `only the bundle root "${MCP_CONFIG_PATH}" is used; "${file.path}" is ignored`,
+        `"${file.path}" is not this bundle's MCP configuration; ignored`,
         { path: file.path }
       );
     }
   }
-  if (mcpFile !== undefined) {
+  const mcpPath = mcpFile?.path ?? legacyMcp?.path;
+  if (mcpPath !== undefined) {
     const docScoped = new PluginIssueCollector();
-    const mcpRaw = parseJsonFile(mcpFile, docScoped, "MCP_INVALID_CONFIG");
+    let mcpRaw =
+      mcpFile !== undefined
+        ? parseJsonFile(mcpFile, docScoped, "MCP_INVALID_CONFIG")
+        : legacyMcp?.kind === "inline"
+          ? legacyMcp.document
+          : null;
+    if (mcpRaw !== null && legacyMcp !== undefined) {
+      const adapted = adaptLegacyMcpConfig(mcpRaw, {
+        sourcePath: mcpPath,
+        issues,
+        maxServers: limits.maxMcpServers,
+      });
+      if (adapted.ok) skipped.push(...adapted.skipped);
+      else docScoped.error(adapted.code, adapted.reason, { path: mcpPath });
+      mcpRaw = adapted.ok ? adapted.document : null;
+    }
     if (mcpRaw === null) {
       // Unreadable/invalid JSON disables the MCP component type only.
       const reason = docScoped.firstErrorMessage() ?? "invalid mcp.json";
@@ -419,18 +455,19 @@ export async function parsePluginBundle(
       issues.warn(
         "COMPONENT_SKIPPED",
         `MCP servers are disabled for this bundle: ${reason}`,
-        { path: MCP_CONFIG_PATH }
+        { path: mcpPath }
       );
-      skipped.push({ kind: "mcp-config", key: MCP_CONFIG_PATH, reason });
+      skipped.push({ kind: "mcp-config", key: mcpPath, reason });
     } else {
       const normalized = normalizePluginMcpConfig(mcpRaw, {
-        sourcePath: MCP_CONFIG_PATH,
+        sourcePath: mcpPath,
         manifestSchemaVersion: manifest.schemaVersion,
         issues,
         // Declared-entry cap, enforced before entry isolation: a flood of
         // malformed entries must not bypass the limit. Bundle-fatal via the
         // final throwIfErrors.
         maxServers: limits.maxMcpServers,
+        entryExtensions: interpretation.profile === "openai-compatible",
       });
       skipped.push(...normalized.skipped);
       for (const server of normalized.servers) {
@@ -442,22 +479,42 @@ export async function parsePluginBundle(
     }
   }
 
-  // Phase 6 — app mappings (`*.app.json`, MCPJam extension).
+  // Phase 6 — app mappings (`*.app.json`). App metadata is extension data,
+  // so one unreadable file skips its apps, never the bundle.
   const apps: ParsedPluginApp[] = [];
   const serverKeys = mcpServers.map((server) => server.key);
   for (const file of files) {
     if (!file.path.endsWith(APP_CONFIG_SUFFIX)) continue;
     if (isPathInside(SKILLS_DIR, file.path)) continue; // skill supporting file
-    const appRaw = parseJsonFile(file, issues, "APP_INVALID_CONFIG");
-    if (appRaw === null) continue;
-    const app = parsePluginAppConfig({
-      sourcePath: file.path,
-      raw: appRaw,
-      serverKeys,
-      contentHash: file.contentHash,
-      issues,
-    });
-    if (app !== null) apps.push(app);
+    const scoped = new PluginIssueCollector();
+    const appRaw = parseJsonFile(file, scoped, "APP_INVALID_CONFIG");
+    const parsedApps =
+      appRaw === null
+        ? null
+        : parsePluginAppConfig({
+            sourcePath: file.path,
+            raw: appRaw,
+            serverKeys,
+            contentHash: file.contentHash,
+            issues: scoped,
+            maxApps: limits.maxMcpServers,
+          });
+    const reason = scoped.firstErrorMessage();
+    issues.absorbDemoted(scoped);
+    if (parsedApps === null || reason !== undefined) {
+      issues.warn(
+        "COMPONENT_SKIPPED",
+        `apps in "${file.path}" were skipped: ${reason ?? "invalid app configuration"}`,
+        { path: file.path }
+      );
+      skipped.push({
+        kind: "app",
+        key: file.path,
+        reason: reason ?? "invalid app configuration",
+      });
+      continue;
+    }
+    apps.push(...parsedApps);
   }
 
   // Phase 7 — presentation assets.
@@ -585,16 +642,21 @@ export async function parsePluginBundle(
         serverKey: server.key,
         name: header.name,
         secret: header.secret,
+        ...(header.scheme !== undefined ? { scheme: header.scheme } : {}),
       });
     }
-    if (server.config.oauth !== undefined) {
+    const { auth, oauth } = server.config;
+    const declaresOAuth = auth?.type === "oauth" || auth?.type === "mixed";
+    // A declared method decides. MCPJam's own `oauth` hint asks for a
+    // sign-in only for a server that declares none, so `none` and `api_key`
+    // never surface one.
+    if (declaresOAuth || (auth === undefined && oauth !== undefined)) {
       setupRequirements.push({
         kind: "oauth",
         componentKey: server.componentKey,
         serverKey: server.key,
-        ...(server.config.oauth.timing !== undefined
-          ? { timing: server.config.oauth.timing }
-          : {}),
+        ...(oauth?.timing !== undefined ? { timing: oauth.timing } : {}),
+        ...(declaresOAuth ? { required: auth.type === "oauth" } : {}),
       });
     }
   }
@@ -603,8 +665,16 @@ export async function parsePluginBundle(
 
   return {
     manifest,
+    interpretation,
     schemaVersion: manifest.schemaVersion,
     bundleHash,
+    executableFiles,
+    executionDigest: await computeExecutionDigest({
+      bundleHash,
+      executableFiles,
+      profile: interpretation.profile,
+      revision: interpretation.revision,
+    }),
     manifestHash,
     skills,
     mcpServers,

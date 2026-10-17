@@ -79,12 +79,14 @@ import {
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
+  onlyStoresCredential,
   readHostedOAuthPendingMarker,
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
 import { cancelPendingDirectScopeStepUpReplay } from "@/lib/scope-step-up-replay";
 import { registerScopeStepUpHostBridge } from "@/lib/scope-step-up";
+import { markOnboardingSignInCompleted } from "@/lib/plugin-onboarding-intent";
 import {
   noteSignInCallbackFailed,
   registerAuthChallengeHostProfile,
@@ -3179,22 +3181,21 @@ export function useServerState({
           });
         localStorage.removeItem("mcp-oauth-return-hash");
         if (hostedCallbackContext) {
-          // The pending marker is written for local-mode project flows too —
-          // clear it whenever a marker-backed callback settles, not only on
-          // the hosted completion path.
+          // Local-mode project flows write the marker too; clear it here.
           clearHostedOAuthPendingState();
         }
         if (result.success) {
           localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         }
 
-        if (!result.success && hostedCallbackContext?.connectionIntent) {
+        if (!result.success && onlyStoresCredential(hostedCallbackContext)) {
           if (!suppressErrorToast) {
             toast.error(result.error ?? "Could not connect the account");
           }
           return;
         }
-        if (result.success && hostedCallbackContext?.connectionIntent) {
+        if (result.success && onlyStoresCredential(hostedCallbackContext)) {
+          markOnboardingSignInCompleted(hostedCallbackContext?.pluginSignIn);
           if (!HOSTED_MODE && result.serverName) {
             const existing =
               appStateServersRef.current[result.serverName] ??
@@ -3206,7 +3207,7 @@ export function useServerState({
           // here too. This branch used to return first, so a saved call never
           // resumed after a hosted connection-intent callback.
           const settledServerName =
-            result.serverName ?? hostedCallbackContext.serverName;
+            result.serverName ?? hostedCallbackContext?.serverName;
           if (settledServerName) {
             const notRetried = await settleSignInCallback(settledServerName, {
               state,
@@ -3216,9 +3217,7 @@ export function useServerState({
             if (notRetried) toast.info(notRetried);
           }
           notifyOAuthConnectionsChanged();
-          if (!suppressSuccessToast) {
-            toast.success("Account connected");
-          }
+          if (!suppressSuccessToast) toast.success("Account connected");
           return;
         }
         if (result.success && result.serverConfig && result.serverName) {
