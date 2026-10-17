@@ -105,7 +105,7 @@ export function pickEnrichmentHeaders(
 }
 
 export interface ResumeConfig {
-  executionVenue?: "hosted" | "local-native";
+  executionVenue?: "hosted" | "local";
   /** Destination of the last saved turn; re-authorized when resumed. */
   executionTarget?: ResumeExecutionTarget;
   systemPrompt?: string;

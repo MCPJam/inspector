@@ -105,7 +105,7 @@ describe("local chat admission precedes allocation", () => {
         modelId: "openai/gpt-5.5",
         toolMode: "auto",
         environmentId: "environment",
-        executionVenue: "local-native",
+        executionVenue: "local",
       },
     });
     const response = await post({

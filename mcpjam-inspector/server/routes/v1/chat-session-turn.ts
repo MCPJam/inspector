@@ -1379,7 +1379,7 @@ async function handleTurn(c: Context): Promise<Response> {
     // The effort the turn runs at is recorded with it (begin_model and failure
     // persistence included), so a failed turn still leaves its pin.
     const turnPins = {
-      executionVenue,
+      ...(executionVenue === "local-native" ? { executionVenue: "local" as const } : {}),
       ...(turnTemperature === undefined ? pinsWithoutTemperature : pins),
       ...(turnReasoningEffort !== undefined
         ? { reasoningEffort: turnReasoningEffort }
@@ -2084,7 +2084,7 @@ async function handleTurn(c: Context): Promise<Response> {
 
     // --- Persist ----------------------------------------------------------
     const resumeConfig: ResumeConfig = {
-      executionVenue,
+      ...(executionVenue === "local-native" ? { executionVenue: "local" as const } : {}),
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
       ...(turnTemperature !== undefined
         ? { temperature: turnTemperature }
