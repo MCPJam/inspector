@@ -3,7 +3,7 @@ const mocks = vi.hoisted(() => ({
   authorize: vi.fn(), query: vi.fn(), actor: vi.fn(), authorization: vi.fn(), grant: vi.fn(), rollout: vi.fn(),
   status: vi.fn(), install: vi.fn(), register: vi.fn(),
   workspace: vi.fn(async () => ({ ok: true, grant: { workspaceGrantId: "set-up-workspace" } })),
-  background: vi.fn(async () => ({ kind: "started" })), policy: vi.fn(() => "auto"),
+  background: vi.fn(async () => ({ kind: "started" })), policy: vi.fn(() => "auto"), venue: vi.fn(() => true),
 }));
 vi.mock("convex/browser", () => ({ ConvexHttpClient: class { setAuth() {} query = mocks.query; } }));
 vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, LOCAL_HARNESS_ENABLED: true }));
@@ -21,6 +21,7 @@ vi.mock("../grants.js", () => ({
 }));
 vi.mock("../instance-key.js", () => ({ readLocalInstanceIdentity: async () => ({ publicKey: "key", keyId: "registered" }), setRegisteredKeyId: vi.fn() }));
 vi.mock("../../harness-model-broker.js", () => ({ registerLocalInstance: mocks.register }));
+vi.mock("../run-resources.js", () => ({ isLocalHarnessVenue: mocks.venue }));
 import { ensureLocalHarnessTarget } from "../readiness.js";
 import { Hono } from "hono";
 import routes from "../../../../routes/v1/local-execution.js";
@@ -32,7 +33,8 @@ beforeEach(() => {
   mocks.actor.mockResolvedValue({ ok: true, actor });
   mocks.query.mockImplementation(async (name: string) => name === "projects:getMyProjects" ? [{ _id: "project" }] : { externalId: "user" });
   mocks.rollout.mockResolvedValue(true);
-  mocks.authorization.mockResolvedValue({ workspaceGrantId: "saved-workspace", unattended: true });
+  mocks.authorization.mockResolvedValue({ workspaceGrantId: "saved-workspace", unattended: true, autoApproveAcknowledgedAt: "2026-10-16T00:00:00.000Z" });
+  mocks.venue.mockReturnValue(true);
   mocks.status.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime", packVersion: "1" });
   mocks.register.mockResolvedValue({ ok: true, keyId: "registered" });
   mocks.grant.mockResolvedValue({ grantId: "fresh-grant", token: "fresh-token", expiresAt: "2099-01-01" });
@@ -66,9 +68,20 @@ it('refuses callers without verified member identity', async () => {
   expect((await post()).status).toBe(401);
   expect(mocks.authorization).not.toHaveBeenCalled();
 });
-it('refuses disabled unattended authorization', async () => {
-  mocks.authorization.mockResolvedValue({ workspaceGrantId: 'saved-workspace', unattended: false });
-  expect((await post()).status).toBe(403);
+it('refuses an attended-only setup without the run-without-asking consent', async () => {
+  mocks.authorization.mockResolvedValue({ workspaceGrantId: 'saved-workspace', unattended: true });
+  const response = await post();
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({ code: 'FORBIDDEN', details: { reason: 'LOCAL_AUTO_APPROVE_CONSENT_REQUIRED' } });
+  expect(mocks.register).not.toHaveBeenCalled();
+  expect(mocks.grant).not.toHaveBeenCalled();
+});
+it('refuses a harness this computer would not run unattended for evals and swarms', async () => {
+  mocks.venue.mockReturnValue(false);
+  const response = await post();
+  expect(response.status).toBe(409);
+  expect(mocks.venue).toHaveBeenCalledWith('codex', 'unattended');
+  expect(mocks.authorization).not.toHaveBeenCalled();
   expect(mocks.grant).not.toHaveBeenCalled();
 });
 it('renews only the authorized workspace without another setup write', async () => {
