@@ -70,7 +70,11 @@ const TRUSTED_CLIENT_IP_HEADER_ENV = "MCPJAM_TRUSTED_CLIENT_IP_HEADER";
 // requests into ONE shared bucket rather than keying on the claim — see
 // routes/web/bench.ts.
 export function edgeAttestationConfigured(): boolean {
-  return !!(process.env.MCPJAM_EDGE_SECRET || process.env.MCPJAM_EDGE_SECRET_PREVIOUS);
+  if (process.env.MCPJAM_EDGE_SECRET || process.env.MCPJAM_EDGE_SECRET_PREVIOUS) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 // Preserve existing deployments until their operator opts into attestation.
@@ -114,7 +118,7 @@ export function getAttestedClientIp(c: Context): string | null {
 // IPv6 address (::ffff:a.b.c.d, dotted or hex) is keyed as the IPv4 address
 // it carries. Anything that is not an IP address comes back as it is.
 export function ipRateLimitKey(ip: string): string {
-  const address = ip.trim();
+  const address = String(ip).trim();
   if (isIP(address) !== 6) return address;
   const groups = ipv6Groups(address.split("%")[0]);
   // ::ffff:0:0/96, the IPv4-mapped block.
@@ -122,7 +126,10 @@ export function ipRateLimitKey(ip: string): string {
     const [high, low] = groups.slice(6);
     return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
   }
-  const prefix = groups.slice(0, 4).map((group) => group.toString(16));
+  const prefix = groups
+    .slice(0, 4)
+    .map((group) => group.toString(16))
+    .map((group) => group);
   return `${prefix.join(":")}::/64`;
 }
 
