@@ -82,6 +82,11 @@ const localHarness = new Hono();
 
 localHarness.use("/*", bearerAuthMiddleware, requireVerifiedAuth());
 localHarness.use("/*", async (c, next) => {
+  // The kill switch answers 404, not 403: an operator who turned the feature
+  // off should not have the surface advertise that it exists.
+  if (!LOCAL_HARNESS_ENABLED || HOSTED_MODE) {
+    return c.json({ error: "Not found" }, 404);
+  }
   if (c.req.method === "GET" && c.req.path.endsWith("/availability") && c.req.query("scope") === "unattended") {
     const harnessId = await requestHarnessId(c);
     const projectId = c.req.query("projectId");
@@ -89,11 +94,6 @@ localHarness.use("/*", async (c, next) => {
     if (c.get("guestId")) return c.json({ error: "Sign in to check this project's execution venue" }, 403);
     const eligible = await eligibleUnattendedLocalHarnesses(c.req.header("authorization"), projectId, [harnessId]);
     return c.json({ unattendedVenue: eligible.includes(harnessId) ? "local" : isComputersDataPlaneConfigured() ? "hosted" : "unavailable" });
-  }
-  // The kill switch answers 404, not 403: an operator who turned the feature
-  // off should not have the surface advertise that it exists.
-  if (!LOCAL_HARNESS_ENABLED || HOSTED_MODE) {
-    return c.json({ error: "Not found" }, 404);
   }
   if (c.get("guestId")) {
     return c.json(
