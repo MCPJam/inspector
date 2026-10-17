@@ -1,7 +1,7 @@
 export const HARNESS_STARTUP_LABELS = {
   "connecting-tools": "Connecting tools…",
   "starting-local": "Starting the local runtime…",
-  "starting-hosted": "Starting the hosted computer…",
+  "starting-hosted": "Starting the cloud computer…",
   "connecting-runtime": "Connecting to the runtime…",
 } as const;
 export type HarnessStartupPhase = keyof typeof HARNESS_STARTUP_LABELS;

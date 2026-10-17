@@ -2116,9 +2116,42 @@ export async function runHarnessTurn(
       }
       tClaim = Date.now();
 
-      // Local preparation never allocates a cloud box. A supplied sandbox
-      // binding is already provisioned by the caller; otherwise resolve the
-      // member's project computer. Local refusal is final, with no cloud fallback.
+      // 3. Get the box this turn runs on. TWO paths, and the choice is made by
+      //    the CALLER, never inferred here:
+      //
+      //    EPHEMERAL (`harnessSandboxBinding`, B-isolation phase 6) — the caller
+      //    already provisioned a per-attempt disposable box and hands it over.
+      //    Nothing is reserved, nothing is woken: the box exists, is live, and
+      //    belongs to this session alone. A swarm session takes this path.
+      //
+      //    PERSONAL (no binding) — reserve and wake the acting user's project
+      //    computer, exactly as playground/chat/evals always have.
+      //
+      //    The binding arrives OUT OF BAND, on the handler options, mirroring
+      //    `ctx.sandboxBinding` on the bash path: it is only settable by an
+      //    in-process caller that just provisioned. It is deliberately NOT part
+      //    of any host config or run snapshot, so nothing parsed off the wire
+      //    can point a harness at a box it does not own.
+      //
+      //    `box` is the CONTROL-PLANE identity the broker leases against and the
+      //    continuity lane keys its resume on; `sandboxId` is the vendor id the
+      //    runtime connects to. On the personal path the first is a
+      //    `projectComputers` id, on the ephemeral path an `evalSandboxes` row
+      //    id — distinct id spaces, so a resumed lane can never mistake one for
+      //    the other.
+      // 3-LOCAL. The user's own machine, which takes NONE of the cloud path
+      // below: no box to reserve, none to wake, no egress transform to install,
+      // and a lease bound to an installation rather than a computer.
+      //
+      // Prepared in one call (`prepareLocalHarnessTurn`) rather than as a
+      // conditional inside each cloud step, because every one of those steps
+      // has a local answer that is not "the same thing with a flag" — and
+      // interleaving them would leave neither path legible.
+      //
+      // A refusal here is FINAL. It is not degraded to a hosted turn: silently
+      // relocating work the user deliberately scoped to their machine is the
+      // dishonesty this design exists to remove, so the message says what
+      // failed and the caller decides.
       // Local providers identify their sandbox by the harness session id. Resolve
       // continuity BEFORE preparation so the gateway, supervisor and SDK all
       // refer to the same session, including approval continuations.

@@ -37,7 +37,7 @@ describe("harness startup progress", () => {
     expect(screen.queryByRole("status")).toBeNull();
     view.rerender(<HarnessStartupStatus chatSessionId="other" loading />);
     expect(screen.getByRole("status").textContent).toBe(
-      "Starting the hosted computer…",
+      "Starting the cloud computer…",
     );
   });
   it("clears on readiness and the terminal cleanup used for errors and Stop", () => {
