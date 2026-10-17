@@ -47,6 +47,22 @@ describe("platform admission transport", () => {
       });
     },
   );
+  it("keeps the held-credit cause beside its billing reason", async () => {
+    const response = await app({
+      code: "platform_fee_refused",
+      reason: "insufficient_credits",
+      cause: "credits_reserved",
+      message: "Wait for other work to finish, then run it again.",
+    }).request("/");
+    expect(response.status).toBe(402);
+    expect(await response.json()).toMatchObject({
+      details: {
+        code: "platform_fee_refused",
+        reason: "insufficient_credits",
+        cause: "credits_reserved",
+      },
+    });
+  });
   it.each([
     ["platform_fee_unavailable", 503, "INTERNAL_ERROR"],
     ["ADMISSION_CONFLICT", 409, "CONFLICT"],

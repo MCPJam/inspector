@@ -188,9 +188,14 @@ import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
   createSuiteRunRecorder,
-  asBillingRouteError,
   type SuiteRunRecorder,
 } from "./evals/recorder";
+import {
+  HarnessIterationRecordError,
+  iterationRecordFailure,
+  missingIterationRecordError,
+  settlePrecreatedIterations,
+} from "./evals/iteration-record.js";
 import { finalizeAiSdkTraceOnFailure } from "./evals/eval-trace-capture";
 import type {
   EvalTraceBlobV1,
@@ -1962,19 +1967,28 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
-    /** A hosted harness needs this row to own its disposable computer. */
+    /**
+     * A hosted HARNESS iteration keys its disposable computer to this row, and
+     * a harness with no box falls back to the member's personal computer. So a
+     * failed record refuses the run, carrying the backend's reason, instead of
+     * being swallowed.
+     */
     requireRecord?: boolean;
   },
 ): Promise<string | undefined> {
   let iterationId: string | undefined;
   try {
-    // The action retries starter-pool contention before returning a record.
+    // ACTION, not the mutation — same starter-pool contention as the suite
+    // path above, retried server-side.
     const result = await convexClient.action(
       "testSuites:startQuickRunIteration" as any,
       {
         ...(params.namedHostId ? { namedHostId: params.namedHostId } : {}),
         ...(params.runtimeVenue ? { runtimeVenue: params.runtimeVenue } : {}),
-        // Declare the harness this local quick run actually executes.
+        // A local quick run declares the one harness it runs here, so the
+        // backend stamps it local exactly when this runner executes it locally
+        // (quick runs declared nothing before, which the backend reads as a
+        // runner for which "local" means Claude Code alone).
         ...(params.runtimeVenue === "local" && params.localHarnessId
           ? {
               runnerCapabilities: [
@@ -1993,43 +2007,16 @@ async function createIterationDirectly(
     );
 
     iterationId = result?.iterationId as string | undefined;
-    if (!iterationId && HOSTED_MODE) throw new Error("Eval setup returned no iteration.");
+    if (!iterationId && HOSTED_MODE)
+      throw new Error("Eval setup returned no iteration.");
   } catch (error) {
-    const billing = asBillingRouteError(error) ?? (HOSTED_MODE
-      ? new WebRouteError(503, ErrorCode.INTERNAL_ERROR,
-          "Could not record this eval, so it did not run. Try again in a few minutes.",
-          { code: "platform_fee_unavailable" }) : null);
-    if (!billing || billing.status >= 500) logger.error("[evals] Failed to create iteration:", error);
-    if (billing) throw billing;
-    if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
-    if (params.requireRecord) {
-      throw new HarnessIterationRecordError(
-        `${HARNESS_ITERATION_RECORD_REQUIRED}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        { cause: error },
-      );
-    }
+    const failure = iterationRecordFailure(error, params);
+    if (failure) throw failure;
     return undefined;
   }
-  if (!iterationId && params.requireRecord) {
-    throw new HarnessIterationRecordError(
-      `${HARNESS_ITERATION_RECORD_REQUIRED}: the backend returned no iteration id`,
-    );
-  }
+  if (!iterationId && params.requireRecord) throw missingIterationRecordError();
   return iterationId;
 }
-
-const HARNESS_ITERATION_RECORD_REQUIRED =
-  "Could not record this eval iteration, which a hosted harness run needs " +
-  "to provision its own computer, so the run was refused";
-
-/**
- * Typed so the quick-run settle loop rethrows it: a run refused before it took
- * a row has nothing of its own to answer with, and the route would otherwise
- * report the case's latest iteration, another run's, as this one's result.
- */
-class HarnessIterationRecordError extends Error {}
 
 /**
  * Persist a failed iteration row when iteration setup throws BEFORE the
@@ -3773,7 +3760,15 @@ const executeTestCase = async (params: {
         const id = await createIterationDirectly(convexClient, iterationParams);
         precreatedIterationIds.push(id);
       } catch (error) {
-        if (error instanceof WebRouteError) throw error;
+        if (error instanceof WebRouteError) {
+          // Rows created before the refusal would otherwise stay running.
+          await settlePrecreatedIterations(
+            convexClient,
+            precreatedIterationIds,
+            error.message,
+          );
+          throw error;
+        }
         logger.warn(
           "[evals] Failed to precreate iteration row; falling back to per-loop create",
           {
@@ -4127,8 +4122,13 @@ export const runEvalSuiteWithAiSdk = async ({
     (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
       orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
       { scope: "unattended" }) ? "local" : "hosted");
-  // Frozen launch budgets already include platform and organization ceilings.
-  // Legacy launches without a snapshot use the platform defaults.
+  // One resolution for the whole run. When the launch response carried frozen
+  // budgets we consume them verbatim — they are the decision, already made,
+  // against the platform ceilings; org ceilings apply once the backend
+  // freezes them. Without a frozen snapshot, resolve `{ authored: undefined }`,
+  // which yields
+  // the platform defaults byte-for-byte. Same code path either way; the only
+  // difference is which rung each field came from.
   const budgets: ResolvedExecutionBudgets =
     executionBudgets ?? defaultEvalExecutionBudgets();
   // Resolved inside the setup `try` below: a refused or unreadable override
