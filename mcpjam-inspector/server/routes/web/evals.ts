@@ -20,6 +20,7 @@ import {
 } from "../../services/evals/quick-run-environment.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
+import { serverDrain } from "../../services/lifecycle/drain.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import {
   createAuthorizedManager,
@@ -385,16 +386,19 @@ evals.post("/run-test-case", async (c) => {
     c,
     hostedRunTestCaseSchema,
     async (manager, body) =>
-      runEvalTestCaseWithManager(manager, {
-        ...body,
-        ...((await anyUnattendedLocalHarness(c.req.header("authorization"), body.projectId)) ? { runtimeVenue: "local" as const } : {}),
-        // The DELEGATED JWT: the run's Convex calls use this bearer, and an
-        // `sk_` API key 401s Convex's query and action surfaces.
-        convexAuthToken: await getConvexBearerForRequest(c),
-        ...(preflightEnvironment
-          ? { resolvedEnvironment: preflightEnvironment }
-          : {}),
-      }),
+      serverDrain.track(
+        "quick_run",
+        runEvalTestCaseWithManager(manager, {
+          ...body,
+          ...((await anyUnattendedLocalHarness(c.req.header("authorization"), body.projectId)) ? { runtimeVenue: "local" as const } : {}),
+          // The DELEGATED JWT: the run's Convex calls use this bearer, and an
+          // `sk_` API key 401s Convex's query and action surfaces.
+          convexAuthToken: await getConvexBearerForRequest(c),
+          ...(preflightEnvironment
+            ? { resolvedEnvironment: preflightEnvironment }
+            : {}),
+        }),
+      ),
     {
       rpcLogs: false,
       beforeConnect: async (rawBody) => {
@@ -548,6 +552,14 @@ evals.post("/stream-test-case", async (c) => {
   // manager above authorizes the raw bearer itself.
   const convexAuthToken = await getConvexBearerForRequest(c);
 
+  // A shutdown drains the run until its stream completes.
+  let streamSettled!: () => void;
+  void serverDrain.track(
+    "quick_run",
+    new Promise<void>((resolve) => {
+      streamSettled = resolve;
+    }),
+  );
   try {
     const stream = await streamEvalTestCaseWithManager(
       manager,
@@ -561,7 +573,10 @@ evals.post("/stream-test-case", async (c) => {
           : {}),
       },
       {
-        onStreamComplete: () => manager.disconnectAllServers(),
+        onStreamComplete: () => {
+          streamSettled();
+          return manager.disconnectAllServers();
+        },
         // Client disconnect aborts the run (including any awaited task).
         requestSignal: c.req.raw.signal,
       },
@@ -575,6 +590,7 @@ evals.post("/stream-test-case", async (c) => {
       },
     });
   } catch (error) {
+    streamSettled();
     await manager.disconnectAllServers();
     throw error;
   }
