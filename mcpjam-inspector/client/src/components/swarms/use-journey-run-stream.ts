@@ -196,9 +196,18 @@ export function reduceSwarmStreamEvent(
 }
 
 /**
+ * Delays before reopening a stream the server answered with `run_remote`.
+ * With no replica affinity the next request can land on the server that owns
+ * the runner, and a runner that had not started yet has usually registered by
+ * then. Bounded, so a run whose runner was lost stops asking; the durable
+ * Convex view carries it until the backend settles the run.
+ */
+const REMOTE_RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 15_000];
+
+/**
  * Auto-connects to the journey-run SSE while `enabled` (typically when the
  * run detail is open and status is `running`). Aborts on unmount / disable /
- * `run_complete`.
+ * `run_complete`, and reconnects a bounded number of times after `run_remote`.
  */
 export function useJourneyRunStream(
   runId: string | null,
@@ -230,58 +239,76 @@ export function useJourneyRunStream(
     }
 
     const controller = new AbortController();
+    let reconnects = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     setState({
       ...emptyRunStreamState(),
       connected: true,
     });
 
-    void streamJourneyRun(
-      runId,
-      (event) => {
-        if (genRef.current !== gen) return;
-        const wave = swarmRunGroupIdRef.current;
-        const organization = organizationIdRef.current;
-        if (
-          event.type === "attempt_status" ||
-          event.type === "session_complete"
-        ) {
-          notifyMCPJamLimitError({
-            runId,
-            ...(wave ? { swarmRunGroupId: wave } : {}),
-            ...(organization ? { organizationId: organization } : {}),
-            message: event.errorMessage,
-            surface: "swarm",
-          });
-        } else if (event.type === "error") {
-          notifyMCPJamLimitError({
-            runId,
-            ...(wave ? { swarmRunGroupId: wave } : {}),
-            ...(organization ? { organizationId: organization } : {}),
-            message: event.message,
-            details: event.details,
-            surface: "swarm",
-          });
-        }
-        setState((prev) => reduceSwarmStreamEvent(prev, event));
-      },
-      controller.signal,
-    )
-      .catch((err) => {
-        if (genRef.current !== gen) return;
-        if (controller.signal.aborted) return;
-        setState((prev) => ({
-          ...prev,
-          connected: false,
-          error: err instanceof Error ? err.message : String(err),
-        }));
-      })
-      .finally(() => {
-        if (genRef.current !== gen) return;
-        setState((prev) => ({ ...prev, connected: false }));
-      });
+    const open = () => {
+      let remote = false;
+      void streamJourneyRun(
+        runId,
+        (event) => {
+          if (genRef.current !== gen) return;
+          if (event.type === "run_remote") remote = true;
+          const wave = swarmRunGroupIdRef.current;
+          const organization = organizationIdRef.current;
+          if (
+            event.type === "attempt_status" ||
+            event.type === "session_complete"
+          ) {
+            notifyMCPJamLimitError({
+              runId,
+              ...(wave ? { swarmRunGroupId: wave } : {}),
+              ...(organization ? { organizationId: organization } : {}),
+              message: event.errorMessage,
+              surface: "swarm",
+            });
+          } else if (event.type === "error") {
+            notifyMCPJamLimitError({
+              runId,
+              ...(wave ? { swarmRunGroupId: wave } : {}),
+              ...(organization ? { organizationId: organization } : {}),
+              message: event.message,
+              details: event.details,
+              surface: "swarm",
+            });
+          }
+          setState((prev) => reduceSwarmStreamEvent(prev, event));
+        },
+        controller.signal,
+      )
+        .catch((err) => {
+          if (genRef.current !== gen) return;
+          if (controller.signal.aborted) return;
+          setState((prev) => ({
+            ...prev,
+            connected: false,
+            error: err instanceof Error ? err.message : String(err),
+          }));
+        })
+        .finally(() => {
+          if (genRef.current !== gen) return;
+          setState((prev) => ({ ...prev, connected: false }));
+          const delay = remote
+            ? REMOTE_RECONNECT_DELAYS_MS[reconnects]
+            : undefined;
+          if (delay === undefined || controller.signal.aborted) return;
+          reconnects += 1;
+          reconnectTimer = setTimeout(() => {
+            if (genRef.current !== gen) return;
+            setState((prev) => ({ ...prev, connected: true }));
+            open();
+          }, delay);
+        });
+    };
+    open();
 
     return () => {
       if (genRef.current === gen) genRef.current += 1;
+      clearTimeout(reconnectTimer);
       controller.abort();
     };
   }, [runId, enabled]);
