@@ -53,17 +53,17 @@ describe("upsertWidgetModelContextEntry", () => {
   });
 });
 
-describe("context one chat request can carry", () => {
-  const bytes = "A".repeat(2_000_000);
-  const refusal = (queue: WidgetModelContextEntry[], context: object) => {
-    try {
-      upsertWidgetModelContextEntry(queue, "call-1", context);
-    } catch (error) {
-      return error;
-    }
-  };
+const refusal = (queue: WidgetModelContextEntry[], context: object) => {
+  try {
+    upsertWidgetModelContextEntry(queue, "call-1", context);
+  } catch (error) {
+    return error;
+  }
+};
 
+describe("upsertWidgetModelContextEntry within one chat request", () => {
   it("queues an image, audio clip or binary resource without its bytes", () => {
+    const bytes = "A".repeat(2_000_000);
     const queue = upsertWidgetModelContextEntry([], "call-1", {
       content: [
         { type: "image", mimeType: "image/png", data: bytes },
@@ -133,7 +133,9 @@ describe("context one chat request can carry", () => {
       "d",
     ]);
   });
+});
 
+describe("fitWidgetModelContext", () => {
   it("sends the newest entries that fit when two queues go as one", () => {
     const entries = Array.from({ length: 40 }, (_, i) => ({
       toolCallId: `call-${i}`,
