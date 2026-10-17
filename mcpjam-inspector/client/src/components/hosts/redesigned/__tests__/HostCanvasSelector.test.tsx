@@ -5,8 +5,16 @@ import { HostCanvasSelector } from "@/components/hosts/redesigned/HostCanvasSele
 import { track } from "@/lib/analytics";
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
-  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
-    isOpen ? <div data-testid="create-host-dialog" /> : null,
+  CreateHostDialog: ({ isOpen, initialTemplateId }: { isOpen: boolean; initialTemplateId?: string }) =>
+    isOpen ? <div data-testid="create-host-dialog" data-template={initialTemplateId} /> : null,
+}));
+
+const harnessFlags = vi.hoisted(() => ({ claude: false, codex: false }));
+vi.mock("@/hooks/useClaudeCodeHostEnabled", () => ({
+  useClaudeCodeHostEnabled: () => harnessFlags.claude,
+}));
+vi.mock("@/hooks/useCodexHostEnabled", () => ({
+  useCodexHostEnabled: () => harnessFlags.codex,
 }));
 
 const mockDeleteHost = vi.fn().mockResolvedValue(undefined);
@@ -100,8 +108,28 @@ const twoHosts = [
 describe("HostCanvasSelector", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    harnessFlags.claude = false;
+    harnessFlags.codex = false;
     mockUseHostList.mockReturnValue({ hosts: oneHost, isLoading: false });
     mockInitStatus.mockReturnValue(null);
+  });
+
+  it.each([[false, false], [true, false], [false, true], [true, true]])(
+    "gates harness shortcuts independently (%s, %s)", (claude, codex) => {
+      harnessFlags.claude = claude;
+      harnessFlags.codex = codex;
+      render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+      expect(Boolean(screen.queryByTestId("host-canvas-quick-add-claude-code"))).toBe(claude);
+      expect(Boolean(screen.queryByTestId("host-canvas-quick-add-codex"))).toBe(codex);
+      expect(screen.getByTestId("host-canvas-quick-add-claude")).toBeVisible();
+    },
+  );
+
+  it("opens the enabled Codex shortcut with its selected template", () => {
+    harnessFlags.codex = true;
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+    fireEvent.click(screen.getByTestId("host-canvas-quick-add-codex"));
+    expect(screen.getByTestId("create-host-dialog")).toHaveAttribute("data-template", "codex");
   });
 
   it("says an empty project's first client is on the way", () => {

@@ -1,24 +1,25 @@
-# The Claude Code host
+# The Claude Code client
 
-Selecting **Claude Code** as a host runs the real `@ai-sdk` Claude Code harness
-inside your project's Computer (an E2B Linux sandbox) instead of MCPJam's
-emulated chat loop. You are observing the actual runtime — its native tools,
-its own MCP client, its real execution behavior — not a simulation of it.
+Selecting **Claude Code** runs the real Claude Code runtime. Hosted turns run
+inside the selected cloud computer. In a local Inspector, an available local
+runtime runs in the workspace you authorize; see [local-harness.md](./local-harness.md).
+The selected target never falls back to another venue or to the emulated engine.
 
-The host appears only when the `claude-code-host-enabled` feature flag is on
-for your org.
+The client appears only when Claude Code access is enabled for your account.
+Availability does not imply that every local platform or unattended mode is certified.
 
 ## What happens when you run a turn
 
 1. **Pre-flight.** The server checks the harness can actually run here
    (`server/utils/harness/harness-availability.ts`): broker credential
    delivery not kill-switched, computers data plane configured, an
-   MCPJam-provided model the runtime supports, and host settings the runtime
+   model the runtime supports and can bill through MCPJam credits or an
+   eligible organization Anthropic connection, and client settings the runtime
    can honor. Any failure returns one clear error *before* the stream opens —
    a turn never silently falls back to the emulated engine.
-2. **Computer wake.** The host's project Computer is reserved/woken (or
-   provisioned on first use). Harness hosts **require** a Computer — there is
-   no local fallback.
+2. **Runtime setup.** For a hosted turn, the selected cloud computer is
+   reserved, woken, or provisioned. A local turn requires its own installed
+   runtime and workspace authorization before execution.
 3. **Credential delivery.** Convex mints a short-lived model lease and
    installs it into the E2B egress transform **outside the VM** — neither the
    sandbox nor your browser ever holds a real model credential. The CLI runs
@@ -38,7 +39,7 @@ for your org.
 
 | Host setting | Harness behavior |
 |---|---|
-| Model | Honored — must be an MCPJam-provided Anthropic model (BYOK fails closed; the CLI maps it to its native alias). |
+| Model | Must be a supported Anthropic model paid through MCPJam credits or an eligible organization Anthropic connection. Personal API keys are not supported for harness clients. |
 | System prompt | Honored (passed to the runtime). |
 | Require tool approval | **Switchable from the Behavior tab** (`client/src/lib/harness-capabilities.ts` marks it enforced for `claude-code`). Approval is honored on all three surfaces — **native, host-executed and MCP-server** tools. The adapter runs the CLI in its `allow-reads` permission mode, which is what makes the MCP case work: every call passes the bridge's `canUseTool` before the CLI may run it, and an external `mcp__<server>__<tool>` name falls into that table's `edit` default, which `allow-reads` gates. Reads stay free. (This row previously said MCP tools could not pause and that approval plus selected servers was rejected pre-flight; `claudeCodeAdapter.supportsMcpToolApproval` has been `true` since that was measured against the vendored bridge.) |
 | Selected MCP servers | Honored — delivered via `.mcp.json` through MCPJam's proxy. |
@@ -55,7 +56,7 @@ disabled in the UI rather than silently ignored.
 
 - A project **Computer** (E2B data plane configured; deployed servers
   bootstrap via `INSPECTOR_SERVICE_TOKEN`).
-- An **MCPJam-provided model** on the host.
+- A supported **Anthropic model** paid through MCPJam credits or an eligible organization connection.
 - A signed-in **project member** (guests run only via host-funded swarms,
   capped).
 
@@ -77,8 +78,9 @@ shutoff, never a bypass.
 ## Codex runtime
 
 Codex runs on MCPJam's own `codex app-server` adapter
-(`server/utils/harness/codex-appserver/`) in every venue: hosted and local
-Playground, evals and swarms. It replaced the published `@ai-sdk/harness-codex`
+(`server/utils/harness/codex-appserver/`). Hosted Playground, evals and swarms
+use this adapter. Local Playground uses it on supported targets; local evals
+and swarms require unattended certification for the exact runtime and platform. It replaced the published `@ai-sdk/harness-codex`
 adapter, which drove `codex exec`, hardcoded `approvalPolicy: "never"` and so
 could never pause for approval.
 
