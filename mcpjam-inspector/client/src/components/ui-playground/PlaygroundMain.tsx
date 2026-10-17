@@ -6604,7 +6604,7 @@ export function PlaygroundMain({
                       <div className="space-y-6">
                         {errorMessage && (
                           <div className="w-full">
-                            <ErrorBox
+                            <ErrorBox isHarnessTurn={Boolean(previewedHarnessId)}
                               onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
@@ -6676,7 +6676,7 @@ export function PlaygroundMain({
                         />
                         {errorMessage && (
                           <div className="w-full">
-                            <ErrorBox
+                            <ErrorBox isHarnessTurn={Boolean(previewedHarnessId)}
                               onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
@@ -6848,7 +6848,7 @@ export function PlaygroundMain({
               >
                 {errorMessage && (
                   <div className="pb-3">
-                    <ErrorBox
+                    <ErrorBox isHarnessTurn={Boolean(previewedHarnessId)}
                       onManageOrgProviders={manageOrgProviders}
                       message={errorMessage.message}
                       errorDetails={errorMessage.details}
@@ -7132,7 +7132,7 @@ export function PlaygroundMain({
                   errorFooterSlot={
                     errorMessage ? (
                       <div className="max-w-4xl mx-auto px-4 pt-4">
-                        <ErrorBox
+                        <ErrorBox isHarnessTurn={Boolean(previewedHarnessId)}
                           onManageOrgProviders={manageOrgProviders}
                           message={errorMessage.message}
                           errorDetails={errorMessage.details}
@@ -7521,7 +7521,7 @@ export function PlaygroundMain({
                           <div className="max-w-4xl mx-auto w-full p-3">
                             {errorMessage && (
                               <div className="pb-3">
-                                <ErrorBox
+                                <ErrorBox isHarnessTurn={Boolean(previewedHarnessId)}
                                   onManageOrgProviders={manageOrgProviders}
                                   message={errorMessage.message}
                                   errorDetails={errorMessage.details}

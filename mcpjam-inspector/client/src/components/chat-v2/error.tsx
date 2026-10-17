@@ -35,6 +35,7 @@ import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 interface ErrorBoxProps {
   message: string;
+  isHarnessTurn?: boolean;
   errorDetails?: string;
   onResetChat?: () => void;
   // New props for enhanced error display
@@ -88,6 +89,7 @@ const parseErrorDetails = (details: string | undefined) => {
 
 export function ErrorBox({
   message,
+  isHarnessTurn = false,
   errorDetails,
   onResetChat,
   code,
@@ -132,7 +134,7 @@ export function ErrorBox({
     </div>;
   }
 
-  if (refusalCode === "free_tier_model_restricted") {
+  if (isHarnessTurn && refusalCode === "free_tier_model_restricted") {
     return (
       <div
         role="alert"

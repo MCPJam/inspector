@@ -91,7 +91,7 @@ export const HARNESS_BOX_MAX_HEARTBEAT_MS = 4 * 60 * MINUTE_MS;
 const RELEASE_REQUEST_TIMEOUT_MS = 15_000;
 
 const DATA_PLANE_REQUIREMENT =
-  "but cloud execution is unavailable. Contact your organization admin to enable it.";
+  "but cloud execution is unavailable. Contact MCPJam support to enable it.";
 
 /**
  * Can this server run a disposable box end to end? Provisioning needs only a

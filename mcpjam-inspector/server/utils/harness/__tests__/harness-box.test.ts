@@ -348,6 +348,6 @@ describe("harnessBoxUnavailableReason", () => {
     expect(reason).toMatch(
       /^This eval runs on a harness, but cloud execution is unavailable/,
     );
-    expect(reason).toContain("Contact your organization admin");
+    expect(reason).toContain("Contact MCPJam support");
   });
 });
