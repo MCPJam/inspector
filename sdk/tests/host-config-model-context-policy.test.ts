@@ -125,6 +125,15 @@ describe("resolveModelContextPolicy", () => {
     expect(resolveModelContextPolicy(seedHostTemplate("codex"))).toEqual(
       MODEL_CONTEXT_POLICY_DEFAULTS
     );
+    // Each seed gets its own budgets: editing one leaves the next as it was.
+    const profile = seedHostTemplate("chatgpt")
+      .mcpProfile as HostConfigMcpProfileV1;
+    const policy = profile.apps?.modelContextPolicy;
+    if (!policy) throw new Error("The ChatGPT seed has no budgets");
+    policy.maxBlocks = 1;
+    expect(resolveModelContextPolicy(seedHostTemplate("chatgpt"))).toEqual(
+      chatgpt
+    );
   });
 
   it("takes each saved key and defaults the rest", () => {

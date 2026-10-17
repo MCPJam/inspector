@@ -1198,7 +1198,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
             enabled: true,
           },
-          modelContextPolicy: CHATGPT_MODEL_CONTEXT_POLICY,
+          modelContextPolicy: { ...CHATGPT_MODEL_CONTEXT_POLICY },
           // MCP Apps extension: hostInfo sent to the View iframe in
           // `ui/initialize`. Different protocol layer from clientInfo
           // above — apps that branch on `hostInfo.name === "chatgpt"`
