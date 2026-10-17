@@ -550,6 +550,7 @@ export type RequestEventMap = {
 
 export type SystemEventMap = {
   telemetry_canary: Record<string, never>;
+  "server.shutdown.drain": import("./shutdown-drain-event.js").ShutdownDrainEvent;
   llm_spend_unattested_ip_pooled: Record<string, never>;
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";
