@@ -38,6 +38,10 @@ export function pluginModelContextBytes(params: {
     structuredContent: params.structuredContent,
   });
 }
+/** ChatGPT's own JSON-RPC -32000 message for a context update it did not
+ * store. Apps get the same text here as there, so it stays verbatim. */
+export const PLUGIN_CONTEXT_NOT_PERSISTED_MESSAGE =
+  "The host could not persist the model context update";
 /** `message` is the refusal code; `excess` is set when a budget was crossed. */
 export class PluginModelContextError extends Error {
   constructor(
