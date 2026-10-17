@@ -1,3 +1,5 @@
+import { hydrateHarnessApprovals, type PendingHarnessApproval } from "./harness-approval-hydration";
+export type { PendingHarnessApproval } from "./harness-approval-hydration";
 import { parsePluginModelContext } from "@/shared/plugin-model-context";
 import { readPluginMessageHistoryTitle } from "@/shared/plugin-message-history";
 import { PLUGIN_MESSAGE_TEXT_PART } from "@/shared/plugin-message";
@@ -383,7 +385,7 @@ function convertParts(
   return parts;
 }
 
-export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
+export function transcriptToUIMessages(transcript: unknown[], pending?: readonly PendingHarnessApproval[]): UIMessage[] {
   if (!Array.isArray(transcript)) return [];
 
   const mergedTranscript = mergeTranscriptToolResults(transcript);
@@ -418,7 +420,7 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
     } as UIMessage);
   }
 
-  return messages;
+  return hydrateHarnessApprovals(messages, pending);
 }
 
 export function preserveHydratedMessageIds(
