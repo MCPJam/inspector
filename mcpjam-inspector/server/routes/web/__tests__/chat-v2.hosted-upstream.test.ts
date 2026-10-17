@@ -305,10 +305,14 @@ describe("hosted chat turn (MJ-001)", () => {
     // evidence the stuck connect was cancelled rather than left to run out
     // the manager's own per-request timeout and retries.
     let aborted = false;
-    upstream.current = (request) =>
-      stallUntilAborted(request, () => {
-        aborted = true;
-      });
+    const started = new Promise<void>((resolve) => {
+      upstream.current = (request) => {
+        resolve();
+        return stallUntilAborted(request, () => {
+          aborted = true;
+        });
+      };
+    });
     const disconnectAll = vi.spyOn(
       MCPClientManager.prototype,
       "disconnectAllServers",
@@ -324,15 +328,29 @@ describe("hosted chat turn (MJ-001)", () => {
     });
 
     const { app, token } = createWebTestApp();
-    const response = await postJson(app, "/api/web/chat-v2", body, token);
+    // Start the deadline clock only after the real manager reached the upstream.
+    // Otherwise a busy runner can time out before there is a request to abort.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = postJson(app, "/api/web/chat-v2", body, token);
+      await started;
+      expect(aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(50);
+      const response = await pending;
 
-    expect(response.status).toBe(424);
-    const payload = (await response.json()) as any;
-    expect(payload.code).toBe("TIMEOUT");
-    expect(payload.message).toMatch(/MCP server ".*" timed out/);
-    expect(disconnectAll).toHaveBeenCalled();
-    expect(aborted).toBe(true);
-    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
-    disconnectAll.mockRestore();
+      expect(response.status).toBe(424);
+      const payload = (await response.json()) as {
+        code: string;
+        message: string;
+      };
+      expect(payload.code).toBe("TIMEOUT");
+      expect(payload.message).toMatch(/MCP server ".*" timed out/);
+      expect(disconnectAll).toHaveBeenCalled();
+      expect(aborted).toBe(true);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      disconnectAll.mockRestore();
+    }
   });
 });
