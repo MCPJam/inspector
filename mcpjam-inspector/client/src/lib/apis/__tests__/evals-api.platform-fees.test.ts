@@ -82,6 +82,19 @@ it.each(["buffered", "streamed", "replay-boundary"] as const)(
   },
 );
 
+it("does not sell credits when other work holds them", () => {
+  const details = {
+    code: "platform_fee_refused",
+    reason: "insufficient_credits",
+    cause: "credits_reserved",
+    message: "Wait for other work to finish, then run it again.",
+  };
+  expect(() =>
+    rethrowIfBillingError({ code: "PAYMENT_REQUIRED", details }),
+  ).toThrow(ConvexError);
+  expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+});
+
 it.each([
   "spend_budget_reached",
   "wallet_locked",

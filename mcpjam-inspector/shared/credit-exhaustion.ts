@@ -153,8 +153,13 @@ export function isCreditExhaustion(value: unknown): boolean {
     if (typeof code === "string" && /^provider_/.test(code)) excluded = true;
     // A platform fee can be refused by the wallet, reserved credits or policy.
     // Only an explicit wallet shortfall is lifted by buying credits.
+    // Held credits travel as insufficient_credits with their own cause.
     if (code === "platform_fee_refused") {
-      if ((item as Record<string, unknown>).reason === "insufficient_credits")
+      const fee = item as Record<string, unknown>;
+      if (
+        fee.reason === "insufficient_credits" &&
+        fee.cause !== "credits_reserved"
+      )
         exhausted = true;
       else excluded = true;
     }
