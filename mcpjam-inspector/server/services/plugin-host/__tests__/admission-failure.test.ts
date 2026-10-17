@@ -120,5 +120,11 @@ describe("plugin workspace admission failures", () => {
       message: expect.stringContaining("Remove an App's context"),
       details: { pluginCode: "PLUGIN_CONTEXT_TURN_TOO_LARGE" },
     });
+    // Any other context error isn't about size, so it isn't answered as one.
+    expect(
+      pluginChatRefusal(
+        new PluginModelContextError("PLUGIN_CONTEXT_USER_TURN_MISSING"),
+      ),
+    ).toBeUndefined();
   });
 });

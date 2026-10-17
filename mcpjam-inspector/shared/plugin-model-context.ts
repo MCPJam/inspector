@@ -38,8 +38,11 @@ export function pluginModelContextBytes(params: {
   content?: unknown;
   structuredContent?: unknown;
 }): number {
+  // A structured-only update is stored with `content: []`, and counts the
+  // same before and after.
+  const empty = Array.isArray(params.content) && !params.content.length;
   return byteSize({
-    content: params.content,
+    content: empty ? undefined : params.content,
     structuredContent: params.structuredContent,
   });
 }
@@ -291,11 +294,11 @@ export function pluginModelContextMessage(
   turnMaxBytes = MODEL_CONTEXT_POLICY_DEFAULTS.turnMaxBytes,
 ): ModelMessage | undefined {
   if (!contexts.length) return;
-  const turnSize = byteSize(
-    contexts.map(({ content, structuredContent }) => ({
-      content,
-      structuredContent,
-    })),
+  // What each App's update was admitted at, so one App at `updateMaxBytes`
+  // fits any turn budget at least that large.
+  const turnSize = contexts.reduce(
+    (sum, context) => sum + pluginModelContextBytes(context),
+    0,
   );
   if (turnSize > turnMaxBytes)
     throw new PluginModelContextError("PLUGIN_CONTEXT_TURN_TOO_LARGE", {

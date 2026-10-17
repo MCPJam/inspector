@@ -374,6 +374,8 @@ export class PluginInstanceRegistry {
     if (this.closed.has(token))
       throw new PluginInvocationError("INSTANCE_UNAVAILABLE");
     if (!port) throw new PluginInvocationError("INSTANCE_STORE_UNAVAILABLE");
+    // An expired copy can't stand in for the context a reply leaves out.
+    this.sweep();
     const known = this.records.get(token)?.contextVersion;
     const saved = await port.read(token, signal, known);
     signal.throwIfAborted();
@@ -655,7 +657,9 @@ export class PluginInstanceRegistry {
       this.get(token, identity);
       signal.throwIfAborted();
       if (contextJson !== before) {
-        this.memory.check(instance, Buffer.byteLength(contextJson));
+        // The person's removal is never refused: it adds only removal state.
+        if (command.kind === "update")
+          this.memory.check(instance, Buffer.byteLength(contextJson));
         try {
           const saved = await port.writeContext(
             token,
