@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { subscribeLocalHarnessConsent } from "@/lib/local-harness-consent";
+import { HOSTED_MODE } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
 
 export type UnattendedVenue = "checking" | "local" | "hosted" | "unavailable";
@@ -11,6 +12,7 @@ export function useUnattendedHarnessVenue(
   const [revision, setRevision] = useState(0);
   const key = `${projectId}:${harnessId}:${revision}`;
   useEffect(() => {
+    if (HOSTED_MODE) return;
     const refresh = () => setRevision((value) => value + 1);
     const unsubscribe = subscribeLocalHarnessConsent(refresh);
     window.addEventListener("focus", refresh);
@@ -24,6 +26,7 @@ export function useUnattendedHarnessVenue(
     venue: "checking",
   });
   useEffect(() => {
+    if (HOSTED_MODE) return;
     const controller = new AbortController();
     setState({ key, venue: "checking" });
     void (async () => {
@@ -52,5 +55,5 @@ export function useUnattendedHarnessVenue(
     })();
     return () => controller.abort();
   }, [key, projectId, harnessId]);
-  return state.key === key ? state.venue : "checking";
+  return HOSTED_MODE ? "hosted" : state.key === key ? state.venue : "checking";
 }

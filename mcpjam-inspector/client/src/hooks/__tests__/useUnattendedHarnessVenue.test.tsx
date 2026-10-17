@@ -2,6 +2,8 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useUnattendedHarnessVenue } from "../useUnattendedHarnessVenue";
 const request = vi.hoisted(() => vi.fn());
+const environment = vi.hoisted(() => ({ hosted: false }));
+vi.mock("@/lib/config", () => ({ get HOSTED_MODE() { return environment.hosted; } }));
 vi.mock("@/lib/session-token", () => ({ authFetch: request }));
 vi.mock("@/lib/local-harness-consent", () => ({
   subscribeLocalHarnessConsent: () => () => {},
@@ -9,6 +11,7 @@ vi.mock("@/lib/local-harness-consent", () => ({
 afterEach(() => {
   cleanup();
   request.mockReset();
+  environment.hosted = false;
 });
 
 it.each(["local", "hosted", "unavailable"])(
@@ -65,4 +68,12 @@ it("reports network failure without claiming a venue", async () => {
   request.mockRejectedValue(new Error("offline"));
   const { result } = renderHook(() => useUnattendedHarnessVenue("project", "codex"));
   await waitFor(() => expect(result.current).toBe("unavailable"));
+});
+
+it("resolves hosted immediately without probing the loopback-only endpoint", () => {
+  environment.hosted = true;
+  const { result } = renderHook(() => useUnattendedHarnessVenue("project", "codex"));
+  expect(result.current).toBe("hosted");
+  act(() => window.dispatchEvent(new Event("focus")));
+  expect(request).not.toHaveBeenCalled();
 });
