@@ -1080,7 +1080,7 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /no computer attached/i
+      /needs a computer.*Attach a computer/i
     );
   });
 
