@@ -2,7 +2,7 @@ import { modelApps } from "./model-apps.js";
 import { pluginResourceUri } from "./bindings.js";
 import type { Context } from "hono";
 import { z } from "zod";
-import { pluginModelContextMessage } from "../../../shared/plugin-model-context.js";
+import type { PluginModelContext } from "../../../shared/plugin-model-context.js";
 import type { PluginWorkspaceAdmission } from "./admission.js";
 import { pluginInstances, type PluginInstanceIdentity } from "./instances.js";
 import { createPluginRequestRuntime } from "./request-runtime.js";
@@ -23,7 +23,7 @@ export async function readOwnedTurnContext(input: {
   const tokens = [
     ...new Set(pluginContextReferencesSchema.parse(input.references)),
   ];
-  const contexts = [];
+  const contexts: PluginModelContext[] = [];
   for (const token of tokens) {
     if (modelApps.has(token)) {
       const record = modelApps.get(token, input.actor);
@@ -108,5 +108,6 @@ export async function readOwnedTurnContext(input: {
     if (modelApps.has(token)) modelApps.get(token, input.actor);
     else pluginInstances.get(token, input.actor);
   }
-  return pluginModelContextMessage(contexts);
+  // The turn budget is the chat's to apply, over every owner's contexts.
+  return contexts;
 }

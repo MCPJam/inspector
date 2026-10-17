@@ -103,6 +103,8 @@ export function createModelContextController({
     sequence: 0,
     state: null,
   };
+  /** The last update the server acknowledged, while it is still the state. */
+  let acknowledged: { params: string; updateId: string } | undefined;
   const acceptSnapshot = (value: unknown) => {
     const next = pluginContextSnapshotSchema.parse(value);
     // State the server already admitted, under whatever policy held then.
@@ -122,6 +124,9 @@ export function createModelContextController({
       throw new Error("Invalid app context revision");
     snapshot = structuredClone(next);
     sequence = snapshot.sequence;
+    // Context changed by anything else (a removal, another tab) is sent again.
+    if (next.state?.updateId !== acknowledged?.updateId)
+      acknowledged = undefined;
     onSnapshot?.(structuredClone(snapshot));
     return true;
   };
@@ -156,6 +161,16 @@ export function createModelContextController({
         onHeld?.(refusal);
         throw refusal;
       }
+      // An App that re-sends the context it already has (Bits & Bolts does on
+      // every redraw) gets the same acknowledgement, with no write. A person
+      // using the App always sends: that is what re-attaches removed context.
+      const key = JSON.stringify(params);
+      if (!user && acknowledged?.params === key)
+        return {
+          _meta: {
+            "openai/modelContext": { updateId: acknowledged.updateId },
+          },
+        };
       let result: unknown;
       try {
         result = await send({
@@ -184,6 +199,7 @@ export function createModelContextController({
         if (!acceptSnapshot((result as { snapshot?: unknown }).snapshot))
           throw new Error("Stale app context acknowledgement");
       } else sequence++;
+      acknowledged = { params: key, updateId };
       return { _meta: { "openai/modelContext": { updateId } } };
     });
   };

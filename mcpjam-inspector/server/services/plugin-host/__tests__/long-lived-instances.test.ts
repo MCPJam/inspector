@@ -848,3 +848,54 @@ describe("App context memory in this process", () => {
     expect(removed.result).toMatchObject({ outcome: "applied" });
   });
 });
+
+describe("App context under the client's policy", () => {
+  it("admits against the policy each update brings, and a lowered one keeps what it admitted", async () => {
+    const clock = () => 1_000_000;
+    const s = store(clock);
+    const registry = new PluginInstanceRegistry(clock, 100);
+    const { token } = await registry.openActivationPersistent(
+      identity,
+      binding,
+      signal(),
+      s.port,
+    );
+    const policy = {
+      updateMaxBytes: 2_548_000,
+      maxBlocks: 256,
+      turnMaxBytes: 8 * 1024 * 1024,
+    };
+    const update = (sequence: number, count: number, limits?: typeof policy) =>
+      registry.changeContextPersistent(
+        token,
+        identity,
+        {
+          kind: "update",
+          request: {
+            operationId: `op-${sequence}`,
+            sequence,
+            params: {
+              content: Array.from({ length: count }, (_, index) => ({
+                type: "text",
+                text: `part ${index}`,
+              })),
+            },
+          },
+          limits,
+        },
+        signal(),
+        async () => {},
+        s.port,
+      );
+    await update(1, 200, policy);
+    // The client is saved with MCPJam's defaults: its stored context restores,
+    // and only the next update is held to the lower budget.
+    const cold = new PluginInstanceRegistry(clock, 100);
+    await cold.getPersistent(token, identity, signal(), s.port);
+    expect(cold.contextSnapshot(token, identity).state?.content).toHaveLength(
+      200,
+    );
+    await expect(update(2, 65)).rejects.toThrow("PLUGIN_CONTEXT_TOO_LARGE");
+    await update(2, 64);
+  });
+});

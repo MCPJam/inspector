@@ -1,6 +1,9 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { pluginModelContextParamsSchema } from "../../../shared/plugin-model-context.js";
+import {
+  pluginModelContextParamsSchema,
+  type PluginContextLimits,
+} from "../../../shared/plugin-model-context.js";
 import {
   pluginInstances,
   type PluginInstanceIdentity,
@@ -44,6 +47,7 @@ export function pluginContextRoutes(ports: {
     action: (
       actor: PluginInstanceIdentity,
       authorize: () => Promise<void>,
+      limits: PluginContextLimits | undefined,
     ) => Promise<Response>,
   ) {
     const { actor, bearer, admission } = await ports.admitted(c, body);
@@ -62,12 +66,16 @@ export function pluginContextRoutes(ports: {
       instance,
       { ownedForms: false },
     );
+    // The client's policy as this request first resolved it: saving the
+    // client never closes the App, and the next update uses the new budgets.
+    let limits: PluginContextLimits | undefined;
     const authorize = async () => {
       const resolved = await resolveOpenPluginActivation(
         runtime,
         instance.activation,
         c.req.raw.signal,
       );
+      limits ??= resolved.modelContextPolicy;
       // The client's current toggle, not the one the App opened with.
       if (resolved.extensions?.capabilities.modelContext === false)
         throw new PluginInvocationError("PLUGIN_EXTENSION_DISABLED");
@@ -81,7 +89,7 @@ export function pluginContextRoutes(ports: {
     };
     try {
       await authorize();
-      return await action(actor, authorize);
+      return await action(actor, authorize, limits);
     } finally {
       await runtime.release();
     }
@@ -89,11 +97,11 @@ export function pluginContextRoutes(ports: {
   router.post("/", (c) =>
     ports.route(c, async () => {
       const body = change.parse(await c.req.json());
-      return use(c, body, async (actor, authorize) => {
+      return use(c, body, async (actor, authorize, limits) => {
         const changed = await pluginInstances.changeContextPersistent(
           body.instanceToken,
           actor,
-          { kind: "update", request: body },
+          { kind: "update", request: body, limits },
           c.req.raw.signal,
           authorize,
         );

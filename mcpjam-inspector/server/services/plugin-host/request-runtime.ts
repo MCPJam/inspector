@@ -23,6 +23,7 @@ import type {
 } from "./invocation.js";
 import {
   pluginModelContextEnabled,
+  pluginModelContextPolicy,
   pluginMessageEnabled,
 } from "./context-profile.js";
 import { pluginComputerUploadsAvailable } from "./computer-file-target.js";
@@ -867,6 +868,7 @@ export function createPluginRequestRuntime(
       contextEnabled:
         pluginModelContextEnabled(config) &&
         extensions.capabilities.modelContext,
+      modelContextPolicy: pluginModelContextPolicy(config),
       messageEnabled:
         pluginMessageEnabled(config) && extensions.capabilities.messages,
       extensions,
