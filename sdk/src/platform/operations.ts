@@ -14,6 +14,7 @@ import {
   type EvalBacktestReport,
 } from "../contract/eval-backtest.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "../contract/standard-checks.js";
+import { isEvalRunTerminalStatus } from "../contract/eval-lifecycle.js";
 import { platformBrowserToolPolicySchema } from "./browser-policy.js";
 import { BROWSER_AGENT_ACT_VERBS } from "./browser-agent-contract.js";
 import type { PlatformSessionBrowserCommand } from "./types.js";
@@ -7259,26 +7260,6 @@ const evalRunScopedInput = z.object({
 export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
 
 /**
- * Statuses at which a run has stopped changing.
- *
- * Mirrors the CLI's `TERMINAL_RUN_STATUSES`. A decision summary is fetched only
- * for a terminal run: while a run is still going its verdict does not exist
- * yet, so the extra request would buy a `notEstablished` a poller already knows
- * from `status`.
- *
- * `grading` IS DELIBERATELY ABSENT. A run held for its gating judge has run
- * every trial but has not been decided — its `result` is `pending` — so
- * fetching a summary for it would return exactly the `notEstablished` this set
- * exists to avoid asking for.
- */
-const TERMINAL_EVAL_RUN_STATUSES: ReadonlySet<string> = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
-/**
  * The diagnostics page size this operation asks for.
  *
  * Small on purpose. Each diagnostic carries a six-row chain plus evidence, and
@@ -7345,7 +7326,9 @@ export const getEvalRunOperation: PlatformOperation<
       { projectId: project.id, runId: input.runId },
       { signal }
     );
-    if (!TERMINAL_EVAL_RUN_STATUSES.has(run.status)) {
+    // A decision summary exists only for a terminal run; asking for a live or
+    // `grading` run's would buy the `notEstablished` its status already says.
+    if (!isEvalRunTerminalStatus(run.status)) {
       return { project: toSelectedProjectInfo(project), run };
     }
     // Endpoint first, then the same shared assembler over the older iteration
