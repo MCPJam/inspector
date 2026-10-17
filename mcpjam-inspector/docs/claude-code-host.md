@@ -133,20 +133,20 @@ real runtime did. All fail closed; a failed start spends nothing.
 
 Run this checklist on the deployed candidate before each widening of access.
 Source-checkout tests, a fake provider, and native runtime conformance are useful
-regressions, but do not qualify a deployed product. Record incomplete cases as
-`not_run`; do not infer success from an absent error or a missing log.
+regressions, but do not qualify a deployed product. Record outcomes and incomplete
+cases in the [candidate qualification task](https://github.com/MCPJam/inspector/issues/6549); do not infer success from an absent error or a missing log.
 
 Record the inspector and backend commit SHAs, deployed versions, both native
 CLI versions, and the candidate's pack/layer identities. For every run, retain
 its project, run, session and turn IDs, exact tool calls, actual engine and venue,
 terminal state, token use, and evidence links. Redact credentials and access links.
 
-| Surface | Claude Code | Codex | Required observation |
-|---|---|---|---|
-| v1 chat through CLI | not_run | not_run | Native file write/read, exact fixture MCP call, second-turn read |
-| Eval | not_run | not_run | Same task; actual engine is `harness:*`, venue is cloud |
-| Swarm | not_run | not_run | Same task; persisted turns complete without a held lease |
-| User Testing | not_run | not_run | Same task; participant session and replay identify the executed client |
+| Surface (both clients) | Required observation |
+|---|---|
+| v1 chat through CLI | Native file write/read, exact fixture MCP call, second-turn read |
+| Eval | Same task; actual engine is `harness:*`, venue is cloud |
+| Swarm | Same task; persisted turns complete without a held lease |
+| User Testing | Same task; participant session and replay identify the executed client |
 
 For both clients, also record these cases:
 
