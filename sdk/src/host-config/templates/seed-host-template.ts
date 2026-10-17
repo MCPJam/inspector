@@ -1943,10 +1943,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // CODEX_HOST_STYLE in client-styles/built-ins.ts.
         hostStyle: "codex",
         // Canonical id (openai/<slug>) so the chat-composer model picker
-        // resolves it. gpt-5-nano is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so
-        // guests get it without an OpenAI key; users can swap to a
-        // codex-specific model after creation.
-        modelId: "openai/gpt-5-nano",
+        // resolves it. gpt-5.4-mini rather than gpt-5-nano: on the pinned
+        // Codex runtime nano never made the MCP call the acceptance task asks
+        // for, while gpt-5.4-mini did every time. It is a hosted model, so
+        // guests get it without an OpenAI key.
+        modelId: "openai/gpt-5.4-mini",
         temperature: 0.7,
         requireToolApproval: false,
         // Run the REAL OpenAI Codex runtime (the @ai-sdk/harness-codex adapter)
