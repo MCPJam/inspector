@@ -167,7 +167,10 @@ describe("authorized plugin invocation boundary", () => {
         "no-metadata-unknown",
         { name: "synthetic" },
       ),
-    ).rejects.toMatchObject({ code: "INVOCATION_OUTCOME_UNKNOWN" });
+    ).rejects.toMatchObject({
+      code: "INVOCATION_DENIED",
+      outcomeUnknown: true,
+    });
     expect(f.ports.execute).toHaveBeenCalledOnce();
   });
   it("emits one bounded receipt observation and isolates observer failure from effects", async () => {

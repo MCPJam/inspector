@@ -188,16 +188,29 @@ describe("ui strings", () => {
           "if (a > b && c < d) return null;",
           "const re = /\"['\"]/g;",
           'function f(x: Foo<string>) { return g("Keep this label"); }',
+          "function runAttempt<T>(attempt: Attempt<T>): Promise<void> {",
           '{count > 0 ? <Empty label="No results yet" /> : "Loading your servers"}',
           '<span>{"—"}</span>',
           '<Button onClick={() => save()}>Save changes</Button>',
+          "{a ? (",
+          "  <p>One two</p>",
+          ") : hint ? (",
+          "  <p>Three four</p>",
+          ") : null}",
           "element: <Boundary />,",
           "children: [",
           "  // a comment — about the route",
           '  { path: "*" },',
         ].join("\n")
       ),
-      ["Keep this label", "No results yet", "Loading your servers", "Save changes"]
+      [
+        "Keep this label",
+        "No results yet",
+        "Loading your servers",
+        "Save changes",
+        "One two",
+        "Three four",
+      ]
     );
   });
 

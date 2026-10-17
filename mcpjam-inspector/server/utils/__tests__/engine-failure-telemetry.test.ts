@@ -288,6 +288,31 @@ describe("engine failure telemetry", () => {
     expect(originOf(calls[0].normalized)).toBe("mcpjam");
   });
 
+  it("does not own a 400 that refuses a retired model", async () => {
+    // The internal hop promotes an `ambiguous` verdict, and a bare 400 is
+    // `internal/unknown` — so without the code, every turn on a retired model
+    // would page.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "model_retired",
+          error:
+            "This model has been retired and is no longer available on MCPJam. Please switch to a newer model.",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].errorCode).toBe("model_retired");
+    expect(calls[0].normalized?.slug).toBe("provider/model_retired");
+    expect(originOf(calls[0].normalized)).toBe("user_config");
+  });
+
   it("fails the turn on a mid-stream error chunk instead of succeeding", async () => {
     // The second delivery path, and the one HTTP status can never see. The
     // backend's `toUIMessageStreamResponse({onError})` categorizes the failure

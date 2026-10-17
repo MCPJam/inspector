@@ -79,6 +79,7 @@ import {
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
@@ -284,8 +285,7 @@ import {
   isSandboxNoticeDataPart,
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
-import { isHistoryNoticeDataPart } from "@/shared/history-notice";
-import { useHistoryNoticeStore } from "@/stores/history-notice-store";
+import { noteTurnNoticePart } from "@/lib/turn-notice-parts";
 import {
   HOSTED_TASKS_VERSION,
   isTaskCreatedDataPart,
@@ -2135,6 +2135,7 @@ export function useChatSession(
     onResetRef.current = onReset;
   }, [onReset]);
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const isMemberActor = useIsMemberActor();
   // Elicitation answers go straight to Convex — the blocked replica isn't
   // addressable from here (see `elicitation-api.ts`).
   const convexClient = useConvex();
@@ -2528,6 +2529,7 @@ export function useChatSession(
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (noteTurnNoticePart(part, chatSessionIdRef.current)) return;
       if (part && typeof part === "object" && "type" in part && part.type === "data-platform-paid-fallback") {
         const session = chatSessionIdRef.current ?? "new";
         if (!paidFallbackNotices.current.has(session)) {
@@ -2786,18 +2788,6 @@ export function useChatSession(
           useHarnessAgentActivityStore
             .getState()
             .applyBackgroundTask(part.data);
-        } else if (isHistoryNoticeDataPart(part)) {
-          // Earlier replies in this chat are not in the model's context this
-          // turn; the thread says so, once, inline. Recorded for the chat the
-          // turn belongs to, which the part names: a part from an earlier
-          // turn can arrive after a reset, fork or thread switch.
-          const sessionId =
-            part.data.chatSessionId ?? chatSessionIdRef.current;
-          if (sessionId) {
-            useHistoryNoticeStore
-              .getState()
-              .noteEarlierRepliesNotSent(sessionId);
-          }
         } else if (isSandboxNoticeDataPart(part)) {
           // One-time fact about the scenario's ephemeral sandbox. Exactly-once
           // delivery is the BACKEND's job (it marks the notice consumed in the
@@ -2986,9 +2976,7 @@ export function useChatSession(
     [savedModelIdsSignature],
   );
 
-  // Build available models — the same composition every picker surface
-  // uses (see `composeAvailableModels`); only the org-config source is
-  // chat-specific (scenario embeds resolve a host-provided project context).
+  // Shared picker composition; scenario embeds use a host-provided org context.
   const outOfCreditsReason = useOutOfCreditsReason();
   const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
@@ -2997,7 +2985,7 @@ export function useChatSession(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
-        isAuthenticated,
+        isAuthenticated: isMemberActor === true,
         isOllamaRunning,
         ollamaModels,
         hasToken,
@@ -3015,7 +3003,7 @@ export function useChatSession(
       isOllamaRunning,
       ollamaModels,
       getAzureBaseUrl,
-      isAuthenticated,
+      isMemberActor,
       customProviders,
       hostedOrgModelConfig,
       outOfCredits,
@@ -3373,17 +3361,16 @@ export function useChatSession(
     });
   }, [appState, hostedProjectId, selectedServers]);
   // ── Hidden environment (a Playground chat's plugins) ────────────────────
-  //
-  // Only the web chat route resolves an environment, so a chat carries its
-  // hidden environment only where that route can run the turn. In the hosted
-  // app it always can. On this machine, a turn that has to stay on the local
-  // route — a client run here, a local-only server, a model keyed on this
-  // machine, this machine's browser or shell — runs as the plain client turn
-  // it would have been, and the surface says the plugins were off.
+  // Only the web chat route resolves an environment. On this machine a turn
+  // that must stay local (a client run here, a local-only server, a model
+  // keyed here, this machine's browser or shell) runs without its plugins and
+  // says so, unless they were composed for that client here (venue `local`).
   const hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null =
     !hostedHiddenEnvironment || HOSTED_MODE
       ? null
-      : !explicitRequiresWebChatApi && localHarnessExecution?.requested === true
+      : !explicitRequiresWebChatApi &&
+          localHarnessExecution?.requested === true &&
+          hostedHiddenEnvironment.venue !== "local"
         ? "local_harness"
         : hasLocalOnlySelectedServer
           ? "local_server"
