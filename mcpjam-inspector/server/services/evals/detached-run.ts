@@ -1,6 +1,6 @@
 import { logger } from "../../utils/logger.js";
 import { createConvexClient } from "./route-helpers.js";
-import { TERMINAL_RUN_STATUSES } from "./run-status.js";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import { shouldSkipExecution } from "../../routes/shared/evals.js";
 
 type DetachableEvalRun = {
@@ -26,7 +26,14 @@ type DetachableEvalRun = {
   status?: string;
 };
 
-async function isRunAlreadyTerminal(
+/**
+ * Whether the run record already reached a terminal status. Used by the
+ * detached-execution catch: `runEvalSuiteWithAiSdk` finalizes a failed run
+ * itself before rethrowing, so a rejected `execute()` usually means the
+ * terminal write already happened — re-finalizing would restamp
+ * `completedAt` and overwrite the runner's notes.
+ */
+export async function isRunAlreadyTerminal(
   convexAuthToken: string,
   runId: string,
 ): Promise<boolean> {
@@ -35,8 +42,11 @@ async function isRunAlreadyTerminal(
       "testSuites:getTestSuiteRun" as any,
       { runId },
     );
-    return TERMINAL_RUN_STATUSES.has(String(run?.status));
+    return isEvalRunTerminalStatus(run?.status);
   } catch {
+    // Can't tell — let the defensive finalize proceed. recorder.finalize
+    // tolerates deleted/unauthorized runs, so the worst case is the
+    // duplicate terminal write we'd have done unconditionally before.
     return false;
   }
 }
