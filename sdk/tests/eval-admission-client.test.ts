@@ -181,11 +181,24 @@ describe("local admission transport", () => {
   ])(
     "preserves terminal wire errors without retrying HTTP %s",
     async (status, code) => {
+      const details =
+        status === 402
+          ? { code: "platform_fee_refused", reason: "insufficient_credits" }
+          : status === 426
+            ? {
+                code: "client_upgrade_required",
+                minimumVersion:
+                  "@mcpjam/sdk 10, @mcpjam/cli 6, @mcpjam/vitest 0.3",
+                docsUrl: "https://docs.mcpjam.com/sdk/migration-v10",
+              }
+            : status === 409
+              ? { code: "ADMISSION_CONFLICT" }
+              : undefined;
       const fetch = vi
         .fn()
         .mockResolvedValue(
           Response.json(
-            { code, message: "The original remedy." },
+            { code, message: "The original remedy.", details },
             { status: Number(status) }
           )
         );
@@ -193,6 +206,7 @@ describe("local admission transport", () => {
       await expect(client().admit(input)).rejects.toMatchObject({
         code,
         message: "The original remedy.",
+        ...(details ? { details } : {}),
       });
       expect(fetch).toHaveBeenCalledTimes(1);
     }
