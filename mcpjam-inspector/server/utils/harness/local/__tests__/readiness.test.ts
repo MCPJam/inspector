@@ -109,6 +109,24 @@ it("keeps unattended Off independent of attended acknowledgement", async () => {
   const result = await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "unattended", requireToolApproval: false });
   expect(result.target.permissionProfile).toBe("unrestricted");
 });
+describe("API runs need the recorded run-without-asking consent", () => {
+  it("refuses an attended-only setup before installation, registration or grant creation", async () => {
+    await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "unattended", requireAutoApproveAcknowledgement: true })).rejects.toMatchObject({ status: "auto-approve-consent-required" });
+    expect(mocks.status).not.toHaveBeenCalled();
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.grant).not.toHaveBeenCalled();
+  });
+  it("issues the unattended grant once the member has allowed running without asking", async () => {
+    mocks.authorization.mockResolvedValue({ workspaceGrantId: "saved-workspace", autoApproveAcknowledgedAt: "2026-10-16T00:00:00.000Z" });
+    const ready = await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "unattended", requireAutoApproveAcknowledgement: true });
+    expect(ready.target).toMatchObject({ workspaceGrantId: "saved-workspace", permissionProfile: "unrestricted" });
+    expect(mocks.grant).toHaveBeenCalledWith(expect.objectContaining({ scope: "unattended" }), expect.any(Object));
+  });
+});
+it("refuses a caller-selected workspace other than the authorized one", async () => {
+  await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "unattended", workspaceGrantId: "elsewhere" })).rejects.toThrow(/workspace authorized/);
+  expect(mocks.grant).not.toHaveBeenCalled();
+});
 
 describe("a turn never waits on a download it does not need", () => {
   it("runs on the permitted previous pack while the desired one installs in the background", async () => {

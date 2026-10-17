@@ -5813,7 +5813,7 @@
         "operationId": "authorizeLocalExecution",
         "tags": ["Chat"],
         "summary": "Renew an existing local execution grant",
-        "description": "Available on a local Inspector only. Requires prior Add client setup in the local Inspector, the authorized workspaceGrantId, a verified user's AuthKit bearer session and explicit unattended intent; this endpoint cannot create machine or workspace authorization. Resolves project membership, existing authorization and the selected runtime before returning an expiring capability. Does not approve attended permission requests. Treat grantToken as a secret and include this target with every local turn.",
+        "description": "Available on a local Inspector only. Requires prior Add client setup in the local Inspector, the authorized workspaceGrantId, a verified user's AuthKit bearer session, explicit unattended intent, and the member's recorded consent in Playground on that computer to run commands without asking (403 LOCAL_AUTO_APPROVE_CONSENT_REQUIRED); this endpoint cannot create machine or workspace authorization or that consent. A harness this computer would not run unattended for evals and swarms is refused (409 LOCAL_UNATTENDED_UNAVAILABLE). Resolves project membership, existing authorization and the selected runtime before returning an expiring capability. Does not approve attended permission requests. Treat grantToken as a secret and include this target with every local turn.",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "requestBody": {
           "required": true,
