@@ -149,22 +149,6 @@ export {
   userValueStageSchema,
 } from "./chain.js";
 
-// ── eval run and iteration lifecycle ─────────────────────────────────────────
-export type {
-  EvalIterationTerminalStatus,
-  EvalRunStatus,
-  EvalRunTerminalStatus,
-} from "./eval-lifecycle.js";
-export {
-  EVAL_ITERATION_TERMINAL_STATUSES,
-  EVAL_RUN_STATUSES,
-  EVAL_RUN_TERMINAL_STATUSES,
-  evalRunStatusSchema,
-  isEvalIterationTerminalStatus,
-  isEvalRunPastExecution,
-  isEvalRunTerminalStatus,
-} from "./eval-lifecycle.js";
-
 // ── deriving a stage's state from a run ──────────────────────────────────────
 export type {
   StageAuthoredCase,
@@ -1219,3 +1203,4 @@ export * from "./swarm-report.js";
 export * from "./eval-authoring.js";
 export * from "./eval-authoring-review.js";
 export * from "./swarm-finding.js";
+export * from "./eval-lifecycle.js";
