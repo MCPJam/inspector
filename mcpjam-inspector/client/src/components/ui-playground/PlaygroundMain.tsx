@@ -1220,6 +1220,8 @@ export function PlaygroundMain({
   const [localHarnessDialog, setLocalHarnessDialog] = useState<{
     trigger: "first_send" | "chip";
   } | null>(null);
+  // Set after a COLD install finishes, so the composer can say what to do next
+  // rather than leaving the user to guess whether anything happened.
   const [localHarnessJustReady, setLocalHarnessJustReady] = useState(false);
   const [localHarnessPreparing, setLocalHarnessPreparing] = useState(false);
   const localHarnessPreparingRef = useRef(false);
@@ -4809,9 +4811,11 @@ export function PlaygroundMain({
   // Refresh launch credentials without changing durable user authorization.
   const ensureLocalHarnessReadyForSend =
     useCallback(async (setup = false): Promise<boolean> => {
+      // An explicit setup creates durable authorization; a returning local
+      // request only refreshes readiness unless its workspace is missing.
       if (!setup && localHarnessIntendedLocal) {
         if (localHarness.phase === "unavailable" || localHarness.phase === "loading" || localHarness.phase === "needs-signin") return false;
-        if (!localHarnessRequested || localHarness.phase === "needs-consent" || localHarness.phase === "needs-workspace") {
+        if (!localHarnessRequested || localHarness.phase === "needs-workspace") {
           setLocalHarnessDialog({ trigger: "first_send" });
           return false;
         }

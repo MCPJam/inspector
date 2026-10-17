@@ -7,6 +7,19 @@ import { PlaygroundMain } from "../PlaygroundMain";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 
+/**
+ * The composer's side of local Claude Code.
+ *
+ * The controller has its own suite; what is under test HERE is the wiring, and
+ * every case is one the plan calls out because getting it wrong is expensive:
+ * a chip that appears on a host that cannot run locally, a first Send that
+ * downloads 200 MB without asking, a Cancel that leaves the draft consumed or
+ * an install running, a cold completion that fires a prompt the user typed
+ * minutes ago, and a Send disabled for missing consent — which would make
+ * first-send setup unreachable, since both Enter and the button are refused
+ * before `onSubmit` ever runs.
+ */
+
 const mockLocalHarness = vi.hoisted(() => ({
   state: {
     requestedTarget: "local-native" as string | null,
@@ -908,6 +921,8 @@ describe("PlaygroundMain — local Claude Code", () => {
     });
 
     it("is not offered on a harness this machine cannot run locally", () => {
+      // What the controller answers when that harness's rollout is off or it
+      // has no runtime for this platform.
       mockHarnessState.harnessId = "codex";
       mockLocalHarness.state.phase = "unavailable";
       render(<PlaygroundMain {...defaultProps} />);
@@ -1010,7 +1025,16 @@ describe("PlaygroundMain — local Claude Code", () => {
         delete state.harnessName;
       }
     });
-    it("opens consent on first Send and preserves the draft when cancelled", async () => {
+    it("renews durable authorization and sends without another setup dialog", async () => {
+      render(<PlaygroundMain {...defaultProps} />);
+      type("pwd"); await submit();
+      expect(ensureReadyMock).toHaveBeenCalledOnce();
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledOnce();
+      expect(screen.queryByTestId("local-harness-setup-dialog")).not.toBeInTheDocument();
+      expect(mockLocalHarness.state.captureApproval).not.toHaveBeenCalled();
+    });
+    it("opens first-time setup and preserves the draft when cancelled", async () => {
+      mockLocalHarness.state.requestedTarget = null;
       render(<PlaygroundMain {...defaultProps} />);
       type("pwd"); await submit();
       expect(screen.getByTestId("local-harness-setup-dialog")).toBeVisible();
@@ -1102,6 +1126,9 @@ describe("PlaygroundMain — local Claude Code", () => {
       expect(mockUseChatSession.sendMessage).toHaveBeenCalledOnce();
     });
     it("is NOT disabled for missing consent — that is how setup starts", () => {
+      // Both Enter and the button are refused by `submitDisabled` before
+      // `onSubmit` runs, so disabling here would make first-send setup
+      // unreachable.
       render(<PlaygroundMain {...defaultProps} />);
       type("pwd");
       const props = mockChatInputProps.mock.calls.at(-1)?.[0] as {
@@ -1127,6 +1154,8 @@ describe("PlaygroundMain — local Claude Code", () => {
         submitDisabled?: boolean;
       };
       expect(props.submitDisabled).toBe(true);
+      // A disabled Send with no reason on screen is the failure this pairs
+      // against.
       expect(
         screen.getByTestId("local-harness-composer-notice"),
       ).toHaveTextContent("win32 has no local harness runtime");
@@ -1141,6 +1170,7 @@ describe("PlaygroundMain — local Claude Code", () => {
         screen.queryByTestId("local-harness-trust-dialog"),
       ).not.toBeInTheDocument();
       expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      // Ready means no readiness round trip and no consent check with On.
       expect(ensureReadyMock).not.toHaveBeenCalled();
       expect(autoConsentMocks.fetch).not.toHaveBeenCalled();
     });
