@@ -1,5 +1,12 @@
-import { resolveByIdOrName, resolutionError, operationInputError } from "./resource-selectors.js";
-import { environmentNamesFor, resolveSuiteHostTargets } from "./suite-client-targets.js";
+import {
+  resolveByIdOrName,
+  resolutionError,
+  operationInputError,
+} from "./resource-selectors.js";
+import {
+  environmentNamesFor,
+  resolveSuiteHostTargets,
+} from "./suite-client-targets.js";
 import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
 import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
 import {
@@ -2664,9 +2671,6 @@ const DEPRECATED_HOST_SELECTOR_SUFFIX =
   " DEPRECATED: use `client`, which means exactly this.";
 const DEPRECATED_HOSTS_SELECTOR_SUFFIX =
   " DEPRECATED: use `clients`, which means exactly this.";
-
-
-
 
 /**
  * Fold a `client` / `clients` selector onto the `host` / `hosts` field every
