@@ -1,0 +1,37 @@
+name: Hosted harness canaries
+
+# Paid qualification is independent of MCP production promotion.
+on:
+  schedule:
+    - cron: '43 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harness-chat-canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    concurrency:
+      group: harness-chat-canary
+      cancel-in-progress: false
+    env:
+      HARNESS_CHAT_CANARY_CONFIG: ${{ vars.HARNESS_CHAT_CANARY_CONFIG }}
+      HARNESS_CHAT_CANARY_REPORT: ${{ runner.temp }}/harness-chat-canary.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Run two hosted turns with each harness
+        env:
+          MCPJAM_API_KEY: ${{ secrets.HARNESS_CHAT_CANARY_API_KEY }}
+        run: node scripts/hosted-harness-chat-canary.mjs
+      - name: Retain actual canary outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-harness-chat-canary-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/harness-chat-canary.json
+          if-no-files-found: error

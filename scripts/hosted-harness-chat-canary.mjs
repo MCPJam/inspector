@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const evidenceReasons = new Set(['missing_turn', 'fresh_saved_turn_required', 'wrong_execution_target', 'missing_execution_identity', 'missing_public_identity', 'continuation_identity_mismatch', 'runtime_continuation_mismatch', 'native_file_read_unproven', 'exact_mcp_call_unproven']);
+const evidenceReasons = new Set(['native_file_write_unproven', 'missing_turn', 'fresh_saved_turn_required', 'wrong_execution_target', 'missing_execution_identity', 'missing_public_identity', 'continuation_identity_mismatch', 'runtime_continuation_mismatch', 'native_file_read_unproven', 'exact_mcp_call_unproven']);
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 const requireThat = (condition, reason) => { if (!condition) throw new Error(reason); };
 
@@ -41,6 +41,12 @@ export function verifyTurn(turn, client, probe, previous) {
     JSON.stringify(call.input).includes(probe.file) && JSON.stringify(call.output)?.includes(probe.nonce) &&
     (!previous || !JSON.stringify(call.input).includes(probe.nonce)))), 'native_file_read_unproven');
   if (!previous) {
+    const readIndex = calls.findIndex(call => native.some(span => span.toolCallId === call.toolCallId) &&
+      call.status === 'ok' && JSON.stringify(call.input).includes(probe.file) &&
+      !JSON.stringify(call.input).includes(probe.nonce) && JSON.stringify(call.output)?.includes(probe.nonce));
+    requireThat(readIndex > 0 && calls.slice(0, readIndex).some(call =>
+      native.some(span => span.toolCallId === call.toolCallId) && call.status === 'ok' &&
+      JSON.stringify(call.input).includes(probe.file) && JSON.stringify(call.input).includes(probe.nonce)), 'native_file_write_unproven');
     requireThat(spans.some(span => span.toolOrigin === 'mcp' && span.serverId === client.fixtureServerId &&
       span.toolName === client.fixtureToolName && span.wireCorroborated === true && span.evidenceStatus === 'complete' &&
       calls.some(call => call.toolCallId === span.toolCallId && call.status === 'ok' &&
