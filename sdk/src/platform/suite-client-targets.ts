@@ -1,3 +1,4 @@
+import { PlatformApiError } from "./errors.js";
 import type { PlatformApiClient } from "./client.js";
 import type {
   PlatformProject,
@@ -49,13 +50,25 @@ async function clientEnvironment(
   selector: string,
   signal: AbortSignal | undefined
 ): Promise<{ id: string; name?: string } | undefined> {
-  const attached = await Promise.all(
+  const attachedResults = await Promise.all(
     (detail?.environmentIds ?? []).map((environmentId) =>
-      client.getEnvironment(
-        { projectId: project.id, environmentId },
-        { signal }
-      )
+      client
+        .getEnvironment({ projectId: project.id, environmentId }, { signal })
+        .catch((error: unknown) => {
+          // Deleted attachments do not invalidate the other saved targets.
+          if (
+            error instanceof PlatformApiError &&
+            error.status === 404 &&
+            error.code === "NOT_FOUND" &&
+            error.codeSource === "envelope"
+          )
+            return undefined;
+          throw error;
+        })
     )
+  );
+  const attached = attachedResults.filter(
+    (environment) => environment !== undefined
   );
   let clientId = selector.trim();
   if (
@@ -84,7 +97,7 @@ async function clientEnvironment(
   );
   if (matches.length > 1) {
     throw operationInputError(
-      `TARGET_REQUIRED: Client "${selector}" has several attached environments: ${formatResourceList(
+      `TARGET_REQUIRED — Client "${selector}" has several attached environments: ${formatResourceList(
         matches
       )}. Select one with environment.`
     );

@@ -40,6 +40,16 @@ function fixture(
           { id: "other", name: "Other" },
         ],
       });
+    if (path.endsWith("/environments/deleted"))
+      return Response.json(
+        { code: "NOT_FOUND", message: "Environment deleted" },
+        { status: 404 }
+      );
+    if (path.endsWith("/environments/failed"))
+      return Response.json(
+        { code: "INTERNAL_ERROR", message: "Lookup failed" },
+        { status: 500 }
+      );
     if (/\/environments\/env/.test(path))
       return Response.json({
         id: path.split("/").pop(),
@@ -77,6 +87,28 @@ describe("environment-backed suite client selectors", () => {
     }
   );
 
+  it("resolves a surviving attachment when another environment was deleted", async () => {
+    const f = fixture(["deleted", "env1"]);
+    await runEvalSuiteOperation.execute(
+      { project: "p1", suite: "s1", client: "client1" },
+      f
+    );
+    expect(f.writes).toEqual([
+      expect.objectContaining({ environmentId: "env1" }),
+    ]);
+  });
+
+  it("does not hide an environment lookup failure", async () => {
+    const f = fixture(["failed", "env1"]);
+    await expect(
+      runEvalSuiteOperation.execute(
+        { project: "p1", suite: "s1", client: "client1" },
+        f
+      )
+    ).rejects.toThrow("Lookup failed");
+    expect(f.writes).toEqual([]);
+  });
+
   it("lists every matching environment and launches nothing when the client is ambiguous", async () => {
     const f = fixture(["env1", "env2"]);
     await expect(
@@ -84,7 +116,7 @@ describe("environment-backed suite client selectors", () => {
         { project: "p1", suite: "s1", client: "client1" },
         f
       )
-    ).rejects.toThrow(/TARGET_REQUIRED.*env1.*Second profile.*env2/);
+    ).rejects.toThrow(/TARGET_REQUIRED —.*env1.*Second profile.*env2/);
     expect(f.writes).toEqual([]);
   });
 
