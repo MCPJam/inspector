@@ -28,13 +28,15 @@ export class PluginContextNotPersisted extends PluginContextUpdateRejected {
     super(PLUGIN_CONTEXT_NOT_PERSISTED_MESSAGE);
   }
 }
-/** Server refusals that mean the update was not stored. */
+/** Server refusals that mean the update was not stored. `RATE_LIMITED` is
+ * the hosted operation limiter, which answers before the route runs. */
 export const PLUGIN_CONTEXT_NOT_PERSISTED_CODES: ReadonlySet<string> = new Set([
   "PLUGIN_CONTEXT_TOO_LARGE",
   "PLUGIN_CONTEXT_MEMORY_LIMIT",
   "INSTANCE_CONTEXT_RATE_LIMITED",
   "INSTANCE_CONTEXT_TOO_LARGE",
   "INVALID_INSTANCE_CONTEXT",
+  "RATE_LIMITED",
 ]);
 /** Refuse an update over a budget before it is sent, as the server would. */
 function parseUpdate(
