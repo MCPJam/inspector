@@ -1,3 +1,4 @@
+import { localRuntimeVersion } from "./local/runtime-version.js";
 import {
   diskResumeState,
   sessionResumeStateFrom,
@@ -972,6 +973,7 @@ export async function runHarnessTurn(
   // not version-pinned by the package pin. Telemetry only — see the capture in
   // `onSandboxSession` and `runtimeVersionCommand` in the registry.
   let installedRuntimeVersion: string | undefined;
+  let execution: import("@/shared/execution-receipt").RuntimeExecution | undefined;
   let capturedTurnTrace: PersistedTurnTrace | undefined;
   // A Stop or the caller's deadline ended a Claude Code background drain: the
   // answer was delivered, so the turn is committed as finished (see
@@ -3199,6 +3201,13 @@ export async function runHarnessTurn(
       // Session is up: the finalizer + heartbeat now own the continuity lane, so
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
+      execution = {
+        engine: `harness:${harnessAdapter.id}`,
+        venue: localPrepared ? "local" : "hosted",
+        runtimeVersion: localPrepared
+          ? await localRuntimeVersion(localPrepared.plan.runtime)
+          : installedRuntimeVersion ?? harnessAdapter.pinnedRuntimeVersion ?? null,
+      };
 
       // DELIVERY STAMP for the external-account credential — HERE, because this
       // is the first point at which the runtime has actually taken it: the
@@ -4779,6 +4788,7 @@ export async function runHarnessTurn(
   return {
     messageHistory,
     aborted,
+    ...(execution ? { execution } : {}),
     ...(capturedTurnTrace ? { turnTrace: capturedTurnTrace } : {}),
     ...(capturedTurnTrace && drainEndedByAbort
       ? { backgroundDrainEnded: true }

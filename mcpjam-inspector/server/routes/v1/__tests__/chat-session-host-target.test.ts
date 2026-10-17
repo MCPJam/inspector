@@ -256,7 +256,10 @@ beforeEach(() => {
     finalizeUsage: async () => {},
     classifyFailure: () => "failed",
   });
-  runUnifiedAssistantTurnMock.mockResolvedValue({
+  runUnifiedAssistantTurnMock.mockImplementation(async () => {
+    const harness = resolveTurnRuntimeMock.mock.calls.at(-1)?.[0]?.harness;
+    return {
+    ...(typeof harness === "string" ? { execution: { engine: `harness:${harness}`, venue: "hosted", runtimeVersion: "2.1.0" } } : {}),
     messages: [],
     assistantMessages: [
       { role: "assistant", content: [{ type: "text", text: "ok" }] },
@@ -267,6 +270,7 @@ beforeEach(() => {
     usage: { inputTokens: 1, outputTokens: 2 },
     finishReason: "stop",
     aborted: false,
+    };
   });
   persistChatSessionToConvexMock.mockResolvedValue({
     outcome: "saved",
@@ -320,6 +324,7 @@ describe("host targeting dispatches the real harness", () => {
     // The response SAYS which engine ran. This is the field whose absence let
     // a silently emulated turn look identical to a harness one.
     expect(body.engine).toBe("harness:claude-code");
+    expect(body.execution).toEqual({ engine: "harness:claude-code", venue: "hosted", runtimeVersion: "2.1.0", sessionId: body.chatSessionId, turnId: body.turnId });
     expect(body.hostId).toBe(HOST);
   });
 
@@ -1710,6 +1715,7 @@ describe("the turn deadline after a harness turn delivered", () => {
       });
   }
   const delivered = {
+    execution: { engine: "harness:claude-code", venue: "hosted", runtimeVersion: "2.1.0" },
     messages: [],
     assistantMessages: [
       { role: "assistant", content: [{ type: "text", text: "the plan" }] },

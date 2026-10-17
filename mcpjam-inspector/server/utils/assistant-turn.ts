@@ -379,6 +379,7 @@ export interface RunAssistantTurnResult {
    * finished; a caller that treats its abort as a timeout must not.
    */
   backgroundDrainEnded?: true;
+  execution?: import("@/shared/execution-receipt").RuntimeExecution;
 }
 
 function extractAssistantMessages(
@@ -780,6 +781,7 @@ export async function runAssistantTurn(
     ...(capturedHarnessCommit
       ? { harnessSessionCommit: capturedHarnessCommit }
       : {}),
+    ...(engineResult.execution ? { execution: engineResult.execution } : {}),
     ...(engineResult.backgroundDrainEnded
       ? { backgroundDrainEnded: true as const }
       : {}),

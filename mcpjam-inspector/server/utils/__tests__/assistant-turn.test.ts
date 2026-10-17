@@ -704,11 +704,9 @@ describe("runAssistantTurn", () => {
 
     it("runs a supported pair on the harness", async () => {
       global.fetch = vi.fn();
-      runHarnessTurnMock.mockResolvedValue({
-        messageHistory: [],
-        aborted: false,
-      });
-      await turn(
+      const execution = { engine: "harness:codex", venue: "local", runtimeVersion: "0.99.0" };
+      runHarnessTurnMock.mockResolvedValue({ messageHistory: [], aborted: false, execution });
+      const result = await turn(
         {
           id: "openai/gpt-5.5",
           provider: "openai",
@@ -716,6 +714,7 @@ describe("runAssistantTurn", () => {
         } as ModelDefinition,
         "codex"
       );
+      expect(result.execution).toEqual(execution);
       expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
       expect(global.fetch).not.toHaveBeenCalled();
     });

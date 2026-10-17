@@ -31465,6 +31465,41 @@
             "type": "string",
             "description": "WHICH ENGINE RAN: `emulated`, or `harness:<id>` such as `harness:claude-code`. Present on every turn. Read it rather than infer it from `model`. `hostId` is per-turn: a continuation of a host-only session is refused without it, and one that pinned its own `serverIds` runs the emulated engine — this is the field that says which."
           },
+          "execution": {
+            "type": "object",
+            "description": "Server-owned evidence of the runtime that executed this turn. Absent on an idempotent replay.",
+            "required": [
+              "engine",
+              "venue",
+              "runtimeVersion",
+              "sessionId",
+              "turnId"
+            ],
+            "properties": {
+              "engine": {
+                "type": "string"
+              },
+              "venue": {
+                "type": "string",
+                "enum": [
+                  "hosted",
+                  "local"
+                ]
+              },
+              "runtimeVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "turnId": {
+                "type": "string"
+              }
+            }
+          },
           "hostId": {
             "type": "string",
             "description": "The saved host this turn executed as — the pointer the caller sent, or the host the targeted environment pins. Absent when the turn named no host."

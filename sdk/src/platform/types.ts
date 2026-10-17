@@ -667,12 +667,21 @@ export interface PlatformChatTurn {
    * session pinned a target of its own.
    */
   engine?: string;
+  /** Server-owned execution evidence; absent on an idempotent replay. */
+  execution?: {
+    engine: string;
+    venue: "hosted" | "local";
+    runtimeVersion: string | null;
+    sessionId: string;
+    turnId: string;
+  };
   /** The saved host this turn executed as, when it named one. */
   hostId?: string;
   advertisedToolCount?: number;
   excludedToolCount?: number;
   persisted: { outcome: string; version?: number };
   origin: string;
+  /** Set when an idempotencyKey replayed an already-completed turn. */
   /** Set when an idempotencyKey replayed an already-completed turn. */
   replay?: true;
   message?: string;

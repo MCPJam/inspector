@@ -4891,6 +4891,7 @@ export interface ChatEngineLoopResult {
    * finished and was kept; it was not cut short.
    */
   backgroundDrainEnded?: true;
+  execution?: import("@/shared/execution-receipt").RuntimeExecution;
 }
 
 /**
