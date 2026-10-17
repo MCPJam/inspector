@@ -19,7 +19,7 @@ import {
   peekPageToolsForChatTurn,
   pageToolsSnapshotFrom,
 } from "./browserd/page-tools-peek.js";
-import { webmcpPageToolsMode } from "../config.js";
+import { HOSTED_MODE, webmcpPageToolsMode } from "../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { type ModelMessage } from "ai";
 import {
@@ -190,6 +190,12 @@ import {
   createSuiteRunRecorder,
   type SuiteRunRecorder,
 } from "./evals/recorder";
+import {
+  HarnessIterationRecordError,
+  iterationRecordFailure,
+  missingIterationRecordError,
+  settlePrecreatedIterations,
+} from "./evals/iteration-record.js";
 import { finalizeAiSdkTraceOnFailure } from "./evals/eval-trace-capture";
 import type {
   EvalTraceBlobV1,
@@ -2001,37 +2007,16 @@ async function createIterationDirectly(
     );
 
     iterationId = result?.iterationId as string | undefined;
+    if (!iterationId && HOSTED_MODE)
+      throw new Error("Eval setup returned no iteration.");
   } catch (error) {
-    logger.error("[evals] Failed to create iteration:", error);
-    if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
-    if (params.requireRecord) {
-      throw new HarnessIterationRecordError(
-        `${HARNESS_ITERATION_RECORD_REQUIRED}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        { cause: error },
-      );
-    }
+    const failure = iterationRecordFailure(error, params);
+    if (failure) throw failure;
     return undefined;
   }
-  if (!iterationId && params.requireRecord) {
-    throw new HarnessIterationRecordError(
-      `${HARNESS_ITERATION_RECORD_REQUIRED}: the backend returned no iteration id`,
-    );
-  }
+  if (!iterationId && params.requireRecord) throw missingIterationRecordError();
   return iterationId;
 }
-
-const HARNESS_ITERATION_RECORD_REQUIRED =
-  "Could not record this eval iteration, which a hosted harness run needs " +
-  "to provision its own computer, so the run was refused";
-
-/**
- * Typed so the quick-run settle loop rethrows it: a run refused before it took
- * a row has nothing of its own to answer with, and the route would otherwise
- * report the case's latest iteration, another run's, as this one's result.
- */
-class HarnessIterationRecordError extends Error {}
 
 /**
  * Persist a failed iteration row when iteration setup throws BEFORE the
@@ -3775,6 +3760,15 @@ const executeTestCase = async (params: {
         const id = await createIterationDirectly(convexClient, iterationParams);
         precreatedIterationIds.push(id);
       } catch (error) {
+        if (error instanceof WebRouteError) {
+          // Rows created before the refusal would otherwise stay running.
+          await settlePrecreatedIterations(
+            convexClient,
+            precreatedIterationIds,
+            error.message,
+          );
+          throw error;
+        }
         logger.warn(
           "[evals] Failed to precreate iteration row; falling back to per-loop create",
           {
@@ -4679,7 +4673,8 @@ export const runEvalSuiteWithAiSdk = async ({
       } else {
         if (
           runId === null &&
-          result.reason instanceof HarnessIterationRecordError
+          (result.reason instanceof HarnessIterationRecordError ||
+            result.reason instanceof WebRouteError)
         ) {
           throw result.reason;
         }

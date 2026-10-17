@@ -3,6 +3,7 @@ import {
   classifyFailure,
   startScheduledEvalsWorker,
 } from "../scheduled-evals-worker";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors";
 
 const CLAIM = {
   triggerId: "trig-1",
@@ -120,6 +121,32 @@ describe("classifyFailure", () => {
     expect(
       classifyFailure(
         new Error('{"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}'),
+      ),
+    ).toBe("quota_exhausted");
+  });
+
+  it("pauses on a refusal whose codes sit only in the translated details", () => {
+    // The web route translates billing refusals into prose messages, so the
+    // codes survive only in `details`.
+    expect(
+      classifyFailure(
+        new WebRouteError(
+          402,
+          ErrorCode.PAYMENT_REQUIRED,
+          "This organization's spend budget is reached.",
+          {
+            code: "ORGANIZATION_SPEND_BUDGET_REACHED",
+            reason: "spend_budget_reached",
+          },
+        ),
+      ),
+    ).toBe("quota_exhausted");
+    expect(
+      classifyFailure(
+        new WebRouteError(402, ErrorCode.PAYMENT_REQUIRED, "Add credits.", {
+          code: "platform_fee_refused",
+          reason: "insufficient_credits",
+        }),
       ),
     ).toBe("quota_exhausted");
   });

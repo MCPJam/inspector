@@ -85,3 +85,9 @@ describe("platform admission transport", () => {
     },
   );
 });
+
+
+it.each(["org_refused", 17, null])("forwards only a string billing organization: %j", async (organizationId) => {
+  const response = await app({ code: "platform_fee_refused", reason: "insufficient_credits", message: "Add credits.", organizationId }).request("/");
+  expect((await response.json()).details).toEqual({ code: "platform_fee_refused", reason: "insufficient_credits", ...(typeof organizationId === "string" ? { organizationId } : {}) });
+});

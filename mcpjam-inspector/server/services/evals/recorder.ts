@@ -25,7 +25,7 @@ import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
-import { ConvexError } from "convex/values";
+import { asBillingRouteError } from "./billing-refusal.js";
 import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -51,40 +51,6 @@ type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
 type ExecutionType = "model" | "model_free" | "harness";
 const RUNTIME_TELEMETRY_TIMEOUT_MS = 2_000;
 
-/**
- * When a Convex mutation rejects because a billing/entitlement cap was hit
- * (e.g. `maxEvalIterationsPerMonth`), the structured payload lives on
- * `ConvexError.data`. Re-emit it as a 402 `WebRouteError` carrying that exact
- * payload in `details`, so the route serializes it onto the JSON body and the
- * client can rebuild a ConvexError and render the proper upgrade message —
- * instead of collapsing it into a generic 500 where the billing fields are
- * lost. Returns null for any non-billing error so callers fall through to
- * their normal handling.
- */
-export function asBillingRouteError(error: unknown): WebRouteError | null {
-  if (!(error instanceof ConvexError)) {
-    return null;
-  }
-  const data = error.data as { code?: unknown; message?: unknown } | undefined;
-  if (
-    !data ||
-    typeof data !== "object" ||
-    (data.code !== "billing_limit_reached" &&
-      data.code !== "billing_feature_not_included")
-  ) {
-    return null;
-  }
-  const message =
-    typeof data.message === "string" && data.message.length > 0
-      ? data.message
-      : "Your plan limit was reached.";
-  return new WebRouteError(
-    402,
-    ErrorCode.BILLING_LIMIT_REACHED,
-    message,
-    data as Record<string, unknown>,
-  );
-}
 
 type SuiteRunEnvironmentSnapshot = {
   servers: string[];
@@ -939,7 +905,8 @@ export const startSuiteRunWithRecorder = async ({
     });
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error);
-    logger.error("[evals] Failed to pre-create suite run iterations", error, {
+    const billing = asBillingRouteError(error);
+    if (!billing || billing.status >= 500) logger.error("[evals] Failed to pre-create suite run iterations", error, {
       suiteId,
       runId,
     });
@@ -967,7 +934,6 @@ export const startSuiteRunWithRecorder = async ({
     // exhaust the cap can still trip the reserve here. Preserve the billing
     // payload so the client renders the proper upgrade message; the run was
     // already finalized failed above, so no pending group is left behind.
-    const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
     }
