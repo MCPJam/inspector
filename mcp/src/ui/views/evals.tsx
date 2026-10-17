@@ -39,13 +39,7 @@ import {
   StatTile,
   ViewHeader,
 } from "./atoms.js";
-
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "canceled",
-]);
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 
 export function EvalSuitesView({
   isDark,
@@ -224,7 +218,7 @@ export function EvalRunView({
   payload: GetEvalRunResult;
 }) {
   const run = payload.run;
-  const isTerminal = TERMINAL_RUN_STATUSES.has(run.status);
+  const isTerminal = isEvalRunTerminalStatus(run.status);
 
   return (
     <>

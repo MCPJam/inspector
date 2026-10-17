@@ -4,7 +4,7 @@ import type {
   EvalRunDecisionDiagnostic,
 } from "@mcpjam/sdk/contract";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import { Search } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -277,7 +277,7 @@ export function RunResultsMatrix({
   const [status, setStatus] = useState(ALL_EVAL_FILTER_VALUES);
   const [view, setView] = useState<MatrixView>("results");
   const showPending = [run, ...runs].some(
-    (item) => !isTerminalEvalRunStatus(item.status),
+    (item) => !isEvalRunTerminalStatus(item.status),
   );
   const counts = resultCounts(
     data.targets.flatMap((target) => target.iterations),
