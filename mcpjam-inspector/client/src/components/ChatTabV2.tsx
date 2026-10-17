@@ -35,7 +35,6 @@ import {
   OrgAiRefusalHandoffProvider,
   orgAiRefusalHandoff,
 } from "@/contexts/org-ai-refusal-context";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
@@ -159,8 +158,7 @@ import {
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
 import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
 
 interface ChatTabProps {
@@ -277,9 +275,8 @@ export function ChatTabV2({
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [elicitationQueue, setElicitationQueue] = useState<DialogElicitation[]>(
     []
   );
@@ -1706,21 +1703,6 @@ export function ChatTabV2({
     );
     setWidgetStateQueue([]);
   }, [status, widgetStateQueue, setMessages]);
-
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      }
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context)
-      );
-    },
-    []
-  );
 
   const activeElicitation = elicitationQueue[0] ?? null;
 
