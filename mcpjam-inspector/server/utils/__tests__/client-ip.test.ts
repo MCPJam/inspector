@@ -157,6 +157,10 @@ describe("ipRateLimitKey", () => {
     expect(ipRateLimitKey("0:0:0:0:0:ffff:cb00:710a")).toBe("203.0.113.10");
   });
 
+  it("drops the zone from a link-local IPv6 address before keying it", () => {
+    expect(ipRateLimitKey("fe80::1%eth0")).toBe("fe80::/64");
+  });
+
   it("does not treat other embedded-IPv4 forms as IPv4", () => {
     expect(ipRateLimitKey("64:ff9b::203.0.113.10")).toBe("64:ff9b:0:0::/64");
     expect(ipRateLimitKey("::ffff:0:203.0.113.10")).toBe("0:0:0:0::/64");
