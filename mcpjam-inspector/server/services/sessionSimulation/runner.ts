@@ -140,7 +140,7 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
-import { requirePersistedHarnessTurn } from "./harness-persistence.js";
+import { failedHarnessPersist, requirePersistedHarnessTurn } from "./harness-persistence.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 import { ranTurnSelection } from "../../utils/session-model-selection";
@@ -1463,7 +1463,7 @@ export async function runSyntheticHostSession(
         ...(toolSnapshot ? { toolSnapshot } : {}),
         // Caller-persist harness turns commit resume state with the transcript.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
-      });
+      }).catch(failedHarnessPersist(harnessSessionCommit));
       warnIfSimulationPersistNotSaved(turnPersist, "turn", chatSessionId);
       // Do not retry a rejected turn from the terminal empty-session fallback.
       anyTurnPersisted = true;
