@@ -46,7 +46,7 @@ export async function verifyLocalHarnessMember(bearer: string, projectId: string
     client.query("projects:getMyProjects" as never, {}),
     client.query("users:getCurrentUser" as never, {}),
   ]) as [Array<{ _id: string }>, { email?: string; externalId?: string } | null];
-  if (trustedActor && user?.externalId !== trustedActor.subject) throw new Error("Background execution identity changed");
+  if (trustedActor && user?.externalId !== trustedActor.subject) throw new LocalHarnessRefusalError("Background execution identity changed. Start the run again from the account that launched it.", "UNAUTHORIZED");
   if (!Array.isArray(projects) || !projects.some(p => String(p._id) === projectId)) throw new LocalHarnessRefusalError("Project membership is required for local execution");
   if (!(await evaluateLocalHarnessRollout(actor.actor.subject, user?.email, LOCAL_HARNESS_ROLLOUT_FLAG[harnessId]))) throw new LocalHarnessRefusalError(`Local ${name} is not available for this account yet`);
   return actor.actor;
@@ -87,6 +87,10 @@ export async function ensureLocalHarnessTarget(args: {
   runWorkspaceGrantId?: string;
   waitForInstall?: boolean;
   requireToolApproval?: boolean;
+  /** API runs: started by a bearer, not a click, with nobody to ask. They
+   *  need the member's recorded "Run commands without asking" consent; the
+   *  durable authorization alone only covers the attended setup it disclosed. */
+  requireAutoApproveAcknowledgement?: boolean;
   /** Verified once at the signed-in launch; only trusted schedulers pass this. */
   trustedActor?: LocalHarnessActor;
   /** Which local harness. Each has its own runtime, rollout flag and durable
@@ -102,13 +106,12 @@ export async function ensureLocalHarnessTarget(args: {
   const machineId = await getLocalMachineId();
   const authorization = await readLocalHarnessAuthorization(actor.userId, machineId, args.projectId, harnessId);
   if (!authorization) throw new LocalHarnessRefusalError(`Set up ${name} from Add client to allow it to run on this computer`);
-  if (args.scope === "attended" && args.requireToolApproval === false && !authorization.autoApproveAcknowledgedAt) {
+  const runsWithoutAsking = (args.scope === "attended" && args.requireToolApproval === false) || args.requireAutoApproveAcknowledgement === true;
+  if (runsWithoutAsking && !authorization.autoApproveAcknowledgedAt) {
     throw new LocalAutoApproveConsentRequiredError();
   }
   if (args.workspaceGrantId && args.workspaceGrantId !== authorization.workspaceGrantId)
     throw new LocalHarnessRefusalError("Choose the workspace authorized through Add client on this computer");
-  if (args.scope === "unattended" && !authorization.unattended)
-    throw new LocalHarnessRefusalError("Set up unattended local execution through Add client on this computer");
   noteRuntimeMetricsActor(actor.subject);
   // Selection reads revocations from the cache only. Keep it fresh for an
   // Inspector that runs for days on its desired pack (rate-limited; never
@@ -151,10 +154,10 @@ export async function ensureLocalHarnessTarget(args: {
   const identity = await readLocalInstanceIdentity();
   // Detached work reuses the instance registered by the original member setup.
   if (args.trustedActor) {
-    if (!identity.keyId) throw new Error(`Reopen ${name} from Playground before starting local background work`);
+    if (!identity.keyId) throw new LocalHarnessRefusalError(`Reopen ${name} from Playground before starting local background work`, "CONFLICT");
   } else {
     const registration = await registerLocalInstance({ machineId, publicKey: identity.publicKey, bearer: args.bearer });
-    if (!registration.ok) throw new Error(registration.error);
+    if (!registration.ok) throw new LocalHarnessRefusalError(registration.error, "CONFLICT");
     setRegisteredKeyId(registration.keyId);
   }
   const permissionProfile = args.scope === "unattended" ? "unrestricted" : "workspace-edits";

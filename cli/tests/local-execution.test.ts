@@ -58,12 +58,12 @@ function fixture(harnessId: Harness) {
           persisted: { outcome: "saved" },
           execution: {
             engine: `harness:${harnessId}`,
-            venue: "local-native",
+            venue: "local",
             runtimeVersion: "fixture-1",
             sessionId: "wire",
             turnId: `turn-${turn}`,
           },
-        })
+        }),
       );
     } else {
       res.statusCode = 404;
@@ -74,11 +74,11 @@ function fixture(harnessId: Harness) {
 }
 async function withFixture(
   harnessId: Harness,
-  run: (url: string, state: ReturnType<typeof fixture>) => Promise<void>
+  run: (url: string, state: ReturnType<typeof fixture>) => Promise<void>,
 ) {
   const state = fixture(harnessId);
   await new Promise<void>((resolve) =>
-    state.server.listen(0, "127.0.0.1", resolve)
+    state.server.listen(0, "127.0.0.1", resolve),
   );
   const address = state.server.address();
   assert.ok(address && typeof address !== "string");
@@ -87,7 +87,7 @@ async function withFixture(
   } finally {
     state.server.closeAllConnections();
     await new Promise<void>((resolve, reject) =>
-      state.server.close((error) => (error ? reject(error) : resolve()))
+      state.server.close((error) => (error ? reject(error) : resolve())),
     );
   }
 }
@@ -98,7 +98,7 @@ function assertWire(requests: Request[], token: string) {
     assert.equal(JSON.stringify(request.body).includes(token), false);
     assert.equal(
       (request.body.executionTarget as { kind: string }).kind,
-      "local-native"
+      "local-native",
     );
   }
   assert.equal(requests[2].body.sessionId, "session");
@@ -112,8 +112,13 @@ for (const harnessId of ["claude-code", "codex"] as const) {
         getAuth: () => "verified-user-token",
       });
       const grant = await authorizeLocalExecutionOperation.execute(
-        { project: "project", harnessId, allowUnattended: true },
-        { client }
+        {
+          project: "project",
+          harnessId,
+          allowUnattended: true,
+          workspaceGrantId: "workspace",
+        },
+        { client },
       );
       const first = await sendChatMessageOperation.execute(
         {
@@ -125,7 +130,7 @@ for (const harnessId of ["claude-code", "codex"] as const) {
           idempotencyKey: "first",
           executionTarget: grant.target,
         },
-        { client }
+        { client },
       );
       const second = await sendChatMessageOperation.execute(
         {
@@ -134,7 +139,7 @@ for (const harnessId of ["claude-code", "codex"] as const) {
           idempotencyKey: "second",
           executionTarget: grant.target,
         },
-        { client }
+        { client },
       );
       assert.equal(first.execution?.sessionId, second.execution?.sessionId);
       assert.notEqual(first.execution?.turnId, second.execution?.turnId);
@@ -163,6 +168,8 @@ for (const harnessId of ["claude-code", "codex"] as const) {
           "--harness",
           harnessId,
           "--allow-unattended",
+          "--workspace-grant",
+          "workspace",
         ]);
         assert.equal(grant.exitCode, 0, grant.stderr);
         const grantFile = join(directory, "grant.json");
@@ -195,7 +202,7 @@ for (const harnessId of ["claude-code", "codex"] as const) {
           `@${grantFile}`,
         ]);
         assert.equal(second.exitCode, 0, second.stderr);
-        assert.equal(JSON.parse(second.stdout).execution.venue, "local-native");
+        assert.equal(JSON.parse(second.stdout).execution.venue, "local");
         assertWire(state.requests, state.target.grantToken);
       } finally {
         await rm(directory, { recursive: true, force: true });

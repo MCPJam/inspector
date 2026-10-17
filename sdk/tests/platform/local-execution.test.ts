@@ -1,12 +1,20 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import spec from "../../../../docs/reference/openapi.json";
 import { z } from "zod";
-import { PlatformApiClient } from "../client.js";
-import { authorizeLocalExecutionOperation } from "../operations.js";
+import { PlatformApiClient } from "../../src/platform/client.js";
+import { authorizeLocalExecutionOperation } from "../../src/platform/operations.js";
+import { hostedSendChatMessageOperation } from "../../src/platform/hosted-chat-operation.js";
 import {
   localExecutionAuthorizationSchema,
   localExecutionTargetSchema,
-} from "../local-execution.js";
+} from "../../src/platform/local-execution.js";
+
+const spec = JSON.parse(
+  readFileSync(
+    new URL("../../../docs/reference/openapi.json", import.meta.url),
+    "utf8"
+  )
+) as { components: { schemas: Record<string, unknown> } };
 const target = {
   kind: "local-native",
   scope: "unattended",
@@ -90,4 +98,16 @@ it("documents the same authorization and target schemas as the SDK", () => {
     const { $schema: _dialect, ...contract } = z.toJSONSchema(schema);
     expect(spec.components.schemas[name]).toEqual(contract);
   }
+});
+
+it("keeps the local capability out of model-facing chat tool arguments", () => {
+  const turn = { message: "hi", idempotencyKey: "k" };
+  const schema = hostedSendChatMessageOperation.inputSchema;
+  expect(
+    schema.safeParse({ ...turn, executionTarget: { kind: "hosted" } }).success
+  ).toBe(true);
+  expect(schema.safeParse({ ...turn, executionTarget: target }).success).toBe(
+    false
+  );
+  expect(JSON.stringify(z.toJSONSchema(schema))).not.toContain("grantToken");
 });

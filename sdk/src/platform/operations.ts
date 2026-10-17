@@ -9361,7 +9361,7 @@ export const listChatSessionsOperation: PlatformOperation<
 
 export const authorizeLocalExecutionOperation = createLocalExecutionAuthorizationOperation(resolveProjectOrThrow);
 
-const sendChatMessageInput = z.object({
+export const sendChatMessageInput = z.object({
   executionTarget: platformExecutionTargetSchema.optional().describe("Explicit execution venue. Re-send the authorized local target on every local turn; a missing or invalid grant never falls back to hosted execution."),
   browser: z
     .object({
@@ -9554,6 +9554,7 @@ export const sendChatMessageOperation: PlatformOperation<
         ...(projectId ? { projectId } : {}),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         ...(input.modelId ? { modelId: input.modelId } : {}),
+        // Forwarded explicitly, like every field: the client builds the body key by key and drops anything not handed over.
         ...(input.executionTarget ? { executionTarget: input.executionTarget } : {}),
         ...(input.hostId ? { hostId: input.hostId } : {}),
         ...(input.environmentId ? { environmentId: input.environmentId } : {}),
