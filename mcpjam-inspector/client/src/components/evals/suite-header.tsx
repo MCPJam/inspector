@@ -62,6 +62,7 @@ import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
 import { countSuiteRunPlans } from "./helpers";
+import { RunVenueHints } from "@/components/harness/RunVenueHints";
 import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
 import { SuiteRunDisclosureHint } from "./run-disclosure-hint";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
@@ -666,14 +667,11 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             ) : (
               runAllButton
             );
-          // The estimate rides BESIDE the CTA (never inside its disabled
-          // tooltip trigger) so it stays readable whether or not Run all is
-          // currently runnable, and it never gates the run. `countSuiteRunPlans`
-          // is the same fan-out width `buildSuiteRunPlans` produces; the hint
-          // renders nothing — and fetches nothing — when the flag is off.
+          // Keep venue and estimates beside the CTA so disabled actions still explain the run.
           return (
             <span className="inline-flex items-center gap-1.5">
               {runAllControl}
+              <RunVenueHints projectId={suite.projectId} environmentIds={suite.environmentIds} hostIds={suite.hostAttachments?.map(host => host.namedHostId)} />
               <SuiteRunCostEstimateHint
                 suiteId={suite._id}
                 planCount={countSuiteRunPlans(suite)}

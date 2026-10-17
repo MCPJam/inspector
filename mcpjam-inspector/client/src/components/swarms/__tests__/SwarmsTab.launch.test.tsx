@@ -26,6 +26,7 @@ const host = { hostId: "host-1", name: "Host One" };
 
 // Convex reads dispatched by query name; runs/sessions are empty.
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     switch (name) {

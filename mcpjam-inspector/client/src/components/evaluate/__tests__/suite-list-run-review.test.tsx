@@ -17,7 +17,7 @@ vi.mock("convex/react", () => ({
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
 }));
-vi.mock("@/hooks/useClients", () => ({ useHostList: () => ({ hosts: [] }) }));
+vi.mock("@/hooks/useClients", () => ({ useHostList: () => ({ hosts: [] }), useHost: () => ({ host: null, isLoading: false }) }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => [],
 }));

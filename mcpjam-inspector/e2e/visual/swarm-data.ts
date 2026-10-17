@@ -156,6 +156,11 @@ export const swarmFixture: AppFixture = {
         serverCount: 1,
       },
     ],
+    "hosts:getHost": {
+      hostId,
+      name: "Weather assistant",
+      config: {},
+    },
     "journeyRuns:listRunningPersonaRefIds": [],
     "journeyRuns:getSwarmOverview": overview,
     "serverAttachments:listServerAttachments": [],
