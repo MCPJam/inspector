@@ -1,6 +1,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
+import { buildAvailableModels } from "@/components/chat-v2/shared/model-helpers";
 
 /**
  * Regression coverage for the auth-bootstrap window behind the `Bearer ` 502.
@@ -225,5 +226,23 @@ describe("useChatSession — request-time chat Authorization", () => {
     for (const option of mockState.transportOptions) {
       expect(option.headers?.Authorization).toBeUndefined();
     }
+  });
+
+  it("does not refetch metadata when a model row is rebuilt with the same identity", async () => {
+    vi.mocked(buildAvailableModels).mockImplementation(() => [{ ...byokModel }]);
+    mockState.getToolsMetadata.mockResolvedValueOnce({
+      metadata: {}, toolServerMap: {}, tokenCounts: null,
+    });
+    // Bound a regression loop so it fails without flooding the test runner.
+    mockState.getToolsMetadata.mockImplementation(() => new Promise(() => {}));
+    const { rerender } = renderHook(
+      ({ server }) => useChatSession({ selectedServers: [server] }),
+      { initialProps: { server: "server-1" } },
+    );
+    await waitFor(() => expect(mockState.getToolsMetadata).toHaveBeenCalled());
+    rerender({ server: "server-1" });
+    expect(mockState.getToolsMetadata).toHaveBeenCalledTimes(1);
+    rerender({ server: "server-2" });
+    await waitFor(() => expect(mockState.getToolsMetadata).toHaveBeenCalledTimes(2));
   });
 });

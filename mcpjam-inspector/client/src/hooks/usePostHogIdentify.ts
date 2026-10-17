@@ -145,7 +145,7 @@ export function usePostHogIdentify() {
       ) {
         // Bypass SDK profile dedup after a delivery-blocking permission window.
         // capture still enforces opt-out, capture-time grants and live send policy.
-        retryPersonProfile(posthog, personProperties);
+        retryPersonProfile(posthog, personProperties, actorKey);
       }
       profileAttemptRef.current = {
         actor: actorKey,

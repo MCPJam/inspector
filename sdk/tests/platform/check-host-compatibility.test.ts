@@ -3,6 +3,12 @@ import {
   checkHostCompatibilityOperation,
   PlatformApiClient,
 } from "../../src/platform/index.js";
+import { toolResultAuthChallengeFindings } from "../../src/platform/operations.js";
+import { bundledHostCompatCatalog } from "../../src/host-compat/index.js";
+import {
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  authChallengePolicyFrom,
+} from "../../src/mcp-client-manager/auth-challenge.js";
 
 const PROJECT = {
   id: "p1",
@@ -172,5 +178,165 @@ describe("checkHostCompatibilityOperation", () => {
     ).toBe(true);
     // Claude supports `message` → still works.
     expect(verdictById(result).claude).toBe("works");
+  });
+});
+
+describe("checkHostCompatibilityOperation — tool-result sign-in challenges", () => {
+  /** A client whose `tools/list` serves exactly `tools`, as raw MCP tools. */
+  function makeToolsClient(tools: Array<Record<string, unknown>>) {
+    const fetchMock = vi.fn(async (target: unknown) => {
+      const path = new URL(String(target)).pathname;
+      if (path === "/api/v1/projects") return Response.json({ items: [PROJECT] });
+      if (/\/servers$/.test(path)) return Response.json({ items: [HTTP_SERVER] });
+      if (/\/servers\/[^/]+\/tools$/.test(path)) return Response.json({ items: tools });
+      return Response.json({ code: "NOT_FOUND", message: path }, { status: 404 });
+    });
+    return new PlatformApiClient({
+      baseUrl: "https://api.example.com/api/v1",
+      getAuth: () => "sk_test",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+  }
+
+  /** What each bundled host resolves `toolResultAuthChallenge` to. */
+  function resolvedActionById(): Record<string, string> {
+    return Object.fromEntries(
+      Object.values(bundledHostCompatCatalog().hostsById).map((host) => [
+        host.id,
+        authChallengePolicyFrom(host.mcpProfile)?.toolResultAuthChallenge ??
+          AUTH_CHALLENGE_POLICY_DEFAULTS.toolResultAuthChallenge,
+      ]),
+    );
+  }
+
+  const finding = (
+    host: { findings: Array<{ code: string }> } | undefined,
+  ) => host?.findings.find((f) => f.code === "tool_result_auth_challenge_ignored");
+
+  it("keeps top-level securitySchemes and warns exactly the passthrough hosts", async () => {
+    const result = await checkHostCompatibilityOperation.execute(
+      { server: "Echo" },
+      {
+        client: makeToolsClient([
+          { name: "get_weather", securitySchemes: [{ type: "noauth" }] },
+          {
+            name: "get_orders",
+            securitySchemes: [{ type: "oauth2", scopes: ["orders:read"] }],
+          },
+        ]),
+      },
+    );
+    const actions = resolvedActionById();
+    expect(Object.values(actions)).toContain("passthrough");
+    for (const host of result.hosts) {
+      const warned = finding(host);
+      if (actions[host.hostId] === "passthrough") {
+        expect(warned, host.hostId).toMatchObject({
+          lane: "server",
+          severity: "info",
+          tools: ["get_orders"],
+        });
+        expect((warned as { detail: string }).detail).toMatch(
+          /as an ordinary error/,
+        );
+        expect((warned as { remediation: string }).remediation).toMatch(
+          /HTTP 401 and a `WWW-Authenticate: Bearer/,
+        );
+      } else {
+        expect(warned, host.hostId).toBeUndefined();
+      }
+    }
+  });
+
+  it("reads a declaration carried in _meta.securitySchemes", async () => {
+    const result = await checkHostCompatibilityOperation.execute(
+      { server: "Echo" },
+      {
+        client: makeToolsClient([
+          {
+            name: "get_orders",
+            _meta: { securitySchemes: [{ type: "oauth2", scopes: [] }] },
+          },
+        ]),
+      },
+    );
+    const passthroughHost = result.hosts.find(
+      (host) => resolvedActionById()[host.hostId] === "passthrough",
+    );
+    expect(finding(passthroughHost)).toMatchObject({ tools: ["get_orders"] });
+  });
+
+  it("says nothing for public-only tools, and never moves a verdict", async () => {
+    const tools = [{ name: "get_weather", securitySchemes: [{ type: "noauth" }] }];
+    const plain = await checkHostCompatibilityOperation.execute(
+      { server: "Echo" },
+      { client: makeToolsClient([{ name: "get_weather" }]) },
+    );
+    const declared = await checkHostCompatibilityOperation.execute(
+      { server: "Echo" },
+      { client: makeToolsClient(tools) },
+    );
+    expect(declared.hosts.every((host) => finding(host) === undefined)).toBe(true);
+    const withOAuth = await checkHostCompatibilityOperation.execute(
+      { server: "Echo" },
+      {
+        client: makeToolsClient([
+          { name: "get_orders", securitySchemes: [{ type: "oauth2", scopes: [] }] },
+        ]),
+      },
+    );
+    expect(verdictById(withOAuth)).toEqual(verdictById(plain));
+  });
+});
+
+describe("toolResultAuthChallengeFindings", () => {
+  const OAUTH_TOOL = {
+    name: "get_orders",
+    securitySchemes: [{ type: "oauth2", scopes: ["orders:read"] }],
+  };
+  const host = (mcpProfile?: unknown) => ({
+    hostLabel: "Example Host",
+    provenance: "vendor-doc" as const,
+    mcpProfile,
+  });
+
+  it("warns a host whose profile says nothing, with assumed provenance", () => {
+    const [warned] = toolResultAuthChallengeFindings([OAUTH_TOOL], host({}));
+    expect(warned).toMatchObject({
+      code: "tool_result_auth_challenge_ignored",
+      provenance: "assumed",
+      tools: ["get_orders"],
+    });
+    expect(warned!.detail).toContain("Example Host shows a tool result carrying");
+  });
+
+  it("carries the host's provenance when passthrough is stated", () => {
+    const [warned] = toolResultAuthChallengeFindings(
+      [OAUTH_TOOL],
+      host({ toolResultAuthChallenge: "passthrough" }),
+    );
+    expect(warned?.provenance).toBe("vendor-doc");
+  });
+
+  it.each(["prompt", "notify"])("does not warn a host that acts on it (%s)", (action) => {
+    expect(
+      toolResultAuthChallengeFindings(
+        [OAUTH_TOOL],
+        host({ toolResultAuthChallenge: action }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not warn when no tool resolves to oauth2", () => {
+    expect(
+      toolResultAuthChallengeFindings(
+        [
+          { name: "a" },
+          { name: "b", securitySchemes: [{ type: "noauth" }] },
+          { name: "c", securitySchemes: "oauth2" },
+        ],
+        host(),
+      ),
+    ).toEqual([]);
   });
 });

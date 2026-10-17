@@ -382,7 +382,7 @@ function shouldAttemptFallback(
   if (!response) return true;
   if (pathname === "/") return false;
   return (
-    (response.status >= 400 && response.status < 500) || response.status === 502
+    response.status >= 400 && response.status < 500 && response.status !== 429
   );
 }
 
@@ -957,8 +957,7 @@ export async function discoverAuthorizationServerMetadata(
     if (!response.ok) {
       await response.text().catch(() => {});
       if (
-        (response.status >= 400 && response.status < 500) ||
-        response.status === 502
+        response.status >= 400 && response.status < 500 && response.status !== 429
       ) {
         continue;
       }
@@ -995,9 +994,8 @@ export async function discoverOAuthServerInfo(
       authorizationServerUrl = resourceMetadata.authorization_servers[0];
     }
   } catch (error) {
-    if (error instanceof TypeError) {
+    if (!(error instanceof Error) || error.message !== RESOURCE_METADATA_NOT_IMPLEMENTED)
       throw error;
-    }
   }
 
   if (!authorizationServerUrl) {

@@ -3,13 +3,21 @@ import {
   BlockedEgressTargetError,
   EgressResolutionError,
 } from "../../../utils/hosted-egress-guard.js";
+import { attachAuthChallenge, parseChallengeHeader } from "@mcpjam/sdk";
 import {
+  annotateToolAuthChallenge,
+  buildToolAuthChallengeMetadata,
   capSetupAuditMetadata,
   classifySetupAttribution,
+  classifyToolAuthChallenge,
+  collectToolAuthChallenges,
   connectSpanId,
   createRunSetupObserver,
   describeSetupFailure,
+  MAX_SETUP_FAILURE_LINE_CHARS,
   SETUP_AUDIT_METADATA_KEY,
+  TOOL_AUTH_CHALLENGES_METADATA_KEY,
+  toolAuthChallengeOf,
   toolsListSpanId,
   type SetupAuditRecord,
 } from "../run-setup-signals.js";
@@ -570,5 +578,174 @@ describe("reason folding and audit limits", () => {
     expect(capped.truncated).toBe(true);
     expect(Buffer.byteLength(JSON.stringify(capped))).toBeLessThanOrEqual(500);
     expect(raw.signals.connection?.reasons).toHaveLength(1);
+  });
+});
+
+describe("classifyToolAuthChallenge (mid-run sign-in)", () => {
+  const HEADER =
+    'Bearer error="invalid_token", resource_metadata="https://x.example/.well-known/oauth-protected-resource", scope="orders:read"';
+
+  /** A thrown 401 as the SDK raises it: the parsed challenge attached. */
+  function challenged401(): Error {
+    const error = httpError(401, "Error POSTing to endpoint (HTTP 401)");
+    attachAuthChallenge(error, parseChallengeHeader(HEADER));
+    return error;
+  }
+
+  it("classifies a thrown 401 as authorization_required (ours), with the parsed challenge and a remediation", () => {
+    const finding = classifyToolAuthChallenge(
+      { error: challenged401() },
+      { serverLabel: "Orders", toolName: "list_orders" },
+    );
+    expect(finding).toMatchObject({
+      setupFailureSource: "authorization_required",
+      attribution: "ours",
+      authChallenge: {
+        source: "http_401",
+        error: "invalid_token",
+        requiredScope: "orders:read",
+        resourceMetadataUrl:
+          "https://x.example/.well-known/oauth-protected-resource",
+        facets: { challengeHeader: "bearer", hasScope: true },
+      },
+    });
+    expect(finding!.line).toBe(
+      '"Orders": asked for sign-in when "list_orders" was called (invalid_token; scope "orders:read")',
+    );
+    expect(finding!.remediation).toMatch(
+      /^Connect this server with OAuth in the eval environment/,
+    );
+    expect(finding!.remediation).toContain("never sign in");
+  });
+
+  it("reads the hosted route error's stamped challenge (403 UPSTREAM_AUTH_FAILED)", () => {
+    const hosted = Object.assign(
+      new Error('Server "orders" asked for sign-in to complete this request.'),
+      {
+        name: "WebRouteError",
+        status: 403,
+        code: "UPSTREAM_AUTH_FAILED",
+        details: {
+          upstreamAuthRequired: true,
+          authChallenge: {
+            ...parseChallengeHeader(HEADER),
+            effectiveAuth: "discover",
+          },
+        },
+      },
+    );
+    expect(
+      classifyToolAuthChallenge(
+        { error: new Error("tool failed", { cause: hosted }) },
+        { serverId: "orders" },
+      ),
+    ).toMatchObject({
+      attribution: "ours",
+      authChallenge: {
+        source: "http_401",
+        effectiveAuth: "discover",
+        requiredScope: "orders:read",
+      },
+    });
+  });
+
+  it('classifies a completed isError result carrying _meta["mcp/www_authenticate"]', () => {
+    const finding = classifyToolAuthChallenge(
+      {
+        result: {
+          isError: true,
+          content: [{ type: "text", text: "Sign in required." }],
+          _meta: { "mcp/www_authenticate": [HEADER] },
+        },
+      },
+      { serverId: "orders", toolName: "list_orders" },
+    );
+    expect(finding).toMatchObject({
+      setupFailureSource: "authorization_required",
+      attribution: "ours",
+      authChallenge: { source: "tool_result_meta", error: "invalid_token" },
+    });
+    expect(finding!.line).toContain('"orders": asked for sign-in');
+  });
+
+  it("gives a step-up remediation for a 403 insufficient_scope", () => {
+    const error = httpError(403, "insufficient scope");
+    attachAuthChallenge(
+      error,
+      parseChallengeHeader(
+        'Bearer error="insufficient_scope", scope="orders:write"',
+        "http_403_insufficient_scope",
+      ),
+    );
+    const finding = classifyToolAuthChallenge({ error });
+    expect(finding?.authChallenge.source).toBe("http_403_insufficient_scope");
+    expect(finding?.remediation).toMatch(/^Reconnect this server with OAuth/);
+  });
+
+  it("returns undefined for ordinary failures, so they keep their own classification", () => {
+    expect(
+      classifyToolAuthChallenge({ error: httpError(500) }),
+    ).toBeUndefined();
+    expect(
+      classifyToolAuthChallenge({ error: httpError(401) }),
+    ).toBeUndefined();
+    expect(
+      classifyToolAuthChallenge({
+        result: { isError: true, content: [{ type: "text", text: "nope" }] },
+      }),
+    ).toBeUndefined();
+    // `_meta` without `isError` is not a challenge.
+    expect(
+      classifyToolAuthChallenge({
+        result: { content: [], _meta: { "mcp/www_authenticate": HEADER } },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("caps what it keeps: every challenge field as the SDK parser caps it", () => {
+    const long = "x".repeat(5_000);
+    const finding = classifyToolAuthChallenge({
+      result: {
+        isError: true,
+        _meta: {
+          "mcp/www_authenticate": `Bearer error="invalid_token", error_description="${long}"`,
+        },
+      },
+    });
+    expect(finding!.authChallenge.errorDescription!.length).toBeLessThanOrEqual(
+      512,
+    );
+    expect(finding!.authChallenge.raw!.length).toBeLessThanOrEqual(2048);
+    expect(finding!.line.length).toBeLessThanOrEqual(
+      MAX_SETUP_FAILURE_LINE_CHARS,
+    );
+  });
+
+  it("annotates a tool step in memory only: never serialized, kept by copies, collected once per call", () => {
+    const finding = classifyToolAuthChallenge({ error: challenged401() })!;
+    const span = { id: "tool-c1", toolCallId: "c1" };
+    annotateToolAuthChallenge(span, {
+      ...finding,
+      toolCallId: "c1",
+      spanId: "tool-c1",
+    });
+    expect(JSON.parse(JSON.stringify(span))).toEqual({
+      id: "tool-c1",
+      toolCallId: "c1",
+    });
+    expect(toolAuthChallengeOf({ ...span })?.spanId).toBe("tool-c1");
+    const records = collectToolAuthChallenges([span, { ...span }, {}]);
+    expect(records).toHaveLength(1);
+    expect(buildToolAuthChallengeMetadata(records)).toEqual({
+      [TOOL_AUTH_CHALLENGES_METADATA_KEY]: [
+        expect.objectContaining({
+          toolCallId: "c1",
+          spanId: "tool-c1",
+          setupFailureSource: "authorization_required",
+          authChallenge: expect.objectContaining({ source: "http_401" }),
+        }),
+      ],
+    });
+    expect(buildToolAuthChallengeMetadata([])).toEqual({});
   });
 });

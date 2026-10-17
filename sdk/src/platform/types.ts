@@ -1,3 +1,5 @@
+import type { PlatformReadinessStartBody } from "./readiness-start-types.js";
+export type { PlatformReadinessStartBody, PlatformReadinessLazyAuthProbe } from "./readiness-start-types.js";
 import type {
   SwarmJourneyFinding,
   SwarmJourneyFindings,
@@ -6002,26 +6004,6 @@ export interface PlatformReadinessRunReceipt {
   /** True when an idempotency key replayed an existing run. */
   deduped: boolean;
   includeLlmObservations: boolean;
-}
-
-/** Fields both start endpoints accept. */
-export interface PlatformReadinessStartBody {
-  /**
-   * Deduplicates a retried POST.
-   *
-   * More load-bearing here than usual: a readiness run dials a third party's
-   * server, and a retried start that created a second run would do that twice.
-   */
-  idempotencyKey?: string;
-  /**
-   * Add model-backed experience observations. CONSUMES MCPJam CREDITS.
-   *
-   * Off by default. Observations are non-dispositive — they can never make a
-   * server not-ready — and a refused reservation makes no provider call and
-   * completes the run with `llmObservations.reason` of
-   * `billing_limit_reached`.
-   */
-  includeLlmObservations?: boolean;
 }
 
 export interface PlatformOpenAIReadinessStartBody

@@ -61,13 +61,29 @@ This behavior applies to local connections. The inspector must be connected to t
 
 ### OAuth scope step-up on tool calls
 
-When a tool call returns a `403 insufficient_scope` error, the Tools tab automatically triggers a re-authorization flow. Inspector unions the scopes from your original OAuth grant with the scopes the server challenged, then redirects you to the authorization server to approve the expanded set. After you return from the consent screen, re-run the tool.
+When a tool call returns a `403 insufficient_scope` error, the Tools tab automatically triggers a re-authorization flow. Inspector unions the scopes from your original OAuth grant with the scopes the server challenged, then redirects you to the authorization server to approve the expanded set.
+
+A challenge that names no scope at all (a bare `Bearer error="insufficient_scope"`) also triggers it. Inspector then requests the scopes from your original grant plus the `scopes_supported` your server's protected resource metadata advertises (or, failing that, the authorization server's).
+
+When you come back from the consent screen, a tool marked `readOnlyHint: true` runs again on its own. Any other tool asks **Run again?** first, because it might change something. Only the sign-in that started from the call can re-run it.
 
 The step-up is bounded per browser session: if re-authorization does not resolve the scope error after the allowed number of attempts, Inspector surfaces the error instead of redirecting again. The counter resets when a tool call succeeds, so a future legitimate scope challenge starts fresh. Opening a new browser session also resets the counter.
 
 <Note>
-Runtime scope step-up is only available on the local (non-hosted) tool-call surface. The hosted path does not yet forward the scope challenge.
+In a hosted project, a step-up reauthorizes your own connection in place. If the call used a connection someone else shared with the project, you sign in with your own account instead, and the earlier call is not re-run: run it again yourself.
 </Note>
+
+### Sign-in requested by a tool call
+
+Some servers let you connect and call public tools without signing in, and ask for sign-in only when a protected tool runs. They signal it with an HTTP `401` and a `WWW-Authenticate` header, or, ChatGPT style, with an `isError` result carrying `_meta["mcp/www_authenticate"]`.
+
+What the Tools tab does depends on the client you are emulating:
+
+- **Prompt to sign in**: a **Connect** card replaces the error. Nothing happens until you click **Connect**. After you sign in, a tool marked `readOnlyHint: true` runs again on its own; any other tool asks **Run again?** first.
+- **Notify**: the call fails with a sign-in message. You can sign in from the card, then run the tool yourself.
+- **Pass through**: the challenge shows as an ordinary error, with a note on how the emulated host handles it.
+
+See [Mid-session sign-in](/inspector/lazy-authentication) for the per-host settings, the Connect card, and how to test your server with the CLI.
 
 ### Tool quality badges
 

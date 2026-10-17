@@ -1,3 +1,9 @@
+import {
+  hasComparisonAuthRecoveryRequest,
+  readComparisonAuthRecovery,
+  registerComparisonLayout,
+  clearComparisonAuthRecovery,
+} from "@/lib/comparison-auth-recovery";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
@@ -907,6 +913,12 @@ export function PlaygroundMain({
 
   const appState = useSharedAppState();
   const servers = appState.servers;
+  const activeProject = appState.projects[appState.activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const [comparisonRecovery, setComparisonRecovery] = useState(() =>
+    readComparisonAuthRecovery(convexProjectId ?? "local"),
+  );
+  const [comparisonServersRestored, setComparisonServersRestored] = useState(false);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   // Multi-server: `playgroundServerSelectorProps.selectedMultipleServers` is
   // the source of truth for which servers the chat session sees in the
@@ -923,13 +935,16 @@ export function PlaygroundMain({
   }, [playgroundServerSelectorProps, servers]);
 
   const selectedServers = useMemo(() => {
+    // Reconnecting other saved servers must not rename the recovered tools
+    // or change the context of the suspended calls.
+    if (comparisonRecovery && !comparisonServersRestored) return comparisonRecovery.selectedServers;
     if (multiSelectedServerNames.length > 0) {
       return multiSelectedServerNames;
     }
     return serverName && servers[serverName]?.connectionStatus === "connected"
       ? [serverName]
       : [];
-  }, [multiSelectedServerNames, serverName, servers]);
+  }, [comparisonRecovery, comparisonServersRestored, multiSelectedServerNames, serverName, servers]);
 
   const serverConnected = Boolean(
     serverName && servers[serverName]?.connectionStatus === "connected",
@@ -946,8 +961,6 @@ export function PlaygroundMain({
   );
 
   // Hosted mode context (projectId, serverIds, OAuth tokens)
-  const activeProject = appState.projects[appState.activeProjectId];
-  const convexProjectId = activeProject?.sharedProjectId ?? null;
 
   // Resolved Local⇄Cloud engine for this project's personal computer. Passed
   // into useChatSession so a direct turn runs this host's bash on the local
@@ -2724,6 +2737,41 @@ export function PlaygroundMain({
   // Deriving this fresh from already-correct persisted data has no state
   // to fall out of sync in the first place, including across a remount.
   const isComparingHosts = canEnableMultiHost && selectedHostIds.length > 1;
+  const comparisonRecoveryMissing =
+    hasComparisonAuthRecoveryRequest() && !comparisonRecovery;
+  const comparisonRecoveryGroupId = comparisonRecovery?.id ?? chatSessionId;
+  const comparisonLayoutRestoredRef = useRef(false);
+  useEffect(() => {
+    if (!comparisonRecovery || comparisonLayoutRestoredRef.current) return;
+    comparisonLayoutRestoredRef.current = true;
+    setMultiModelEnabled(comparisonRecovery.multiModelEnabled);
+    if (comparisonRecovery.modelSelections)
+      setCompareSelections(comparisonRecovery.modelSelections);
+    setSelectedHostIds(comparisonRecovery.hostIds);
+  }, [
+    comparisonRecovery,
+    setMultiModelEnabled,
+    setCompareSelections,
+    setSelectedHostIds,
+  ]);
+  useEffect(
+    () =>
+      registerComparisonLayout(comparisonRecoveryGroupId, {
+        projectId: convexProjectId ?? "local",
+        multiModelEnabled,
+        modelSelections: compareSelections,
+        hostIds: selectedHostIds,
+        selectedServers,
+      }),
+    [
+      comparisonRecoveryGroupId,
+      convexProjectId,
+      multiModelEnabled,
+      compareSelections,
+      selectedHostIds,
+      selectedServers,
+    ],
+  );
 
   // Lead identity check — we cannot compact away the lead slot. If
   // `selectedHostIds[0]` is still loading from Convex, the resolved
@@ -3106,7 +3154,8 @@ export function PlaygroundMain({
   }, [isMultiHostMode, multiHostColumns]);
 
   const effectiveHasMessages = isMultiModelLayoutMode
-    ? Object.values(compareHasMessages).some(Boolean)
+    ? Object.values(compareHasMessages).some(Boolean) ||
+      Boolean(comparisonRecovery?.columns.some((column) => column.hasMessages))
     : !isThreadEmpty;
   const preludeTraceEnvelope = useMemo(
     () =>
@@ -3675,6 +3724,26 @@ export function PlaygroundMain({
     },
     [playgroundServerSelectorProps, serverName, servers, serversById],
   );
+
+  useEffect(() => {
+    if (comparisonRecovery && !comparisonServersRestored &&
+      comparisonRecovery.selectedServers.length === multiSelectedServerNames.length &&
+      comparisonRecovery.selectedServers.every((name) => multiSelectedServerNames.includes(name))) {
+      setComparisonServersRestored(true);
+    }
+  }, [comparisonRecovery, comparisonServersRestored, multiSelectedServerNames]);
+
+  const comparisonServersRestoredRef = useRef(false);
+  useEffect(() => {
+    if (
+      !comparisonRecovery ||
+      comparisonServersRestoredRef.current ||
+      Object.keys(servers).length === 0
+    )
+      return;
+    comparisonServersRestoredRef.current = true;
+    restoreHistoryServerSelection(comparisonRecovery.selectedServers);
+  }, [comparisonRecovery, servers, restoreHistoryServerSelection]);
 
   const loadHistorySession = useCallback(
     async (
@@ -4275,6 +4344,8 @@ export function PlaygroundMain({
   }, [availableModels, chatSessionId, selectedModel, setSelectedModel]);
 
   const resetMultiModelSessions = useCallback(() => {
+    clearComparisonAuthRecovery();
+    setComparisonRecovery(null);
     clearMultiModelUiState();
     setMultiModelSessionGeneration((previous) => previous + 1);
   }, [clearMultiModelUiState]);
@@ -4841,7 +4912,11 @@ export function PlaygroundMain({
         try {
           return await localAutoApprove.ensure();
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`,
+          );
           return false;
         }
       }
@@ -4860,13 +4935,26 @@ export function PlaygroundMain({
         );
         return await localAutoApprove.ensure();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`,
+        );
         return false;
       } finally {
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
+    },
+    [
+      localHarnessRequested,
+      convexProjectId,
+      localHarness.phase,
+      localHarness.harnessId,
+      localHarness.harnessName,
+      localAutoApprove.ensure,
+    ],
+  );
 
   const extensionOwnerScope = JSON.stringify([
     currentUserForSender?._id,
@@ -6922,12 +7010,19 @@ export function PlaygroundMain({
     // synchronously on the first render, so the fetch-source key is
     // stable from mount #1.
     <WidgetSurfaceProvider value="playground">
+      {comparisonRecoveryMissing && (
+        <div role="alert" className="p-3 text-sm text-destructive">
+          MCPJam couldn’t restore this comparison. Please start a new chat.
+        </div>
+      )}
       {/* ONE dialog for the surface. Rendered here rather than by a composer
           because there are six composers and a compare view mounts several at
           once — each owning its own would race one approval. */}
       <LocalHarnessAutoApproveDialog
         open={localAutoApprove.open}
-        name={previewedHost?.config?.harness === "codex" ? "Codex" : "Claude Code"}
+        name={
+          previewedHost?.config?.harness === "codex" ? "Codex" : "Claude Code"
+        }
         onCancel={localAutoApprove.cancel}
         onApprove={localAutoApprove.approve}
       />
@@ -7226,7 +7321,7 @@ export function PlaygroundMain({
                             },
                           )}
                           browserWorkspace={{
-                            id: chatSessionId,
+                            id: comparisonRecoveryGroupId,
                             order: columnIndex,
                             clientCount: multiHostColumns.length,
                           }}
@@ -7348,7 +7443,7 @@ export function PlaygroundMain({
                                 : null,
                             )}
                             browserWorkspace={{
-                              id: chatSessionId,
+                              id: comparisonRecoveryGroupId,
                               order: modelIndex,
                               clientCount: modelCompareCards.length,
                             }}

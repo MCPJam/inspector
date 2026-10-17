@@ -3,6 +3,13 @@ import {
   computeHostConfigHashV2,
 } from "../src/host-config/internal";
 import type { HostConfigInputV2 } from "../src/host-config/internal";
+import {
+  AUTH_CHALLENGE_ACTIONS,
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+  authChallengePolicyFrom,
+} from "../src/mcp-client-manager/auth-challenge";
 
 function base(overrides: Partial<HostConfigInputV2> = {}): HostConfigInputV2 {
   return {
@@ -918,6 +925,174 @@ describe("canonicalizeHostConfigV2 — client-conformance knobs", () => {
       "paginationTraversal",
       "toolParamHeaderMirroring",
     ]);
+  });
+});
+
+describe("canonicalizeHostConfigV2 — mid-session sign-in knobs", () => {
+  // [key, every permitted literal, the literal that means the same as absent].
+  // Spelled out rather than imported: the backend restores these fields under
+  // these exact names and values, so a rename on either side must fail here.
+  const KNOBS = [
+    ["unauthorizedChallenge", ["prompt", "notify", "passthrough"], "prompt"],
+    [
+      "unauthorizedChallengeTrigger",
+      ["any", "bearer-header", "resource-metadata"],
+      "any",
+    ],
+    [
+      "toolResultAuthChallenge",
+      ["prompt", "notify", "passthrough"],
+      // The asymmetry: the `_meta` challenge is not in the MCP spec, so its
+      // absent action is the one that does not act.
+      "passthrough",
+    ],
+    [
+      "toolResultAuthChallengeTrigger",
+      ["any", "oauth2-scheme", "oauth2-scheme+error-params"],
+      "oauth2-scheme+error-params",
+    ],
+  ] as const;
+
+  const withKnob = (key: string, value: unknown) =>
+    base({
+      mcpProfile: { profileVersion: 1, [key]: value } as never,
+    });
+
+  it("accepts exactly the literals the auth-challenge policy defines", () => {
+    expect([...AUTH_CHALLENGE_ACTIONS]).toEqual([...KNOBS[0][1]]);
+    expect([...UNAUTHORIZED_CHALLENGE_TRIGGERS]).toEqual([...KNOBS[1][1]]);
+    expect([...AUTH_CHALLENGE_ACTIONS]).toEqual([...KNOBS[2][1]]);
+    expect([...TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS]).toEqual([...KNOBS[3][1]]);
+  });
+
+  it("documents the same absent values the runtime policy applies", () => {
+    for (const [key, , absent] of KNOBS) {
+      expect(AUTH_CHALLENGE_POLICY_DEFAULTS[key]).toBe(absent);
+    }
+  });
+
+  it("round-trips every literal of every knob", () => {
+    for (const [key, modes] of KNOBS) {
+      for (const mode of modes) {
+        const c = canonicalizeHostConfigV2(withKnob(key, mode));
+        expect(
+          (c.mcpProfile as Record<string, unknown> | undefined)?.[key]
+        ).toBe(mode);
+      }
+    }
+  });
+
+  it("omits every knob when absent, so pre-feature configs keep their hash", async () => {
+    const c = canonicalizeHostConfigV2(base());
+    expect(c.mcpProfile).toBeUndefined();
+    const bare = canonicalizeHostConfigV2(
+      base({ mcpProfile: { profileVersion: 1 } })
+    );
+    for (const [key] of KNOBS) {
+      expect(JSON.stringify(c)).not.toContain(key);
+      expect(JSON.stringify(bare)).not.toContain(key);
+    }
+    // An explicit `undefined` is absence, not a value.
+    expect(
+      await hash(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            unauthorizedChallenge: undefined,
+            toolResultAuthChallenge: undefined,
+          },
+        })
+      )
+    ).toBe(await hash(base({ mcpProfile: { profileVersion: 1 } })));
+  });
+
+  it("stores the absent-value literal and hashes it distinctly from absent", async () => {
+    // Same discipline as `paginationTraversal: "full"`: the literal that
+    // behaves like absence is still stored as given. UIs write absence.
+    const absentHash = await hash(base({ mcpProfile: { profileVersion: 1 } }));
+    for (const [key, , absent] of KNOBS) {
+      const c = canonicalizeHostConfigV2(withKnob(key, absent));
+      expect((c.mcpProfile as Record<string, unknown> | undefined)?.[key]).toBe(
+        absent
+      );
+      expect(await hash(withKnob(key, absent))).not.toBe(absentHash);
+    }
+  });
+
+  it("hashes every literal of every knob distinctly", async () => {
+    const seen = new Set<string>([await hash(base())]);
+    for (const [key, modes] of KNOBS) {
+      for (const mode of modes) {
+        const h = await hash(withKnob(key, mode));
+        expect(seen.has(h)).toBe(false);
+        seen.add(h);
+      }
+    }
+  });
+
+  it("throws on an unknown literal rather than storing it", () => {
+    for (const [key, modes] of KNOBS) {
+      for (const bogus of ["bogus", "Prompt", null, true, 1]) {
+        expect(() => canonicalizeHostConfigV2(withKnob(key, bogus))).toThrow(
+          new RegExp(
+            `mcpProfile\\.${key} must be one of ${modes
+              .join(", ")
+              .replace(/\+/g, "\\+")}`
+          )
+        );
+      }
+    }
+  });
+
+  it("stores a trigger without its action (inert at runtime, not invalid)", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          toolResultAuthChallengeTrigger: "any",
+        },
+      })
+    );
+    expect(c.mcpProfile).toEqual({
+      profileVersion: 1,
+      toolResultAuthChallengeTrigger: "any",
+    });
+  });
+
+  it("emits profileVersion first then alphabetical keys when combined", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          unauthorizedChallengeTrigger: "bearer-header",
+          unauthorizedChallenge: "notify",
+          toolResultAuthChallengeTrigger: "oauth2-scheme",
+          toolResultAuthChallenge: "prompt",
+          paginationTraversal: "firstPageOnly",
+        },
+      })
+    );
+    expect(Object.keys(c.mcpProfile ?? {})).toEqual([
+      "profileVersion",
+      "paginationTraversal",
+      "toolResultAuthChallenge",
+      "toolResultAuthChallengeTrigger",
+      "unauthorizedChallenge",
+      "unauthorizedChallengeTrigger",
+    ]);
+  });
+
+  it("reads back through authChallengePolicyFrom unchanged", () => {
+    const policy = {
+      unauthorizedChallenge: "notify",
+      unauthorizedChallengeTrigger: "bearer-header",
+      toolResultAuthChallenge: "prompt",
+      toolResultAuthChallengeTrigger: "oauth2-scheme",
+    } as const;
+    const c = canonicalizeHostConfigV2(
+      base({ mcpProfile: { profileVersion: 1, ...policy } })
+    );
+    expect(authChallengePolicyFrom(c.mcpProfile)).toEqual(policy);
   });
 });
 

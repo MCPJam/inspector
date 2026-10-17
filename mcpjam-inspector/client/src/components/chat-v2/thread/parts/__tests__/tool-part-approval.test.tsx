@@ -2,6 +2,8 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToolPart } from "../tool-part";
+import { CHAT_AUTH_RECOVERY_MESSAGE, recordChatAuthRecoveryFailure } from "@/lib/chat-auth-recovery";
+vi.mock("@/lib/sentry", () => ({ captureSentryMessage: vi.fn() }));
 
 vi.mock("lucide-react", () => {
   const s = (props: any) => <div {...props} />;
@@ -99,7 +101,16 @@ const getHeaderButton = () =>
 describe("ToolPart approval expansion", () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     window.location.hash = "";
+  });
+
+  it("shows a local error for a failed recovery instead of a loading tool", async () => {
+    recordChatAuthRecoveryFailure("resume_failed", { toolCallId: basePart.toolCallId, continuationId: "cont-ui" });
+    render(<ToolPart part={{ ...basePart, state: "input-available", output: undefined } as any} uiType="mcp-apps" />);
+    const header = getHeaderButton();
+    if (header?.getAttribute("aria-expanded") === "false") await userEvent.click(header);
+    expect(screen.getByText(CHAT_AUTH_RECOVERY_MESSAGE)).toBeInTheDocument();
   });
 
   it("renders the approval pill when approval is requested", async () => {
