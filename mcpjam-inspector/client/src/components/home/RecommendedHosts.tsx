@@ -1,16 +1,14 @@
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useState } from "react";
-import { toast } from "@/lib/toast";
-import { Loader2, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { useAppNavigate, buildHostsPath } from "@/lib/app-navigation";
-import { useHostMutations } from "@/hooks/useClients";
 import {
   PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
   useCanManageProjectClients,
 } from "@/hooks/useProjects";
-import { cloneHostTemplateInput } from "@/lib/client-config-v2";
+import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
@@ -23,7 +21,6 @@ interface RecommendedHostsProps {
 }
 
 export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
-  const { createHost } = useHostMutations();
   const navigate = useAppNavigate();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
@@ -34,7 +31,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
     ...(claudeCodeEnabled ? ["claude-code"] : []),
     ...(codexEnabled ? ["codex"] : []),
   ];
-  const [creatingId, setCreatingId] = useState<string | null>(null);
+  const [createTemplateId, setCreateTemplateId] = useState<string | null>(null);
   const { isAuthenticated } = useConvexAuth();
   // Creating a client is project-admin only (`hosts.ts` `requireAdminAccess`).
   const { canManage: canManageClients } = useCanManageProjectClients({
@@ -50,40 +47,6 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
         })
       : [];
 
-  async function handleCreate(hostId: string) {
-    if (!projectId) {
-      toast.error("Select a project before creating a client.");
-      return;
-    }
-    const catalog =
-      catalogState.status === "live" ? catalogState.catalog : null;
-    const template = catalog
-      ? getCatalogTemplate(catalog, hostId)
-      : undefined;
-    if (!template) {
-      toast.error("Could not load live client templates.");
-      return;
-    }
-    const label =
-      (catalog ? getCatalogHost(catalog, hostId)?.label : undefined) ?? hostId;
-    setCreatingId(hostId);
-    try {
-      const seed = cloneHostTemplateInput(template, { themeMode });
-      const { hostId } = await createHost({
-        projectId,
-        name: label,
-        input: { ...seed, serverIds: [] },
-      });
-      toast.success(`Created ${label} client.`);
-      navigate(buildHostsPath(hostId));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to create ${label}: ${message}`);
-    } finally {
-      setCreatingId(null);
-    }
-  }
-
   return (
     <section className="rounded-xl border border-border/60">
       <div className="border-b border-border/60 px-4 py-2">
@@ -94,7 +57,6 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
 
       <ul>
         {recommended.map((host, i) => {
-          const isCreating = creatingId === host.id;
           const isLast = i === recommended.length - 1;
           const canCreateFromLiveTemplate =
             catalogState.status === "live" &&
@@ -107,12 +69,11 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
               <button
                 type="button"
                 disabled={
-                  isCreating ||
                   !projectId ||
                   !canManageClients ||
                   !canCreateFromLiveTemplate
                 }
-                onClick={() => handleCreate(host.id)}
+                onClick={() => setCreateTemplateId(host.id)}
                 title={
                   !canManageClients
                     ? PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE
@@ -133,20 +94,26 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
                   {host.label}
                 </span>
                 <span className="flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-muted-foreground transition group-hover:text-foreground group-disabled:opacity-50">
-                  {isCreating ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <>
-                      <Plus className="size-3" />
-                      Create
-                    </>
-                  )}
+                  <Plus className="size-3" />
+                  Create
                 </span>
               </button>
             </li>
           );
         })}
       </ul>
+      {projectId && createTemplateId && (
+        <CreateHostDialog
+          isOpen
+          projectId={projectId}
+          initialTemplateId={createTemplateId}
+          onClose={() => setCreateTemplateId(null)}
+          onCreated={(hostId) => {
+            setCreateTemplateId(null);
+            navigate(buildHostsPath(hostId));
+          }}
+        />
+      )}
     </section>
   );
 }

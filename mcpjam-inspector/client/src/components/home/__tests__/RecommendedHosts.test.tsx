@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { RecommendedHosts } from "../RecommendedHosts";
 
 const state = vi.hoisted(() => ({
@@ -42,11 +42,9 @@ vi.mock("@mcpjam/sdk/host-compat", () => ({
   getCatalogHost: (_catalog: unknown, id: string) => ({ id, label: id }),
   getCatalogTemplate: (_catalog: unknown, id: string) => ({ id }),
 }));
-vi.mock("@/lib/client-config-v2", () => ({
-  cloneHostTemplateInput: (template: { id: string }) => ({
-    harness: template.id,
-    computer: { kind: "personal" },
-  }),
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ initialTemplateId }: { initialTemplateId: string }) =>
+    <div role="dialog">Setup {initialTemplateId}</div>,
 }));
 
 describe("recommended harness clients", () => {
@@ -75,20 +73,11 @@ describe("recommended harness clients", () => {
     expect(screen.getByRole("button", { name: "claudeCreate" })).toBeEnabled();
   });
 
-  it("creates the selected harness from its live template", async () => {
+  it("opens the selected harness in the existing setup dialog before creating", () => {
     state.codex = true;
     render(<RecommendedHosts projectId="project" />);
     fireEvent.click(screen.getByRole("button", { name: "codexCreate" }));
-    await waitFor(() =>
-      expect(state.create).toHaveBeenCalledWith({
-        projectId: "project",
-        name: "codex",
-        input: {
-          harness: "codex",
-          computer: { kind: "personal" },
-          serverIds: [],
-        },
-      }),
-    );
+    expect(screen.getByRole("dialog")).toHaveTextContent("Setup codex");
+    expect(state.create).not.toHaveBeenCalled();
   });
 });
