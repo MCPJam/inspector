@@ -1519,7 +1519,7 @@ describe("assertHarnessDispatchable", () => {
         engine: { kind: "harness", harness: "claude-code", hostId: HOST },
         runtimeKind: "direct",
       }),
-    ).toThrow(/refused rather than run on the emulated engine/);
+    ).toThrow(/Claude Code client cannot use a locally hosted model/);
   });
 
   it("is a no-op for a hosted harness and for an emulated turn", () => {
