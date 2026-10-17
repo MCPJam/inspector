@@ -334,6 +334,30 @@ const inputs = [
     },
   },
   {
+    // The budgets beside the `apps` keys they sort between, given out of
+    // order. The backend restores the policy after the pinned SDK runs, so
+    // this pins where it lands.
+    label: "apps-model-context-policy-beside-other-keys",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          sandbox: {
+            permissions: { mode: "custom", allow: { camera: true } },
+          },
+          pluginExtensions: {
+            enabled: true,
+            capabilities: { mentions: false },
+          },
+          modelContextPolicy: { maxBlocks: 64 },
+          mcpAppsOverrides: { logging: true },
+        },
+      },
+    },
+  },
+  {
     label: "host-capabilities-override-explicit-empty",
     input: { ...base(), hostCapabilitiesOverride: {}, chatUiOverride: { logo: "x" } },
   },

@@ -741,44 +741,80 @@ describe("large App context in the durable store", () => {
     expect(known).toEqual([1, undefined]);
     expect(content(registry, token)).toEqual([{ type: "text", text: "kept" }]);
   });
+
+  it("asks for the context in full once its own copy has expired", async () => {
+    let now = 1_000_000;
+    const clock = () => now;
+    const { s, token } = await open(clock, "kept");
+    const registry = new PluginInstanceRegistry(clock, 100);
+    await registry.getPersistent(token, identity, signal(), s.port);
+    // Another process renewed the lease after this one's copy ran out.
+    now += 150;
+    s.rows.set(token, { ...s.rows.get(token)!, expiresAt: now + 500 });
+    const read = s.port.read;
+    const known: (number | undefined)[] = [];
+    s.port.read = async (handle, abort, version) => {
+      known.push(version);
+      return read(handle, abort, version);
+    };
+    await registry.getPersistent(token, identity, signal(), s.port);
+    expect(known).toEqual([undefined]);
+    expect(content(registry, token)).toEqual([{ type: "text", text: "kept" }]);
+  });
 });
 
 describe("App context memory in this process", () => {
+  const now = 1_000_000;
+  const clock = () => now;
+  const s = store(clock);
+  const registry = new PluginInstanceRegistry(
+    clock,
+    100,
+    512,
+    new PluginContextMemory(64 * 1024, 1024 * 1024),
+  );
+  const open = (threadId: string) =>
+    registry.openActivationPersistent(
+      identity,
+      {
+        ...binding,
+        activation: {
+          ...binding.activation,
+          selector: { kind: "thread", threadId },
+        },
+      },
+      signal(),
+      s.port,
+    );
+  const change = (
+    token: string,
+    command: Parameters<PluginInstanceRegistry["changeContextPersistent"]>[2],
+    on = registry,
+  ) =>
+    on.changeContextPersistent(
+      token,
+      identity,
+      command,
+      signal(),
+      async () => {},
+      s.port,
+    );
+  const update = (token: string, text: string, sequence = 1, on = registry) =>
+    change(
+      token,
+      {
+        kind: "update",
+        request: {
+          operationId: `op-${token.slice(0, 8)}-${sequence}`,
+          sequence,
+          params: { content: [{ type: "text", text }] },
+          attach: "user",
+        },
+      },
+      on,
+    );
+
   it("refuses an update past the actor's budget, and frees it when an App closes", async () => {
-    const now = 1_000_000;
-    const clock = () => now;
-    const s = store(clock);
-    const memory = new PluginContextMemory(64 * 1024, 1024 * 1024);
-    const registry = new PluginInstanceRegistry(clock, 100, 512, memory);
-    const open = (threadId: string) =>
-      registry.openActivationPersistent(
-        identity,
-        {
-          ...binding,
-          activation: {
-            ...binding.activation,
-            selector: { kind: "thread", threadId },
-          },
-        },
-        signal(),
-        s.port,
-      );
-    const update = (token: string, text: string) =>
-      registry.changeContextPersistent(
-        token,
-        identity,
-        {
-          kind: "update",
-          request: {
-            operationId: `op-${token.slice(0, 8)}`,
-            sequence: 1,
-            params: { content: [{ type: "text", text }] },
-          },
-        },
-        signal(),
-        async () => {},
-        s.port,
-      );
     const first = await open("first");
     const second = await open("second");
     await update(first.token, "x".repeat(40_000));
@@ -790,6 +826,26 @@ describe("App context memory in this process", () => {
     await registry.closePersistent(first.token, identity, signal(), s.port);
     await update(second.token, "y".repeat(30_000));
     expect(s.rows.get(second.token)?.contextVersion).toBe(1);
+  });
+
+  it("lets the person remove an App's context past the budget", async () => {
+    const big = await open("big");
+    const small = await open("small");
+    const updated = await update(small.token, "a");
+    // Another process stored more for this actor. Restoring it here is never
+    // refused, so the actor is now over its budget.
+    const other = new PluginInstanceRegistry(clock);
+    await update(big.token, "x".repeat(70_000), 1, other);
+    await registry.getPersistent(big.token, identity, signal(), s.port);
+    await expect(update(small.token, "b".repeat(100), 2)).rejects.toThrow(
+      "PLUGIN_CONTEXT_MEMORY_LIMIT",
+    );
+    // Removing a one-character context adds a few bytes of removal state.
+    const removed = await change(small.token, {
+      kind: "remove-all",
+      request: { operationId: "remove", basis: updated.snapshot.cursor ?? 0 },
+    });
+    expect(removed.result).toMatchObject({ outcome: "applied" });
   });
 });
 

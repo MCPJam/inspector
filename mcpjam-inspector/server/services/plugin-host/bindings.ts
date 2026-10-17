@@ -70,9 +70,9 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
  *  - `mcpProfile.apps.mcpAppsOverrides.{serverTools,updateModelContext,message}`
  *    and `requireToolApproval`, recomputed by every request.
  *  - `mcpProfile.apps.modelContextPolicy`, the client's App context budgets.
- *    They are read per request, never from the binding, and stored context
- *    is re-read against the ceilings, so a lowered budget refuses the next
- *    update instead of closing the App.
+ *    They bound what an App may add, not where it runs, so whatever enforces
+ *    them must read the saved client's current value, never the binding. A
+ *    lowered budget then refuses the next update instead of closing the App.
  *  - `hostConfigId`, the saved config's content address. It rotates on ANY
  *    saved edit, the toggles above included; the fields it summarizes are
  *    projected individually and stay bound.

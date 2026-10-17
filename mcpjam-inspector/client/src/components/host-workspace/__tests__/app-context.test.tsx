@@ -196,6 +196,7 @@ describe("retained App composer context", () => {
     "INSTANCE_CONTEXT_RATE_LIMITED",
     "INSTANCE_CONTEXT_TOO_LARGE",
     "INVALID_INSTANCE_CONTEXT",
+    "RATE_LIMITED",
   ])(
     "answers a %s refusal with -32000 and sends the next update at once",
     async (code) => {

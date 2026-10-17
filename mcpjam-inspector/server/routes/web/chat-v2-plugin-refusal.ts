@@ -20,7 +20,10 @@ export function pluginChatRefusal(error: unknown):
   | undefined {
   // The Apps' context is over the client's turn budget: the person can fix
   // it by removing context, so it is a refused request, not an MCPJam fault.
-  if (error instanceof PluginModelContextError)
+  if (
+    error instanceof PluginModelContextError &&
+    error.message === "PLUGIN_CONTEXT_TURN_TOO_LARGE"
+  )
     return {
       status: 413,
       code: ErrorCode.VALIDATION_ERROR,
