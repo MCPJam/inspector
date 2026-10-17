@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 
-const state = {
+const state = vi.hoisted(() => ({
   saved: null as Record<string, unknown> | null,
   sessionId: "",
   alive: false,
@@ -12,7 +12,7 @@ const state = {
   teardown: vi.fn(),
   hold: vi.fn(),
   create: vi.fn(),
-};
+}));
 vi.mock("@ai-sdk/harness/agent", async (original) => ({
   ...(await original<typeof import("@ai-sdk/harness/agent")>()),
   HarnessAgent: class {
