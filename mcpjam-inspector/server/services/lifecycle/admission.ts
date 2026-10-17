@@ -40,3 +40,18 @@ export function refuseWhileDraining(
     await next();
   };
 }
+
+/**
+ * The internal doorbells' form. They have no error envelope, and a refused
+ * ring costs nothing: the backend's sweep re-delivers whatever it asked for,
+ * which is what makes the doorbells reliable at all.
+ */
+export function refuseDoorbellWhileDraining(
+  drain: DrainCoordinator = serverDrain,
+): MiddlewareHandler {
+  return async (c, next) => {
+    if (!drain.isDraining()) return next();
+    c.header("Retry-After", String(DRAINING_RETRY_AFTER_SECONDS));
+    return c.json({ ok: false, error: "This server is restarting." }, 503);
+  };
+}
