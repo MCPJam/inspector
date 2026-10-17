@@ -32,7 +32,7 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
-import { isRunPastExecution } from "../../services/evals/run-status.js";
+import { isEvalRunPastExecution } from "@mcpjam/sdk/contract";
 import {
   checkEvalExecutionAdmission,
   checkEvalHarnessAdmission,
@@ -1491,11 +1491,10 @@ export type PreparedEvalRun = {
  * is not a licence to change behaviour.
  *
  * TRUE for a replay of a run held in `grading`, which is why this reads
- * `isRunPastExecution` rather than `isTerminalRunStatus`. Such a run has run
- * every trial and is waiting only for its judge; a redelivered claim that
- * executed it would run the whole suite a second time and bill for it, against
- * a run whose trials are already recorded — the exact double-spend above, in a
- * status that is deliberately not terminal.
+ * `isEvalRunPastExecution` rather than `isEvalRunTerminalStatus`. Such a run
+ * has run every trial and waits only for its judge; executing a redelivered
+ * claim would run and bill the whole suite again for trials already recorded,
+ * the exact double-spend above in a status that is deliberately not terminal.
  *
  * TRUE for a replay whose server failed the preflight, whatever its status.
  * Resuming a crashed run is only worth it against a server that answers; this
@@ -1510,7 +1509,8 @@ export function shouldSkipExecution(prepared: {
 }): boolean {
   return (
     prepared.deduped === true &&
-    (prepared.serverUnreachable === true || isRunPastExecution(prepared.status))
+    (prepared.serverUnreachable === true ||
+      isEvalRunPastExecution(prepared.status))
   );
 }
 
