@@ -1105,8 +1105,10 @@ async function runJourneyFanOut(
             // default template instead (`sandboxIntentFor`). The reason
             // names the broken pin, and the target is refused before any
             // box is booted for it.
-            (harnessTargetIntent.reason ??
-              "The computer image this target pinned is unavailable, so one cannot be created.")
+            `${(harnessTargetIntent.reason ?? "The computer image this target pinned is unavailable")
+              .trim()
+              .replace(/\.$/, "")}. ` +
+            "Choose an available computer image for this environment, then run the swarm again."
           : undefined;
       } catch (err) {
         // Fail CLOSED and name what happened. We do not know WHICH rule threw,

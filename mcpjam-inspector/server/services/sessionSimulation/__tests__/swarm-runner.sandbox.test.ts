@@ -1071,6 +1071,9 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     // The message names the ACTUAL configuration problem, not "swarms don't
     // support harnesses".
     expect(String(terminals[0]!.errorMessage)).toMatch(/computer image/i);
+    expect(String(terminals[0]!.errorMessage)).toMatch(
+      /execute in\. Choose an available computer image for this environment, then run the swarm again\.$/
+    );
   });
 
   it("FAILS CLOSED, without provisioning, when the target has no computer attached", async () => {
