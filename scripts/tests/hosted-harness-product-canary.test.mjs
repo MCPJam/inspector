@@ -6,9 +6,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runProductCanary } from '../hosted-harness-product-canary.mjs';
 
+const apiUrl = 'https://staging.mcpjam.com/api/v1';
 test('rejects unpinned destinations before any paid run or AuthKit mint', async () => {
   for (const webUrl of ['https://attacker.test/', 'https://staging.mcpjam.com.attacker.test/', 'https://user:pass@staging.mcpjam.com/']) {
-    await assert.rejects(runProductCanary({ staging: true, webUrl }), /pinned_staging_required/);
+    await assert.rejects(runProductCanary({ staging: true, webUrl, apiUrl }), /pinned_staging_required/);
+  }
+});
+test('rejects an unpinned API destination before the API key is used', async () => {
+  for (const candidate of [undefined, 'not a url', 'https://staging.mcpjam.com/', 'http://staging.mcpjam.com/api/v1',
+    'https://attacker.test/api/v1', 'https://staging.mcpjam.com.attacker.test/api/v1', 'https://user:pass@staging.mcpjam.com/api/v1']) {
+    await assert.rejects(runProductCanary({ staging: true, webUrl: 'https://staging.mcpjam.com/', apiUrl: candidate }), /pinned_staging_required/);
   }
 });
 test('not_run retains its report and exits nonzero', () => {

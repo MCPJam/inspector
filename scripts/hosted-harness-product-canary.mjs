@@ -5,9 +5,13 @@ import { invokeCli, runAsyncCanaries } from './hosted-harness-async-canary.mjs';
 import { runUserTesting } from './hosted-harness-user-testing-canary.mjs';
 import { mintSession } from '../.github/scripts/canary-session.mjs';
 
+// Both destinations receive credentials (the AuthKit bearer and MCPJAM_API_KEY),
+// so each must be exactly staging, not merely https.
+const isPinned = (value, expected) => typeof value === 'string' && URL.canParse(value) && new URL(value).href.replace(/\/$/, '') === expected;
+
 export async function runProductCanary(config) {
-  const web = new URL(config.webUrl);
-  if (config.staging !== true || web.href !== 'https://staging.mcpjam.com/' ||
+  if (config.staging !== true || !isPinned(config.webUrl, 'https://staging.mcpjam.com') ||
+      !isPinned(config.apiUrl, 'https://staging.mcpjam.com/api/v1') ||
       (process.env.WORKOS_API_BASE && process.env.WORKOS_API_BASE !== 'https://api.workos.com')) throw new Error('pinned_staging_required');
   const tokens = JSON.parse(process.env.HARNESS_PRODUCT_STUDY_TOKENS || '{}');
   const invoke = args => invokeCli(config, args);
