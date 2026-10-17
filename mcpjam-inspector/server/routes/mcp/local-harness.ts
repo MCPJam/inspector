@@ -70,7 +70,6 @@ import {
   localPackTarget,
   LOCAL_HARNESS_POLICY_VERSION,
   type LocalPermissionProfile,
-  type SupportedLocalHarnessId,
 } from "../../utils/harness/local/targets.js";
 import {
   contextCredentialClass,
