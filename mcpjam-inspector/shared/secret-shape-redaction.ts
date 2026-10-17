@@ -32,6 +32,16 @@ export const tokenLike = () => /\bBearer\s+[A-Za-z0-9._~\-+/=]+\b/gi;
  */
 export const skKeyLike = () => /\bsk-(?:[A-Za-z0-9]+-)*[A-Za-z0-9]{16,}\b/g;
 
+/**
+ * Provider and host tokens with a fixed prefix: GitHub, GitLab, Slack, AWS
+ * access key ids, Hugging Face, Groq, xAI and Google OAuth access tokens.
+ * Each length floor sits well above a prefix named in prose (`hf_`, `xai-`).
+ * The backend's `BARE_CREDENTIAL_SHAPES` covers the same prefixes, and both
+ * repos' tests use the same synthetic examples so the two cannot drift apart.
+ */
+export const providerTokenLike = () =>
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_.-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}\b|hf_[A-Za-z0-9]{30,}|gsk_[A-Za-z0-9]{20,}|xai-[A-Za-z0-9]{20,}|ya29\.[A-Za-z0-9_-]{20,})/g;
+
 /** A JWT: three base64url segments, which nothing else looks like. */
 export const jwtLike = () =>
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
@@ -85,5 +95,6 @@ function redactSegment(text: string, replacement: string): string {
     .replace(jwtLike(), replacement)
     .replace(urlBasicAuthLike(), `$1${replacement}@`)
     .replace(skKeyLike(), replacement)
+    .replace(providerTokenLike(), replacement)
     .replace(secretParamLike(), `$1${replacement}`);
 }

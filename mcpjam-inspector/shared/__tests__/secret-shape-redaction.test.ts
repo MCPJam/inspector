@@ -8,6 +8,7 @@
  * is trying to understand why a page failed.
  */
 import { describe, expect, it } from "vitest";
+import { scrubLogPayload, scrubLogText } from "../log-scrubber";
 import {
   redactSecretShapes,
   secretParamLike,
@@ -178,9 +179,9 @@ describe("the patterns are FACTORIES, not shared instances", () => {
     });
 
     it("carries several through, in order", () => {
-      expect(
-        redactSecretShapes("{{secret:A_ONE}}/{{secret:B_TWO}}"),
-      ).toBe("{{secret:A_ONE}}/{{secret:B_TWO}}");
+      expect(redactSecretShapes("{{secret:A_ONE}}/{{secret:B_TWO}}")).toBe(
+        "{{secret:A_ONE}}/{{secret:B_TWO}}",
+      );
     });
 
     it("does NOT spare something that merely looks like one", () => {
@@ -195,5 +196,67 @@ describe("the patterns are FACTORIES, not shared instances", () => {
         redactSecretShapes("{{secret:PW}} sk-proj-abcdefghijklmnop", "***"),
       ).toBe("{{secret:PW}} ***");
     });
+  });
+});
+
+// Synthetic, split so no scanner reads them as live keys. The backend's
+// redaction tests use these same examples.
+const PROVIDER_TOKENS = [
+  ["GitHub token", "ghp" + "_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+  ["Slack bot token", "xox" + "b-1234567890-0987654321-AbCdEfGh"],
+  ["AWS access key id", "AKIA" + "IOSFODNN7EXAMPLE"],
+  ["Hugging Face token", "hf" + "_AbCdEfGhIjKlMnOpQrStUvWxYz01234567"],
+  ["Groq key", "gsk" + "_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+  ["Google OAuth access token", "ya29" + ".a0AfH6SMBxYzAbCdEfGhIjKl-_9"],
+  ["xAI key", "xai" + "-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+  ["GitLab token", "glpat" + "-AbCdEfGhIjKlMnOpQrSt"],
+] as const;
+
+describe("bare provider and host tokens", () => {
+  it.each(PROVIDER_TOKENS)(
+    "removes a %s from a model-bound message and a log line",
+    (_label, token) => {
+      const message = `provider refused ${token}; rotate it and retry`;
+      expect(redactSecretShapes(message)).toBe(
+        "provider refused [redacted]; rotate it and retry",
+      );
+      expect(scrubLogText(message)).toBe(
+        "provider refused [redacted-secret]; rotate it and retry",
+      );
+    },
+  );
+
+  it.each(PROVIDER_TOKENS)(
+    "removes a %s quoted in JSON and under an error key near its cap",
+    (_label, token) => {
+      const body = JSON.stringify({ error: { message: `bad key ${token}` } });
+      expect(redactSecretShapes(body)).not.toContain(token);
+      const row = scrubLogPayload({
+        errorMessage: `${"x".repeat(490)} ${token} and more after it`,
+      });
+      expect(JSON.stringify(row)).not.toContain(token.slice(0, 8));
+    },
+  );
+
+  it("leaves a prefix named in prose, and a second pass, unchanged", () => {
+    const prose = "keys start with ghp_, hf_ or xai- and are rotated monthly";
+    expect(redactSecretShapes(prose)).toBe(prose);
+    expect(scrubLogText(prose)).toBe(prose);
+    const once = redactSecretShapes(`token ${PROVIDER_TOKENS[3][1]}`);
+    expect(redactSecretShapes(once)).toBe(once);
+  });
+
+  it("keeps a secret placeholder beside a provider token", () => {
+    expect(
+      redactSecretShapes(
+        `typed {{secret:HF_TOKEN}} then ${PROVIDER_TOKENS[3][1]}`,
+      ),
+    ).toBe("typed {{secret:HF_TOKEN}} then [redacted]");
+  });
+
+  it("scans a large adversarial line in linear time", () => {
+    const started = performance.now();
+    redactSecretShapes("ghp_".repeat(50_000) + "glpat-".repeat(50_000));
+    expect(performance.now() - started).toBeLessThan(2000);
   });
 });
