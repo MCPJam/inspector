@@ -835,10 +835,7 @@ export function ChatTabV2({
           : null) ?? undefined;
       await loadChatSession(
         {
-          chatSessionId: detail.chatSessionId,
-          messagesBlobUrl: detail.messagesBlobUrl,
-          resumeConfig: detail.resumeConfig,
-          version: detail.version,
+          ...detail,
           widgetSnapshots,
           turnTraces: options?.turnTraces,
         },

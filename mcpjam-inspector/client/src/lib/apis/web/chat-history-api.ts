@@ -1,3 +1,4 @@
+import type { PendingHarnessApproval } from "@/lib/harness-approval-hydration";
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
@@ -76,6 +77,7 @@ export interface ResumeConfig {
  * contract change.
  */
 export interface ChatHistoryDetailSession extends ChatHistorySession {
+  pendingHarnessApprovals?: PendingHarnessApproval[];
   origin?: string;
   browser?: {
     browserSessionId: string;

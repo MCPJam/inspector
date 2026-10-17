@@ -183,6 +183,7 @@ import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
 import {
   preserveHydratedMessageIds,
   transcriptToUIMessages,
+  type PendingHarnessApproval,
 } from "@/lib/transcript-to-ui-messages";
 import {
   hydrateMessageTimestamps,
@@ -895,6 +896,7 @@ export interface UseChatSessionReturn {
     session: {
       chatSessionId: string;
       messagesBlobUrl: string | null;
+      pendingHarnessApprovals?: PendingHarnessApproval[];
       resumeConfig?: {
         systemPrompt?: string;
         temperature?: number;
@@ -5557,12 +5559,12 @@ export function useChatSession(
     },
     [startChatWithMessages],
   );
-
   const loadChatSession = useCallback(
     async (
       session: {
         chatSessionId: string;
         messagesBlobUrl: string | null;
+        pendingHarnessApprovals?: PendingHarnessApproval[];
         resumeConfig?: {
           systemPrompt?: string;
           temperature?: number;
@@ -5626,16 +5628,14 @@ export function useChatSession(
         }
       }
       let uiMessages: UIMessage[] = [];
-
       if (session.messagesBlobUrl) {
-        // Goes through the dedup cache so a hover-prefetched blob is reused
-        // by the click path. Throws on non-OK responses internally.
         const transcript = (await getCachedBlobJson(
           session.messagesBlobUrl,
         )) as unknown[];
-        uiMessages = transcriptToUIMessages(transcript);
+        uiMessages = transcriptToUIMessages(
+          transcript, session.pendingHarnessApprovals,
+        );
       }
-
       // Build toolRenderOverrides from widget snapshots if available
       let overrides: Record<string, ToolRenderOverride> = {};
       const hydratedWidgetSnapshots = await resolveHydratedWidgetSnapshots(
