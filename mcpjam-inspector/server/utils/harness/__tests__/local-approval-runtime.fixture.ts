@@ -155,4 +155,5 @@ function options(
     ...overrides,
   } as MCPJamHandlerOptions;
 }
-export { state as localApprovalFixture, options as localApprovalOptions };
+export { options as localApprovalOptions };
+export { localApprovalFixture } from "./local-approval-agent.fixture.js";

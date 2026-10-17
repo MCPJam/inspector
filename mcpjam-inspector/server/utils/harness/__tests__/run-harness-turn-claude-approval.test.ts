@@ -1,3 +1,4 @@
+import { localApprovalFixture as state } from "./local-approval-agent.fixture.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { convertToModelMessages } from "ai";
 import {
@@ -11,7 +12,6 @@ import {
 } from "../local/session-registry.js";
 
 import {
-  localApprovalFixture as state,
   localApprovalOptions as options,
 } from "./local-approval-runtime.fixture.js";
 
