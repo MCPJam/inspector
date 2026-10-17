@@ -13,10 +13,10 @@
 # `conformance-evidence-*` artifact. A release requires one for every pack it
 # may select (`check-local-harness-release.mjs --evidence`).
 #
-# On a pull request only Linux x64 runs, and it runs THIS PR's layer against
-# the PINNED published pack: nothing has to be published for it to pass, so a
-# bridge change can never deadlock on a pack only main can publish. Which legs
-# run where is `scripts/plan-local-harness-conformance.mjs`.
+# Pull requests run Linux x64 against the pinned published pack and experimental
+# Windows Codex against a source-built Windows pack, both with this PR's layer.
+# Source-pack evidence does not qualify the released pack. Other target legs
+# are selected by `scripts/plan-local-harness-conformance.mjs`.
 name: Local harness conformance
 
 on:
@@ -97,6 +97,7 @@ on:
       # anywhere before it merged.
       - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
       - ".github/workflows/local-harness-conformance.yml"
+      - ".github/workflows/local-codex-windows-conformance.yml"
 
 concurrency:
   # The versions AND the harness selection: a release calls this twice (its
@@ -618,15 +619,10 @@ jobs:
           path: ${{ runner.temp }}/conformance/published-conformance-input.json
           if-no-files-found: error
 
-  # Local Codex: its own pack (MCPJam's app-server bridge + the pinned
-  # `@openai/codex` platform binary), its own adapter and its own sandbox
-  # claims, so its own legs — against a mock OpenAI Responses upstream behind
-  # the same loopback gateway. Only the model is fake.
-  #
-  # D8: the targets Codex's manifest certifies (`nativeTargets`) block; the
-  # others run so their evidence stays visible without holding up a certified
-  # target's release. Windows has no leg: it is not a Codex native target, and
-  # its sandbox (`windowsSandbox/setupStart`) has no evidence yet.
+  # Codex uses its own pack, adapter, and sandbox claims, with only the model
+  # replaced by a mock Responses upstream behind the loopback gateway.
+  # Certified targets block their release; uncertified targets collect visible
+  # evidence without granting capabilities. Windows remains uncertified.
   codex-scenarios:
     name: codex ${{ matrix.platform_key }}
     needs: [unit, plan]
@@ -789,6 +785,15 @@ jobs:
           path: ${{ runner.temp }}/conformance/evidence/*.json
           if-no-files-found: error
 
+  codex-windows:
+    needs: [unit, plan]
+    if: needs.plan.outputs.run_codex == 'true'
+    uses: ./.github/workflows/local-codex-windows-conformance.yml
+    with:
+      published_pack_version: ${{ github.event_name != 'pull_request' && needs.plan.outputs.codex_pack_version || '' }}
+      candidate: ${{ inputs.candidate || false }}
+      pack_version: ${{ inputs.pack_version || 'conformance' }}
+
   summarize:
     name: conformance version
     # A conformance version records the evidence behind EVERY platform the
@@ -801,9 +806,8 @@ jobs:
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:
-      # The value the record carries. It names the RUN that produced the
-      # evidence, so a recorded conformance version can always be traced back to
-      # the scenarios that justified it.
+      # The stamp names the run that produced the evidence, so it can always
+      # be traced back to the scenarios that justified it.
       - id: stamp
         env:
           PUBLISHED_PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
@@ -816,7 +820,7 @@ jobs:
 
   # Codex's own stamp, from Codex's own legs only. A Codex failure must not
   # withhold Claude Code's version, nor a Claude Code failure Codex's: each
-  # harness's evidence certifies that harness alone (D4).
+  # harness's evidence certifies that harness alone.
   codex-summarize:
     name: codex conformance version
     needs: [codex-scenarios, plan]

@@ -1,0 +1,194 @@
+name: Local Codex Windows qualification
+
+on:
+  workflow_call:
+    inputs:
+      published_pack_version:
+        type: string
+        default: ""
+      pack_version:
+        type: string
+        default: conformance
+      candidate:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  MOCK_LATENCY_MS: "50"
+
+jobs:
+  qualification:
+    name: codex win32-x64 qualification
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+      # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
+      # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
+      # SDK's extract script to run. pnpm 9 reads the same file and fails with
+      # "packages field missing or empty".
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ steps.toolchain.outputs.pnpm }}
+
+      # From the REPO ROOT: this is an npm workspace, so dependencies install
+      # and hoist there. Installing inside the package produces a second,
+      # partial tree and the adapter ends up in neither place the build looks.
+      - name: Install workspace dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+
+      # The Job Object launcher is what whole-tree cleanup rests on here, so a
+      # conformance run without it is not testing Windows support — it is
+      # testing that Windows is refused, which the unit suite already covers.
+      - name: Set up the pinned Go toolchain
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.toolchain.outputs.go }}
+          cache-dependency-path: mcpjam-inspector/tools/mcpjam-job-launcher/go.sum
+
+      - name: Build the Job Object launcher
+        working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
+        run: go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
+
+      # The launcher's unit tests, on the only runner that can run them: the
+      # code is `syscall.SysProcAttr` and `golang.org/x/sys/windows`, so it
+      # does not compile anywhere else. They cover which child the launcher
+      # will agree to start — a containment check that ran nowhere in CI until
+      # this step existed, and one whose failure mode is silent acceptance of
+      # a program outside the verified pack.
+      - name: Test the Job Object launcher
+        working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Download the bundled Node runtime
+        run: |
+          set -euo pipefail
+          archive="node-v${BUNDLED_NODE_VERSION}-win-x64.zip"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${archive}" \
+            -o "$RUNNER_TEMP/node-runtime.zip"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/node-shasums.txt"
+          expected=$(awk -v name="$archive" '$2 == name {print $1}' "$RUNNER_TEMP/node-shasums.txt")
+          test -n "$expected"
+          actual=$(sha256sum < "$RUNNER_TEMP/node-runtime.zip" | awk '{print $1}')
+          test "$actual" = "$expected"
+
+      - name: Prepare the pinned published pack
+        if: inputs.published_pack_version != ''
+        working-directory: mcpjam-inspector
+        env:
+          PACK_VERSION: ${{ inputs.published_pack_version }}
+          CANDIDATE: ${{ inputs.candidate && '--candidate' || '' }}
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "win32-x64" "$RUNNER_TEMP/codex conformance" codex $CANDIDATE
+
+      - name: Build the pack
+        if: inputs.published_pack_version == ''
+        working-directory: mcpjam-inspector
+        env:
+          SOURCE_PACK_VERSION: ${{ inputs.pack_version || 'conformance' }}
+        run: |
+          node scripts/build-local-harness-pack.mjs \
+            --harness codex \
+            --platform win32-x64 \
+            --pack-version "$SOURCE_PACK_VERSION" \
+            --node-tarball "$RUNNER_TEMP/node-runtime.zip" \
+            --job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe" \
+            --out "$RUNNER_TEMP/codex-runtime-src" \
+            --skip-archive
+          mkdir -p "$RUNNER_TEMP/codex conformance/runtime"
+          cp -R "$RUNNER_TEMP/codex-runtime-src/codex" \
+            "$RUNNER_TEMP/codex conformance/runtime/codex"
+
+      - name: Build Inspector adapter dependencies
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
+
+      - name: Native Codex scenarios
+        id: native
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/codex conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$CONFORMANCE_ROOT/home"
+          for mode in attended attended-off unattended; do
+            HOME="$CONFORMANCE_ROOT/home" npx tsx server/utils/harness/local/conformance/run-codex-turn.ts "$mode"
+          done
+
+      - name: No supervised Codex process survived
+        if: always()
+        shell: pwsh
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/codex conformance
+        run: |
+          $root = $env:CONFORMANCE_ROOT.Replace('/', '\')
+          $survivors = Get-CimInstance Win32_Process | Where-Object {
+            $_.ProcessId -ne $PID -and $_.CommandLine -and
+            $_.CommandLine.Replace('/', '\').Contains($root) -and
+            ($_.Name -eq 'node.exe' -or $_.Name -eq 'codex.exe')
+          }
+          if ($survivors) {
+            $survivors | Select-Object ProcessId, ParentProcessId, Name
+            throw 'Supervised Codex processes survived native conformance'
+          }
+
+      - name: Record Windows Codex outcome
+        if: always()
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/codex conformance
+          OUTCOME: ${{ steps.native.outcome }}
+          PACK_VERSION: ${{ inputs.published_pack_version || 'source' }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { mkdirSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          const dir = join(process.env.CONFORMANCE_ROOT, "evidence");
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(join(dir, `codex-windows-outcome-${process.env.PACK_VERSION}.json`), JSON.stringify({
+            harnessId: "codex", target: "win32-x64", result: process.env.OUTCOME,
+            commit: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID,
+          }, null, 2) + "\n");
+          NODE
+
+      - name: Record Windows Codex conformance evidence
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/codex conformance
+          PACK_VERSION: ${{ inputs.published_pack_version }}
+        run: |
+          published=()
+          if [ -n "$PACK_VERSION" ]; then
+            published=(--published "$CONFORMANCE_ROOT/published-conformance-input.json")
+          fi
+          node scripts/write-conformance-evidence.mjs \
+            --harness codex --target win32-x64 \
+            --runtime "$CONFORMANCE_ROOT/runtime/codex" \
+            --out "$CONFORMANCE_ROOT/evidence" "${published[@]}" \
+            --scenarios attended,attended-off,unattended,windows-sandbox-setup
+
+      - name: Upload Windows Codex evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-evidence-codex-win32-x64-${{ inputs.published_pack_version || 'source' }}
+          path: ${{ runner.temp }}/codex conformance/evidence/*.json
+          if-no-files-found: error
