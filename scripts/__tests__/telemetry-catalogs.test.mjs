@@ -155,6 +155,22 @@ test("a second scan in one process sees edited, renamed and deleted routes", () 
   }
 });
 
+test("a LogConvexId field gets the context-only convexId rule, a plain string none", () => {
+  const root = fixture();
+  try {
+    edit(root, "mcpjam-inspector/shared/log-events.ts", [
+      "interface CommonLogContext { orgId?: LogConvexId | null; sessionId?: string | null }",
+      'export type RequestEventMap = { "probe.request": { statusCode: number; orgId: string } };',
+    ].join("\n"));
+    assert.deepEqual(inspector(buildTelemetryCatalogs({ root })).fields, {
+      orgId: { kind: "convexId" },
+      statusCode: { kind: "number" },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 /** Milliseconds until `condition` holds, or Infinity past the budget. */
 async function within(condition) {
   const started = performance.now();
