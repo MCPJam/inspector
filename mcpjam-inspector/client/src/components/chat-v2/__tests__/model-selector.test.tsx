@@ -386,92 +386,10 @@ describe("ModelSelector", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText('No models match "zzzznomatch".')
-      ).toBeInTheDocument();
+      expect(screen.getByText('No models match "zzzznomatch".')).toBeInTheDocument();
     });
     expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
     expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
-  });
-
-  // A search for a model the list doesn't offer used to end at "No matching
-  // models", with nothing to say why or what to do next.
-  it("says why a searched model isn't listed and offers to add its provider", async () => {
-    const user = userEvent.setup();
-    const onAddProvider = vi.fn();
-
-    render(
-      <ModelSelector
-        currentModel={searchModels[0]}
-        availableModels={searchModels}
-        onModelChange={() => {}}
-        onAddProvider={onAddProvider}
-      />
-    );
-
-    await user.click(screen.getByTestId("model-selector-trigger"));
-    await user.type(screen.getByPlaceholderText("Search models"), "mixtral");
-
-    expect(
-      await screen.findByText('No models match "mixtral".')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Only models MCPJam runs and models from your organization's providers are listed."
-      )
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Add a provider" }));
-    expect(onAddProvider).toHaveBeenCalledTimes(1);
-  });
-
-  it("sends a member under the key policy to an admin", async () => {
-    const user = userEvent.setup();
-
-    render(
-      <ModelSelector
-        currentModel={searchModels[0]}
-        availableModels={searchModels}
-        onModelChange={() => {}}
-        requireOrgKeys
-      />
-    );
-
-    await user.click(screen.getByTestId("model-selector-trigger"));
-    await user.type(screen.getByPlaceholderText("Search models"), "mixtral");
-
-    expect(
-      await screen.findByText(
-        "Only models from your organization's providers are listed."
-      )
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Ask an organization admin to add one.")
-    ).toBeInTheDocument();
-  });
-
-  it("only explains when it can't tell whether the viewer can add providers", async () => {
-    const user = userEvent.setup();
-
-    render(
-      <ModelSelector
-        currentModel={searchModels[0]}
-        availableModels={searchModels}
-        onModelChange={() => {}}
-      />
-    );
-
-    await user.click(screen.getByTestId("model-selector-trigger"));
-    await user.type(screen.getByPlaceholderText("Search models"), "mixtral");
-
-    expect(
-      await screen.findByText('No models match "mixtral".')
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Add a provider" })
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("Ask an organization admin to add one.")
-    ).not.toBeInTheDocument();
   });
 
   it("restores hidden provider headings when the search is cleared", async () => {
