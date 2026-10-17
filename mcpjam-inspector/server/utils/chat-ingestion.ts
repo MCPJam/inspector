@@ -124,11 +124,11 @@ export interface ResumeConfig {
   /**
    * Agent-Playground FIRST-TURN PINS (`origin: "api"` sessions).
    *
-   * Mirrors the backend `chatResumeConfigValidator`.
-   * are the fields the ingest boundary protects with `preserveAgentResumePins`
-   * — first-write-wins, so a continuation cannot swap the model, the tool
-   * policy, or the target out from under a session that already pinned them.
-   * The route's own `CONFIG_ON_CONTINUATION` check is the friendly error; this
+   * Hand-mirrored from the backend `chatResumeConfigValidator`. These four are
+   * the fields the ingest boundary protects with `preserveAgentResumePins`:
+   * first-write-wins, so a continuation cannot swap the model, tool policy or
+   * target under a session that already pinned them. The route's own
+   * `CONFIG_ON_CONTINUATION` check is the friendly error; this is the guarantee.
    *
    * Adding a field here is NOT enough to make it persist: the backend's HTTP
    * ingest projects `resumeConfig` through an explicit allowlist, so a new key

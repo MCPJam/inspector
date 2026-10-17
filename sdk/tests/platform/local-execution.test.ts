@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { PlatformApiClient } from "../../src/platform/client.js";
 import { authorizeLocalExecutionOperation } from "../../src/platform/operations.js";
+import { hostedSendChatMessageOperation } from "../../src/platform/hosted-chat-operation.js";
 import {
   localExecutionAuthorizationSchema,
   localExecutionTargetSchema,
@@ -97,4 +98,16 @@ it("documents the same authorization and target schemas as the SDK", () => {
     const { $schema: _dialect, ...contract } = z.toJSONSchema(schema);
     expect(spec.components.schemas[name]).toEqual(contract);
   }
+});
+
+it("keeps the local capability out of model-facing chat tool arguments", () => {
+  const turn = { message: "hi", idempotencyKey: "k" };
+  const schema = hostedSendChatMessageOperation.inputSchema;
+  expect(
+    schema.safeParse({ ...turn, executionTarget: { kind: "hosted" } }).success
+  ).toBe(true);
+  expect(schema.safeParse({ ...turn, executionTarget: target }).success).toBe(
+    false
+  );
+  expect(JSON.stringify(z.toJSONSchema(schema))).not.toContain("grantToken");
 });

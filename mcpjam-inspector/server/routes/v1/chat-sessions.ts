@@ -79,7 +79,14 @@ const MAX_MESSAGE_PAGE = 200;
 const DEFAULT_TRACE_TURNS = 1;
 const MAX_TRACE_TURNS = 20;
 
-/** Fields consumed from the backend session document. */
+/**
+ * The `chatSessions` fields these reads consume, hand-mirrored.
+ *
+ * `getSession` spreads the whole document, so this is deliberately narrower
+ * than what arrives — naming the fields we depend on is what makes a backend
+ * projection change show up as a type error here rather than as a silently
+ * absent field in a public response.
+ */
 type SessionRow = {
   _id: string;
   chatSessionId?: string;

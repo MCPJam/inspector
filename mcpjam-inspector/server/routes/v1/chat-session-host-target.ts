@@ -300,6 +300,7 @@ export function resolveChatSessionEngine(args: {
   const hostConfig = args.hostTarget.runtimeConfig;
   const name = getHarnessAdapter(harness).displayName;
 
+  // The host's own approval gate, read server-side like everything else here.
   const requireToolApproval = hostConfig.requireToolApproval === true;
 
   const hostEffort =
@@ -317,7 +318,8 @@ export function resolveChatSessionEngine(args: {
     // never be MORE permissive than a valid one.
     xaaEnterprisePolicyOn:
       readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off",
-    // Chat may run an unverified pair with the verdict reported as a warning.
+    // An API chat turn is chat: an unverified harness × model pair runs, and
+    // the verdict's reason comes back as `warning`.
     purpose: "chat",
     // The host's saved effort, when its selection names the model this turn
     // runs. A harness that cannot apply it refuses the turn instead of running
