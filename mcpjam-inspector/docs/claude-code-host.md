@@ -128,3 +128,47 @@ real runtime did. All fail closed; a failed start spends nothing.
 | Org out of compute allowance + credits (enforce mode) | Computer pauses with the "Paused for billing" notice. |
 | Org spending limit reached | Clean rejection at broker start (429), before any model call. |
 | Sandbox dies mid-run | Turn errors; next turn starts a fresh session ("the project computer was reset"). |
+
+## Hosted candidate qualification
+
+Run this checklist on the deployed candidate before each widening of access.
+Source-checkout tests, a fake provider, and native runtime conformance are useful
+regressions, but do not qualify a deployed product. Record outcomes and incomplete
+cases in the [candidate qualification task](https://github.com/MCPJam/inspector/issues/6549); do not infer success from an absent error or a missing log.
+
+Record the inspector and backend commit SHAs, deployed versions, both native
+CLI versions, and the candidate's pack/layer identities. For every run, retain
+its project, run, session and turn IDs, exact tool calls, actual engine and venue,
+terminal state, token use, and evidence links. Redact credentials and access links.
+
+| Surface (both clients) | Required observation |
+|---|---|
+| v1 chat through CLI | Native file write/read, exact fixture MCP call, second-turn read |
+| Eval | Same task; actual engine is `harness:*`, venue is cloud |
+| Swarm | Same task; persisted turns complete without a held lease |
+| User Testing | Same task; participant session and replay identify the executed client |
+
+For both clients, also record these cases:
+
+- Browser Playground with approvals: approve once, two sequential approvals,
+  deny, double submit, reload while pending, and Stop while pending. Repeat
+  approval and fresh-chat paths ten times per client.
+- Real bearer-auth and OAuth MCP servers: initial authorization, token refresh,
+  revocation, and selected-tool filtering. Disabled tools must be absent.
+- User Testing: member, invited and policy-allowed anonymous participants;
+  ratings, comments, replay, session isolation, and a settled analysis window
+  that produces insights. `window_not_analyzed` is incomplete evidence.
+- Stop or timeout in Playground, eval and swarm: exactly one terminal result,
+  no remaining running computer, and no duplicate result appended later.
+- Readiness: the retained QA sessions have been regraded and native tool calls
+  are classified correctly. Production regrading is a human-operated step.
+
+Use an authenticated staging path if guest bootstrap is unavailable. Record the
+403 and the alternate path; do not treat signed-in testing as guest coverage.
+
+Before widening, a human verifies this checklist, three successful nightly
+canaries, the Codex default-model decision, and free-user model eligibility.
+Widen Claude Code and Codex independently from design partners to paid
+organizations to all signed-in users. Flag conditions remain email-property-only
+with `evaluation_runtime: all`. Deployments, flag changes, production regrades,
+and signed runtime publication require human operation.
