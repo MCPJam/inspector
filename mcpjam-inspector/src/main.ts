@@ -34,6 +34,7 @@ const desktopSentryIdentity = installDesktopSentryIdentity();
 
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
+import { once } from "events";
 import path from "path";
 import fs from "fs";
 // IMPORTANT: do NOT statically import "../server/app.js" or anything that
@@ -458,10 +459,6 @@ async function startHonoServer(): Promise<number> {
 
     let port: number;
     if (cachedProbedPort !== null) {
-      // Re-use the port from first launch — server/config.ts is already
-      // module-cached against this value; probing again would risk
-      // picking a different free port and silently desyncing CORS,
-      // origin validation, and LOCAL_SERVER_ADDR from the bound port.
       port = cachedProbedPort;
       log.info(`Reusing previously-probed port ${port} for server restart`);
     } else {
@@ -613,6 +610,8 @@ async function startHonoServer(): Promise<number> {
     // Attach the computer terminal WebSocket upgrade handler (mirror of
     // server/index.ts). Without this the Computer tab's Shell can't upgrade.
     injectWebSocket(server);
+    // serve() leaves bind errors unhandled; this turns them into a rejection.
+    await once(server, "listening");
 
     if (port !== DEFAULT_SERVER_PORT) {
       log.warn(
@@ -1083,6 +1082,8 @@ function showStartupFailureDialog(error: unknown): void {
 
 // App event handlers
 app.whenReady().then(async () => {
+  // A second instance still gets `ready` while it quits: never bind there.
+  if (!gotTheLock) return;
   try {
     // Best-effort cleanup of GPU/HTTP caches when the app version changes.
     // Stale caches from a previous build can crash the renderer/GPU process
@@ -1202,6 +1203,8 @@ function visibleWindows(): BrowserWindow[] {
 }
 
 async function handleActivate(): Promise<void> {
+  // macOS can emit `activate` mid-launch; the bootstrap makes the window.
+  if (!appBootstrapped) return;
   // On macOS, re-create window when the dock icon is clicked
   if (visibleWindows().length === 0) {
     // A quick reopen can arrive while the browser closed by
@@ -1215,19 +1218,15 @@ async function handleActivate(): Promise<void> {
     // Re-asked after the await: the teardown is long enough for a window to
     // have appeared, and building a second one is worse than doing nothing.
     if (visibleWindows().length > 0) return;
-    if (serverPort > 0) {
-      mainWindow = createMainWindow(getServerUrl());
-      setTrustedUpdateWindow(mainWindow);
-    } else {
-      // Restart server if needed
-      try {
-        serverPort = await startHonoServer();
-        mainWindow = createMainWindow(getServerUrl());
-        setTrustedUpdateWindow(mainWindow);
-      } catch (error) {
-        log.error("Failed to restart server:", error);
-      }
+    try {
+      if (serverPort === 0) serverPort = await startHonoServer();
+    } catch (error) {
+      log.error("Failed to restart server:", error);
+      showStartupFailureDialog(error);
+      return;
     }
+    mainWindow = createMainWindow(getServerUrl());
+    setTrustedUpdateWindow(mainWindow);
   }
 }
 
