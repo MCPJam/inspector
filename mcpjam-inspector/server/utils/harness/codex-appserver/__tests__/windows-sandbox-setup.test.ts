@@ -7,12 +7,10 @@ function fixture(started = true) {
   const request = vi
     .fn<AppServerClient["request"]>()
     .mockResolvedValue({ started });
-  const client = {
-    request,
-    onNotification: (listener: NonNullable<typeof notify>) => {
-      notify = listener;
-    },
-  };
+  const onNotification = vi.fn((listener: NonNullable<typeof notify>) => {
+    notify = listener;
+  });
+  const client = { request, onNotification };
   return {
     client,
     request,
@@ -39,6 +37,10 @@ it("waits for completed Windows setup after the start acknowledgment", async () 
   });
   f.finish(true);
   await expect(setup).resolves.toBeUndefined();
+  expect(f.client.onNotification).toHaveBeenCalledTimes(2);
+  expect(f.client.onNotification.mock.calls[1][0]).not.toBe(
+    f.client.onNotification.mock.calls[0][0],
+  );
 });
 
 it("rejects an unsuccessful setup and a refused start", async () => {
@@ -46,6 +48,7 @@ it("rejects an unsuccessful setup and a refused start", async () => {
   const setup = setupWindowsSandbox(f.client, "C:\\work");
   f.finish(false);
   await expect(setup).rejects.toThrow("setup refused");
+  expect(f.client.onNotification).toHaveBeenCalledTimes(2);
   await expect(
     setupWindowsSandbox(fixture(false).client, "C:\\work"),
   ).rejects.toThrow("did not start");
@@ -53,8 +56,10 @@ it("rejects an unsuccessful setup and a refused start", async () => {
 
 it("bounds a missing Windows setup completion notification", async () => {
   vi.useFakeTimers();
-  const setup = setupWindowsSandbox(fixture().client, "C:\\work", 20);
+  const f = fixture();
+  const setup = setupWindowsSandbox(f.client, "C:\\work", 20);
   const rejected = expect(setup).rejects.toThrow("timed out");
   await vi.advanceTimersByTimeAsync(20);
   await rejected;
+  expect(f.client.onNotification).toHaveBeenCalledTimes(2);
 });
