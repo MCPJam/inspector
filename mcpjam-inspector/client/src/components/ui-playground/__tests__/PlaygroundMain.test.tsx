@@ -2365,10 +2365,15 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.chatSessionId = ORIGINAL_CONVERSATION_ID;
       // The URL is dropped from `onBeforeBranch`, which the real hook fires as
       // the branch is minted — so a refused rewind keeps its `?conversation=`.
+      // It is read right there because this mock never mints the branch's own
+      // session id: once the hook's mask lifts, its sync effect writes the
+      // mock's unchanged id, the original's, back into the URL.
+      let searchAfterBranch: string | undefined;
       mockUseChatSession.rewindToMessage = vi
         .fn()
         .mockImplementation(async (options) => {
           options?.onBeforeBranch?.();
+          searchAfterBranch = window.location.search;
           return { previousChatSessionId: ORIGINAL_CONVERSATION_ID };
         });
 
@@ -2383,19 +2388,8 @@ describe("PlaygroundMain", () => {
         expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
       });
 
-      // Not "no param at all": once the branch's transcript has content the sync
-      // effect writes the BRANCH's id here. What must never survive is the
-      // original's, which is what the restore effect would act on. The URL
-      // updates after several effects settle, which can pass the default
-      // one-second wait on a loaded CI runner.
-      await waitFor(
-        () => {
-          expect(window.location.search).not.toContain(
-            ORIGINAL_CONVERSATION_ID
-          );
-        },
-        { timeout: 5000 }
-      );
+      // Gone as the branch is minted, so the restore effect has nothing to act on.
+      expect(searchAfterBranch).toBe("");
     });
 
     it("withholds the edit affordance when signed out, where there is no history to go back to", () => {
