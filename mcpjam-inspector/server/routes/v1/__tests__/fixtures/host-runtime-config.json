@@ -1,0 +1,47 @@
+{
+  "ok": true,
+  "config": {
+    "accessKind": "project_member",
+    "actorKind": "signedIn",
+    "capabilities": {
+      "computer": true,
+      "harness": true,
+      "personalSkills": true,
+      "sharedSkills": true
+    },
+    "computer": {
+      "kind": "personal"
+    },
+    "executionScope": {
+      "kind": "project",
+      "projectId": "000000000000000000010005projects"
+    },
+    "harness": "claude-code",
+    "hostConfigId": "000000000000000010006hostConfigs",
+    "hostId": "000000000000000000000010007hosts",
+    "hostStyle": "claude-code",
+    "modelId": "anthropic/claude-haiku-4.5",
+    "modelSelectionLabel": {
+      "origin": "backfill",
+      "selection": {
+        "fallback": {
+          "model": "none",
+          "provider": "none"
+        },
+        "modelId": "anthropic/claude-haiku-4.5",
+        "source": "hosted"
+      }
+    },
+    "requireToolApproval": false,
+    "runtimeSkills": {
+      "personal": true,
+      "shared": true
+    },
+    "selectedServerIds": [
+      "0000000000000000000010009servers",
+      "0000000000000000000010010servers"
+    ],
+    "systemPrompt": "You are Claude Code.",
+    "temperature": 1
+  }
+}
