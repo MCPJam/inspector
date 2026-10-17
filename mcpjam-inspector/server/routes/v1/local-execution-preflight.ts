@@ -1,3 +1,4 @@
+import { localHarnessCapabilityRefusal } from "../../../shared/harness-capability-support.js";
 import { localExecutionTargetBodySchema } from "@mcpjam/sdk/platform";
 import type { z } from "zod";
 import { verifyLocalHarnessMember } from "../../utils/harness/local/readiness.js";
@@ -23,6 +24,25 @@ export function assertPlatformExecutionVenue(
   return venue;
 }
 
+function assertLocalCapabilities(
+  harnessId: string,
+  hostConfig: Record<string, unknown>,
+  requestedBrowser: unknown,
+) {
+  const refusal = localHarnessCapabilityRefusal(harnessId, {
+    builtInToolIds: Array.isArray(hostConfig.builtInToolIds)
+      ? hostConfig.builtInToolIds.filter(
+          (id): id is string => typeof id === "string",
+        )
+      : [],
+    browserToolPolicy: requestedBrowser ?? hostConfig.browserToolPolicy,
+  });
+  if (refusal)
+    throw new WebRouteError(422, ErrorCode.FEATURE_NOT_SUPPORTED, refusal, {
+      reason: "LOCAL_CAPABILITY_UNSUPPORTED",
+    });
+}
+
 /** This read-only preflight runs before the API allocates a turn lease. */
 export async function preflightLocalExecution(args: {
   target: LocalTarget;
@@ -30,6 +50,7 @@ export async function preflightLocalExecution(args: {
   bearer: string;
   projectId: string;
   hostConfig: Record<string, unknown> | undefined;
+  requestedBrowser?: unknown;
 }) {
   const { target, grantToken, bearer, projectId, hostConfig } = args;
   if (!grantToken)
@@ -55,6 +76,7 @@ export async function preflightLocalExecution(args: {
       { reason: "ATTENDED_APPROVAL_REQUIRED" },
     );
   }
+  assertLocalCapabilities(target.harnessId, hostConfig, args.requestedBrowser);
   const actor = await verifyLocalHarnessMember(
     bearer,
     projectId,

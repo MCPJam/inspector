@@ -76,6 +76,45 @@ describe("local execution preflight", () => {
       expect(availability).not.toHaveBeenCalled();
     },
   );
+  it.each([
+    { builtInToolIds: ["bash"] },
+    { builtInToolIds: ["browser", "desktop", "computer", "video"] },
+    { browserToolPolicy: { mode: "allow_all" } },
+  ])(
+    "refuses cloud-only capabilities before actor or runtime work",
+    async (requirements) => {
+      await expect(
+        preflightLocalExecution({
+          ...args,
+          hostConfig: { harness: "codex", ...requirements },
+        }),
+      ).rejects.toMatchObject({
+        status: 422,
+        details: { reason: "LOCAL_CAPABILITY_UNSUPPORTED" },
+      });
+      expect(member).not.toHaveBeenCalled();
+      expect(runtime).not.toHaveBeenCalled();
+      expect(availability).not.toHaveBeenCalled();
+    },
+  );
+  it("refuses a per-turn browser before actor or runtime work", async () => {
+    await expect(
+      preflightLocalExecution({ ...args, requestedBrowser: {} }),
+    ).rejects.toMatchObject({
+      status: 422,
+      details: { reason: "LOCAL_CAPABILITY_UNSUPPORTED" },
+    });
+    expect(member).not.toHaveBeenCalled();
+    expect(runtime).not.toHaveBeenCalled();
+  });
+  it("accepts an ordinary client without cloud-only requirements", async () => {
+    await expect(
+      preflightLocalExecution({
+        ...args,
+        hostConfig: { harness: "codex", builtInToolIds: ["web_search"] },
+      }),
+    ).resolves.toMatchObject({ scope: "unattended" });
+  });
   it("refuses an unavailable runtime before checking launch availability", async () => {
     runtime.mockResolvedValue({ state: "absent" });
     await expect(preflightLocalExecution(args)).rejects.toThrow(/unavailable/);

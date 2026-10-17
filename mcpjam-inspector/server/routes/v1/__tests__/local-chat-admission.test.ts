@@ -17,8 +17,10 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 }));
 vi.mock(
   "../../../services/environments/runtime.js",
-  async importOriginal => ({
-    ...(await importOriginal<typeof import("../../../services/environments/runtime.js")>()),
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../services/environments/runtime.js")
+    >()),
     resolveEnvironmentForRuntime: async () => ({
       host: { hostId: "host", runtimeConfig: { harness: "codex" } },
       servers: { effectiveServerIds: ["server"] },
@@ -93,6 +95,30 @@ describe("local chat admission precedes allocation", () => {
       expect(mutation).not.toHaveBeenCalled();
     },
   );
+  it("passes per-turn browser requirements to preflight before a lease", async () => {
+    preflight.mockRejectedValue(
+      new WebRouteError(
+        422,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        "Unsupported browser",
+      ),
+    );
+    const response = await post({
+      projectId: "project",
+      idempotencyKey: "browser-intent",
+      modelId: "openai/gpt-5.5",
+      environmentId: "environment",
+      message: "browse",
+      toolMode: "auto",
+      executionTarget: target,
+      browser: {},
+    });
+    expect(response.status).toBe(422);
+    expect(preflight).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedBrowser: {} }),
+    );
+    expect(mutation).not.toHaveBeenCalled();
+  });
   it("does not silently move a local continuation to hosted", async () => {
     query.mockResolvedValue({
       _id: "session",
