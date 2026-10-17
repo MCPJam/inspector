@@ -317,3 +317,50 @@ describe("ErrorBox organization AI-key refusals", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });
+
+
+describe("ErrorBox free-tier model refusal", () => {
+  it("opens plan and organization-provider actions without personal BYOK or retry", () => {
+    const onTopUp = vi.fn();
+    const onManageOrgProviders = vi.fn();
+    render(
+      <ErrorBox
+        isHarnessTurn
+        message="Restricted"
+        code="free_tier_model_restricted"
+        canTopUp
+        onTopUp={onTopUp}
+        creditActionLabel="Compare plans"
+        onManageOrgProviders={onManageOrgProviders}
+        onRetry={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Compare plans" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Manage AI providers" }),
+    );
+    expect(onTopUp).toHaveBeenCalledOnce();
+    expect(onManageOrgProviders).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("button", { name: /use your own API key|retry/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reads the refusal code from details and directs members to their admin", () => {
+    render(
+      <ErrorBox
+        isHarnessTurn
+        message="Restricted"
+        errorDetails={JSON.stringify({ code: "free_tier_model_restricted" })}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(/organization admin/i);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+});
+
+it("preserves personal-key guidance for a non-harness free-tier refusal", () => {
+  render(<ErrorBox message="Choose a free model or use your own API key." code="free_tier_model_restricted" />);
+  expect(screen.getByText(/use your own API key/)).toBeVisible();
+  expect(screen.queryByText(/organization admin/i)).not.toBeInTheDocument();
+});

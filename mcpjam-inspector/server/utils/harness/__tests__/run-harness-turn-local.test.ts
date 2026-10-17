@@ -420,7 +420,7 @@ describe("runHarnessTurn local continuity", () => {
     }) as any, "none").catch((error: unknown) => onEngineError(error));
     expect(onEngineError).toHaveBeenCalled();
     expect(String(onEngineError.mock.calls[0]![0]?.message ?? onEngineError.mock.calls[0]![0]))
-      .toMatch(/can't pause for tool approval in an unattended run/);
+      .toMatch(/cannot wait for tool approval in evals or swarms/);
     expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
   });
 

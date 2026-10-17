@@ -1190,7 +1190,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /enterprise-managed/i
+      /authorization policy/i
     );
   });
 
@@ -1227,7 +1227,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
 
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /unattended run/i
+      /cannot wait for tool approval in evals or swarms/i
     );
   });
 
@@ -1323,7 +1323,7 @@ describe("swarm runner — a bad target cannot take the run down with it", () =>
     // INVALID is treated exactly like ON — never more permissive than a policy
     // that parses.
     expect(String(byHost.get("host-1")!.errorMessage)).toMatch(
-      /enterprise-managed/i
+      /authorization policy/i
     );
     // ...while its sibling runs to completion.
     expect(byHost.get("host-2")).toMatchObject({ status: "succeeded" });
@@ -1386,7 +1386,7 @@ describe("swarm runner — a bad target cannot take the run down with it", () =>
       // the read could throw.
       expect(t.status).toBe("failed");
       expect(t.errorCode).toBe("session_failed");
-      expect(String(t.errorMessage)).toMatch(/enterprise-managed/i);
+      expect(String(t.errorMessage)).toMatch(/authorization policy/i);
     }
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
   });

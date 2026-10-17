@@ -567,7 +567,7 @@ describe("ModelsPill — harness × model support", () => {
     expect(luna).toHaveAttribute("aria-disabled", "true");
     await user.hover(luna);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "the Claude Code harness can't run this host's model"
+      "The Claude Code client cannot run this model"
     );
     // Not verified on the pinned runtime ⇒ refused for an eval.
     expect(option("Claude Fable 5")).toHaveAttribute("aria-disabled", "true");
