@@ -18999,7 +18999,7 @@
           },
           "hosts": {
             "type": "array",
-            "description": "The clients (hosts) attached to the suite at create time. Empty when none were named.",
+            "description": "Direct client attachments saved on the suite. Empty for environment-based suites; inspect environmentIds for their targets.",
             "items": {
               "type": "object",
               "required": ["id"],
@@ -19012,6 +19012,11 @@
                 }
               }
             }
+          },
+          "environmentIds": {
+            "type": "array",
+            "description": "Saved environment targets, including unnamed environments composed from the requested client and servers.",
+            "items": { "type": "string" }
           },
           "caseUpsert": {
             "type": "object",

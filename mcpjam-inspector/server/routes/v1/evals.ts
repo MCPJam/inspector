@@ -5603,29 +5603,19 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
       ...(idempotencyKey ? { idempotencyKey } : {}),
     });
 
-    // Attach the clients AFTER authoring: a per-host `servers` pick resolves
-    // against the suite's environment bindings, which the write above is what
-    // creates. Re-read for the same reason the PATCH route does.
+    // Read back the saved target axis: composed suites attach environments.
     let attachedHostIds: string[] = [];
-    const authoredSuite = body.hosts?.length
-      ? await readSuiteInProject(
-          convexAuthToken,
-          projectId,
-          suiteId,
-          "authorized",
-        )
-      : null;
-    if ((authoredSuite?.environmentIds?.length ?? 0) > 0) {
-      // Born an environment suite on the requested client: nothing to attach.
-      attachedHostIds = (preResolvedHosts ?? []).map((attachment) =>
-        String(attachment.namedHostId),
-      );
-    } else if (body.hosts?.length) {
-      const suite = authoredSuite!;
+    const authoredSuite = await readSuiteInProject(
+      convexAuthToken,
+      projectId,
+      suiteId,
+      "authorized",
+    );
+    if (suiteEnvironmentIds(authoredSuite).length === 0 && body.hosts?.length) {
       const hostAttachments = await resolveHostAttachments(
         convexClient,
         projectId,
-        suite,
+        authoredSuite,
         body.hosts,
       );
       try {
@@ -5651,6 +5641,7 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
           ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
         })),
         hosts: attachedHostIds.map((id) => ({ id })),
+        environmentIds: suiteEnvironmentIds(authoredSuite),
         caseUpsert,
       },
       201,

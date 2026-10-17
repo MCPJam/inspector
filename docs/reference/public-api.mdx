@@ -161,7 +161,11 @@ query parameter on `GET` lists). Cursors are opaque — don't parse them.
 
 **Authoring vs running suites.** `POST /eval-suites` creates a runnable suite
 (the suite plus its test cases) **synchronously** and responds `201` with the
-`suiteId`, WITHOUT running anything — author once, run later. `POST /eval-runs`
+`suiteId`, WITHOUT running anything — author once, run later. The response reports
+saved targets: direct client attachments in `hosts`, or environment targets in
+`environmentIds`. A requested client can become an environment target, so check
+these fields instead of assuming the response echoes the client input.
+`POST /eval-runs`
 is the async counterpart: it validates and creates a run synchronously, then
 detaches execution and responds `202` with a `runId`. Poll
 `GET /eval-runs/{runId}` until `status` is `completed`, `failed`, or
