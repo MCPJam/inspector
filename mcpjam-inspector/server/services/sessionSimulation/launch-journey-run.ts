@@ -315,8 +315,17 @@ export async function launchJourneyRun(
   deps: LaunchJourneyRunDeps,
   input: LaunchJourneyRunInput,
 ): Promise<LaunchJourneyRunResult> {
-  // Before the run is created: a draining server could not finish it.
+  // Before the run is created: a draining server could not finish it. Once
+  // admitted, the launch holds the drain through every setup step, so a
+  // shutdown that begins while the run is being created still waits for it.
   assertAdmitting();
+  return serverDrain.track("swarm_run", createAndStartJourneyRun(deps, input));
+}
+
+async function createAndStartJourneyRun(
+  deps: LaunchJourneyRunDeps,
+  input: LaunchJourneyRunInput,
+): Promise<LaunchJourneyRunResult> {
   const convexHttpUrl = requireConvexHttpUrl();
   // Capture the signed-in identity before replacing its bearer with the
   // background credential. Membership and rollout are rechecked per session.
@@ -521,8 +530,8 @@ export async function launchJourneyRun(
   const getPluginRegateClient = async () =>
     createConvexClient(await deps.getRunBearer());
 
-  // Registered with the drain from acceptance, not from the runner's start,
-  // so a shutdown that begins in between still waits for the run.
+  // Registered before the launch settles and released when the runner does,
+  // so the drain holds the run with no gap between setup and the runner.
   let runnerSettled!: () => void;
   void serverDrain.track(
     "swarm_run",
