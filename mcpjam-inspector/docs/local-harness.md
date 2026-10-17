@@ -1,10 +1,16 @@
-# Local Claude Code
+# Local Claude Code and Codex
 
 On Node/npx and Electron, an authorized Claude Code client executes locally when
 a verified pack and platform conformance are pinned, the account rollout is on,
-and the operator kill switch permits it. Otherwise existing clients retain cloud
-execution. Hosted Inspector continues to use cloud execution. Set
+and the operator kill switch permits it. Local setup reports unavailable targets
+before execution. Hosted Inspector continues to use cloud execution. Set
 `MCPJAM_LOCAL_HARNESS_ENABLED=false` to disable selection of local execution.
+
+Codex also supports local Playground chat where its runtime and platform are
+certified and its account rollout is enabled. Add client → Codex starts its own
+setup; Claude Code authorization does not authorize Codex. Local Codex evals and
+swarms additionally require certification for unattended sandboxed execution on
+that exact platform. An attended chat certification alone does not enable them.
 
 ## Setup and normal use
 
