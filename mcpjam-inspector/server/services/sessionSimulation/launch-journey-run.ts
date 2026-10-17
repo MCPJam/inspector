@@ -44,6 +44,8 @@ import { createConvexClient } from "../evals/route-helpers.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { logger } from "../../utils/logger.js";
 import { rolloutEnabled } from "../../utils/computers/browser-rollout.js";
+import { assertAdmitting } from "../lifecycle/admission.js";
+import { serverDrain } from "../lifecycle/drain.js";
 import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
 import {
   parseFundingChangedDetails,
@@ -313,6 +315,8 @@ export async function launchJourneyRun(
   deps: LaunchJourneyRunDeps,
   input: LaunchJourneyRunInput,
 ): Promise<LaunchJourneyRunResult> {
+  // Before the run is created: a draining server could not finish it.
+  assertAdmitting();
   const convexHttpUrl = requireConvexHttpUrl();
   // Capture the signed-in identity before replacing its bearer with the
   // background credential. Membership and rollout are rechecked per session.
@@ -517,13 +521,22 @@ export async function launchJourneyRun(
   const getPluginRegateClient = async () =>
     createConvexClient(await deps.getRunBearer());
 
+  // Registered with the drain from acceptance, not from the runner's start,
+  // so a shutdown that begins in between still waits for the run.
+  let runnerSettled!: () => void;
+  void serverDrain.track(
+    "swarm_run",
+    new Promise<void>((resolve) => {
+      runnerSettled = resolve;
+    }),
+  );
   setImmediate(async () => {
     // Never rejects: the rollout read treats every failure as "not enrolled".
     const runHosts = await withoutBrowserOutsideRollout(
       hosts,
       deps.callerContext.workosUserId,
     );
-    startJourneyRun({
+    await startJourneyRun({
       runId,
       projectId,
       hosts: runHosts,
@@ -670,12 +683,14 @@ export async function launchJourneyRun(
           },
         };
       },
-    }).catch((err) => {
-      logger.error("[swarm-runs] startJourneyRun failed", {
-        runId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+    })
+      .catch((err) => {
+        logger.error("[swarm-runs] startJourneyRun failed", {
+          runId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      })
+      .finally(runnerSettled);
   });
 
   return { runId, ...(created.funding ? { funding: created.funding } : {}) };
