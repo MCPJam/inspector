@@ -906,7 +906,9 @@ describe("reasoning effort on a harness (refuse, never drop)", () => {
       adapter,
       reasoningEffort: "high",
     });
-    expect(reason).toContain('"low", "medium"');
+    expect(reason).toBe(
+      'The Codex client does not support the "high" reasoning effort. Choose "low" or "medium".',
+    );
   });
 });
 
@@ -919,7 +921,9 @@ describe("an effort the adapter applies but the model does not list", () => {
         reasoningEffort: "xhigh",
         modelEfforts: ["minimal", "low", "medium", "high"],
       }),
-    ).toContain('does not support the "xhigh"');
+    ).toBe(
+      'This model does not support the "xhigh" reasoning effort. Choose "minimal", "low", "medium", or "high".',
+    );
     expect(
       harnessReasoningEffortRefusalReason({
         adapter,
