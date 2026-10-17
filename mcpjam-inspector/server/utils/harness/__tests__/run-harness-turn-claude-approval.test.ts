@@ -72,6 +72,15 @@ describe("Claude approval through the turn runner's pause and teardown", () => {
       expect(getHarnessAdapter("claude-code").liveApprovalRuntime).toBe(true);
       const responseBody = await request();
       expect(responseBody).toContain("tool-approval-request");
+      const phases = ["starting-local", "connecting-runtime"];
+      let previous = -1;
+      for (const phase of phases) {
+        const next = responseBody.indexOf(`"phase":"${phase}"`);
+        expect(next).toBeGreaterThan(previous);
+        previous = next;
+      }
+      expect(responseBody.indexOf('"phase":null')).toBeGreaterThan(previous);
+      expect(responseBody.indexOf("tool-approval-request")).toBeGreaterThan(previous);
       expect(state.saved).toMatchObject({
         resumeState: { data: { bridge: { token: "claude-generation" } } },
       });

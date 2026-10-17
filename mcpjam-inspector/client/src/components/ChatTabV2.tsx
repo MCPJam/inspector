@@ -162,7 +162,6 @@ import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
-
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
@@ -2404,6 +2403,7 @@ export function ChatTabV2({
     stop: stopActiveChat,
     disabled: composerDisabled,
     isLoading: isStreamingActive,
+    startupChatSessionId: chatSessionId,
     placeholder,
     currentModel: selectedModel,
     availableModels,

@@ -2,11 +2,32 @@
   "stream": [
     {
       "data": {
+        "phase": "connecting-runtime"
+      },
+      "transient": true,
+      "type": "data-harness-startup"
+    },
+    {
+      "data": {
+        "phase": "connecting-tools"
+      },
+      "transient": true,
+      "type": "data-harness-startup"
+    },
+    {
+      "data": {
         "machine": "disposable",
         "workdir": "/home/user/<session-dir>"
       },
       "transient": true,
       "type": "data-harness-session"
+    },
+    {
+      "data": {
+        "phase": null
+      },
+      "transient": true,
+      "type": "data-harness-startup"
     },
     {
       "data": {

@@ -1,3 +1,5 @@
+import { isHarnessStartupDataPart } from "@/shared/harness-startup";
+import { useHarnessStartupStore } from "@/stores/harness-startup-store";
 import { isHistoryNoticeDataPart } from "@/shared/history-notice";
 import { isPluginServerUnavailableDataPart } from "@/shared/plugin-server-unavailable";
 import { useHistoryNoticeStore } from "@/stores/history-notice-store";
@@ -18,6 +20,13 @@ export function noteTurnNoticePart(
   part: unknown,
   liveChatSessionId: string | null | undefined,
 ): boolean {
+  if (isHarnessStartupDataPart(part)) {
+    useHarnessStartupStore.getState().setPhase(
+      part.data.chatSessionId ?? liveChatSessionId ?? "new",
+      part.data.phase,
+    );
+    return true;
+  }
   if (isHistoryNoticeDataPart(part)) {
     const sessionId = part.data.chatSessionId ?? liveChatSessionId;
     if (sessionId) {

@@ -1,3 +1,4 @@
+import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import {
   diskResumeState,
   sessionResumeStateFrom,
@@ -1143,6 +1144,12 @@ export async function runHarnessTurn(
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
+    const startup = (phase: HarnessStartupPhase | null) =>
+      writer.write({
+        type: "data-harness-startup",
+        data: { phase, chatSessionId },
+        transient: true,
+      });
     if (effectiveAbortSignal.aborted) {
       aborted = true;
       return;
@@ -2198,6 +2205,7 @@ export async function runHarnessTurn(
             ),
           };
         }
+        startup("starting-local");
         const preparation = await org.prepareLocal({
           target: harnessExecutionTarget,
           scope: sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
@@ -2269,6 +2277,7 @@ export async function runHarnessTurn(
         };
         sandboxId = harnessSandboxBinding.sandboxId;
       } else {
+        startup("starting-hosted");
         const resolved = await resolveHarnessSandbox({
           bearer: authHeader,
           projectId,
@@ -2735,6 +2744,7 @@ export async function runHarnessTurn(
             }
           : {}),
         onSandboxSession: async ({ session, sessionWorkDir }) => {
+          startup("connecting-tools");
           // Capture the file-capable sandbox session for the turn-end adoption
           // pass (the finally's agent session has no file I/O). Stays valid until
           // the box is detached/destroyed, which happens AFTER adoption.
@@ -3122,6 +3132,7 @@ export async function runHarnessTurn(
           { harnessSessionId: continuity?.state?.harnessSessionId },
         );
       }
+      startup("connecting-runtime");
       // WS3: resuming a turn the user just approved/denied. The committed state
       // is a `continue-turn` payload (awaitingApproval), reattached via
       // continueFrom (NOT resumeFrom) and continued with continueStream below.
@@ -3194,6 +3205,7 @@ export async function runHarnessTurn(
       // Session is up: the finalizer + heartbeat now own the continuity lane, so
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
+      startup(null);
 
       // DELIVERY STAMP for the external-account credential — HERE, because this
       // is the first point at which the runtime has actually taken it: the

@@ -1,3 +1,4 @@
+import { HarnessStartupStatus } from "./chat-input/harness-startup-status";
 import { hostComposerClasses } from "@/lib/host-composer-presentation";
 import {
   registerComposerSlot,
@@ -322,6 +323,7 @@ interface ChatInputProps {
   /** Why Send is off, shown in its tooltip (an out-of-credits model). */
   submitDisabledReason?: string;
   isLoading?: boolean;
+  startupChatSessionId?: string | null;
   placeholder?: string;
   className?: string;
   currentModel: ModelDefinition;
@@ -341,11 +343,6 @@ interface ChatInputProps {
   /**
    * Where this turn's Claude Code agent runs, as a chip in the toolbar.
    *
-   * A DATA prop, mirroring `clientSelector`: one key on
-   * `sharedChatInputProps` reaches all six `<ChatInput>` sites, and the
-   * component itself owns no lifecycle. The dialog it opens lives in
-   * PlaygroundMain, once — six composers each owning their own would be six
-   * dialogs racing one approval.
    */
   executionTarget?: ExecutionTargetChipData;
   systemPrompt: string;
@@ -505,6 +502,7 @@ export function ChatInput({
   submitDisabled = false,
   submitDisabledReason,
   isLoading = false,
+  startupChatSessionId,
   placeholder = "Type your message...",
   className,
   currentModel,
@@ -1685,6 +1683,7 @@ export function ChatInput({
 
   return (
     <>
+      <HarnessStartupStatus chatSessionId={startupChatSessionId} loading={isLoading} />
       {creditBalance?.platformPaidFallback && (
         <p role="status" className="px-2 py-1 text-sm text-muted-foreground">
           MCPJam&apos;s shared free allowance is unavailable; this chat is using
