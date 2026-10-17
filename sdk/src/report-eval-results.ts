@@ -41,6 +41,10 @@ import {
   definitionsForDeployment,
 } from "./contract/policy-spelling.js";
 import type { ScorerRole } from "./contract/types.js";
+import {
+  evalRunStatusSchema,
+  isEvalRunTerminalStatus,
+} from "./contract/eval-lifecycle.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRY_DELAYS_MS = [250, 750, 1750];
@@ -703,16 +707,7 @@ function validateReportingResponse(
   if (body.reused !== undefined && typeof body.reused !== "boolean") invalid();
   if (
     body.status !== undefined &&
-    (typeof body.status !== "string" ||
-      ![
-        "pending",
-        "running",
-        "grading",
-        "completed",
-        "failed",
-        "cancelled",
-        "timed_out",
-      ].includes(body.status))
+    !evalRunStatusSchema.safeParse(body.status).success
   )
     invalid();
   if (
@@ -755,9 +750,7 @@ function validateReportingResponse(
   }
   if (!path.endsWith("runs/start")) {
     if (!body.status || !body.result || !body.summary) invalid();
-    const terminal = ["completed", "failed", "cancelled", "timed_out"].includes(
-      String(body.status)
-    );
+    const terminal = isEvalRunTerminalStatus(body.status);
     if (terminal ? !isEvalRunVerdict(body.result) : body.result !== "pending")
       invalid();
   }
