@@ -66,6 +66,42 @@ describe("drainBeforeTeardown", () => {
     );
   });
 
+  it("waits for the job a claim answered after the stop registers", async () => {
+    const drain = createDrainCoordinator();
+    let finishJob!: () => void;
+    // The loop's last claim comes back after the stop and starts its job; the
+    // loop stops once that job is done.
+    const workers = workersStoppingWith(
+      Promise.resolve().then(() =>
+        drain.track(
+          "claimed_job",
+          new Promise<void>((resolve) => {
+            finishJob = resolve;
+          }),
+        ),
+      ),
+    );
+
+    const done = drainBeforeTeardown(
+      workers,
+      { drainMs: 60_000, drainClamped: false },
+      drain,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).not.toHaveBeenCalled();
+    finishJob();
+    await done;
+
+    expect(events).toHaveBeenCalledWith(
+      "server.shutdown.drain",
+      expect.objectContaining({
+        drained: true,
+        inFlightAtStart: 0,
+        remainingClaimedJobs: 0,
+      }),
+    );
+  });
+
   it("gives up on a stuck job at the deadline so the teardown still runs", async () => {
     vi.useFakeTimers();
     try {

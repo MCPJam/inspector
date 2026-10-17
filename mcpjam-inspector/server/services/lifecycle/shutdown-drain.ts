@@ -27,7 +27,9 @@ export async function drainBeforeTeardown(
       });
     });
   }
-  const result = await drain.drain(settings.drainMs);
+  // Until the loops stop, a claim answered after the stop can still register
+  // the job it starts, so the drain waits for them too, to the same deadline.
+  const result = await drain.drain(settings.drainMs, loopsStopped);
   getSystemLogger("shutdown").event("server.shutdown.drain", {
     drainMs: settings.drainMs,
     drainClamped: settings.drainClamped,

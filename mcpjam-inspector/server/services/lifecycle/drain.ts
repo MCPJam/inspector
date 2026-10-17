@@ -70,18 +70,32 @@ export function createDrainCoordinator(now: () => number = Date.now) {
     /**
      * Stop admitting new work and wait, up to `deadlineMs`, for registered work
      * to settle. Work registered while waiting (a claimed job finishing its
-     * last step, a swarm session already under way) is waited for too.
+     * last step, a swarm session already under way) is waited for too, and so
+     * is `registering`: until it settles, whatever is still being accepted (a
+     * claim answered after the claim loops were told to stop) can register.
      */
-    async drain(deadlineMs: number): Promise<DrainResult> {
+    async drain(
+      deadlineMs: number,
+      registering?: Promise<unknown>,
+    ): Promise<DrainResult> {
       draining = true;
       const startedAt = now();
       const inFlightAtStart = counts();
-      while (inFlight.size > 0) {
+      let open = registering !== undefined;
+      const close = () => {
+        open = false;
+      };
+      // A failure is its owner's to report; here it only ends the registering.
+      const closed = registering?.then(close, close);
+      while (open || inFlight.size > 0) {
         const leftMs = startedAt + deadlineMs - now();
         if (leftMs <= 0) break;
         let timer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
-          Promise.all([...inFlight.values()].map((entry) => entry.settled)),
+          Promise.all([
+            closed,
+            ...[...inFlight.values()].map((entry) => entry.settled),
+          ]),
           new Promise<void>((resolve) => {
             timer = setTimeout(resolve, leftMs);
           }),
