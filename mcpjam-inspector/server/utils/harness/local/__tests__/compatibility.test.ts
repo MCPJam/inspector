@@ -268,7 +268,9 @@ describe("codex runs locally only on the app-server adapter, attended, where cer
     );
 
   it("refuses unattended runs on a target whose sandbox was never measured", () => {
-    const refused = unattended({ platform: "darwin", packTarget: "darwin-arm64" });
+    // As shipped: no target has passed, so unattended local Codex is refused
+    // everywhere — never run without the sandbox.
+    const refused = unattended();
     expect(refused).toMatchObject({ ok: false, status: "backend-not-verified" });
     expect((refused as { message: string }).message).toMatch(/sandbox/);
     expect(
@@ -324,9 +326,8 @@ describe("codex runs locally only on the app-server adapter, attended, where cer
       expect(localSandboxPolicyFor(harnessId, profile, kind, scope)).toBeNull();
   });
 
-  it("admits only the measured Linux x64 unattended target", () => {
-    expect(LOCAL_HARNESS_MANIFEST.codex.unattendedSandboxTargets).toEqual(["linux-x64"]);
-    expect(unattended()).toMatchObject({ ok: true, permissionMode: "allow-all" });
+  it("records no target as passing the unattended sandbox yet", () => {
+    expect(LOCAL_HARNESS_MANIFEST.codex.unattendedSandboxTargets).toEqual([]);
   });
 });
 

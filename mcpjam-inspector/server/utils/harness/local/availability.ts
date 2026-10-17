@@ -55,6 +55,7 @@ import {
   type LocalHarnessExecutionTarget,
 } from "./targets.js";
 import { isSelectablePack, manifestWithExpectedBundleDigest } from "./runtime-install.js";
+import { probeCodexLinuxSandbox } from "./codex-linux-readiness.js";
 import { supportsOwnershipProof } from "./process-identity.js";
 
 export type LocalHarnessUnavailableStatus =
@@ -323,6 +324,11 @@ export async function resolveLocalHarnessAvailability(
       "the resolved runtime is not the one this target names; consent is " +
         "bound to a runtime identity, so it must be re-granted",
     );
+  }
+
+  if (query.scope === "unattended" && target.harnessId === "codex" && platform === "linux") {
+    const sandbox = await probeCodexLinuxSandbox(runtimeResolution.runtime.rootPath);
+    if (!sandbox.ok) return unavailable("backend-not-verified", sandbox.message);
   }
 
   const binding: HarnessGrantBinding = {

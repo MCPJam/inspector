@@ -2,4 +2,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Enable local Codex evals and swarms on Linux x64 after native sandbox qualification.
+Check Linux sandbox prerequisites before unattended Codex execution. Linux unattended eligibility remains disabled pending real eval and swarm qualification.

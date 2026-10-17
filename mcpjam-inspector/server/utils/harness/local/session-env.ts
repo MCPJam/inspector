@@ -67,7 +67,7 @@ export const LOCAL_HARNESS_ENV_ALLOWLIST: readonly string[] = [
  */
 const SYSTEM_PATH_POSIX = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
 
-function systemPath(
+export function localHarnessSystemPath(
   platform: NodeJS.Platform,
   base: NodeJS.ProcessEnv,
 ): string {
@@ -191,7 +191,7 @@ export function buildLocalHarnessEnv(
     if (typeof value === "string" && value.length > 0) env[name] = value;
   }
 
-  env.PATH = platform === "win32" && opts.gitBashPath ? `${path.dirname(opts.gitBashPath)}${path.delimiter}${systemPath(platform, base)}` : systemPath(platform, base);
+  env.PATH = platform === "win32" && opts.gitBashPath ? `${path.dirname(opts.gitBashPath)}${path.delimiter}${localHarnessSystemPath(platform, base)}` : localHarnessSystemPath(platform, base);
   env.HOME = opts.syntheticHome;
   env.PWD = opts.sessionRoot;
   env.MCPJAM_LOCAL_CONTROL_ROOT = path.dirname(path.dirname(opts.syntheticHome)).replace(/-sessions$/, "");
