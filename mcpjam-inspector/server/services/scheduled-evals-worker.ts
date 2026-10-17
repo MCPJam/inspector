@@ -21,6 +21,7 @@
 
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
+import { abortableSleep } from "../utils/run-supervisor/backoff.js";
 import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
 import { WebRouteError } from "../routes/web/errors.js";
@@ -354,21 +355,6 @@ export async function executeClaimedRun(
   }
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(done, ms);
-    function done() {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }
-    function onAbort() {
-      clearTimeout(timer);
-      done();
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 export interface ScheduledEvalsWorkerHandle {
   /** Aborts polling and resolves once the loop (incl. an in-flight run) settles. */
   stop: () => Promise<void>;
@@ -423,7 +409,8 @@ export function startScheduledEvalsWorker(options?: {
         });
         waitMs = ERROR_BACKOFF_MS;
       }
-      await sleep(waitMs, abort.signal);
+      // Resolves at once when `stop()` aborted while a run was executing.
+      await abortableSleep(waitMs, abort.signal);
     }
     logger.info("[scheduled-evals] worker stopped");
   })();
