@@ -1,3 +1,4 @@
+import { PlatformApiError } from "./errors.js";
 import type { PlatformApiClient } from "./client.js";
 import type {
   PlatformProject,
@@ -6,6 +7,7 @@ import type {
 } from "./types.js";
 import type { RunTargetHost } from "./suite-run-plans.js";
 import {
+  formatResourceList,
   operationInputError,
   resolveByIdOrName,
 } from "./resource-selectors.js";
@@ -40,29 +42,124 @@ export async function environmentNamesFor(
   }
 }
 
-/** Host selectors → attached hosts, by id or unique name. Same rationale as
- *  the environment resolver above: validated here so a fan-out cannot spend on
- *  its first targets and then discover a bad one. */
-export function resolveSuiteHostTargets(
-  suite: PlatformEvalSuite,
+/** Resolve an attached client's environment, including unnamed composed rows. */
+async function clientEnvironment(
+  client: PlatformApiClient,
+  project: PlatformProject,
   detail: PlatformEvalSuiteDetail | undefined,
-  selectors: string[]
-): RunTargetHost[] {
-  if (selectors.length === 0) return [];
-  const hosts = detail?.hosts ?? [];
-  if (hosts.length === 0) {
-    throw operationInputError(
-      `Suite "${
-        suite.name ?? suite.id
-      }" has no attached hosts, so there is no host to run. Attach one to the suite first, or omit the host selector.`
-    );
-  }
-  return selectors.map((selector) =>
-    resolveByIdOrName(
-      hosts,
-      selector,
-      "Suite host",
-      `suite "${suite.name ?? suite.id}"`
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<{ id: string; name?: string } | undefined> {
+  const attachedResults = await Promise.all(
+    (detail?.environmentIds ?? []).map((environmentId) =>
+      client
+        .getEnvironment({ projectId: project.id, environmentId }, { signal })
+        .catch((error: unknown) => {
+          // Deleted attachments do not invalidate the other saved targets.
+          if (
+            error instanceof PlatformApiError &&
+            error.status === 404 &&
+            error.code === "NOT_FOUND" &&
+            error.codeSource === "envelope"
+          )
+            return undefined;
+          throw error;
+        })
     )
   );
+  const attached = attachedResults.filter(
+    (environment) => environment !== undefined
+  );
+  let clientId = selector.trim();
+  if (
+    attached.length > 0 &&
+    !attached.some((environment) => environment.hostId === clientId)
+  ) {
+    const clients = await client.listClients(
+      { projectId: project.id },
+      { signal }
+    );
+    const matches = clients.items.filter(
+      (candidate) =>
+        candidate.id === clientId ||
+        candidate.name?.toLocaleLowerCase() === clientId.toLocaleLowerCase()
+    );
+    if (matches.length > 0)
+      clientId = resolveByIdOrName(
+        clients.items,
+        selector,
+        "Client",
+        `project "${project.name}"`
+      ).id;
+  }
+  const matches = attached.filter(
+    (environment) => environment.hostId === clientId
+  );
+  if (matches.length > 1) {
+    throw operationInputError(
+      `TARGET_REQUIRED — Client "${selector}" has several attached environments: ${formatResourceList(
+        matches
+      )}. Select one with environment.`
+    );
+  }
+  const environment = matches[0];
+  return environment
+    ? {
+        id: environment.id,
+        ...(environment.name ? { name: environment.name } : {}),
+      }
+    : undefined;
+}
+
+/** Resolve clients to their saved target axis before any launch can spend. */
+export async function resolveSuiteHostTargets(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  suite: PlatformEvalSuite,
+  detail: PlatformEvalSuiteDetail | undefined,
+  selectors: string[],
+  signal: AbortSignal | undefined
+): Promise<{
+  hosts: RunTargetHost[];
+  environments: Array<{ id: string; name?: string }>;
+}> {
+  const hosts: RunTargetHost[] = [];
+  const environments: Array<{ id: string; name?: string }> = [];
+  const attached = detail?.hosts ?? [];
+  for (const selector of selectors) {
+    const matched = attached.some(
+      (host) =>
+        host.id === selector.trim() ||
+        host.name?.toLocaleLowerCase() === selector.trim().toLocaleLowerCase()
+    );
+    if (!matched) {
+      const environment = await clientEnvironment(
+        client,
+        project,
+        detail,
+        selector,
+        signal
+      );
+      if (environment) {
+        environments.push(environment);
+        continue;
+      }
+    }
+    if (attached.length === 0) {
+      throw operationInputError(
+        `Suite "${
+          suite.name ?? suite.id
+        }" has no attached hosts, so there is no host to run. Attach one to the suite first, or omit the host selector.`
+      );
+    }
+    hosts.push(
+      resolveByIdOrName(
+        attached,
+        selector,
+        "Suite host",
+        `suite "${suite.name ?? suite.id}"`
+      )
+    );
+  }
+  return { hosts, environments };
 }
