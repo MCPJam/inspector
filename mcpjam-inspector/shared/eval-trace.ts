@@ -1,3 +1,4 @@
+import { runtimeExecutionSchema, type RuntimeExecution } from "./execution-receipt";
 import type { PluginWorkspaceRecording } from "./plugin-workspace-recording";
 import type { ModelMessage } from "ai";
 import { z } from "zod";
@@ -24,6 +25,7 @@ export type EvalTraceSpan = {
   status?: EvalTraceSpanStatus;
   toolCallId?: string;
   toolName?: string;
+  execution?: RuntimeExecution;
   serverId?: string;
   connectionId?: string;
   modelId?: string;
@@ -573,6 +575,7 @@ export const evalTraceSpanZ = z.object({
   status: z.enum(["ok", "error"]).optional(),
   toolCallId: z.string().optional(),
   toolName: z.string().optional(),
+  execution: runtimeExecutionSchema.optional(),
   serverId: z.string().optional(),
   connectionId: z.string().optional(),
   modelId: z.string().optional(),

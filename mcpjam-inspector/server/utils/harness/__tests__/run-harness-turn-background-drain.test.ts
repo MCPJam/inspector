@@ -10,6 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { PersistedTurnTrace } from "../../chat-ingestion";
 
 const harnessState = vi.hoisted(() => ({
   // Each entry is a part, or a function run at that point (to fire a Stop).
@@ -228,11 +229,19 @@ describe("runHarnessTurn background drain", () => {
     ];
     harnessState.finalText = "hi";
 
-    const result = await runHarnessTurn(options() as any, "none");
+    const completed = vi.fn(async (_messages: ModelMessage[], _trace?: PersistedTurnTrace) => ({ outcome: "saved" as const }));
+    const result = await runHarnessTurn(options({ onConversationComplete: completed }) as any, "none");
     await result.response?.text();
     expect(result.execution).toEqual({
       engine: "harness:claude-code", venue: "hosted", runtimeVersion: "2.1.0",
     });
+    const runtimeSpans = result.turnTrace?.spans.filter(span =>
+      span.category === "step" || span.category === "llm");
+    expect(runtimeSpans?.length).toBeGreaterThan(0);
+    expect(runtimeSpans?.every(span =>
+      JSON.stringify(span.execution) === JSON.stringify(result.execution))).toBe(true);
+
+    expect(completed.mock.calls[0]?.[1]).toEqual(result.turnTrace);
 
     const createHarnessCalls = vi
       .mocked(getHarnessAdapter)

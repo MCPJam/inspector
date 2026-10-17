@@ -4667,9 +4667,15 @@ export async function runHarnessTurn(
       !aborted &&
       driver
     ) {
-      // Stream start (matches the span offset base) so rehydrated traces align
-      // with the live ones — see traceBaseMs.
-      const trace: PersistedTurnTrace = driver.buildPersistedTrace();
+      // Preserve runtime identity before any surface persists the trace.
+      const built = driver.buildPersistedTrace();
+      const trace: PersistedTurnTrace = {
+        ...built,
+        spans: built.spans.map((span) =>
+          execution && (span.category === "step" || span.category === "llm")
+            ? { ...span, execution }
+            : span),
+      };
       capturedTurnTrace = trace;
       // §3: hand the resume-state commit to onConversationComplete so it rides
       // /ingest-chat atomically with the transcript. On success the backend

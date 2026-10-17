@@ -24,6 +24,7 @@ export type EvalTraceSpanInput = {
   status?: EvalTraceSpanStatus;
   toolCallId?: string;
   toolName?: string;
+  execution?: { engine: string; venue: "hosted" | "local-native"; runtimeVersion: string | null };
   serverId?: string;
   modelId?: string;
   inputTokens?: number;
