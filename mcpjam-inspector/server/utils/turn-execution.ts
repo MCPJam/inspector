@@ -1,7 +1,8 @@
 /**
  * `runUnifiedAssistantTurn` — the single front door for executing one assistant
- * turn. Chat, playground, and the eval runners call this; it dispatches to one
- * of two existing engines and returns a normalized result.
+ * turn. The eval drivers, the agent and chat-session routes and the swarm runner
+ * call this; chat and playground still reach the engines directly. It
+ * dispatches to one of two existing engines and returns a normalized result.
  *
  * Design: ONE public turn API, TWO engine adapters, MULTIPLE sinks. It does NOT
  * merge the engine internals.
@@ -115,8 +116,7 @@ export type DirectTurnOptions = {
    * engine does NOT throw), and the chat local-org wrapper gates persistence on
    * it. Forward it so a migrated direct caller can't record a mid-stream engine
    * failure as a successful turn. (Eval additionally detects this via the error
-   * span in `turnTrace.spans`.) Full cross-runtime callback normalization —
-   * onToolCall/onToolResult mapping for eval SSE — lands with PR 3/PR 5.
+   * span in `turnTrace.spans`.) The eval SSE rides `onStreamPart` instead.
    */
   onLiveTextDelta?: RunDirectChatTurnOptions["onLiveTextDelta"];
   onStepFinish?: RunDirectChatTurnOptions["onStepFinish"];
