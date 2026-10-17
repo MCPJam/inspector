@@ -348,6 +348,7 @@ describe("harnessBoxUnavailableReason", () => {
     expect(reason).toMatch(
       /^This eval runs on a harness, but cloud execution is unavailable/,
     );
-    expect(reason).toContain("Contact MCPJam support");
+    // Off the hosted app the operator owns the data plane, not MCPJam support.
+    expect(reason).toContain("Contact the operator of this Inspector to enable it.");
   });
 });
