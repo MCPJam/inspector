@@ -38,10 +38,7 @@ describe("startScheduledEvalsWorker loop", () => {
   });
 
   it("claims and executes one trigger at a time, then keeps polling", async () => {
-    const claim = vi
-      .fn()
-      .mockResolvedValueOnce(CLAIM)
-      .mockResolvedValue(null);
+    const claim = vi.fn().mockResolvedValueOnce(CLAIM).mockResolvedValue(null);
     const execute = vi.fn().mockResolvedValue(undefined);
 
     const handle = startScheduledEvalsWorker({ claim, execute });
@@ -66,7 +63,7 @@ describe("startScheduledEvalsWorker loop", () => {
     handle.stop();
     await vi.advanceTimersByTimeAsync(70_000);
 
-    expect(execute) .not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
     expect(claim.mock.calls.length).toBeGreaterThan(1);
   });
 
@@ -91,6 +88,30 @@ describe("startScheduledEvalsWorker loop", () => {
     const callsAtStop = claim.mock.calls.length;
     await vi.advanceTimersByTimeAsync(120_000);
     expect(claim.mock.calls.length).toBe(callsAtStop);
+  });
+
+  it("stop() during a run ends the loop when the run settles, not after the poll delay", async () => {
+    let finishRun!: () => void;
+    const claim = vi.fn().mockResolvedValue(CLAIM);
+    const execute = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRun = resolve;
+        }),
+    );
+    const handle = startScheduledEvalsWorker({ claim, execute });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    let stopped = false;
+    const stopping = handle.stop().then(() => {
+      stopped = true;
+    });
+    finishRun();
+    // No timer advance: an already-aborted stop must skip the 1 s re-poll wait.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stopped).toBe(true);
+    await stopping;
   });
 
   it("does not start without the service credentials", async () => {
