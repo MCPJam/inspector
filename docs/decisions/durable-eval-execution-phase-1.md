@@ -33,9 +33,11 @@ MCPJam/mcpjam-backend#2262 pins them so a later change has to be deliberate.
 
 ## The measurement that decides the gate
 
-Run for four weeks after MCPJam/inspector#6666 and #6671 are deployed with a
-drain configured (`MCPJAM_SHUTDOWN_DRAIN_MS` with
-`RAILWAY_DEPLOYMENT_DRAINING_SECONDS`). Read it per week, by source.
+Run for four weeks once every pull request in the Shutdown row above is
+deployed with a drain configured (`MCPJAM_SHUTDOWN_DRAIN_MS` with
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS`). Until MCPJam/inspector#6677 and #6678
+are live, nothing tracks eval runs, quick runs, swarm runs or doorbell passes,
+so their remainders would read zero. Read it per week, by source.
 
 1. **Work a deploy still cut.** One `server.shutdown.drain` row per replica
    shutdown in the inspector's clean dataset (`AXIOM_CLEAN_DATASET`):
@@ -47,17 +49,20 @@ drain configured (`MCPJAM_SHUTDOWN_DRAIN_MS` with
    `eval_execution_stopped` with `reason`, `phase` and `source`, once per
    accepted run attempt and per iteration. The same parse the existing PAGE
    monitor uses (`ops/axiom-monitors/monitors/eval-execution-stopped.json` in
-   the backend) gives the weekly counts:
+   the backend) gives the daily counts. `<start>` is the midnight UTC the
+   window opens on, fixed before reading; days 1 to 7 from it are week one, and
+   so on. A rolling `ago(28d)` with seven-day bins would split the first and
+   last weeks wherever the bins happen to fall.
 
    ```
    ['mcpjam-backend-clean-v1']
-   | where _sysTime >= ago(28d)
+   | where _sysTime >= datetime(<start>) and _sysTime < datetime(<start>) + 28d
    | extend msg = tostring(['data.message'])
    | where msg contains '[mcpjam_operational_event]' and msg contains '"event":"eval_execution_stopped"'
    | extend payload = parse_json(extract(@'\[mcpjam_operational_event\] (.*)', 1, msg))
    | extend Reason = tostring(payload.reason), Source = tostring(payload.source),
             Level = iff(isempty(tostring(payload.iterationId)), 'run', 'iteration')
-   | summarize Count = count() by bin(_sysTime, 7d), Reason, Source, Level
+   | summarize Count = count() by Day = bin(_sysTime, 1d), Reason, Source, Level
    ```
 
    `stale_worker` is a lost worker (a deploy, a crash, an OOM). The other
@@ -74,7 +79,8 @@ drain configured (`MCPJAM_SHUTDOWN_DRAIN_MS` with
    within the hour after a `stale_worker` stop.
 5. **Claimed-job recovery.** Stale-lease recoveries for scheduled runs (a 35 min
    fixed lease), GitHub checks (5 min stale cutoff) and benchmark jobs (90 s
-   lease), which say how much a deploy costs the claim loops in latency.
+   lease). A job a deploy cut is only noticed once its lease runs out, so each
+   recovery costs up to one lease of delay before the job is retried or ended.
 
 The brief sets no threshold, and this record does not invent one. State it
 before reading the data, in the units above (for example stale-worker stops
@@ -99,16 +105,18 @@ denominator would change that number, and should only do so on purpose.
 
 **New, reconstructed proof (scratch, not committed):** a fresh run on Linux
 (Node 22.22.0, Convex npm 1.43.0, local backend `precompiled-2026-10-06-a3538c6`,
-backend helper source `a1c67a3`) passed 20 of 20 scenarios twice. That covers
-the historical 14, plus:
+backend helper source `a1c67a3`) passed 20 of 20 scenarios twice: the
+historical 14 (scenarios 1 to 14) and six more, numbered as in the run's
+report:
 
-- the mixed 8 completed / 2 unsafe interrupted / 10 pending case under a
+- 15: the mixed 8 completed / 2 unsafe interrupted / 10 pending case under a
   revised policy: 20 configured, 20 attempted, 18 gradeable, `inconclusive`
   under full-completion validity, no synthesized failures;
-- the same case under the historical whole-run park, for contrast;
-- simultaneous interruptions;
-- a shared-resource counterexample;
-- cancellation and deadline, before and during adoption.
+- 15.1: the same case under the historical whole-run park, for contrast;
+- 16: two unsafe and one safe iteration interrupted at once;
+- 17: a shared-resource counterexample, with a run-wide shared prerequisite;
+- 18: cancellation, before and during adoption;
+- 19: a deadline, before and during adoption.
 
 Three weakened fixtures each failed their scenario as they should: a guard
 without the lease-expiry check, a revised policy that replays unsafe work, and
