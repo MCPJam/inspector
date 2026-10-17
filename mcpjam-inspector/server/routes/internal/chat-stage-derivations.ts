@@ -27,16 +27,20 @@
 
 import { Hono } from "hono";
 import { internalServiceAuthMiddleware } from "../../middleware/internal-service-auth.js";
+import { refuseDoorbellWhileDraining } from "../../services/lifecycle/admission.js";
+import { serverDrain } from "../../services/lifecycle/drain.js";
 import { runChatSessionStagePass } from "../../services/chat-stage/chat-session-stage-pass.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const internalChatStageDerivations = new Hono();
 
 internalChatStageDerivations.use("*", internalServiceAuthMiddleware());
+internalChatStageDerivations.use("*", refuseDoorbellWhileDraining());
 
 internalChatStageDerivations.post("/derivation-requested", async (c) => {
   // Deliberately not awaited. See the note above: the caller is a doorbell.
-  void runChatSessionStagePass().catch((error: unknown) => {
+  const pass = serverDrain.track("doorbell", runChatSessionStagePass());
+  void pass.catch((error: unknown) => {
     // The 202 has already gone out, so this is the last place a failure can be
     // seen. Nothing session-specific is recorded: everything the pass touches
     // is customer evidence.
