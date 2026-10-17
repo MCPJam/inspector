@@ -16,22 +16,28 @@
  * need this: a new session has no runtime holding an old connection.
  */
 
-import type { Sandbox } from "e2b";
+import { CommandExitError, type Sandbox } from "e2b";
+import { scrubLogText } from "../../../shared/log-scrubber.js";
 import { logger } from "../logger.js";
 
 /** Hostnames only, so the value can sit in a shell command unquoted. */
 const HOSTNAME = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i;
 
 /**
- * The root command that closes every TCP connection to `host`:443 in the box,
- * or null when `host` is not a plain hostname. `ss -K` needs CAP_NET_ADMIN,
- * so it must run as root.
+ * The root command that closes every TCP connection to `host`:443 in the box
+ * and prints how many it closed, or null when `host` is not a plain hostname.
+ * `ss -K` needs CAP_NET_ADMIN, so it must run as root, and it reads a bare
+ * IPv6 address as address:port, so those are bracketed. Every address is
+ * tried; the exit status says whether any failed.
  */
 export function closeModelProxyConnectionsCommand(host: string): string | null {
   if (!HOSTNAME.test(host)) return null;
   return (
-    `for ip in $(getent ahosts ${host} | awk '{print $1}' | sort -u); ` +
-    `do ss -K dst "$ip" dport = :443 >/dev/null; done`
+    `n=0; rc=0; for ip in $(getent ahosts ${host} | awk '{print $1}' | sort -u); do ` +
+    `case "$ip" in *:*) ip="[$ip]" ;; esac; ` +
+    `out=$(ss -K dst "$ip" dport = :443) || rc=1; ` +
+    `n=$((n + $(printf '%s\\n' "$out" | tail -n +2 | grep -c .))); done; ` +
+    `echo "$n"; exit $rc`
   );
 }
 
@@ -44,18 +50,30 @@ export async function closeModelProxyConnections(
   const command = host ? closeModelProxyConnectionsCommand(host) : null;
   if (!command) return;
   try {
-    await sandbox.commands.run(command, {
+    const result = await sandbox.commands.run(command, {
       user: "root",
       timeoutMs: 10_000,
       ...(signal ? { signal } : {}),
     });
+    logger.info(
+      `[harness] closed ${result.stdout.trim() || "0"} model-proxy connection(s) on resume`,
+    );
   } catch (error) {
     // Not fatal: a resume that keeps its old connection fails on its first
-    // model call exactly as it did before this step existed.
-    logger.warn("[harness] could not close model-proxy connections", {
-      error,
-    });
+    // model call exactly as it did before this step existed. The detail is in
+    // the message because the console prints a warning's message only.
+    logger.warn(
+      `[harness] could not close model-proxy connections: ${closeFailureDetail(error)}`,
+    );
   }
+}
+
+function closeFailureDetail(error: unknown): string {
+  if (error instanceof CommandExitError) {
+    const stderr = error.stderr.trim().split("\n")[0] ?? "";
+    return `exit ${error.exitCode}${stderr ? `: ${scrubLogText(stderr).slice(0, 200)}` : ""}`;
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** The model proxy's hostname from the broker's proxy base URL. */
