@@ -1,12 +1,19 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import spec from "../../../../docs/reference/openapi.json";
 import { z } from "zod";
-import { PlatformApiClient } from "../client.js";
-import { authorizeLocalExecutionOperation } from "../operations.js";
+import { PlatformApiClient } from "../../src/platform/client.js";
+import { authorizeLocalExecutionOperation } from "../../src/platform/operations.js";
 import {
   localExecutionAuthorizationSchema,
   localExecutionTargetSchema,
-} from "../local-execution.js";
+} from "../../src/platform/local-execution.js";
+
+const spec = JSON.parse(
+  readFileSync(
+    new URL("../../../docs/reference/openapi.json", import.meta.url),
+    "utf8"
+  )
+) as { components: { schemas: Record<string, unknown> } };
 const target = {
   kind: "local-native",
   scope: "unattended",
