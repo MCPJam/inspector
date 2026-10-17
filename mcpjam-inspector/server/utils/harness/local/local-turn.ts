@@ -824,18 +824,18 @@ async function adoptParkedLocalTurn(
   args: PrepareLocalHarnessTurnArgs,
   harnessId: SupportedLocalHarnessId,
 ): Promise<LocalHarnessTurnPreparation> {
-  const continuation = args.approvalContinuation!;
   const claim = claimParkedLocalSession<LiveLocalRuntime>({
     sessionId: args.sessionId,
-    generation: continuation.generation,
+    generation: args.approvalContinuation!.generation,
     userId: args.target.actingUserId,
     projectId: args.projectId,
-    approvalIds: continuation.approvalIds,
+    approvalIds: args.approvalContinuation!.approvalIds,
   });
   if (!claim.ok) {
     return { ok: false, status: `approval-${claim.reason}`, message: claim.message };
   }
   const live = claim.parked.resources;
+  live.prepared.sandbox.forbidNewProcesses();
   const fail = async (
     reason: ParkInvalidationReason,
     status: string,
@@ -982,7 +982,7 @@ async function adoptParkedLocalTurn(
   }
   logger.info("[local-harness] parked session re-adopted for an approval", {
     sessionId: args.sessionId,
-    approvals: continuation.approvalIds.length,
+    approvals: args.approvalContinuation!.approvalIds.length,
   });
   return {
     ok: true,

@@ -75,7 +75,8 @@ import {
 } from "./command-translation.js";
 import type { LocalHarnessCompatibility } from "./compatibility.js";
 import type { NodeLauncher } from "./node-launcher.js";
-import { revalidateRuntime, type ResolvedRuntime } from "./runtime-identity.js";
+import type { ResolvedRuntime } from "./runtime-identity.js";
+import { createLocalProcessStartGuard } from "./process-start-guard.js";
 import {
   buildLocalHarnessEnv,
   filterBridgeSuppliedEnv,
@@ -487,7 +488,8 @@ async function collectStream(
 
 export function createSupervisedLocalHarnessProvider(
   opts: SupervisedLocalHarnessProviderOptions,
-): HarnessV1SandboxProvider {
+): HarnessV1SandboxProvider & { forbidNewProcesses: () => void } {
+  const processStarts = createLocalProcessStartGuard(opts.runtime);
   const maxFileBytes =
     opts.maxFileBytes ?? DEFAULT_LOCAL_HARNESS_FILE_LIMIT_BYTES;
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes <= 0) {
@@ -803,25 +805,6 @@ export function createSupervisedLocalHarnessProvider(
       }
     };
 
-    /**
-     * Prove the runtime is still what consent named, immediately before every
-     * launch.
-     *
-     * Availability checked it once, but a session outlives that check: a
-     * bundle replaced in between would otherwise be launched here under a
-     * grant that describes different bytes. Invariant 3 says "verified before
-     * consent AND re-verified before spawn", and spawn is here.
-     */
-    const assertRuntimeUnchanged = async (): Promise<void> => {
-      const result = await revalidateRuntime(opts.runtime);
-      if (!result.ok) {
-        throw new Error(
-          `refusing to launch: ${result.message}. Local execution is bound to ` +
-            `a runtime identity, so a changed runtime needs fresh consent.`,
-        );
-      }
-    };
-
     /** Session environment plus the adapter's allowlisted per-call additions. */
     const envFor = (
       supplied: Readonly<Record<string, string>> | undefined,
@@ -878,7 +861,7 @@ export function createSupervisedLocalHarnessProvider(
           return { exitCode: 0, stdout: "", stderr: "" };
         }
         case "exec": {
-          await assertRuntimeUnchanged();
+          await processStarts.assertCanStart();
           const handle = await opts.supervisor.spawnSupervised({
             sessionId,
             executable: translated.executable,
@@ -1049,7 +1032,7 @@ export function createSupervisedLocalHarnessProvider(
         const aborted = () => (signal ?? abortSignal)?.aborted === true;
         let spawning = false;
         try {
-          await assertRuntimeUnchanged();
+          await processStarts.assertCanStart();
           // Before the bridge exists, not after: once it is running, an
           // accepted connection on the leased port is indistinguishable from
           // "our bridge came up" and "our bridge failed to bind and something
@@ -1216,6 +1199,7 @@ export function createSupervisedLocalHarnessProvider(
   return {
     specificationVersion: "harness-sandbox-v1",
     providerId: "mcpjam-local-supervised",
+    forbidNewProcesses: processStarts.forbidNewProcesses,
     // `bridgePorts` is gone from the stable contract: port discovery is the
     // adapter's job now, reading `session.ports` and resolving through
     // `getPortEndpoint`.
