@@ -4623,7 +4623,8 @@ export async function runHarnessTurn(
     // encodes.
     await localMcpPlane?.close();
     localMcpPlane = undefined;
-    // Completed continuations return to teardown; parked runtimes stay alive.
+    // A continuation that finished without pausing again (or failed) hands
+    // its runtime back to ordinary teardown; a parked one keeps it.
     if (!localParked) localUnpark?.();
     if (localTeardown) {
       const teardown = localTeardown;
@@ -4649,7 +4650,11 @@ export async function runHarnessTurn(
         signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
       }).catch(() => {});
     }
-    // Release an unleased reservation so the next turn need not wait for its TTL.
+    // The box was claimed but never leased — preparation failed, or the turn was
+    // aborted during it. Hand the box back now; the reservation's TTL would
+    // otherwise make the next turn wait minutes for a box nobody is using.
+    // Reaching here with the claim still held means no lease exists, so there is
+    // no egress rule to clear and nothing else to undo.
     if (reservationHeld && releaseBoxReservation) {
       reservationHeld = false;
       await releaseBoxReservation();
@@ -4672,8 +4677,10 @@ export async function runHarnessTurn(
             : span),
       };
       capturedTurnTrace = trace;
-      // Persist the resume commit atomically with the transcript; release the
-      // lane if persistence fails without advancing the saved runtime state.
+      // §3: hand the resume-state commit to onConversationComplete so it rides
+      // /ingest-chat atomically with the transcript. On success the backend
+      // commit releases the lease; if persistence is absent or fails, the
+      // sidecar did NOT advance — release the lane best-effort.
       let persistOk = false;
       try {
         const persistOutcome = await onConversationComplete?.(
