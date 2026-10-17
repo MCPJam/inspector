@@ -200,14 +200,15 @@ export function toCodexPermissions(
  */
 function withThreadConfig(
   start: StartMessage,
+  effectiveConfig?: unknown,
 ): { config?: Record<string, unknown> } {
-  const config = threadConfig(start);
+  const config = threadConfig(start, effectiveConfig);
   return Object.keys(config).length > 0 ? { config } : {};
 }
 
-function threadConfig(start: StartMessage): Record<string, unknown> {
+function threadConfig(start: StartMessage, effectiveConfig?: unknown): Record<string, unknown> {
   const config: Record<string, unknown> = { ...(start.codexConfig ?? {}) };
-  const foreign = foreignMcpServerOverrides({ keep: RELAY_MCP_SERVER_NAME });
+  const foreign = foreignMcpServerOverrides({ keep: RELAY_MCP_SERVER_NAME, effectiveConfig });
   if (Object.keys(foreign).length > 0) {
     const existing =
       config.mcp_servers && typeof config.mcp_servers === "object"
@@ -470,7 +471,9 @@ async function main(): Promise<void> {
         ...(start.instructions
           ? { developerInstructions: start.instructions }
           : {}),
-        ...withThreadConfig(start),
+        ...withThreadConfig(start, process.platform === "win32"
+          ? await runtime.request("config/read", { cwd: args.workdir, includeLayers: true })
+          : undefined),
         serviceName: "mcpjam-inspector",
       };
 
