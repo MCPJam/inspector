@@ -481,3 +481,61 @@ describe("exec result normalization", () => {
     });
   });
 });
+
+describe("model-proxy connections on resume", () => {
+  // E2B stamps the lease header per connection (see
+  // model-proxy-connections.ts), so a resume must close the box's connections
+  // to the proxy before the surviving runtime continues on them.
+  const isClose = (call: unknown[]) =>
+    typeof call[0] === "string" && call[0].includes("ss -K");
+
+  it("closes the proxy host's connections as root when a session resumes", async () => {
+    let host: string | undefined;
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      modelProxyHost: () => host,
+    });
+    // The turn mints its lease after building the provider.
+    host = "proxy.convex.site";
+
+    await p.resumeSession!({ sessionId: "s" });
+
+    const close = sandboxState.run.mock.calls.find(isClose);
+    expect(close?.[0]).toContain("getent ahosts proxy.convex.site");
+    expect(close?.[0]).toContain('ss -K dst "$ip" dport = :443');
+    expect(close?.[1]).toMatchObject({ user: "root" });
+  });
+
+  it("leaves a new session's connections alone", async () => {
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      modelProxyHost: () => "proxy.convex.site",
+    });
+
+    await p.createSession();
+
+    expect(sandboxState.run.mock.calls.some(isClose)).toBe(false);
+  });
+
+  it("still resumes when the close fails, and refuses a host it cannot quote", async () => {
+    sandboxState.run.mockImplementation(async (command: string) => {
+      if (command.includes("ss -K")) throw new Error("ss: permission denied");
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const failing = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      modelProxyHost: () => "proxy.convex.site",
+    });
+    await expect(
+      failing.resumeSession!({ sessionId: "s" }),
+    ).resolves.toBeDefined();
+
+    sandboxState.run.mockClear();
+    const unsafe = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      modelProxyHost: () => "proxy.site; reboot",
+    });
+    await unsafe.resumeSession!({ sessionId: "s" });
+    expect(sandboxState.run.mock.calls.some(isClose)).toBe(false);
+  });
+});

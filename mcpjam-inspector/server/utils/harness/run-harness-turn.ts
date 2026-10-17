@@ -142,6 +142,7 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
+import { modelProxyHostOf } from "./model-proxy-connections.js";
 import { ScenarioHarnessRepublishRequiredError } from "../scenario-runtime-config.js";
 import {
   harnessBootstrapLogFields,
@@ -983,9 +984,10 @@ export async function runHarnessTurn(
   // closure free the lane if the commit can't happen (detach/persist failure).
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
   let releaseHarnessLease: (() => Promise<void>) | undefined;
-  // Broker-delivery run identity, set after the lease is installed into E2B's
-  // egress transform; used to revoke + clear the rule on teardown.
+  // Broker-delivery run identity and proxy host, set once the lease is in E2B's
+  // egress transform: teardown revokes by the id; a resume closes the host.
   let brokerRunId: string | undefined;
+  let modelProxyHost: string | undefined;
   let brokerRevoked = false;
   /**
    * The LOCAL path's own teardown: revoke the gateway, revoke the lease, stop
@@ -2451,14 +2453,12 @@ export async function runHarnessTurn(
           : createHarnessSandboxProvider({
               sandboxId: sandboxId!,
               defaultWorkingDirectory,
+              modelProxyHost: () => modelProxyHost,
               // The materialized secrets, as a session-wide env bag on every `run`
-              // and `spawn`. This is the whole of materialized delivery on the
-              // harness path: the agent runs `stripe customers list`, and
-              // `STRIPE_API_KEY` is simply in that process's environment.
-              //
-              // In `envs`, never in the command line — the rule `plugin-box.ts`
-              // already states: argv is readable by every process in the box through
-              // `/proc`, and it lands in shell history.
+              // and `spawn` — the whole of materialized delivery on the harness
+              // path: `STRIPE_API_KEY` is simply in `stripe customers list`'s env.
+              // In `envs`, never the command line (the `plugin-box.ts` rule): argv
+              // is readable by every process in the box and lands in shell history.
               ...(sessionSecretEnv && Object.keys(sessionSecretEnv).length > 0
                 ? {
                     sessionEnv: sessionSecretEnv,
@@ -2548,11 +2548,11 @@ export async function runHarnessTurn(
             },
           );
         }
-        // The lease is recorded, which consumed this turn's claim on the box; the
-        // lease's own per-box fence covers the rest of the turn. Releasing now
-        // would free a box that is very much still in use.
+        // Recording the lease consumed this turn's claim on the box, and its own
+        // per-box fence covers the rest of the turn: releasing would free a busy box.
         clearReservationHeartbeat();
         reservationHeld = false;
+        modelProxyHost = modelProxyHostOf(broker.proxyBaseUrl);
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
         modelEndpoint = org.brokeredEndpoint;
       }
