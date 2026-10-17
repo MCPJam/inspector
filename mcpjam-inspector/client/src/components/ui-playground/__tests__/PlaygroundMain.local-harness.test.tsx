@@ -2,7 +2,7 @@ const autoConsentMocks = vi.hoisted(() => ({ fetch: vi.fn(async () => ({ ok: tru
 const ensureReadyMock = vi.hoisted(() => vi.fn(async () => ({})));
 vi.mock("@/lib/local-harness-consent", async () => ({ ...(await vi.importActual("@/lib/local-harness-consent")), ensureLocalHarnessReady: ensureReadyMock, fetchLocalHarnessAvailability: autoConsentMocks.fetch, acknowledgeLocalAutoApprove: autoConsentMocks.acknowledge }));
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
@@ -1014,12 +1014,9 @@ describe("PlaygroundMain — local Claude Code", () => {
         await waitFor(() => expect(screen.getByRole("button", { name: "Set up" })).toBeInTheDocument());
         ensureReadyMock.mockClear();
         type("pwd"); await submit();
-        const dialog = screen.getByTestId("local-harness-setup-dialog");
-        expect(dialog).toHaveTextContent("Set up Codex");
-        expect(ensureReadyMock).not.toHaveBeenCalled();
-        fireEvent.click(within(dialog).getByRole("button", { name: "Set up" }));
-        await waitFor(() => expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, undefined, "codex"));
-        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), false, undefined, undefined, "codex");
+        expect(screen.queryByTestId("local-harness-setup-dialog")).not.toBeInTheDocument();
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledOnce();
       } finally {
         delete state.harnessId;
         delete state.harnessName;
