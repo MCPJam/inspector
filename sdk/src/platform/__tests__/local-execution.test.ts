@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import spec from "../../../../docs/reference/openapi.json";
 import { z } from "zod";
 import { PlatformApiClient } from "../client.js";
 import { authorizeLocalExecutionOperation } from "../operations.js";
@@ -33,6 +33,7 @@ describe("local execution authorization", () => {
         expect(JSON.parse(String(init?.body))).toEqual({
           harnessId,
           allowUnattended: true,
+          workspaceGrantId: "workspace",
         });
         return Response.json({
           target: { ...target, harnessId },
@@ -45,7 +46,12 @@ describe("local execution authorization", () => {
         fetch: fetchMock,
       });
       const result = await authorizeLocalExecutionOperation.execute(
-        { project: "My project", harnessId, allowUnattended: true },
+        {
+          project: "My project",
+          harnessId,
+          allowUnattended: true,
+          workspaceGrantId: "workspace",
+        },
         { client }
       );
       expect(result.target).toEqual({ ...target, harnessId });
@@ -77,12 +83,6 @@ describe("local execution authorization", () => {
 });
 
 it("documents the same authorization and target schemas as the SDK", () => {
-  const spec = JSON.parse(
-    readFileSync(
-      new URL("../../../../docs/reference/openapi.json", import.meta.url),
-      "utf8"
-    )
-  );
   for (const [name, schema] of [
     ["LocalExecutionAuthorization", localExecutionAuthorizationSchema],
     ["LocalExecutionTarget", localExecutionTargetSchema],

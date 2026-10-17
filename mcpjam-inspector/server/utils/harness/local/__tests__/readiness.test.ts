@@ -29,7 +29,7 @@ beforeEach(() => {
   mocks.actor.mockResolvedValue({ ok: true, actor });
   mocks.query.mockImplementation(async (name: string) => name === "projects:getMyProjects" ? [{ _id: "project" }] : { externalId: "user" });
   mocks.rollout.mockResolvedValue(true);
-  mocks.authorization.mockResolvedValue({ workspaceGrantId: "saved-workspace" });
+  mocks.authorization.mockResolvedValue({ workspaceGrantId: "saved-workspace", unattended: true });
   mocks.status.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime", packVersion: "1" });
   mocks.register.mockResolvedValue({ ok: true, keyId: "registered" });
   mocks.grant.mockResolvedValue({ grantId: "fresh-grant", token: "fresh-token", expiresAt: "2099-01-01" });
@@ -47,7 +47,7 @@ describe("shared local readiness", () => {
     expect(mocks.grant).not.toHaveBeenCalled();
   });
   it("binds background execution to the captured member and session-owned workspace", async () => {
-    const ready = await ensureLocalHarnessTarget({ bearer: "delegated", projectId: "project", scope: "unattended", workspaceGrantId: "scratch", trustedActor: actor });
+    const ready = await ensureLocalHarnessTarget({ bearer: "delegated", projectId: "project", scope: "unattended", runWorkspaceGrantId: "scratch", trustedActor: actor });
     expect(mocks.actor).not.toHaveBeenCalled();
     expect(ready.target).toMatchObject({ workspaceGrantId: "scratch", permissionProfile: "unrestricted" });
     expect(mocks.grant).toHaveBeenCalledWith(expect.objectContaining({ scope: "unattended", userId: "authkit:user" }), expect.any(Object));

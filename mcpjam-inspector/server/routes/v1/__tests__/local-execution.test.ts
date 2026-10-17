@@ -1,11 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-const { setup, ensure } = vi.hoisted(() => ({
-  setup: vi.fn(),
-  ensure: vi.fn(),
-}));
+const { ensure } = vi.hoisted(() => ({ ensure: vi.fn() }));
 vi.mock("../../../utils/harness/local/readiness.js", () => ({
-  setupLocalHarness: setup,
+  LocalHarnessRefusalError: class extends Error {},
   ensureLocalHarnessTarget: ensure,
   LocalRuntimePreparingError: class extends Error {},
 }));
@@ -32,24 +29,24 @@ const post = (body: unknown, authorization = "Bearer jwt") =>
   });
 beforeEach(() => {
   vi.clearAllMocks();
-  setup.mockResolvedValue({});
   ensure.mockResolvedValue({ target, expiresAt: "2026-10-17T00:00:00Z" });
 });
 describe("local execution grant boundary", () => {
   it.each(["claude-code", "codex"])(
     "requires deliberate unattended consent for %s",
     async (harnessId) => {
-      const response = await post({ harnessId, allowUnattended: true });
+      const response = await post({
+        harnessId,
+        allowUnattended: true,
+        workspaceGrantId: "workspace",
+      });
       expect(response.status).toBe(200);
-      expect(setup).toHaveBeenCalledWith(
-        expect.objectContaining({
-          bearer: "Bearer jwt",
-          projectId: "project",
-          harnessId,
-        }),
-      );
       expect(ensure).toHaveBeenCalledWith(
-        expect.objectContaining({ scope: "unattended", harnessId }),
+        expect.objectContaining({
+          scope: "unattended",
+          harnessId,
+          workspaceGrantId: "workspace",
+        }),
       );
       const body = await response.json();
       expect(body.target).toMatchObject({
@@ -66,12 +63,21 @@ describe("local execution grant boundary", () => {
     { harnessId: "codex", allowUnattended: true, actingUserId: "other" },
   ])("rejects incomplete or forged input before setup", async (body) => {
     expect((await post(body)).status).toBe(400);
-    expect(setup).not.toHaveBeenCalled();
+    expect(ensure).not.toHaveBeenCalled();
   });
   it("rejects missing bearer before setup", async () => {
     expect(
-      (await post({ harnessId: "codex", allowUnattended: true }, "")).status,
+      (
+        await post(
+          {
+            harnessId: "codex",
+            allowUnattended: true,
+            workspaceGrantId: "workspace",
+          },
+          "",
+        )
+      ).status,
     ).toBe(401);
-    expect(setup).not.toHaveBeenCalled();
+    expect(ensure).not.toHaveBeenCalled();
   });
 });
