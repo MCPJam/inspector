@@ -210,6 +210,12 @@ const PROVIDER_TOKENS = [
   ["Google OAuth access token", "ya29" + ".a0AfH6SMBxYzAbCdEfGhIjKl-_9"],
   ["xAI key", "xai" + "-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
   ["GitLab token", "glpat" + "-AbCdEfGhIjKlMnOpQrSt"],
+  [
+    "stateless GitHub installation token",
+    "ghs" +
+      "_1234567_eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiIxMjM0NTY3In0.c2lnbmF0dXJl-_x",
+  ],
+  ["temporary AWS access key id", "ASIA" + "IOSFODNN7EXAMPLE"],
 ] as const;
 
 describe("bare provider and host tokens", () => {
@@ -237,6 +243,17 @@ describe("bare provider and host tokens", () => {
       expect(JSON.stringify(row)).not.toContain(token.slice(0, 8));
     },
   );
+
+  it("removes a token glued to an underscore, not one inside a word", () => {
+    const token = PROVIDER_TOKENS[0][1];
+    expect(redactSecretShapes(`rejected GITHUB_TOKEN_${token} now`)).toBe(
+      "rejected GITHUB_TOKEN_[redacted] now",
+    );
+    expect(scrubLogText(`rejected GITHUB_TOKEN_${token} now`)).toBe(
+      "rejected GITHUB_TOKEN_[redacted-secret] now",
+    );
+    expect(redactSecretShapes(`id x${token}`)).toBe(`id x${token}`);
+  });
 
   it("leaves a prefix named in prose, and a second pass, unchanged", () => {
     const prose = "keys start with ghp_, hf_ or xai- and are rotated monthly";
