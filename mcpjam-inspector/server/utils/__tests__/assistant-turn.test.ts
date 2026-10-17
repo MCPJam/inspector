@@ -704,7 +704,7 @@ describe("runAssistantTurn", () => {
 
     it("runs a supported pair on the harness", async () => {
       global.fetch = vi.fn();
-      const execution = { engine: "harness:codex", venue: "local-native", runtimeVersion: "0.99.0" };
+      const execution = { engine: "harness:codex", venue: "local", runtimeVersion: "0.99.0" };
       runHarnessTurnMock.mockResolvedValue({ messageHistory: [], aborted: false, execution });
       const result = await turn(
         {
