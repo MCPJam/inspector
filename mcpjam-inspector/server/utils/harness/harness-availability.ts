@@ -638,7 +638,7 @@ export function checkHarnessRuntimeAvailable(args: {
       kind: "broker-disabled",
       reason:
         `The ${name} client cannot access model credentials right now. ` +
-        "Contact your organization admin or choose another client.",
+        "Contact MCPJam support or choose another client.",
     };
   }
 
@@ -662,7 +662,7 @@ export function checkHarnessRuntimeAvailable(args: {
       kind: "computers-unconfigured",
       reason:
         `The ${name} client needs a cloud computer, which is unavailable right now. ` +
-        "Contact your organization admin to enable cloud execution.",
+        "Contact MCPJam support to enable cloud execution.",
     };
   }
 

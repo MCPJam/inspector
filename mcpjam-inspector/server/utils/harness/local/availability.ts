@@ -188,7 +188,7 @@ export async function resolveLocalHarnessAvailability(
   if (!enabled) {
     return unavailable(
       "server-disabled",
-      "Local execution is unavailable. Choose cloud execution or contact your organization admin.",
+      "Local execution is unavailable. Choose cloud execution or contact the operator of this Inspector.",
     );
   }
   if (!isActorEligibleForLocalHarness(query.actor, query.scope)) {

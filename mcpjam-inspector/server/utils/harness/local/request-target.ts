@@ -87,7 +87,7 @@ export function parseHarnessExecutionTarget(args: {
       kind: "refused",
       reason:
         "Running a client on this machine is unavailable. " +
-        "Choose cloud execution or contact your organization admin.",
+        "Choose cloud execution or contact the operator of this Inspector.",
     };
   }
   if (!args.actorEligible) {
