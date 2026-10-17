@@ -1,8 +1,29 @@
 import type { PersistChatOutcome } from "../../utils/chat-ingestion.js";
 import {
-  releaseHarnessSessionState,
+  releaseUncommittedHarnessLane,
   type HarnessSessionCommitPayload,
 } from "../../utils/harness/harness-session-state.js";
+import { logger } from "../../utils/logger.js";
+
+/**
+ * A turn persist that threw instead of returning an outcome.
+ *
+ * For a harness turn it becomes a failed outcome, so the lane release in
+ * `requirePersistedHarnessTurn` still runs; leaving the throw would skip it and
+ * hold the lane until its lease TTL. Any other turn keeps the throw it had.
+ */
+export function failedHarnessPersist(
+  commit: HarnessSessionCommitPayload | undefined,
+): (error: unknown) => PersistChatOutcome {
+  return (error) => {
+    if (!commit) throw error;
+    logger.error("[sessionSimulation] harness turn persist threw", {
+      chatSessionId: commit.chatSessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { outcome: "failed", failureKind: "exception" };
+  };
+}
 
 /** A rejected transcript cannot safely advance or resume the harness lane. */
 export async function requirePersistedHarnessTurn(args: {
@@ -21,23 +42,15 @@ export async function requirePersistedHarnessTurn(args: {
   ) {
     return;
   }
-  // Release only this turn's claim. Never apply the rejected resume-state commit.
-  await releaseHarnessSessionState({
-    owner: {
-      projectId: args.projectId,
-      harnessId: commit.harnessId,
-      ownerType: commit.ownerType,
-      chatSessionId: commit.chatSessionId,
-      ...(commit.scenarioId ? { scenarioId: commit.scenarioId } : {}),
-      ...(args.journeyRunId ? { journeyRunId: args.journeyRunId } : {}),
-      ...(args.hostId ? { hostId: args.hostId } : {}),
-      ...(commit.executionScope
-        ? { executionScope: commit.executionScope }
-        : {}),
-    },
-    leaseId: commit.leaseId,
+  // Release only this turn's claim. Never apply the rejected resume-state
+  // commit. A release that fails is logged by the helper; the session still
+  // fails below, so the run never continues on a lane it could not free.
+  await releaseUncommittedHarnessLane({
+    commit,
+    projectId: args.projectId,
     bearer: args.bearer,
-    signal: AbortSignal.timeout(5_000),
+    ...(args.journeyRunId ? { journeyRunId: args.journeyRunId } : {}),
+    ...(args.hostId ? { hostId: args.hostId } : {}),
   });
   throw Object.assign(
     new Error(

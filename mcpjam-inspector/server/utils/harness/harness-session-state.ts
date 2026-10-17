@@ -273,14 +273,23 @@ export async function heartbeatHarnessSessionState(args: {
   return "lost"; // definitive 4xx (e.g. membership/lease rejection)
 }
 
-export async function releaseHarnessSessionState(args: {
+type ReleaseHarnessSessionArgs = {
   owner: HarnessOwnerRef;
   leaseId: string;
   bearer: string;
   /** Deadline. Release runs on the TERMINAL path, where an unbounded await
    *  holds the whole turn open — see the teardown note in `run-harness-turn`. */
   signal?: AbortSignal;
-}): Promise<void> {
+};
+
+export async function releaseHarnessSessionState(
+  args: ReleaseHarnessSessionArgs
+): Promise<void> {
+  await postRelease(args);
+}
+
+/** The release, answering whether the backend accepted it. */
+async function postRelease(args: ReleaseHarnessSessionArgs): Promise<boolean> {
   const res = await postSessionState(
     "release",
     args.bearer,
@@ -293,6 +302,66 @@ export async function releaseHarnessSessionState(args: {
   if (!res.ok) {
     logger.warn("[harness-session-state] release failed", { error: res.error });
   }
+  return res.ok;
+}
+
+/** Bounded: the caller awaits this on its terminal path. */
+const UNCOMMITTED_LANE_RELEASE_TIMEOUT_MS = 5_000;
+
+/**
+ * Release the lane a caller-persist turn's commit was minted against, without
+ * applying the commit.
+ *
+ * For a turn whose transcript did not land: its resume state must not advance
+ * past the saved conversation, and keeping the lease would refuse the next
+ * turn until its TTL. The backend checks the lease id, so a lane that was
+ * committed or claimed again since is left alone. A release that fails is
+ * reported with the lane it leaves held; the lease TTL then recovers it.
+ */
+export async function releaseUncommittedHarnessLane(args: {
+  commit: HarnessSessionCommitPayload;
+  projectId: string;
+  bearer: string;
+  /** A `swarm-chat` lane's key; the commit itself does not carry them. */
+  journeyRunId?: string;
+  hostId?: string;
+}): Promise<boolean> {
+  const { commit } = args;
+  let released = false;
+  let error: unknown;
+  try {
+    released = await postRelease({
+      owner: {
+        projectId: args.projectId,
+        harnessId: commit.harnessId,
+        ownerType: commit.ownerType,
+        chatSessionId: commit.chatSessionId,
+        ...(commit.scenarioId ? { scenarioId: commit.scenarioId } : {}),
+        ...(args.journeyRunId ? { journeyRunId: args.journeyRunId } : {}),
+        ...(args.hostId ? { hostId: args.hostId } : {}),
+        ...(commit.executionScope
+          ? { executionScope: commit.executionScope }
+          : {}),
+      },
+      leaseId: commit.leaseId,
+      bearer: args.bearer,
+      signal: AbortSignal.timeout(UNCOMMITTED_LANE_RELEASE_TIMEOUT_MS),
+    });
+  } catch (caught) {
+    // Callers run this on their terminal path; a throw here would replace
+    // the outcome they are about to report with this cleanup's failure.
+    error = caught;
+  }
+  if (!released) {
+    logger.error("[harness-session-state] uncommitted lane is still leased", {
+      ownerType: commit.ownerType,
+      chatSessionId: commit.chatSessionId,
+      ...(error
+        ? { error: error instanceof Error ? error.message : String(error) }
+        : {}),
+    });
+  }
+  return released;
 }
 
 export async function commitHarnessSessionState(args: {
