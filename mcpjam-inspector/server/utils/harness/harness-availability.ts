@@ -17,6 +17,7 @@
  * failures (computer wake, E2B connect).
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
+import { cloudExecutionContact } from "./harness-box.js";
 import {
   getCanonicalModelId,
   hostedProviderFromCanonicalId,
@@ -381,7 +382,7 @@ export function harnessReasoningEffortRefusalReason(args: {
       return (
         `This model does not support the "${reasoningEffort}" reasoning effort.` +
         (modelEfforts.length > 0
-          ? ` Choose ${modelEfforts.map((level) => `"${level}"`).join(", ")}.`
+          ? ` Choose ${quotedChoices(modelEfforts)}.`
           : " Remove the reasoning effort from this model.")
       );
     }
@@ -392,9 +393,14 @@ export function harnessReasoningEffortRefusalReason(args: {
     ? `The ${name} client does not support the "${reasoningEffort}" reasoning effort. ` +
         "Remove the reasoning effort from this model or choose another client."
     : `The ${name} client does not support the "${reasoningEffort}" reasoning ` +
-        `effort. Choose ${adapter.supportedReasoningEfforts
-          .map((level) => `"${level}"`)
-          .join(", ")}.`;
+        `effort. Choose ${quotedChoices(adapter.supportedReasoningEfforts)}.`;
+}
+
+/** `"low", "medium", or "high"`: the levels a refusal offers, as one choice. */
+function quotedChoices(levels: readonly string[]): string {
+  return new Intl.ListFormat("en", { type: "disjunction" }).format(
+    levels.map((level) => `"${level}"`),
+  );
 }
 
 /**
@@ -662,7 +668,7 @@ export function checkHarnessRuntimeAvailable(args: {
       kind: "computers-unconfigured",
       reason:
         `The ${name} client needs a cloud computer, which is unavailable right now. ` +
-        "Contact MCPJam support to enable cloud execution.",
+        `${cloudExecutionContact()} to enable cloud execution.`,
     };
   }
 
