@@ -81,8 +81,10 @@ export async function setupLocalHarness(args: { bearer: string; projectId: strin
 
 export async function ensureLocalHarnessTarget(args: {
   bearer: string; projectId: string; scope: "attended" | "unattended";
-  /** Must match UI authorization; only trusted schedulers may use session-owned scratch. */
+  /** A caller-selected grant must match the UI authorization. */
   workspaceGrantId?: string;
+  /** Only prepareLocalHarnessRun supplies its newly registered private scratch. Never mapped from HTTP input. */
+  runWorkspaceGrantId?: string;
   waitForInstall?: boolean;
   requireToolApproval?: boolean;
   /** Verified once at the signed-in launch; only trusted schedulers pass this. */
@@ -103,7 +105,7 @@ export async function ensureLocalHarnessTarget(args: {
   if (args.scope === "attended" && args.requireToolApproval === false && !authorization.autoApproveAcknowledgedAt) {
     throw new LocalAutoApproveConsentRequiredError();
   }
-  if (args.workspaceGrantId && args.workspaceGrantId !== authorization.workspaceGrantId && !args.trustedActor)
+  if (args.workspaceGrantId && args.workspaceGrantId !== authorization.workspaceGrantId )
     throw new LocalHarnessRefusalError("Choose the workspace authorized through Add client on this computer");
   if (args.scope === "unattended" && !authorization.unattended)
     throw new LocalHarnessRefusalError("Set up unattended local execution through Add client on this computer");
@@ -143,7 +145,7 @@ export async function ensureLocalHarnessTarget(args: {
     runtimeRoot: status.runtimeRoot, platform,
   });
   if (!runtime.ok) throw new LocalHarnessRefusalError(runtime.message, "CONFLICT");
-  const workspaceGrantId = args.workspaceGrantId ?? authorization.workspaceGrantId;
+  const workspaceGrantId = args.runWorkspaceGrantId ?? args.workspaceGrantId ?? authorization.workspaceGrantId;
   const workspace = await resolveWorkspaceGrant(workspaceGrantId);
   if (!workspace.ok) throw new LocalHarnessRefusalError(workspace.message, "CONFLICT");
   const identity = await readLocalInstanceIdentity();

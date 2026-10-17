@@ -188,7 +188,7 @@ export async function prepareLocalHarnessRun(args: { bearer: string; projectId: 
     if (!workspace.ok) throw new Error(workspace.message);
     workspaceGrantId = workspace.grant.workspaceGrantId;
     await recordScratchOwner(basename(directory), workspaceGrantId);
-    const ready = await ensureLocalHarnessTarget({ ...args, harnessId, scope: "unattended", workspaceGrantId });
+    const ready = await ensureLocalHarnessTarget({ ...args, harnessId, scope: "unattended", runWorkspaceGrantId: workspaceGrantId });
     const localSessionId = `local-${randomUUID()}`;
     return { target: { ...ready.target, localSessionId }, cleanup: async () => {
       try {
