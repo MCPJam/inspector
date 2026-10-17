@@ -54,6 +54,42 @@ for (const harness of ["claude-code", "codex"]) {
         page.getByRole("button", { name: "Approve", exact: true }),
       ).toHaveCount(0);
     });
+    test("concurrent approval requests execute the pending action once", async ({
+      page,
+      request,
+    }) => {
+      await request.post(`${api}/reset`, { data: { harness, count: 1 } });
+      await page.goto("/");
+      await chatAction(page, "Send");
+      const outcomes: string[] = [];
+      await page.route("**/api/chat", async (route) => {
+        const responses = await Promise.all(
+          [0, 1].map(() =>
+            request.post(`${api}/chat`, {
+              data: route.request().postData()!,
+              headers: { "Content-Type": "application/json" },
+            }),
+          ),
+        );
+        outcomes.push(
+          ...(await Promise.all(responses.map((response) => response.text()))),
+        );
+        const success = outcomes.find(
+          (body) => !body.includes('"type":"error"'),
+        );
+        expect(success).toBeDefined();
+        await route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: success!,
+        });
+      });
+      await chatAction(page, "Approve");
+      expect(
+        outcomes.filter((body) => body.includes('"type":"error"')),
+      ).toHaveLength(1);
+      expect(await stats(request)).toMatchObject({ executions: 1, resumed: 1 });
+    });
     test("denial does not execute the command", async ({ page, request }) => {
       await request.post(`${api}/reset`, { data: { harness, count: 1 } });
       await page.goto("/");

@@ -25,6 +25,13 @@ vi.mock("@ai-sdk/harness/agent", async (original) => ({
           type: "continue-turn",
           harnessId: state.harnessId,
           specificationVersion: "harness-v1",
+          pendingToolApprovals: [
+            {
+              approvalId: `a${state.currentApproval}`,
+              toolCallId: `call-${state.currentApproval}`,
+              providerExecuted: true,
+            },
+          ],
           data: {
             bridge: {
               port: 4100,
