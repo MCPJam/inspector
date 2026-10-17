@@ -5,6 +5,7 @@ import {
 } from "node:http";
 import { once } from "node:events";
 import { it } from "vitest";
+import { z } from "zod";
 import { convertToModelMessages, type UIMessage } from "ai";
 import {
   localApprovalFixture as state,
@@ -61,20 +62,28 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     await stopAllLocalHarnessSessions();
     return json(response, { ok: true });
   }
-  if (request.url === "/history")
+  if (request.url === "/history") {
+    const saved = z
+      .object({
+        pendingToolApprovals: z.array(
+          z.object({
+            approvalId: z.string(),
+            toolCallId: z.string(),
+            providerExecuted: z.boolean().optional(),
+          }),
+        ),
+      })
+      .safeParse(state.saved?.resumeState);
     return json(response, {
       transcript,
-      pending: (describeParkedLocalSession(state.sessionId)?.state ===
-      "awaiting-approval"
-        ? (describeParkedLocalSession(state.sessionId)?.pendingApprovalIds ??
-          [])
-        : []
-      ).map((id) => ({
-        approvalId: id,
-        toolCallId: `call-${id.slice(1)}`,
-        providerExecuted: true,
-      })),
+      pending:
+        saved.success &&
+        describeParkedLocalSession(state.sessionId)?.state ===
+          "awaiting-approval"
+          ? saved.data.pendingToolApprovals
+          : [],
     });
+  }
   if (request.url !== "/chat") {
     response.writeHead(404).end();
     return;
