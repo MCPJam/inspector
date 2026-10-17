@@ -25,6 +25,8 @@ export function translatePlatformFeeError(
   if (typeof data.organizationId === "string")
     details.organizationId = data.organizationId;
   if (typeof data.reason === "string") details.reason = data.reason;
+  // Held credits travel as insufficient_credits; the cause keeps the remedy apart.
+  if (data.cause === "credits_reserved") details.cause = data.cause;
   if (
     code === "platform_fee_refused" ||
     code === "ORGANIZATION_SPEND_BUDGET_REACHED"
