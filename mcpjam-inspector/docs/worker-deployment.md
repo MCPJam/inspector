@@ -73,8 +73,18 @@ worker.
 
 ## Known difference
 
-A harness eval that hits an insufficient-scope challenge records it in the
-worker's memory, while the proxy request that reads it lands on a web replica.
-The eval loses that challenge chunk (an eval cannot continue a step-up anyway)
-and the proxy's error answer waits 1.25 s for it. The same already happens
-whenever an eval and its proxy calls land on different web replicas.
+A scope step-up challenge raised through the harness MCP proxy does not reach
+the worker. The proxy, on a web replica, is what sees the sandbox's tool call
+fail with `insufficient_scope`. It hands the challenge to the turn when both
+run in the same process, and otherwise relays it through the shared RPC-log
+sink, which only hosted chat turns read. No claimed job needs it: an eval turn
+has no step-up continuation and streams into a no-op writer, so its tool call
+fails with the same error on any replica.
+
+On the web replica the proxy then does one of two things, as it already does
+whenever an eval's proxy calls land on a different web replica than the eval:
+
+- If exactly one live harness turn there selected the same server, the
+  proxy's fallback for stale correlation ids hands the challenge to that turn.
+  A chat there may then ask its user to step up scope for that server.
+- Otherwise it relays the challenge and holds the error answer for 1.25 s.
