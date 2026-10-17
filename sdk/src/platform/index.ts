@@ -7,6 +7,7 @@
  * `check:platform-runtime-safety` guard). Consumed by the MCP worker
  * (Cloudflare), the CLI, and SDK users.
  */
+export { hostedSendChatMessageOperation } from "./hosted-chat-operation.js";
 export { localExecutionTargetBodySchema, platformExecutionTargetBodySchema, localExecutionAuthorizationSchema, localExecutionTargetSchema, platformExecutionTargetSchema, type PlatformExecutionTarget, type LocalExecutionAuthorization, type PlatformLocalExecutionGrant } from "./local-execution.js";
 export {
   PLATFORM_V1_ERROR_CODES,
@@ -500,8 +501,7 @@ export {
   listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
-  authorizeLocalExecutionOperation,
-  sendChatMessageOperation,
+  authorizeLocalExecutionOperation, sendChatMessageOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
   listEvalCasesOperation,

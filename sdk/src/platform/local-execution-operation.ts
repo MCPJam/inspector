@@ -26,7 +26,7 @@ export function createLocalExecutionAuthorizationOperation(
     name: "authorize_local_execution",
     title: "Renew an existing local execution grant",
     description:
-      "Renew a short-lived capability for a workspace already authorized through Add client in the local Inspector. Requires workspaceGrantId and allowUnattended:true; cannot create machine or workspace authorization. Use this target on every local chat turn. Does not approve attended permission requests.",
+      "Renew a short-lived capability for a workspace already authorized through Add client in the local Inspector. Requires workspaceGrantId, allowUnattended:true, and the member's consent, given in Playground on that computer, to run commands without asking; cannot create machine or workspace authorization or that consent. Use this target on every local chat turn. Does not approve attended permission requests.",
     readOnly: false,
     mayBeDestructive: true,
     risk: "exposure",
@@ -34,7 +34,10 @@ export function createLocalExecutionAuthorizationOperation(
     inputSchema,
     async execute(input, context) {
       const validated = inputSchema.parse(input);
-      const { project } = await resolveProjectOrThrow(context, validated.project);
+      const { project } = await resolveProjectOrThrow(
+        context,
+        validated.project
+      );
       const { project: _selector, ...body } = validated;
       return context.client.authorizeLocalExecution(project.id, body, {
         signal: context.signal,

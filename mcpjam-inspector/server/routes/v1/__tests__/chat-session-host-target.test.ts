@@ -321,6 +321,8 @@ describe("host targeting dispatches the real harness", () => {
         }),
       }),
     );
+    // The response SAYS which engine ran. This is the field whose absence let
+    // a silently emulated turn look identical to a harness one.
     expect(body.engine).toBe("harness:claude-code");
     expect(body.execution).toEqual({ engine: "harness:claude-code", venue: "hosted", runtimeVersion: "2.1.0", sessionId: body.chatSessionId, turnId: body.turnId });
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(expect.objectContaining({ harnessSessionCommit: expect.objectContaining({ harnessSessionId: "native" }) }), expect.anything());

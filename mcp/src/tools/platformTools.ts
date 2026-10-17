@@ -80,7 +80,7 @@ import {
   listStudiesOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
-  sendChatMessageOperation,
+  hostedSendChatMessageOperation,
   driveChatSessionBrowserOperation,
   observeChatSessionBrowserOperation,
   getChatSessionOperation,
@@ -453,7 +453,7 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   // The two reads are here while `list_chat_sessions`/`search_sessions`
   // remain deliberately narrow elsewhere, because taking an id the caller
   // produced is not the same claim as enumerating an org's conversations.
-  sendChatMessageOperation,
+  hostedSendChatMessageOperation,
   driveChatSessionBrowserOperation,
   observeChatSessionBrowserOperation,
   getChatSessionOperation,

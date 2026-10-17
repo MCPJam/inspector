@@ -39,7 +39,7 @@ import {
   renderServerWidgetOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
-  sendChatMessageOperation,
+  hostedSendChatMessageOperation,
   driveChatSessionBrowserOperation,
   observeChatSessionBrowserOperation,
   cancelEvalRunOperation,
@@ -1790,7 +1790,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: sendChatMessageOperation,
+    operation: hostedSendChatMessageOperation,
     tier: "gated",
     proposal: {
       describe: describeChatMessage,

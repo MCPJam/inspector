@@ -57,10 +57,13 @@ vi.mock("@ai-sdk/harness/agent", () => ({
       text: Promise.resolve(harnessState.finalText),
     }));
   },
+  // No trailing tool-approval-response parts in these prompts.
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => harnessState.continuations),
 }));
 
 vi.mock("../registry.js", () => ({
+  // Broker-only credential delivery: the turn builds dummy auth pointed at the
+  // broker proxy, with no per-adapter credential resolution.
   buildBrokerDummyAuth: vi.fn(() => ({
     anthropic: {
       apiKey: "",
@@ -380,6 +383,7 @@ describe("runHarnessTurn local continuity", () => {
   });
 
   it("maps HarnessAgent's nested approval toolCall onto the UI approval", async () => {
+    // HarnessAgent's fullStream shape; the flat `toolCallId` is adapter-level.
     harnessState.streamParts = [{
       type: "tool-approval-request", approvalId: "approval-1",
       toolCall: { toolCallId: "call-1", toolName: "bash", input: { command: "ls" } },
@@ -425,6 +429,8 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.continuations = [
       { type: "tool-approval-response", approvalId: "approval-1", approved: false },
     ];
+    // The bare response names only the approval; the call id comes from the
+    // assistant's earlier approval request.
     const options = baseOptions();
     options.messages.push(
       {

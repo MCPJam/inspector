@@ -6399,13 +6399,20 @@ export class PlatformApiClient {
   }
 
   private async request<T>(
+    // PUT is for idempotent creates (`publishScenario`): publishing a published
+    // environment returns the existing scenario instead of minting a second.
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
     init: {
       query?: QueryParams;
       body?: unknown;
       localHarnessGrant?: string;
-      /** Opt in to caller-declared run attribution. */
+      /**
+       * Send the declared launch context. Opt-in per call: these headers describe
+       * a RUN's origin, so stamping them on unrelated reads and writes would claim
+       * an origin for requests that create nothing. `sendFeedback` is the one
+       * non-run caller: a report is stored with the client that filed it.
+       */
       declareLaunch?: boolean;
     },
     options?: RequestOptions
