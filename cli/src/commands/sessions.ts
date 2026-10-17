@@ -1,4 +1,4 @@
-import { registerLocalExecutionCommands } from "./sessions-local.js";
+import { parseExecutionTargetFlag, registerLocalExecutionCommands } from "./sessions-local.js";
 import { waitForSessionTurn } from "../lib/session-turn-retry.js";
 import {
   addBrowserFlags,
@@ -265,6 +265,7 @@ export function registerSessionsCommands(program: Command): void {
             "--client <hostId>",
             "Client ID (from `mcpjam cloud clients list`) to run the turn AS. A client that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the REAL runtime; without one the turn runs MCPJam's emulated engine. Per-turn, NOT pinned to the session — pass it on every turn, and check the printed `engine` to see what ran. Continuing a session you started with --client alone REQUIRES it: without it the turn is refused rather than answered by the emulated engine. Alongside --environment it only asserts which host you expect (a mismatch is refused). It cannot be combined with --server: --client cannot be pinned beside a pinned server set, so a later turn that omitted it would run the emulated engine on a session established on the harness. Use --environment, or --client alone (which connects the client's own servers). A harness turn needs --tool-mode auto with no --max-tool-calls."
           )
+          .option("--execution-target <json>", "hosted, an authorized target JSON, or @file containing an authorize-local response")
           .option(
             "--environment <environmentId>",
             "Run against this environment's servers (mutually exclusive with --server). An environment pins its own host, so a harness environment runs its harness on every turn, continuations included."
@@ -305,6 +306,7 @@ export function registerSessionsCommands(program: Command): void {
       project: options.project,
       sessionId: options.session,
       modelId: options.model,
+      executionTarget: parseExecutionTargetFlag(options.executionTarget),
       hostId: options.client,
       environmentId: options.environment,
       serverIds: options.server,
@@ -392,6 +394,7 @@ export function registerSessionsCommands(program: Command): void {
 }
 
 type SendOptions = BrowserOptions & {
+  executionTarget?: string;
   project?: string;
   message?: string;
   idempotencyKey?: string;

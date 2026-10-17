@@ -259,7 +259,7 @@ beforeEach(() => {
   runUnifiedAssistantTurnMock.mockImplementation(async () => {
     const harness = resolveTurnRuntimeMock.mock.calls.at(-1)?.[0]?.harness;
     return {
-    ...(typeof harness === "string" ? { execution: { engine: `harness:${harness}`, venue: "hosted", runtimeVersion: "2.1.0" } } : {}),
+    ...(typeof harness === "string" ? { execution: { engine: `harness:${harness}`, venue: "hosted", runtimeVersion: "2.1.0" }, harnessSessionCommit: { ownerType: "direct-chat", chatSessionId: "wire", leaseId: "lease", expectedStateVersion: 0, harnessId: harness, harnessSessionId: "native", resumeState: {}, computerId: "local", runtimeFingerprint: "fingerprint" } } : {}),
     messages: [],
     assistantMessages: [
       { role: "assistant", content: [{ type: "text", text: "ok" }] },
@@ -325,6 +325,7 @@ describe("host targeting dispatches the real harness", () => {
     // a silently emulated turn look identical to a harness one.
     expect(body.engine).toBe("harness:claude-code");
     expect(body.execution).toEqual({ engine: "harness:claude-code", venue: "hosted", runtimeVersion: "2.1.0", sessionId: body.chatSessionId, turnId: body.turnId });
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(expect.objectContaining({ harnessSessionCommit: expect.objectContaining({ harnessSessionId: "native" }) }), expect.anything());
     expect(body.hostId).toBe(HOST);
   });
 

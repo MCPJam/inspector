@@ -102,6 +102,7 @@ type SessionRow = {
   cumulativeInputTokens?: number;
   cumulativeOutputTokens?: number;
   resumeConfig?: {
+    executionVenue?: "hosted" | "local";
     modelId?: string;
     toolMode?: "read_only" | "auto";
     environmentId?: string;

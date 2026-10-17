@@ -57,13 +57,13 @@ vi.mock("@ai-sdk/harness/agent", () => ({
       text: Promise.resolve(harnessState.finalText),
     }));
   },
-  // WS3: no trailing tool-approval-response parts in these prompts.
+  // No trailing tool-approval-response parts in these prompts.
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => harnessState.continuations),
 }));
 
 vi.mock("../registry.js", () => ({
-  // Broker-only credential delivery (COMP-23): the turn builds dummy auth
-  // pointed at the broker proxy; there is no per-adapter resolveAuth anymore.
+  // Broker-only credential delivery: the turn builds dummy auth pointed at the
+  // broker proxy, with no per-adapter credential resolution.
   buildBrokerDummyAuth: vi.fn(() => ({
     anthropic: {
       apiKey: "",
@@ -542,6 +542,12 @@ describe("runHarnessTurn local continuity", () => {
     await runHarnessTurn(options as any, "none");
     expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
     expect(harnessState.create).not.toHaveBeenCalled();
+  });
+
+  it("runs an explicitly authorized unattended API turn", async () => {
+    const options = baseOptions();
+    await runHarnessTurn({ ...options, harnessExecutionTarget: { ...options.harnessExecutionTarget, scope: "unattended", permissionProfile: "unrestricted" } } as never, "none");
+    expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(expect.objectContaining({ scope: "unattended" }));
   });
 
   it("refuses unrestricted direct turns before preparing a local runtime", async () => {
