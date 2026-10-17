@@ -374,7 +374,9 @@ export interface RunAssistantTurnResult {
    */
   harnessSessionCommit?: HarnessSessionCommitPayload;
   /**
-   * The harness delivered its answer before its background drain was stopped.
+   * A harness turn whose wait for Claude Code background agents was ended by
+   * a Stop or the caller's deadline AFTER its answer was delivered. The turn
+   * finished; a caller that treats its abort as a timeout must not.
    */
   backgroundDrainEnded?: true;
   execution?: import("@/shared/execution-receipt").RuntimeExecution;

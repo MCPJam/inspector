@@ -1,3 +1,4 @@
+import { HOSTED_MODE } from "../../config.js";
 import { executionReceipt } from "@/shared/execution-receipt";
 import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
@@ -2396,10 +2397,17 @@ async function handleTurn(c: Context): Promise<Response> {
       },
       toolMode: pins.toolMode,
       /**
-       * Server-resolved engine; the receipt also identifies its runtime venue.
+       * WHICH ENGINE RAN — `"emulated"` or `"harness:<id>"`, on every turn.
+       *
+       * Not decoration. This surface used to answer 200 for a harness-declaring
+       * target while running the emulated engine, and the response said nothing
+       * either way, so nothing downstream could tell. It is also what a caller
+       * reads back the host from: a continuation that means to stay on a
+       * harness re-sends the `hostId` reported alongside it, and one that
+       * forgets is refused rather than answered by the other engine.
        */
       engine: engineLabel(engine),
-      execution: executionReceipt(result.execution, engineLabel(engine), runtimeChatSessionId, leaseTurnId),
+      execution: executionReceipt(result.execution, engineLabel(engine), runtimeChatSessionId, leaseTurnId, HOSTED_MODE ? "hosted" : "local"),
       // The host this turn executed as, when there was one. Server-resolved —
       // an environment's own host, or the pointer the caller sent.
       ...(target.host ? { hostId: target.host.hostId } : {}),

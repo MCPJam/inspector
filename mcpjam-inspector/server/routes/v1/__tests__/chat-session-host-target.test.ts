@@ -1,7 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-
+/**
+ * HOST TARGETING on `POST /v1/chat-sessions/messages` — which ENGINE ran.
+ *
+ * Every property here is one whose violation is INVISIBLE in the response
+ * body, which is exactly how the bug this file exists for reached production:
+ * a turn aimed at a Cursor-harness environment answered 200, reported a plain
+ * `anthropic/…` model, and had run MCPJam's emulated engine the whole time.
+ *
+ *   1. A HARNESS HOST DISPATCHES THE HARNESS. Reading the host's `harness`
+ *      is not enough — the turn also has to reach `runHarnessTurn` with an MCP
+ *      proxy strategy, which it THROWS without whenever servers are selected.
+ *      Both are asserted, because either one missing is a silently emulated
+ *      turn rather than an error.
+ *   2. THE BODY NEVER SUPPLIES THE ENGINE. `harness` in the request is a 400,
+ *      and the engine is read only off the config the server fetched.
+ *   3. TWO POINTERS THAT DISAGREE ARE REFUSED. A `hostId` contradicting the
+ *      environment's own host must not be resolved by precedence.
+ *   4. AN UNAVAILABLE RUNTIME IS A NAMED PRE-STREAM REFUSAL. Never a fallback:
+ *      the assertion is that no runtime was resolved and no turn was run, not
+ *      merely that the status code was unhappy.
+ *   5. EVERY TURN NAMES ITS ENGINE. Emulated turns too — a response that says
+ *      nothing is indistinguishable from one that ran the harness.
+ *
+ * The availability gate itself is NOT mocked. It is driven through the real
+ * environment (`E2B_API_KEY` and friends), so these tests exercise the same
+ * `checkHarnessRuntimeAvailable` chat, swarms and eval admission call, and a
+ * new rule added there shows up here.
+ */
 
 const {
   queryMock,

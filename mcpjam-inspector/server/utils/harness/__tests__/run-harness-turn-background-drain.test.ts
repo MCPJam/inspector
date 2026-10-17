@@ -1,4 +1,13 @@
-
+/**
+ * The server side of the Claude Code background drain
+ * (`claude-code-background-drain.ts`): the bridge's `raw` drain parts become
+ * transient `data-harness-background-task` chunks, a background agent's
+ * follow-up is its own text part, and a Stop that lands while the bridge is
+ * only WAITING ends the wait and keeps the delivered answer.
+ *
+ * The module mocks are the ones `run-harness-turn-hosted-resume.test.ts`
+ * drives a turn with; the stream is scripted per test.
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const runtimeExecutionSchema = z.strictObject({
   engine: z.string().regex(/^harness:[a-z][a-z0-9-]*$/),
-  venue: z.enum(["hosted", "local-native"]),
+  venue: z.enum(["hosted", "local"]),
   runtimeVersion: z.string().min(1).nullable(),
 });
 export type RuntimeExecution = z.infer<typeof runtimeExecutionSchema>;
@@ -15,23 +15,25 @@ export const executionReceiptSchema = z.strictObject({
   turnId: z.string().min(1),
 });
 
-/** A receipt is created only after an engine returned a successful turn. */
+/** Observational evidence must never turn an already spent/persisted turn into a retryable failure. */
 export function executionReceipt(
   runtime: RuntimeExecution | undefined,
   expectedEngine: string,
   sessionId: string,
   turnId: string,
+  emulatedVenue: "hosted" | "local" = "hosted",
 ) {
   if (expectedEngine !== (runtime?.engine ?? "emulated")) {
-    throw new Error("The runtime did not provide the selected engine receipt");
+    return undefined;
   }
-  return executionReceiptSchema.parse({
+  const parsed = executionReceiptSchema.safeParse({
     ...(runtime ?? {
       engine: "emulated",
-      venue: "hosted",
+      venue: emulatedVenue,
       runtimeVersion: null,
     }),
     sessionId,
     turnId,
   });
+  return parsed.success ? parsed.data : undefined;
 }

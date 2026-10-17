@@ -11,7 +11,7 @@ describe("execution receipts", () => {
       turnId: "turn",
     });
   });
-  it.each(["hosted", "local-native"] as const)(
+  it.each(["hosted", "local"] as const)(
     "preserves the runtime's %s evidence",
     (venue) => {
       expect(
@@ -25,13 +25,11 @@ describe("execution receipts", () => {
     },
   );
   it("refuses to invent a receipt from a requested harness", () => {
-    expect(() =>
-      executionReceipt(undefined, "harness:codex", "session", "turn"),
-    ).toThrow(/receipt/);
+    expect(executionReceipt(undefined, "harness:codex", "session", "turn")).toBeUndefined();
   });
   it.each([
     { engine: "harness:codex", venue: "desktop", runtimeVersion: "1" },
-    { engine: "harness:codex", venue: "local-native", runtimeVersion: "" },
+    { engine: "harness:codex", venue: "local", runtimeVersion: "" },
     { engine: "requested:codex", venue: "hosted", runtimeVersion: "1" },
   ])("rejects invalid runtime evidence %j", (runtime) => {
     expect(
@@ -42,4 +40,9 @@ describe("execution receipts", () => {
       }).success,
     ).toBe(false);
   });
+});
+
+it('reports local emulated execution and never throws on missing evidence', () => {
+  expect(executionReceipt(undefined, 'emulated', 'session', 'turn', 'local')?.venue).toBe('local');
+  expect(executionReceipt({ engine: 'harness:codex', venue: 'local', runtimeVersion: '' }, 'harness:codex', 'session', 'turn')).toBeUndefined();
 });

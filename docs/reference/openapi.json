@@ -31483,7 +31483,7 @@
                 "type": "string",
                 "enum": [
                   "hosted",
-                  "local-native"
+                  "local"
                 ]
               },
               "runtimeVersion": {
