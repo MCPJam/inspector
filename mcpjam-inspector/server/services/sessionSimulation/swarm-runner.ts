@@ -397,10 +397,10 @@ export interface StartJourneyRunOptions {
   /** Aborts the run mid-fan-out on inspector shutdown / user cancel. */
   abortSignal?: AbortSignal;
   /**
-   * The run's FROZEN execution budgets. Absent ⇒ the platform defaults, which
-   * is every run until the backend writes authored budgets into the launch
-   * snapshot. Resolved through the real resolver either way, so a defaulted
-   * run and a frozen one take the same code path.
+   * The run's FROZEN execution budgets, from its launch snapshot. Absent ⇒ a
+   * backend that predates frozen swarm budgets: the platform defaults, sized
+   * here for local sessions. Present ⇒ authoritative and never resized: the
+   * backend already resolved and sized them when it froze them.
    */
   budgets?: ResolvedExecutionBudgets;
 }
