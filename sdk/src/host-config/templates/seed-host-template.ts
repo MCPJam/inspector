@@ -32,6 +32,7 @@ import {
   GOOSE_PLATFORM,
 } from "./goose-style.js";
 import { SLACK_FONT_CSS, getSlackStyleVariables } from "./slack-style.js";
+import { CHATGPT_MODEL_CONTEXT_POLICY } from "./chatgpt-model-context-policy.js";
 
 type HostThemeMode = "light" | "dark";
 
@@ -1197,14 +1198,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
             enabled: true,
           },
-          // Budgets for plugin Apps' `ui/update-model-context`. ChatGPT web
-          // refuses an update past about 2.55 MB, per request; the block and
-          // turn budgets are MCPJam guardrails. Mirrors the backend template.
-          modelContextPolicy: {
-            maxBlocks: 256,
-            turnMaxBytes: 8 * 1024 * 1024,
-            updateMaxBytes: 2_548_000,
-          },
+          modelContextPolicy: CHATGPT_MODEL_CONTEXT_POLICY,
           // MCP Apps extension: hostInfo sent to the View iframe in
           // `ui/initialize`. Different protocol layer from clientInfo
           // above — apps that branch on `hostInfo.name === "chatgpt"`
