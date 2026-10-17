@@ -35,7 +35,7 @@ const startLocalModelGateway = vi.fn(async () => ({
   stats: () => ({ requests: 0, rejected: 0, forwarded: 0, upstreamErrors: 0 }),
 }));
 const resolveNodeLauncher = vi.fn(() => ({ command: "node", args: [] }));
-const createSupervisedLocalHarnessProvider = vi.fn(() => ({}) as never);
+const createSupervisedLocalHarnessProvider = vi.fn(() => ({ forbidNewProcesses: vi.fn() }) as never);
 
 let stateRoot = "";
 
@@ -669,6 +669,7 @@ describe.each(["codex", "claude-code"] as const)("a local %s runtime parked on a
     if (!adopted.ok) throw new Error(adopted.message);
     // The same live process: same provider, same capability and gateway.
     expect(adopted.prepared.sandbox).toBe(parked.sandbox);
+    expect(adopted.prepared.sandbox.forbidNewProcesses).toHaveBeenCalledOnce();
     expect(adopted.prepared.auth).toEqual(parked.auth);
     expect(startLocalModelGateway).toHaveBeenCalledOnce();
     expect(gatewayRebind).toHaveBeenCalledWith("lease.two.value");
