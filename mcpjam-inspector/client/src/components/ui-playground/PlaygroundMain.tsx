@@ -379,7 +379,7 @@ import {
 } from "@/components/chat-v2/thread/thread-helpers";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
-import { artifactStableKey } from "@/lib/artifact-urls";
+import { buildHistoryContentSignature } from "./playground-history-signature";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
@@ -403,32 +403,6 @@ const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
 const PLAYGROUND_SEED_TEMPLATE_IDS = ["claude", "chatgpt", "cursor"] as const;
 
 const NO_PLUGIN_SERVERS: ActivePluginServer[] = [];
-
-function buildHistoryContentSignature(
-  session: ChatHistoryDetailSession,
-  widgetSnapshots?: ChatHistoryWidgetSnapshot[],
-) {
-  const snapshotSignature = (widgetSnapshots ?? [])
-    .map((snapshot) =>
-      [
-        snapshot._id,
-        snapshot.toolCallId,
-        snapshot.resourceUri ?? "",
-        // Artifact links are re-minted with new expiries; the object they
-        // point at is what says whether the content changed.
-        artifactStableKey(snapshot.widgetHtmlUrl ?? ""),
-        artifactStableKey(snapshot.toolOutputUrl ?? ""),
-      ].join(":"),
-    )
-    .sort()
-    .join("|");
-  return [
-    session._id,
-    session.chatSessionId,
-    artifactStableKey(session.messagesBlobUrl ?? ""),
-    snapshotSignature,
-  ].join("::");
-}
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
