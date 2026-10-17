@@ -7,7 +7,8 @@ import {
   isSessionRevokedResponse,
   notifySessionRevoked,
 } from "./auth/session-revoked";
-import { detectPlatform, VITE_PUBLIC_POSTHOG_KEY } from "./PosthogUtils";
+import { detectPlatform } from "./PosthogUtils";
+import { POSTHOG_TAB_STORAGE_KEY } from "./posthog-tab-storage";
 
 /**
  * PostHog flag values come from our own server (`GET /api/web/flags`), which
@@ -63,34 +64,18 @@ export async function fetchServerFeatureFlags(
   }
 }
 
-// posthog-js persists its identity under `ph_<token>_posthog` (localStorage,
-// mirrored to a cookie). localStorage wins when both are present, as it does
-// inside posthog-js.
+// Read only this tab's identity, using the same storage/name as posthog-js.
 function readPersistedPostHogDistinctId(): string | null {
-  const storageKey = `ph_${VITE_PUBLIC_POSTHOG_KEY}_posthog`;
-  const candidates: Array<() => string | null | undefined> = [
-    () => window.localStorage?.getItem(storageKey),
-    () => {
-      const prefix = `${storageKey}=`;
-      const entry = document.cookie
-        .split(";")
-        .map((part) => part.trim())
-        .find((part) => part.startsWith(prefix));
-      return entry ? decodeURIComponent(entry.slice(prefix.length)) : null;
-    },
-  ];
-  for (const read of candidates) {
-    try {
-      const raw = read();
-      if (!raw) continue;
-      const distinctId = (JSON.parse(raw) as { distinct_id?: unknown })
-        ?.distinct_id;
-      if (typeof distinctId === "string" && distinctId) return distinctId;
-    } catch {
-      // Unreadable storage or entry: try the next one.
-    }
+  try {
+    const raw = window.sessionStorage.getItem(POSTHOG_TAB_STORAGE_KEY);
+    const distinctId = raw
+      ? (JSON.parse(raw) as { distinct_id?: unknown })?.distinct_id
+      : null;
+    return typeof distinctId === "string" && distinctId ? distinctId : null;
+  } catch {
+    // Storage may be unavailable; the guest bootstrap remains usable.
+    return null;
   }
-  return null;
 }
 
 /**
