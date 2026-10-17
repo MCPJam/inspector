@@ -168,6 +168,7 @@ import {
   TERMINAL_RUN_STATUSES,
 } from "../../services/evals/run-status.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
+import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
 import {
   createEvalCasesInBatches,
   withMintedCaseIds,
@@ -318,6 +319,18 @@ evals.use("*", async (c, next) => {
   }
   await next();
 });
+
+// The routes that start eval runs, refused while this process drains.
+evals.on(
+  "POST",
+  [
+    "/projects/:projectId/eval-runs",
+    "/projects/:projectId/eval-run-groups",
+    "/projects/:projectId/eval-runs/:runId/rerun",
+    "/projects/:projectId/eval-description-experiments/:experimentId/start",
+  ],
+  refuseWhileDraining(),
+);
 
 // ── Public authoring contract: TestStep[] ↔ internal case fields ──────
 //
