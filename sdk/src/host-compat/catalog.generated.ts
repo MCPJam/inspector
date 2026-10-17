@@ -1524,6 +1524,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
             enabled: true,
           },
+          modelContextPolicy: {
+            maxBlocks: 256,
+            turnMaxBytes: 8388608,
+            updateMaxBytes: 2548000,
+          },
           uiInitialize: {
             hostInfo: {
               name: "chatgpt",
