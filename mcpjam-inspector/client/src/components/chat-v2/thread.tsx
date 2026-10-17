@@ -28,7 +28,10 @@ import {
   getScenarioChatBackground,
   getScenarioHostFamily,
 } from "@/lib/scenario-client-style";
-import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
+import {
+  LIVE_CHAT_REASONING_DISPLAY_MODE,
+  type ReasoningDisplayMode,
+} from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
 import {
   getLastRenderableConversationMessage,
@@ -179,7 +182,7 @@ export function Thread({
   minimalMode = false,
   interactive = true,
   widgetPolicy = "live",
-  reasoningDisplayMode = "inline",
+  reasoningDisplayMode = LIVE_CHAT_REASONING_DISPLAY_MODE,
   mcpToolResultImageRendering,
   focusMessageId = null,
   highlightedMessageIds = [],

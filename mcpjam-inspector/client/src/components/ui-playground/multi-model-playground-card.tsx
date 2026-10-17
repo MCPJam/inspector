@@ -293,7 +293,7 @@ export function MultiModelPlaygroundCard({
   broadcastRequest,
   deterministicExecutionRequest,
   stopRequestId,
-  reasoningDisplayMode = "inline",
+  reasoningDisplayMode,
   executionConfig,
   hostedContext,
   hostedOrgModelConfig,
