@@ -44,6 +44,8 @@ import { createConvexClient } from "../evals/route-helpers.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { logger } from "../../utils/logger.js";
 import { rolloutEnabled } from "../../utils/computers/browser-rollout.js";
+import { assertAdmitting } from "../lifecycle/admission.js";
+import { serverDrain } from "../lifecycle/drain.js";
 import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
 import {
   parseFundingChangedDetails,
@@ -313,6 +315,17 @@ export async function launchJourneyRun(
   deps: LaunchJourneyRunDeps,
   input: LaunchJourneyRunInput,
 ): Promise<LaunchJourneyRunResult> {
+  // Before the run is created: a draining server could not finish it. Once
+  // admitted, the launch holds the drain through every setup step, so a
+  // shutdown that begins while the run is being created still waits for it.
+  assertAdmitting();
+  return serverDrain.track("swarm_run", createAndStartJourneyRun(deps, input));
+}
+
+async function createAndStartJourneyRun(
+  deps: LaunchJourneyRunDeps,
+  input: LaunchJourneyRunInput,
+): Promise<LaunchJourneyRunResult> {
   const convexHttpUrl = requireConvexHttpUrl();
   // Capture the signed-in identity before replacing its bearer with the
   // background credential. Membership and rollout are rechecked per session.
@@ -517,13 +530,22 @@ export async function launchJourneyRun(
   const getPluginRegateClient = async () =>
     createConvexClient(await deps.getRunBearer());
 
+  // Registered before the launch settles and released when the runner does,
+  // so the drain holds the run with no gap between setup and the runner.
+  let runnerSettled!: () => void;
+  void serverDrain.track(
+    "swarm_run",
+    new Promise<void>((resolve) => {
+      runnerSettled = resolve;
+    }),
+  );
   setImmediate(async () => {
     // Never rejects: the rollout read treats every failure as "not enrolled".
     const runHosts = await withoutBrowserOutsideRollout(
       hosts,
       deps.callerContext.workosUserId,
     );
-    startJourneyRun({
+    await startJourneyRun({
       runId,
       projectId,
       hosts: runHosts,
@@ -670,12 +692,14 @@ export async function launchJourneyRun(
           },
         };
       },
-    }).catch((err) => {
-      logger.error("[swarm-runs] startJourneyRun failed", {
-        runId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+    })
+      .catch((err) => {
+        logger.error("[swarm-runs] startJourneyRun failed", {
+          runId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      })
+      .finally(runnerSettled);
   });
 
   return { runId, ...(created.funding ? { funding: created.funding } : {}) };
