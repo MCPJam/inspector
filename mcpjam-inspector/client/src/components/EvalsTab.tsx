@@ -75,6 +75,7 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import { cancelEvalRunForAgent } from "./evals/agent-cancel-eval-run";
 import type {
   CancelEvalRunInspectorCommand,
   DeleteEvalSuiteInspectorCommand,
@@ -842,22 +843,10 @@ function EvalsTabContent({
       cancelEvalRun: async (command) => {
         requireAgentOperable();
         const { payload } = command as CancelEvalRunInspectorCommand;
-        const run = resolveRun(payload.runId);
-        if (run.status !== "pending" && run.status !== "running") {
-          return {
-            status: "already_finished",
-            runId: run._id,
-            runStatus: run.status,
-          };
-        }
-        if (latestHandlersRef.current.cancellingRunId) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            "Another run cancellation is already in progress.",
-          );
-        }
-        await latestHandlersRef.current.handleCancelRun(run._id);
-        return { status: "cancel_requested", runId: run._id };
+        return cancelEvalRunForAgent(
+          resolveRun(payload.runId),
+          latestHandlersRef.current,
+        );
       },
       generateEvalTests: async (command) => {
         requireAgentOperable();
