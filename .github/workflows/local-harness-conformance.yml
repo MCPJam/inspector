@@ -619,7 +619,10 @@ jobs:
           path: ${{ runner.temp }}/conformance/published-conformance-input.json
           if-no-files-found: error
 
-  # Uncertified Codex targets collect evidence without granting capabilities.
+  # Codex uses its own pack, adapter, and sandbox claims, with only the model
+  # replaced by a mock Responses upstream behind the loopback gateway.
+  # Certified targets block their release; uncertified targets collect visible
+  # evidence without granting capabilities. Windows remains uncertified.
   codex-scenarios:
     name: codex ${{ matrix.platform_key }}
     needs: [unit, plan]
@@ -795,14 +798,16 @@ jobs:
     name: conformance version
     # A conformance version records the evidence behind EVERY platform the
     # manifest calls native. Windows is one of them now, so its leg holds up
-    # the stamp exactly as the POSIX legs do.
+    # the stamp exactly as the POSIX legs do: a version minted without it
+    # would certify a platform whose scenarios had not run.
     needs: [scenarios, windows, plan]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:
-      # Keep the stamp traceable to the run that produced its evidence.
+      # The stamp names the run that produced the evidence, so it can always
+      # be traced back to the scenarios that justified it.
       - id: stamp
         env:
           PUBLISHED_PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
@@ -815,6 +820,7 @@ jobs:
 
   # Codex's own stamp, from Codex's own legs only. A Codex failure must not
   # withhold Claude Code's version, nor a Claude Code failure Codex's: each
+  # harness's evidence certifies that harness alone.
   codex-summarize:
     name: codex conformance version
     needs: [codex-scenarios, plan]
