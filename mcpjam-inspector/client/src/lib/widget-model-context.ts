@@ -100,8 +100,11 @@ export function upsertWidgetModelContextEntry(
   return next;
 }
 
-/** Queues sent as one (a multi-model card adds its own to the chat's): the
- * newest entries that fit the request, so the turn always goes. */
+/** Queues sent as one (a multi-model card adds its own after the chat's)
+ * can be over the caps each queue fits alone. Entries go from the front until
+ * the rest fit, so the chat's go before the card's own, and the turn always
+ * goes. The Apps dropped here aren't told: each update was accepted into its
+ * own queue. */
 export function fitWidgetModelContext(entries: WidgetModelContextEntry[]) {
   let kept = entries;
   while (kept.length > 0 && !fits(kept)) kept = kept.slice(1);
