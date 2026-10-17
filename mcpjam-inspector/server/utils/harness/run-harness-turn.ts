@@ -1,3 +1,4 @@
+import { harnessToolOrigin, type ToolOrigin } from "@/shared/tool-origin";
 import {
   diskResumeState,
   sessionResumeStateFrom,
@@ -3478,7 +3479,7 @@ export async function runHarnessTurn(
         const accountByCall = new Map<string, McpConnectionAttribution>();
         const toolMeta = new Map<
           string,
-          { serverId?: string; toolName: string }
+          { serverId?: string; toolName: string; toolOrigin?: ToolOrigin }
         >();
         const toolStartMs = new Map<string, number>();
         const failedToolCallIds = new Set<string>();
@@ -3645,14 +3646,8 @@ export async function runHarnessTurn(
             // engine callbacks, and persisted transcript carry MCPJam tool
             // identity (eval matching + MCP App rendering key off it).
             //
-            // Name AND input, because not every runtime puts the identity in the
-            // name: Claude Code namespaces MCP tools as `mcp__<server>__<tool>`
-            // (native tools have no prefix → serverId stays undefined), while
-            // Cursor streams every MCP call as an opaque `acp_tool_<id>` and
-            // carries `{ providerIdentifier, toolName }` in the input instead.
-            // The adapter decides; this call site only has to hand over both.
-            // (Which is why `input` is now resolved FIRST — it is an argument to
-            // the attribution, not just something recorded after it.)
+            // Cursor carries MCP identity in input; Claude namespaces the name.
+            // Both are needed for the adapter to establish provenance.
             const { serverId, toolName } = harnessAdapter.attributeToolCall
               ? harnessAdapter.attributeToolCall({
                   rawToolName,
@@ -3669,6 +3664,11 @@ export async function runHarnessTurn(
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
               toolName,
+              toolOrigin: harnessToolOrigin({
+                rawToolName, toolName, serverId,
+                hostTools: hostExecutedTools,
+                nativeTools: harnessAdapter.listBuiltinTools?.() ?? [],
+              }),
             });
             // Stand-in ToolSet entry so emitTraceSnapshot's collectActualToolCalls
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
@@ -3855,6 +3855,8 @@ export async function runHarnessTurn(
                 status: isError ? "error" : "ok",
                 toolCallId,
                 toolName: meta.toolName,
+                toolOrigin: toolMeta.get(toolCallId)?.toolOrigin ??
+                  (meta.serverId ? "mcp" : "unknown"),
                 ...(meta.serverId ? { serverId: meta.serverId } : {}),
                 ...(accountByCall.get(toolCallId)
                   ? {
@@ -3879,13 +3881,8 @@ export async function runHarnessTurn(
               ...(meta.serverId ? { serverId: meta.serverId } : {}),
             });
           } else if (type === "file-change") {
-            // Some runtimes (Codex) report file mutations as a `file-change`
-            // stream part that does NOT originate from a model-callable tool.
-            // Surface it as a synthetic NATIVE provider-executed tool (serverId
-            // undefined, like Bash) so it flows through the same UI emit + trace
-            // span + transcript path. No serverId ⇒ eval MCP-tool matching
-            // ignores it automatically. Only adapters that declare a
-            // `fileChangeToolName` emit these (Claude Code does not).
+            // Declared file changes are native actions. Surface them through
+            // the ordinary tool path without attributing them to an MCP server.
             const fcName = harnessAdapter.fileChangeToolName;
             if (fcName) {
               // Begins a new step after prior results; close any open text block.
@@ -3903,7 +3900,7 @@ export async function runHarnessTurn(
                 path: (part as { path?: unknown }).path,
               });
               const startMs = Date.now();
-              toolMeta.set(toolCallId, { toolName: fcName });
+              toolMeta.set(toolCallId, { toolName: fcName, toolOrigin: "native" });
               toolSetForTrace[fcName] = {};
               emitToolInput(writer, {
                 toolCallId,
@@ -3953,6 +3950,7 @@ export async function runHarnessTurn(
                 status: "ok",
                 toolCallId,
                 toolName: fcName,
+                toolOrigin: "native",
               });
               pendingResults.push({
                 toolCallId,

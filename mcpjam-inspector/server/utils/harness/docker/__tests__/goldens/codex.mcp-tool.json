@@ -135,7 +135,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-2>",
-              "toolName": "echo"
+              "toolName": "echo",
+              "toolOrigin": "mcp"
             },
             {
               "category": "llm",
@@ -268,7 +269,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-2>",
-              "toolName": "echo"
+              "toolName": "echo",
+              "toolOrigin": "mcp"
             },
             {
               "category": "llm",
