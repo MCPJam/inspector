@@ -149,9 +149,8 @@ export function usePostHogIdentify() {
     if (isActorChange) {
       posthog.register({ user_id: actorKey });
       previousActorRef.current = { key: actorKey, wasAuthed: isAuthedActor };
-      // Keep the last server evaluation until the actor refresh replaces it.
-      // Clearing here persists an empty evaluation under the existing PostHog
-      // identity, which also clears flags in other tabs using that identity.
+      // Keep this tab's last evaluation until its actor refresh replaces it.
+      // PostHog persistence is tab-local, including reset and updateFlags.
       // Flags are evaluated by our server, not by posthog-js on identify
       // (MJ-015), so fetch the new actor's values here.
       void refreshServerFeatureFlagsForActor(posthog, {
