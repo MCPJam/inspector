@@ -1,5 +1,5 @@
 {
-  "__inputHash": "c7d444151729b61f1635a005ca987dac23acddb2a93928bec786b39bfbc1da0a",
+  "__inputHash": "950ae7cfd1df83480a08a08dcc19dad97a056e372f73692aa2d31baae7eb55dc",
   "rows": [
     {
       "label": "base-minimal",
@@ -610,6 +610,49 @@
       },
       "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"chatgpt\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"modelContextPolicy\":{\"maxBlocks\":256,\"turnMaxBytes\":8388608,\"updateMaxBytes\":2548000}}}}",
       "sha256": "63d37eeeddee7088203fa2134840f05e5699384438faa8623337bbed95dff25a"
+    },
+    {
+      "label": "apps-model-context-policy-beside-other-keys",
+      "input": {
+        "hostStyle": "chatgpt",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "apps": {
+            "sandbox": {
+              "permissions": {
+                "mode": "custom",
+                "allow": {
+                  "camera": true
+                }
+              }
+            },
+            "pluginExtensions": {
+              "enabled": true,
+              "capabilities": {
+                "mentions": false
+              }
+            },
+            "modelContextPolicy": {
+              "maxBlocks": 64
+            },
+            "mcpAppsOverrides": {
+              "logging": true
+            }
+          }
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"chatgpt\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"mcpAppsOverrides\":{\"logging\":true},\"modelContextPolicy\":{\"maxBlocks\":64},\"pluginExtensions\":{\"capabilities\":{\"mentions\":false},\"enabled\":true},\"sandbox\":{\"permissions\":{\"allow\":{\"camera\":true},\"mode\":\"custom\"}}}}}",
+      "sha256": "33fccd540a902679e660cc465a7fc2b6130bfb5542cb561adbe8c86c9dff54b4"
     },
     {
       "label": "host-capabilities-override-explicit-empty",
