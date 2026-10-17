@@ -1,0 +1,120 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+const { ensure, venue, ConsentRequired } = vi.hoisted(() => ({
+  ensure: vi.fn(),
+  venue: vi.fn(),
+  ConsentRequired: class extends Error {},
+}));
+vi.mock("../../../utils/harness/local/readiness.js", () => ({
+  LocalHarnessRefusalError: class extends Error {},
+  LocalAutoApproveConsentRequiredError: ConsentRequired,
+  LOCAL_HARNESS_DISPLAY_NAMES: { "claude-code": "Claude Code", codex: "Codex" },
+  ensureLocalHarnessTarget: ensure,
+  LocalRuntimePreparingError: class extends Error {},
+}));
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  isLocalHarnessVenue: venue,
+}));
+import routes from "../local-execution";
+import { v1OnError } from "../envelope";
+const app = new Hono();
+app.onError(v1OnError);
+app.route("/", routes);
+const target = {
+  kind: "local-native",
+  machineId: "machine",
+  workspaceGrantId: "workspace",
+  runtimeId: "runtime",
+  permissionProfile: "unrestricted",
+  policyVersion: "policy",
+  grantToken: "a-valid-capability-token",
+  actingUserId: "authkit:member",
+};
+const post = (body: unknown, authorization = "Bearer jwt") =>
+  app.request("/projects/project/local-execution-grants", {
+    method: "POST",
+    headers: { authorization, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+beforeEach(() => {
+  vi.clearAllMocks();
+  ensure.mockResolvedValue({ target, expiresAt: "2026-10-17T00:00:00Z" });
+  venue.mockReturnValue(true);
+});
+describe("local execution grant boundary", () => {
+  it.each(["claude-code", "codex"])(
+    "requires deliberate unattended consent for %s",
+    async (harnessId) => {
+      const response = await post({
+        harnessId,
+        allowUnattended: true,
+        workspaceGrantId: "workspace",
+      });
+      expect(response.status).toBe(200);
+      expect(ensure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: "unattended",
+          harnessId,
+          workspaceGrantId: "workspace",
+          requireAutoApproveAcknowledgement: true,
+        }),
+      );
+      const body = await response.json();
+      expect(body.target).toMatchObject({
+        scope: "unattended",
+        harnessId,
+        grantToken: target.grantToken,
+      });
+      expect(body.target).not.toHaveProperty("actingUserId");
+    },
+  );
+  it.each([
+    { harnessId: "codex" },
+    { harnessId: "codex", allowUnattended: false },
+    { harnessId: "codex", allowUnattended: true, actingUserId: "other" },
+  ])("rejects incomplete or forged input before setup", async (body) => {
+    expect((await post(body)).status).toBe(400);
+    expect(ensure).not.toHaveBeenCalled();
+  });
+  it("maps missing run-without-asking consent to an actionable 403", async () => {
+    ensure.mockRejectedValue(new ConsentRequired());
+    const response = await post({
+      harnessId: "claude-code",
+      allowUnattended: true,
+      workspaceGrantId: "workspace",
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      details: { reason: "LOCAL_AUTO_APPROVE_CONSENT_REQUIRED" },
+      message: expect.stringContaining("Claude Code"),
+    });
+  });
+  it("refuses a harness this computer would not run unattended", async () => {
+    venue.mockReturnValue(false);
+    const response = await post({
+      harnessId: "codex",
+      allowUnattended: true,
+      workspaceGrantId: "workspace",
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      details: { reason: "LOCAL_UNATTENDED_UNAVAILABLE" },
+    });
+    expect(ensure).not.toHaveBeenCalled();
+  });
+  it("rejects missing bearer before setup", async () => {
+    expect(
+      (
+        await post(
+          {
+            harnessId: "codex",
+            allowUnattended: true,
+            workspaceGrantId: "workspace",
+          },
+          "",
+        )
+      ).status,
+    ).toBe(401);
+    expect(ensure).not.toHaveBeenCalled();
+  });
+});
