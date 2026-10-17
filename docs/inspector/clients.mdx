@@ -236,3 +236,8 @@ The URL updates automatically as you toggle hosts on or off. When the default se
 A signed desktop release needs native product checks beyond unsigned package or source tests. Track the exact installer, signer, runtime packs, platform, authentication, approvals, update/recovery and process-cleanup evidence in the [macOS release task](https://github.com/MCPJam/inspector/issues/6555).
 
 Record pass, failure and unexecuted outcomes in that task for each candidate. A changed installer or runtime pack requires fresh evidence for the affected checks.
+
+
+### Windows candidate scope
+
+Track signed installation, Authenticode, callbacks, updates and native process cleanup in the [Windows release task](https://github.com/MCPJam/inspector/issues/6556). Qualify local Claude Code where supported. Local Codex remains unavailable on Windows; its experimental containment evidence is not a product qualification or certification. Record refusal and unverified outcomes in the task.
