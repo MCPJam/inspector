@@ -131,7 +131,7 @@ describe("local admission transport", () => {
       code: "ADMISSION_CLOSED",
     });
   });
-  it("preserves quota exhaustion after bounded retries", async () => {
+  it("preserves quota exhaustion without retrying a terminal limit", async () => {
     vi.useFakeTimers();
     const details = {
       code: "billing_limit_reached",
@@ -156,6 +156,7 @@ describe("local admission transport", () => {
     });
     await vi.runAllTimersAsync();
     await result;
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("requires credentials without making a request", () => {
@@ -196,20 +197,28 @@ describe("local admission transport", () => {
       expect(fetch).toHaveBeenCalledTimes(1);
     }
   );
-  it("reuses exact request identity after a transient response", async () => {
-    vi.useFakeTimers();
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
-      .mockResolvedValue(Response.json(receipt));
-    vi.stubGlobal("fetch", fetch);
-    const promise = client().admit(input);
-    const result = expect(promise).resolves.toMatchObject(receipt);
-    await vi.runAllTimersAsync();
-    await result;
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(fetch.mock.calls[0][1].body).toBe(fetch.mock.calls[1][1].body);
-  });
+  it.each([429, 503])(
+    "reuses exact request identity after transient HTTP %i",
+    async (status) => {
+      vi.useFakeTimers();
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            { code: status === 429 ? "RATE_LIMITED" : "INTERNAL_ERROR" },
+            { status, headers: { "Retry-After": "0" } }
+          )
+        )
+        .mockResolvedValue(Response.json(receipt));
+      vi.stubGlobal("fetch", fetch);
+      const promise = client().admit(input);
+      const result = expect(promise).resolves.toMatchObject(receipt);
+      await vi.runAllTimersAsync();
+      await result;
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(fetch.mock.calls[0][1].body).toBe(fetch.mock.calls[1][1].body);
+    }
+  );
   it("serializes concurrent prompt extensions with distinct ordinals", async () => {
     const targets: number[] = [];
     const fetch = vi.fn(async (_url, init) => {
