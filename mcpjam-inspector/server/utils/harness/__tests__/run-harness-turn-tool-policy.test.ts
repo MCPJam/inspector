@@ -13,6 +13,7 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 
 const harnessState = vi.hoisted(() => ({
+  fileChangeToolName: undefined as string | undefined,
   streamParts: [] as Array<Record<string, unknown> & { type?: string }>,
   finalText: "",
   session: {
@@ -59,6 +60,8 @@ vi.mock("../registry.js", () => ({
     deliverMcpServers: vi.fn(async () => {}),
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
+    listBuiltinTools: () => [{ key: "bash" }],
+    fileChangeToolName: harnessState.fileChangeToolName,
     // The real adapter's MCP tool names are `mcp__<key>__<tool>`; the turn only
     // needs the resolved pair, so map it directly.
     parseToolName: vi.fn((toolName: string) => ({
@@ -238,7 +241,7 @@ describe("runHarnessTurn tool-policy accounting", () => {
     // `blockedByPolicy`.
     expect(onToolResult).not.toHaveBeenCalled();
     expect(
-      (result.trace?.spans ?? []).some((span) => span.category === "tool"),
+      (result.turnTrace?.spans ?? []).some((span) => span.category === "tool"),
     ).toBe(false);
   });
 
@@ -286,5 +289,40 @@ describe("runHarnessTurn tool-policy accounting", () => {
 
     expect(blocks).toEqual([]);
     expect(onToolResult).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("harness provenance", () => {
+  beforeEach(() => {
+    harnessState.fileChangeToolName = undefined;
+    harnessState.finalText = "";
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    vi.stubEnv(
+      "COMPUTERS_TERMINAL_TOKEN_SECRET",
+      "test-harness-proxy-secret-32-chars",
+    );
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    ["bash", "native"],
+    ["mcp__srv-a__bash", "mcp"],
+    ["mystery", "unknown"],
+  ])("persists adapter provenance for %s", async (name, origin) => {
+    harnessState.streamParts = toolCallParts(name, "done");
+    const errors: unknown[] = [];
+    const result = await runHarnessTurn(options({ onEngineError: (error: unknown) => { errors.push(error); } }), "none");
+    expect(errors).toEqual([]);
+    expect(
+      result.turnTrace?.spans.find((span) => span.category === "tool")?.toolOrigin,
+    ).toBe(origin);
+  });
+  it("records declared file-change events as native", async () => {
+    harnessState.fileChangeToolName = "fileChange";
+    harnessState.streamParts = [{ type: "file-change", event: "update", path: "file.txt" }];
+    const errors: unknown[] = [];
+    const result = await runHarnessTurn(options({ onEngineError: (error: unknown) => { errors.push(error); } }), "none");
+    expect(errors).toEqual([]);
+    expect(result.turnTrace?.spans.find(span => span.toolName === "fileChange")?.toolOrigin).toBe("native");
   });
 });

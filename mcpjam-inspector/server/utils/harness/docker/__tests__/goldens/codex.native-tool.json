@@ -131,7 +131,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-2>",
-              "toolName": "bash"
+              "toolName": "bash",
+              "toolOrigin": "native"
             },
             {
               "category": "llm",
@@ -262,7 +263,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-2>",
-              "toolName": "bash"
+              "toolName": "bash",
+              "toolOrigin": "native"
             },
             {
               "category": "llm",
