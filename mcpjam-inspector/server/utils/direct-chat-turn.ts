@@ -55,6 +55,7 @@ import {
 } from "@/shared/mcp-tool-origin-metadata";
 import { pageToolBindingOf } from "./built-in-tools/page-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
+import { buildDirectChatTurnTrace } from "./direct-chat-turn-full-stream";
 import { logger } from "./logger";
 import { withoutEmptyTextBlocks } from "./empty-text-blocks";
 import {
@@ -1178,29 +1179,15 @@ export async function consumeDirectChatTurnHeadless(
     const messages = Array.isArray(responseMessages)
       ? (responseMessages as ModelMessage[])
       : [];
-    // Build the real turnTrace from the engine's own accumulator — mirrors the
-    // streaming `onPersist` construction (runDirectChatTurn ~902) so headless
-    // and streaming produce the identical PersistedTurnTrace.
-    const turnTrace: PersistedTurnTrace = {
-      turnId: handle.traceTurn.turnId,
-      promptIndex: handle.traceTurn.promptIndex,
-      startedAt: handle.traceTurn.turnStartedAt,
-      endedAt: Date.now(),
-      spans: [...handle.traceContext.recordedSpans],
-      requestPayloads: capRequestPayloadsForPersist(
-        handle.traceContext.recordedRequestPayloads,
-      ),
-      usage: handle.traceTurn.turnUsage,
-      finishReason: finishReason ?? undefined,
-      modelId: handle.modelId,
-    };
     return {
       messages,
       steps,
       totalUsage,
       finishReason,
       spans: handle.traceContext.recordedSpans,
-      turnTrace,
+      // The same construction as the streaming `onPersist` path, so headless
+      // and streaming produce the identical PersistedTurnTrace.
+      turnTrace: buildDirectChatTurnTrace(handle, finishReason),
       aborted: handle.isAborted(),
     };
   } catch (error) {
