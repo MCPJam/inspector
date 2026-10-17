@@ -128,3 +128,24 @@ real runtime did. All fail closed; a failed start spends nothing.
 | Org out of compute allowance + credits (enforce mode) | Computer pauses with the "Paused for billing" notice. |
 | Org spending limit reached | Clean rejection at broker start (429), before any model call. |
 | Sandbox dies mid-run | Turn errors; next turn starts a fresh session ("the project computer was reset"). |
+
+### Hosted CLI chat canary configuration
+
+The `Hosted harness canaries` workflow (`hosted-harness-canary.yml`) runs a
+CLI-chat canary nightly and on manual dispatch, outside production promotion.
+It is only one slice of the required four-surface monitor; it does not qualify
+a release.
+Configure `HARNESS_CHAT_CANARY_API_KEY` as a repository secret for a dedicated
+disposable project, then set `HARNESS_CHAT_CANARY_CONFIG` as a repository variable:
+
+```json
+{"disposableProject":true,"projectId":"<disposable-project>","apiUrl":"https://<candidate>","cliVersion":"<exact-published-version>","clients":[{"harness":"claude-code","clientId":"<client>","modelId":"<model>","fixtureServerId":"<server>","fixtureToolName":"<exact-tool>","fixtureInput":{}},{"harness":"codex","clientId":"<client>","modelId":"<model>","fixtureServerId":"<server>","fixtureToolName":"<exact-tool>","fixtureInput":{}}]}
+```
+
+Use a read-only fixture tool with a known exact input, and clients whose local
+workspace and MCP servers are disposable. The driver makes at most four chat
+calls, with no automatic retry, and checks a native file round-trip, the exact
+wire-correlated MCP call and a second-turn native read. The selected CLI and API
+must expose actual execution receipts and tool-origin evidence; missing evidence
+fails the check. Stored reports contain identities and outcomes, not transcripts.
+Missing dedicated configuration records `not_run`, never a passing canary.
