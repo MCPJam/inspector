@@ -131,8 +131,10 @@ real runtime did. All fail closed; a failed start spends nothing.
 
 ### Hosted CLI chat canary configuration
 
-The nightly dogfood workflow has a separate CLI-chat canary. It is only one
-slice of the required four-surface monitor; it does not qualify a release.
+The `Hosted harness canaries` workflow (`hosted-harness-canary.yml`) runs a
+CLI-chat canary nightly and on manual dispatch, outside production promotion.
+It is only one slice of the required four-surface monitor; it does not qualify
+a release.
 Configure `HARNESS_CHAT_CANARY_API_KEY` as a repository secret for a dedicated
 disposable project, then set `HARNESS_CHAT_CANARY_CONFIG` as a repository variable:
 
