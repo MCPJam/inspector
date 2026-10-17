@@ -1,5 +1,5 @@
 import { requestHarnessId } from "./local-harness-request-id.js";
-import { shouldUseLocalHarness, isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
+import { eligibleUnattendedLocalHarnesses, shouldUseLocalHarness, isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
 import { setupLocalHarness, ensureLocalHarnessTarget, localHarnessAccountEnabled, LocalRuntimePreparingError, LOCAL_HARNESS_DISPLAY_NAMES, verifyLocalHarnessMember } from "../../utils/harness/local/readiness.js";
 import { revokeLocalHarnessAuthorization, updateAuthorizedWorkspace, readLocalHarnessAuthorization, acknowledgeLocalHarnessAutoApprove } from "../../utils/harness/local/authorization.js";
 /**
@@ -86,6 +86,14 @@ localHarness.use("/*", async (c, next) => {
   // off should not have the surface advertise that it exists.
   if (!LOCAL_HARNESS_ENABLED || HOSTED_MODE) {
     return c.json({ error: "Not found" }, 404);
+  }
+  if (c.req.method === "GET" && c.req.path.endsWith("/availability") && c.req.query("scope") === "unattended") {
+    const harnessId = await requestHarnessId(c);
+    const projectId = c.req.query("projectId");
+    if (!harnessId || !projectId) return c.json({ error: "A project and supported harness are required" }, 400);
+    if (c.get("guestId")) return c.json({ error: "Sign in to check this project's execution venue" }, 403);
+    const eligible = await eligibleUnattendedLocalHarnesses(c.req.header("authorization"), projectId, [harnessId]);
+    return c.json({ unattendedVenue: eligible.includes(harnessId) ? "local" : isComputersDataPlaneConfigured() ? "hosted" : "unavailable" });
   }
   if (c.get("guestId")) {
     return c.json(
