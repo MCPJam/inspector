@@ -322,6 +322,9 @@ export async function releaseUncommittedHarnessLane(args: {
   commit: HarnessSessionCommitPayload;
   projectId: string;
   bearer: string;
+  /** A `swarm-chat` lane's key; the commit itself does not carry them. */
+  journeyRunId?: string;
+  hostId?: string;
 }): Promise<boolean> {
   const { commit } = args;
   let released = false;
@@ -334,6 +337,8 @@ export async function releaseUncommittedHarnessLane(args: {
         ownerType: commit.ownerType,
         chatSessionId: commit.chatSessionId,
         ...(commit.scenarioId ? { scenarioId: commit.scenarioId } : {}),
+        ...(args.journeyRunId ? { journeyRunId: args.journeyRunId } : {}),
+        ...(args.hostId ? { hostId: args.hostId } : {}),
         ...(commit.executionScope
           ? { executionScope: commit.executionScope }
           : {}),
