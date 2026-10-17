@@ -7,7 +7,13 @@ export declare const SHUTDOWN_TEARDOWN_MS: number;
 export declare const SHUTDOWN_LOG_FLUSH_MS: number;
 export declare const SHUTDOWN_PARENT_MARGIN_MS: number;
 
-export declare function resolveShutdownSettings(): {
+export declare function resolveShutdownSettings(
+  env?: Record<string, string | undefined>,
+): {
+  /** How long in-flight work may finish after admission stops. */
+  drainMs: number;
+  /** True when the platform's own window cut the requested drain short. */
+  drainClamped: boolean;
   /** When the server force-exits itself after a shutdown signal. */
   forceExitMs: number;
   /** How long that force-exit waits for the log flush. */
