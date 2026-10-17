@@ -267,4 +267,8 @@ COPY --from=build /usr/src/app/sdk/dist /usr/src/app/sdk/dist
 
 EXPOSE 6274
 
-ENTRYPOINT ["npm", "start"]
+# Node directly, not `npm start`: npm as PID 1 exits on SIGTERM before the app
+# can shut down, and the container takes the server with it. start.js forwards
+# the signal to the server and waits for its graceful shutdown. NODE_ENV is set
+# above, which is all the npm script added.
+ENTRYPOINT ["node", "bin/start.js"]
