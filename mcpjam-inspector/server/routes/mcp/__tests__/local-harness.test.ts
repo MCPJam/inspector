@@ -705,12 +705,21 @@ describe("unattended venue projection", () => {
   ] as const)("uses runner eligibility local=%s cloud=%s", async (local, cloud, venue) => {
     unattended.mockResolvedValue(local ? ["codex"] : []);
     isComputersDataPlaneConfiguredMock.mockReturnValue(cloud);
-    venueMode.hosted = cloud;
     const response = await createApp().request("/api/mcp/local-harness/availability?scope=unattended&projectId=project&harnessId=codex", { headers: AUTH });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ unattendedVenue: venue });
     expect(unattended).toHaveBeenCalledWith("Bearer session", "project", ["codex"]);
     expect(readRuntimeInstallStatusMock).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["the kill switch is off", { enabled: false, hosted: false }],
+    ["the server is hosted", { enabled: true, hosted: true }],
+  ] as const)("answers 404 when %s", async (_label, mode) => {
+    Object.assign(venueMode, mode);
+    isComputersDataPlaneConfiguredMock.mockReturnValue(true);
+    const response = await createApp().request("/api/mcp/local-harness/availability?scope=unattended&projectId=project&harnessId=codex", { headers: AUTH });
+    expect(response.status).toBe(404);
+    expect(unattended).not.toHaveBeenCalled();
   });
   it("requires a project and refuses unsupported harnesses", async () => {
     for (const query of ["harnessId=codex", "projectId=project&harnessId=cursor"]) {
