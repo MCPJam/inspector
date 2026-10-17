@@ -70,9 +70,7 @@ export function upsertWidgetModelContextEntry(
     (entry) => entry.toolCallId !== toolCallId
   );
   const content = Array.isArray(context.content)
-    ? (context.content as unknown as Record<string, unknown>[]).map(
-        withoutBytes,
-      )
+    ? context.content.map((block) => withoutBytes({ ...block }))
     : undefined;
   const structuredContent =
     context.structuredContent &&

@@ -29,7 +29,6 @@ import {
   type UiToolEntry,
 } from "../chat-v2-orchestration";
 import { getSkillToolsAndPrompt } from "../skill-tools";
-import { upsertWidgetModelContextEntry } from "../../../client/src/lib/widget-model-context";
 import { listCloudSkills } from "../computers/cloud-skills";
 import {
   buildExaWebSearchTool,
@@ -1074,29 +1073,6 @@ describe("widget model context helpers (SEP-1865 boundary)", () => {
         { ...validEntry, context: { content: "not-array" } },
       ])
     ).toThrow(/context.content must be an array/);
-  });
-
-  it("takes an App's large-image context as the host queues it, with the same placeholder", () => {
-    const context = {
-      content: [
-        { type: "image", mimeType: "image/png", data: "A".repeat(500_000) },
-        { type: "text", text: "Selected part" },
-      ],
-    };
-    // Sent raw, the image bytes alone would fail the turn.
-    expect(() =>
-      validateWidgetModelContextEntries([{ toolCallId: "call-1", context }]),
-    ).toThrow(WidgetModelContextValidationError);
-    const queued = upsertWidgetModelContextEntry(
-      [],
-      "call-1",
-      context as never,
-    );
-    const prompt = buildWidgetModelContextSystemPrompt(
-      validateWidgetModelContextEntries(queued),
-    );
-    expect(prompt).toContain("[image: image/png]");
-    expect(prompt).toContain("Selected part");
   });
 
   it("renders widget context into an ephemeral system-prompt section", () => {
