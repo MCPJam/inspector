@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+const unattended = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<string[]>>(async () => []));
+const venueMode = vi.hoisted(() => ({ hosted: false, enabled: true }));
+vi.mock("../../../utils/harness/local/run-resources.js", async importOriginal => ({ ...await importOriginal<typeof import("../../../utils/harness/local/run-resources.js")>(), eligibleUnattendedLocalHarnesses: unattended }));
 const accountRollout = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
 const offConsent = vi.hoisted(() => ({ acknowledge: vi.fn(async () => ({})), read: vi.fn(async () => null as any), member: vi.fn(async () => ({})) }));
 vi.mock("../../../utils/harness/local/authorization.js", async importOriginal => ({ ...await importOriginal<typeof import("../../../utils/harness/local/authorization.js")>(), readLocalHarnessAuthorization: offConsent.read, acknowledgeLocalHarnessAutoApprove: offConsent.acknowledge, updateAuthorizedWorkspace: vi.fn(async () => {}) }));
@@ -54,7 +57,7 @@ vi.mock("../../../config.js", async () => {
   const actual = await vi.importActual<typeof import("../../../config.js")>(
     "../../../config.js",
   );
-  return { ...actual, LOCAL_HARNESS_ENABLED: true, HOSTED_MODE: false };
+  return { ...actual, get LOCAL_HARNESS_ENABLED() { return venueMode.enabled; }, get HOSTED_MODE() { return venueMode.hosted; } };
 });
 
 vi.mock("../../../utils/harness/local/runtime-install.js", async () => {
@@ -161,6 +164,9 @@ const READY_STATUS = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  venueMode.hosted = false;
+  venueMode.enabled = true;
+  unattended.mockResolvedValue([]);
   offConsent.read.mockResolvedValue(null);
   offConsent.member.mockResolvedValue({});
   offConsent.acknowledge.mockResolvedValue({});
@@ -688,5 +694,29 @@ describe("local Off consent", () => {
     const response = await createApp().request("/api/mcp/local-harness/availability?projectId=project&harnessId=claude-code", { headers: AUTH });
     expect(await response.json()).toMatchObject({ autoApproveAcknowledged: true });
     expect(offConsent.read).toHaveBeenCalledWith("authkit:user_1", "mach_1", "project", "claude-code");
+  });
+});
+
+describe("unattended venue projection", () => {
+  it.each([
+    [true, false, "local"],
+    [false, true, "hosted"],
+    [false, false, "unavailable"],
+  ] as const)("uses runner eligibility local=%s cloud=%s", async (local, cloud, venue) => {
+    unattended.mockResolvedValue(local ? ["codex"] : []);
+    isComputersDataPlaneConfiguredMock.mockReturnValue(cloud);
+    venueMode.hosted = cloud;
+    const response = await createApp().request("/api/mcp/local-harness/availability?scope=unattended&projectId=project&harnessId=codex", { headers: AUTH });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ unattendedVenue: venue });
+    expect(unattended).toHaveBeenCalledWith("Bearer session", "project", ["codex"]);
+    expect(readRuntimeInstallStatusMock).not.toHaveBeenCalled();
+  });
+  it("requires a project and refuses unsupported harnesses", async () => {
+    for (const query of ["harnessId=codex", "projectId=project&harnessId=cursor"]) {
+      const response = await createApp().request(`/api/mcp/local-harness/availability?scope=unattended&${query}`, { headers: AUTH });
+      expect(response.status).toBe(400);
+    }
+    expect(unattended).not.toHaveBeenCalled();
   });
 });
