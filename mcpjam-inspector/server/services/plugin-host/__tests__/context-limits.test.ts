@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MODEL_CONTEXT_POLICY_CEILINGS } from "@mcpjam/sdk/host-config/internal";
+import { PLUGIN_CONTEXT_META_MAX_BYTES } from "../../../../shared/plugin-model-context.js";
 import { PluginContextWorkspace } from "../context.js";
 
 const instanceId = "44444444-4444-4444-8444-444444444444";
@@ -45,6 +46,16 @@ describe("context already admitted is re-read against the ceilings", () => {
     expect(ws.snapshot(instanceId, 1).state?.content).toHaveLength(256);
     const copy = ws.fork(instanceId, 1);
     expect(copy.snapshot(instanceId, 1).state?.content).toHaveLength(256);
+  });
+
+  it("restores a stored _meta larger than a new update may carry", () => {
+    const ws = workspace();
+    const saved = JSON.parse(stored);
+    saved.context.params._meta = {
+      pad: "m".repeat(2 * PLUGIN_CONTEXT_META_MAX_BYTES),
+    };
+    ws.restore(instanceId, 1, JSON.stringify(saved), 1);
+    expect(ws.snapshot(instanceId, 1).state?.content).toHaveLength(256);
   });
 
   it("still admits a new update against the default budgets", () => {
