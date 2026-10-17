@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
 import { useJourneyRunStream } from "../use-journey-run-stream";
 
@@ -43,5 +43,75 @@ describe("selected run stream lifecycle", () => {
     expect(result.current.sessions).toEqual({});
     expect(result.current.connected).toBe(false);
     expect(result.current.error).toBeNull();
+  });
+});
+
+describe("stream answered by a server without the run's runner", () => {
+  const runLevel = {
+    runId: "run-1",
+    hostId: "",
+    chatSessionId: "",
+    sessionIndex: -1,
+  };
+
+  /** Each open emits one run-level event, then the server closes the stream. */
+  function answerEveryOpenWith(type: "run_remote" | "run_complete") {
+    streams.mockImplementation(async (_id, onEvent) => {
+      onEvent({ ...runLevel, type } as SwarmStreamEvent);
+    });
+  }
+
+  beforeEach(() => {
+    streams.mockReset();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reopens the stream after run_remote, and stops after the bounded retries", async () => {
+    answerEveryOpenWith("run_remote");
+    const { result } = renderHook(() => useJourneyRunStream("run-1", true));
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    // The first open plus six bounded reconnects, then the durable view alone.
+    expect(streams).toHaveBeenCalledTimes(7);
+    expect(result.current.runComplete).toBe(false);
+    expect(result.current.connected).toBe(false);
+  });
+
+  it("does not reopen a stream that ended in run_complete", async () => {
+    answerEveryOpenWith("run_complete");
+    const { result } = renderHook(() => useJourneyRunStream("run-1", true));
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(streams).toHaveBeenCalledTimes(1);
+    expect(result.current.runComplete).toBe(true);
+  });
+
+  it("cancels a pending reconnect when the stream is disabled", async () => {
+    answerEveryOpenWith("run_remote");
+    const { rerender } = renderHook(
+      ({ enabled }) => useJourneyRunStream("run-1", enabled),
+      { initialProps: { enabled: true } },
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(streams).toHaveBeenCalledTimes(1);
+
+    rerender({ enabled: false });
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(streams).toHaveBeenCalledTimes(1);
   });
 });
