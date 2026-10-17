@@ -1,6 +1,7 @@
-import { useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { getInitialThemeMode } from "@/lib/theme-utils";
 import type { ProjectVisibility } from "@/state/app-types";
 import type { ProjectClientConfig } from "@/lib/client-config";
 
@@ -423,9 +424,26 @@ export function isViewerRolePending(
 }
 
 export function useProjectMutations() {
-  const createProject = useMutation("projects:createProject" as any);
-  const ensureDefaultProject = useMutation(
+  const createProjectMutation = useMutation("projects:createProject" as any);
+  const ensureDefaultProjectMutation = useMutation(
     "projects:ensureDefaultProject" as any,
+  );
+  // A new project is seeded with an MCPJam client. Without the viewer's
+  // theme the backend keeps its dark template. Read from storage at call
+  // time: this hook mounts above PreferencesStoreProvider, and the store
+  // writes every theme change back to localStorage.
+  const createProject = useCallback(
+    (args: Record<string, unknown>) =>
+      createProjectMutation({ ...args, themeMode: getInitialThemeMode() }),
+    [createProjectMutation],
+  );
+  const ensureDefaultProject = useCallback(
+    (args: Record<string, unknown> = {}) =>
+      ensureDefaultProjectMutation({
+        ...args,
+        themeMode: getInitialThemeMode(),
+      }),
+    [ensureDefaultProjectMutation],
   );
   const updateProject = useMutation("projects:updateProject" as any);
   // Phase 4: write the project default's connection portion through the

@@ -6,18 +6,19 @@ import {
   type RemoteProject,
   shouldQueryProjectId,
   useCanManageProjectClients,
+  useProjectMutations,
   useProjectQueries,
   useProjectServers,
   type ProjectMember,
 } from "../useProjects";
 
-const { mockUseDbUserReady, mockUseMutation, mockUseQuery } = vi.hoisted(
-  () => ({
+const { mockUseDbUserReady, mockUseMutation, mockUseQuery, mockThemeMode } =
+  vi.hoisted(() => ({
     mockUseDbUserReady: vi.fn(() => true),
     mockUseMutation: vi.fn(),
     mockUseQuery: vi.fn(),
-  }),
-);
+    mockThemeMode: { current: "light" as "light" | "dark" },
+  }));
 
 vi.mock("convex/react", () => ({
   useMutation: mockUseMutation,
@@ -26,6 +27,10 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: mockUseDbUserReady,
+}));
+
+vi.mock("@/lib/theme-utils", () => ({
+  getInitialThemeMode: () => mockThemeMode.current,
 }));
 
 function createProject(
@@ -65,6 +70,39 @@ describe("filterProjectsForOrganization", () => {
       projects[0],
       projects[2],
     ]);
+  });
+});
+
+describe("useProjectMutations", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Rendered without PreferencesStoreProvider on purpose: the hook mounts
+  // above it in the app, so it must not read the preferences store.
+  it("creates projects with the viewer's theme", async () => {
+    const createProject = vi.fn().mockResolvedValue("p1");
+    const ensureDefaultProject = vi.fn().mockResolvedValue("p1");
+    mockUseMutation.mockImplementation((name: string) => {
+      if (name === "projects:createProject") return createProject;
+      if (name === "projects:ensureDefaultProject") return ensureDefaultProject;
+      return vi.fn();
+    });
+    mockThemeMode.current = "dark";
+
+    const { result } = renderHook(() => useProjectMutations());
+    await result.current.createProject({ name: "New", servers: {} });
+    await result.current.ensureDefaultProject({ organizationId: "org-1" });
+
+    expect(createProject).toHaveBeenCalledWith({
+      name: "New",
+      servers: {},
+      themeMode: "dark",
+    });
+    expect(ensureDefaultProject).toHaveBeenCalledWith({
+      organizationId: "org-1",
+      themeMode: "dark",
+    });
   });
 });
 
