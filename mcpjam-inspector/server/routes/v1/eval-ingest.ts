@@ -42,6 +42,8 @@ const PROXY_TIMEOUT_MS = 60_000;
 const MAX_ARTIFACT_BODY_BYTES = 20 * 1024 * 1024;
 
 const INGEST_SUFFIXES = [
+  "admit",
+  "ensure-steps",
   "capabilities",
   "runs/evaluations",
   "report",
@@ -125,6 +127,8 @@ async function proxyIngest(c: Context, suffix: string): Promise<Response> {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
+    const retryAfter = response.headers.get("Retry-After");
+    if (retryAfter) c.header("Retry-After", retryAfter);
     const body = (await response.json().catch(() => null)) as unknown;
     return c.json(body ?? {}, response.status as never);
   } catch (error) {

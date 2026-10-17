@@ -24,6 +24,7 @@ import type { Context } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { backendFailureText } from "../../utils/backend-failure-text.js";
+import { PLATFORM_FEE_ERROR_CODES } from "./platform-fee-errors.js";
 import { v1Error } from "./envelope.js";
 import type { V1ErrorCode } from "./contract.js";
 
@@ -43,6 +44,8 @@ const PROXY_TIMEOUT_MS = 15_000;
 const BROKER_STATUS_TO_V1: Record<number, V1ErrorCode> = {
   400: "VALIDATION_ERROR",
   401: "UNAUTHORIZED",
+  402: "PAYMENT_REQUIRED",
+  426: "UPGRADE_REQUIRED",
   403: "FORBIDDEN",
   404: "NOT_FOUND",
   409: "CONFLICT",
@@ -112,7 +115,13 @@ async function callBroker(
       headers: {
         "content-type": "application/json",
         ...inspectorAiRequestHeaders("v1-harness"),
-        ...(c.req.header("x-mcpjam-client-version") ? { "x-mcpjam-client-version": c.req.header("x-mcpjam-client-version")! } : {}),
+        ...(c.req.header("x-mcpjam-client-version")
+          ? {
+              "x-mcpjam-client-version": c.req.header(
+                "x-mcpjam-client-version",
+              )!,
+            }
+          : {}),
         authorization: `Bearer ${bearer}`,
       },
       body: JSON.stringify(payload),
@@ -127,19 +136,44 @@ async function callBroker(
     const code =
       BROKER_STATUS_TO_V1[response.status] ??
       (response.status >= 500 ? "SERVER_UNREACHABLE" : "INTERNAL_ERROR");
-    const message = backendFailureText({
-      source: "model-leases",
-      status: response.status,
-      detail: body.error,
-      fallback: "Could not complete the model lease operation",
-    });
+    const domainCode =
+      typeof body.domainCode === "string" ? body.domainCode : undefined;
+    const admissionError =
+      domainCode && PLATFORM_FEE_ERROR_CODES.includes(domainCode);
+    const message =
+      admissionError && typeof body.error === "string"
+        ? body.error
+        : backendFailureText({
+            source: "model-leases",
+            status: response.status,
+            detail: body.error,
+            fallback: "Could not complete the model lease operation",
+          });
     // `retryAfter` is seconds, and the spec documents `Retry-After` on every
     // 429 — pass it through rather than promising a header we never send.
     const retryAfter =
       typeof body.retryAfter === "number" && Number.isFinite(body.retryAfter)
         ? { "Retry-After": String(Math.max(0, Math.ceil(body.retryAfter))) }
         : undefined;
-    return v1Error(c, code, message, undefined, retryAfter);
+    return v1Error(
+      c,
+      admissionError && domainCode === "platform_fee_unavailable"
+        ? "INTERNAL_ERROR"
+        : code,
+      message,
+      admissionError
+        ? {
+            ...(body.details && typeof body.details === "object"
+              ? body.details
+              : {}),
+            ...(typeof body.code === "string" && body.code !== domainCode
+              ? { reason: body.code }
+              : {}),
+            code: domainCode,
+          }
+        : undefined,
+      retryAfter,
+    );
   } catch (error) {
     if (isAbortError(error)) {
       return v1Error(c, "TIMEOUT", "Model lease operation timed out");
@@ -176,6 +210,20 @@ modelLeases.post("/projects/:projectId/model-leases", async (c) => {
     );
   }
 
+  for (const key of ["executionAdmissionId", "attemptAdmissionId"]) {
+    if (
+      payload[key] !== undefined &&
+      (typeof payload[key] !== "string" ||
+        !payload[key] ||
+        (payload[key] as string).length > 256)
+    ) {
+      return v1Error(
+        c,
+        "VALIDATION_ERROR",
+        `${key} must contain 1 to 256 characters.`,
+      );
+    }
+  }
   // `default` is the zero-config alias: omit projectId so the backend resolves
   // the key org's Default project. Anything else is forwarded and validated
   // (org scope + membership) backend-side — including an id the caller
@@ -184,10 +232,20 @@ modelLeases.post("/projects/:projectId/model-leases", async (c) => {
   // and the results it produces always land in the same project.
   const projectId = c.req.param("projectId");
   const result = await callBroker(c, "start", {
+    ...(payload.executionAdmissionId
+      ? { executionAdmissionId: payload.executionAdmissionId }
+      : {}),
+    ...(payload.attemptAdmissionId
+      ? { attemptAdmissionId: payload.attemptAdmissionId }
+      : {}),
     delivery: "sdk-direct",
     modelId: model.trim(),
-    ...(payload.modelSelection !== undefined ? { modelSelection: payload.modelSelection } : {}),
-    ...(payload.reasoningEffort !== undefined ? { reasoningEffort: payload.reasoningEffort } : {}),
+    ...(payload.modelSelection !== undefined
+      ? { modelSelection: payload.modelSelection }
+      : {}),
+    ...(payload.reasoningEffort !== undefined
+      ? { reasoningEffort: payload.reasoningEffort }
+      : {}),
     ...(typeof runId === "string" ? { runId: runId.trim() } : {}),
     ...(typeof maxOutputTokens === "number" ? { maxOutputTokens } : {}),
     ...(projectId && projectId !== "default" ? { projectId } : {}),
