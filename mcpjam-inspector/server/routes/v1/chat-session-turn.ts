@@ -26,7 +26,65 @@ import {
   redactBrowserEvidenceTree,
   type BrowserScreenshotEvidence,
 } from "../../services/browser-tool-evidence";
-
+/**
+ * `POST /api/v1/chat-sessions/messages` — one agent Playground turn.
+ *
+ * Send a message, get back the assistant's reply PLUS everything a
+ * participant in the conversation could not see: which tools the model
+ * picked, the arguments it sent, what each server actually returned, how long
+ * each call took, and the turn's token usage. Pass the returned `sessionId`
+ * back to continue; omit it to start a new session.
+ *
+ * WHY NOT `/api/web/chat-v2`. That route already runs this loop, and it speaks
+ * a streaming AI-SDK UI-message protocol with a Hono `Context` baked through
+ * it. De-streaming it would fork the one handler the product's own Playground
+ * depends on. Instead this clones the SYNCHRONOUS-JSON packaging that
+ * `routes/v1/agent.ts` already proved (wall clock, per-org concurrency,
+ * `runUnifiedAssistantTurn` with `streamSink: "none"`) and points it at the
+ * caller's project servers with persistence ON.
+ *
+ * SPEND SAFETY IS THE DESIGN, not a mitigation. A synchronous endpoint that
+ * spends money is exposed to the oldest failure in HTTP: the client times out,
+ * retries, and pays twice. Three things stop that, in this order:
+ *
+ *   1. `idempotencyKey` is REQUIRED. Not optional-with-a-fallback like the
+ *      agent route's — there is no legacy caller to preserve, and a spend
+ *      endpoint that lets you skip the safety is a spend endpoint that will be
+ *      called without it.
+ *   2. A Convex TURN LEASE is claimed BEFORE any model call. Same key on a
+ *      completed turn replays the answer instead of re-running it; a second
+ *      concurrent turn on one session is refused rather than interleaved.
+ *      Cross-replica by construction, because the hosted plane has no
+ *      affinity and an in-process map would be decorative.
+ *   3. The version-conflict 409 is the BACKSTOP, not the mechanism. It fires
+ *      after the spend, which makes it a damage report; the lease is what
+ *      prevents the damage.
+ *
+ * TOOL EFFECTS ARE A SEPARATE AXIS FROM SPEND. `toolMode` defaults to
+ * `read_only`, which advertises only tools the server annotated
+ * `readOnlyHint: true`. That hint is server-asserted — a server may mislabel a
+ * mutating tool — so this is a policy the host applies, not a guarantee it can
+ * verify, and the operation description says so. `auto` advertises everything
+ * and may cause real side effects through arbitrary third-party tools.
+ *
+ * HOST TARGETING SAYS WHICH ENGINE RUNS. A turn may name a saved host — by
+ * `hostId`, or implicitly through the environment that pins one — and the
+ * server re-fetches that host's authoritative runtime config to decide between
+ * MCPJam's emulated engine and a real agent harness. `harness`/`computer` are
+ * never read from the request body. When a harness-declaring target cannot run
+ * here the turn is REFUSED before it spends, never quietly downgraded, and
+ * every response names the engine it ran on. See `chat-session-host-target.ts`
+ * for the rules and why each refusal exists. `hostId` is per-turn and cannot
+ * be pinned, so a continuation of a host-established session must re-send it —
+ * omitting it is `HOST_TARGET_REQUIRED`, never a quiet fall back to emulated.
+ *
+ * CONFIG IS FIRST-TURN-ONLY. Model, target, system prompt and tool mode pin at
+ * session creation and are stored in `resumeConfig`; a continuation that
+ * resends any of them is refused with `CONFIG_ON_CONTINUATION` rather than
+ * silently repinned. The backend enforces the same thing at the ingest
+ * boundary (`preserveAgentResumePins`), which is the actual guarantee — this
+ * check is the friendly error.
+ */
 import { createHash, randomUUID } from "node:crypto";
 import type { Hono } from "hono";
 import type { Context } from "hono";
