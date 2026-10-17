@@ -2105,9 +2105,9 @@ describe("useChatSession — environment execution target", () => {
   });
 
   it("says a replaced computer reset the session, without guessing why", () => {
-    // `sandbox-replaced` fires for an idle timeout, the box's max age, a
-    // changed environment or secrets, and a first turn after deploy alike, so
-    // the copy names none of them.
+    // `sandbox-replaced` fires for a box deleted while idle, the box's max
+    // age, a changed environment or secrets, and a first turn after deploy
+    // alike, so the copy names none of them.
     const info = vi.spyOn(toast, "info").mockImplementation(() => "toast-id");
     const { unmount } = renderHook(() =>
       useChatSession({
