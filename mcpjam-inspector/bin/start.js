@@ -14,6 +14,7 @@ import {
   networkAccessLinks,
 } from "./access-link.mjs";
 import { launchWorkspaceCandidate } from "./launch-workspace.mjs";
+import { resolveShutdownSettings } from "./shutdown-settings.mjs";
 import { computeInstanceEnv } from "./runtime-profile.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1174,11 +1175,10 @@ async function main() {
     });
 
     function killServerProcess() {
-      if (serverProcessClosed) {
-        return;
-      }
+      if (serverProcessClosed) return;
 
       serverProcess.kill("SIGTERM");
+      // Past the server's own force-exit and log flush: only a stuck server.
       if (!forceKillTimer) {
         forceKillTimer = setTimeout(() => {
           if (!serverProcessClosed) {
@@ -1187,7 +1187,7 @@ async function main() {
             );
             serverProcess.kill("SIGKILL");
           }
-        }, 5000);
+        }, resolveShutdownSettings().parentKillMs);
         forceKillTimer.unref?.();
       }
     }
