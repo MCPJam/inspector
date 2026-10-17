@@ -240,7 +240,6 @@ const PLAIN_TOOLS = [
   "connect_eval_check_repo",
   "list_chat_sessions",
   "search_sessions",
-  "authorize_local_execution",
   "send_chat_message",
   "drive_chat_session_browser",
   "observe_chat_session_browser",
@@ -498,8 +497,7 @@ describe("platform tool registration", () => {
       "list_studies",
       "get_study",
       "list_chat_sessions",
-      "authorize_local_execution",
-      "send_chat_message",
+          "send_chat_message",
       "get_chat_session",
       "get_chat_session_trace",
       "get_capabilities",
@@ -677,8 +675,7 @@ describe("platform tool registration", () => {
         .annotations;
     for (const name of [
       "call_server_tool",
-      "authorize_local_execution",
-      "send_chat_message",
+          "send_chat_message",
       "update_project",
       "update_project_server",
       "connect_project_server",

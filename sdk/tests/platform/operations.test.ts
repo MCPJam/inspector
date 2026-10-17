@@ -2661,6 +2661,7 @@ describe("operation catalog consistency", () => {
     use_sandbox_image: { image: "i" },
     reset_computer: {},
     search_sessions: { query: "q" },
+    authorize_local_execution: { project: "p", harnessId: "codex", allowUnattended: true, workspaceGrantId: "workspace" },
     send_chat_message: {
       idempotencyKey: "k",
       message: "hi",

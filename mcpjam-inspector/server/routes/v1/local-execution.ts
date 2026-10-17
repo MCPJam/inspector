@@ -10,7 +10,7 @@ import {
   WebRouteError,
 } from "../web/errors.js";
 import {
-  setupLocalHarness,
+  LocalHarnessRefusalError,
   ensureLocalHarnessTarget,
   LocalRuntimePreparingError,
 } from "../../utils/harness/local/readiness.js";
@@ -35,11 +35,10 @@ localExecution.post(
       bearer,
       projectId: c.req.param("projectId"),
       harnessId: input.harnessId,
-      workspacePath: input.workspacePath,
+      workspaceGrantId: input.workspaceGrantId,
       waitForInstall: false,
     };
     try {
-      await setupLocalHarness(args);
       const grant = await ensureLocalHarnessTarget({
         ...args,
         scope: "unattended",
@@ -55,6 +54,7 @@ localExecution.post(
         expiresAt: grant.expiresAt,
       });
     } catch (error) {
+      if (error instanceof LocalHarnessRefusalError) return v1Error(c, error.code, error.message);
       if (error instanceof LocalRuntimePreparingError) {
         return v1Error(c, "CONFLICT", error.message, {
           reason: "LOCAL_RUNTIME_PREPARING",

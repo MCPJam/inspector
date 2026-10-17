@@ -5812,8 +5812,8 @@
       "post": {
         "operationId": "authorizeLocalExecution",
         "tags": ["Chat"],
-        "summary": "Authorize unattended local execution",
-        "description": "Available on a local Inspector only. Requires a verified user's AuthKit bearer session and explicit unattended consent; API keys cannot authorize a machine. Resolves project membership, workspace access and the selected Claude Code or Codex runtime before returning an expiring capability. Does not approve attended permission requests. Treat grantToken as a secret and include this target with every local turn.",
+        "summary": "Renew an existing local execution grant",
+        "description": "Available on a local Inspector only. Requires prior Add client setup in the local Inspector, the authorized workspaceGrantId, a verified user's AuthKit bearer session and explicit unattended intent; this endpoint cannot create machine or workspace authorization. Resolves project membership, existing authorization and the selected runtime before returning an expiring capability. Does not approve attended permission requests. Treat grantToken as a secret and include this target with every local turn.",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "requestBody": {
           "required": true,
@@ -31424,11 +31424,11 @@
       "LocalExecutionAuthorization": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["harnessId", "allowUnattended"],
+        "required": ["harnessId", "allowUnattended", "workspaceGrantId"],
         "properties": {
           "harnessId": { "type": "string", "enum": ["claude-code", "codex"] },
           "allowUnattended": { "type": "boolean", "const": true },
-          "workspacePath": { "type": "string", "minLength": 1 }
+          "workspaceGrantId": { "type": "string", "minLength": 1 }
         }
       },
       "LocalExecutionTarget": {

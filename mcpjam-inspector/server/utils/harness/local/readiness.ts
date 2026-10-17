@@ -38,20 +38,23 @@ export function localHarnessBackend(bearer: string) {
 }
 export async function verifyLocalHarnessMember(bearer: string, projectId: string, trustedActor?: LocalHarnessActor, harnessId: SupportedLocalHarnessId = "claude-code") {
   const name = LOCAL_HARNESS_DISPLAY_NAMES[harnessId];
-  if (HOSTED_MODE || !LOCAL_HARNESS_ENABLED) throw new Error(`Local ${name} is unavailable on this server`);
+  if (HOSTED_MODE || !LOCAL_HARNESS_ENABLED) throw new LocalHarnessRefusalError(`Local ${name} is unavailable on this server`);
   const actor = trustedActor ? { ok: true as const, actor: trustedActor } : await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${bearer.replace(/^Bearer\s+/i, "")}`, contextCredential: null });
-  if (!actor.ok) throw new Error(actor.message);
+  if (!actor.ok) throw new LocalHarnessRefusalError(actor.message, "UNAUTHORIZED");
   const client = localHarnessBackend(bearer);
   const [projects, user] = await Promise.all([
     client.query("projects:getMyProjects" as never, {}),
     client.query("users:getCurrentUser" as never, {}),
   ]) as [Array<{ _id: string }>, { email?: string; externalId?: string } | null];
   if (trustedActor && user?.externalId !== trustedActor.subject) throw new Error("Background execution identity changed");
-  if (!Array.isArray(projects) || !projects.some(p => String(p._id) === projectId)) throw new Error("Project membership is required for local execution");
-  if (!(await evaluateLocalHarnessRollout(actor.actor.subject, user?.email, LOCAL_HARNESS_ROLLOUT_FLAG[harnessId]))) throw new Error(`Local ${name} is not available for this account yet`);
+  if (!Array.isArray(projects) || !projects.some(p => String(p._id) === projectId)) throw new LocalHarnessRefusalError("Project membership is required for local execution");
+  if (!(await evaluateLocalHarnessRollout(actor.actor.subject, user?.email, LOCAL_HARNESS_ROLLOUT_FLAG[harnessId]))) throw new LocalHarnessRefusalError(`Local ${name} is not available for this account yet`);
   return actor.actor;
 }
 
+export class LocalHarnessRefusalError extends Error {
+  constructor(message: string, readonly code: "UNAUTHORIZED" | "FORBIDDEN" | "CONFLICT" = "FORBIDDEN") { super(message); }
+}
 export class LocalRuntimePreparingError extends Error {}
 export class LocalAutoApproveConsentRequiredError extends Error {
   readonly status = "auto-approve-consent-required";
@@ -78,7 +81,7 @@ export async function setupLocalHarness(args: { bearer: string; projectId: strin
 
 export async function ensureLocalHarnessTarget(args: {
   bearer: string; projectId: string; scope: "attended" | "unattended";
-  /** Registered session-owned scratch grant; supplied only by trusted schedulers. */
+  /** Must match UI authorization; only trusted schedulers may use session-owned scratch. */
   workspaceGrantId?: string;
   waitForInstall?: boolean;
   requireToolApproval?: boolean;
@@ -96,10 +99,14 @@ export async function ensureLocalHarnessTarget(args: {
   const actor = await verifyLocalHarnessMember(args.bearer, args.projectId, args.trustedActor, harnessId);
   const machineId = await getLocalMachineId();
   const authorization = await readLocalHarnessAuthorization(actor.userId, machineId, args.projectId, harnessId);
-  if (!authorization) throw new Error(`Set up ${name} from Add client to allow it to run on this computer`);
+  if (!authorization) throw new LocalHarnessRefusalError(`Set up ${name} from Add client to allow it to run on this computer`);
   if (args.scope === "attended" && args.requireToolApproval === false && !authorization.autoApproveAcknowledgedAt) {
     throw new LocalAutoApproveConsentRequiredError();
   }
+  if (args.workspaceGrantId && args.workspaceGrantId !== authorization.workspaceGrantId && !args.trustedActor)
+    throw new LocalHarnessRefusalError("Choose the workspace authorized through Add client on this computer");
+  if (args.scope === "unattended" && !authorization.unattended)
+    throw new LocalHarnessRefusalError("Set up unattended local execution through Add client on this computer");
   noteRuntimeMetricsActor(actor.subject);
   // Selection reads revocations from the cache only. Keep it fresh for an
   // Inspector that runs for days on its desired pack (rate-limited; never

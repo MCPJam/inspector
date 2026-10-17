@@ -1,3 +1,4 @@
+import { trimmedOrUndefined } from "./header-value.js";
 import type { LocalExecutionAuthorization, PlatformLocalExecutionGrant } from "./local-execution.js";
 import type {
   JudgeBacktestRequest,
@@ -518,17 +519,6 @@ function buildLaunchHeaders(
   }
 
   return Object.keys(headers).length > 0 ? headers : undefined;
-}
-
-function trimmedOrUndefined(
-  value: unknown,
-  maxChars?: number
-): string | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return undefined;
-  return maxChars === undefined ? trimmed : trimmed.slice(0, maxChars);
 }
 
 /**
@@ -1302,7 +1292,11 @@ export class PlatformApiClient {
     },
     options?: RequestOptions
   ): Promise<PlatformChatTurn> {
-    // The route is strict: forward only fields in the public contract.
+    // Built field by field rather than forwarded wholesale. The route's body
+    // schema is STRICT, so any extra key a caller happens to carry on its own
+    // params object would turn a valid request into a 400 — and forwarding an
+    // unknown key is exactly how a client starts depending on a field the
+    // contract never promised.
     return this.request(
       "POST",
       "/chat-sessions/messages",

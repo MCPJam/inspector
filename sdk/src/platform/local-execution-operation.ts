@@ -24,9 +24,9 @@ export function createLocalExecutionAuthorizationOperation(
   });
   return {
     name: "authorize_local_execution",
-    title: "Authorize unattended local execution",
+    title: "Renew an existing local execution grant",
     description:
-      "Authorize this verified user's local machine and workspace for unattended Claude Code or Codex execution. Requires allowUnattended:true; returns a short-lived capability. Use this target on every local chat turn. Does not approve attended permission requests.",
+      "Renew a short-lived capability for a workspace already authorized through Add client in the local Inspector. Requires workspaceGrantId and allowUnattended:true; cannot create machine or workspace authorization. Use this target on every local chat turn. Does not approve attended permission requests.",
     readOnly: false,
     mayBeDestructive: true,
     risk: "exposure",

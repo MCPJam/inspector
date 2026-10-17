@@ -1,7 +1,11 @@
 /**
  * `@mcpjam/sdk/platform` — fetch-based client and curated operation catalog
  * for the MCPJam Platform API (`/api/v1`).
- * Runtime-agnostic: native fetch only; consumed by MCP, CLI and SDK users.
+ *
+ * Runtime-agnostic by construction: native fetch only, no Node built-ins, no
+ * ambient environment reads (enforced by the repo-root
+ * `check:platform-runtime-safety` guard). Consumed by the MCP worker
+ * (Cloudflare), the CLI, and SDK users.
  */
 export { localExecutionAuthorizationSchema, localExecutionTargetSchema, platformExecutionTargetSchema, type PlatformExecutionTarget, type LocalExecutionAuthorization, type PlatformLocalExecutionGrant } from "./local-execution.js";
 export {

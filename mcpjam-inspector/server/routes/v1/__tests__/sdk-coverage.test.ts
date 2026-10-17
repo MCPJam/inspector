@@ -48,6 +48,7 @@ function appInventory(): Set<string> {
 
 /** Route -> the `PlatformApiClient` method that calls it. */
 const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
+  "post /projects/{projectId}/local-execution-grants": "authorizeLocalExecution",
   "post /chat-sessions/browser": "createChatSessionBrowser",
   "post /chat-sessions/{sessionId}/browser/open": "chatSessionBrowser",
   "post /chat-sessions/{sessionId}/browser/command": "chatSessionBrowser",

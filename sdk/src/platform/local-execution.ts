@@ -3,7 +3,7 @@ import { z } from "zod";
 export const localExecutionAuthorizationSchema = z.strictObject({
   harnessId: z.enum(["claude-code", "codex"]),
   allowUnattended: z.literal(true),
-  workspacePath: z.string().min(1).optional(),
+  workspaceGrantId: z.string().min(1),
 });
 export const localExecutionTargetSchema = z.strictObject({
   kind: z.literal("local-native"),
