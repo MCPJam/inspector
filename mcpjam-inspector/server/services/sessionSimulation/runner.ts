@@ -97,12 +97,6 @@ import {
 } from "../../utils/chat-ingestion.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
 
-/**
- * Headless runs have no stream to carry a `data-persist-receipt`, but the
- * outcome still matters: a synthetic run whose transcripts never landed used to
- * be indistinguishable from one that saved cleanly. `not-attempted` is silent —
- * it means persistence was not configured for this run, which is expected.
- */
 function warnIfSimulationPersistNotSaved(
   outcome: PersistChatOutcome | undefined,
   stage: "empty-session" | "turn",
@@ -146,6 +140,7 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
+import { failedHarnessPersist, requirePersistedHarnessTurn } from "./harness-persistence.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 import { ranTurnSelection } from "../../utils/session-model-selection";
@@ -1466,16 +1461,20 @@ export async function runSyntheticHostSession(
           : turnTrace,
         resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
-        // §3: ride this turn's harness resume-state commit into /ingest-chat
-        // atomically with the transcript (the caller-persist path — the harness
-        // turn ran with persistMode "caller", so nothing else commits it). For a
-        // swarm harness turn this carries `ownerType: "swarm-chat"`; the backend
-        // derives the lane's journeyRunId/hostId from the top-level swarm
-        // attribution above. Undefined for the emulated engine.
+        // Caller-persist harness turns commit resume state with the transcript.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
-      });
+      }).catch(failedHarnessPersist(harnessSessionCommit));
       warnIfSimulationPersistNotSaved(turnPersist, "turn", chatSessionId);
+      // Do not retry a rejected turn from the terminal empty-session fallback.
       anyTurnPersisted = true;
+      await requirePersistedHarnessTurn({
+        outcome: turnPersist,
+        commit: harnessSessionCommit,
+        projectId,
+        journeyRunId: persist.journeyRunId,
+        hostId: persist.hostId,
+        bearer: authHeader,
+      });
 
       // MCP App widget snapshots so the Sessions viewer renders the actual
       // widget instead of a collapsed tool pill. Best-effort — a failure here

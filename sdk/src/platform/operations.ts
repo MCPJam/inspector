@@ -1,3 +1,12 @@
+import {
+  resolveByIdOrName,
+  resolutionError,
+  operationInputError,
+} from "./resource-selectors.js";
+import {
+  environmentNamesFor,
+  resolveSuiteHostTargets,
+} from "./suite-client-targets.js";
 import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
 import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
 import {
@@ -65,7 +74,6 @@ import {
 import {
   computeRunTargets,
   type RunTarget,
-  type RunTargetHost,
   type RunTargetPlan,
 } from "./suite-run-plans.js";
 import {
@@ -979,62 +987,6 @@ function environmentRef(environment: {
 }
 
 // ── Named-resource resolution ────────────────────────────────────────
-
-/**
- * Resolve a suite/scenario/server selector against a project listing the same
- * way `resolveProject` works: exact id first, then unique case-insensitive
- * name. Failures become NOT_FOUND platform errors whose message enumerates
- * the valid choices, so every surface renders the same actionable text.
- */
-function resolveByIdOrName<T extends { id: string; name?: string | null }>(
-  items: T[],
-  selector: string,
-  kind: string,
-  scope: string
-): T {
-  const trimmedSelector = selector.trim();
-  const idMatch = items.find((item) => item.id === trimmedSelector);
-  if (idMatch) {
-    return idMatch;
-  }
-
-  const normalizedSelector = trimmedSelector.toLocaleLowerCase();
-  const nameMatches = items.filter(
-    (item) => item.name?.toLocaleLowerCase() === normalizedSelector
-  );
-
-  if (nameMatches.length === 1) {
-    return nameMatches[0]!;
-  }
-
-  if (nameMatches.length > 1) {
-    throw resolutionError(
-      `${kind} name "${trimmedSelector}" is ambiguous in ${scope}. Use one of these IDs: ${formatResourceList(
-        nameMatches
-      )}.`
-    );
-  }
-
-  throw resolutionError(
-    items.length > 0
-      ? `${kind} "${trimmedSelector}" was not found in ${scope}. Available: ${formatResourceList(
-          items
-        )}.`
-      : `${kind} "${trimmedSelector}" was not found: ${scope} has none.`
-  );
-}
-
-function formatResourceList(
-  items: Array<{ id: string; name?: string | null }>
-): string {
-  return items
-    .map((item) => `${item.name ?? "(unnamed)"} (id: ${item.id})`)
-    .join(", ");
-}
-
-function resolutionError(message: string): PlatformApiError {
-  return new PlatformApiError(message, "NOT_FOUND", { status: 0 });
-}
 
 function toSelectedProjectInfo(project: PlatformProject): SelectedProjectInfo {
   return {
@@ -2721,17 +2673,6 @@ const DEPRECATED_HOSTS_SELECTOR_SUFFIX =
   " DEPRECATED: use `clients`, which means exactly this.";
 
 /**
- * A caller-input problem the SDK can see without a round trip. Carries the same
- * `VALIDATION_ERROR` code the API would return, so surfaces render it
- * identically. Guards live in `execute` bodies, not `.refine()`, because the
- * CLI calls `execute` directly and never parses the input schema — a
- * refine-only guard would simply not fire there.
- */
-function operationInputError(message: string): PlatformApiError {
-  return new PlatformApiError(message, "VALIDATION_ERROR", { status: 0 });
-}
-
-/**
  * Fold a `client` / `clients` selector onto the `host` / `hosts` field every
  * read below already uses.
  *
@@ -3062,63 +3003,6 @@ async function resolveSuiteEnvironmentTargets(
     });
   }
   return resolved;
-}
-
-/**
- * Display names for a suite's attached environment ids.
- *
- * BEST EFFORT on purpose: these names are read by people, never matched on, so
- * a listing that fails or omits a row costs a nicer message and nothing else.
- * Failing the launch over it would trade a real run for a cosmetic lookup.
- */
-async function environmentNamesFor(
-  client: PlatformApiClient,
-  project: PlatformProject,
-  environmentIds: string[],
-  signal: AbortSignal | undefined
-): Promise<Map<string, string>> {
-  if (environmentIds.length === 0) return new Map();
-  try {
-    const page = await client.listEnvironments(
-      { projectId: project.id },
-      { signal }
-    );
-    const wanted = new Set(environmentIds);
-    return new Map(
-      page.items
-        .filter((environment) => wanted.has(environment.id) && environment.name)
-        .map((environment) => [environment.id, environment.name])
-    );
-  } catch {
-    return new Map();
-  }
-}
-
-/** Host selectors → attached hosts, by id or unique name. Same rationale as
- *  the environment resolver above: validated here so a fan-out cannot spend on
- *  its first targets and then discover a bad one. */
-function resolveSuiteHostTargets(
-  suite: PlatformEvalSuite,
-  detail: PlatformEvalSuiteDetail | undefined,
-  selectors: string[]
-): RunTargetHost[] {
-  if (selectors.length === 0) return [];
-  const hosts = detail?.hosts ?? [];
-  if (hosts.length === 0) {
-    throw operationInputError(
-      `Suite "${
-        suite.name ?? suite.id
-      }" has no attached hosts, so there is no host to run. Attach one to the suite first, or omit the host selector.`
-    );
-  }
-  return selectors.map((selector) =>
-    resolveByIdOrName(
-      hosts,
-      selector,
-      "Suite host",
-      `suite "${suite.name ?? suite.id}"`
-    )
-  );
 }
 
 /** The knobs both launch shapes forward, in the wire's own vocabulary. */
@@ -4596,12 +4480,8 @@ export const runEvalSuiteOperation: PlatformOperation<
         )
       : undefined;
 
-    // The suite DETAIL carries both attachment axes in attach order, so the
-    // targets compute from one read. Skipped on the two paths that have no
-    // axis to read: an explicit server override is a single legacy run by
-    // construction, and a composed stack has already PRODUCED its target — for
-    // either of them the attachments are simply not consulted, so fetching
-    // them would be a round trip spent on an answer nobody reads.
+    // The saved target axes are only needed when no override or composition
+    // has already supplied the complete target.
     const detail =
       overrideServers || composed
         ? undefined
@@ -4618,17 +4498,15 @@ export const runEvalSuiteOperation: PlatformOperation<
       input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
-    const selectedHosts = resolveSuiteHostTargets(
+    const selectedClients = await resolveSuiteHostTargets(
+      client,
+      project,
       suite,
       detail,
-      input.host ? [input.host] : input.hosts ?? []
+      input.host ? [input.host] : input.hosts ?? [],
+      signal
     );
 
-    // Attached environments arrive as bare IDS — the suite detail carries no
-    // names — and every place they surface is one a person reads: the
-    // TARGET_REQUIRED refusal listing what is pickable, and a fan-out receipt
-    // naming which target failed. One listing buys names for both; an id that
-    // no longer resolves degrades to itself rather than failing the run.
     const attachedEnvironmentNames = await environmentNamesFor(
       client,
       project,
@@ -4663,8 +4541,11 @@ export const runEvalSuiteOperation: PlatformOperation<
             id: host.id,
             name: host.name,
           })),
-          selectedEnvironments,
-          selectedHosts,
+          selectedEnvironments: [
+            ...selectedEnvironments,
+            ...selectedClients.environments,
+          ],
+          selectedHosts: selectedClients.hosts,
           ...(input.allAttached !== undefined
             ? { allAttached: input.allAttached }
             : {}),
@@ -5152,19 +5033,21 @@ export const runEvalCaseOperation: PlatformOperation<
           signal
         )
       : undefined;
-    // The suite detail is read ONLY when a host was named — a case run is
-    // otherwise unchanged, and paying for an extra request on every call to
-    // support an optional selector would be a tax on the common path.
-    const host = input.host
-      ? resolveSuiteHostTargets(
+    const selectedClients = input.host
+      ? await resolveSuiteHostTargets(
+          client,
+          project,
           suite,
           await client.getEvalSuite(
             { projectId: project.id, suiteId: suite.id },
             { signal }
           ),
-          [input.host]
-        )[0]!
+          [input.host],
+          signal
+        )
       : undefined;
+    const host = selectedClients?.hosts[0];
+    const clientEnvironment = selectedClients?.environments[0];
     const created = await createEvalRunOrReportCompose(composed, () =>
       client.createEvalRun(
         {
@@ -5187,6 +5070,7 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(composed ? { environmentId: composed.environment.id } : {}),
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
+            ...(clientEnvironment ? { environmentId: clientEnvironment.id } : {}),
             ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
             ...(input.iterations !== undefined ||
             input.repetitions !== undefined
@@ -5455,10 +5339,10 @@ function foldCaseCheckAlias(
 export type CreateEvalSuiteResult = {
   project: SelectedProjectInfo;
   suite: { id: string; name: string | null };
-  /** The HTTP servers the suite was configured against. */
   servers: Array<{ id: string; name?: string }>;
-  /** The clients (hosts) attached to the suite; empty when none were named. */
+  /** Saved target axes; environment-based suites have no direct hosts. */
   hosts: Array<{ id: string; name?: string }>;
+  environmentIds: string[];
   caseUpsert: PlatformEvalSuiteCreated["caseUpsert"];
 };
 
@@ -5503,11 +5387,7 @@ export const createEvalSuiteOperation: PlatformOperation<
             : {}),
           model: input.model,
           ...(input.provider ? { provider: input.provider } : {}),
-          // Ergonomic case shape; the backend normalizes per-case defaults
-          // (runs, model/provider fill, tool-call mapping) into the run schema.
-          // `checks` folds onto the wire's `predicates` here, so an older
-          // deployment that has never heard the canonical word still gets a
-          // body it understands.
+          // Fold checks onto predicates for deployments using that spelling.
           tests: input.cases.map(foldCaseCheckAlias),
         },
       },
@@ -5521,6 +5401,7 @@ export const createEvalSuiteOperation: PlatformOperation<
         name: server.name,
       })),
       hosts: created.hosts ?? [],
+      environmentIds: created.environmentIds ?? [],
       caseUpsert: created.caseUpsert,
     };
   },
@@ -5811,18 +5692,14 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       detail.environmentIds ?? [],
       signal
     );
-    // `attachedHosts` IS included in this plan, and since G4c a caller can
-    // actually SATISFY a host-axis ambiguity: `host` names one, exactly as
-    // `run_eval_suite`'s own selector does. Before that this operation had to
-    // refuse the host axis outright — the backend contract took no host
-    // selector, so the only query it could have sent was the selector-less
-    // suite-base derivation, which a host config's own model/harness can
-    // contradict. `testSuites:getRunDisclosure` now takes `namedHostId`, so
-    // the refusal is gone and the host axis is disclosed for real.
-    const selectedHosts = resolveSuiteHostTargets(
+    // Use the same client-to-environment resolution as a run launch.
+    const selectedClients = await resolveSuiteHostTargets(
+      client,
+      project,
       suite,
       detail,
-      input.host ? [input.host] : []
+      input.host ? [input.host] : [],
+      signal
     );
     const plan = computeRunTargets({
       attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
@@ -5835,8 +5712,11 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         id: host.id,
         name: host.name,
       })),
-      selectedEnvironments,
-      selectedHosts,
+      selectedEnvironments: [
+        ...selectedEnvironments,
+        ...selectedClients.environments,
+      ],
+      selectedHosts: selectedClients.hosts,
     });
     if (plan.kind === "target-required") {
       // `readOnly` wording: this operation spends nothing, and has no

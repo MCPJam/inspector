@@ -104,10 +104,10 @@ import { withSelectionRouting } from "../../utils/selection-rail.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
-  persistChatSessionToConvex,
   type AgentTurnToolMode,
   type ResumeConfig,
 } from "../../utils/chat-ingestion.js";
+import { persistLanded, trackHarnessLane } from "./chat-turn-harness-lane.js";
 import {
   resolveEnvironmentForRuntime,
   runtimeServerIds,
@@ -1255,6 +1255,7 @@ async function handleTurn(c: Context): Promise<Response> {
   let handoffResumed = false;
   let leaseSettled = false;
   let turnSucceeded = false;
+  const harnessLane = trackHarnessLane({ projectId, bearer: authHeader });
   /**
    * Set the instant before the engine is invoked, and never cleared.
    *
@@ -2055,6 +2056,7 @@ async function handleTurn(c: Context): Promise<Response> {
         lastEngineError = event;
       },
     } as never);
+    harnessLane.adopt(result.harnessSessionCommit);
 
     await runtime.finalizeUsage(result);
     // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
@@ -2091,7 +2093,7 @@ async function handleTurn(c: Context): Promise<Response> {
     ) {
       // The shell and incrementally uploaded screenshots survive failure; retain
       // the partial transcript/trace as well so retries can inspect what ran.
-      const failed = await persistChatSessionToConvex(
+      const failed = await harnessLane.persist(
         {
           chatSessionId: runtimeChatSessionId,
           modelId: String(modelDefinition.id),
@@ -2131,8 +2133,7 @@ async function handleTurn(c: Context): Promise<Response> {
         },
         c,
       );
-      leaseSettled =
-        failed.outcome === "saved" || failed.outcome === "duplicate";
+      leaseSettled = persistLanded(failed);
     }
 
     if (timedOut) {
@@ -2204,7 +2205,7 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(pins.serverIds ? { serverIds: pins.serverIds } : {}),
     };
 
-    const persisted = await persistChatSessionToConvex(
+    const persisted = await harnessLane.persist(
       {
         chatSessionId: runtimeChatSessionId,
         modelId: String(modelDefinition.id),
@@ -2293,8 +2294,7 @@ async function handleTurn(c: Context): Promise<Response> {
     // The ingest either applied the turn or recognized it as already applied;
     // either way the lease's completion rides inside that mutation, so the
     // `finally` below must not release it.
-    leaseSettled =
-      persisted.outcome === "saved" || persisted.outcome === "duplicate";
+    leaseSettled = persistLanded(persisted);
 
     if (
       persisted.outcome === "failed" ||
@@ -2330,8 +2330,7 @@ async function handleTurn(c: Context): Promise<Response> {
     // it then is one assignment here.
     const secretScrubber = undefined;
 
-    turnSucceeded =
-      persisted.outcome === "saved" || persisted.outcome === "duplicate";
+    turnSucceeded = persistLanded(persisted);
     return v1Resource(c, {
       // May be null ONLY when the persist did not land — the caller then knows
       // from `persisted.outcome` that there is nothing to read back yet, which
@@ -2458,6 +2457,7 @@ async function handleTurn(c: Context): Promise<Response> {
       await flushBrowserEvidence(browserOutbox);
 
     requestSignal.removeEventListener("abort", onRequestAbort);
+    await harnessLane.releaseIfUnsettled();
     // Release admission before attempting desktop cleanup.
     if (shouldReleaseLease({ leaseTurnId, leaseSettled, modelCallStarted })) {
       await releaseTurnLease(client, leaseTurnId!, executionOwnerToken);
@@ -2562,6 +2562,7 @@ function captureTurnEvent(
 }
 
 export const __testing = {
+  resolveTarget,
   assertUnambiguousModelId,
   capToolCalls,
   narrowTarget,
@@ -2574,5 +2575,4 @@ export const __testing = {
   CONFIG_FIELDS,
   turnSchema,
 };
-
 export type { TurnBody };

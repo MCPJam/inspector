@@ -23,6 +23,7 @@ import { type RuntimeExecutionFields } from "./execution-scope.js";
 
 export type HostRuntimeConfig = RuntimeExecutionFields & {
   hostId: string;
+  selectedServerIds?: string[];
   modelId: string;
   systemPrompt: string;
   temperature: number;

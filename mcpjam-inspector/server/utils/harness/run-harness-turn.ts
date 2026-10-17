@@ -1,3 +1,4 @@
+import { harnessToolOrigin, type ToolOrigin } from "@/shared/tool-origin";
 import {
   diskResumeState,
   sessionResumeStateFrom,
@@ -65,10 +66,8 @@ import {
   type ToolSet,
   type UIMessageChunk,
 } from "ai";
-import {
-  HarnessAgent,
-  collectHarnessAgentToolApprovalContinuations,
-} from "@ai-sdk/harness/agent";
+import { HarnessAgent } from "@ai-sdk/harness/agent";
+import { pendingApprovalContinuations } from "./pending-approval-continuations.js";
 import {
   emitTraceSnapshot,
   getPromptIndex,
@@ -142,6 +141,7 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
+import { modelProxyHostOf } from "./model-proxy-connections.js";
 import { ScenarioHarnessRepublishRequiredError } from "../scenario-runtime-config.js";
 import {
   harnessBootstrapLogFields,
@@ -983,9 +983,10 @@ export async function runHarnessTurn(
   // closure free the lane if the commit can't happen (detach/persist failure).
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
   let releaseHarnessLease: (() => Promise<void>) | undefined;
-  // Broker-delivery run identity, set after the lease is installed into E2B's
-  // egress transform; used to revoke + clear the rule on teardown.
+  // Broker-delivery run identity and proxy host, set once the lease is in E2B's
+  // egress transform: teardown revokes by the id; a resume closes the host.
   let brokerRunId: string | undefined;
+  let modelProxyHost: string | undefined;
   let brokerRevoked = false;
   /**
    * The LOCAL path's own teardown: revoke the gateway, revoke the lease, stop
@@ -1368,10 +1369,7 @@ export async function runHarnessTurn(
       // Detect an approval-response resume up front (the inbound messages carry
       // the user's decision as trailing tool-approval-response parts); a resume
       // continues the paused turn rather than starting a new prompt.
-      const approvalContinuations =
-        collectHarnessAgentToolApprovalContinuations({
-          messages: messages as never,
-        });
+      const approvalContinuations = pendingApprovalContinuations(messages);
       const isApprovalResume = approvalContinuations.length > 0;
       // Composer attachments come OUT of the prompt here (no adapter takes a
       // file part), land on the session's disk in `onSandboxSession`, and reach
@@ -2451,14 +2449,12 @@ export async function runHarnessTurn(
           : createHarnessSandboxProvider({
               sandboxId: sandboxId!,
               defaultWorkingDirectory,
+              modelProxyHost: () => modelProxyHost,
               // The materialized secrets, as a session-wide env bag on every `run`
-              // and `spawn`. This is the whole of materialized delivery on the
-              // harness path: the agent runs `stripe customers list`, and
-              // `STRIPE_API_KEY` is simply in that process's environment.
-              //
-              // In `envs`, never in the command line — the rule `plugin-box.ts`
-              // already states: argv is readable by every process in the box through
-              // `/proc`, and it lands in shell history.
+              // and `spawn` — the whole of materialized delivery on the harness
+              // path: `STRIPE_API_KEY` is simply in `stripe customers list`'s env.
+              // In `envs`, never the command line (the `plugin-box.ts` rule): argv
+              // is readable by every process in the box and lands in shell history.
               ...(sessionSecretEnv && Object.keys(sessionSecretEnv).length > 0
                 ? {
                     sessionEnv: sessionSecretEnv,
@@ -2548,11 +2544,11 @@ export async function runHarnessTurn(
             },
           );
         }
-        // The lease is recorded, which consumed this turn's claim on the box; the
-        // lease's own per-box fence covers the rest of the turn. Releasing now
-        // would free a box that is very much still in use.
+        // Recording the lease consumed this turn's claim on the box, and its own
+        // per-box fence covers the rest of the turn: releasing would free a busy box.
         clearReservationHeartbeat();
         reservationHeld = false;
+        modelProxyHost = modelProxyHostOf(broker.proxyBaseUrl);
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
         modelEndpoint = org.brokeredEndpoint;
       }
@@ -3478,7 +3474,7 @@ export async function runHarnessTurn(
         const accountByCall = new Map<string, McpConnectionAttribution>();
         const toolMeta = new Map<
           string,
-          { serverId?: string; toolName: string }
+          { serverId?: string; toolName: string; toolOrigin?: ToolOrigin }
         >();
         const toolStartMs = new Map<string, number>();
         const failedToolCallIds = new Set<string>();
@@ -3645,14 +3641,8 @@ export async function runHarnessTurn(
             // engine callbacks, and persisted transcript carry MCPJam tool
             // identity (eval matching + MCP App rendering key off it).
             //
-            // Name AND input, because not every runtime puts the identity in the
-            // name: Claude Code namespaces MCP tools as `mcp__<server>__<tool>`
-            // (native tools have no prefix → serverId stays undefined), while
-            // Cursor streams every MCP call as an opaque `acp_tool_<id>` and
-            // carries `{ providerIdentifier, toolName }` in the input instead.
-            // The adapter decides; this call site only has to hand over both.
-            // (Which is why `input` is now resolved FIRST — it is an argument to
-            // the attribution, not just something recorded after it.)
+            // Cursor carries MCP identity in input; Claude namespaces the name.
+            // Both are needed for the adapter to establish provenance.
             const { serverId, toolName } = harnessAdapter.attributeToolCall
               ? harnessAdapter.attributeToolCall({
                   rawToolName,
@@ -3669,6 +3659,11 @@ export async function runHarnessTurn(
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
               toolName,
+              toolOrigin: harnessToolOrigin({
+                rawToolName, toolName, serverId,
+                hostTools: hostExecutedTools,
+                nativeTools: harnessAdapter.listBuiltinTools?.() ?? [],
+              }),
             });
             // Stand-in ToolSet entry so emitTraceSnapshot's collectActualToolCalls
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
@@ -3855,6 +3850,8 @@ export async function runHarnessTurn(
                 status: isError ? "error" : "ok",
                 toolCallId,
                 toolName: meta.toolName,
+                toolOrigin: toolMeta.get(toolCallId)?.toolOrigin ??
+                  (meta.serverId ? "mcp" : "unknown"),
                 ...(meta.serverId ? { serverId: meta.serverId } : {}),
                 ...(accountByCall.get(toolCallId)
                   ? {
@@ -3879,13 +3876,8 @@ export async function runHarnessTurn(
               ...(meta.serverId ? { serverId: meta.serverId } : {}),
             });
           } else if (type === "file-change") {
-            // Some runtimes (Codex) report file mutations as a `file-change`
-            // stream part that does NOT originate from a model-callable tool.
-            // Surface it as a synthetic NATIVE provider-executed tool (serverId
-            // undefined, like Bash) so it flows through the same UI emit + trace
-            // span + transcript path. No serverId ⇒ eval MCP-tool matching
-            // ignores it automatically. Only adapters that declare a
-            // `fileChangeToolName` emit these (Claude Code does not).
+            // Declared file changes are native actions. Surface them through
+            // the ordinary tool path without attributing them to an MCP server.
             const fcName = harnessAdapter.fileChangeToolName;
             if (fcName) {
               // Begins a new step after prior results; close any open text block.
@@ -3903,7 +3895,7 @@ export async function runHarnessTurn(
                 path: (part as { path?: unknown }).path,
               });
               const startMs = Date.now();
-              toolMeta.set(toolCallId, { toolName: fcName });
+              toolMeta.set(toolCallId, { toolName: fcName, toolOrigin: "native" });
               toolSetForTrace[fcName] = {};
               emitToolInput(writer, {
                 toolCallId,
@@ -3953,6 +3945,7 @@ export async function runHarnessTurn(
                 status: "ok",
                 toolCallId,
                 toolName: fcName,
+                toolOrigin: "native",
               });
               pendingResults.push({
                 toolCallId,

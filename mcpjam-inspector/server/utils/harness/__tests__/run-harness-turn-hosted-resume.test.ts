@@ -13,6 +13,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import { convertToModelMessages } from "ai";
 
 const harnessState = vi.hoisted(() => ({
   streamParts: [] as Array<Record<string, unknown> & { type?: string }>,
@@ -27,24 +28,30 @@ const harnessState = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("@ai-sdk/harness/agent", () => ({
-  HarnessAgent: class {
-    createSession = harnessState.createSession;
-    stream = vi.fn(async () => ({
-      fullStream: (async function* () {
-        for (const part of harnessState.streamParts) {
-          yield part;
-        }
-      })(),
-      text: Promise.resolve(harnessState.finalText),
-    }));
-    continueStream = this.stream;
-  },
-  // WS3: the user's approval decision, when a test sends one.
-  collectHarnessAgentToolApprovalContinuations: vi.fn(
-    () => harnessState.approvalContinuations,
-  ),
-}));
+vi.mock("@ai-sdk/harness/agent", async (original) => {
+  const actual = await original<typeof import("@ai-sdk/harness/agent")>();
+  return {
+    ...actual,
+    HarnessAgent: class {
+      createSession = harnessState.createSession;
+      stream = vi.fn(async () => ({
+        fullStream: (async function* () {
+          for (const part of harnessState.streamParts) {
+            yield part;
+          }
+        })(),
+        text: Promise.resolve(harnessState.finalText),
+      }));
+      continueStream = this.stream;
+    },
+    // WS3: the user's approval decision, when a test sends one.
+    collectHarnessAgentToolApprovalContinuations: vi.fn((args) =>
+      harnessState.approvalContinuations.length > 0
+        ? harnessState.approvalContinuations
+        : actual.collectHarnessAgentToolApprovalContinuations(args),
+    ),
+  };
+});
 
 vi.mock("../registry.js", () => ({
   // Broker-only credential delivery (COMP-23): the turn builds dummy auth
@@ -61,6 +68,9 @@ vi.mock("../registry.js", () => ({
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
+    supportsNativeToolApproval: true,
+    supportsMcpToolApproval: true,
+    supportsHostExecutedToolApproval: true,
     mcpDelivery: "host-executed",
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
@@ -228,6 +238,51 @@ describe("runHarnessTurn hosted resume", () => {
     const result = await runHarnessTurn(options() as any, "ui");
     await result.response!.text();
 
+    expect(harnessState.createSession).toHaveBeenCalledWith({
+      sessionId: "harness-session-0",
+      continueFrom: paused,
+    });
+  });
+  it("delivers a fresh hosted denial through the real SDK collector", async () => {
+    const paused = {
+      type: "continue-turn",
+      harnessId: "claude-code",
+      specificationVersion: "harness-v1",
+      data: { claudeSessionId: "claude-1", bridge: BRIDGE },
+      pendingToolApprovals: [{ approvalId: "denial-1" }],
+    };
+    harnessState.claimedState = {
+      harnessSessionId: "harness-session-0",
+      computerId: "computer-1",
+      awaitingApproval: true,
+      resumeState: paused,
+    };
+    const input = options();
+    input.requireToolApproval = true;
+    input.messages = await convertToModelMessages([
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "bash",
+            toolCallId: "denied-call",
+            input: { command: "touch denied" },
+            state: "approval-responded",
+            providerExecuted: true,
+            approval: { id: "denial-1", approved: false },
+          },
+        ],
+      },
+    ]);
+    const result = await runHarnessTurn(
+      input as Parameters<typeof runHarnessTurn>[0],
+      "ui",
+    );
+    expect(await result.response!.text()).toContain(
+      '"type":"tool-output-denied","toolCallId":"denied-call"',
+    );
     expect(harnessState.createSession).toHaveBeenCalledWith({
       sessionId: "harness-session-0",
       continueFrom: paused,

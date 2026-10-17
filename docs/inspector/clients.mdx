@@ -229,3 +229,10 @@ The URL updates automatically as you toggle hosts on or off. When the default se
 - **Pin Evals to a Client.** Always select a Client before running an eval suite so the results are reproducible. Evals run against ambient settings drift the moment someone toggles something elsewhere.
 - **Duplicate before debugging.** When you're chasing a bug, duplicate the Client first and tweak the copy. Your baseline stays intact for comparison.
 - **Share Compare links.** Toggle down to the hosts you care about and copy the URL — the `?hosts=` parameter preserves your selection for teammates.
+
+
+## Signed desktop client qualification
+
+A signed desktop release needs native product checks beyond unsigned package or source tests. Track the exact installer, signer, runtime packs, platform, authentication, approvals, update/recovery and process-cleanup evidence in the [macOS release task](https://github.com/MCPJam/inspector/issues/6555).
+
+Record pass, failure and unexecuted outcomes in that task for each candidate. A changed installer or runtime pack requires fresh evidence for the affected checks.

@@ -1869,10 +1869,10 @@ describe("v1 write routes", () => {
           hosts: [{ host: "Claude", servers: ["Echo"] }],
         }
       );
-
       expect(res.status).toBe(201);
-      expect((await res.json()) as { hosts?: unknown }).toMatchObject({
-        hosts: [{ id: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
+      expect(await res.json()).toMatchObject({
+        hosts: [],
+        environmentIds: ["envxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
       });
       // The picks resolve against this request's servers before authoring.
       expect(

@@ -101,7 +101,11 @@ describe("passCriteria is a bounded percent", () => {
     process.env.CONVEX_URL = "https://convex.example.com";
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
-    convexQueryMock.mockResolvedValue(null);
+    convexQueryMock.mockImplementation(async (fn: string) =>
+      fn === "testSuites:getTestSuite"
+        ? { _id: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx", projectId: "p1" }
+        : null,
+    );
     createAuthorizedManagerMock.mockResolvedValue({
       manager: {
         listServers: () => ["s1"],
