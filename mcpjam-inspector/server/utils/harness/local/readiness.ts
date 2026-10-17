@@ -105,7 +105,7 @@ export async function ensureLocalHarnessTarget(args: {
   if (args.scope === "attended" && args.requireToolApproval === false && !authorization.autoApproveAcknowledgedAt) {
     throw new LocalAutoApproveConsentRequiredError();
   }
-  if (args.workspaceGrantId && args.workspaceGrantId !== authorization.workspaceGrantId )
+  if (args.workspaceGrantId && args.workspaceGrantId !== authorization.workspaceGrantId)
     throw new LocalHarnessRefusalError("Choose the workspace authorized through Add client on this computer");
   if (args.scope === "unattended" && !authorization.unattended)
     throw new LocalHarnessRefusalError("Set up unattended local execution through Add client on this computer");

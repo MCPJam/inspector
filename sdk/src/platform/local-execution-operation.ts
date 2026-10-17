@@ -34,10 +34,7 @@ export function createLocalExecutionAuthorizationOperation(
     inputSchema,
     async execute(input, context) {
       const validated = inputSchema.parse(input);
-      const { project } = await resolveProjectOrThrow(
-        context,
-        validated.project
-      );
+      const { project } = await resolveProjectOrThrow(context, validated.project);
       const { project: _selector, ...body } = validated;
       return context.client.authorizeLocalExecution(project.id, body, {
         signal: context.signal,
