@@ -91,6 +91,7 @@ import {
 } from "./bench-probe-child.js";
 import type { ConformanceSuiteKind, OAuthConformanceConfig } from "@mcpjam/sdk";
 import { getServiceCredential } from "./service-credential.js";
+import { serverDrain } from "./lifecycle/drain.js";
 
 const BENCH_SERVICE_BASE = "/internal/v1/bench";
 
@@ -2520,10 +2521,7 @@ export function startBenchWorker(options?: {
     options?.claimedBy ??
     `inspector-bench-${process.env.RAILWAY_REPLICA_ID ?? process.pid}`;
   const claim = options?.claim ?? claimNext;
-  const execute =
-    options?.execute ??
-    ((claimed: ClaimedBenchmarkJob, by: string) =>
-      executeClaimedJob(claimed, by));
+  const execute = options?.execute ?? executeClaimedJob;
 
   // Checked BEFORE the loop, not on the first claim: an unset or unsafe
   // CONVEX_HTTP_URL is a deployment mistake, and a worker that starts anyway
@@ -2562,7 +2560,7 @@ export function startBenchWorker(options?: {
           // doesn't need an Inspector restart.
           waitMs = ERROR_BACKOFF_MS;
         } else if (claimed) {
-          await execute(claimed, claimedBy);
+          await serverDrain.track("claimed_job", execute(claimed, claimedBy));
           // Drain mode: another run may be queued behind this one.
           waitMs = 1_000;
         }
