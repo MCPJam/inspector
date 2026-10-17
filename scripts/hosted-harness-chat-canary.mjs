@@ -27,6 +27,7 @@ export function verifyTurn(turn, client, probe, previous) {
   requireThat(turn && typeof turn === 'object', 'missing_turn');
   requireThat(turn.replay !== true && turn.persisted?.outcome === 'saved', 'fresh_saved_turn_required');
   const receipt = turn.execution;
+  requireThat(receipt, 'missing_execution_identity');
   requireThat(receipt?.engine === `harness:${client.harness}` && receipt.venue === 'hosted', 'wrong_execution_target');
   requireThat([receipt.runtimeVersion, receipt.sessionId, receipt.turnId].every(nonempty), 'missing_execution_identity');
   requireThat(nonempty(turn.sessionId) && nonempty(turn.turnId), 'missing_public_identity');
@@ -87,7 +88,7 @@ export function runCanary(config, invoke = send) {
       results.push({ harness: client.harness, status: 'passed', turns });
     } catch (error) {
       const code = error.exitCode;
-      results.push({ harness: client.harness, status: code === undefined && evidenceReasons.has(error.message) ? 'task_failed' : 'inconclusive',
+      results.push({ harness: client.harness, status: code === undefined && evidenceReasons.has(error.message) && !error.message.startsWith('missing_') ? 'task_failed' : 'inconclusive',
         reason: evidenceReasons.has(error.message) ? error.message : 'cli_did_not_complete', exitCode: code, turns });
     }
   }
