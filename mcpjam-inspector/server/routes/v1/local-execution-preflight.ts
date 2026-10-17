@@ -8,11 +8,11 @@ import { ErrorCode, WebRouteError } from "../web/errors.js";
 
 type LocalTarget = z.infer<typeof localExecutionTargetBodySchema>;
 export function assertPlatformExecutionVenue(
-  pinned: "hosted" | "local-native" | undefined,
+  pinned: "hosted" | "local" | undefined,
   requested: "hosted" | "local-native" | undefined,
 ) {
   const venue = requested ?? "hosted";
-  if (pinned !== undefined && pinned !== venue) {
+  if (pinned !== undefined && pinned !== (venue === "local-native" ? "local" : "hosted")) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,

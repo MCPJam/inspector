@@ -105,14 +105,14 @@ describe("session venue binding", () => {
     "pins %s without rewriting it",
     (venue) => {
       expect(assertPlatformExecutionVenue(undefined, venue)).toBe(venue);
-      expect(assertPlatformExecutionVenue(venue, venue)).toBe(venue);
+      expect(assertPlatformExecutionVenue(venue === "local-native" ? "local" : "hosted", venue)).toBe(venue);
     },
   );
   it.each([undefined, "hosted"] as const)(
     "refuses an omitted or hosted target on a local continuation",
     (requested) => {
       expect(() =>
-        assertPlatformExecutionVenue("local-native", requested),
+        assertPlatformExecutionVenue("local", requested),
       ).toThrow(/original execution venue/);
     },
   );
