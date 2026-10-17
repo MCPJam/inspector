@@ -37,6 +37,10 @@ Deploy the same image as the web service (`mcpjam-inspector/Dockerfile`). It
 needs no public domain; point its healthcheck at `/health`.
 
 - `MCPJAM_PROCESS_ROLE=worker`.
+- `VITE_MCPJAM_HOSTED_MODE=true`, as on the web service. Neither the image nor
+  `.env.production` sets it, and without it the worker boots as a self-hosted
+  inspector: it skips the public-origin check above and leaves local computer,
+  browser and harness execution on, which hosted mode forces off.
 - The loop flags, moved from the web service: `SCHEDULED_EVALS_WORKER_ENABLED=1`,
   `GITHUB_CHECKS_WORKER_ENABLED=1` with `GITHUB_CHECKS_E2B_TEMPLATE_ID`, and
   `BENCH_WORKER_ENABLED=1`. Production scoring has no flag and runs on every
