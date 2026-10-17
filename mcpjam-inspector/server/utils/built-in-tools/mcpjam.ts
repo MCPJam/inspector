@@ -330,6 +330,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  authorize_local_execution: "Local capability renewal requires prior explicit setup in the Inspector UI; workspace agents cannot renew it.",
   // A person in the app reports through the Send feedback form, which shows
   // them where the text goes. A model-authored post to the MCPJam team from
   // inside someone's chat is a different act, and this surface declines it.
