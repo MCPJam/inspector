@@ -4,6 +4,7 @@ import {
   type PluginContextUpdate,
 } from "./context.js";
 import { pluginContextMemory } from "./context-memory.js";
+import type { PluginContextLimits } from "../../../shared/plugin-model-context.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { PLUGIN_MODEL_APP_META } from "../../../shared/plugin-model-app.js";
 import type { PluginFormOwner, PluginInstanceIdentity } from "./instances.js";
@@ -177,6 +178,7 @@ export class ModelAppRegistry {
     token: string,
     actor: PluginInstanceIdentity,
     request: PluginContextUpdate,
+    limits?: PluginContextLimits,
   ) {
     const { context, owner } = this.get(token, actor);
     const bytes = Buffer.byteLength(JSON.stringify(request.params ?? null));
@@ -185,6 +187,7 @@ export class ModelAppRegistry {
       owner.owner.instanceId,
       owner.owner.generation,
       request,
+      limits,
     );
     this.memory.hold(owner, bytes);
     return result;

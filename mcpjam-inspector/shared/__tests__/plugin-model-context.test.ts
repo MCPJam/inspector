@@ -355,6 +355,17 @@ describe("admission limits and ceilings", () => {
     ).toBe(pluginModelContextBytes(update));
   });
 
+  it("holds every App in a turn, thread and global alike, to one budget", () => {
+    const thread = context([{ type: "text", text: "x".repeat(600) }]);
+    const global = context([{ type: "text", text: "y".repeat(600) }]);
+    expect(() => pluginModelContextMessage([thread, global], 1000)).toThrow(
+      "PLUGIN_CONTEXT_TURN_TOO_LARGE",
+    );
+    expect(
+      JSON.stringify(pluginModelContextMessage([thread, global], 2000)),
+    ).toContain("y".repeat(600));
+  });
+
   it("admits a full update beside its _meta, which has its own cap", () => {
     // `{"pad":""}` is 10 bytes.
     const meta = (bytes: number) => ({ pad: "m".repeat(bytes - 10) });

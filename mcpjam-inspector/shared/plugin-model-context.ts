@@ -281,9 +281,14 @@ export function parsePluginModelContext(
   return structuredClone(params);
 }
 
-/** Per-turn, untrusted app state. Presentation/request metadata never reaches the model. */
+/**
+ * Per-turn, untrusted app state. Presentation/request metadata never reaches
+ * the model. `turnMaxBytes` is the chat client's budget over every App in the
+ * turn; eval turns keep MCPJam's default.
+ */
 export function pluginModelContextMessage(
   contexts: readonly PluginModelContext[],
+  turnMaxBytes = MODEL_CONTEXT_POLICY_DEFAULTS.turnMaxBytes,
 ): ModelMessage | undefined {
   if (!contexts.length) return;
   const turnSize = byteSize(
@@ -292,11 +297,11 @@ export function pluginModelContextMessage(
       structuredContent,
     })),
   );
-  if (turnSize > MODEL_CONTEXT_POLICY_DEFAULTS.turnMaxBytes)
+  if (turnSize > turnMaxBytes)
     throw new PluginModelContextError("PLUGIN_CONTEXT_TURN_TOO_LARGE", {
       budget: "turnMaxBytes",
       actual: turnSize,
-      allowed: MODEL_CONTEXT_POLICY_DEFAULTS.turnMaxBytes,
+      allowed: turnMaxBytes,
     });
   const parts: UserContent = [];
   for (const context of contexts) {

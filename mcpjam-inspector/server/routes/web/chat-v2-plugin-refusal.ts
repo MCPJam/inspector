@@ -1,4 +1,5 @@
 import { describePluginError } from "@/shared/plugin-diagnostics";
+import { PluginModelContextError } from "@/shared/plugin-model-context";
 import { PluginWorkspaceAdmissionError } from "../../services/plugin-host/admission.js";
 import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
 import { ErrorCode } from "./errors.js";
@@ -17,6 +18,15 @@ export function pluginChatRefusal(error: unknown):
       details: { pluginCode: string };
     }
   | undefined {
+  // The Apps' context is over the client's turn budget: the person can fix
+  // it by removing context, so it is a refused request, not an MCPJam fault.
+  if (error instanceof PluginModelContextError)
+    return {
+      status: 413,
+      code: ErrorCode.VALIDATION_ERROR,
+      message: describePluginError(error.message) ?? error.message,
+      details: { pluginCode: error.message },
+    };
   if (
     !(error instanceof PluginWorkspaceAdmissionError) &&
     !(error instanceof PluginInvocationError)

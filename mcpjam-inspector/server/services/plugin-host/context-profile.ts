@@ -1,3 +1,16 @@
+import {
+  resolveModelContextPolicy,
+  type ModelContextPolicyHostInput,
+} from "@mcpjam/sdk/host-config/internal";
+
+/** The saved client's App context budgets, read per request and never bound
+ * to an open App, so saving the client changes the next update. */
+export function pluginModelContextPolicy(
+  config: { mcpProfile?: unknown } | null | undefined,
+) {
+  return resolveModelContextPolicy(config as ModelContextPolicyHostInput);
+}
+
 /** Fail closed until this partial prototype is explicitly enabled in the saved matrix.
  * Stock presets and OpenAI full-extension claims are migrated in their own slice.
  */

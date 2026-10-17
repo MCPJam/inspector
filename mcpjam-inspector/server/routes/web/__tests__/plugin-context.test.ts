@@ -165,6 +165,56 @@ describe("App context update admission", () => {
   });
 });
 
+describe("App context admission under the client's policy", () => {
+  const policy = {
+    updateMaxBytes: 2_548_000,
+    maxBlocks: 256,
+    turnMaxBytes: 8 * 1024 * 1024,
+  };
+  const update = (sequence: number) =>
+    routes().request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: "p",
+        pluginWorkspace: { version: 1, workspaceId: "w" },
+        instanceToken: token,
+        operationId: crypto.randomUUID(),
+        sequence,
+        params: { content: [{ type: "text", text: "part" }] },
+      }),
+    });
+
+  it("admits each update against the policy its request first resolved, and the App stays open when it changes", async () => {
+    const opened = pluginActivationFromCatalog(
+      catalog as never,
+      "library",
+      selector,
+    );
+    f.persistent.mockResolvedValue({
+      contextEnabled: true,
+      hostId: "host",
+      owner: { serverId: "server" },
+      activation: {
+        selector,
+        toolName: "reference",
+        sourceToolName: "library",
+        revision: opened.revision,
+      },
+    });
+    // Only the request's first resolution carries the policy.
+    f.catalog.mockResolvedValueOnce({ ...catalog, modelContextPolicy: policy });
+    expect((await update(1)).status).toBe(200);
+    expect(f.change.mock.calls[0][2]).toMatchObject({
+      kind: "update",
+      limits: policy,
+    });
+    // The client was saved without one: the next update uses the defaults.
+    expect((await update(2)).status).toBe(200);
+    expect(f.change.mock.calls[1][2].limits).toBeUndefined();
+  });
+});
+
 describe("App context routes for an open quick-action App", () => {
   it("removes all of its context, authorized against the revision it opened with", async () => {
     const opened = pluginActivationFromCatalog(

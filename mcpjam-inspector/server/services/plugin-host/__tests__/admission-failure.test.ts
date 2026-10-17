@@ -14,6 +14,7 @@ import {
 } from "../admission.js";
 import { pluginChatRefusal } from "../../../routes/web/chat-v2-plugin-refusal.js";
 import { PluginInvocationError } from "../invocation.js";
+import { PluginModelContextError } from "../../../../shared/plugin-model-context.js";
 
 const descriptor = { version: 1, workspaceId: "playground:chat" } as never;
 const fetchFailed = () =>
@@ -102,5 +103,22 @@ describe("plugin workspace admission failures", () => {
       message: expect.stringContaining("can't send chat messages"),
     });
     expect(pluginChatRefusal(new Error("other"))).toBeUndefined();
+  });
+
+  it("answers a turn over the client's context budget as a refused request", () => {
+    expect(
+      pluginChatRefusal(
+        new PluginModelContextError("PLUGIN_CONTEXT_TURN_TOO_LARGE", {
+          budget: "turnMaxBytes",
+          actual: 9_000_000,
+          allowed: 8_388_608,
+        }),
+      ),
+    ).toEqual({
+      status: 413,
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Remove an App's context"),
+      details: { pluginCode: "PLUGIN_CONTEXT_TURN_TOO_LARGE" },
+    });
   });
 });
