@@ -62,24 +62,33 @@ describe("local admission transport", () => {
 
   it("rejects an expired authorization during construction", () => {
     expect(
-      () => new AttemptStepGuard(client(), {
-        ...receipt,
-        expiresAt: Date.now(),
-      })
+      () =>
+        new AttemptStepGuard(client(), {
+          ...receipt,
+          expiresAt: Date.now(),
+        })
     ).toThrow(expect.objectContaining({ code: "ADMISSION_CLOSED" }));
   });
   it("rejects an active receipt already expired when it arrives", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
-      Response.json({ ...receipt, expiresAt: Date.now() - 1 })
-    ));
-    await expect(client().admit(input)).rejects.toMatchObject({ code: "ADMISSION_CLOSED" });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ ...receipt, expiresAt: Date.now() - 1 })
+        )
+    );
+    await expect(client().admit(input)).rejects.toMatchObject({
+      code: "ADMISSION_CLOSED",
+    });
   });
   it("preserves the original transport failure for diagnosis", async () => {
     vi.useFakeTimers();
     const cause = new Error("connection reset");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(cause));
     const result = expect(client().admit(input)).rejects.toMatchObject({
-      code: "PLATFORM_UNAVAILABLE", cause,
+      code: "PLATFORM_UNAVAILABLE",
+      cause,
     });
     await vi.runAllTimersAsync();
     await result;
@@ -194,8 +203,13 @@ describe("local admission transport", () => {
   it("stops queued and subsequent prompts after an authorization failure", async () => {
     const admission = client();
     const refusal = new Error("Authorization refused");
-    const extend = vi.spyOn(admission, "ensureSteps").mockRejectedValue(refusal);
-    const guard = new AttemptStepGuard(admission, { ...receipt, state: "active" });
+    const extend = vi
+      .spyOn(admission, "ensureSteps")
+      .mockRejectedValue(refusal);
+    const guard = new AttemptStepGuard(admission, {
+      ...receipt,
+      state: "active",
+    });
     await guard.beforePrompt();
     const blocked = guard.beforePrompt();
     const queued = guard.beforePrompt();
