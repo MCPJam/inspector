@@ -6,22 +6,37 @@ import { promisify } from "node:util";
 const execFileP = promisify(execFile);
 const WIN = process.platform === "win32";
 const powershell = (script: string) =>
-  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], {
-    windowsHide: true,
-  });
+  execFileP(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-InputFormat",
+      "None",
+      "-Command",
+      `$ErrorActionPreference = 'Stop'; ${script}`,
+    ],
+    {
+      windowsHide: true,
+    },
+  );
 
 export async function running(pid: number): Promise<boolean> {
   if (WIN) {
-    try {
-      const { stdout } = await execFileP("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"]);
-      return stdout.includes(`"${pid}"`);
-    } catch {
-      return false;
-    }
+    const { stdout } = await execFileP("tasklist", [
+      "/FI",
+      `PID eq ${pid}`,
+      "/NH",
+      "/FO",
+      "CSV",
+    ]);
+    return stdout.includes(`"${pid}"`);
   }
   let state: string;
   try {
-    state = (await execFileP("ps", ["-o", "stat=", "-p", String(pid)])).stdout.trim();
+    state = (
+      await execFileP("ps", ["-o", "stat=", "-p", String(pid)])
+    ).stdout.trim();
   } catch {
     return false; // `ps` exits non-zero for a pid that does not exist.
   }
@@ -40,12 +55,20 @@ export async function descendants(pid: number): Promise<number[]> {
     let kids = "";
     try {
       kids = WIN
-        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
+        ? (
+            await powershell(
+              `Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`,
+            )
+          ).stdout
         : (await execFileP("pgrep", ["-P", String(p)])).stdout;
-    } catch {
-      return;
+    } catch (error) {
+      if (WIN) throw error;
+      return; // pgrep exits non-zero when the process has no children.
     }
-    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
+    for (const k of kids
+      .split(/\r?\n/)
+      .map((s) => Number(s.trim()))
+      .filter(Boolean)) {
       out.push(k);
       await walk(k);
     }
@@ -55,7 +78,9 @@ export async function descendants(pid: number): Promise<number[]> {
 }
 export async function psLine(pid: number, withEnv = false) {
   try {
-    const args = withEnv ? ["-E", "-o", "command=", "-p", String(pid)] : ["-o", "command=", "-p", String(pid)];
+    const args = withEnv
+      ? ["-E", "-o", "command=", "-p", String(pid)]
+      : ["-o", "command=", "-p", String(pid)];
     return (await execFileP("ps", args)).stdout.trim();
   } catch {
     return "";
@@ -66,19 +91,29 @@ export async function listeners(pid: number) {
     // `  TCP    127.0.0.1:53123    0.0.0.0:0    LISTENING    1234`, for v4 and
     // v6 alike (`[::1]:53123`). Shaped like the lsof answer below so the
     // loopback verdict's regex reads both.
-    try {
-      return (await execFileP("netstat", ["-ano"])).stdout
-        .split(/\r?\n/)
-        .map((l) => l.trim().split(/\s+/))
-        .filter((f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid))
-        .map((f) => `${f[1]} (LISTEN)`);
-    } catch {
-      return [];
-    }
+    return (await execFileP("netstat", ["-ano"])).stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim().split(/\s+/))
+      .filter(
+        (f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid),
+      )
+      .map((f) => `${f[1]} (LISTEN)`);
   }
   try {
-    return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
-      .split("\n").slice(1).filter(Boolean).map((l) => l.split(/\s+/).slice(-2).join(" "));
+    return (
+      await execFileP("lsof", [
+        "-nP",
+        "-a",
+        "-p",
+        String(pid),
+        "-iTCP",
+        "-sTCP:LISTEN",
+      ])
+    ).stdout
+      .split("\n")
+      .slice(1)
+      .filter(Boolean)
+      .map((l) => l.split(/\s+/).slice(-2).join(" "));
   } catch {
     return [];
   }
