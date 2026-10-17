@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const request = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/session-token", () => ({ authFetch: request }));
-import { ensureLocalHarnessReady, loadStoredLocalHarnessConsent } from "../local-harness-consent";
+import { ensureLocalHarnessReady, loadStoredLocalHarnessConsent, revokeLocalHarnessConsent } from "../local-harness-consent";
 const ready = { token: "capability-token-long-enough", expiresAt: "2099-01-01T00:00:00.000Z", target: { runtimeId: "verified" } };
 beforeEach(() => { request.mockReset(); localStorage.clear(); vi.useFakeTimers(); });
 afterEach(() => vi.useRealTimers());
@@ -33,4 +33,29 @@ it("does not persist a late credential after changing accounts or leaving the sc
   request.mockImplementation(async () => { abort.abort(new Error("Account changed")); return Response.json(ready); });
   await expect(ensureLocalHarnessReady("project", false, abort.signal)).rejects.toThrow("Account changed");
   expect(loadStoredLocalHarnessConsent("project")).toBeNull();
+});
+
+it.each([409, 500])("keeps local consent when the Forget response fails (%s)", async (status) => {
+  request.mockResolvedValueOnce(Response.json(ready));
+  await ensureLocalHarnessReady("project", false);
+  request.mockResolvedValueOnce(new Response("failed", { status }));
+  await expect(revokeLocalHarnessConsent("project")).rejects.toThrow("could not be removed");
+  expect(loadStoredLocalHarnessConsent("project")).toEqual(ready);
+});
+it("keeps local consent when the Forget request cannot reach the server", async () => {
+  request.mockResolvedValueOnce(Response.json(ready));
+  await ensureLocalHarnessReady("project", false);
+  request.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+  await expect(revokeLocalHarnessConsent("project")).rejects.toThrow("Failed to fetch");
+  expect(loadStoredLocalHarnessConsent("project")).toEqual(ready);
+});
+it("clears every local harness credential once the server forgets the project", async () => {
+  request.mockResolvedValueOnce(Response.json(ready));
+  await ensureLocalHarnessReady("project", false);
+  request.mockResolvedValueOnce(Response.json(ready));
+  await ensureLocalHarnessReady("project", false, undefined, undefined, "codex");
+  request.mockResolvedValueOnce(Response.json({ revoked: true }));
+  await revokeLocalHarnessConsent("project");
+  expect(loadStoredLocalHarnessConsent("project")).toBeNull();
+  expect(loadStoredLocalHarnessConsent("project", "codex")).toBeNull();
 });

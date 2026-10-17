@@ -1,4 +1,4 @@
-import { shouldUseLocalHarness, isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
+import { shouldUseLocalHarness, isLocalHarnessVenue, readUnattendedGitStatus } from "../../utils/harness/local/run-resources.js";
 import { setupLocalHarness, ensureLocalHarnessTarget, localHarnessAccountEnabled, LocalRuntimePreparingError, LOCAL_HARNESS_DISPLAY_NAMES, verifyLocalHarnessMember } from "../../utils/harness/local/readiness.js";
 import { revokeLocalHarnessAuthorization, updateAuthorizedWorkspace, readLocalHarnessAuthorization, acknowledgeLocalHarnessAutoApprove } from "../../utils/harness/local/authorization.js";
 /**
@@ -308,7 +308,6 @@ localHarness.get("/availability", async (c) => {
 
   const suggestedWorkspace = await resolveSuggestedWorkspace({ displayRoot });
   const projectId = c.req.query("projectId");
-  // Per harness: each has its own rollout, conformance and authorization.
   const preferredVenue = projectId && await shouldUseLocalHarness(harnessId, c.req.header("authorization"), projectId) ? "local" : "hosted";
 
   const actor = projectId ? await resolveConsentActor(c) : null;
@@ -318,6 +317,7 @@ localHarness.get("/availability", async (c) => {
   return c.json({
     harnessId,
     autoApproveAcknowledged: Boolean(authorization?.autoApproveAcknowledgedAt),
+    unattendedGit: await readUnattendedGitStatus(harnessId),
     preferredVenue,
     setupAvailable: isLocalHarnessVenue(harnessId) && await localHarnessAccountEnabled(c.req.header("authorization"), undefined, harnessId),
     available:

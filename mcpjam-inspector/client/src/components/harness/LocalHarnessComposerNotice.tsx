@@ -23,7 +23,7 @@ export function LocalHarnessComposerNotice({
   onRetry,
   onSetup,
 }: {
-  controller: LocalHarnessControllerState;
+  controller: Pick<LocalHarnessControllerState, "phase" | "harnessName" | "runtimeStatus" | "statusFetchFailed" | "reason">;
   onRetry: () => void;
   onSetup?: () => void;
 }) {

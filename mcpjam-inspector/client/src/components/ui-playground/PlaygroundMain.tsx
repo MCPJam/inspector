@@ -239,10 +239,8 @@ import {
   LocalHarnessAutoApproveDialog,
 } from "@/components/harness/LocalHarnessTrustDialog";
 import { LocalHarnessSetupDialog } from "@/components/harness/LocalHarnessSetupDialog";
-import {
-  LocalHarnessComposerNotice,
-  LocalHarnessReadyNotice,
-} from "@/components/harness/LocalHarnessComposerNotice";
+import { LocalHarnessReadyNotice } from "@/components/harness/LocalHarnessComposerNotice";
+import { LocalHarnessComposerPanel } from "@/components/harness/LocalHarnessComposerPanel";
 import type { ExecutionTargetChipData } from "@/components/chat-v2/chat-input/execution-target-chip";
 import {
   isAnotherUsersReopenedThread,
@@ -1198,6 +1196,7 @@ export function PlaygroundMain({
   // rather than leaving the user to guess whether anything happened.
   const [localHarnessJustReady, setLocalHarnessJustReady] = useState(false);
   const [localHarnessPreparing, setLocalHarnessPreparing] = useState(false);
+  const [localHarnessProgress, setLocalHarnessProgress] = useState<string | null>(null);
   const localHarnessPreparingRef = useRef(false);
   const localHarnessWasInstallingRef = useRef(false);
   const localHarnessPhase = localHarness.phase;
@@ -4815,7 +4814,7 @@ export function PlaygroundMain({
           convexProjectId,
           setup,
           undefined,
-          undefined,
+          setLocalHarnessProgress,
           localHarness.harnessId ?? "claude-code",
         );
         return await localAutoApprove.ensure();
@@ -4825,6 +4824,7 @@ export function PlaygroundMain({
       } finally {
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
+        setLocalHarnessProgress(null);
       }
     }, [localHarnessIntendedLocal, localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
 
@@ -6112,7 +6112,8 @@ export function PlaygroundMain({
    * and hide the control that re-enables it.
    */
   const localHarnessNotice = localHarnessIntendedLocal ? (
-      <LocalHarnessComposerNotice
+      <LocalHarnessComposerPanel
+        progress={localHarnessProgress}
         controller={
           localHarnessPreparing
             ? { ...localHarness, phase: "authorizing" }

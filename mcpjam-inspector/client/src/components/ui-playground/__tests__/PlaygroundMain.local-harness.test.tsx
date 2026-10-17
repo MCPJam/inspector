@@ -971,7 +971,7 @@ describe("PlaygroundMain — local Claude Code", () => {
       render(<PlaygroundMain {...defaultProps} />);
       type("keep my draft");
       fireEvent.click(screen.getByRole("button", { name: "Set up" }));
-      expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, undefined, "claude-code");
+      expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, expect.any(Function), "claude-code");
       expect(screen.getByText("Preparing Claude Code on this machine…")).toBeInTheDocument();
       await act(async () => { finish(); });
       expect(mockLocalHarness.state.refresh).toHaveBeenCalled();
@@ -986,7 +986,7 @@ describe("PlaygroundMain — local Claude Code", () => {
         render(<PlaygroundMain {...defaultProps} />);
         fireEvent.click(screen.getByRole("button", { name: "Set up" }));
         await waitFor(() =>
-          expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, undefined, "claude-code"),
+          expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, expect.any(Function), "claude-code"),
         );
         await waitFor(() => expect(mockLocalHarness.state.refresh).toHaveBeenCalled());
         ensureReadyMock.mockClear();
@@ -1009,12 +1009,12 @@ describe("PlaygroundMain — local Claude Code", () => {
         render(<PlaygroundMain {...defaultProps} />);
         fireEvent.click(screen.getByRole("button", { name: "Set up" }));
         await waitFor(() =>
-          expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, undefined, "codex"),
+          expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, expect.any(Function), "codex"),
         );
         await waitFor(() => expect(screen.getByRole("button", { name: "Set up" })).toBeInTheDocument());
         ensureReadyMock.mockClear();
         type("pwd"); await submit();
-        expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), false, undefined, undefined, "codex");
+        expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), false, undefined, expect.any(Function), "codex");
         expect(screen.queryByTestId("local-harness-setup-dialog")).not.toBeInTheDocument();
         expect(mockUseChatSession.sendMessage).toHaveBeenCalledOnce();
       } finally {

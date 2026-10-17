@@ -336,6 +336,7 @@ export interface LocalHarnessRuntimeStatus {
 }
 
 export interface LocalHarnessAvailabilityView {
+  unattendedGit?: { ready: boolean; message: string };
   autoApproveAcknowledged?: boolean;
   preferredVenue?: "local" | "hosted";
   setupAvailable?: boolean;
@@ -677,29 +678,29 @@ export function persistLocalHarnessConsent(
 /**
  * Forget & re-authorize.
  *
- * Clears the local record whatever the server says: a user who clicked this
- * must not be left with a token the UI still treats as consent because a
- * network call failed. The server-side revoke is the authoritative half, and
- * the grant's own TTL is the backstop if it never lands.
+ * Clears the local record only after the server revoke succeeds. The server
+ * keeps a durable authorization that a later send renews without asking, so
+ * clearing this browser's copy after a failed revoke would show "Not
+ * authorized" while the machine still is. A failure throws for the caller to
+ * show, and the stored record stays so the user can retry.
  */
 export async function revokeLocalHarnessConsent(
   projectId: string,
   harnessId: LocalHarnessClientId = "claude-code",
 ): Promise<void> {
   const stored = loadStoredLocalHarnessConsent(projectId, harnessId);
+  const response = await localHarnessRequest(
+    "consent/revoke",
+    { ...(stored ? { grantId: stored.grantId } : {}), projectId, forget: true },
+  );
+  if (!response.ok) {
+    throw new Error("Local access could not be removed. Try again.");
+  }
   // The server's "forget" revokes the project's authorization for every local
   // harness on this machine, so every cached launch credential for the
   // project goes with it.
   for (const id of Object.keys(LOCAL_HARNESS_CLIENT_NAMES) as LocalHarnessClientId[]) {
     persist(projectId, null, id);
-  }
-  try {
-    await localHarnessRequest(
-      "consent/revoke",
-      { ...(stored ? { grantId: stored.grantId } : {}), projectId, forget: true },
-    );
-  } catch {
-    // Already forgotten locally; the TTL and the server's own sweep finish it.
   }
 }
 
