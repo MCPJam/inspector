@@ -1,5 +1,3 @@
-import { translatePlatformFeeError } from "../../routes/v1/platform-fee-errors.js";
-import { convexErrorData } from "../../routes/v1/convex-error-data.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
@@ -27,7 +25,7 @@ import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
-import { ConvexError } from "convex/values";
+import { asBillingRouteError } from "./billing-refusal.js";
 import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -53,33 +51,6 @@ type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
 type ExecutionType = "model" | "model_free" | "harness";
 const RUNTIME_TELEMETRY_TIMEOUT_MS = 2_000;
 
-/** Preserve billing refusals before recorder setup can turn them into outages. */
-export function asBillingRouteError(error: unknown): WebRouteError | null {
-  const fee = translatePlatformFeeError(convexErrorData(error));
-  if (fee) return fee;
-  if (!(error instanceof ConvexError)) {
-    return null;
-  }
-  const data = error.data as { code?: unknown; message?: unknown } | undefined;
-  if (
-    !data ||
-    typeof data !== "object" ||
-    (data.code !== "billing_limit_reached" &&
-      data.code !== "billing_feature_not_included")
-  ) {
-    return null;
-  }
-  const message =
-    typeof data.message === "string" && data.message.length > 0
-      ? data.message
-      : "Your plan limit was reached.";
-  return new WebRouteError(
-    402,
-    ErrorCode.BILLING_LIMIT_REACHED,
-    message,
-    data as Record<string, unknown>,
-  );
-}
 
 type SuiteRunEnvironmentSnapshot = {
   servers: string[];

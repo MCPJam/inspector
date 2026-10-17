@@ -39,7 +39,7 @@ import {
   type ResolvedEnvironmentForLaunch,
 } from "../environments/resolve.js";
 import { resolveQuickRunPluginServers } from "../plugins/run-plugin-servers.js";
-import { asBillingRouteError } from "./recorder.js";
+import { asBillingRouteError } from "./billing-refusal.js";
 import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import {
   buildPinnedSkillSource,

@@ -40,6 +40,7 @@ import { withGithubCredentialPolicy } from "./github-checks/credential-policy.js
 
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
+import { billingRefusalReason } from "./evals/billing-refusal.js";
 import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
 import { prepareEvalRun, shouldSkipExecution } from "../routes/shared/evals.js";
@@ -545,14 +546,9 @@ export function describeCheckFailure(error: unknown): {
     };
   }
   const message = error instanceof Error ? error.message : String(error);
-  if (/billing_limit_reached/i.test(message)) {
-    return { failureReason: "billing_limit_reached" };
-  }
-  // Both canonical markers for the org spend budget: the `/stream` wire code
-  // and the launch mutation's ConvexError code.
-  if (/spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message)) {
-    return { failureReason: "spend_budget_reached" };
-  }
+  // Billing codes may sit in the message or only in a translated error's details.
+  const billing = billingRefusalReason(error);
+  if (billing) return { failureReason: billing };
   return { failureReason: message.slice(0, 200) };
 }
 

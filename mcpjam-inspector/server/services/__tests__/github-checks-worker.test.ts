@@ -29,6 +29,7 @@ import {
   type ClaimedGithubCheck,
 } from "../github-checks-worker";
 import { CheckStepError, type CheckSandbox } from "../github-checks/sandbox";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors";
 import {
   CheckStoppedByPlan,
   PlanProtocolError,
@@ -1093,6 +1094,30 @@ describe("describeCheckFailure", () => {
     ).toMatchObject({
       failureReason: "tool failed: check your billing page",
     });
+  });
+
+  it("names a billing refusal whose codes sit only in translated details", () => {
+    expect(
+      describeCheckFailure(
+        new WebRouteError(
+          402,
+          ErrorCode.PAYMENT_REQUIRED,
+          "This organization's spend budget is reached.",
+          {
+            code: "ORGANIZATION_SPEND_BUDGET_REACHED",
+            reason: "spend_budget_reached",
+          },
+        ),
+      ),
+    ).toMatchObject({ failureReason: "spend_budget_reached" });
+    expect(
+      describeCheckFailure(
+        new WebRouteError(402, ErrorCode.PAYMENT_REQUIRED, "Add credits.", {
+          code: "platform_fee_refused",
+          reason: "insufficient_credits",
+        }),
+      ),
+    ).toMatchObject({ failureReason: "platform_fee_refused" });
   });
 
   it("names the org spend budget from either canonical marker", () => {
