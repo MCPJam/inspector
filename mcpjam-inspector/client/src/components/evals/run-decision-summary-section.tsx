@@ -8,9 +8,9 @@
  */
 import {
   evalRunDecisionRevision,
-  isTerminalEvalRunStatus,
   type EvalDecisionSummaryStore,
 } from "@/lib/evals/eval-decision-summary-store";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { RunDecisionSummaryCard } from "./run-decision-summary-card";
 import type { EvalSuiteRun } from "./types";
@@ -35,7 +35,7 @@ export function RunDecisionSummarySection({
 }) {
   // Terminal only. A pending or running row has no decision to read, and
   // asking anyway spends a request per poll to be told so.
-  const active = enabled && isTerminalEvalRunStatus(run.status);
+  const active = enabled && isEvalRunTerminalStatus(run.status);
   const detail = useEvalRunDecisionDetail({
     projectId,
     runId: run._id,
