@@ -1051,7 +1051,7 @@ async function revokeLease(runId: string, bearer: string): Promise<void> {
 declare const __MCPJAM_CLAUDE_ADAPTER_VERSION__: string | undefined;
 let cachedAdapterVersion: string | null = null;
 
-async function readInstalledAdapterVersion(
+export async function readInstalledAdapterVersion(
   harnessId: SupportedLocalHarnessId,
 ): Promise<string> {
   // Codex's local adapter is MCPJam's own bridge bundle plus the pinned CLI,
