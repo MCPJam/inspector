@@ -41,35 +41,3 @@ preserved timeline: event `7bf10c69f58c4dd9b72ea1ab7ec7233c`, issue `7781862317`
 The inspected Slack workflow `3827830` only applies to `prod`; searching the alert
 channel found no controlled-test notification. No alert configuration was changed.
 Signed macOS end-to-end update testing still requires a signing identity.
-
-## Signed macOS harness qualification
-
-`desktop-package-smoke.yml` checks an unsigned bundle. Its success does not
-qualify a signed release, authentication, updating, or a local harness. Run the
-following on a fresh installation of the exact signed and notarized candidate,
-on every advertised macOS architecture. Signing and publication are human steps.
-
-Before testing, record the installer SHA-256, app version, source commit,
-macOS version and architecture, signing identity, notarization assessment, and
-both runtime pack versions, tree digests and layer versions. Retain the native
-signature-verification output with the report; a filename is not identity proof.
-Use a disposable project and independent work folders for the two clients.
-
-| Check | Required evidence | Initial status |
-|---|---|---|
-| Fresh install and first launch | Gatekeeper accepts the notarized app; executable signature verifies; displayed version matches the installer | not_run |
-| Sign in and callback | Real browser sign-in returns to this installed app and the intended account; wrong or replayed callback is refused | not_run |
-| Runtime installation | Claude Code and Codex packs download, verify and report the recorded exact identities; failed verification does not launch | not_run |
-| Local turns and approvals | Each client performs a native write/read, exact fixture MCP call, and second-turn read; approve, deny, two approvals, reload and Stop each settle correctly | not_run |
-| Update and restart | Install the candidate from the previous supported release; restart opens the candidate version, preserves settings and requires valid local authorization | not_run |
-| Offline and recovery | Interrupted download or lost network has an actionable result; reconnect/retry completes once; an unverified partial pack never executes | not_run |
-| Quit cleanup | Quit while running and while awaiting approval; app and native harness descendants terminate; relaunch reports no stale running session | not_run |
-
-For each row, retain a short recording or command output, timestamps, session
-and turn IDs, and the observed terminal state. For update rows include the
-update attempt ID and its diagnostics timeline. For cleanup include a native
-process-tree observation after the app exits, not only an empty UI list.
-Mark a row passed only after observing its required behavior; retain failure and
-`not_run` statuses. Never copy source-test or unsigned-bundle results into this
-report. A changed installer or runtime pack invalidates the corresponding
-candidate evidence and requires rerunning its affected cases.
