@@ -131,6 +131,32 @@ describe("local admission transport", () => {
       code: "ADMISSION_CLOSED",
     });
   });
+  it("preserves quota exhaustion after bounded retries", async () => {
+    vi.useFakeTimers();
+    const details = {
+      code: "billing_limit_reached",
+      resetsAt: Date.now() + 60_000,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "RATE_LIMITED",
+            message: "Monthly iteration limit reached.",
+            details,
+          },
+          { status: 429 }
+        )
+      )
+    );
+    const result = expect(client().admit(input)).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+      details,
+    });
+    await vi.runAllTimersAsync();
+    await result;
+  });
 
   it("requires credentials without making a request", () => {
     const fetch = vi.fn();
