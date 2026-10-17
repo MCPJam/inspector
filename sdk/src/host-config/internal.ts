@@ -180,3 +180,6 @@ export type {
   ModelSelectionIssueCode,
   ModelSelectionValidation,
 } from "./model-selection.js";
+
+export { clientServerIds, resolveClientEnvironment } from "./target-resolution.js";
+export type { ClientEnvironmentMatch } from "./target-resolution.js";
