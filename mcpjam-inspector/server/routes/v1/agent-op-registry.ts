@@ -2598,10 +2598,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
-  // Swarms operations the agent may not even PROPOSE. All three are
-  // `risk: destructive` in the SDK catalog, and the rule this surface applies
-  // is the one the gated block above states: a proposal makes spend
-  // deliberate, it does not make a removal recoverable.
+  authorize_local_execution:
+    "Local execution consent must come from the user, never from the agent or an approval proposal.",
+  // Destructive swarm operations remain unavailable even as proposals.
   delete_persona:
     "Removes a persona from the roster; the agent proposes authoring, never destruction.",
   // PROJECT SECRET WRITES. The first two are excluded for a reason that is not

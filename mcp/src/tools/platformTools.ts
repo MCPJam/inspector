@@ -1,3 +1,4 @@
+import { stringList } from "./catalog-values.js";
 /**
  * MCP tools over the shared platform operation catalog. Each tool is a thin
  * adapter: parse args with the operation's schema, call the Platform API
@@ -566,6 +567,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
+  authorize_local_execution: "Local execution requires prior explicit setup in the Inspector UI; capability renewal is available only through the local REST API, SDK or CLI.",
   ...Object.fromEntries(
     HELD_WHILE_IN_BETA.flatMap(({ feature, operations }) =>
       operations.map((operation) => [
@@ -976,13 +978,6 @@ const MODEL_CATALOG_OMITTED_FIELDS = [
   "default_parameters",
   "pricing (beyond prompt and completion)",
 ] as const;
-
-function stringList(value: unknown): string[] | undefined {
-  return Array.isArray(value) &&
-    value.every((entry) => typeof entry === "string")
-    ? (value as string[])
-    : undefined;
-}
 
 export function compactModelCatalogForModel(payload: object): object {
   const items = (payload as { items?: unknown }).items;

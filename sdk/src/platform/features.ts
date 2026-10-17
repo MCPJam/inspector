@@ -318,6 +318,7 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   create_tunnel: null,
   close_tunnel: null,
   list_chat_sessions: null,
+  authorize_local_execution: null,
   send_chat_message: null,
   get_chat_session: null,
   get_chat_session_trace: null,

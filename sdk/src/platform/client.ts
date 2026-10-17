@@ -1,3 +1,5 @@
+import { trimmedOrUndefined } from "./header-value.js";
+import type { LocalExecutionAuthorization, PlatformLocalExecutionGrant } from "./local-execution.js";
 import type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
@@ -517,17 +519,6 @@ function buildLaunchHeaders(
   }
 
   return Object.keys(headers).length > 0 ? headers : undefined;
-}
-
-function trimmedOrUndefined(
-  value: unknown,
-  maxChars?: number
-): string | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return undefined;
-  return maxChars === undefined ? trimmed : trimmed.slice(0, maxChars);
 }
 
 /**
@@ -1274,6 +1265,9 @@ export class PlatformApiClient {
     options?: RequestOptions
   ): Promise<PlatformSessionBrowserOpened> {
     return this.request("POST", "/chat-sessions/browser", { body }, options);
+  }
+  authorizeLocalExecution(projectId: string, body: LocalExecutionAuthorization, options?: RequestOptions): Promise<PlatformLocalExecutionGrant> {
+    return this.request("POST", `/projects/${encodeURIComponent(projectId)}/local-execution-grants`, { body }, options);
   }
   sendChatMessage(
     params: {

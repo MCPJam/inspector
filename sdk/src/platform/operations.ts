@@ -1,3 +1,5 @@
+import { projectIdOf } from "./project-id.js";
+import { createLocalExecutionAuthorizationOperation } from "./local-execution-operation.js";
 import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
 import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
 import {
@@ -879,13 +881,6 @@ function stampSuiteId<T extends object>(
 // readable line of intent each. Every one of them returns a REF, never a URL:
 // composing the URL is `buildAppPermalink`'s job and happens in exactly one
 // place.
-
-/** Spread `projectId` only when the payload actually carries one. */
-function projectIdOf(source: { projectId?: string | null }): {
-  projectId?: string;
-} {
-  return source.projectId ? { projectId: source.projectId } : {};
-}
 
 /** The saved server a server-scoped operation resolved. */
 function serverRef(result: {
@@ -9362,6 +9357,8 @@ export const listChatSessionsOperation: PlatformOperation<
 // caller either produced themselves or was handed by a human, which is a
 // different claim: "show me the session I just created" is not "show me what
 // everyone in this org has been talking about".
+
+export const authorizeLocalExecutionOperation = createLocalExecutionAuthorizationOperation(resolveProjectOrThrow);
 
 const sendChatMessageInput = z.object({
   browser: z
@@ -19577,6 +19574,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getStudyOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
+  authorizeLocalExecutionOperation,
   sendChatMessageOperation,
   driveChatSessionBrowserOperation,
   observeChatSessionBrowserOperation,

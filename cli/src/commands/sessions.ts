@@ -1,3 +1,4 @@
+import { registerLocalExecutionCommands } from "./sessions-local.js";
 import { waitForSessionTurn } from "../lib/session-turn-retry.js";
 import {
   addBrowserFlags,
@@ -232,6 +233,7 @@ export function registerSessionsCommands(program: Command): void {
   );
 
   registerSessionsBrowserCommands(sessions);
+  registerLocalExecutionCommands(sessions);
 
   // ── Agent Playground ──────────────────────────────────────────────────────
 

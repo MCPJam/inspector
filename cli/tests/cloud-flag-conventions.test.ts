@@ -34,6 +34,7 @@ const CLOUD_COMMAND_FILES = [
   "secrets.ts",
   "sessions.ts",
   "sessions-browser.ts",
+  "sessions-local.ts",
   "skills.ts",
   "swarms.ts",
   "trace-destinations.ts",
