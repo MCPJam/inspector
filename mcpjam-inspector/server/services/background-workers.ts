@@ -1,8 +1,9 @@
 /**
- * The claim loops a server process runs beside its HTTP traffic. Each polls
- * Convex for one kind of claimable job and executes it in this process; the
- * backend owns the fleet-wide caps and the stale-lease sweeps that recover a
- * job whose process died.
+ * The claim loops a server process runs beside its HTTP traffic, unless its
+ * role leaves them to a worker deployment (`lifecycle/process-role`). Each
+ * polls Convex for one kind of claimable job and executes it in this process;
+ * the backend owns the fleet-wide caps and the stale-lease sweeps that recover
+ * a job whose process died.
  */
 
 import {
@@ -24,6 +25,12 @@ import {
   startBenchWorker,
   type BenchWorkerHandle,
 } from "./bench-worker";
+import {
+  assertWorkerCanRunClaims,
+  resolveProcessRole,
+  type ProcessRole,
+} from "./lifecycle/process-role";
+import { getSystemLogger } from "../utils/request-logger";
 
 export interface BackgroundWorkers {
   /**
@@ -34,7 +41,15 @@ export interface BackgroundWorkers {
   stop: () => Promise<void>;
 }
 
-export function startBackgroundWorkers(): BackgroundWorkers {
+export function startBackgroundWorkers(
+  role: ProcessRole = resolveProcessRole(),
+): BackgroundWorkers {
+  getSystemLogger("workers").event("server.process_role", { role });
+  // A web replica leaves every loop, the flagless production one included, to
+  // the worker deployment.
+  if (role === "web") return { stop: async () => {} };
+  if (role === "worker") assertWorkerCanRunClaims();
+
   // Scheduled eval runs (synthetic monitors): claim-and-execute polling loop.
   // Env-gated; the backend cron has its own SCHEDULED_EVALS_ENABLED gate.
   let scheduledEvalsWorker: ScheduledEvalsWorkerHandle | undefined;
