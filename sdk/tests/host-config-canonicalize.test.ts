@@ -853,6 +853,16 @@ describe("canonicalizeHostConfigV2 — client-conformance knobs", () => {
   const KNOBS = [
     ["paginationTraversal", ["full", "firstPageOnly"]],
     ["mrtrSupport", ["full", "none"]],
+    ["unauthorizedChallenge", ["prompt", "notify", "passthrough"]],
+    [
+      "unauthorizedChallengeTrigger",
+      ["any", "bearer-header", "resource-metadata"],
+    ],
+    ["toolResultAuthChallenge", ["prompt", "notify", "passthrough"]],
+    [
+      "toolResultAuthChallengeTrigger",
+      ["any", "oauth2-scheme", "oauth2-scheme+error-params"],
+    ],
   ] as const;
 
   it("round-trips every literal of every knob", () => {
@@ -897,7 +907,7 @@ describe("canonicalizeHostConfigV2 — client-conformance knobs", () => {
             } as never,
           })
         )
-      ).toThrow(new RegExp(`${key} must be one of ${modes.join(", ")}`));
+      ).toThrow(`${key} must be one of ${modes.join(", ")}`);
     }
   });
 

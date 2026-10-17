@@ -160,6 +160,23 @@ describe("private server binding identity", () => {
         ),
       );
     });
+    it("ignores the client's App context budgets", () => {
+      const before = pluginHostBindingDigest(host);
+      const budgets = {
+        modelContextPolicy: { maxBlocks: 256, updateMaxBytes: 2_548_000 },
+      };
+      expect(pluginHostBindingDigest(withProfile(budgets))).toBe(before);
+      // Beside a bound setting, only the bound setting counts.
+      expect(
+        pluginHostBindingDigest(
+          withProfile({ ...budgets, mcpAppsOverrides: { openLinks: false } }),
+        ),
+      ).toBe(
+        pluginHostBindingDigest(
+          withProfile({ mcpAppsOverrides: { openLinks: false } }),
+        ),
+      );
+    });
     it.each([
       ["harness", { harness: "codex" }],
       ["host style", { hostStyle: "claude" }],

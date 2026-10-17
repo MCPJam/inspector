@@ -248,6 +248,35 @@ export const MRTR_SUPPORT_MODES = [
 ] as const satisfies readonly MrtrSupport[];
 
 /**
+ * Mid-session sign-in knobs: what the simulated client does when a server
+ * refuses a call until the user signs in. Absent is spec-conforming for all
+ * four. For the HTTP `401` pair that is acting on any 401 (`"prompt"`,
+ * `"any"`). The `_meta["mcp/www_authenticate"]` tool-result challenge is not
+ * in the MCP spec, so for that pair absent is `"passthrough"`. The SDK stores
+ * and hashes them so a config the backend saved with them keeps its address.
+ */
+export type AuthChallengeAction = "prompt" | "notify" | "passthrough";
+export const AUTH_CHALLENGE_ACTIONS = [
+  "prompt",
+  "notify",
+  "passthrough",
+] as const satisfies readonly AuthChallengeAction[];
+export type UnauthorizedChallengeTrigger =
+  "any" | "bearer-header" | "resource-metadata";
+export const UNAUTHORIZED_CHALLENGE_TRIGGERS = [
+  "any",
+  "bearer-header",
+  "resource-metadata",
+] as const satisfies readonly UnauthorizedChallengeTrigger[];
+export type ToolResultAuthChallengeTrigger =
+  "any" | "oauth2-scheme" | "oauth2-scheme+error-params";
+export const TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS = [
+  "any",
+  "oauth2-scheme",
+  "oauth2-scheme+error-params",
+] as const satisfies readonly ToolResultAuthChallengeTrigger[];
+
+/**
  * Which cancellation leaf a connection on `version` is governed by.
  *
  * The two leaves are measured per era, but a CONNECTION only ever speaks one,
@@ -312,6 +341,21 @@ export type PluginExtensionCapabilityKey =
 export type HostConfigPluginExtensionsV1 = {
   enabled: boolean;
   capabilities?: Partial<Record<PluginExtensionCapabilityKey, boolean>>;
+};
+
+/**
+ * Per-client budgets for the context a plugin App pushes with
+ * `ui/update-model-context`. Every key is optional: absent means MCPJam's
+ * default (`MODEL_CONTEXT_POLICY_DEFAULTS`). No version field, because an
+ * eval pins the content-addressed `hostConfigId` instead.
+ */
+export type HostConfigModelContextPolicyV1 = {
+  /** UTF-8 bytes of one update's `{ content, structuredContent }`. */
+  updateMaxBytes?: number;
+  /** Content blocks in one update. */
+  maxBlocks?: number;
+  /** UTF-8 bytes of every App context one turn carries. */
+  turnMaxBytes?: number;
 };
 
 export type CspDomainSet = {
@@ -390,6 +434,11 @@ export type HostConfigMcpProfileV1 = {
     listens?: boolean;
     refetches?: boolean;
   };
+  // Mid-session sign-in knobs; see `AUTH_CHALLENGE_ACTIONS`.
+  unauthorizedChallenge?: AuthChallengeAction;
+  unauthorizedChallengeTrigger?: UnauthorizedChallengeTrigger;
+  toolResultAuthChallenge?: AuthChallengeAction;
+  toolResultAuthChallengeTrigger?: ToolResultAuthChallengeTrigger;
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the
@@ -484,6 +533,8 @@ export type HostConfigMcpProfileV1 = {
     // OpenAI plugin extensions (sidebar Apps, file viewers, forms, …) this
     // client offers. Absent → the client style's default.
     pluginExtensions?: HostConfigPluginExtensionsV1;
+    // Budgets for plugin App context. Absent → MCPJam's defaults.
+    modelContextPolicy?: HostConfigModelContextPolicyV1;
   };
   extensions?: Record<string, unknown>;
 };
