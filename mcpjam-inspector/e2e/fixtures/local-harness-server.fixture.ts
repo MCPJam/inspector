@@ -9,7 +9,7 @@ import { convertToModelMessages, type UIMessage } from "ai";
 import {
   localApprovalFixture as state,
   localApprovalOptions,
-} from "../../server/utils/harness/__tests__/run-harness-turn-claude-approval.test";
+} from "../../server/utils/harness/__tests__/local-approval-runtime.fixture";
 import { runHarnessTurn } from "../../server/utils/harness/run-harness-turn";
 import {
   describeParkedLocalSession,
