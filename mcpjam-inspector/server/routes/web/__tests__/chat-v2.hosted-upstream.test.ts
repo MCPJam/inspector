@@ -1,3 +1,5 @@
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
@@ -91,9 +93,17 @@ function json(body: unknown): Response {
   });
 }
 
+// A real fetch keeps an in-flight request, and so its abort signal, reachable
+// until the exchange settles. Nothing else holds a stalled one here: the
+// request's signal follows its caller's only through a weak reference, so a
+// collection mid-stall would silently drop the abort this fixture reports.
+const stalledRequests = new Set<Request>();
+
 function stallUntilAborted(request: Request, onAbort: () => void) {
+  stalledRequests.add(request);
   return new Promise<Response>((_resolve, reject) => {
     const rejectOnAbort = () => {
+      stalledRequests.delete(request);
       onAbort();
       reject(request.signal.reason);
     };
@@ -126,6 +136,26 @@ it.each(["before", "after"])(
     expect(observed).toHaveBeenCalledOnce();
   },
 );
+
+it("observes an upstream abort after a collection mid-stall", async () => {
+  // Only its own listener holds the stalled request, as in a hosted turn, so
+  // a collection while it waits must not cost the abort.
+  setFlagsFromString("--expose-gc");
+  const collect: () => void = runInNewContext("gc");
+  const controller = new AbortController();
+  const reason = new Error("Upstream fixture aborted");
+  const observed = vi.fn();
+  const pending = stallUntilAborted(
+    new Request("https://upstream.invalid", { signal: controller.signal }),
+    observed,
+  );
+  // A new task first: a weak target stays alive until the creating job ends.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  collect();
+  controller.abort(reason);
+  expect(observed).toHaveBeenCalledOnce();
+  await expect(pending).rejects.toBe(reason);
+});
 
 /** An answer that is not MCP: 405 with an HTML page. */
 const htmlRejection: Upstream = () =>
