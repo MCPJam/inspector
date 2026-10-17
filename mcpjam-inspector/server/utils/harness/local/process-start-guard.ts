@@ -11,7 +11,7 @@ export function createLocalProcessStartGuard(runtime: ResolvedRuntime) {
     async assertCanStart(): Promise<void> {
       if (forbidden) {
         throw new Error(
-          "The local runtime holding this approval could not be reattached; the pending action will not run.",
+          "The client waiting for approval could not be reached. The pending action will not run. Send a new message to continue.",
         );
       }
       // Availability checked the bundle once, but it can be replaced while a
@@ -25,7 +25,7 @@ export function createLocalProcessStartGuard(runtime: ResolvedRuntime) {
       }
       if (forbidden) {
         throw new Error(
-          "The local runtime holding this approval could not be reattached; the pending action will not run.",
+          "The client waiting for approval could not be reached. The pending action will not run. Send a new message to continue.",
         );
       }
     },
