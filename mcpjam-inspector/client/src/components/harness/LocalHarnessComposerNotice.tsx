@@ -30,6 +30,14 @@ export function LocalHarnessComposerNotice({
   const { phase, runtimeStatus, statusFetchFailed } = controller;
   const name = controller.harnessName ?? "Claude Code";
 
+  if (phase === "loading") {
+    return (
+      <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+        {controller.reason ?? `Checking ${name} on this computer…`}
+      </p>
+    );
+  }
+
   if ((phase === "needs-consent" || phase === "needs-workspace") && onSetup) {
     return (
       <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs" role="status">

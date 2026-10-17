@@ -238,6 +238,7 @@ import {
   LocalHarnessTrustDialog,
   LocalHarnessAutoApproveDialog,
 } from "@/components/harness/LocalHarnessTrustDialog";
+import { LocalHarnessSetupDialog } from "@/components/harness/LocalHarnessSetupDialog";
 import {
   LocalHarnessComposerNotice,
   LocalHarnessReadyNotice,
@@ -261,7 +262,7 @@ import {
   type ConversationExecutionTarget,
 } from "@/lib/conversation-execution-target";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useComputersEnabled, useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
 import { useBrowserTools } from "@/hooks/useBrowserTools";
 import { useComputerAttachmentUpload } from "@/hooks/useComputerAttachmentUpload";
 import {
@@ -1148,7 +1149,7 @@ export function PlaygroundMain({
     ownerUserId: loadedThreadOwnerUserId,
     currentUserId: currentUserForSender?._id,
   });
-  const localHarnessInScope = isLocalHarnessScope({
+  const localHarnessInScope = useLocalHarnessEnabled() && isLocalHarnessScope({
     harnessId: previewedHarnessId,
     hostedMode: HOSTED_MODE,
     environmentId: isEnvironmentMode
@@ -1187,6 +1188,8 @@ export function PlaygroundMain({
   });
   const localHarnessRequested =
     localHarnessInScope && localHarness.requestedTarget === "local-native";
+  const localHarnessIntendedLocal = localHarnessInScope &&
+    !(localHarness.requestedTarget === "hosted" && localHarness.hostedAvailable === true);
   const localHarnessResolveSendTarget = localHarness.resolveSendTarget;
   const localHarnessExecutionOption = useMemo(
     () => ({
@@ -1240,18 +1243,6 @@ export function PlaygroundMain({
       setLocalHarnessJustReady(true);
     }
   }, [localHarnessPhase]);
-  // A send in flight that is waiting for a WARM authorization to land. Held in
-  // a ref because the dialog's callback runs across an await and must not read
-  // a stale render's copy.
-  const localHarnessPendingSendRef = useRef<null | (() => void)>(null);
-  const localHarnessCancelSendRef = useRef<null | (() => void)>(null);
-  const localHarnessDialogOpenRef = useRef(false);
-  localHarnessDialogOpenRef.current = localHarnessDialog !== null;
-  // Read at SEND time by a callback defined above this line, so it has to be a
-  // ref rather than a closed-over render value.
-  const localHarnessRef = useRef(localHarness);
-  localHarnessRef.current = localHarness;
-
   // COMP-14 gate: composer attachments go into the sandbox only when the
   // previewed host actually attaches a computer (honesty rule — no computer, no
   // sandbox upload; attachments stay inline-only exactly as before) AND the
@@ -3188,24 +3179,15 @@ export function PlaygroundMain({
       playgroundEnvironment.isPreviewLoading ||
       !isSessionBootstrapComplete ||
       (!!environmentHostId && previewedHostId !== environmentHostId));
-  /**
-   * When a requested local turn cannot run AT ALL, and Send should say so.
-   *
-   * Deliberately narrow. Missing consent and a missing folder are NOT here:
-   * both `submitDisabled` paths — Enter and the button — refuse before
-   * `onSubmit` ever runs (`chat-input.tsx`), so disabling for them would make
-   * first-send setup unreachable, which is the one thing this flow cannot
-   * afford. Those states open the dialog instead.
-   *
-   * What IS here is work in flight (nothing to do but wait) and a machine that
-   * cannot run this at all. The composer notice carries the explanation, so
-   * the disabled Send is never unexplained.
-   */
+  // Unavailable local clients must explain the disabled Send even before
+  // authorization exists. Setup remains reachable from an enabled Send.
   const localHarnessBlocksSend =
-    localHarnessRequested &&
-    (localHarness.phase === "installing" ||
-      localHarness.phase === "authorizing" ||
-      localHarness.phase === "unavailable");
+    localHarnessIntendedLocal &&
+    (localHarness.phase === "unavailable" ||
+      localHarness.phase === "loading" || localHarness.phase === "needs-signin" ||
+      (localHarnessRequested &&
+        (localHarness.phase === "installing" ||
+          localHarness.phase === "authorizing")));
   // Out of credits, a send on a locked MCPJam model could only be refused, so
   // every send path (composer, starter prompts, fullscreen, edits) is off and
   // Send says why. A compare grid drops locked models itself.
@@ -4829,11 +4811,15 @@ export function PlaygroundMain({
   // Refresh launch credentials without changing durable user authorization.
   const ensureLocalHarnessReadyForSend =
     useCallback(async (setup = false): Promise<boolean> => {
-      // A send only needs readiness when this machine is the requested target.
-      // An explicit Set up does regardless: "requested" means a durable
-      // authorization already exists (`preferredVenue === "local"`), and setup
-      // is what creates it — so on a machine that never set this harness up,
-      // returning here made the button do nothing at all.
+      // An explicit setup creates durable authorization; a returning local
+      // request only refreshes readiness unless its workspace is missing.
+      if (!setup && localHarnessIntendedLocal) {
+        if (localHarness.phase === "unavailable" || localHarness.phase === "loading" || localHarness.phase === "needs-signin") return false;
+        if (!localHarnessRequested || localHarness.phase === "needs-workspace") {
+          setLocalHarnessDialog({ trigger: "first_send" });
+          return false;
+        }
+      }
       if (!setup && !localHarnessRequested) return true;
       // A ready target sends without a readiness round trip (the turn's own
       // route re-checks it); only Off still confirms consent first.
@@ -4866,7 +4852,7 @@ export function PlaygroundMain({
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
+    }, [localHarnessIntendedLocal, localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
 
   const extensionOwnerScope = JSON.stringify([
     currentUserForSender?._id,
@@ -6151,9 +6137,7 @@ export function PlaygroundMain({
    * it rather than replacing it. Overwriting it would disable the visible Send
    * and hide the control that re-enables it.
    */
-  const localHarnessNotice =
-    localHarnessInScope &&
-    (localHarness.phase !== "unavailable" || localHarnessRequested) ? (
+  const localHarnessNotice = localHarnessIntendedLocal ? (
       <LocalHarnessComposerNotice
         controller={
           localHarnessPreparing
@@ -6931,19 +6915,24 @@ export function PlaygroundMain({
         onCancel={localAutoApprove.cancel}
         onApprove={localAutoApprove.approve}
       />
-      {localHarnessDialog !== null ? (
+      {localHarnessDialog?.trigger === "first_send" ? (
+        <LocalHarnessSetupDialog
+          name={localHarness.harnessName ?? "Claude Code"}
+          onCancel={() => setLocalHarnessDialog(null)}
+          onConfirm={() => {
+            setLocalHarnessDialog(null);
+            void ensureLocalHarnessReadyForSend(true).then((ready) => {
+              localHarness.refresh();
+              if (ready) setLocalHarnessJustReady(true);
+            });
+          }}
+        />
+      ) : localHarnessDialog !== null ? (
         <LocalHarnessTrustDialog
           open
           onOpenChange={(next) => {
             if (next) return;
             setLocalHarnessDialog(null);
-            // A dialog that closes without authorizing releases the send it
-            // was gating. Leaving that promise pending would hang the composer
-            // on a dialog that is no longer on screen.
-            const cancel = localHarnessCancelSendRef.current;
-            localHarnessCancelSendRef.current = null;
-            localHarnessPendingSendRef.current = null;
-            cancel?.();
           }}
           controller={localHarness}
           scopeKey={localHarnessScopeKey}
@@ -6956,13 +6945,8 @@ export function PlaygroundMain({
             : {})}
           onAuthorized={() => {
             setLocalHarnessDialog(null);
-            // WARM only: the grant is in hand, so the original send continues
-            // once. A cold install resolves through the cancel path instead —
-            // there is deliberately no queued send.
-            const resume = localHarnessPendingSendRef.current;
-            localHarnessPendingSendRef.current = null;
-            localHarnessCancelSendRef.current = null;
-            resume?.();
+            // Setup never queues a turn against a potentially changed draft.
+            setLocalHarnessJustReady(true);
           }}
         />
       ) : null}
