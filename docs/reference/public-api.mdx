@@ -185,9 +185,11 @@ is stable and machine-readable; `message` is human-readable and may change;
 | `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant — distinct from a bad key |
 | `FORBIDDEN` | 403 | Key is valid but not allowed to do this — or the **target MCP server** rejected the credentials MCPJam presented (retrying with a different MCPJam key will not help; reconnect or re-authorize the server) |
 | `VALIDATION_ERROR` | 400 | Malformed body or parameters |
+| `PAYMENT_REQUIRED` | 402 | The organization can't pay for this work. `details.reason` says why: `insufficient_credits`, `spend_budget_reached` or `wallet_locked`. Fix billing before retrying |
 | `NOT_FOUND` | 404 | Unknown project, server, or resource |
 | `CONFLICT` | 409 | The resource isn't in a state that accepts this write — a stale `expectedRevision`, a duplicate name, or an environment that can't currently be launched. Re-read and retry |
 | `FEATURE_NOT_SUPPORTED` | 422 | The target server doesn't support this MCP capability |
+| `UPGRADE_REQUIRED` | 426 | This client version can no longer do this. `details.minimumVersion` names the version to install |
 | `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits) |
 | `SERVER_UNREACHABLE` | 502 | Could not connect to the target MCP server |
 | `TIMEOUT` | 504 | The target MCP server connected but didn't respond in time |
