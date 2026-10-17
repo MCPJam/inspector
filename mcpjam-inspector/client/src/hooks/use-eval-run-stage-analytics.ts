@@ -29,6 +29,7 @@ import {
   isEvalStageAnalyticsError,
   type StageAnalyticsFailureKind,
 } from "@/lib/apis/eval-stage-analytics-api";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 
 export interface StageAnalyticsErrorInfo {
   message: string;
@@ -84,24 +85,6 @@ function toErrorInfo(error: unknown): StageAnalyticsErrorInfo {
   };
 }
 
-/**
- * The statuses after which a run's document will not appear later.
- *
- * `timed_out` belongs here and is easy to miss: the runner types its own
- * terminal transitions as `"cancelled" | "timed_out"`, so a run that ran out of
- * time is as over as one that was cancelled. Leaving it out meant a page opened
- * during such a run never re-asked and sat on the older rollup forever.
- *
- * A SUPERSET of `use-run-group-quality.ts`'s list, which omits it — worth
- * reconciling, but widening that one is outside this change and it is used for
- * a different question.
- */
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
 
 /**
  * How long to keep asking while the document says it is not settled yet.
@@ -149,7 +132,9 @@ export function useEvalRunStageAnalytics({
   // Collapsed to a BOOLEAN, not carried through as the raw status: a run
   // moving `pending` → `running` changes nothing about whether its document
   // exists, and re-fetching on it would issue a request per status tick.
-  const runIsOver = runStatus ? TERMINAL_RUN_STATUSES.has(runStatus) : true;
+  // Terminal includes `timed_out`: a run that ran out of time is as over as
+  // a cancelled one, and a page left waiting would sit on the older rollup.
+  const runIsOver = runStatus ? isEvalRunTerminalStatus(runStatus) : true;
 
   const [document, setDocument] = useState<EvalStageAnalyticsV1 | null>(null);
   const [status, setStatus] = useState<EvalRunStageAnalyticsStatus>("idle");
