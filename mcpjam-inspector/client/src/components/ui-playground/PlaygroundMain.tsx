@@ -4794,7 +4794,8 @@ export function PlaygroundMain({
         }
       }
       if (!setup && !localHarnessRequested) return true;
-      // The turn route rechecks readiness; Off still confirms consent first.
+      // A ready target sends without a readiness round trip (the turn's own
+      // route re-checks it); only Off still confirms consent first.
       if (!setup && localHarness.phase === "ready") {
         try {
           return await localAutoApprove.ensure();
