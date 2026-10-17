@@ -151,6 +151,18 @@ export function isCreditExhaustion(value: unknown): boolean {
     // can include "insufficient credits", but MCPJam credits cannot fix them.
     const code = (item as Record<string, unknown>).code;
     if (typeof code === "string" && /^provider_/.test(code)) excluded = true;
+    // A platform fee can be refused by the wallet, reserved credits or policy.
+    // Only an explicit wallet shortfall is lifted by buying credits.
+    // Held credits travel as insufficient_credits with their own cause.
+    if (code === "platform_fee_refused") {
+      const fee = item as Record<string, unknown>;
+      if (
+        fee.reason === "insufficient_credits" &&
+        fee.cause !== "credits_reserved"
+      )
+        exhausted = true;
+      else excluded = true;
+    }
     // Billing also uses this code for plan quotas (e.g. Eval iteration count).
     // Those have their own upgrade dialog and cannot be lifted by credit.
     for (const key of ["gateKey", "limit"]) {
