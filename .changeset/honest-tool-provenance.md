@@ -1,6 +1,5 @@
 ---
 "@mcpjam/inspector": patch
-"@mcpjam/sdk": patch
 "@mcpjam/evaluators": patch
 ---
 
