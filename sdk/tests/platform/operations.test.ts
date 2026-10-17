@@ -2888,6 +2888,7 @@ describe("operation catalog consistency", () => {
       // One agent Playground turn. A write because it appends to a durable
       // transcript, and `risk: "spend"` because it runs a model — the two
       // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
+      "authorize_local_execution",
       "send_chat_message",
       "drive_chat_session_browser",
       "observe_chat_session_browser",
@@ -2923,6 +2924,7 @@ describe("operation catalog consistency", () => {
       // which is `call_server_tool`'s unknowability with a model choosing the
       // arguments. Softening the destructive default would claim a safety the
       // host cannot verify, since `readOnlyHint` is server-asserted.
+      "authorize_local_execution",
       "send_chat_message",
       "drive_chat_session_browser",
     ]);
