@@ -15,10 +15,10 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...actual, homedir: () => env.home };
 });
 vi.mock("../readiness.js", () => ({
-  ensureLocalHarnessTarget: vi.fn(async (args: { harnessId: string; workspaceGrantId: string }) => ({
+  ensureLocalHarnessTarget: vi.fn(async (args: { harnessId: string; runWorkspaceGrantId: string }) => ({
     target: {
       kind: "local-native", machineId: "m", runtimeId: `rt-${args.harnessId}`,
-      workspaceGrantId: args.workspaceGrantId, permissionProfile: "unrestricted",
+      workspaceGrantId: args.runWorkspaceGrantId, permissionProfile: "unrestricted",
       policyVersion: "v1", grantToken: "g", actingUserId: "u",
     },
   })),
@@ -53,7 +53,7 @@ describe.skipIf(process.platform === "win32")("prepareLocalHarnessRun", () => {
   it("mints an unattended Codex target over a private scratch folder and removes it all at the end", async () => {
     const run = await prepareLocalHarnessRun({ bearer: "b", projectId: "p", harnessId: "codex" });
     expect(ensureLocalHarnessTarget).toHaveBeenCalledWith(
-      expect.objectContaining({ harnessId: "codex", scope: "unattended", workspaceGrantId: "scratch-grant-1" }),
+      expect.objectContaining({ harnessId: "codex", scope: "unattended", runWorkspaceGrantId: "scratch-grant-1" }),
     );
     expect(run.target).toMatchObject({ runtimeId: "rt-codex", permissionProfile: "unrestricted" });
     expect(run.target.localSessionId).toMatch(/^local-/);
