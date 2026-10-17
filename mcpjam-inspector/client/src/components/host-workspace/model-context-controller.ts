@@ -1,5 +1,6 @@
 import {
   parsePluginModelContext,
+  PLUGIN_CONTEXT_NOT_PERSISTED_MESSAGE,
   pluginContextRemoveAllResultSchema,
   PluginModelContextError,
   type PluginModelContextParams,
@@ -15,8 +16,8 @@ export class PluginContextHeld extends PluginContextUpdateRejected {}
 /**
  * The host refused the update before storing it (a size, rate or memory
  * budget) and kept the App's last accepted context, so the next, smaller
- * update can go at once. The App gets JSON-RPC -32000 with this message,
- * which is what ChatGPT answers; the MCP SDK forwards an integer `code`.
+ * update can go at once. The App gets JSON-RPC -32000 with ChatGPT's
+ * message; the MCP SDK forwards an integer `code`.
  */
 export class PluginContextNotPersisted extends PluginContextUpdateRejected {
   readonly code = -32000;
@@ -24,7 +25,7 @@ export class PluginContextNotPersisted extends PluginContextUpdateRejected {
     readonly reason: string,
     readonly excess?: PluginContextExcess,
   ) {
-    super("The host could not persist the model context update");
+    super(PLUGIN_CONTEXT_NOT_PERSISTED_MESSAGE);
   }
 }
 /** Server refusals that mean the update was not stored. */
