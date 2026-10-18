@@ -16,6 +16,7 @@ const {
   validateApiKeyMock,
   resolveUserByExternalIdMock,
   lookupWorkosKeyBindingMock,
+  sharedCapacity,
 } = vi.hoisted(() => {
   // The evals route resolves its concurrency limit at import time; pin the
   // env BEFORE the hoisted imports run so a V1_MAX_CONCURRENT_EVAL_RUNS in
@@ -32,8 +33,14 @@ const {
     validateApiKeyMock: vi.fn(),
     resolveUserByExternalIdMock: vi.fn(),
     lookupWorkosKeyBindingMock: vi.fn(),
+    sharedCapacity: { enabled: false },
   };
 });
+
+vi.mock("../../../services/evals/trial-slots.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  sharedEvalCapacityEnabled: () => sharedCapacity.enabled,
+}));
 
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
@@ -1985,6 +1992,45 @@ describe("v1 write routes", () => {
       await vi.waitFor(() =>
         expect(disconnectAllServers).toHaveBeenCalledTimes(4)
       );
+    });
+
+    it("lets hosted launches past the process cap to queue for shared slots", async () => {
+      sharedCapacity.enabled = true;
+      try {
+        const app = makeApp();
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        const releaseGates: Array<() => void> = [];
+        prepareEvalRunMock.mockImplementation(async () => ({
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn(
+            () => new Promise<void>((resolve) => releaseGates.push(resolve))
+          ),
+        }));
+        for (let i = 0; i < 3; i++) {
+          const response = await request(
+            app,
+            "POST",
+            "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+            { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] },
+            "tok"
+          );
+          expect(response.status).toBe(202);
+        }
+        for (const release of releaseGates.splice(0)) release();
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(3)
+        );
+      } finally {
+        sharedCapacity.enabled = false;
+      }
     });
   });
 

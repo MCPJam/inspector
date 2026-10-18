@@ -116,6 +116,12 @@ import {
 import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
 import {
+  createPausableDeadline,
+  createTrialSlotDispatcher,
+  sharedEvalCapacityEnabled,
+  trialKeyForCase,
+} from "./evals/trial-slots.js";
+import {
   platformExecutionBudgetCeilings,
   platformExecutionBudgetDefaults,
   resolveExecutionBudgets,
@@ -3029,6 +3035,49 @@ async function markIterationTimedOut(args: {
 }
 
 /**
+ * A case that never got an execution slot within the queue deadline. Each of
+ * its rows is a platform capacity failure: no model was called and nothing
+ * about the customer's server was measured, which `infraError` records so the
+ * trial is excluded and refunded. Never throws.
+ */
+async function markCaseQueueExpired(args: {
+  convexClient: ConvexHttpClient;
+  runId: string | null;
+  test: EvalTestCase;
+}): Promise<void> {
+  const message =
+    "No eval execution capacity became free within the queue deadline. This case did not run.";
+  for (let runIndex = 0; runIndex < (args.test.runs || 1); runIndex++) {
+    const iterationId = await findIterationIdForTimeout({ ...args, runIndex });
+    if (!iterationId) continue;
+    try {
+      await args.convexClient.action("testSuites:updateTestIteration" as any, {
+        iterationId,
+        status: "failed",
+        result: "failed",
+        actualToolCalls: [],
+        tokensUsed: 0,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        messages: [{ role: "assistant", content: message }],
+        error: message,
+        resultSource: "derived",
+        infraError: {
+          class: "capacity",
+          layer: "platform",
+          retryable: true,
+          code: "capacity_queue_timeout",
+        },
+      });
+    } catch (error) {
+      logger.warn("[evals] Failed to mark queue-expired iteration", {
+        iterationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+}
+
+/**
  * Record a stopped iteration in its own terminal word instead of leaving the
  * row behind.
  *
@@ -4361,7 +4410,7 @@ export const runEvalSuiteWithAiSdk = async ({
     }
 
     let stopControls = false;
-    let runTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    let runClock: ReturnType<typeof createPausableDeadline> | undefined;
 
     // Run tests in parallel, but cap concurrent render checks: each
     // `widget_probe` case launches a headless Chromium, so an all-render-check
@@ -4472,7 +4521,45 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
       });
-    const testPromises = tests.map((test) =>
+    // Hosted runs share their org's execution capacity with every Inspector
+    // replica: each case waits for a backend slot before it runs. A local
+    // harness keeps its own process slot, and a quick run has no run to queue.
+    const trialSlots =
+      runId !== null &&
+      harnessRuntimeVenue !== "local" &&
+      sharedEvalCapacityEnabled()
+        ? createTrialSlotDispatcher({
+            client: convexClient,
+            runId: String(runId),
+            signal: abortController.signal,
+            executionMs:
+              Math.max(...tests.map((test) => test.runs || 1)) *
+                budgets.unitTimeoutMs +
+              EVAL_ABORT_GRACE_MS,
+            // Waiting for capacity never counts against the run's clock.
+            onWaitingChange: (waiting) =>
+              waiting > 0 ? runClock?.pause() : runClock?.resume(),
+          })
+        : undefined;
+    await trialSlots?.start(tests.map((_, index) => trialKeyForCase(index)));
+    const runWithSlot = async (test: (typeof tests)[number], index: number) => {
+      if (!trialSlots) return runOne(test);
+      const key = trialKeyForCase(index);
+      const outcome = await trialSlots.acquire(key);
+      if (outcome === "stopped") {
+        throw abortController.signal.reason ?? RUN_CANCELLED_ERROR;
+      }
+      if (outcome === "queue_expired") {
+        await markCaseQueueExpired({ convexClient, runId, test });
+        return [];
+      }
+      try {
+        return await runOne(test);
+      } finally {
+        await trialSlots.release(key);
+      }
+    };
+    const testPromises = tests.map((test, index) =>
       // Cap concurrent headless browsers for every model-free render check
       // (legacy widget_probe OR a unified case whose turns are all pinned),
       // not just the legacy discriminator — otherwise a monitoring suite of
@@ -4481,8 +4568,8 @@ export const runEvalSuiteWithAiSdk = async ({
         caseType: test.caseType,
         promptTurns: resolveEvalTestCase(test).promptTurns,
       })
-        ? renderCheckLimit(() => runOne(test))
-        : runOne(test),
+        ? renderCheckLimit(() => runWithSlot(test, index))
+        : runWithSlot(test, index),
     );
 
     // Poll the run status: user cancellation, or a `timed_out` status set
@@ -4573,11 +4660,13 @@ export const runEvalSuiteWithAiSdk = async ({
     // PromiseSettledResult[].
     const createRunTimeout = (): Promise<never> =>
       new Promise<never>((_, reject) => {
-        runTimeoutId = setTimeout(() => {
+        runClock = createPausableDeadline(budgets.runTimeoutMs, () => {
           const stop = runTimeoutError(budgets.runTimeoutMs);
           abortRun(stop);
           reject(stop);
-        }, budgets.runTimeoutMs);
+        });
+        // Cases still waiting for a slot keep the clock paused.
+        if (!trialSlots || trialSlots.waiting() === 0) runClock.resume();
       });
 
     // Surface an `EvalRunStoppedError` thrown by ANY iteration immediately
@@ -4647,9 +4736,8 @@ export const runEvalSuiteWithAiSdk = async ({
       throw error;
     } finally {
       stopControls = true;
-      if (runTimeoutId) {
-        clearTimeout(runTimeoutId);
-      }
+      runClock?.clear();
+      await trialSlots?.close();
       void heartbeatLoop;
     }
 

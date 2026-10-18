@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
+const sharedCapacity = vi.hoisted(() => ({ enabled: false }));
+vi.mock("../trial-slots.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  sharedEvalCapacityEnabled: () => sharedCapacity.enabled,
+}));
 const streamTextMock = vi.hoisted(() => vi.fn());
 const preparedToolsOverride = vi.hoisted(() => ({
   current: undefined as Record<string, any> | undefined,
@@ -427,9 +432,13 @@ describe.each(["local", "hosted"] as const)(
         turnTimeout?: boolean;
         capacity?: boolean;
         capacityAbort?: boolean;
+        /** Shared capacity on; the case waits this long for its slot. */
+        queuedForMs?: number;
       } = {},
     ) {
       vi.useFakeTimers();
+      sharedCapacity.enabled = options.queuedForMs !== undefined;
+      const queuedUntil = Date.now() + (options.queuedForMs ?? 0);
       vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
       vi.stubEnv(
         "MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT",
@@ -469,7 +478,16 @@ describe.each(["local", "hosted"] as const)(
             ? { iterations: rows }
             : { status: "running" },
         ),
-        mutation: vi.fn(async () => ({})),
+        mutation: vi.fn(async (name: string) => {
+          if (name !== "evalTrialSlots:claimTrialSlots") return {};
+          return Date.now() < queuedUntil
+            ? { status: "waiting", token: "tok" }
+            : {
+                status: "granted",
+                token: "tok",
+                granted: [{ trialKey: "case:0" }],
+              };
+        }),
         action: vi.fn(async (name, args) => {
           if (name === "testSuites:updateTestIteration")
             Object.assign(
@@ -596,8 +614,13 @@ describe.each(["local", "hosted"] as const)(
           runTimeoutMs: options.runDeadline ? 50 : 1000,
         },
       } as any);
-      await vi.advanceTimersByTimeAsync(options.capacityAbort ? 350 : 150);
+      await vi.advanceTimersByTimeAsync(
+        (options.capacityAbort ? 350 : 150) +
+          // The dispatcher re-asks every ~2 s; leave room for one more poll.
+          (options.queuedForMs === undefined ? 0 : options.queuedForMs + 2_600),
+      );
       await pending;
+      sharedCapacity.enabled = false;
       return { rows, recorder, convexClient };
     }
 
@@ -653,6 +676,26 @@ describe.each(["local", "hosted"] as const)(
           status: "timed_out",
           stopReason: "iteration_timeout",
         }),
+      );
+    });
+
+    it("starts the run deadline when the case gets its slot, not at launch", async () => {
+      // Queued 20x longer than the run deadline: had the wait counted, the run
+      // would time out before iteration 1 ever ran.
+      const { rows, recorder, convexClient } = await startRun({
+        runDeadline: true,
+        queuedForMs: 1_000,
+      });
+      expect(rows[0].status).toBe("completed");
+      expect(recorder.finalize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "timed_out",
+          stopReason: "run_timeout",
+        }),
+      );
+      expect(convexClient.mutation).toHaveBeenCalledWith(
+        "evalTrialSlots:releaseTrialSlots",
+        expect.objectContaining({ runId: "run-1", token: "tok" }),
       );
     });
 
