@@ -27,6 +27,15 @@ const ENUMS: Record<string, readonly string[]> = {
   level: ["debug", "info", "warn", "error"],
 };
 
+/**
+ * A Convex document ID: the shape the backend collector's `convexId` rule
+ * keeps and the error-class-spike monitor counts. Only a shape; the value's
+ * provenance is its writer's (`LogConvexId`, `server/utils/log-convex-id.ts`).
+ */
+export function isLogConvexIdShape(value: unknown): value is string {
+  return typeof value === "string" && /^[a-z0-9]{32}$/.test(value);
+}
+
 /** Own keys only: a field named `toString` or `constructor` has no rule. */
 function own<T>(map: Record<string, T>, key: string): T | undefined {
   return Object.hasOwn(map, key) ? map[key] : undefined;
@@ -70,7 +79,13 @@ export function buildLegacyLogRow(
       : message === "[harness] turn failed"
         ? "harness.turn.failed"
         : "log.unknown";
-  const row = buildStrictLogRow(event, context, {}, error);
+  // A legacy caller passes whatever it holds, so its context names no ID.
+  const untrusted = Object.fromEntries(
+    Object.entries(context).filter(
+      ([key]) => strictLogFieldRule(key)?.kind !== "convexId",
+    ),
+  );
+  const row = buildStrictLogRow(event, untrusted, {}, error);
   if (event === "log.unknown" && messages.has(message)) {
     row.event = `log.${sha256Hex(message).slice(0, 16)}`;
     row.message = message;
@@ -79,7 +94,11 @@ export function buildLegacyLogRow(
   return row;
 }
 
-/** Context is resolved by the server; event payload fields cannot replace it. */
+/**
+ * Context is resolved by the server; event payload fields cannot replace it.
+ * Convex IDs are copied from that context alone: a payload ID is never a
+ * fallback, also when the context holds null or no such field.
+ */
 export function buildStrictLogRow(
   name: string,
   context: Fields,
@@ -154,6 +173,9 @@ function copySafeLogContext(row: Fields, context: Fields, payload: Fields) {
     )
       row[key] = value;
   }
+  for (const [key, value] of Object.entries(context))
+    if (strictLogFieldRule(key)?.kind === "convexId" && isLogConvexIdShape(value))
+      row[key] = value;
   if (
     typeof context.requestId === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
