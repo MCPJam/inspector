@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { captureSession } from './capture.mjs';
 import { stopFollowup, turnBaseline } from './decisions.mjs';
 import { loadEffort, now, updateBranch } from './effort.mjs';
 import { INJECTS, normalize, render } from './hosts.mjs';
@@ -80,8 +81,15 @@ export const handlers = {
   },
   edit: noteEdits,
   tool: noteEdits,
-  stop: stopFollowup,
-  end: () => null,
+  stop: (event, effort, session) => {
+    if (effort.task) captureSession(effort.co, session, effort.task, now());
+    return stopFollowup(event, effort, session);
+  },
+  end: (event, effort, session) => {
+    session.endedAt = now();
+    if (effort.task) captureSession(effort.co, session, effort.task, now());
+    return null;
+  },
 };
 
 /**

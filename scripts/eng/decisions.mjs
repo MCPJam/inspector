@@ -61,8 +61,14 @@ const markReconciled = (co) =>
     reconciled: (record.reconciled ?? 0) + 1,
   }));
 
+/**
+ * Session records change every turn, so they ride along with other records
+ * rather than earn a continuation of their own.
+ */
 const queuedKeys = (co, task) =>
-  pending(co, task.key).map((item) => `${item.id}:${item.revision}`);
+  pending(co, task.key)
+    .filter((item) => item.kind !== 'session')
+    .map((item) => `${item.id}:${item.revision}`);
 
 /** What the end of the turn compares against, taken as the turn begins. */
 export function turnBaseline({ co, branch, task }) {

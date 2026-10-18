@@ -131,6 +131,19 @@ lists records the turn queued for Kestral. It fires at most once per turn and
 never blocks an edit, a commit or a PR; if you cannot act on it, say why and
 finish.
 
+## Session records
+
+On a linked branch the hooks keep one record per agent session: at every
+Stop and at session end they read the new part of the host's transcript,
+redact credentials, and rebuild the record (prompts, answers, commands with
+their output folded, edits, commits, checks and decisions, in order). It is
+queued like any other record; sync it whenever you sync the rest, and before
+the PR. Long sessions split into parts.
+
+The record states what it could not see: "unavailable" when the host gave
+no transcript, "partial" when lines could not be read, and events without
+timestamps. Never fill those gaps from memory; say what is missing.
+
 ## Why is this line here?
 
 Commits on a linked branch get a `Kestral: <KEY>` trailer from the
