@@ -14,7 +14,14 @@ const mockUseAuth = vi.fn();
 const mockShareProjectDialog = vi.fn();
 const mockInviteSignUpDialog = vi.fn();
 let sidebarHidden = false;
+let sidebarState = "expanded";
+let sidebarIsMobile = false;
 const mockFeatureFlags: Record<string, boolean | undefined> = {};
+
+beforeEach(() => {
+  sidebarState = "expanded";
+  sidebarIsMobile = false;
+});
 
 // The guest invite CTA only exists on hosted deployments — a local/self-hosted
 // install has no WorkOS to sign up through — so these tests run hosted.
@@ -167,8 +174,8 @@ vi.mock("@/components/ui/sidebar", () => ({
   ),
   SidebarTrigger: () => null,
   useSidebar: () => ({
-    isMobile: false,
-    state: "expanded",
+    isMobile: sidebarIsMobile,
+    state: sidebarState,
   }),
 }));
 
@@ -587,6 +594,56 @@ describe("sidebar update pill", () => {
     });
   });
 
+  it("shows a tray icon without overflowing text on collapsed desktop", () => {
+    sidebarState = "collapsed";
+    mockUpdateState.status = { kind: "downloaded", version: "3.12.0" };
+
+    renderSidebar();
+
+    const button = screen.getByRole("button", { name: "Relaunch to update" });
+    expect(button.textContent).toBe("");
+    expect(button).toHaveAttribute("title", "Relaunch to update");
+    expect(button).toHaveClass("size-8", "p-0");
+    expect(button.querySelector("svg.lucide-download")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    fireEvent.click(button);
+    expect(mockUpdateState.restartAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("keeps the full label on mobile=%s", (isMobile) => {
+    sidebarIsMobile = isMobile;
+    sidebarState = isMobile ? "collapsed" : "expanded";
+    mockUpdateState.status = { kind: "downloaded", version: "3.12.0" };
+
+    renderSidebar();
+
+    const button = screen.getByRole("button", { name: "Relaunch to update" });
+    expect(button).toHaveTextContent("Relaunch to update");
+    expect(button).toHaveClass("w-full");
+  });
+
+  it.each([
+    ["pending", "Downloading…"],
+    ["retry-waiting", "Retrying download…"],
+    ["recovering", "Restarting to retry update…"],
+  ])("keeps collapsed %s updates disabled with a spinner", (kind, label) => {
+    sidebarState = "collapsed";
+    mockUpdateState.status = { kind };
+
+    renderSidebar();
+
+    const button = screen.getByRole("button", { name: label });
+    expect(button).toBeDisabled();
+    expect(button.textContent).toBe("");
+    expect(button).toHaveAttribute("title", label);
+    expect(button.querySelector("svg")).toHaveClass("animate-spin", "size-4");
+    fireEvent.click(button);
+    expect(mockUpdateState.restartAndInstall).not.toHaveBeenCalled();
+    expect(mockUpdateState.retryUpdate).not.toHaveBeenCalled();
+  });
+
   it("does not offer installation before a download finishes", () => {
     mockUpdateState.status = { kind: "pending", installRequested: false };
 
@@ -596,6 +653,28 @@ describe("sidebar update pill", () => {
 
     expect(mockUpdateState.restartAndInstall).not.toHaveBeenCalled();
     expect(mockUpdateState.showUpdateError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["instructions", "Update failed"],
+    ["retry-download", "Retry download"],
+    ["relaunch-retry", "Relaunch to retry"],
+  ])("preserves collapsed failure action %s", (action, label) => {
+    sidebarState = "collapsed";
+    mockUpdateState.status = { kind: "failed", action };
+
+    renderSidebar();
+
+    const button = screen.getByRole("button", { name: label });
+    expect(button.textContent).toBe("");
+    expect(button).toHaveAttribute("title", label);
+    fireEvent.click(button);
+    expect(
+      action === "instructions"
+        ? mockUpdateState.showUpdateError
+        : mockUpdateState.retryUpdate,
+    ).toHaveBeenCalledTimes(1);
+    expect(mockUpdateState.restartAndInstall).not.toHaveBeenCalled();
   });
 
   it("reopens the failure message instead of sending the user to GitHub", () => {
