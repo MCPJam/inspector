@@ -1,6 +1,7 @@
 import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
+import type { LogConvexId } from "./log-convex-id.js";
 
 export type Environment =
   | "prod"
@@ -57,14 +58,15 @@ interface CommonLogContext {
   userExternalId?: string | null;
   guestExternalId?: string | null;
   emailDomain?: string | null;
-  orgId?: string | null;
+  orgId?: LogConvexId | null;
   orgPlan?: string | null;
   orgSeatQuantity?: number | null;
   orgCreatedBy?: string | null;
-  projectId?: string | null;
+  projectId?: LogConvexId | null;
   projectRole?: ProjectRole | null;
   accessLevel?: AccessLevel | null;
-  serverId?: string | null;
+  serverId?: LogConvexId | null;
+  /** Not logged until a verified producer writes it. */
   sessionId?: string | null;
   scenarioId?: string | null;
   surface?: Surface | null;

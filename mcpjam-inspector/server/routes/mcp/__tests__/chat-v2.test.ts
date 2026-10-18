@@ -2005,6 +2005,47 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
+    it("streams the persist receipt for a non-harness MCPJam turn", async () => {
+      // Without a receipt the client cannot advance its version baseline, so
+      // its reactive history refresh rehydrates the thread after every turn and
+      // remounts each App iframe into a blank sandbox.
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse(completedStreamEvents());
+          }
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return Response.json({ version: 7 });
+          }
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "google/gemini-2.5-flash", provider: "google" },
+          chatSessionId: "chat-session-receipt",
+          projectId: "project_123",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const receipt = capturedStreamEvents.find(
+          (event) => event?.type === "data-persist-receipt",
+        );
+        expect(receipt?.data).toMatchObject({
+          chatSessionId: "chat-session-receipt",
+          outcome: "saved",
+          version: 7,
+        });
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
     it("persists completed MCPJam conversations when chatSessionId is present", async () => {
       const originalFetch = global.fetch;
       global.fetch = vi
@@ -2575,6 +2616,42 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(res.status).toBe(200);
         await lastStreamExecution;
         expect(fetchMock).toHaveBeenCalledTimes(1);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("streams the persist receipt for a cloud org BYOK turn", async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockImplementation(async (input) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org") {
+          return createSseResponse(completedStreamEvents());
+        }
+        if (url === "https://test-convex.example.com/ingest-chat") {
+          return Response.json({ version: 4 });
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4-turbo", provider: "openai" },
+          chatSessionId: "chat-session-org-receipt",
+          projectId: "project-1",
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const receipt = capturedStreamEvents.find(
+          (event) => event?.type === "data-persist-receipt",
+        );
+        expect(receipt?.data).toMatchObject({
+          chatSessionId: "chat-session-org-receipt",
+          outcome: "saved",
+          version: 4,
+        });
       } finally {
         global.fetch = originalFetch;
       }
