@@ -17,6 +17,8 @@
  *   hooks                                   which hosts' hooks are running
  *   pending [--all]                         records waiting to go to Kestral
  *   synced <id> --ref <kestral id>          mark one as saved
+ *   decision --what <..> --why <..> [--alternatives <..>] [--supersedes D<n>] [--long-lived]
+ *   reconcile --none                        nothing material changed this turn
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -28,10 +30,10 @@ import {
   requireTask,
   now,
   updateBranch,
-  updateTask,
   whoami,
 } from './effort.mjs';
-import { queueCheckpoint, syncCommands } from './sync.mjs';
+import { decisionCommands } from './decisions.mjs';
+import { changeTask, queueCheckpoint, syncCommands } from './sync.mjs';
 import { hostStatus } from './setup.mjs';
 import { read, taskRecord, write } from './state.mjs';
 import {
@@ -67,13 +69,6 @@ const json = (path) => JSON.parse(readFileSync(path, 'utf8'));
 function checkpointFile(path) {
   const text = readFileSync(path, 'utf8');
   return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
-}
-
-/** Change the linked task and queue its checkpoint for Kestral. */
-function changeTask(effort, change) {
-  const task = updateTask(effort.co, requireTask(effort), change);
-  queueCheckpoint(effort.co, task);
-  return task;
 }
 
 function status(effort, { flags }) {
@@ -178,7 +173,7 @@ export const coreCommands = {
   },
 };
 
-const COMMANDS = { ...coreCommands, ...syncCommands };
+const COMMANDS = { ...coreCommands, ...syncCommands, ...decisionCommands };
 
 export function run(argv, cwd = process.cwd(), commands = COMMANDS) {
   const [name, ...rest] = argv;

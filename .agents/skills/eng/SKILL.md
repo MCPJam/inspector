@@ -100,6 +100,25 @@ architecture reopens the approval it touches: `eng reopen specs --reason ...`
 document, and ask again. A routine implementation choice only needs a
 decision entry.
 
+Log each consequential decision as you make it:
+
+```bash
+eng decision --what "Queue uploads in the git common dir" \
+  --why "Survives worktree removal" --alternatives "Per-worktree file" \
+  [--by "<who decided>"] [--supersedes D2] [--long-lived]
+```
+
+It queues one task comment: what, why, alternatives and who decided. A
+reversal names the entry it supersedes. `--long-lived` flags a decision for a
+person to promote to a lasting document; never promote one yourself.
+
+When a turn that changed source ends, the Stop hook asks you once to
+reconcile those changes with the approved plan: record the missing decisions,
+or `eng reconcile --none` if nothing material changed. The same reminder
+lists records the turn queued for Kestral. It fires at most once per turn and
+never blocks an edit, a commit or a PR; if you cannot act on it, say why and
+finish.
+
 ## Setup, once per machine
 
 1. Add the Kestral connector in each agent you use (Claude Code, Codex and

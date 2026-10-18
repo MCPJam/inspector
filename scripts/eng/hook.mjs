@@ -13,10 +13,13 @@ import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { stopFollowup, turnBaseline } from './decisions.mjs';
 import { loadEffort, now, updateBranch } from './effort.mjs';
 import { INJECTS, normalize, render } from './hosts.mjs';
 import { isBuildPrompt, isSourceEdit, offerText } from './nudge.mjs';
+import { pending } from './outbox.mjs';
 import { noteHostRun } from './setup.mjs';
+import { syncInstructions } from './sync.mjs';
 import { hashKey, update } from './state.mjs';
 import { nextStep, stage } from './workflow.mjs';
 
@@ -38,7 +41,13 @@ function offer({ co, task }, trigger) {
 
 function resume({ co, task }) {
   const link = task.url ? ` (${task.url})` : '';
-  return `eng: ${co.branch} is on Kestral task ${task.key}${link}, stage ${stage(task)}. Next: ${nextStep(task)}`;
+  const sync = syncInstructions(pending(co, task.key));
+  return [
+    `eng: ${co.branch} is on Kestral task ${task.key}${link}, stage ${stage(task)}. Next: ${nextStep(task)}`,
+    sync,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function noteEdits(event, effort, session) {
@@ -57,13 +66,14 @@ export const handlers = {
     session.turn += 1;
     session.turnStartedAt = now();
     session.turnFiles = [];
+    session.turnBaseline = turnBaseline(effort);
     return isBuildPrompt(event.prompt)
       ? offer(effort, 'a build request')
       : null;
   },
   edit: noteEdits,
   tool: noteEdits,
-  stop: () => null,
+  stop: stopFollowup,
   end: () => null,
 };
 

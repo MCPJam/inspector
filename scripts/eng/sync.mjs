@@ -2,7 +2,7 @@
  * The CLI side of the outbox: list what waits for Kestral, mark it saved,
  * and queue the workflow checkpoint whenever the task record changes.
  */
-import { requireTask } from './effort.mjs';
+import { requireTask, updateTask } from './effort.mjs';
 import { describePending, enqueue, markSynced, pending } from './outbox.mjs';
 import { CLI } from './workflow.mjs';
 
@@ -16,6 +16,13 @@ export function queueCheckpoint(co, task) {
     title: `eng checkpoint for ${task.key}`,
     body: ['```json', JSON.stringify(saved, null, 2), '```'].join('\n'),
   });
+}
+
+/** Change the linked task and queue its checkpoint for Kestral. */
+export function changeTask(effort, change) {
+  const task = updateTask(effort.co, requireTask(effort), change);
+  queueCheckpoint(effort.co, task);
+  return task;
 }
 
 export function syncInstructions(items) {
