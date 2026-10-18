@@ -172,6 +172,18 @@ commit each result was verified at, unresolved risks, and anything not yet
 on Kestral or not captured. Save it on the task, `eng synced`, then sync the
 remaining records so its last section is empty, or say why it is not.
 
+For the PR, write the prose sections the record cannot know (user story,
+what this does, architecture and the rest of the template) to a JSON object
+keyed by section name, and run
+
+```bash
+eng pr-body --review-url <review page URL> --fields <sections.json>
+```
+
+It fills every section of `.github/pull_request_template.md`, links the
+review page on line one, and refuses to leave a section empty. Keep the
+existing PR Links lines and CI as they are.
+
 ## Session records
 
 On a linked branch the hooks keep one record per agent session: at every

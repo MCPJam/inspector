@@ -24,6 +24,7 @@
  *   scenario add <text> | <id> <passed|failed|unverified> [--evidence <ref>] [--note <why>]
  *   ui none | states <a,b> | shot <path> --phase <..> --state <..> [--steps <..>] | deviation <text>
  *   review-page [--base <ref>] [--notes <plan-vs-actual.md>] [--risk <text>]
+ *   pr-body --review-url <url> --fields <sections.json>
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -39,6 +40,7 @@ import {
 } from './effort.mjs';
 import { decisionCommands } from './decisions.mjs';
 import { evidenceCommands } from './evidence.mjs';
+import { prBodyCommands } from './prbody.mjs';
 import { repoCommands } from './repos.mjs';
 import { reviewCommands } from './review.mjs';
 import { recoverTask, recoveryHint, why } from './trailers.mjs';
@@ -195,6 +197,7 @@ const COMMANDS = {
   ...evidenceCommands,
   ...uiCommands,
   ...reviewCommands,
+  ...prBodyCommands,
 };
 
 export function run(argv, cwd = process.cwd(), commands = COMMANDS) {
