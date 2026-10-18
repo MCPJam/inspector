@@ -131,6 +131,16 @@ lists records the turn queued for Kestral. It fires at most once per turn and
 never blocks an edit, a commit or a PR; if you cannot act on it, say why and
 finish.
 
+## Why is this line here?
+
+Commits on a linked branch get a `Kestral: <KEY>` trailer from the
+`commit-msg` git hook, whoever commits. Keep it when you rewrite a message.
+To answer why code is the way it is, run `eng why <file>:<line>`: it follows
+the blame to the commit, its trailer to the task, and lists the decisions
+recorded locally. Read the task's decision comments and session records
+before answering. When the commit has no trailer, say that no record exists
+rather than guess.
+
 ## Setup, once per machine
 
 1. Add the Kestral connector in each agent you use (Claude Code, Codex and

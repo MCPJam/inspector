@@ -1,0 +1,9 @@
+#!/bin/sh
+# Adds the `Kestral: <task>` trailer to commits on a branch linked to a task
+# in the eng flow (scripts/eng/trailers.mjs), for every author. It never
+# refuses a commit.
+
+command -v node >/dev/null 2>&1 || exit 0
+root="$(git rev-parse --show-toplevel)" || exit 0
+[ -f "$root/scripts/eng/trailers.mjs" ] && node "$root/scripts/eng/trailers.mjs" "$1"
+exit 0

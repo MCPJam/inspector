@@ -20,6 +20,7 @@
  *   decision --what <..> --why <..> [--alternatives <..>] [--supersedes D<n>] [--long-lived]
  *   reconcile --none                        nothing material changed this turn
  *   repos [--json]                          find the other repository, read-only
+ *   why <file>:<line>                       the commit and task behind a line
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -35,6 +36,7 @@ import {
 } from './effort.mjs';
 import { decisionCommands } from './decisions.mjs';
 import { repoCommands } from './repos.mjs';
+import { recoverTask, recoveryHint, why } from './trailers.mjs';
 import { changeTask, queueCheckpoint, syncCommands } from './sync.mjs';
 import { hostStatus } from './setup.mjs';
 import { read, taskRecord, write } from './state.mjs';
@@ -87,7 +89,10 @@ function status(effort, { flags }) {
     return JSON.stringify({ repo: co.repo, branch: co.branch, ...summary });
   }
   const lines = [`Branch: ${co.branch ?? '(detached)'} in ${co.repo}`];
-  if (!task) {
+  const recovered = task ? null : recoverTask(co);
+  if (recovered) {
+    lines.push(recoveryHint(recovered));
+  } else if (!task) {
     lines.push(
       `Task: none (flow ${summary.offer}). Start with \`${CLI} link <TASK-KEY>\`.`
     );
@@ -101,6 +106,7 @@ function status(effort, { flags }) {
 export const coreCommands = {
   status,
   hooks: (effort) => hostStatus(effort.co).join('\n'),
+  why: (effort, { positional }) => why(effort, positional[0]),
   link: (effort, { positional, flags }) => {
     const task = linkBranch(effort.co, positional[0], flags.url);
     queueCheckpoint(effort.co, task);

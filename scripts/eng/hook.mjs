@@ -20,8 +20,9 @@ import { isBuildPrompt, isSourceEdit, offerText } from './nudge.mjs';
 import { pending } from './outbox.mjs';
 import { describeCounterpart, discover } from './repos.mjs';
 import { noteHostRun } from './setup.mjs';
-import { syncInstructions } from './sync.mjs';
 import { hashKey, update } from './state.mjs';
+import { syncInstructions } from './sync.mjs';
+import { recoverTask, recoveryHint } from './trailers.mjs';
 import { nextStep, stage } from './workflow.mjs';
 
 export const sessionRecord = (host, sessionId) =>
@@ -63,7 +64,11 @@ function noteEdits(event, effort, session) {
 
 /** One handler per event kind. Each returns context text, a result or null. */
 export const handlers = {
-  start: (event, effort) => (effort.task ? resume(effort) : null),
+  start: (event, effort) => {
+    if (effort.task) return resume(effort);
+    const recovered = recoverTask(effort.co);
+    return recovered ? `eng: ${recoveryHint(recovered)}` : null;
+  },
   prompt: (event, effort, session) => {
     session.turn += 1;
     session.turnStartedAt = now();
