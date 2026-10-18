@@ -495,3 +495,16 @@ it("uses current run-owned App state for the next turn without persisting it", a
   expect(JSON.stringify(runAssistantTurnMock.mock.calls[0])).toContain("Selected bolt");
   expect(JSON.stringify(params.acc.messageHistory)).not.toContain("Selected bolt");
 });
+
+describe("driveHostedEvalTurn engine options", () => {
+  it("asks the engine to resend steps the spending lane refused as busy", async () => {
+    runAssistantTurnMock.mockClear();
+    runAssistantTurnMock.mockImplementationOnce(async () => {
+      throw new Error("stop after reading options");
+    });
+    await driveHostedEvalTurn(baseParams());
+    expect(runAssistantTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({ retrySpendingBusy: true }),
+    );
+  });
+});

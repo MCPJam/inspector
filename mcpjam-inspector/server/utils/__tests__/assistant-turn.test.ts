@@ -218,6 +218,47 @@ describe("runAssistantTurn", () => {
     expect(fetchBody.journeyRunId).toBe("run_abc");
   });
 
+  it("threads retrySpendingBusy to the engine, which resends a busy step", async () => {
+    const busy = () =>
+      new Response(
+        JSON.stringify({ code: "spending_reservation_busy", retryAfter: 1 }),
+        { status: 503 }
+      );
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValue(
+        createSseResponse([
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ])
+      );
+
+    const resolved = await runAssistantTurn({
+      messages: [{ role: "user", content: "Hi." }] as any,
+      modelDefinition: baseModelDefinition,
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      authContext: { kind: "user_bearer", token: "Bearer test-token" },
+      sourceType: "scenario",
+      origin: "scenario",
+      approvalMode: "auto-deny",
+      streamSink: "none",
+      persistMode: "caller",
+      retrySpendingBusy: true,
+    });
+    await lastExecution;
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(resolved.finishReason).toBe("stop");
+  });
+
   it("returns a Response when streamSink:ui and threads through to the engine", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       createSseResponse([

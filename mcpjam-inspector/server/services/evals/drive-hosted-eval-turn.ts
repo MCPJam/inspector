@@ -889,6 +889,9 @@ export async function driveHostedEvalTurn(
       extraBodyFields: mergedExtraBodyFields,
       ...(params.extraHeaders ? { extraHeaders: params.extraHeaders } : {}),
       abortSignal: turnDeadline.signal,
+      // A busy spending lane refused the step before any provider call, so it
+      // is safe to send again; the turn deadline bounds the wait.
+      retrySpendingBusy: true,
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
       discoveryState: prepared.discoveryState,

@@ -365,6 +365,7 @@ import {
 import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
 import { serviceCredentialHeaders } from "../services/service-credential.js";
+import { retryWhileSpendingBusy } from "./stream-busy-retry.js";
 
 const DEFAULT_MAX_STEPS = DEFAULT_TURN_MAX_STEPS;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
@@ -1456,6 +1457,12 @@ export interface MCPJamHandlerOptions {
    */
   abortSignal?: AbortSignal;
   /**
+   * Resend a step the backend refused as `spending_reservation_busy` (decided
+   * before any provider call) until the abort signal fires. Eval turns opt in;
+   * interactive chat keeps surfacing the refusal at once.
+   */
+  retrySpendingBusy?: boolean;
+  /**
    * Idle heartbeat interval. While the stream has been silent for at least
    * this many ms, the handler writes a transient `heartbeat` trace event so
    * LB/proxy idle timers don't sever the SSE connection. Defaults to
@@ -1560,6 +1567,7 @@ interface StepContext {
   // Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing.
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   abortSignal?: AbortSignal;
+  retrySpendingBusy?: boolean;
 }
 
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
@@ -3804,8 +3812,8 @@ async function processOneStep(ctx: StepContext): Promise<{
   // back: a provider that rejects the request outright still failed as the
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
-  try {
-    res = await fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
+  const sendStep = () =>
+    fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
       method: "POST",
       headers: convexHeaders,
       body: JSON.stringify({
@@ -3833,6 +3841,13 @@ async function processOneStep(ctx: StepContext): Promise<{
       }),
       ...(abortSignal ? { signal: abortSignal } : {}),
     });
+  try {
+    res = await sendStep();
+    if (ctx.retrySpendingBusy) {
+      res = await retryWhileSpendingBusy(res, sendStep, {
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+    }
   } catch (error) {
     // AbortError on fetch is the standard cancellation signal — propagate
     // it without writing a fail span. Real network errors fall through to
@@ -5470,6 +5485,7 @@ export async function runChatEngineLoop(
             // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
             prepareAdvertisedTools,
             abortSignal,
+            ...(options.retrySpendingBusy ? { retrySpendingBusy: true } : {}),
           });
 
         steps++;
