@@ -131,7 +131,8 @@ files or the tree.
 
 Task-specific workflows live in `.agents/skills/`: `verify-before-pr`,
 `run-inspector`, `ui-change`, `ui-copy`, `server-change`, `fix-ci`,
-`investigate-production`. `REVIEW.md` lists
+`investigate-production`, `eng` (task to PR on a Kestral task, mirrored from
+the backend) and `engineering-writing`. `REVIEW.md` lists
 what reviewers check.
 
 ## Design

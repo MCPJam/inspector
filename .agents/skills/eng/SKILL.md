@@ -1,0 +1,96 @@
+---
+name: eng
+description: Take an engineering task from prompt to PR on one Kestral task. The engineer approves a product spec, an engineering spec and a fresh-agent-reviewed plan; you draft them, build, log decisions, capture sessions, verify the acceptance scenarios and assemble the review page and PR body. Use when the engineer accepts the flow when a hook offers it, types /eng, or asks to resume or revisit a step.
+---
+
+# Engineering flow
+
+The engineer approves two things: the specs, then the reviewed plan. You do
+the rest and record it as you go. Kestral holds every artifact. The local
+record that the hooks, resume and the review page read is kept by
+
+```bash
+node scripts/eng/cli.mjs <command>   # "eng <command>" below
+```
+
+Use your Kestral connector for every task, document, comment and upload. The
+hooks run outside your session and cannot call Kestral; they tell you what is
+pending and you do it.
+
+## Start or resume
+
+The hooks offer the flow once per branch, on a build-shaped prompt or on the
+first source edit, whichever comes first. Ask the engineer in one sentence.
+
+- **Yes.** Find or create the Kestral task, then
+  `eng link <KEY> --url <task url>`. One task covers the whole effort:
+  stacked branches and work in both repositories link to the same key.
+- **No.** `eng decline`. Neither nudge fires again on this branch.
+- **/eng**, or a fresh session. `eng status` and continue from its "Next".
+  On a checkout with no local record, read the latest checkpoint on the task,
+  save it to a scratch file and `eng restore --file <path>`.
+
+After every approval or reopen, post `eng checkpoint` on the task as the
+workflow checkpoint. That comment is what a fresh checkout restores from.
+
+## Specs
+
+Draft both from `templates/`, then save each on the task as a document.
+
+- **Product spec** (`templates/product-spec.md`): who it is for, intended
+  behavior, non-goals, acceptance scenarios, open decisions, and a user-flow
+  or state diagram.
+- **Engineering spec** (`templates/engineering-spec.md`): current and
+  intended architecture, affected repositories, reuse and deletion,
+  interfaces, failure handling, verification, rollout, and an architecture or
+  sequence diagram.
+
+Keep the split the billing pages use: what a customer sees or decides goes in
+the product spec; how it is built goes in the engineering spec. Keep each
+summary to about one screen and link the detail rather than leave out a
+consequential decision. Label every diagram and description current,
+proposed or implemented.
+
+For a user-visible change, also create the UI diff from
+`templates/ui-diff.md` before asking for approval. Without one, the
+engineering spec says "None: no UI change."
+
+Record each saved document with its Kestral id and version:
+`eng doc product-spec --ref <doc id> --revision <version>`, and the same for
+`engineering-spec` and `ui-diff`. Without a version, export the document and
+pass `--file <export>` to hash it.
+
+Show the engineer both specs and ask for approval. Record it only when they
+give it: `eng approve specs`.
+
+## Plan
+
+1. Draft the plan from `templates/plan.md` (five sections), save it and
+   `eng doc plan ...`.
+2. Have a fresh agent review it. It must not inherit your conversation:
+   Claude Code, a subagent; Codex, a new `codex exec` session; Cursor, a new
+   chat. Give it `templates/plan-review.md` filled in with the task, both
+   specs, the plan and the code paths it touches, and nothing else.
+3. Write each finding with your disposition (`accepted`, `rejected` or
+   `deferred`, plus a note) to a JSON array and
+   `eng review --file <findings.json> --revision <reviewed revision>`. Post
+   the findings and dispositions on the task.
+4. Revise the plan, save it, `eng doc plan ...` with the new revision.
+5. Show the engineer the plan and the review. On approval, `eng approve plan`.
+
+Leave the filled-in review prompt on the task as a comment, so the engineer
+can run a second agent on it themselves.
+
+## Build
+
+Build to the approved plan. A material change to approved behavior, scope or
+architecture reopens the approval it touches: `eng reopen specs --reason ...`
+(which reopens the plan too) or `eng reopen plan --reason ...`, update the
+document, and ask again. A routine implementation choice only needs a
+decision entry.
+
+## Writing
+
+Apply the `engineering-writing` skill to the prose you write: specs, plan,
+decisions, review page and PR body. Leave literal commands, results and
+quotations as they are.
