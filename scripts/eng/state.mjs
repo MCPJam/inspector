@@ -22,10 +22,16 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
+// A lock older than LOCK_STALE_MS is taken over once its holder has exited;
+// past LOCK_ABANDONED_MS it is taken over whatever the holder looks like,
+// so a reused process id cannot keep a record locked for good.
 const LOCK_STALE_MS = 10_000;
+const LOCK_ABANDONED_MS = 300_000;
 const LOCK_WAIT_MS = 5_000;
+const OWNER = `${hostname()} ${process.pid}`;
 
 export function git(args, cwd) {
   return execFileSync('git', args, {
@@ -35,8 +41,11 @@ export function git(args, cwd) {
   }).trim();
 }
 
-/** `owner/name` of the origin remote, lowercased; the folder name without one. */
-export function repoId(root) {
+/**
+ * `owner/name` of the origin remote, lowercased. Without one, the main
+ * checkout's folder name, which every worktree of it shares.
+ */
+function repoId(root, common) {
   try {
     const url = git(['remote', 'get-url', 'origin'], root);
     const match = /[:/]([^/:]+\/[^/]+?)(?:\.git)?\/?$/.exec(url);
@@ -44,7 +53,10 @@ export function repoId(root) {
   } catch {
     // No origin remote: a scratch or test checkout, named by its folder.
   }
-  return basename(root).toLowerCase();
+  const shared = basename(common) === '.git' ? dirname(common) : common;
+  return basename(shared)
+    .replace(/\.git$/, '')
+    .toLowerCase();
 }
 
 /**
@@ -64,6 +76,8 @@ export function checkout(cwd) {
       cwd
     ).split('\n');
   } catch {
+    // Not a git checkout, or git cannot read it: the flow stays off here,
+    // and the CLI says so rather than guessing at a repository.
     return null;
   }
   let branch = null;
@@ -72,7 +86,12 @@ export function checkout(cwd) {
   } catch {
     // Detached HEAD: there is no branch to scope records by.
   }
-  return { root, branch, repo: repoId(root), dir: join(common, 'eng') };
+  return {
+    root,
+    branch,
+    repo: repoId(root, common),
+    dir: join(common, 'eng'),
+  };
 }
 
 export const hashKey = (...parts) =>
@@ -81,7 +100,8 @@ export const hashKey = (...parts) =>
 export const branchRecord = (repo, branch) =>
   `branches/${hashKey(repo, branch)}.json`;
 
-export const taskRecord = (key) => `tasks/${key.replace(/[^\w.-]/g, '_')}.json`;
+// Encoded, not replaced, so distinct keys never share a record.
+export const taskRecord = (key) => `tasks/${encodeURIComponent(key)}.json`;
 
 export function read(dir, name, fallback = null) {
   try {
@@ -92,7 +112,7 @@ export function read(dir, name, fallback = null) {
   }
 }
 
-export function write(dir, name, value) {
+function replace(dir, name, value) {
   const file = join(dir, name);
   mkdirSync(dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
@@ -103,6 +123,66 @@ export function write(dir, name, value) {
 const pause = (ms) =>
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
+function running(pid) {
+  if (!(pid > 0)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+/** Milliseconds since `path` changed, or null when it is gone. */
+function age(path) {
+  try {
+    return Date.now() - statSync(path).mtimeMs;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+/** Whether the holder of `lockDir` crashed or exited without releasing it. */
+function abandoned(lockDir) {
+  const held = age(lockDir);
+  if (held === null || held < LOCK_STALE_MS) return false;
+  if (held > LOCK_ABANDONED_MS) return true;
+  let owner = '';
+  try {
+    owner = readFileSync(join(lockDir, 'owner'), 'utf8');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  const [host, pid] = owner.split(' ');
+  return host !== hostname() || !running(Number(pid));
+}
+
+/**
+ * Remove `lockDir` if it is abandoned; true when it was. One process
+ * reclaims at a time and checks again under that guard, so it never removes
+ * a lock another process has just taken in its place.
+ */
+function reclaim(lockDir) {
+  const guard = `${lockDir}.reclaim`;
+  try {
+    mkdirSync(guard);
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    // The guard is held for a moment only; one this old was left by a crash.
+    if (age(guard) > LOCK_STALE_MS)
+      rmSync(guard, { recursive: true, force: true });
+    return false;
+  }
+  try {
+    if (!abandoned(lockDir)) return false;
+    rmSync(lockDir, { recursive: true, force: true });
+    return true;
+  } finally {
+    rmSync(guard, { recursive: true, force: true });
+  }
+}
+
 function lock(file) {
   const lockDir = `${file}.lock`;
   mkdirSync(dirname(file), { recursive: true });
@@ -110,19 +190,12 @@ function lock(file) {
   for (;;) {
     try {
       mkdirSync(lockDir);
+      writeFileSync(join(lockDir, 'owner'), OWNER);
       return () => rmSync(lockDir, { recursive: true, force: true });
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
     }
-    // A holder that crashed leaves its lock behind; take it over once stale.
-    try {
-      if (Date.now() - statSync(lockDir).mtimeMs > LOCK_STALE_MS) {
-        rmSync(lockDir, { recursive: true, force: true });
-        continue;
-      }
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
+    if (abandoned(lockDir) && reclaim(lockDir)) continue;
     if (Date.now() > deadline) throw new Error(`State is locked: ${lockDir}`);
     pause(20);
   }
@@ -136,7 +209,7 @@ export function update(dir, name, change, fallback = {}) {
   const release = lock(join(dir, name));
   try {
     const next = change(read(dir, name, structuredClone(fallback)));
-    write(dir, name, next);
+    replace(dir, name, next);
     return next;
   } finally {
     release();
