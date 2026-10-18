@@ -1,6 +1,17 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/eng/hook.mjs\" claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Write",
@@ -21,6 +32,11 @@
             "type": "command",
             "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/slop/hook.mjs\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/eng/hook.mjs\" claude",
+            "timeout": 10
           }
         ]
       }
@@ -31,6 +47,11 @@
           {
             "type": "command",
             "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/slop/hook.mjs\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/eng/hook.mjs\" claude",
             "timeout": 10
           }
         ]
@@ -43,6 +64,22 @@
             "type": "command",
             "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/slop/hook.mjs\"",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/eng/hook.mjs\" claude",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$CLAUDE_PROJECT_DIR/scripts/eng/hook.mjs\" claude",
+            "timeout": 10
           }
         ]
       }
