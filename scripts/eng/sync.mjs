@@ -25,6 +25,16 @@ export function changeTask(effort, change) {
   return task;
 }
 
+/** Like changeTask, but returns what `change` returned rather than the task. */
+export function changeTaskFor(effort, change) {
+  let out;
+  changeTask(effort, (task) => {
+    out = change(task);
+    return task;
+  });
+  return out;
+}
+
 export function syncInstructions(items) {
   if (!items.length) return null;
   return [

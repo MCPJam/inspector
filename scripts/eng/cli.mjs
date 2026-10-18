@@ -21,6 +21,7 @@
  *   reconcile --none                        nothing material changed this turn
  *   repos [--json]                          find the other repository, read-only
  *   why <file>:<line>                       the commit and task behind a line
+ *   scenario add <text> | <id> <passed|failed|unverified> [--evidence <ref>] [--note <why>]
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -35,6 +36,7 @@ import {
   whoami,
 } from './effort.mjs';
 import { decisionCommands } from './decisions.mjs';
+import { evidenceCommands } from './evidence.mjs';
 import { repoCommands } from './repos.mjs';
 import { recoverTask, recoveryHint, why } from './trailers.mjs';
 import { changeTask, queueCheckpoint, syncCommands } from './sync.mjs';
@@ -186,6 +188,7 @@ const COMMANDS = {
   ...syncCommands,
   ...decisionCommands,
   ...repoCommands,
+  ...evidenceCommands,
 };
 
 export function run(argv, cwd = process.cwd(), commands = COMMANDS) {

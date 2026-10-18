@@ -131,6 +131,21 @@ lists records the turn queued for Kestral. It fires at most once per turn and
 never blocks an edit, a commit or a PR; if you cannot act on it, say why and
 finish.
 
+## Verify
+
+Add each acceptance scenario from the approved product spec with
+`eng scenario add "<scenario>"`, then record what happened:
+
+```bash
+eng scenario S1 passed --evidence "npm run test:once -- upload: 4 passed"
+eng scenario S2 failed --evidence "<log or artifact>"   # back to build
+eng scenario S3 unverified --note "No staging access"
+```
+
+A pass or failure needs evidence; each result records the commit and
+whether the tree was clean. A failed scenario sends the effort back to build.
+Verify against committed code so the evidence matches the PR.
+
 ## Session records
 
 On a linked branch the hooks keep one record per agent session: at every

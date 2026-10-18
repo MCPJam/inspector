@@ -136,10 +136,18 @@ export function recordReview(task, { revision, findings, at }) {
   return task;
 }
 
+/**
+ * A scenario is settled when it passed, or was left unverified on purpose
+ * with a note saying why. Any failure sends the effort back to build.
+ */
+const settled = (s) =>
+  s.result === 'passed' || (s.result === 'unverified' && Boolean(s.note));
+
 export function stage(task) {
   if (!isApproved(task, 'specs')) return 'specs';
   if (!isApproved(task, 'plan')) return 'plan';
-  return 'build';
+  const scenarios = task.scenarios ?? [];
+  return scenarios.length && scenarios.every(settled) ? 'review' : 'build';
 }
 
 /** The one thing the agent should do next, as a sentence it can act on. */
@@ -156,5 +164,12 @@ export function nextStep(task) {
       ? `${blocker} See "Plan" in .agents/skills/eng/SKILL.md.`
       : `Show the engineer the reviewed plan and ask for approval; record it with \`${CLI} approve plan\`.`;
   }
-  return `Build to the approved plan. Log each consequential decision with \`${CLI} decision\`.`;
+  if (current === 'review') {
+    return 'Every scenario is settled. Assemble the review page and the PR body; see "Review package" in .agents/skills/eng/SKILL.md.';
+  }
+  const failed = (task.scenarios ?? []).filter((s) => s.result === 'failed');
+  if (failed.length) {
+    return `Scenario ${failed.map((s) => s.id).join(', ')} failed: fix the build, then verify again with \`${CLI} scenario\`.`;
+  }
+  return `Build to the approved plan. Log each consequential decision with \`${CLI} decision\`, and record each acceptance scenario's result with \`${CLI} scenario\`.`;
 }
