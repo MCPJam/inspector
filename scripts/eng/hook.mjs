@@ -18,6 +18,7 @@ import { loadEffort, now, updateBranch } from './effort.mjs';
 import { INJECTS, normalize, render } from './hosts.mjs';
 import { isBuildPrompt, isSourceEdit, offerText } from './nudge.mjs';
 import { pending } from './outbox.mjs';
+import { describeCounterpart, discover } from './repos.mjs';
 import { noteHostRun } from './setup.mjs';
 import { syncInstructions } from './sync.mjs';
 import { hashKey, update } from './state.mjs';
@@ -44,6 +45,7 @@ function resume({ co, task }) {
   const sync = syncInstructions(pending(co, task.key));
   return [
     `eng: ${co.branch} is on Kestral task ${task.key}${link}, stage ${stage(task)}. Next: ${nextStep(task)}`,
+    describeCounterpart(discover(co, { fast: true })),
     sync,
   ]
     .filter(Boolean)

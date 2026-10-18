@@ -19,6 +19,7 @@
  *   synced <id> --ref <kestral id>          mark one as saved
  *   decision --what <..> --why <..> [--alternatives <..>] [--supersedes D<n>] [--long-lived]
  *   reconcile --none                        nothing material changed this turn
+ *   repos [--json]                          find the other repository, read-only
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -33,6 +34,7 @@ import {
   whoami,
 } from './effort.mjs';
 import { decisionCommands } from './decisions.mjs';
+import { repoCommands } from './repos.mjs';
 import { changeTask, queueCheckpoint, syncCommands } from './sync.mjs';
 import { hostStatus } from './setup.mjs';
 import { read, taskRecord, write } from './state.mjs';
@@ -173,7 +175,12 @@ export const coreCommands = {
   },
 };
 
-const COMMANDS = { ...coreCommands, ...syncCommands, ...decisionCommands };
+const COMMANDS = {
+  ...coreCommands,
+  ...syncCommands,
+  ...decisionCommands,
+  ...repoCommands,
+};
 
 export function run(argv, cwd = process.cwd(), commands = COMMANDS) {
   const [name, ...rest] = argv;

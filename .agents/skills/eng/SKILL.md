@@ -44,6 +44,18 @@ worktree, and the review page lists whatever is still unsynced.
 
 The checkpoint is what a fresh checkout restores from.
 
+## The other repository
+
+Backend and Inspector work often spans both. `eng repos` finds the other
+checkout, read-only: `MCPJAM_INSPECTOR_DIR` or `MCPJAM_BACKEND_DIR` first,
+then the cached path, then a bounded search. It reports the path, branch,
+revision and how far it is from the local `origin/main`, which is only as
+fresh as that checkout's last fetch; say so when it matters.
+
+Never clone, fetch, pull, reset or switch the other checkout. If it is
+missing, say so and carry on with what does not need it. Ask the engineer
+for its path only when a required step cannot happen without it.
+
 ## Specs
 
 Draft both from `templates/`, then save each on the task as a document.
