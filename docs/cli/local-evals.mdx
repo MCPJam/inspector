@@ -1,12 +1,26 @@
 ---
 title: "Local Evals"
-description: "Run an MCPJam eval suite file on your machine with mcpjam test — no account needed for BYOK, and nothing is ever uploaded"
+description: "Run an MCPJam eval suite file on your machine with mcpjam test with local results and an MCPJam identity"
 icon: "flask"
 ---
 
-`mcpjam test <file>` runs an MCPJam suite file locally: it connects your MCP servers, drives each case's prompts through a model, grades the transcript with the same assertions a hosted run uses, and decides the run with the same verdict policy. Bring your own provider key and no MCPJam account is required. With MCPJam-hosted inference it uses your existing CLI login and billing.
+<Note>
+The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+</Note>
 
-Results are **never uploaded**. The command writes to your terminal and, if you ask, to a report file — nothing else. Like every command, it sends the CLI's single anonymous [telemetry](/cli/telemetry) event, which `--no-telemetry` or `DO_NOT_TRACK=1` turns off; the run adds no telemetry of its own.
+`mcpjam test <file>` runs an MCPJam suite file locally: it connects your MCP servers, drives each case's prompts through a model, grades the transcript with the same assertions a hosted run uses, and decides the run with the same verdict policy. Bring your own provider key and authenticate the run with MCPJam. With MCPJam-hosted inference it uses your existing CLI login and billing.
+
+Results are **never uploaded**. The command writes results to your terminal and, if you ask, to a report file. It records the run start with MCPJam. Like every command, it sends the CLI's single anonymous [telemetry](/cli/telemetry) event, which `--no-telemetry` or `DO_NOT_TRACK=1` turns off; the run adds no telemetry of its own.
+
+## Eval identity and local data
+
+Run `mcpjam cloud login` locally, or set `MCPJAM_API_KEY` to an organization `sk_` key in CI. The SDK also accepts `apiKey` or `mcpjamAuth` in run options. Explicit credentials take precedence over `MCPJAM_API_KEY`, which takes precedence over the saved CLI login. An invalid explicit credential never falls back to another account. CI never starts an interactive login. Ask an organization admin for a key if you cannot create one.
+
+Every logical run needs an online start response. MCPJam retries transient failures within ten seconds, then stops before execution. A prior successful run does not enable offline execution. The CLI resolves the project using its existing `--project`, environment, and linked-project settings; a key can only access its own organization.
+
+With results uploads disabled, the request sends only the credential in the authorization header, project selection, a new run-start ID, client version and surface (SDK, CLI, or Vitest), planned iteration count, provider names, and whether a client profile is used (`unknown` for custom executors). The server resolves the organization and account. It sends no prompts, outputs, tool calls, or server URLs. Retries reuse the same ID. Planned iterations are intent, not completed usage or a charge. This release adds no debit, quota draw, or balance refusal.
+
+`DO_NOT_TRACK`, `MCPJAM_TELEMETRY_DISABLED`, and CLI telemetry settings disable analytics, not the required run-start request. Results remain local unless result uploading is enabled separately.
 
 ## Quick start
 
