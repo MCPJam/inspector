@@ -3425,15 +3425,13 @@ export function useChatSession(
     !hostedScenarioId &&
     localHarnessExecution?.requested === true;
   const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi;
-  const shouldUseOrgAwareChatApi =
-    isHostedTransport ||
-    (selectedModelUsesOrgRuntime &&
-      !localMcpRuntimeRequired &&
-      // Local execution only exists on the local `/api/mcp` route. An
-      // org-runtime model would otherwise route an explicitly local turn to
-      // `/api/web/chat-v2`, which refuses the target — so the ask has to keep
-      // the turn on the route that can honour it.
-      !localHarnessRequested);
+  // An org-runtime model stays on the local `/api/mcp` route in a local build,
+  // like every other model. That route resolves the org connection itself (the
+  // key stays in Convex) and runs tools on this app's own MCP connections, so
+  // a tool result names its server the way the widget looks it up. The web
+  // route keys servers by Convex id — which the local widget endpoints can't
+  // resolve ("Unknown MCP server") — and reconnects every server per turn.
+  const shouldUseOrgAwareChatApi = isHostedTransport;
   const requestChoice = useMemo(() => chatRequestSelection({
     intent: effectiveSelectionIntent,
     selection: savedSelection,
@@ -3677,11 +3675,10 @@ export function useChatSession(
     //
     // Scoped to the /api/mcp/chat-v2 path (`!shouldUseOrgAwareChatApi`): the
     // local engine only exists on the local server's mcp route (both this
-    // transmission AND the server-side resolver live there). An org-runtime
-    // model routes to /api/web/chat-v2, which has no local engine — so we send
-    // nothing local there (no stray consent header on the web route) and that
-    // turn's bash resolves cloud, as it must. Local engine + org model is a
-    // deliberate non-combo in v1.
+    // transmission AND the server-side resolver live there). A turn on
+    // /api/web/chat-v2 has no local engine — so we send nothing local there
+    // (no stray consent header on the web route) and that turn's bash
+    // resolves cloud, as it must.
     const sendLocalEngine =
       !shouldUseOrgAwareChatApi &&
       resolvedLocalEngine &&
@@ -6102,15 +6099,10 @@ export function useChatSession(
     requiresAuthForChat && isAuthenticated && !authHeaders;
   const orgOrHostedContextRequired =
     HOSTED_MODE || hostedRequiresWebChatApi || selectedModelUsesOrgRuntime;
-  const selectedServerIdsRequired =
-    HOSTED_MODE ||
-    hostedRequiresWebChatApi ||
-    (selectedModelUsesOrgRuntime &&
-      !localMcpRuntimeRequired &&
-      // Same carve-out as the route choice above, and for a sharper reason:
-      // this one feeds `hostedContextNotReady`, so getting it wrong leaves
-      // submit disabled forever with no way for the user to find out why.
-      !localHarnessRequested);
+  // Only the web route needs a Convex id per selected server. An org-runtime
+  // model in a local build runs on the local route by server name, so it needs
+  // the project (above) but never waits on ids.
+  const selectedServerIdsRequired = isHostedTransport;
   // When the surface provides a send-time resolver (`ensureServerIds`), the
   // preflight resolves ad-hoc/App server names → Convex ids at send, so a
   // pre-resolved id per selected server is NOT required up front — requiring
