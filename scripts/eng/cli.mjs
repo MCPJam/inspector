@@ -37,7 +37,7 @@ import { decisionCommands } from './decisions.mjs';
 import { repoCommands } from './repos.mjs';
 import { changeTask, queueCheckpoint, syncCommands } from './sync.mjs';
 import { hostStatus } from './setup.mjs';
-import { read, taskRecord, write } from './state.mjs';
+import { taskRecord, update } from './state.mjs';
 import {
   CLI,
   approve,
@@ -159,17 +159,23 @@ export const coreCommands = {
       throw new Error(`${flags.file} is not an eng checkpoint (version 1).`);
     }
     const key = saved.task.key;
-    const mine = read(effort.co.dir, taskRecord(key));
-    if (
-      mine &&
-      mine.history.length > saved.task.history.length &&
-      !flags.force
-    ) {
-      throw new Error(
-        `Local state for ${key} is newer (${mine.history.length} entries, checkpoint has ${saved.task.history.length}). Pass --force to replace it.`
-      );
-    }
-    write(effort.co.dir, taskRecord(key), saved.task);
+    update(
+      effort.co.dir,
+      taskRecord(key),
+      (mine) => {
+        if (
+          mine &&
+          mine.history.length > saved.task.history.length &&
+          !flags.force
+        ) {
+          throw new Error(
+            `Local state for ${key} is newer (${mine.history.length} entries, checkpoint has ${saved.task.history.length}). Pass --force to replace it.`
+          );
+        }
+        return saved.task;
+      },
+      null
+    );
     linkBranch(effort.co, key);
     return `Restored ${key}. Next: ${nextStep(saved.task)}`;
   },
