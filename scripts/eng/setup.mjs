@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { now } from './effort.mjs';
-import { read, write } from './state.mjs';
+import { read, update } from './state.mjs';
 
 export const HOST_CONFIG = {
   claude: '.claude/settings.json',
@@ -37,10 +37,10 @@ export function configHash(root, host) {
 }
 
 export function noteHostRun(co, host) {
-  write(co.dir, `hosts/${host}.json`, {
+  update(co.dir, `hosts/${host}.json`, () => ({
     seenAt: now(),
     configHash: configHash(co.root, host),
-  });
+  }));
 }
 
 /** One line per host: running on the current config, stale, or never seen. */

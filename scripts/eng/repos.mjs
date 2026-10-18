@@ -17,7 +17,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
-import { read, write } from './state.mjs';
+import { read, update } from './state.mjs';
 import { CLI } from './workflow.mjs';
 
 const BACKEND = {
@@ -184,7 +184,7 @@ export function discover(co, options = {}) {
   for (const candidate of candidates(co, spec, search)) {
     const path = validate(candidate, spec, git);
     if (!path) continue;
-    write(co.dir, CACHE, { ...read(co.dir, CACHE, {}), [name]: path });
+    update(co.dir, CACHE, (cache) => ({ ...cache, [name]: path }));
     return found(path, 'search');
   }
   return missing('unavailable', 'not found on this machine');
