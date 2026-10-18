@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
-import { probeFreePort, waitForListening } from "./server-port-fallback";
+import {
+  describeStartupFailure,
+  NoFreePortError,
+  probeFreePort,
+  SERVER_PORT_PINNED_ENV,
+  shouldRestartForPortConflict,
+  waitForListening,
+} from "./server-port-fallback";
 
 function listenBlocker(port: number): Promise<{
   close: () => Promise<void>;
@@ -131,5 +138,81 @@ describe("waitForListening", () => {
     });
     expect(server.listenerCount("listening")).toBe(0);
     await blocker.close();
+  });
+});
+
+function addressInUse(port?: number): NodeJS.ErrnoException {
+  const err = new Error("listen EADDRINUSE") as NodeJS.ErrnoException & {
+    port?: number;
+  };
+  err.code = "EADDRINUSE";
+  if (port !== undefined) err.port = port;
+  return err;
+}
+
+describe("shouldRestartForPortConflict", () => {
+  it("restarts once for a lost bind", () => {
+    expect(
+      shouldRestartForPortConflict(addressInUse(6274), {
+        alreadyRetried: false,
+        env: {},
+      }),
+    ).toBe(true);
+  });
+
+  it("does not restart for any other failure", () => {
+    for (const error of [
+      new Error("boom"),
+      new NoFreePortError("No free port available"),
+      null,
+      "EADDRINUSE",
+    ])
+      expect(
+        shouldRestartForPortConflict(error, { alreadyRetried: false, env: {} }),
+      ).toBe(false);
+  });
+
+  it("does not restart twice", () => {
+    expect(
+      shouldRestartForPortConflict(addressInUse(6274), {
+        alreadyRetried: true,
+        env: {},
+      }),
+    ).toBe(false);
+  });
+
+  it("does not restart when the launcher pinned the port", () => {
+    expect(
+      shouldRestartForPortConflict(addressInUse(6274), {
+        alreadyRetried: false,
+        env: { [SERVER_PORT_PINNED_ENV]: "1" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("describeStartupFailure", () => {
+  it("names the port a lost bind was on", async () => {
+    // A real listen error, so this pins Node putting `port` on it.
+    const blocker = await listenBlocker(0);
+    const server = net.createServer();
+    server.listen(blocker.port, "127.0.0.1");
+    const error = await waitForListening(server).catch((err: unknown) => err);
+    await blocker.close();
+
+    expect(describeStartupFailure(error)).toEqual({
+      code: "port_taken",
+      port: blocker.port,
+    });
+  });
+
+  it("tells a full port range and other failures apart", async () => {
+    const fullRange = await probeFreePort("127.0.0.1", 60000, 0).catch(
+      (err: unknown) => err,
+    );
+    expect(describeStartupFailure(fullRange)).toEqual({ code: "no_free_port" });
+    expect(describeStartupFailure(new Error("boom"))).toEqual({
+      code: "startup_failed",
+    });
   });
 });

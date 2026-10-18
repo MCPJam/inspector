@@ -1,4 +1,5 @@
 import net from "net";
+import type { DesktopStartupFailureCode } from "../shared/desktop-startup-failure.js";
 
 export interface ProbeFreePortOptions {
   /**
@@ -55,6 +56,54 @@ export function resolveServerPortAttempts(
 }
 
 /**
+ * Marks the copy of the app that `app.relaunch` started after a lost port
+ * race, so losing again shows the startup dialog instead of looping.
+ */
+export const PORT_RETRY_ARG = "--mcpjam-port-retry";
+
+/**
+ * Whether a failed server start is worth one fresh restart of the app.
+ *
+ * Only a lost bind (EADDRINUSE) qualifies: a fresh process probes from the
+ * start port again and lands on a free one, which this process cannot do —
+ * `server/config.ts` froze its addresses to the first port at module load.
+ * Never twice, and never when the launcher pinned the port: the dev renderer
+ * proxies to exactly that port, so falling forward would split the window
+ * from its own server.
+ */
+export function shouldRestartForPortConflict(
+  error: unknown,
+  options: { alreadyRetried: boolean; env: NodeJS.ProcessEnv },
+): boolean {
+  return (
+    (error as NodeJS.ErrnoException | null)?.code === "EADDRINUSE" &&
+    !options.alreadyRetried &&
+    options.env[SERVER_PORT_PINNED_ENV] !== "1"
+  );
+}
+
+/** Every port `probeFreePort` tried was taken. */
+export class NoFreePortError extends Error {}
+
+/**
+ * Classify a failed start. `port` is the one the bind lost, which Node puts on
+ * listen errors; the other failures have no single port to name.
+ */
+export function describeStartupFailure(error: unknown): {
+  code: DesktopStartupFailureCode;
+  port?: number;
+} {
+  if (error instanceof NoFreePortError) return { code: "no_free_port" };
+  const err = error as (NodeJS.ErrnoException & { port?: unknown }) | null;
+  if (err?.code === "EADDRINUSE")
+    return {
+      code: "port_taken",
+      ...(typeof err.port === "number" ? { port: err.port } : {}),
+    };
+  return { code: "startup_failed" };
+}
+
+/**
  * Probe `startPort`, `startPort + 1`, ..., up to `maxAttempts` total, looking
  * for one that is free to bind on `hostname`. Returns the first port that
  * binds successfully (immediately closing the probe server before returning).
@@ -95,7 +144,7 @@ export async function probeFreePort(
   const tried = errors
     .map(({ port, error }) => `${port} (${error.code ?? error.message})`)
     .join(", ");
-  throw new Error(
+  throw new NoFreePortError(
     `No free port available after ${maxAttempts} attempts starting at port ${startPort}. Tried: ${tried}`,
   );
 }
