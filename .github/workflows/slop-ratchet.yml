@@ -44,6 +44,11 @@ jobs:
       - name: Test the ratchet
         run: node --test scripts/slop/slop.test.mjs scripts/git-hooks/git-hooks.test.mjs
 
+      # The eng flow is mirrored from mcpjam-backend; an edit here without
+      # re-pinning means the backend copy was not considered.
+      - name: Eng flow mirror pin
+        run: node scripts/check-eng-mirror.mjs
+
       - name: Compare with the base branch
         env:
           SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
