@@ -1,8 +1,15 @@
 // @vitest-environment node
-import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 
 import {
@@ -10,6 +17,7 @@ import {
   checkout,
   list,
   read,
+  taskRecord,
   update,
 } from '../../../scripts/eng/state.mjs';
 
@@ -21,7 +29,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-function repo() {
+function repo({ origin = true } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'eng-state-')));
   dirs.push(dir);
   const git = (...args: string[]) =>
@@ -30,7 +38,8 @@ function repo() {
   git('config', 'user.email', 'test@example.com');
   git('config', 'user.name', 'test');
   git('commit', '-q', '--allow-empty', '-m', 'base');
-  git('remote', 'add', 'origin', 'git@github.com:MCPJam/mcpjam-backend.git');
+  if (origin)
+    git('remote', 'add', 'origin', 'git@github.com:MCPJam/mcpjam-backend.git');
   return { dir, git };
 }
 
@@ -64,6 +73,19 @@ describe('checkout', () => {
     expect(read(checkout(dir).dir, branchRecord(id, 'feature'))).toEqual({
       task: 'PP-1',
     });
+  });
+
+  test('worktrees without an origin share one repository id', () => {
+    const { dir, git } = repo({ origin: false });
+    const tree = join(dir, '.worktrees/feature');
+    git('worktree', 'add', '-q', '-b', 'feature', tree);
+    expect(checkout(tree).repo).toBe(basename(dir).toLowerCase());
+    expect(checkout(dir).repo).toBe(checkout(tree).repo);
+  });
+
+  test('distinct task keys get distinct records', () => {
+    expect(taskRecord('PP-6')).toBe('tasks/PP-6.json');
+    expect(taskRecord('PP/1')).not.toBe(taskRecord('PP_1'));
   });
 
   test('is null outside git and has no branch when detached', () => {
@@ -103,4 +125,30 @@ describe('update', () => {
     expect(read(state, 'tasks/PP-1.json')).toEqual({ count: 80 });
     expect(list(state, 'tasks')).toEqual(['tasks/PP-1.json']);
   });
+
+  /** A lock on tasks/PP-1.json held by `pid` since a minute ago. */
+  function heldLock(state: string, pid: number) {
+    const lockDir = join(state, 'tasks/PP-1.json.lock');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(join(lockDir, 'owner'), `${hostname()} ${pid}`);
+    const minuteAgo = new Date(Date.now() - 60_000);
+    utimesSync(lockDir, minuteAgo, minuteAgo);
+  }
+
+  test('takes over a lock whose holder exited', () => {
+    const { dir } = repo();
+    const state = checkout(dir).dir;
+    heldLock(state, spawnSync('node', ['-e', '']).pid as number);
+    update(state, 'tasks/PP-1.json', () => ({ count: 1 }));
+    expect(read(state, 'tasks/PP-1.json')).toEqual({ count: 1 });
+  });
+
+  test('never takes over a lock whose holder is still running', () => {
+    const { dir } = repo();
+    const state = checkout(dir).dir;
+    heldLock(state, process.pid);
+    expect(() => update(state, 'tasks/PP-1.json', () => ({}))).toThrow(
+      /State is locked/
+    );
+  }, 15_000);
 });
