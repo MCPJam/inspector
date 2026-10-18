@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 import { loadEffort, now, updateBranch } from './effort.mjs';
 import { INJECTS, normalize, render } from './hosts.mjs';
 import { isBuildPrompt, isSourceEdit, offerText } from './nudge.mjs';
+import { noteHostRun } from './setup.mjs';
 import { hashKey, update } from './state.mjs';
 import { nextStep, stage } from './workflow.mjs';
 
@@ -74,6 +75,7 @@ export function handle(event) {
   if (!event.kind) return {};
   const effort = loadEffort(event.cwd);
   if (!effort) return {};
+  noteHostRun(effort.co, event.host);
   let result = {};
   const fresh = { turn: 0, turnFiles: [], startedAt: now() };
   update(

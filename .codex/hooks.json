@@ -1,0 +1,60 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$(git rev-parse --show-toplevel)/scripts/eng/hook.mjs\" codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$(git rev-parse --show-toplevel)/scripts/eng/hook.mjs\" codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$(git rev-parse --show-toplevel)/scripts/eng/hook.mjs\" codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$(git rev-parse --show-toplevel)/scripts/eng/hook.mjs\" codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node \"$(git rev-parse --show-toplevel)/scripts/eng/hook.mjs\" codex",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

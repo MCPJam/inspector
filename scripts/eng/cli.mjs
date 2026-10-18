@@ -14,6 +14,7 @@
  *   reopen <specs|plan> --reason <why>
  *   checkpoint                              JSON to save on the Kestral task
  *   restore --file <checkpoint.json> [--force]
+ *   hooks                                   which hosts' hooks are running
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -27,6 +28,7 @@ import {
   updateTask,
   whoami,
 } from './effort.mjs';
+import { hostStatus } from './setup.mjs';
 import { read, taskRecord, write } from './state.mjs';
 import {
   CLI,
@@ -91,6 +93,7 @@ function status(effort, { flags }) {
 
 export const coreCommands = {
   status,
+  hooks: (effort) => hostStatus(effort.co).join('\n'),
   link: (effort, { positional, flags }) => {
     const task = linkBranch(effort.co, positional[0], flags.url);
     return `Linked ${effort.co.branch} to ${task.key}. Next: ${nextStep(task)}`;

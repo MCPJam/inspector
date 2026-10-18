@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node scripts/eng/hook.mjs cursor",
+        "timeout": 10
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node scripts/eng/hook.mjs cursor",
+        "timeout": 10
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node scripts/eng/hook.mjs cursor",
+        "timeout": 10
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node scripts/eng/hook.mjs cursor",
+        "timeout": 10
+      }
+    ],
+    "stop": [
+      {
+        "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node scripts/eng/hook.mjs cursor",
+        "timeout": 30,
+        "loop_limit": 1
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "[ -n \"$GITHUB_ACTIONS$CI\" ] || node scripts/eng/hook.mjs cursor",
+        "timeout": 10
+      }
+    ]
+  }
+}

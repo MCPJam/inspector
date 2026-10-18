@@ -1,7 +1,9 @@
 .DS_Store
 worktrees/
 .worktrees/
-.cursor/
+# Cursor's local state stays out; its project hooks are shared.
+.cursor/*
+!.cursor/hooks.json
 node_modules/
 node_modules
 .mcpjam/skills/

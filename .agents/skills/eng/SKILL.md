@@ -89,6 +89,23 @@ architecture reopens the approval it touches: `eng reopen specs --reason ...`
 document, and ask again. A routine implementation choice only needs a
 decision entry.
 
+## Setup, once per machine
+
+1. Add the Kestral connector in each agent you use (Claude Code, Codex and
+   Cursor IDE) and sign in. The flow needs task, document, comment and
+   upload access.
+2. Trust the project's hooks. Claude Code reads `.claude/settings.json`.
+   Codex reads `.codex/hooks.json` only in a trusted project, and skips a
+   changed hook until you trust it again with `/hooks`; do that after every
+   pull that changes the file. Cursor reads `.cursor/hooks.json` in a trusted
+   workspace. Cursor CLI is not supported.
+3. Check with `eng hooks`. A host whose hooks "have not run" or ran "from an
+   older" config is skipping them: re-trust, then start a new session.
+
+Without hooks the flow still works from `/eng`, but nothing offers it,
+reminds you to reconcile decisions or captures sessions. Say so to the
+engineer when `eng hooks` shows it.
+
 ## Writing
 
 Apply the `engineering-writing` skill to the prose you write: specs, plan,
