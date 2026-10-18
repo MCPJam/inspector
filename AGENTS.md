@@ -17,6 +17,10 @@ asked for. Where one genuinely does not apply, write `None: <reason>` — a
 one-line fix, a revert and a dependency bump are all legitimate reasons. A
 non-blocking check comments when a line is empty or still a placeholder.
 
+A stacked PR's base is the branch below it, not `main`, so its diff and its
+size show only its own change. GitHub moves it to `main` when the PR below
+merges.
+
 ## Code quality contract
 
 These rules bind every change, human or agent. Agents write most of the code
@@ -52,9 +56,13 @@ message, list what you deleted and what existing code you reused.
 ### Size
 
 - A new file stays under 400 lines; a function under 80.
-- A file already over 800 lines does not grow. Put new code in its own module.
-- A PR stays under 400 changed lines of hand-written source. Larger needs the
-  `large-pr` label; over 1,500 needs to be split or labelled `mechanical`.
+- A file already over 800 lines grows by at most 50 lines, enough to wire new
+  code in. New logic goes in its own module.
+- A PR stays under 800 changed lines of hand-written source. Tests, fixtures,
+  docs and generated files do not count, and a moved line counts once. Measure
+  with `npm run slop:size` rather than estimating; on a stacked branch, add
+  `-- --base <branch below>`. Larger needs the `large-pr` label; over 1,500
+  needs to be split or labelled `mechanical`.
 - A move or split is its own PR with no behavior change in it.
 
 ### Reuse before you write
