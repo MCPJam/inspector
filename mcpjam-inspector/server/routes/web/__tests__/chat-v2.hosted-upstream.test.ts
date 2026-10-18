@@ -305,10 +305,16 @@ describe("hosted chat turn (MJ-001)", () => {
     // evidence the stuck connect was cancelled rather than left to run out
     // the manager's own per-request timeout and retries.
     let aborted = false;
-    upstream.current = (request) =>
-      stallUntilAborted(request, () => {
+    let received!: () => void;
+    const requestReceived = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    upstream.current = (request) => {
+      received();
+      return stallUntilAborted(request, () => {
         aborted = true;
       });
+    };
     const disconnectAll = vi.spyOn(
       MCPClientManager.prototype,
       "disconnectAllServers",
@@ -316,10 +322,15 @@ describe("hosted chat turn (MJ-001)", () => {
     const { prepareChatV2 } = await vi.importActual<
       typeof import("../../../utils/chat-v2-orchestration.js")
     >("../../../utils/chat-v2-orchestration.js");
-    prepareChatV2Mock.mockImplementation((args: any) => {
+    prepareChatV2Mock.mockImplementation(async (args: any) => {
       // The hosted turn asks for the real budget; shortened here so the test
       // does not wait 30 s.
       expect(args.toolListingTimeoutMs).toBe(WEB_CHAT_TOOL_LISTING_TIMEOUT_MS);
+      // The manager starts this connect when it is built, before the turn
+      // gets here. Starting the short budget only once the server holds the
+      // request keeps a slow runner from expiring it before the request is
+      // sent, which leaves nothing in flight to abort.
+      await requestReceived;
       return prepareChatV2({ ...args, toolListingTimeoutMs: 50 });
     });
 
