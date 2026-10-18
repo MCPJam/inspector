@@ -427,6 +427,8 @@ describe.each(["local", "hosted"] as const)(
         turnTimeout?: boolean;
         capacity?: boolean;
         capacityAbort?: boolean;
+        /** A durable run: resumed with these rows' statuses, or losing its lease. */
+        durable?: { statuses?: string[]; loseLease?: boolean };
       } = {},
     ) {
       vi.useFakeTimers();
@@ -450,6 +452,19 @@ describe.each(["local", "hosted"] as const)(
         status: "pending",
         result: "pending",
       })) as Array<Record<string, any>>;
+      options.durable?.statuses?.forEach((status, index) => {
+        rows[index].status = status;
+      });
+      const durableRun = options.durable
+        ? {
+            resumed: options.durable.statuses !== undefined,
+            startHeartbeat: vi.fn((onLeaseLost: () => void) => {
+              if (options.durable?.loseLease) setTimeout(onLeaseLost, 5);
+            }),
+            dispatch: vi.fn(async () => "ok"),
+            stop: vi.fn(),
+          }
+        : undefined;
       const recorder = {
         startIteration: vi.fn(
           async ({ iterationNumber }) => rows[iterationNumber - 1]._id,
@@ -589,6 +604,7 @@ describe.each(["local", "hosted"] as const)(
         convexHttpUrl: "https://example.convex.site",
         convexAuthToken: "token",
         mcpClientManager: manager,
+        ...(durableRun ? { durableRun } : {}),
         executionBudgets: {
           ...defaultEvalExecutionBudgets(),
           turnTimeoutMs: options.turnTimeout ? 20 : 1000,
@@ -598,7 +614,7 @@ describe.each(["local", "hosted"] as const)(
       } as any);
       await vi.advanceTimersByTimeAsync(options.capacityAbort ? 350 : 150);
       await pending;
-      return { rows, recorder, convexClient };
+      return { rows, recorder, convexClient, durableRun };
     }
 
     it("persists the turn clock before the iteration budget expires", async () => {
@@ -654,6 +670,31 @@ describe.each(["local", "hosted"] as const)(
           stopReason: "iteration_timeout",
         }),
       );
+    });
+
+    it("a resumed durable run runs only the attempts still pending", async () => {
+      const { rows, recorder } = await startRun({
+        durable: { statuses: ["completed", "timed_out", "pending"] },
+      });
+      // The recorded attempt and the lost one are never started again.
+      expect(recorder.startIteration).toHaveBeenCalledTimes(1);
+      expect(recorder.startIteration).toHaveBeenCalledWith(
+        expect.objectContaining({ iterationNumber: 3 }),
+      );
+      expect(rows.map((row) => row.status)).toEqual([
+        "completed",
+        "timed_out",
+        "completed",
+      ]);
+    });
+
+    it("a replica that loses the durable lease stands down without finalizing", async () => {
+      const { recorder, durableRun } = await startRun({
+        durable: { loseLease: true },
+      });
+      expect(durableRun!.startHeartbeat).toHaveBeenCalledTimes(1);
+      expect(durableRun!.stop).toHaveBeenCalled();
+      expect(recorder.finalize).not.toHaveBeenCalled();
     });
 
     it("keeps completed evidence and finalizes the run deadline for the backend sweep", async () => {
