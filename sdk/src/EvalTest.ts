@@ -1,3 +1,4 @@
+import { startEvalRun, executorProviders, type EvalIdentityOptions } from "./eval-run-start.js";
 import {
   assertEvalCaptureWithinLimit,
   DEFAULT_MAX_CAPTURED_BYTES,
@@ -432,7 +433,7 @@ export interface EvalTestConfig {
 /**
  * Options for running an EvalTest
  */
-export interface EvalTestRunOptions {
+export interface EvalTestRunOptions extends EvalIdentityOptions {
   iterations: number;
   summary?: "none" | "table";
   concurrency?: number; // default: 5
@@ -892,6 +893,7 @@ export class EvalTest {
         integer("evaluator timeoutMs", evaluator.timeoutMs);
     }
     this.running = true;
+    const identityOptions = { ...options };
     try {
       if (
         !options.__suppressMcpjamAutoSave &&
@@ -913,6 +915,10 @@ export class EvalTest {
           }),
         };
       }
+      if (!options.__evalRunStarted) await startEvalRun({
+        ...identityOptions, plannedIterations: options.iterations,
+        providers: executorProviders(executor),
+      });
       this.lastReportingReceipt = notRequestedReceipt("disabled");
       const controller = new AbortController();
       const cancel = () =>

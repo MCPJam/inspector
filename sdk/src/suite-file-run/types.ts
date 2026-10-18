@@ -40,9 +40,7 @@ export type SuiteFileServerBinding = {
 export type SuiteFileInferenceMode = "auto" | "byok" | "mcpjam";
 
 /**
- * How to reach MCPJam-hosted inference. Resolved lazily — only when a
- * selected case actually needs the platform rail — so a BYOK-only run never
- * touches the caller's login.
+ * How to reach MCPJam for run identity and hosted inference.
  */
 export type McpjamInferenceConnection = {
   /** MCPJam app origin, e.g. `https://app.mcpjam.com` — not the `/api/v1` base. */
@@ -66,7 +64,7 @@ export type SuiteFileInferenceOptions = {
   /** Non-secret provider base URLs (a gateway, a local stub). */
   baseUrls?: Omit<BaseUrls, "mcpjam">;
   /**
-   * Called at most once, and only when the platform rail is needed. The
+   * Called once before every run, including BYOK. The
    * signal aborts when the setup deadline passes or the run is cancelled.
    */
   resolveMcpjam?: (signal: AbortSignal) => Promise<McpjamInferenceConnection>;
@@ -79,6 +77,8 @@ export type SuiteFileImportApproval = {
 };
 
 export type RunSuiteFileOptions = {
+  surface?: "sdk" | "cli" | "vitest";
+  clientVersion?: string;
   /** Bindings for the file's target servers, keyed by server NAME. */
   servers: Readonly<Record<string, SuiteFileServerBinding>>;
   /** Exact authored case ids. Omitted: every enabled case. */
@@ -103,6 +103,7 @@ export type RunSuiteFileOptions = {
 // ── progress ─────────────────────────────────────────────────────────────────
 
 export type SuiteFileRunProgressEvent =
+  | { type: "identity"; organizationId: string; projectId: string }
   | {
       type: "setup";
       stage: "connect" | "discover" | "credentials" | "lease";

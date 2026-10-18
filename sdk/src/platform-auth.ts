@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import {
   readStoredAuth,
   writeStoredAuth,
@@ -14,6 +15,7 @@ export type {
   AuthStorePathOptions,
 } from "./platform-auth-store.js";
 const TOKEN_REFRESH_SKEW_MS = 60_000;
+const pendingRefreshes = new Map<string, Promise<StoredPlatformAuth>>();
 const MISSING_CLOUD_CREDENTIAL_MESSAGE =
   "Not logged in. Run `mcpjam cloud login`, or pass an sk_ API key via --api-key / MCPJAM_API_KEY.";
 
@@ -39,7 +41,17 @@ export async function getOAuthAccessToken(deps: {
     throw new Error("Login expired. Run `mcpjam cloud login` again.");
   }
 
-  const refreshed = await refreshStoredAuth(stored, deps);
+  const path = resolve(deps.authFilePath);
+  let refresh = pendingRefreshes.get(path);
+  if (!refresh) {
+    // A caller timeout must not launch another exchange with the same rotating
+    // token. Finish and persist the first exchange, including after timeout.
+    refresh = refreshStoredAuth(stored, deps).finally(() => {
+      pendingRefreshes.delete(path);
+    });
+    pendingRefreshes.set(path, refresh);
+  }
+  const refreshed = await refresh;
   return refreshed.accessToken;
 }
 

@@ -1,3 +1,4 @@
+import { startEvalRun, executorProviders } from "./eval-run-start.js";
 import { randomUUID } from "node:crypto";
 import {
   createSavedClientRunner,
@@ -730,6 +731,10 @@ export class EvalSuite {
       throw new Error(
         "Hosted subset reporting requires persisted selection support; use mcpjam.enabled=false for a local selected-scope run"
       );
+    if (!options.__evalRunStarted) await startEvalRun({
+      ...options, mcpjam: suiteReportingConfig, plannedIterations,
+      providers: executorProviders(executor),
+    });
     const testResults = new Map<string, EvalRunResult>();
 
     // Track total progress across all tests
@@ -748,6 +753,7 @@ export class EvalSuite {
             }
           : undefined,
         __suppressMcpjamAutoSave: true,
+        __evalRunStarted: true,
         onProgress: options.onProgress
           ? (completed, _total) => {
               // Calculate overall progress
