@@ -208,6 +208,11 @@ import {
   type ScheduledEvalsWorkerHandle,
 } from "./services/scheduled-evals-worker";
 import {
+  isEvalRunJobsWorkerEnabled,
+  startEvalRunJobsWorker,
+  type EvalRunJobsWorkerHandle,
+} from "./services/eval-run-jobs-worker";
+import {
   isGithubChecksWorkerEnabled,
   startGithubChecksWorker,
   type GithubChecksWorkerHandle,
@@ -991,6 +996,13 @@ if (isScheduledEvalsWorkerEnabled()) {
   scheduledEvalsWorker = startScheduledEvalsWorker();
 }
 
+// Durable hosted eval runs: resume a run whose replica was lost. Gated by the
+// same EVAL_RUN_JOBS_ENABLED flag that makes launches durable.
+let evalRunJobsWorker: EvalRunJobsWorkerHandle | undefined;
+if (isEvalRunJobsWorkerEnabled()) {
+  evalRunJobsWorker = startEvalRunJobsWorker();
+}
+
 // GitHub PR check runs: claim a PR trigger, build its MCP server in a sandbox,
 // run the dedicated eval suite, report an outcome. Env-gated; the backend has
 // its own GITHUB_CHECKS_ENABLED gate and 404s the routes when it is off.
@@ -1072,6 +1084,7 @@ async function shutdown() {
     // shutdown rather than skipping straight to the force-exit deadline.
     await localServerCheckQueue.shutdown();
     await scheduledEvalsWorker?.stop();
+    await evalRunJobsWorker?.stop();
     await githubChecksWorker?.stop();
     await benchWorker?.stop();
     await productionChecksWorker.stop();

@@ -117,6 +117,7 @@ import {
 } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { SCHEDULED_EVALS_WRITE_ENABLED } from "../../config.js";
+import { durableRunsEnabled } from "../../services/evals/durable-run.js";
 import {
   deriveItemIdempotencyKey,
   deriveOperationIdempotencyKey,
@@ -4577,6 +4578,29 @@ async function launchEvalRun(params: {
       // the shared path resolve again — the run must be pinned to the
       // revision whose servers the manager just connected.
       ...(environmentLaunch ? { resolvedEnvironment: environmentLaunch } : {}),
+      // An API launch carries no request-only credential beyond `modelApiKeys`
+      // (which the shared path checks), so a keyed launch of a saved suite can
+      // be recovered by another replica.
+      ...(durableRunsEnabled() && body.suiteId
+        ? {
+            durable: {
+              launch: {
+                suiteId: body.suiteId,
+                projectId,
+                serverIds,
+                serverNames,
+                ...(environmentId ? { environmentId } : {}),
+                ...(body.namedHostId ? { namedHostId: body.namedHostId } : {}),
+                ...(body.caseIds ? { caseIds: body.caseIds } : {}),
+                ...(body.iterationOverride
+                  ? { iterationOverride: body.iterationOverride }
+                  : {}),
+                ...(body.runGroupId ? { runGroupId: body.runGroupId } : {}),
+                source: "api" as const,
+              },
+            },
+          }
+        : {}),
     });
   } catch (error) {
     await manager.disconnectAllServers().catch(() => {});
