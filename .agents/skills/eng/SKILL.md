@@ -157,6 +157,21 @@ is missing; record departures from the proposal with `eng ui deviation` and a
 decision. Pair a screenshot with a test, network log or backend check when
 appearance alone cannot prove the behavior. With no UI change, `eng ui none`.
 
+## Review package
+
+When `eng status` says review, write a short plan-versus-actual summary,
+one line per plan step, to a scratch file, then:
+
+```bash
+eng review-page --notes <summary.md> [--base <branch below>] [--risk "<risk>"]
+```
+
+It builds the review page from the record: spec and plan links, the decision
+timeline, plan versus actual, the UI diff, acceptance evidence with the
+commit each result was verified at, unresolved risks, and anything not yet
+on Kestral or not captured. Save it on the task, `eng synced`, then sync the
+remaining records so its last section is empty, or say why it is not.
+
 ## Session records
 
 On a linked branch the hooks keep one record per agent session: at every

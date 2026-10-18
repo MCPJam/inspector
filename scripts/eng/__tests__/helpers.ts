@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach } from 'vitest';
@@ -41,4 +41,31 @@ export function building(key = 'PP-4') {
   eng('approve', 'plan');
   const status = () => JSON.parse(eng('status', '--json'));
   return { ...repo, status, head: repo.git('rev-parse', '--short', 'HEAD') };
+}
+
+/** An effort with decisions, evidence at two commits and a UI gap. */
+export function reviewed() {
+  const repo = building('PP-6');
+  const { dir, git, eng } = repo;
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  eng('decision', '--what', 'Poll every 5s', '--why', 'Simple');
+  eng(
+    'decision',
+    '--what',
+    'Push over SSE',
+    '--why',
+    'Polling lagged',
+    '--supersedes',
+    'D1',
+    '--long-lived'
+  );
+  eng('scenario', 'add', 'Upload retries three times');
+  eng('scenario', 'add', 'Works offline');
+  eng('scenario', 'S1', 'passed', '--evidence', 'vitest upload: 4 passed');
+  writeFileSync(join(dir, 'upload.ts'), 'export {};\n');
+  git('add', 'upload.ts');
+  git('commit', '-q', '-m', 'upload');
+  eng('scenario', 'S2', 'unverified', '--note', 'No offline harness');
+  eng('ui', 'states', 'default,error');
+  return repo;
 }
