@@ -146,6 +146,17 @@ A pass or failure needs evidence; each result records the commit and
 whether the tree was clean. A failed scenario sends the effort back to build.
 Verify against committed code so the evidence matches the PR.
 
+For a user-visible change, finish the UI diff before review. Name the
+states that apply (`eng ui states default,loading,empty,error,permission,narrow`),
+capture each one from the running build with the existing browser or
+screenshot tools, and record it:
+`eng ui shot <png> --phase actual --state error --steps "<how to reproduce>"`.
+Record proposed visuals the same way with `--phase proposed` before spec
+approval. Each shot is queued for upload with its label. `eng ui` lists what
+is missing; record departures from the proposal with `eng ui deviation` and a
+decision. Pair a screenshot with a test, network log or backend check when
+appearance alone cannot prove the behavior. With no UI change, `eng ui none`.
+
 ## Session records
 
 On a linked branch the hooks keep one record per agent session: at every
