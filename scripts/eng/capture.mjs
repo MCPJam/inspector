@@ -127,6 +127,7 @@ export function captureSession(co, session, task, at) {
     events: readLog(co, session),
     task,
     at,
+    root: co.root,
   });
   parts.forEach((body, index) => {
     const part =

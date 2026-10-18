@@ -113,8 +113,11 @@ export function recordDoc(task, kind, { ref, revision, at }) {
   if (!DOC_KINDS.includes(kind)) {
     throw new Error(`Unknown document "${kind}". Use ${DOC_KINDS.join(', ')}.`);
   }
-  if (!ref || !revision)
-    throw new Error('A document needs --ref and --revision.');
+  if (!ref || !revision) {
+    throw new Error(
+      'A document needs --ref <document id> and --revision <version>, or --file <export> to hash in place of a version.'
+    );
+  }
   if (task.docs[kind]?.revision !== revision) {
     log(task, at, 'document', { kind, ref, revision });
   }
@@ -165,7 +168,9 @@ export function nextStep(task) {
       : `Show the engineer the reviewed plan and ask for approval; record it with \`${CLI} approve plan\`.`;
   }
   if (current === 'review') {
-    return 'Every scenario is settled. Assemble the review page and the PR body; see "Review package" in .agents/skills/eng/SKILL.md.';
+    return task.reviewPage
+      ? `The review page was generated at ${task.reviewPage.head}: save it on ${task.key}, then fill the PR body with \`${CLI} pr-body --review-url <url> --fields <sections.json>\`. Generate it again after any new commit.`
+      : 'Every scenario is settled. Assemble the review page and the PR body; see "Review package" in .agents/skills/eng/SKILL.md.';
   }
   const failed = (task.scenarios ?? []).filter((s) => s.result === 'failed');
   if (failed.length) {

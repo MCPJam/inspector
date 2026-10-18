@@ -9,9 +9,14 @@ const HOSTS = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
 const PART_SIZE = 300;
 const SHORT = 200;
 
+/**
+ * Matched against a command's first line only: a heredoc body or a script
+ * passed inline mentions "test" or "commit" without running either.
+ */
 const TEST_COMMAND =
-  /\b(?:vitest|jest|pytest|go test|node --test|npm (?:run )?test\S*|slop:check|typecheck|lint(?::ci)?|pr:check)\b/;
-const COMMIT_COMMAND = /\bgit commit\b/;
+  /(?:^|[;&|]\s*)(?:npx |npm (?:run )?)?(?:vitest|jest|pytest|go test|node --test|test\S*|slop:check|typecheck|lint(?::ci)?|pr:check)\b/;
+const COMMIT_COMMAND = /(?:^|[;&|]\s*)git commit\b/;
+const firstLine = (text) => text.split('\n')[0].slice(0, 160);
 
 const time = (at) => (at ? at.slice(11, 19) : '--:--:--');
 
@@ -79,8 +84,17 @@ function captureLine({ status, note, unknown, untimed }) {
 }
 
 /** Markdown parts for the session record. The first carries the summary. */
-export function renderSession({ session, events, task, at }) {
-  const commands = events.filter((e) => e.kind === 'command');
+/** Repo-relative when inside `root`; anything else is marked as outside it. */
+function shownPath(file, root) {
+  if (!root) return file;
+  if (file.startsWith(`${root}/`)) return file.slice(root.length + 1);
+  return file.startsWith('/') ? `${file} (outside the checkout)` : file;
+}
+
+export function renderSession({ session, events, task, at, root }) {
+  const commands = events
+    .filter((e) => e.kind === 'command')
+    .map((e) => firstLine(e.text));
   const decisions = (task.decisions ?? [])
     .filter((d) => d.at >= (session.startedAt ?? '') && d.at <= at)
     .map((d) => ({ at: d.at, kind: 'decision', text: `${d.id}: ${d.what}` }));
@@ -88,7 +102,11 @@ export function renderSession({ session, events, task, at }) {
     a.at && b.at ? a.at.localeCompare(b.at) : 0
   );
   const files = [
-    ...new Set(events.filter((e) => e.kind === 'edit').map((e) => e.text)),
+    ...new Set(
+      events
+        .filter((e) => e.kind === 'edit')
+        .map((e) => shownPath(e.text, root))
+    ),
   ];
   const list = (items) =>
     items.length ? items.map((i) => `- \`${i}\``) : ['- None'];
@@ -103,14 +121,10 @@ export function renderSession({ session, events, task, at }) {
     ...list(files),
     '',
     '## Commits',
-    ...list(
-      commands.filter((c) => COMMIT_COMMAND.test(c.text)).map((c) => c.text)
-    ),
+    ...list(commands.filter((c) => COMMIT_COMMAND.test(c))),
     '',
     '## Checks and tests run',
-    ...list(
-      commands.filter((c) => TEST_COMMAND.test(c.text)).map((c) => c.text)
-    ),
+    ...list(commands.filter((c) => TEST_COMMAND.test(c))),
     '',
     '## Chronology (UTC)',
   ];

@@ -97,4 +97,34 @@ describe('session record', () => {
       /^# Session record, part 2 of 2\n\nContinues the chronology of PP-8's claude session abcdef12\.\n\n- 03:00:00 \*\*Answer\*\* step 300$/
     );
   });
+
+  test('shows paths inside the checkout relative to it, and only real checks and commits', () => {
+    const events = [
+      { at, kind: 'edit', text: '/repo/convex/a.ts' },
+      { at, kind: 'edit', text: '/tmp/notes/spec.md' },
+      {
+        at,
+        kind: 'command',
+        text: "cat > /tmp/spec.md <<'EOF'\nrun npm run typecheck and git commit\nEOF",
+      },
+      { at, kind: 'command', text: 'git add a.ts && git commit -m "add a"' },
+      { at, kind: 'command', text: 'npx vitest run tests/a.test.ts' },
+    ];
+    const [body] = renderSession({
+      session: session({}),
+      events,
+      task,
+      at,
+      root: '/repo',
+    });
+    expect(body).toMatch(
+      /## Files changed\n- `convex\/a\.ts`\n- `\/tmp\/notes\/spec\.md \(outside the checkout\)`/
+    );
+    expect(body).toMatch(
+      /## Commits\n- `git add a\.ts && git commit -m "add a"`\n\n/
+    );
+    expect(body).toMatch(
+      /## Checks and tests run\n- `npx vitest run tests\/a\.test\.ts`\n\n/
+    );
+  });
 });

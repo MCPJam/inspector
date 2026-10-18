@@ -45,6 +45,9 @@ describe('review page', () => {
     expect(page).toMatch(
       /## Not synchronized or not captured\n- Not on Kestral yet: checkpoint/
     );
+    expect(JSON.parse(eng('status', '--json')).next).toMatch(
+      /^The review page was generated at \w+: save it on PP-6, then fill the PR body with `node scripts\/eng\/cli\.mjs pr-body/
+    );
     expect(
       pending(checkout(dir), 'PP-6').some(
         (i: { kind: string }) => i.kind === 'review'

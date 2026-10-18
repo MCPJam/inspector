@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 
 import { requireTask } from './effort.mjs';
 import { enqueue, pending } from './outbox.mjs';
+import { changeTaskFor } from './sync.mjs';
 import { git, list, read } from './state.mjs';
 import { uiGaps } from './ui.mjs';
 import { CLI, isApproved, planReview } from './workflow.mjs';
@@ -199,6 +200,10 @@ export const reviewCommands = {
       notes,
       risks: extra,
       at,
+    });
+    const head = git(['rev-parse', '--short', 'HEAD'], effort.co.root);
+    changeTaskFor(effort, (task) => {
+      task.reviewPage = { at, head };
     });
     const item = enqueue(effort.co, {
       key: `review:${key}`,

@@ -5,26 +5,7 @@
  * Kestral calls stay with the agent's connector; this only keeps the local
  * record that resume, the hooks and the review page read.
  *
- *   status [--json]                         where the effort stands
- *   link <TASK-KEY> [--url <url>]           start, or join a stacked branch
- *   decline                                 keep the flow off for this branch
- *   doc <kind> --ref <id> (--revision <v> | --file <export>)
- *   review (--file <findings.json> | --none) [--revision <plan revision>]
- *   approve <specs|plan> [--by <name>]
- *   reopen <specs|plan> --reason <why>
- *   checkpoint                              JSON to save on the Kestral task
- *   restore --file <checkpoint.json> [--force]
- *   hooks                                   which hosts' hooks are running
- *   pending [--all]                         records waiting to go to Kestral
- *   synced <id> --ref <kestral id>          mark one as saved
- *   decision --what <..> --why <..> [--alternatives <..>] [--supersedes D<n>] [--long-lived]
- *   reconcile --none                        nothing material changed this turn
- *   repos [--json]                          find the other repository, read-only
- *   why <file>:<line>                       the commit and task behind a line
- *   scenario add <text> | <id> <passed|failed|unverified> [--evidence <ref>] [--note <why>]
- *   ui none | states <a,b> | shot <path> --phase <..> --state <..> [--steps <..>] | deviation <text>
- *   review-page [--base <ref>] [--notes <plan-vs-actual.md>] [--risk <text>]
- *   pr-body --review-url <url> --fields <sections.json>
+ * `node scripts/eng/cli.mjs help` lists the commands.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -58,6 +39,31 @@ import {
   reopen,
   stage,
 } from './workflow.mjs';
+
+export const USAGE = [
+  'node scripts/eng/cli.mjs <command>',
+  '',
+  '  status [--json]                         where the effort stands',
+  '  link <TASK-KEY> [--url <url>]           start, or join a stacked branch',
+  '  decline                                 keep the flow off for this branch',
+  '  doc <kind> --ref <id> (--revision <v> | --file <export>)',
+  '  review (--file <findings.json> | --none) [--revision <plan revision>]',
+  '  approve <specs|plan> [--by <name>]',
+  '  reopen <specs|plan> --reason <why>',
+  '  checkpoint                              JSON to save on the Kestral task',
+  '  restore --file <checkpoint.json> [--force]',
+  "   hooks                                   which hosts' hooks are running",
+  '  pending [--all]                         records waiting to go to Kestral',
+  '  synced <id> --ref <kestral id>          mark one as saved',
+  '  decision --what <..> --why <..> [--alternatives <..>] [--supersedes D<n>] [--long-lived]',
+  '  reconcile --none                        nothing material changed this turn',
+  '  repos [--json]                          find the other repository, read-only',
+  '  why <file>:<line>                       the commit and task behind a line',
+  '  scenario add <text> | <id> <passed|failed|unverified> [--evidence <ref>] [--note <why>]',
+  '  ui none | states <a,b> | shot <path> --phase <..> --state <..> [--steps <..>] | deviation <text>',
+  '  review-page [--base <ref>] [--notes <plan-vs-actual.md>] [--risk <text>]',
+  '  pr-body --review-url <url> --fields <sections.json>',
+].join('\n');
 
 export function parseArgs(argv) {
   const positional = [];
@@ -202,6 +208,7 @@ const COMMANDS = {
 
 export function run(argv, cwd = process.cwd(), commands = COMMANDS) {
   const [name, ...rest] = argv;
+  if (!name || name === 'help' || rest.includes('--help')) return USAGE;
   const command = commands[name];
   if (!command) {
     throw new Error(

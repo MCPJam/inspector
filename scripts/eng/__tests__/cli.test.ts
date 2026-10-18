@@ -120,4 +120,16 @@ describe('eng CLI', () => {
   test('rejects an unknown command with the list of commands', () => {
     expect(() => repo().eng('ship')).toThrow(/Unknown command "ship"/);
   });
+
+  test('help lists the commands, as does --help on any of them', () => {
+    const { eng } = repo();
+    expect(eng('help')).toMatch(
+      /^node scripts\/eng\/cli\.mjs <command>\n\n {2}status \[--json\]/
+    );
+    expect(eng('pr-body', '--help')).toBe(eng('help'));
+    eng('link', 'PP-7');
+    expect(() => eng('doc', 'plan', '--ref', 'd1')).toThrow(
+      /--file <export> to hash/
+    );
+  });
 });
