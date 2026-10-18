@@ -1,7 +1,8 @@
 .DS_Store
 worktrees/
 .worktrees/
-.cursor/
+.cursor/*
+!.cursor/hooks.json
 node_modules/
 node_modules
 .mcpjam/skills/

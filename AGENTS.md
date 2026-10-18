@@ -126,6 +126,16 @@ Task-specific workflows live in `.agents/skills/`: `verify-before-pr`,
 `investigate-production`. `REVIEW.md` lists
 what reviewers check.
 
+## Eng flow
+
+`.agents/skills/eng/` takes a piece of work from Kestral task to PR: specs,
+a reviewed plan, a decision log on the task, and a review page. The hooks in
+`scripts/eng/` offer it once per branch on build work and resume it in a new
+session; follow `.agents/skills/eng/SKILL.md` when they do. The engineer decides
+whether to use it. mcpjam-backend owns the canonical copy of `scripts/eng/` and
+the vendored skills; `npm run check:mirrors` fails when this copy changes
+without a re-pin.
+
 ## Design
 
 **Read [`DESIGN.md`](./DESIGN.md) before any UI or styling work.** It describes the

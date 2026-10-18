@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "node scripts/eng/hook.mjs cursor",
+        "timeout": 120
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "node scripts/eng/hook.mjs cursor",
+        "matcher": "Write",
+        "timeout": 10
+      }
+    ],
+    "stop": [
+      {
+        "command": "node scripts/eng/hook.mjs cursor",
+        "timeout": 30,
+        "loop_limit": 1
+      }
+    ]
+  }
+}

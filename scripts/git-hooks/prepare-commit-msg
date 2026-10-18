@@ -1,0 +1,7 @@
+#!/bin/sh
+# Adds a `Kestral: <task>` trailer when this branch is mapped to a Kestral task
+# (scripts/eng), so `git blame` leads from a line to the task and its decision
+# log. Never blocks a commit: a missing script or a failure leaves the message as is.
+case "$2" in merge|squash) exit 0 ;; esac
+[ -f scripts/eng/eng.mjs ] || exit 0
+node scripts/eng/eng.mjs trailer "$1" >/dev/null 2>&1 || true

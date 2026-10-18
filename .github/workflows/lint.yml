@@ -66,6 +66,13 @@ jobs:
             .github/scripts/local-harness-bot-pr.test.mjs \
             .github/scripts/check-workos-loopback.test.mjs
 
+      # The eng flow hooks and the pins that keep them in step with
+      # mcpjam-backend, which owns the canonical copy.
+      - name: Eng tooling tests and mirror pins
+        run: |
+          node --test scripts/eng/eng.test.node.mjs
+          node scripts/check-eng-mirror.mjs
+
       # Same node_modules cache as test.yml's jobs — the rationale lives on the
       # `test` job there. Different key prefix: this job runs on a bare
       # ubuntu-latest rather than the Playwright container, and the tree carries
