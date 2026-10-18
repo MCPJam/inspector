@@ -1,0 +1,4 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nAdd a retry to the upload\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Running the tests first."},{"type":"tool_use","name":"Shell","input":{"command":"npm test -- upload"}}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"StrReplace","input":{"path":"convex/upload.ts"}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Added three retries."}]}}
