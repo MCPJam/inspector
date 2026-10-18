@@ -12,7 +12,7 @@ import {
   taskRecord,
   update,
 } from './state.mjs';
-import { newTask } from './workflow.mjs';
+import { CLI, newTask } from './workflow.mjs';
 
 export const now = () => new Date().toISOString();
 
@@ -35,6 +35,14 @@ export function loadEffort(cwd) {
     : {};
   const task = branch.task ? read(co.dir, taskRecord(branch.task)) : null;
   return { co, branch, task };
+}
+
+/** The linked task's key, or an error telling the agent to link one. */
+export function requireTask(effort) {
+  if (!effort.task) {
+    throw new Error(`Link a Kestral task first: ${CLI} link <TASK-KEY>`);
+  }
+  return effort.task.key;
 }
 
 export function updateBranch(co, change) {

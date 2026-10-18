@@ -15,6 +15,8 @@
  *   checkpoint                              JSON to save on the Kestral task
  *   restore --file <checkpoint.json> [--force]
  *   hooks                                   which hosts' hooks are running
+ *   pending [--all]                         records waiting to go to Kestral
+ *   synced <id> --ref <kestral id>          mark one as saved
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -23,11 +25,13 @@ import { pathToFileURL } from 'node:url';
 import {
   linkBranch,
   loadEffort,
+  requireTask,
   now,
   updateBranch,
   updateTask,
   whoami,
 } from './effort.mjs';
+import { queueCheckpoint, syncCommands } from './sync.mjs';
 import { hostStatus } from './setup.mjs';
 import { read, taskRecord, write } from './state.mjs';
 import {
@@ -57,14 +61,20 @@ export function parseArgs(argv) {
   return { positional, flags };
 }
 
-function needTask(effort) {
-  if (!effort.task) {
-    throw new Error(`Link a Kestral task first: ${CLI} link <TASK-KEY>`);
-  }
-  return effort.task.key;
+const json = (path) => JSON.parse(readFileSync(path, 'utf8'));
+
+/** A saved checkpoint, as exported from Kestral: the JSON inside any fence. */
+function checkpointFile(path) {
+  const text = readFileSync(path, 'utf8');
+  return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
 }
 
-const json = (path) => JSON.parse(readFileSync(path, 'utf8'));
+/** Change the linked task and queue its checkpoint for Kestral. */
+function changeTask(effort, change) {
+  const task = updateTask(effort.co, requireTask(effort), change);
+  queueCheckpoint(effort.co, task);
+  return task;
+}
 
 function status(effort, { flags }) {
   const { co, branch, task } = effort;
@@ -96,6 +106,7 @@ export const coreCommands = {
   hooks: (effort) => hostStatus(effort.co).join('\n'),
   link: (effort, { positional, flags }) => {
     const task = linkBranch(effort.co, positional[0], flags.url);
+    queueCheckpoint(effort.co, task);
     return `Linked ${effort.co.branch} to ${task.key}. Next: ${nextStep(task)}`;
   },
   decline: (effort) => {
@@ -109,7 +120,7 @@ export const coreCommands = {
           .digest('hex')
           .slice(0, 12)
       : flags.revision;
-    const task = updateTask(effort.co, needTask(effort), (t) =>
+    const task = changeTask(effort, (t) =>
       recordDoc(t, positional[0], { ref: flags.ref, revision, at: now() })
     );
     return `Recorded ${positional[0]} revision ${revision}. Next: ${nextStep(task)}`;
@@ -117,7 +128,7 @@ export const coreCommands = {
   review: (effort, { flags }) => {
     const raw = flags.none ? [] : json(flags.file);
     const findings = Array.isArray(raw) ? raw : raw.findings;
-    const task = updateTask(effort.co, needTask(effort), (t) =>
+    const task = changeTask(effort, (t) =>
       recordReview(t, {
         revision: flags.revision ?? currentRevision(t, 'plan'),
         findings,
@@ -128,25 +139,25 @@ export const coreCommands = {
   },
   approve: (effort, { positional, flags }) => {
     const by = flags.by ?? whoami(effort.co.root);
-    const task = updateTask(effort.co, needTask(effort), (t) =>
+    const task = changeTask(effort, (t) =>
       approve(t, positional[0], { by, at: now() })
     );
     return `${positional[0]} approved by ${by}. Next: ${nextStep(task)}`;
   },
   reopen: (effort, { positional, flags }) => {
     const by = whoami(effort.co.root);
-    const task = updateTask(effort.co, needTask(effort), (t) =>
+    const task = changeTask(effort, (t) =>
       reopen(t, positional[0], { reason: flags.reason, by, at: now() })
     );
     return `Reopened ${positional[0]}. Next: ${nextStep(task)}`;
   },
   checkpoint: (effort) => {
-    needTask(effort);
+    requireTask(effort);
     const saved = { kind: 'eng-checkpoint', version: 1, task: effort.task };
     return JSON.stringify(saved, null, 2);
   },
   restore: (effort, { flags }) => {
-    const saved = json(flags.file);
+    const saved = checkpointFile(flags.file);
     if (saved.kind !== 'eng-checkpoint' || saved.version !== 1) {
       throw new Error(`${flags.file} is not an eng checkpoint (version 1).`);
     }
@@ -167,7 +178,9 @@ export const coreCommands = {
   },
 };
 
-export function run(argv, cwd = process.cwd(), commands = coreCommands) {
+const COMMANDS = { ...coreCommands, ...syncCommands };
+
+export function run(argv, cwd = process.cwd(), commands = COMMANDS) {
   const [name, ...rest] = argv;
   const command = commands[name];
   if (!command) {

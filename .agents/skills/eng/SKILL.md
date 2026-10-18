@@ -30,8 +30,19 @@ first source edit, whichever comes first. Ask the engineer in one sentence.
   On a checkout with no local record, read the latest checkpoint on the task,
   save it to a scratch file and `eng restore --file <path>`.
 
-After every approval or reopen, post `eng checkpoint` on the task as the
-workflow checkpoint. That comment is what a fresh checkout restores from.
+## Sync to Kestral
+
+Every change to the task record queues the workflow checkpoint, and later
+steps queue decision comments, session records and screenshots. `eng pending`
+lists what waits and whether to create it or update the document it already
+is. Save each with your connector, then `eng synced <id> --ref <kestral id>`.
+If an earlier attempt may have landed, search the task for the
+`<!-- eng:... -->` marker at the end of the body before creating anything, so
+a retry never duplicates a document or comment. If Kestral is unavailable,
+tell the engineer and carry on; the queue survives the session and the
+worktree, and the review page lists whatever is still unsynced.
+
+The checkpoint is what a fresh checkout restores from.
 
 ## Specs
 
