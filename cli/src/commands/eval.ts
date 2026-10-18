@@ -189,6 +189,11 @@ import {
 } from "../lib/eval-run-exit-code.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
 import {
+  outerRunWaitMs,
+  startRunWaitClock,
+  type RunWaitBudget,
+} from "../lib/eval-run-wait.js";
+import {
   decisionSummaryFromIterations,
   readEvalRunDecisionSummary,
 } from "../lib/eval-decision-summary.js";
@@ -1395,7 +1400,8 @@ function collectRepeatable(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-// 30-minute eval run default plus grading extension headroom.
+// 30-minute eval run default plus grading extension headroom. As a default it
+// is an IDLE window, not wall-clock time (`lib/eval-run-wait.ts`).
 const DEFAULT_RUN_WAIT_TIMEOUT_MS = 35 * 60_000;
 const RUN_POLL_INTERVAL_MS = 3000;
 
@@ -1451,24 +1457,34 @@ function isSuiteGateReportAbsent(error: unknown): boolean {
  *
  * An EXPLICIT `--wait-timeout` is honoured strictly (`gradingExtensionMs: 0`):
  * a caller who named a budget meant it, and silently spending 31 more minutes
- * of a CI job's wall clock is not a favour.
+ * of a CI job's wall clock is not a favour. The default budget instead runs out
+ * only after a window with no newly finished trial (`lib/eval-run-wait.ts`).
  */
 async function waitForEvalRun(
-  client: Pick<PlatformApiClient, "getEvalRun">,
+  client: Pick<PlatformApiClient, "getEvalRun" | "listEvalRunIterations">,
   signal: AbortSignal,
   projectId: string,
   runId: string,
-  deadline: number,
+  budget: RunWaitBudget,
   gradingExtensionMs = 0
 ) {
   let extended = false;
   let run = await client.getEvalRun({ projectId, runId }, { signal });
+  if (TERMINAL_RUN_STATUSES.has(run.status)) return run;
+  // Started once the run is seen still going, so a finished run costs nothing.
+  const clock = await startRunWaitClock({
+    client,
+    signal,
+    projectId,
+    runId,
+    budget,
+  });
   while (!TERMINAL_RUN_STATUSES.has(run.status)) {
     if (run.status === "grading" && !extended && gradingExtensionMs > 0) {
       extended = true;
-      deadline = Math.max(deadline, Date.now() + gradingExtensionMs);
+      clock.extend(gradingExtensionMs);
     }
-    if (Date.now() >= deadline) {
+    if (await clock.expired()) {
       throw operationalError(
         `Eval run "${runId}" is still ${run.status} after waiting for completion.`
       );
@@ -1641,6 +1657,10 @@ async function runEvalGate(
   // Zero when the caller named their own budget: they meant it.
   const gradingExtensionMs =
     options.waitTimeout !== undefined ? 0 : GRADING_WAIT_EXTENSION_MS;
+  const waitBudget: RunWaitBudget = {
+    ms: waitTimeoutMs,
+    strict: options.waitTimeout !== undefined,
+  };
   const resolved = resolveCloudProjectArgs(options);
 
   let decisionSummary: EvalRunDecisionSummary | undefined;
@@ -1661,7 +1681,7 @@ async function runEvalGate(
       // reached.
       Math.max(
         globalOptions.timeout,
-        options.wait ? waitTimeoutMs + gradingExtensionMs : 0
+        options.wait ? outerRunWaitMs(waitBudget, gradingExtensionMs) : 0
       ),
       async ({ client, signal }) => {
         const projects = await client.listProjects({}, { signal });
@@ -1673,12 +1693,23 @@ async function runEvalGate(
         }
         const project = resolution.project;
         resolvedProjectId = project.id;
-        let deadline = Date.now() + waitTimeoutMs;
         let gradingExtended = false;
         let run = await client.getEvalRun(
           { projectId: project.id, runId },
           { signal }
         );
+        // Started once the run is seen still going, so a finished run costs
+        // nothing (`waitForEvalRun` does the same).
+        const clock =
+          options.wait && !TERMINAL_RUN_STATUSES.has(run.status)
+            ? await startRunWaitClock({
+                client,
+                signal,
+                projectId: project.id,
+                runId,
+                budget: waitBudget,
+              })
+            : undefined;
 
         while (!TERMINAL_RUN_STATUSES.has(run.status)) {
           // Granted once, on first seeing the hold. See `waitForEvalRun`.
@@ -1688,7 +1719,7 @@ async function runEvalGate(
             gradingExtensionMs > 0
           ) {
             gradingExtended = true;
-            deadline = Math.max(deadline, Date.now() + gradingExtensionMs);
+            clock?.extend(gradingExtensionMs);
           }
           if (!options.wait) {
             // Without --wait, a still-running run would otherwise be gated on
@@ -1715,7 +1746,7 @@ async function runEvalGate(
               run,
             };
           }
-          if (Date.now() >= deadline) {
+          if (await clock?.expired()) {
             // A wait timeout is INFRASTRUCTURE, not a verdict: the run may yet
             // pass. Reported as incomplete so it can never read as a
             // regression.
@@ -1733,7 +1764,9 @@ async function runEvalGate(
                   {
                     gate: "wait",
                     status: "non_gateable" as const,
-                    message: `run still ${run.status} after ${waitTimeoutMs}ms`,
+                    message: waitBudget.strict
+                      ? `run still ${run.status} after ${waitTimeoutMs}ms`
+                      : `run still ${run.status} with no newly finished trial in ${waitTimeoutMs}ms`,
                   },
                 ],
               },
@@ -3732,6 +3765,10 @@ export function registerEvalCommands(program: Command): void {
         // Zero when the caller named their own budget: they meant it.
         const gradingExtensionMs =
           options.waitTimeout !== undefined ? 0 : GRADING_WAIT_EXTENSION_MS;
+        const waitBudget: RunWaitBudget = {
+          ms: waitTimeoutMs,
+          strict: options.waitTimeout !== undefined,
+        };
         let webOrigin = DEFAULT_PLATFORM_ORIGIN;
         const resolved = resolveCloudProjectArgs(options);
         // Auth -> 3 is scoped to THIS action, and only under --wait: the shared
@@ -3974,9 +4011,11 @@ export function registerEvalCommands(program: Command): void {
           // the whole command, so an inner deadline pushed past it would be
           // killed before it could be reached — the extension would exist and
           // never apply.
-          Math.max(globalOptions.timeout, waitTimeoutMs + gradingExtensionMs),
+          Math.max(
+            globalOptions.timeout,
+            outerRunWaitMs(waitBudget, gradingExtensionMs)
+          ),
           async ({ client, signal }) => {
-            const deadline = Date.now() + waitTimeoutMs;
             const waited = await Promise.all(
               result.targets
                 .filter((target) => target.status === "started")
@@ -3989,7 +4028,7 @@ export function registerEvalCommands(program: Command): void {
                         signal,
                         result.project.id,
                         target.runId,
-                        deadline,
+                        waitBudget,
                         gradingExtensionMs
                       ),
                     };
@@ -4828,6 +4867,10 @@ export function registerEvalCommands(program: Command): void {
       // Same rule as `eval run --wait`: an explicit budget is honoured strictly.
       const gradingExtensionMs =
         options.waitTimeout !== undefined ? 0 : GRADING_WAIT_EXTENSION_MS;
+      const waitBudget: RunWaitBudget = {
+        ms: waitTimeoutMs,
+        strict: options.waitTimeout !== undefined,
+      };
       const resolved = resolveCloudProjectArgs(options);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
 
@@ -4838,7 +4881,7 @@ export function registerEvalCommands(program: Command): void {
           options.wait
             ? Math.max(
                 globalOptions.timeout,
-                waitTimeoutMs + gradingExtensionMs
+                outerRunWaitMs(waitBudget, gradingExtensionMs)
               )
             : globalOptions.timeout,
           async (context) => {
@@ -4880,7 +4923,7 @@ export function registerEvalCommands(program: Command): void {
                 signal,
                 projectId,
                 rerun.runId,
-                Date.now() + waitTimeoutMs,
+                waitBudget,
                 gradingExtensionMs
               );
               return { projectId, rerun, run };
