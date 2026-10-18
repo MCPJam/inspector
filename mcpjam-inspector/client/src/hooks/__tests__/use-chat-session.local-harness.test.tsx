@@ -488,13 +488,14 @@ describe("useChatSession — routing an org-runtime model that asks for local", 
     providers: [{ providerKey: "openai", enabled: true, hasSecret: true }],
   } as never;
 
-  it("routes an org-runtime model to the web API when nothing asks for local", async () => {
-    // The control. Without this the assertion below would pass whether or not
-    // the carve-out exists.
+  it("keeps an org-runtime model on the local route, with no local runtime ask, when nothing asks for local", async () => {
+    // The control. Without this the `localMcpRuntimeRequired` assertions below
+    // would pass whether or not a local ask is what sets the flag.
     await renderWithHarness(undefined, { projectId: "proj-1" }, {
       hostedOrgModelConfig: ORG_CONFIG,
     });
-    expect(chatApi()).toBe("/api/web/chat-v2");
+    expect(chatApi()).toBe("/api/mcp/chat-v2");
+    expect(sendRequest().body.localMcpRuntimeRequired).toBeUndefined();
   });
 
   it("keeps a requested local turn on the route that can run it", async () => {
