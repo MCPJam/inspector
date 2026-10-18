@@ -15,16 +15,17 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { now } from './effort.mjs';
+import { redact } from './redact.mjs';
 import { hashKey, list, read, update } from './state.mjs';
 
 export const marker = (key) => `<!-- eng:${key} -->`;
 
 const itemName = (id) => `outbox/${id}.json`;
 
-/** Queue `body` under `key`. Returns the item. */
+/** Queue `body` under `key`, with credentials redacted. Returns the item. */
 export function enqueue(co, { key, kind, task, title, body }) {
   const id = hashKey(key).slice(0, 8);
-  const text = `${body.trimEnd()}\n\n${marker(key)}\n`;
+  const text = `${redact(body).trimEnd()}\n\n${marker(key)}\n`;
   const bodyPath = join(co.dir, 'outbox', `${id}.md`);
   const revision = createHash('sha256').update(text).digest('hex').slice(0, 12);
   return update(co.dir, itemName(id), (item) => {
@@ -35,7 +36,7 @@ export function enqueue(co, { key, kind, task, title, body }) {
       key,
       kind,
       task,
-      title,
+      title: redact(title),
       bodyPath,
       revision,
       ref: item.ref ?? null,
