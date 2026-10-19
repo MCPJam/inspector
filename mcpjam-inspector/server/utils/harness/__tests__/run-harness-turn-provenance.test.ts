@@ -200,6 +200,34 @@ describe("runHarnessTurn history provenance (MJ-009)", () => {
     ]));
   });
 
+  it("retains the saved MCP server on an unqualified result-only resume", async () => {
+    const onToolResult = vi.fn();
+    harnessState.streamParts = [
+      { type: "tool-result", toolCallId: "paused-call", toolName: "read_wiki_structure", output: "done" },
+      { type: "finish", finishReason: "stop" },
+    ];
+    const result = await runHarnessTurn({
+      ...baseOptions(),
+      onToolResult,
+      messages: [
+        { role: "user", content: "Read the wiki" },
+        { role: "assistant", content: [{
+          type: "tool-call", toolCallId: "paused-call", toolName: "read_wiki_structure", input: {},
+          providerOptions: { mcpjam: { serverId: "deepwiki" } },
+        }] },
+      ],
+    } as never, "none");
+    expect(onToolResult).toHaveBeenCalledWith(expect.objectContaining({ serverId: "deepwiki" }));
+    expect(result.turnTrace?.spans).toEqual(expect.arrayContaining([
+      expect.objectContaining({ toolCallId: "paused-call", serverId: "deepwiki", toolOrigin: "mcp" }),
+    ]));
+    expect(result.messageHistory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "tool", content: expect.arrayContaining([
+        expect.objectContaining({ toolCallId: "paused-call", providerOptions: { mcpjam: { serverId: "deepwiki" } } }),
+      ]) }),
+    ]));
+  });
+
   it("signs the text it streams in hosted mode", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token-with-enough-length");

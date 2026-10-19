@@ -3743,22 +3743,22 @@ export async function runHarnessTurn(
               errorEvent ||
               (part as { isError?: unknown }).isError === true ||
               (part as { error?: unknown }).error != null;
-            // Reuse the identity resolved at tool-call time (the result part may
-            // omit the name); fall back to parsing the result's own toolName.
-            // Name-only on purpose: a RESULT part carries no call input, so
-            // `attributeToolCall` would have nothing extra to work with. The
-            // identity resolved at call time (above) is the real answer and this
-            // is only its fallback.
-            const meta =
-              toolMeta.get(toolCallId) ??
-              harnessAdapter.parseToolName(
-                String(
-                  (part as { toolName?: unknown }).toolName ??
-                    historicalCall?.toolName ??
-                    "tool",
-                ),
-                harnessKeyToServerId,
-              );
+            // Result-only resumes retain the saved MCP identity even when the
+            // runtime echoes an unqualified tool name.
+            const parsedMeta = harnessAdapter.parseToolName(
+              String(
+                (part as { toolName?: unknown }).toolName ??
+                  historicalCall?.toolName ??
+                  "tool",
+              ),
+              harnessKeyToServerId,
+            );
+            const meta = toolMeta.get(toolCallId) ?? {
+              ...parsedMeta,
+              ...(historicalCall?.serverId
+                ? { serverId: historicalCall.serverId }
+                : {}),
+            };
             // A tool call the MCP proxy blocked on policy, recognised only when
             // THIS run sealed a policy for that server, and only ever with the
             // verdict that snapshot already holds — a server echoing the block
