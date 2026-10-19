@@ -12,6 +12,17 @@ import { UserMessageBubble } from "./user-message-bubble";
 import { UserContextCard } from "./user-context-card";
 import { getUserContextBlocks } from "@/shared/user-context-message";
 import { PartSwitch } from "./part-switch";
+import { ChatAuthChallengeCards } from "@/components/auth-challenge/ChatAuthChallengeCards";
+
+/** The tool call ids in one message, for its sign-in cards. */
+function messageToolCallIds(message: { parts?: unknown[] }): string[] {
+  const ids: string[] = [];
+  for (const part of message.parts ?? []) {
+    const id = (part as { toolCallId?: unknown } | null)?.toolCallId;
+    if (typeof id === "string" && id.length > 0) ids.push(id);
+  }
+  return ids;
+}
 import type { RecorderProps } from "./recorder-types";
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
@@ -683,6 +694,9 @@ function MessageViewImpl({
             </div>
           ))}
         </div>
+        {interactive !== false ? (
+          <ChatAuthChallengeCards toolCallIds={messageToolCallIds(message)} />
+        ) : null}
         {mcpjamFooterActive ? (
           <div data-testid="mcpjam-message-footer" className="pt-4">
             <MCPJamMarkIndicator />
