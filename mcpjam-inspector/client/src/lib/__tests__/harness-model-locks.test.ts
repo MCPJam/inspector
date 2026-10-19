@@ -105,7 +105,7 @@ describe("harnessPickerModels", () => {
     const models = harnessPickerModels(CATALOG, { harnessId: "claude-code" });
     expect(ids(models)).toEqual(["anthropic/claude-haiku-4.5", "anthropic/claude-fable-5"]);
     expect(models[0]!.warningReason).toBeUndefined();
-    expect(models[1]!.warningReason).toMatch(/not verified/);
+    expect(models[1]!.warningReason).toMatch(/not been verified/);
   });
 
   it("leaves an emulated client's list alone", () => {
@@ -232,7 +232,7 @@ describe("organization-key rows on a harness", () => {
     ]) {
       expect(
         harnessRowRefusalReason(row, { harnessId: "claude-code" }, "chat"),
-      ).toMatch(/MCPJam-provided models or your organization's Anthropic key/);
+      ).toMatch(/MCPJam model or your organization's Anthropic key/);
     }
     expect(
       harnessRowRefusalReason(
@@ -341,7 +341,7 @@ describe("a harness under the organization's key policy", () => {
         POLICY,
       ),
     ).toBe(
-      "the Claude Code harness runs only on your organization's Anthropic key",
+      "The Claude Code client requires your organization's Anthropic key. Choose an organization model or contact your organization admin.",
     );
     const locked = applyHarnessModelLocks(
       [hosted, ORG_ANTHROPIC],
@@ -358,7 +358,7 @@ describe("a harness under the organization's key policy", () => {
         "eval",
         POLICY,
       ).get(modelRowKey(ORG_OPENAI)),
-    ).toMatch(/runs only on your organization's Anthropic key/);
+    ).toMatch(/requires your organization's Anthropic key/);
   });
 
   it("keeps a saved model the policy no longer allows, so the trigger can warn", () => {
@@ -425,7 +425,7 @@ describe("harnessChoiceRefusalReason (a saved choice, no row)", () => {
         { harnessId: "claude-code" },
         "eval",
       ),
-    ).toMatch(/MCPJam-provided models/);
+    ).toMatch(/MCPJam model/);
   });
 
   it("a hosted or legacy choice keeps the evidence rule", () => {

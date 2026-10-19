@@ -35,6 +35,7 @@
  * `withCapacityRetry` with its own policy. The caller passes that call in, and
  * its refusal comes back untouched.
  */
+import { HOSTED_MODE } from "../../config.js";
 import { logger } from "../logger.js";
 import {
   isComputersDataPlaneConfigured,
@@ -90,10 +91,18 @@ export const HARNESS_BOX_MAX_HEARTBEAT_MS = 4 * 60 * MINUTE_MS;
 /** Teardown deadline. Nothing waits on it, and the reaper takes any miss. */
 const RELEASE_REQUEST_TIMEOUT_MS = 15_000;
 
-const DATA_PLANE_REQUIREMENT =
-  "but this server isn't a computers data plane (deployed servers bootstrap " +
-  "credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) " +
-  "— it could provision a sandbox but not exec or release it.";
+/**
+ * Who can turn cloud execution on: MCPJam runs the data plane behind its
+ * hosted app, while on npx or a self-hosted Inspector the operator configures
+ * it, and MCPJam support cannot.
+ */
+export function cloudExecutionContact(): string {
+  return HOSTED_MODE
+    ? "Contact MCPJam support"
+    : "Ask your MCPJam administrator";
+}
+
+const DATA_PLANE_REQUIREMENT = `but cloud execution is unavailable. ${cloudExecutionContact()} to enable it.`;
 
 /**
  * Can this server run a disposable box end to end? Provisioning needs only a

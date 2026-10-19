@@ -1555,7 +1555,7 @@ async function handleTurn(c: Context): Promise<Response> {
       return v1Error(
         c,
         "FEATURE_NOT_SUPPORTED",
-        `This host runs the ${engineDecision.harness} harness, which this turn can't run: ${engineDecision.reason}.`,
+        engineDecision.reason,
         {
           reason: "HARNESS_UNAVAILABLE",
           harness: engineDecision.harness,

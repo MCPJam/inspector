@@ -1140,13 +1140,13 @@ describe("expandModelChoices — harness × model support", () => {
         clientId: "h-claude",
         modelId: "openai/gpt-5.6-luna",
         reason: expect.stringContaining(
-          "the Claude Code harness can't run this host's model",
+          "This model isn’t supported by Claude Code",
         ),
       },
       {
         clientId: "h-claude",
         modelId: "anthropic/claude-fable-5",
-        reason: expect.stringMatching(/^not verified for claude-code /),
+        reason: expect.stringMatching(/has not been verified for the Claude Code client/),
       },
     ]);
   });
@@ -1176,7 +1176,7 @@ describe("expandModelChoices — harness × model support", () => {
         harness: { harnessId: "codex", runtimeVersion: "0.160.0" },
       },
     );
-    expect(skipped[0]?.reason).toBe("not verified for codex 0.160.0");
+    expect(skipped[0]?.reason).toBe("This model has not been verified for the Codex client (0.160.0). Choose a verified model or another client.");
   });
 
   it("reads whose key a saved choice runs on: the org's own vendor runs, a local key or another vendor's connection is skipped", () => {
