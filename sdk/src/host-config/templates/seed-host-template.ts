@@ -1025,7 +1025,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Same guest-allowed Anthropic model rationale as the Claude
         // template — the real CLI's model choice never crosses the MCP
         // wire, so this is a product default, not probe data.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
         // Run the REAL Claude Code runtime (the @ai-sdk/harness-claude-code
