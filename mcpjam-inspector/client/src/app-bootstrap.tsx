@@ -1,6 +1,6 @@
-import { promoSignInReturn } from "@/lib/promo-intent";
 // Must stay first; OAuth modules and SDKs retain window.fetch at load time.
 import "./lib/install-telemetry-transport";
+import { promoSignInReturn } from "@/lib/promo-intent";
 import { HostedAuthEntry } from "./components/auth/hosted-auth-entry";
 import { authRefusalDiagnostics } from "./lib/auth/auth-refusal-diagnostics";
 import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";

@@ -6,7 +6,6 @@ import { readStoredActiveOrganizationId } from "@/lib/active-organization-storag
 import { PromoFields } from "./PromoFields";
 import { Dialog } from "@mcpjam/design-system/dialog";
 import { PromoCardLayout } from "./PromoCardLayout";
-import { ArrowRight } from "lucide-react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import {
   clearPromoIntent,
@@ -54,7 +53,7 @@ function ClaimForm({ context }: { context: Ready }) {
   const active = useActiveClaim();
   const [code, setCode] = usePromoCode();
   const [name, setName] = useState(context.account.name);
-  const [company, setCompany] = useState("");
+  const [company, setCompany] = useState<string | null>(null);
   const [orgId, setOrgId] = useState(() => initialOrganization(context));
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
@@ -62,10 +61,17 @@ function ClaimForm({ context }: { context: Ready }) {
   const org = context.organizations.find(
     (item) => item.organizationId === orgId,
   );
+  const canSubmit =
+    !!org &&
+    !!context.account.email &&
+    !!name.trim() &&
+    !!(company ?? org.name).trim() &&
+    !!code.trim() &&
+    !pending;
   if (receipt) return <ReceiptView receipt={receipt} />;
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!org || pending) return;
+    if (!org || !canSubmit) return;
     setPending(true);
     setMessage("");
     try {
@@ -73,7 +79,7 @@ function ClaimForm({ context }: { context: Ready }) {
         campaignId,
         code,
         name,
-        company,
+        company: company ?? org.name,
         organizationId: org.organizationId,
       });
       if (!active.current) return;
@@ -96,27 +102,21 @@ function ClaimForm({ context }: { context: Ready }) {
     }
   }
   return (
-    <form onSubmit={submit} className="space-y-5 ph-no-capture" data-private>
+    <form onSubmit={submit} className="space-y-4 ph-no-capture" data-private>
       <PromoFields
         context={context}
         code={code}
         setCode={setCode}
         name={name}
         setName={setName}
-        company={company}
+        company={company ?? org?.name ?? ""}
         setCompany={setCompany}
         orgId={orgId}
         setOrgId={setOrgId}
       />
       {message && <p role="alert">{message}</p>}
-      <Button
-        type="submit"
-        variant="secondary"
-        className="h-11 w-full justify-between px-4"
-        disabled={!org || !context.account.email || pending}
-      >
-        {pending ? "Redeeming…" : `Redeem to ${org?.name ?? "organization"}`}
-        <ArrowRight className="size-4" aria-hidden />
+      <Button type="submit" className="w-full" disabled={!canSubmit}>
+        {pending ? "Redeeming…" : `Claim for ${org?.name ?? "organization"}`}
       </Button>
     </form>
   );
@@ -162,22 +162,13 @@ export function PromoRedemptionPage() {
           }
         }}
       >
-        <PromoCardLayout>
+        <PromoCardLayout signedIn={!!user}>
           {user ? (
             <SignedInClaim key={user.id} />
           ) : (
             <div className="space-y-4">
-              <p>
-                Sign in or create an account to continue. Signing in does not
-                redeem your card.
-              </p>
-              <Button
-                variant="secondary"
-                className="h-11 w-full justify-between"
-                onClick={login}
-              >
-                Sign in to continue
-                <ArrowRight className="size-4" aria-hidden />
+              <Button className="w-full" onClick={login}>
+                Sign in to claim
               </Button>
             </div>
           )}
@@ -206,11 +197,11 @@ function initialOrganization(context: Ready) {
     const stored = readStoredActiveOrganizationId(context.account.userId);
     return context.organizations.some((org) => org.organizationId === stored)
       ? stored!
-      : "";
+      : (context.organizations[0]?.organizationId ?? "");
   } catch {
-    // A blocked preference store leaves the explicit selector available.
+    // The named submit button still confirms the default when storage is blocked.
     console.debug("Organization preference storage unavailable");
-    return "";
+    return context.organizations[0]?.organizationId ?? "";
   }
 }
 
