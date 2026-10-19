@@ -54,11 +54,15 @@ describe("web eval launches while the server drains", () => {
   it("passes the same request through when not draining", async () => {
     const res = await createApp().request("/api/web/evals/run", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer token",
+      },
       body: "{}",
     });
 
     // Reaches the handler, which refuses the empty body on its own terms.
-    expect(res.status).not.toBe(429);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "VALIDATION_ERROR" });
   });
 });

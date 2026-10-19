@@ -7,7 +7,7 @@ import { createDrainCoordinator } from "../drain.js";
 
 function appWith(drain: ReturnType<typeof createDrainCoordinator>) {
   const app = new Hono();
-  app.on("POST", ["/run"], refuseWhileDraining(drain));
+  app.on("POST", ["/run"], refuseWhileDraining("eval_run", drain));
   app.post("/run", (c) => c.json({ started: true }, 202));
   app.get("/run", (c) => c.json({ status: "running" }));
   app.onError((error, c) => webErrorFromRoute(c, mapWebBoundaryError(error)));

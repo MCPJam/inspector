@@ -66,10 +66,11 @@ import {
 const evals = new Hono();
 
 // The routes that start eval work, refused while this process drains.
+evals.on("POST", ["/run", "/replay-run"], refuseWhileDraining("eval_run"));
 evals.on(
   "POST",
-  ["/run", "/replay-run", "/run-test-case", "/stream-test-case"],
-  refuseWhileDraining(),
+  ["/run-test-case", "/stream-test-case"],
+  refuseWhileDraining("quick_run"),
 );
 
 const hostedBatchSchema = z.object({
