@@ -3135,6 +3135,12 @@ export async function runHarnessTurn(
       const resumeFromApproval =
         isApprovalResume && resumable?.awaitingApproval === true;
       if (isApprovalResume && !resumeFromApproval) {
+        logger.info("[harness] approval continuation refused", {
+          harness: harnessAdapter.id,
+          reason: eligibility.reason ?? (continuity?.runtimeChanged ? "runtime-changed" : "missing-paused-state"),
+          stateVersion: continuity?.stateVersion,
+          selectedServerCount: selectedServers?.length ?? 0,
+        });
         // A scenario conversation's box stops heartbeating when a turn pauses
         // for approval, and idles out if the answer comes late; this turn was
         // handed its replacement. Say what happened and what to do.
