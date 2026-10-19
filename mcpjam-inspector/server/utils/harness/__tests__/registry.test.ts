@@ -197,18 +197,8 @@ describe("harness registry", () => {
     expect(codex.supportsModel("openai/o1")).toBe(false);
   });
 
-  // ── Tool-less model lines ────────────────────────────────────────────────
-  //
-  // These cases are VERSION-KEYED to the pinned Codex CLI and were measured,
-  // not guessed: `.spike-codex-appserver` gate P5 drove the pinned binary
-  // through every gpt-5-family id in the hosted catalog and recorded how many
-  // tools each was given. The whole gpt-5.6 line got zero. Re-measure and
-  // update `CODEX_TOOL_LESS_MODEL_LINES` when the pinned CLI moves.
-  //
-  // Why this matters more than an ordinary unsupported model: the CLI RESOLVES
-  // these ids, so there is no unknown-model warning and the turn completes
-  // normally — the user just silently gets a Codex host that cannot act. All
-  // three are in MCPJam's hosted catalog today.
+  // GPT-5.6 is unverified on this pinned runtime. Only Playground's explicit
+  // allowUnknown path may try it; eval and swarm admission stay closed.
   it.each([
     ["openai/gpt-5.6-terra"],
     ["openai/gpt-5.6-sol"],
@@ -216,14 +206,11 @@ describe("harness registry", () => {
     // The bare line id, and case-insensitively.
     ["openai/gpt-5.6"],
     ["openai/GPT-5.6-Terra"],
-  ])("refuses the tool-less %s rather than running it chat-only", (modelId) => {
-    // Refused by the evidence table at the pinned 0.149.x CLI, not by the id
-    // mapping: `toNativeModel` still maps the gpt-5 family, and an unverified
-    // newer CLI reads the pair as `unknown` rather than inheriting the refusal.
+  ])("keeps %s unverified on the pinned runtime", (modelId) => {
     const codex = getHarnessAdapter("codex");
     expect(codex.supportsModel(modelId)).toBe(false);
-    expect(codex.supportsModel(modelId, { allowUnknown: true })).toBe(false);
-    expect(codex.modelSupport(modelId).status).toBe("unsupported");
+    expect(codex.supportsModel(modelId, { allowUnknown: true })).toBe(true);
+    expect(codex.modelSupport(modelId).status).toBe("unknown");
     expect(codex.toNativeModel?.(modelId)).toBe(
       modelId.slice("openai/".length),
     );
