@@ -834,7 +834,7 @@ const AUTH_CHALLENGE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "HTTP 401 trigger",
     path: "mcpProfile.unauthorizedChallengeTrigger",
     description:
-      "Which server sign-in requests the client accepts: any request, only requests that name Bearer authentication, or only those that also provide a resource metadata link. If unset, any request counts.",
+      "Accept any server sign-in request, only requests that name Bearer authentication, or only those that also provide a resource metadata link. If unset, any request counts.",
     kind: { kind: "enum", options: UNAUTHORIZED_CHALLENGE_TRIGGERS },
     read: (cfg) => mcpProfile(cfg)?.unauthorizedChallengeTrigger,
   },
