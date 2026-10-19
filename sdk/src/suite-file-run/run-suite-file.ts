@@ -1,4 +1,8 @@
-import { startEvalRun, EvalRunStartError } from "../eval-run-start.js";
+import {
+  startEvalRun,
+  EvalRunStartError,
+  type EvalRunContext,
+} from "../eval-run-start.js";
 /**
  * `runSuiteFile` — execute a suite file locally and decide it with the v2
  * verdict policy.
@@ -574,6 +578,7 @@ async function executeSuiteFile(
     // ── 6. execute ───────────────────────────────────────────────────────────
     executed = await executeCases({
       plan,
+      runContext: started,
       tools: frozenTools,
       snapshot,
       credentials,
@@ -682,6 +687,7 @@ async function executeSuiteFile(
 
 async function executeCases(args: {
   plan: SuiteFilePlan;
+  runContext: EvalRunContext;
   tools: ToolSet;
   snapshot: ToolPolicySnapshot | undefined;
   credentials: ResolvedInferenceCredentials;
@@ -824,6 +830,7 @@ function notStartedCase(
 
 async function executeCase(args: {
   plan: SuiteFilePlan;
+  runContext: EvalRunContext;
   planned: PlannedCase;
   tools: ToolSet;
   snapshot: ToolPolicySnapshot | undefined;
@@ -971,7 +978,7 @@ async function executeCase(args: {
       // Analytics belong to the caller, and the CLI's
       // opt-outs (`--no-telemetry`, a persisted choice) are invisible here.
       __suppressTelemetry: true,
-      __evalRunStarted: true,
+      __evalRunContext: args.runContext,
       signal: caseController.signal,
       onProgress: (completed, total) =>
         args.progress({ type: "iteration", caseId, completed, total }),

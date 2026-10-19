@@ -21,3 +21,9 @@ vi.mock("../src/eval-run-start.js", async (importOriginal) => {
     organizationId: "test-org", projectId: "test-project",
   })) };
 });
+
+
+vi.mock("../src/eval-iteration-payment.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/eval-iteration-payment.js")>();
+  return { ...actual, payEvalIteration: vi.fn(async () => "test-payment") };
+});

@@ -553,6 +553,8 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Imports an OAuth grant obtained out of band. Deliberately hard to reach: an SDK method would make bulk credential injection the easy path.",
   "post /projects/{projectId}/eval-ingest/capabilities":
     "Authenticated SDK reporting capability negotiation is owned by the reporter.",
+  "post /projects/{projectId}/eval-ingest/pay-iteration":
+    "Iteration payment is owned by the SDK payEvalIteration transport before callback execution.",
   "post /projects/{projectId}/eval-ingest/start-run":
     "Run identity is owned by the SDK's startEvalRun transport before execution; it is not a separate PlatformApiClient operation.",
   "post /projects/{projectId}/eval-ingest/runs/evaluations":
