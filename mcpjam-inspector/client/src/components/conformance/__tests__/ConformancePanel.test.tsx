@@ -439,6 +439,18 @@ describe("ConformanceTab", () => {
     expect(screen.getByText("OpenAI Directory Readiness")).toBeDefined();
   });
 
+  it("keeps the readiness sections mounted when the first run starts", async () => {
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+    const before = screen.getByText("OpenAI Directory Readiness");
+
+    await runToCompletion();
+
+    // A remount would reset choices made before the run, such as the OpenAI
+    // submission mode; the same node means the same component instance.
+    expect(screen.getByText("OpenAI Directory Readiness")).toBe(before);
+  });
+
   it("falls back to Overview when ?view=history has no History tab", () => {
     window.history.replaceState(null, "", "/?view=history");
     try {

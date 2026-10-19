@@ -20,21 +20,15 @@ import { ConformanceScorePreview } from "./ConformanceScorePreview";
 export const RUN_LABEL = "Run conformance checks";
 
 /**
- * The pre-run page: the animated score card above the first-run prompt, and
- * anything that runs on its own (`footer`) below it.
+ * The pre-run state: the animated score card above the first-run prompt.
+ * It fills the space above whatever follows it in the scroll container.
  */
-export function ConformancePreRun({
-  runButton,
-  footer,
-}: {
-  runButton: ReactNode;
-  footer?: ReactNode;
-}) {
+export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
   return (
     // `my-auto` rather than `justify-center`: it centers the prompt while
-    // there is room and, unlike justify-center, never clips the top once a
-    // footer makes the page scroll.
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-10">
+    // there is room and, unlike justify-center, never clips the top once
+    // the page scrolls.
+    <div className="flex shrink-0 grow flex-col py-4">
       <div className="my-auto flex flex-col items-center gap-4">
         <ConformanceScorePreview />
         <div className="flex flex-col items-center gap-2 pt-2 text-center">
@@ -48,7 +42,6 @@ export function ConformancePreRun({
           <div className="pt-4">{runButton}</div>
         </div>
       </div>
-      {footer ? <div className="mt-10">{footer}</div> : null}
     </div>
   );
 }

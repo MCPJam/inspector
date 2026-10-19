@@ -326,143 +326,151 @@ function ConformanceContent({
           <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
             {history}
           </div>
-        ) : !hasStarted ? (
-          <ConformancePreRun runButton={runButton} footer={readiness} />
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-8">
-            <OverallScoreCard
-              score={pooledScore}
-              serverName={server.name}
-              version={
-                pooledScore?.protocolVersion ??
-                (versionPin === "auto" ? "Auto" : versionPin)
-              }
-              isRunning={isRunning}
-              oauthNotScored={oauthNotScored}
-            />
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">
+            {!hasStarted ? (
+              <ConformancePreRun runButton={runButton} />
+            ) : (
+              <div>
+                <OverallScoreCard
+                  score={pooledScore}
+                  serverName={server.name}
+                  version={
+                    pooledScore?.protocolVersion ??
+                    (versionPin === "auto" ? "Auto" : versionPin)
+                  }
+                  isRunning={isRunning}
+                  oauthNotScored={oauthNotScored}
+                />
 
-            <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card">
-              <SuiteSection
-                key={`${runVersion}-protocol`}
-                title={SUITE_COPY.protocol.title}
-                description={SUITE_COPY.protocol.description}
-                state={protocol}
-                score={protocolScore}
-                catalog={protocolChecks}
-                catalogNote={
-                  versionPin === "auto"
-                    ? "The negotiated version decides which era's checks run."
-                    : undefined
-                }
-                hasResult={Boolean(protocol.result)}
-              >
-                {protocol.result ? (
-                  <div>
-                    {(protocol.result.readiness ?? []).length > 0 && (
-                      <div className="my-2 space-y-1 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2">
-                        {(protocol.result.readiness ?? []).map((warning) => (
-                          <div
-                            key={warning.id}
-                            className="flex items-start gap-1.5 text-[11px]"
-                          >
-                            <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500" />
-                            <span className="min-w-0">
-                              <span className="font-medium">
-                                {warning.title}
-                              </span>{" "}
-                              <span className="text-muted-foreground">
-                                ({warning.specStrength})
-                              </span>{" "}
-                              — {warning.message}
-                            </span>
+                <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card">
+                  <SuiteSection
+                    key={`${runVersion}-protocol`}
+                    title={SUITE_COPY.protocol.title}
+                    description={SUITE_COPY.protocol.description}
+                    state={protocol}
+                    score={protocolScore}
+                    catalog={protocolChecks}
+                    catalogNote={
+                      versionPin === "auto"
+                        ? "The negotiated version decides which era's checks run."
+                        : undefined
+                    }
+                    hasResult={Boolean(protocol.result)}
+                  >
+                    {protocol.result ? (
+                      <div>
+                        {(protocol.result.readiness ?? []).length > 0 && (
+                          <div className="my-2 space-y-1 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+                            {(protocol.result.readiness ?? []).map(
+                              (warning) => (
+                                <div
+                                  key={warning.id}
+                                  className="flex items-start gap-1.5 text-[11px]"
+                                >
+                                  <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500" />
+                                  <span className="min-w-0">
+                                    <span className="font-medium">
+                                      {warning.title}
+                                    </span>{" "}
+                                    <span className="text-muted-foreground">
+                                      ({warning.specStrength})
+                                    </span>{" "}
+                                    — {warning.message}
+                                  </span>
+                                </div>
+                              ),
+                            )}
                           </div>
+                        )}
+                        {protocol.result.checks.map((check) => (
+                          <CheckRow
+                            key={`${runVersion}-${check.id}`}
+                            check={check}
+                            pending={protocolPendingIds.has(check.id)}
+                          />
                         ))}
                       </div>
-                    )}
-                    {protocol.result.checks.map((check) => (
-                      <CheckRow
-                        key={`${runVersion}-${check.id}`}
-                        check={check}
-                        pending={protocolPendingIds.has(check.id)}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </SuiteSection>
+                    ) : null}
+                  </SuiteSection>
 
-              <SuiteSection
-                key={`${runVersion}-apps`}
-                title={SUITE_COPY.apps.title}
-                description={SUITE_COPY.apps.description}
-                state={apps}
-                score={appsScore}
-                catalog={APPS_CATALOG}
-                hasResult={Boolean(apps.result)}
-              >
-                {apps.result ? (
-                  <div>
-                    {apps.result.checks.map((check) => (
-                      <CheckRow
-                        key={`${runVersion}-${check.id}`}
-                        check={check}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </SuiteSection>
+                  <SuiteSection
+                    key={`${runVersion}-apps`}
+                    title={SUITE_COPY.apps.title}
+                    description={SUITE_COPY.apps.description}
+                    state={apps}
+                    score={appsScore}
+                    catalog={APPS_CATALOG}
+                    hasResult={Boolean(apps.result)}
+                  >
+                    {apps.result ? (
+                      <div>
+                        {apps.result.checks.map((check) => (
+                          <CheckRow
+                            key={`${runVersion}-${check.id}`}
+                            check={check}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </SuiteSection>
 
-              <SuiteSection
-                key={`${runVersion}-tasks`}
-                title={SUITE_COPY.tasks.title}
-                description={SUITE_COPY.tasks.description}
-                state={tasks}
-                score={tasksScore}
-                catalog={TASKS_CATALOG}
-                hasResult={Boolean(tasks.result)}
-              >
-                {tasks.result ? (
-                  <div>
-                    {tasks.result.checks.map((check) => (
-                      <CheckRow
-                        key={`${runVersion}-${check.id}`}
-                        check={check}
-                        pending={tasksPendingIds.has(check.id)}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </SuiteSection>
+                  <SuiteSection
+                    key={`${runVersion}-tasks`}
+                    title={SUITE_COPY.tasks.title}
+                    description={SUITE_COPY.tasks.description}
+                    state={tasks}
+                    score={tasksScore}
+                    catalog={TASKS_CATALOG}
+                    hasResult={Boolean(tasks.result)}
+                  >
+                    {tasks.result ? (
+                      <div>
+                        {tasks.result.checks.map((check) => (
+                          <CheckRow
+                            key={`${runVersion}-${check.id}`}
+                            check={check}
+                            pending={tasksPendingIds.has(check.id)}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </SuiteSection>
 
-              <SuiteSection
-                key={`${runVersion}-oauth`}
-                title={SUITE_COPY.oauth.title}
-                description={SUITE_COPY.oauth.description}
-                state={oauth}
-                score={oauthScore}
-                catalog={OAUTH_CATALOG}
-                catalogNote="The authorization flow steps are recorded as the run proceeds."
-                hasResult={
-                  Boolean(oauth.result) || Boolean(oauth.waitingForAuth)
-                }
-              >
-                {oauth.waitingForAuth ? (
-                  <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Waiting for browser authorization...
-                  </div>
-                ) : oauth.result ? (
-                  <div>
-                    {oauth.result.steps.map((step) => (
-                      <OAuthStepRow
-                        key={`${runVersion}-${step.step}`}
-                        step={step}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </SuiteSection>
-            </div>
+                  <SuiteSection
+                    key={`${runVersion}-oauth`}
+                    title={SUITE_COPY.oauth.title}
+                    description={SUITE_COPY.oauth.description}
+                    state={oauth}
+                    score={oauthScore}
+                    catalog={OAUTH_CATALOG}
+                    catalogNote="The authorization flow steps are recorded as the run proceeds."
+                    hasResult={
+                      Boolean(oauth.result) || Boolean(oauth.waitingForAuth)
+                    }
+                  >
+                    {oauth.waitingForAuth ? (
+                      <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Waiting for browser authorization...
+                      </div>
+                    ) : oauth.result ? (
+                      <div>
+                        {oauth.result.steps.map((step) => (
+                          <OAuthStepRow
+                            key={`${runVersion}-${step.step}`}
+                            step={step}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </SuiteSection>
+                </div>
+              </div>
+            )}
 
+            {/* The same slot before and after the first run, so starting it
+                keeps the sections mounted and their selections intact. */}
             <div className="mt-6">{readiness}</div>
           </div>
         )}
@@ -540,7 +548,9 @@ export function ConformanceTab({
               {history}
             </div>
           ) : (
-            <ConformancePreRun runButton={noServerRunButton} />
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">
+              <ConformancePreRun runButton={noServerRunButton} />
+            </div>
           )}
         </ConformanceTabPanel>
       </div>
