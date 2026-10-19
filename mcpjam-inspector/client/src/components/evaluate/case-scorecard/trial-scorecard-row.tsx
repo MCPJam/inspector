@@ -12,6 +12,7 @@ import { expectationOf } from "./case-scorecard-model";
 import { useState } from "react";
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   ChevronRight,
   Circle,
@@ -109,6 +110,7 @@ function formatValue(result: TrialRowResult): string | null {
 export function TrialScorecardRow({
   row,
   body,
+  passEvidence = [],
   hideJudgeResult = false,
   syncedStepId,
   onSyncStep,
@@ -117,6 +119,8 @@ export function TrialScorecardRow({
   row: JoinedScorecardRow;
   /** The judge row's panel, which owns the blind-label protocol. */
   body?: React.ReactNode;
+  /** The stage's passing checks, listed on the judge row as its evidence. */
+  passEvidence?: readonly string[];
   /**
    * Withhold this row's own judge output while a blind label is being taken.
    *
@@ -230,6 +234,16 @@ export function TrialScorecardRow({
           </p>
         ) : (
           <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm leading-relaxed sm:grid-cols-[7rem_minmax(0,1fr)]">
+            {body ? (
+              <>
+                <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Judge
+                </dt>
+                <dd className="min-w-0" data-testid="trial-scorecard-judge">
+                  {body}
+                </dd>
+              </>
+            ) : null}
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Expected
             </dt>
@@ -261,6 +275,29 @@ export function TrialScorecardRow({
                 </p>
               )}
             </dd>
+            {passEvidence.length > 0 ? (
+              <>
+                <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Evidence
+                </dt>
+                <dd className="min-w-0">
+                  <ul
+                    className="space-y-0.5"
+                    data-testid="trial-scorecard-evidence"
+                  >
+                    {passEvidence.map((text) => (
+                      <li key={text} className="flex gap-1.5 break-words">
+                        <Check
+                          className="mt-1 h-3 w-3 shrink-0 text-success"
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0">{text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            ) : null}
           </dl>
         )}
         {row.evidence?.frozenRole && !withheld && (
@@ -270,7 +307,8 @@ export function TrialScorecardRow({
             — this scorer's role has changed since the run.
           </p>
         )}
-        {body && <div className="pt-2">{body}</div>}
+        {/* While withheld, the panel that lifts the mask sits below. */}
+        {body && withheld && <div className="pt-2">{body}</div>}
       </li>
     );
   }

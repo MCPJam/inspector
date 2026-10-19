@@ -39,16 +39,42 @@ function answerWord(passed: boolean, score: number, threshold: number): string {
 
 export function JudgeAnswerRow({
   state,
+  model,
+  inline = false,
   onRetry,
   onOpenSuiteSettings,
   children,
 }: {
   state: JudgeAnswerState;
+  /** The judge model's display name, when the run recorded one. */
+  model?: string;
+  /** Sits in the scorecard row's Judge cell: no box, no question. */
+  inline?: boolean;
   onRetry?: () => void;
   onOpenSuiteSettings?: () => void;
   /** The existing verdict/review panel, hosted as this row's body. */
   children?: React.ReactNode;
 }) {
+  if (inline) {
+    return (
+      <div
+        data-testid="judge-answer-row"
+        data-judge-state={state.kind}
+        className="space-y-1.5"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Gavel className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <Body
+            state={state}
+            model={model}
+            onRetry={onRetry}
+            onOpenSuiteSettings={onOpenSuiteSettings}
+          />
+        </div>
+        {state.kind === "withheld" ? children : null}
+      </div>
+    );
+  }
   return (
     <div
       data-testid="judge-answer-row"
@@ -73,10 +99,12 @@ export function JudgeAnswerRow({
 
 function Body({
   state,
+  model,
   onRetry,
   onOpenSuiteSettings,
 }: {
   state: JudgeAnswerState;
+  model?: string;
   onRetry?: () => void;
   onOpenSuiteSettings?: () => void;
 }) {
@@ -104,8 +132,11 @@ function Body({
         >
           {word}
         </span>
-        {/* The score sits on the judge row below; the chip's tooltip says
-            what the role decides. */}
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          {Math.round(judgeCase.score * 100)}%
+          {model ? ` · ${model}` : null}
+        </span>
+        {/* The chip's tooltip says what the role decides. */}
         <RoleChip role={gating ? "required" : "advisory"} />
       </>
     );

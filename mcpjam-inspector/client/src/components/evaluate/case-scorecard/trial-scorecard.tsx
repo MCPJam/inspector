@@ -398,6 +398,9 @@ export function TrialScorecard({
       (row) =>
         row.stage === "userValue" &&
         row.provenance !== "rubricCheck" &&
+        // The judge's own reason is its row's ACTUAL; listing it again as
+        // its evidence would say the same sentence twice.
+        row.provenance !== "judge" &&
         row.result.state === "passed",
     );
   const userValueEvidence = [
@@ -530,18 +533,6 @@ export function TrialScorecard({
             </p>
           ) : undefined
         }
-        footer={
-          section.stage === "userValue" &&
-          showUserValueEvidence &&
-          userValueEvidence.length > 0 ? (
-            <p
-              className="text-xs text-muted-foreground"
-              data-testid="user-value-pass-evidence"
-            >
-              {userValueEvidence.join(" ")}
-            </p>
-          ) : undefined
-        }
       >
         {rows.map((row) => (
           <TrialScorecardRow
@@ -549,6 +540,13 @@ export function TrialScorecard({
             layout="report"
             row={row}
             body={row.provenance === "judge" ? judgeSlot : undefined}
+            passEvidence={
+              row.provenance === "judge" &&
+              section.stage === "userValue" &&
+              showUserValueEvidence
+                ? userValueEvidence
+                : undefined
+            }
             hideJudgeResult={judgeHidden}
             syncedStepId={syncedStepId}
             onSyncStep={onSyncStep}
