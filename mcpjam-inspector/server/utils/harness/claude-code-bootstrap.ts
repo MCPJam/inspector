@@ -125,10 +125,15 @@ function gatewayModelOverrideSettingsFor(model, env) {
   if (env?.MCPJAM_HARNESS_UPSTREAM_PROFILE === "anthropic-native") return undefined;
   let overrides;
   if (model === "haiku") {
+    const native = env?.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? "claude-haiku-4-5";
+    const match = native.match(/^claude-haiku-(\\d+)(?:-(\\d+))?$/);
+    if (!match) return undefined;
+    const gateway = "anthropic/claude-haiku-" + match[1] + (match[2] ? "." + match[2] : "");
     overrides = {
-      haiku: "anthropic/claude-haiku-4.5",
-      "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
-      "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5"
+      haiku: gateway,
+      [native]: gateway,
+      "claude-haiku-4-5": gateway,
+      "claude-haiku-4-5-20251001": gateway
     };
   } else {
     if (!model.startsWith("claude-")) return undefined;
@@ -236,10 +241,15 @@ const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH = `  function gatewayModelOve
     if (env?.MCPJAM_HARNESS_UPSTREAM_PROFILE === "anthropic-native") return undefined;
     let overrides;
     if (model === "haiku") {
+      const native = env?.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? "claude-haiku-4-5";
+      const match = native.match(/^claude-haiku-(\\d+)(?:-(\\d+))?$/);
+      if (!match) return undefined;
+      const gateway = "anthropic/claude-haiku-" + match[1] + (match[2] ? "." + match[2] : "");
       overrides = {
-        haiku: "anthropic/claude-haiku-4.5",
-        "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
-        "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5"
+        haiku: gateway,
+        [native]: gateway,
+        "claude-haiku-4-5": gateway,
+        "claude-haiku-4-5-20251001": gateway
       };
     } else {
       if (!model.startsWith("claude-")) return undefined;
