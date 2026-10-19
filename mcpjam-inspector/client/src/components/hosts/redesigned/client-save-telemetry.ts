@@ -224,6 +224,7 @@ const CLIENT_SETTING_DETECTORS = {
       ? (["model"] as const)
       : [],
   systemPrompt: one("system_prompt", (config) => config.systemPrompt),
+  systemPromptDefault: () => [],
   temperature: one("temperature", (config) => config.temperature),
   requireToolApproval: one(
     "tool_approval",
