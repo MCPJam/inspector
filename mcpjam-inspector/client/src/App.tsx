@@ -247,7 +247,8 @@ import {
   driveChatScopeStepUp,
   resolveScopeStepUpServer,
 } from "./lib/scope-step-up";
-import { markPendingChatScopeStepUpCancelled } from "./lib/scope-step-up-pending";
+import { cancelPendingChatScopeStepUpForCallback } from "./lib/scope-step-up-pending";
+import { authorizationFlowDigest } from "./lib/oauth/flow-digest";
 import { HOSTED_MODE } from "./lib/config";
 import {
   createInspectorCommandClientError,
@@ -3112,10 +3113,21 @@ export default function App() {
       )
         return;
       if (errorMessage && callbackContext.serverName) {
-        markPendingChatScopeStepUpCancelled(
-          callbackContext.serverName,
-          errorMessage,
-        );
+        void authorizationFlowDigest(state)
+          .then((digest) =>
+            cancelPendingChatScopeStepUpForCallback(
+              callbackContext.serverName,
+              errorMessage,
+              digest,
+              callbackContext.chatAuthContinuationId,
+            ),
+          )
+          .catch(() => {
+            // Without a verified digest, do not cancel a different pending flow.
+            console.warn(
+              "Could not settle the failed sign-in callback; no call was cancelled.",
+            );
+          });
       }
       if (callbackContext.serverName) {
         writeHostedOAuthResumeMarker({

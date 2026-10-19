@@ -7,6 +7,11 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { ResourcesTab } from "../ResourcesTab";
+import {
+  savePendingDirectScopeStepUpReplay,
+  setPendingDirectScopeStepUpReplayFlowDigest,
+  markPendingDirectScopeStepUpReplayReady,
+} from "@/lib/scope-step-up-replay";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 const { mockJsonEditor } = vi.hoisted(() => ({
@@ -61,9 +66,55 @@ describe("ResourcesTab", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
     mockJsonEditor.mockClear();
     mockListResources.mockResolvedValue({ resources: [] });
     mockReadResource.mockResolvedValue({ content: null });
+  });
+
+  it("retains the OAuth replay result when resource lists refresh", async () => {
+    mockListResources.mockResolvedValue({
+      resources: [{ name: "private-value", uri: "bench://private/value" }],
+    });
+    mockReadResource.mockResolvedValue({
+      content: {
+        contents: [{ type: "text", text: "retained OAuth resource" }],
+      },
+    });
+    savePendingDirectScopeStepUpReplay({
+      operation: {
+        resourceUrl: "https://bench.example",
+        method: "resources/read",
+        operation: "bench://private/value",
+      },
+      descriptor: {
+        kind: "resource",
+        surface: "resources",
+        serverName: "test-server",
+        uri: "bench://private/value",
+        target: "resource",
+      },
+    });
+    setPendingDirectScopeStepUpReplayFlowDigest("test-server", "flow");
+    markPendingDirectScopeStepUpReplayReady("test-server", "flow");
+    const view = render(
+      <ResourcesTab
+        serverConfig={createServerConfig()}
+        serverName="test-server"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/retained OAuth resource/)).toBeInTheDocument(),
+    );
+    view.rerender(
+      <ResourcesTab
+        serverConfig={createServerConfig()}
+        serverName="test-server"
+      />,
+    );
+    await waitFor(() => expect(mockListResources).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(/retained OAuth resource/)).toBeInTheDocument();
+    expect(mockReadResource).toHaveBeenCalledTimes(1);
   });
 
   describe("empty state", () => {
