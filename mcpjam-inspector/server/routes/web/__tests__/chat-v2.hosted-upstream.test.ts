@@ -342,15 +342,24 @@ describe("hosted chat turn (MJ-001)", () => {
     });
 
     const { app, token } = createWebTestApp();
-    const response = await postJson(app, "/api/web/chat-v2", body, token);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = postJson(app, "/api/web/chat-v2", body, token);
+      // Start the deadline only after the fake upstream has received the call.
+      await requestReceived;
+      await vi.advanceTimersByTimeAsync(50);
+      const response = await pending;
 
-    expect(response.status).toBe(424);
-    const payload = (await response.json()) as any;
-    expect(payload.code).toBe("TIMEOUT");
-    expect(payload.message).toMatch(/MCP server ".*" timed out/);
-    expect(disconnectAll).toHaveBeenCalled();
-    expect(aborted).toBe(true);
-    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
-    disconnectAll.mockRestore();
+      expect(response.status).toBe(424);
+      const payload = (await response.json()) as any;
+      expect(payload.code).toBe("TIMEOUT");
+      expect(payload.message).toMatch(/MCP server ".*" timed out/);
+      expect(disconnectAll).toHaveBeenCalled();
+      expect(aborted).toBe(true);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      disconnectAll.mockRestore();
+    }
   });
 });
