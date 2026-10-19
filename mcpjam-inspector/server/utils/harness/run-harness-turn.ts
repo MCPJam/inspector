@@ -3135,9 +3135,10 @@ export async function runHarnessTurn(
       const resumeFromApproval =
         isApprovalResume && resumable?.awaitingApproval === true;
       if (isApprovalResume && !resumeFromApproval) {
-        logger.info("[harness] approval continuation refused", {
+        const reason = eligibility.reason ?? (continuity?.runtimeChanged ? "runtime-changed" : "missing-paused-state");
+        logger.info(`[harness] approval continuation refused: ${reason} (${selectedServers?.length ?? 0} servers)`, {
           harness: harnessAdapter.id,
-          reason: eligibility.reason ?? (continuity?.runtimeChanged ? "runtime-changed" : "missing-paused-state"),
+          reason,
           stateVersion: continuity?.stateVersion,
           selectedServerCount: selectedServers?.length ?? 0,
         });
