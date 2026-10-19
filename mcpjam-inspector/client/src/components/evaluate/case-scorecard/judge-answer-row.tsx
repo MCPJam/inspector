@@ -1,5 +1,5 @@
 /**
- * "Did it accomplish the goal?" — in a sentence, with its score and its role.
+ * "Did it accomplish the goal?" — in a word, with its role.
  *
  * This is the first grader a case has, and on the observe-first flow it is the
  * only one until a run produces evidence to harden from. So it says what it
@@ -15,6 +15,7 @@
 import { Gavel } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
+import { RoleChip } from "@/components/evals/scorer-role-control";
 import type { JudgeCase } from "@/components/evals/goal-completion-presentation";
 
 export type JudgeAnswerState =
@@ -103,14 +104,9 @@ function Body({
         >
           {word}
         </span>
-        <span className="text-[11px] tabular-nums text-muted-foreground">
-          {judgeCase.score.toFixed(2)}
-          {judgeCase.passed ? " ≥ " : " < "}
-          {threshold.toFixed(2)}
-        </span>
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          {gating ? "Required" : "Advisory — does not change the result"}
-        </span>
+        {/* The score sits on the judge row below; the chip's tooltip says
+            what the role decides. */}
+        <RoleChip role={gating ? "required" : "advisory"} />
       </>
     );
   }
