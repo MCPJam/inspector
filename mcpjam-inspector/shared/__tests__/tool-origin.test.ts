@@ -4,6 +4,17 @@ import { harnessToolOrigin, toolOrigin } from "../tool-origin";
 
 describe("harness origin survives ingestion", () => {
   it.each([
+    ["Bash", "bash", undefined, "native"],
+    ["Bash", "bash", "server", "mcp"],
+    ["Bash", "bash_extra", undefined, "unknown"],
+    ["Read", "read", undefined, "native"],
+  ] as const)("matches runtime %s to trace %s without losing MCP precedence", (key, name, serverId, expected) => {
+    expect(harnessToolOrigin({
+      rawToolName: key, toolName: name, serverId,
+      nativeTools: [{ key }], hostTools: {},
+    })).toBe(expected);
+  });
+  it.each([
     ["bash", undefined, "native"],
     ["bash", "server", "mcp"],
     ["mcp__missing__bash", undefined, "mcp"],

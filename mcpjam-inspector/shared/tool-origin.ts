@@ -29,11 +29,11 @@ export function harnessToolOrigin(input: {
     const origin = toolOrigin(rawToolName, hostTool);
     if (origin !== "unknown") return origin;
   }
-  return nativeTools.some(
-    (tool) =>
-      tool.key === toolName ||
-      tool.name === toolName ||
-      tool.commonName === toolName,
+  const normalizedName = toolName.toLowerCase();
+  return nativeTools.some((tool) =>
+    [tool.key, tool.name, tool.commonName].some(
+      name => name?.toLowerCase() === normalizedName,
+    ),
   )
     ? "native"
     : "unknown";
