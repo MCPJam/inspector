@@ -1,5 +1,9 @@
 /** Small presentational pieces shared by the platform widget views. */
 import type { App } from "@modelcontextprotocol/ext-apps";
+import type {
+  EvalIterationTerminalStatus,
+  EvalRunTerminalStatus,
+} from "@mcpjam/sdk/contract";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@mcpjam/design-system/cn";
 import { Check, Copy, ExternalLink } from "lucide-react";
@@ -51,6 +55,25 @@ type EvalOutcome = {
   pulse?: boolean;
 };
 
+type SettledStatus = Exclude<
+  EvalRunTerminalStatus | EvalIterationTerminalStatus,
+  "completed" | "failed"
+>;
+
+/**
+ * The finished run and iteration statuses that have no arm of their own below.
+ * Typed by the SDK's terminal lists, so a terminal status the SDK adds fails
+ * this file's typecheck until it is labelled here instead of pulsing as if it
+ * were still running. A value of its own because the widget bundle takes only
+ * types from the SDK.
+ */
+const SETTLED_STATUS_LABELS: Record<SettledStatus, string> = {
+  cancelled: "Cancelled",
+  timed_out: "Timed out",
+  setup_failed: "Setup failed",
+  skipped: "Skipped",
+};
+
 /**
  * One verdict from the status/result pair: the terminal `result` wins, then
  * terminal statuses, then anything else reads as in-flight.
@@ -82,14 +105,17 @@ export function getEvalOutcome(
       return { label: "Completed", dotClass: "bg-muted-foreground/55" };
     case "failed":
       return { label: "Failed", dotClass: "bg-red-500" };
-    case "cancelled":
-    case "canceled":
-      return { label: "Cancelled", dotClass: "bg-muted-foreground/55" };
     case null:
     case undefined:
     case "":
       return { label: "Unknown", dotClass: "bg-muted-foreground/55" };
     default:
+      if (Object.hasOwn(SETTLED_STATUS_LABELS, status)) {
+        return {
+          label: SETTLED_STATUS_LABELS[status as SettledStatus],
+          dotClass: "bg-muted-foreground/55",
+        };
+      }
       return {
         label: humanizeStatus(status),
         dotClass: "bg-amber-500",
