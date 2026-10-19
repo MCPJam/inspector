@@ -48,7 +48,10 @@ vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
 function renderBehaviorTab(
   partial?: Parameters<typeof emptyHostConfigInputV2>[0],
 ) {
-  const draft = emptyHostConfigInputV2(partial);
+  const draft = {
+    ...emptyHostConfigInputV2(partial),
+    systemPromptDefault: partial?.systemPromptDefault,
+  };
   return render(
     <BehaviorTab draft={draft} onDraftChange={vi.fn()} attention={[]} />,
   );
@@ -296,7 +299,6 @@ describe("the model list a harness host offers", () => {
   });
 });
 
-
 describe("saved system prompt status", () => {
   it.each([
     [
@@ -317,17 +319,7 @@ describe("saved system prompt status", () => {
   ] as const)(
     "conceals text and renders saved state",
     (text, metadata, status) => {
-      render(
-        <BehaviorTab
-          draft={{
-            ...emptyHostConfigInputV2(),
-            systemPrompt: text,
-            systemPromptDefault: metadata,
-          }}
-          onDraftChange={vi.fn()}
-          attention={[]}
-        />,
-      );
+      renderBehaviorTab({ systemPrompt: text, systemPromptDefault: metadata });
       expect(screen.getByDisplayValue(status)).toBeDisabled();
       expect(screen.getByDisplayValue(status)).toHaveClass(
         "resize-none",

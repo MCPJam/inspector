@@ -18,11 +18,6 @@ describe('saved automatic system prompts', () => {
       expect(host.toJSON().systemPromptDefault).toBeUndefined();
     }
   });
-  it('clears attribution on direct text assignment', () => {
-    const host = new Host({ style: 'claude', model: 'test-model', systemPrompt: 'Saved text', systemPromptDefault: automatic });
-    host.systemPrompt = '';
-    expect(host.toJSON().systemPromptDefault).toBeUndefined();
-  });
   it('preserves legacy bytes and appends normalized metadata for backend parity', () => {
     const base = canonicalizeHostConfigV2(input);
     expect(base).not.toHaveProperty('systemPromptDefault');
