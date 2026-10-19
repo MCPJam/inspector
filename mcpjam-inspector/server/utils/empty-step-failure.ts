@@ -194,22 +194,17 @@ const EXPLAINED_EMPTY_FINISH_REASONS: ReadonlySet<string> = new Set([
  * Whether an empty hosted step is MCPJam's to own, judged by the provider's
  * own usage report.
  *
+ * - A named cause (a rejected tool input, or a finish reason in
+ *   {@link EXPLAINED_EMPTY_FINISH_REASONS}): the model or provider chose where
+ *   the step went, whatever the usage says. Not ours.
  * - `outputTokens === 0`: the provider says it generated nothing. There was no
  *   content for our rail to lose, so the empty reply is upstream.
- * - `outputTokens > 0` with a named cause (a rejected tool input, or a finish
- *   reason in {@link EXPLAINED_EMPTY_FINISH_REASONS}): the tokens went
- *   somewhere the model or provider chose. Not ours.
  * - `outputTokens > 0` and nothing explains it: the provider generated content
  *   that never reached the step. That is the shape a bug in our stream takes.
- * - `outputTokens` absent: no evidence either way. Stays ours, as every empty
- *   step was before this verdict existed.
+ * - `outputTokens` absent and nothing explains it: no evidence either way.
+ *   Stays ours, as every empty step was before this verdict existed.
  */
 export function isMcpjamOwnedEmptyStep(facts: EmptyStepFacts): boolean {
-  const outputTokens = facts.outputTokens;
-  if (typeof outputTokens !== "number" || !Number.isFinite(outputTokens)) {
-    return true;
-  }
-  if (outputTokens <= 0) return false;
   if ((facts.toolInputErrors?.length ?? 0) > 0) return false;
   if (
     facts.finishReason !== undefined &&
@@ -217,7 +212,11 @@ export function isMcpjamOwnedEmptyStep(facts: EmptyStepFacts): boolean {
   ) {
     return false;
   }
-  return true;
+  const outputTokens = facts.outputTokens;
+  if (typeof outputTokens !== "number" || !Number.isFinite(outputTokens)) {
+    return true;
+  }
+  return outputTokens > 0;
 }
 
 /**

@@ -506,9 +506,18 @@ describe("isMcpjamOwnedEmptyStep", () => {
     ).toBe(true);
   });
 
-  it("stays ours when the provider reported no usage at all", () => {
+  it("stays ours when the provider reported no usage and nothing explains it", () => {
     expect(isMcpjamOwnedEmptyStep({ finishReason: "other" })).toBe(true);
     expect(isMcpjamOwnedEmptyStep({ outputTokens: Number.NaN })).toBe(true);
+  });
+
+  it("is not ours when a named cause explains it, even with no usage", () => {
+    for (const finishReason of ["length", "content-filter", "error"]) {
+      expect(isMcpjamOwnedEmptyStep({ finishReason })).toBe(false);
+    }
+    expect(
+      isMcpjamOwnedEmptyStep({ toolInputErrors: ["bad input"] }),
+    ).toBe(false);
   });
 });
 
