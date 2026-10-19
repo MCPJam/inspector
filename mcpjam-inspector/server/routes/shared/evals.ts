@@ -32,7 +32,10 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
-import { isEvalRunPastExecution } from "@mcpjam/sdk/contract";
+import {
+  isEvalIterationTerminalStatus,
+  isEvalRunPastExecution,
+} from "@mcpjam/sdk/contract";
 import {
   checkEvalExecutionAdmission,
   checkEvalHarnessAdmission,
@@ -3919,14 +3922,8 @@ export async function prepareSingleCaseExecution(
 
 /** Is this iteration row finished? */
 function isTerminalIteration(iteration: unknown): boolean {
-  const status = (iteration as { status?: unknown } | null)?.status;
-  return (
-    status === "completed" ||
-    status === "failed" ||
-    status === "cancelled" ||
-    status === "timed_out" ||
-    status === "setup_failed" ||
-    status === "skipped"
+  return isEvalIterationTerminalStatus(
+    (iteration as { status?: unknown } | null)?.status
   );
 }
 

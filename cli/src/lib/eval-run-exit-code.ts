@@ -4,10 +4,8 @@ import {
   type AiRefusalClass,
   type AiRefusalCode,
 } from "@mcpjam/sdk";
-import {
-  isNonVerdictRunResult,
-  isNonVerdictRunStatus,
-} from "./eval-gate-exit-code.js";
+import { isEvalRunNonVerdictStatus } from "@mcpjam/sdk/contract";
+import { isNonVerdictRunResult } from "./eval-gate-exit-code.js";
 
 /**
  * Exit code for `mcpjam cloud eval run --wait`.
@@ -46,7 +44,7 @@ import {
  * ## A run held for its judge is not a status this module ever sees
  *
  * `grading` — every trial finished, the run waiting for its gating judge — is
- * not `isEvalRunTerminalStatus` and never reaches `NON_VERDICT_STATUSES`.
+ * not `isEvalRunTerminalStatus` and never reaches `isEvalRunNonVerdictStatus`.
  * `--wait` therefore keeps polling through it, and a wait that runs out with
  * the run still held is the "deadline with a non-terminal run" case above:
  * exit 5, never 1. A judge that has not answered is an absence of verdict, and
@@ -229,7 +227,7 @@ export function worstOf(codes: number[]): number {
 /** One run's contribution to the merge — see the doc block for the mapping. */
 function runExitCode(run: EvalRunWaitRunOutcome): number {
   const codes: number[] = [];
-  if (isNonVerdictRunStatus(run.status)) {
+  if (isEvalRunNonVerdictStatus(run.status)) {
     // status: "cancelled" | "timed_out" | "failed" — an execution state, not
     // a verdict. Deliberately 5, never 4: see "status: failed -> 5" above.
     codes.push(5);

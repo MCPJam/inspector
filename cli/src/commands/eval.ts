@@ -112,6 +112,7 @@ import {
   EVAL_SUITE_SCHEMA_VERSION,
   EVAL_SUITE_SCHEMA_VERSIONS,
   composeSuiteGateWithBaseReport,
+  isEvalRunNonVerdictStatus,
   isEvalRunTerminalStatus,
   type EvalSuiteSchemaVersion,
 } from "@mcpjam/sdk/contract";
@@ -162,7 +163,6 @@ import {
   EVAL_GATE_USAGE_EXIT_CODE,
   evalGateExitCode,
   isNonVerdictRunResult,
-  isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
   activeWaiverForRun,
@@ -1766,7 +1766,7 @@ async function runEvalGate(
         }
 
         if (
-          isNonVerdictRunStatus(run.status) ||
+          isEvalRunNonVerdictStatus(run.status) ||
           isNonVerdictRunResult(run.result)
         ) {
           decisionSummary =

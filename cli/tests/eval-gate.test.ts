@@ -5,8 +5,8 @@ import {
   EVAL_GATE_USAGE_EXIT_CODE,
   evalGateExitCode,
   isNonVerdictRunResult,
-  isNonVerdictRunStatus,
 } from "../src/lib/eval-gate-exit-code.js";
+import { isEvalRunNonVerdictStatus as isNonVerdictRunStatus } from "@mcpjam/sdk/contract";
 import {
   assertRunIdBaseline,
   buildBaselineProvenance,
