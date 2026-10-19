@@ -109,7 +109,7 @@ function FeedEntryRow({
           </Flag>
         ) : null}
         {entry.webhookIdMismatch ? (
-          <Flag title="The server labeled this delivery with an id that differs from the event inside it. The event was still recorded.">
+          <Flag title="The delivery id does not match the event id. The event was still recorded.">
             Delivery id mismatch
           </Flag>
         ) : null}
