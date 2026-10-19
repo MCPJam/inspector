@@ -1,3 +1,23 @@
+## Task, spec and plan
+
+<!-- All three lines stay. A non-blocking check comments when one is blank.
+
+Every change gets a task, including a one-line fix. If there isn't one, make one —
+it takes a few seconds and it is how the work becomes findable later.
+
+Spec and Plan are different: plenty of changes genuinely need neither. Write
+`None: <reason>` for those. A bug fix, a revert, a dependency bump, a copy tweak
+and a mechanical refactor are all good reasons, and nobody will query them.
+
+Spec means a spec that existed BEFORE the code — a Kestral spec, a design doc,
+something someone agreed to. It is not a second copy of this description. If the
+user story, acceptance criteria and architecture below are the spec, say so and
+move on; that is the normal case, not a cop-out. -->
+
+- **Kestral task:** <!-- PP-96, or https://app.kestral.ai/workspace/yhNILB2/task/… — required -->
+- **Spec:** <!-- link to a spec agreed before the code, or None: covered by the user story and acceptance criteria below -->
+- **Plan:** <!-- link, or 3 to 6 bullets of the approach you agreed before writing code, or None: <reason> -->
+
 ## User story
 
 <!-- Who this is for and what they can do after it merges. Name a specific persona: "hosted evals user", "self-hosted admin", "on-call engineer", not "the user". -->
@@ -58,6 +78,6 @@ flowchart LR
 ## Checklist
 
 - [ ] I can explain every line of this diff without the agent that wrote it.
-- [ ] Under 400 hand-written changed lines, or labelled `large-pr` / `mechanical`.
+- [ ] Under 800 changed lines of hand-written source, not counting tests (`npm run slop:size`), or labelled `large-pr` / `mechanical`.
 - [ ] No new `as any`, empty `catch`, `.catch(() => {})` or raw `console` on the server.
 - [ ] Comments say why the code is this way, not how it got here.

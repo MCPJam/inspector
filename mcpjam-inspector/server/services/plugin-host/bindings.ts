@@ -72,6 +72,12 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
  *  - `hostConfigId`, the saved config's content address. It rotates on ANY
  *    saved edit, the toggles above included; the fields it summarizes are
  *    projected individually and stay bound.
+ * `selectedServerIds` also leaves it, because one host is read two ways. The
+ * `/web/host/runtime-config` read that chat binds against carries the host's
+ * server selection; the execution-context read that discovery and every
+ * retained App check against does not. Binding it would make the two reads of
+ * an unchanged host disagree on every call. An App's own server is bound by
+ * its server identity (`pluginServerBindingDigest`), not by this list.
  * Every other field is identity: changing it yields `INSTANCE_HOST_CHANGED`.
  * A config holding none of these hashes exactly as before, and containers
  * left empty are dropped, so saving a first toggle into an absent profile
@@ -82,6 +88,7 @@ export function pluginHostBindingDigest(config: unknown) {
   const {
     hostConfigId: _contentAddress,
     requireToolApproval: _approval,
+    selectedServerIds: _selection,
     ...bound
   } = config;
   const profile = bound.mcpProfile;

@@ -119,6 +119,92 @@
     }
   ],
   "paths": {
+      "/projects/{projectId}/eval-ingest/pay-iteration": {
+        "post": {
+          "operationId": "payEvalIteration",
+          "tags": [
+            "Eval runs"
+          ],
+          "summary": "Pay for one local eval iteration",
+          "description": "Collect the declared prompt fee and reserve one iteration atomically before execution. Retries with the same identity reuse the receipt; changed requests conflict. Uploads claim the payment without charging again.",
+          "parameters": [
+            {
+              "name": "projectId",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Project id, or default to resolve the authenticated organization's Default project."
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "runStartId",
+                    "iterationKey",
+                    "caseId",
+                    "billableSteps"
+                  ],
+                  "properties": {
+                    "runStartId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "iterationKey": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "caseId": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                    },
+                    "billableSteps": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Iteration payment receipt with paymentId, runStartId, iterationKey and billableSteps."
+            },
+            "400": {
+              "description": "Invalid request."
+            },
+            "401": {
+              "description": "Authentication required."
+            },
+            "403": {
+              "description": "Access or payment refused."
+            },
+            "404": {
+              "description": "Owned run start not found."
+            },
+            "409": {
+              "description": "Conflicting iteration payment."
+            },
+            "413": {
+              "description": "Request exceeds 8 KiB."
+            },
+            "429": {
+              "description": "Organization limit reached."
+            },
+            "503": {
+              "description": "Billing unavailable."
+            }
+          }
+        }
+      },
     "/projects/{projectId}/eval-runs/{runId}/judge/backtest": {
       "post": {
         "operationId": "backtestEvalRunJudge",
@@ -7570,6 +7656,157 @@
           },
           "504": {
             "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-ingest/start-run": {
+      "post": {
+        "operationId": "startEvalRun",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Authenticate and record an eval start",
+        "description": "Called by official SDK, CLI and Vitest runners before executing an eval. Requires an organization API key or saved-login bearer. Records only start metadata, creates no dashboard run, and applies no debit or quota draw. Planned iterations are intent, not completed usage. Reuse the runStartId for retries of the same logical run; changed metadata with the same ID returns 409. Replay protection is retained for the lifetime of the owning scope. The gateway passes the backend status and receipt through unchanged.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project id, or default to resolve the authenticated organization's Default project."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "runStartId",
+                  "surface",
+                  "clientVersion",
+                  "providers",
+                  "usedClientProfile",
+                  "plannedIterations"
+                ],
+                "properties": {
+                  "runStartId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "surface": {
+                    "type": "string",
+                    "enum": [
+                      "sdk",
+                      "cli",
+                      "vitest"
+                    ]
+                  },
+                  "clientVersion": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "providers": {
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_-]{1,64}$"
+                    }
+                  },
+                  "usedClientProfile": {
+                    "oneOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "plannedIterations": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated start receipt. Identical retries return the same receipt.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "runStartId",
+                    "organizationId",
+                    "projectId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "runStartId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "organizationId": {
+                      "type": "string"
+                    },
+                    "projectId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          },
+          "413": {
+            "description": "The start metadata exceeds the 8 KiB limit."
           }
         }
       }

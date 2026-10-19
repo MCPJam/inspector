@@ -45,6 +45,7 @@ export function rebuildSentryFacts(
   for (const [key, min, max] of [
     ["fieldCount", 0, 1000],
     ["httpStatus", 100, 599],
+    ["port", 1, 65535],
   ] as const) {
     const value = input[key];
     if (

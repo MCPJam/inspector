@@ -221,10 +221,7 @@ export async function resolveTurnRuntime(
     // the org's local key and be reported under the harness's name. Refused
     // using shared copy that makes no assumption about organization policy.
     if (args.harness) {
-      throw new Error(
-        `This host runs the ${args.harness} harness, which isn't available: ` +
-          `${harnessOrgProviderUnsupportedReason(args.harness, null)}.`,
-      );
+      throw new Error(harnessOrgProviderUnsupportedReason(args.harness, null));
     }
 
     // Local-runtime org providers have no approval loop yet — the direct turn

@@ -95,7 +95,7 @@ export function prepareLocalHarnessSendRequest<UI_MESSAGE extends UIMessage>(
   snapshot: LocalHarnessSendSnapshot | null,
 ): ChatSendRequest {
   if (snapshot === null) {
-    throw new Error("Local execution is not authorized for this turn");
+    throw new Error("Local execution is not authorized. Set up this client on your machine and try again.");
   }
   if (snapshot.serverAuthorized) return { body: { ...withSdkSendFields(options), harnessTarget: { kind: "local-native", serverAuthorized: true } }, headers: normalizeSendHeaders(options.headers) };
   return {
