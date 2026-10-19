@@ -87,6 +87,7 @@ jobs:
       announced: ${{ steps.announce.outcome == 'success' || steps.announce.outcome == 'failure' }}
       announced_at: ${{ steps.announce.outputs.at }}
       slack_ts: ${{ steps.announce.outputs.slack_ts }}
+      kind: ${{ steps.announce.outputs.kind }}
     environment:
       name: production
       url: ${{ vars.PRODUCTION_APP_URL || 'https://app.mcpjam.com' }}
@@ -121,6 +122,7 @@ jobs:
         if: ${{ inputs.announce == true || inputs.announce == 'true' }}
         continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOYS_BOT_TOKEN }}
           SLACK_CHANNEL: ${{ vars.SLACK_DEPLOYS_CHANNEL || 'C0BF4A8A1QQ' }}
           DEPLOY_SHA: ${{ steps.resolved.outputs.sha }}
@@ -132,8 +134,15 @@ jobs:
             echo "::warning::SLACK_DEPLOYS_BOT_TOKEN is not set, so this deploy was not announced."
             exit 0
           fi
+          # The bold label says what kind of deploy this is; the finish reuses it.
+          # A commit behind `main` is a rollback.
+          kind="Webapp-only deploy"
+          icon="🚀"
+          cmp="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$DEPLOY_SHA" --jq .status)" || cmp=""
+          if [ "$cmp" = behind ]; then kind="Webapp rollback"; icon="⏪"; fi
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
           commit="<$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$DEPLOY_SHA|${DEPLOY_SHA:0:9}>"
-          text="🚀 Webapp → prod started by $GITHUB_TRIGGERING_ACTOR · $commit · <$RUN_URL|run>"
+          text="$icon *$kind* · started by $GITHUB_TRIGGERING_ACTOR · $commit · <$RUN_URL|run>"
           # The Web API, not a webhook: a webhook can't reply in a thread. The
           # token goes through a header file (mktemp: mode 0600), never a command
           # line. Slack answers 200 even on an error, so `ok` is checked, and `ts`
@@ -334,6 +343,7 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOYS_BOT_TOKEN }}
           SLACK_CHANNEL: ${{ vars.SLACK_DEPLOYS_CHANNEL || 'C0BF4A8A1QQ' }}
           SLACK_TS: ${{ needs.deploy.outputs.slack_ts }}
+          KIND: ${{ needs.deploy.outputs.kind || 'Webapp-only deploy' }}
           STARTED: ${{ needs.deploy.outputs.announced_at }}
           DEPLOY: ${{ needs.deploy.result }}
           SMOKE: ${{ needs.smoke.result }}
@@ -343,13 +353,13 @@ jobs:
           [ -n "${SLACK_BOT_TOKEN:-}" ] || exit 0
           mins=$(( ( $(date -u +%s) - ${STARTED:-$(date -u +%s)} ) / 60 ))
           if [ "$DEPLOY" = cancelled ] || [ "$SMOKE" = cancelled ]; then
-            text="⚪ Webapp → prod cancelled (${mins}m) · <$RUN_URL|run>"
+            text="⚪ *$KIND* cancelled (${mins}m) · <$RUN_URL|run>"
           elif [ "$DEPLOY" != success ]; then
-            text="❌ Webapp → prod failed (${mins}m) · <$RUN_URL|run>"
+            text="❌ *$KIND* failed (${mins}m) · <$RUN_URL|run>"
           elif [ "$SMOKE" != success ]; then
-            text="❌ Webapp → prod deployed, but the production smoke check failed (${mins}m) · <$RUN_URL|run>"
+            text="❌ *$KIND* deployed, but the production smoke check failed (${mins}m) · <$RUN_URL|run>"
           else
-            text="✅ Webapp → prod done, smoke check passed (${mins}m) · <$RUN_URL|run>"
+            text="✅ *$KIND* done, smoke check passed (${mins}m) · <$RUN_URL|run>"
           fi
           # Replies in the start line's thread, or on its own if that line never
           # went out. Anything but a success is also sent to the channel.

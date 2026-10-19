@@ -1101,6 +1101,7 @@ jobs:
     outputs:
       started_at: ${{ steps.post.outputs.started_at }}
       slack_ts: ${{ steps.post.outputs.slack_ts }}
+      kind: ${{ steps.post.outputs.kind }}
     steps:
       - name: Announce the release in Slack
         id: post
@@ -1126,6 +1127,10 @@ jobs:
           [ "$DESKTOP" = true ] && parts="$parts + desktop"
           [ "$WEBAPP" = true ] && parts="webapp + $parts"
           [ "$BACKEND" = true ] && parts="backend + $parts"
+          # The bold label says what kind of release this is; the finish reuses it.
+          kind="Package release $NAME"
+          if [ "$BACKEND" = true ] || [ "$WEBAPP" = true ]; then kind="Full release $NAME"; fi
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
           who="by $GITHUB_TRIGGERING_ACTOR"
           case "$GITHUB_TRIGGERING_ACTOR" in *"[bot]") who="automatically" ;; esac
           # Not `releases/latest`: `finalize` may already have published this
@@ -1142,7 +1147,7 @@ jobs:
           if [ -n "$count" ]; then
             changes=" · <$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$prev...${GITHUB_SHA:0:9}|$count commits since $prev>"
           fi
-          text="🚀 Release $NAME started $who · $parts$changes · <$RUN_URL|run>"
+          text="🚀 *$kind* · started $who · $parts$changes · <$RUN_URL|run>"
           # The Web API, not a webhook: a webhook can't reply in a thread. The
           # token goes through a header file (mktemp: mode 0600), never a command
           # line. Slack answers 200 even on an error, so `ok` is checked, and `ts`
@@ -1177,6 +1182,7 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOYS_BOT_TOKEN }}
           SLACK_CHANNEL: ${{ vars.SLACK_DEPLOYS_CHANNEL || 'C0BF4A8A1QQ' }}
           SLACK_TS: ${{ needs.announce-start.outputs.slack_ts }}
+          KIND: ${{ needs.announce-start.outputs.kind || format('Release {0}', needs.preflight.outputs.release_tag || inputs.versions || 'packages') }}
           NAME: ${{ needs.preflight.outputs.release_tag || inputs.versions || 'packages' }}
           STARTED_AT: ${{ needs.announce-start.outputs.started_at }}
           FINALIZE: ${{ needs.finalize.result }}
@@ -1189,13 +1195,13 @@ jobs:
           # a deploy it does not require failed, so say the outcome is unknown.
           if ! failed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
             --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(", ")')"; then
-            text="⚠️ Release $NAME ended (${mins}m), job results unreadable · <$RUN_URL|run>"
+            text="⚠️ *$KIND* ended (${mins}m), job results unreadable · <$RUN_URL|run>"
           elif [ -n "$failed" ]; then
-            text="❌ Release $NAME failed (${mins}m) at $failed · <$RUN_URL|run>"
+            text="❌ *$KIND* failed (${mins}m) at $failed · <$RUN_URL|run>"
           elif [ "$FINALIZE" = success ]; then
-            text="✅ Release $NAME done (${mins}m) · <$RUN_URL|run>"
+            text="✅ *$KIND* done (${mins}m) · <$RUN_URL|run>"
           else
-            text="⚪ Release $NAME stopped (${mins}m) · <$RUN_URL|run>"
+            text="⚪ *$KIND* stopped (${mins}m) · <$RUN_URL|run>"
           fi
           # Replies in the start line's thread, or on its own if that line never
           # went out. Anything but a success is also sent to the channel.
