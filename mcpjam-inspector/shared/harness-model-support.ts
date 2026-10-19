@@ -321,10 +321,7 @@ function notVerifiedReason(
  *  harness pre-flight has always used for a model the runtime can't run. */
 export function harnessModelUnsupportedReason(harnessId: string): string {
   const name = harnessDisplayName(harnessId);
-  return (
-    `The ${name} client cannot run this model. ` +
-    `Choose a model supported by ${name} or another client.`
-  );
+  return `This model isn’t supported by ${name}. Choose a supported model or switch clients.`;
 }
 
 /**

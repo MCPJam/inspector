@@ -325,7 +325,6 @@ describe("ErrorBox free-tier model refusal", () => {
     const onManageOrgProviders = vi.fn();
     render(
       <ErrorBox
-        isHarnessTurn
         message="Restricted"
         code="free_tier_model_restricted"
         canTopUp
@@ -349,7 +348,6 @@ describe("ErrorBox free-tier model refusal", () => {
   it("reads the refusal code from details and directs members to their admin", () => {
     render(
       <ErrorBox
-        isHarnessTurn
         message="Restricted"
         errorDetails={JSON.stringify({ code: "free_tier_model_restricted" })}
       />,
@@ -359,8 +357,11 @@ describe("ErrorBox free-tier model refusal", () => {
   });
 });
 
-it("preserves personal-key guidance for a non-harness free-tier refusal", () => {
-  render(<ErrorBox message="Choose a free model or use your own API key." code="free_tier_model_restricted" />);
-  expect(screen.getByText(/use your own API key/)).toBeVisible();
-  expect(screen.queryByText(/organization admin/i)).not.toBeInTheDocument();
+it("keeps reset and omits upgrade advice when no upgrade action is available", () => {
+  const reset = vi.fn();
+  render(<ErrorBox message="Restricted" code="free_tier_model_restricted" canTopUp onResetChat={reset} />);
+  expect(screen.queryByText(/Upgrade your plan/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Compare plans" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Reset chat" }));
+  expect(reset).toHaveBeenCalledOnce();
 });

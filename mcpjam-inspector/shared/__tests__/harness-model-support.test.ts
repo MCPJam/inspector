@@ -32,8 +32,7 @@ describe("harnessModelSupport — seed evidence", () => {
     });
     expect(verdict.status).toBe("unsupported");
     expect(verdict.reason).toBe(
-      "The Claude Code client cannot run this model. " +
-        "Choose a model supported by Claude Code or another client.",
+      "This model isn’t supported by Claude Code. Choose a supported model or switch clients.",
     );
     expect(verdict.evidence?.familyPattern).toBe(".*");
   });
@@ -45,7 +44,7 @@ describe("harnessModelSupport — seed evidence", () => {
       modelId: "anthropic/claude-haiku-4.5",
     });
     expect(verdict.status).toBe("unsupported");
-    expect(verdict.reason).toMatch(/Codex client cannot run this model/);
+    expect(verdict.reason).toMatch(/isn’t supported by Codex/);
   });
 
   it("claude-code has no verified native id for claude-fable-5", () => {

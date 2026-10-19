@@ -17,6 +17,7 @@
  * failures (computer wake, E2B connect).
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
+import { HOSTED_MODE } from "../../config.js";
 import { cloudExecutionContact } from "./harness-box.js";
 import {
   getCanonicalModelId,
@@ -382,7 +383,7 @@ export function harnessReasoningEffortRefusalReason(args: {
       return (
         `This model does not support the "${reasoningEffort}" reasoning effort.` +
         (modelEfforts.length > 0
-          ? ` Choose ${quotedChoices(modelEfforts)}.`
+          ? ` Choose ${modelEfforts.map((level) => `"${level}"`).join(" or ")}.`
           : " Remove the reasoning effort from this model.")
       );
     }
@@ -393,14 +394,7 @@ export function harnessReasoningEffortRefusalReason(args: {
     ? `The ${name} client does not support the "${reasoningEffort}" reasoning effort. ` +
         "Remove the reasoning effort from this model or choose another client."
     : `The ${name} client does not support the "${reasoningEffort}" reasoning ` +
-        `effort. Choose ${quotedChoices(adapter.supportedReasoningEfforts)}.`;
-}
-
-/** `"low", "medium", or "high"`: the levels a refusal offers, as one choice. */
-function quotedChoices(levels: readonly string[]): string {
-  return new Intl.ListFormat("en", { type: "disjunction" }).format(
-    levels.map((level) => `"${level}"`),
-  );
+        `effort. Choose ${adapter.supportedReasoningEfforts.map((level) => `"${level}"`).join(" or ")}.`;
 }
 
 /**
@@ -643,8 +637,7 @@ export function checkHarnessRuntimeAvailable(args: {
       ok: false,
       kind: "broker-disabled",
       reason:
-        `The ${name} client cannot access model credentials right now. ` +
-        "Contact MCPJam support or choose another client.",
+        `${name} can’t access the credentials needed to use this model. ${cloudExecutionContact()}${HOSTED_MODE ? "" : " to check the model credentials"}. You can also switch clients.`,
     };
   }
 

@@ -4537,7 +4537,9 @@ export async function runHarnessTurn(
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();
       if (textId !== undefined) emitTextEnd(writer, textId);
-      emitError(writer, errorText);
+      emitError(writer, failureEvidence?.code
+        ? JSON.stringify({ message: errorText, code: failureEvidence.code })
+        : errorText);
       // A mid-stream failure still gets a final snapshot + turn_finish so the
       // Trace tab renders what happened (parity with runChatEngineLoop). Guarded
       // by the driver's `traceStarted` so a pre-stream failure emits no phantom

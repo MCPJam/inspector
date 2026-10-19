@@ -99,7 +99,7 @@ const RELEASE_REQUEST_TIMEOUT_MS = 15_000;
 export function cloudExecutionContact(): string {
   return HOSTED_MODE
     ? "Contact MCPJam support"
-    : "Contact the operator of this Inspector";
+    : "Ask your MCPJam administrator";
 }
 
 const DATA_PLANE_REQUIREMENT = `but cloud execution is unavailable. ${cloudExecutionContact()} to enable it.`;

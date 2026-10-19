@@ -159,7 +159,7 @@ import {
   MultiModelStarterPromptsBlock,
   MultiModelStartersEmptyLayout,
 } from "@/components/chat-v2/multi-model-starters-empty";
-import { ErrorBox } from "@/components/chat-v2/error";
+import { TopupGatedErrorBox as ErrorBox } from "@/components/billing/TopupGatedErrorBox";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import {
   DETACH_FORK_FAILED_MESSAGE,
@@ -6604,7 +6604,9 @@ export function PlaygroundMain({
                       <div className="space-y-6">
                         {errorMessage && (
                           <div className="w-full">
-                            <ErrorBox isHarnessTurn={Boolean(previewedHarnessId)}
+                            <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                               onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
@@ -6676,7 +6678,9 @@ export function PlaygroundMain({
                         />
                         {errorMessage && (
                           <div className="w-full">
-                            <ErrorBox isHarnessTurn={Boolean(previewedHarnessId)}
+                            <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                               onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
@@ -6848,7 +6852,9 @@ export function PlaygroundMain({
               >
                 {errorMessage && (
                   <div className="pb-3">
-                    <ErrorBox isHarnessTurn={Boolean(previewedHarnessId)}
+                    <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                       onManageOrgProviders={manageOrgProviders}
                       message={errorMessage.message}
                       errorDetails={errorMessage.details}
@@ -7132,7 +7138,9 @@ export function PlaygroundMain({
                   errorFooterSlot={
                     errorMessage ? (
                       <div className="max-w-4xl mx-auto px-4 pt-4">
-                        <ErrorBox isHarnessTurn={Boolean(previewedHarnessId)}
+                        <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                           onManageOrgProviders={manageOrgProviders}
                           message={errorMessage.message}
                           errorDetails={errorMessage.details}
@@ -7521,7 +7529,9 @@ export function PlaygroundMain({
                           <div className="max-w-4xl mx-auto w-full p-3">
                             {errorMessage && (
                               <div className="pb-3">
-                                <ErrorBox isHarnessTurn={Boolean(previewedHarnessId)}
+                                <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                                   onManageOrgProviders={manageOrgProviders}
                                   message={errorMessage.message}
                                   errorDetails={errorMessage.details}

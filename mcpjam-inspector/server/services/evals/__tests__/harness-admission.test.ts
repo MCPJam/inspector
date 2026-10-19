@@ -255,7 +255,7 @@ describe("checkEvalHarnessAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("cannot access model credentials");
+    expect(verdict.reason).toContain("can’t access the credentials");
   });
 
   it("admits Codex for a suite with MCP servers (host-executed delivery)", () => {
@@ -822,7 +822,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("Codex client cannot run this model");
+    expect(verdict.reason).toContain("model isn’t supported by Codex");
     expect(verdict.reason).toContain("Ineligible cases: luna");
     expect(verdict.reason).not.toContain("fine");
   });
@@ -865,7 +865,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
     expect(verdict.reason).toContain(
-      "Claude Code client cannot run this model"
+      "model isn’t supported by Claude Code"
     );
   });
 });

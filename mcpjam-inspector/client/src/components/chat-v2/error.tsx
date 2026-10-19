@@ -35,7 +35,6 @@ import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 interface ErrorBoxProps {
   message: string;
-  isHarnessTurn?: boolean;
   errorDetails?: string;
   onResetChat?: () => void;
   // New props for enhanced error display
@@ -89,7 +88,6 @@ const parseErrorDetails = (details: string | undefined) => {
 
 export function ErrorBox({
   message,
-  isHarnessTurn = false,
   errorDetails,
   onResetChat,
   code,
@@ -134,20 +132,20 @@ export function ErrorBox({
     </div>;
   }
 
-  if (isHarnessTurn && refusalCode === "free_tier_model_restricted") {
+  if (refusalCode === "free_tier_model_restricted") {
     return (
       <div
         role="alert"
         className="flex flex-col gap-2 rounded border border-warning bg-warning/20 p-4 text-warning-foreground"
       >
         <p>
-          This model is not included in the free allowance. Upgrade your plan or
-          use an organization API key.
+          This model isn’t included in your free daily allowance.{" "}
+          {canTopUp && onTopUp ? "Upgrade your plan or use an organization API key." : "Use an organization API key."}
         </p>
         <div className="flex flex-wrap gap-2">
           {canTopUp && onTopUp && (
             <Button variant="outline" onClick={onTopUp}>
-              {creditActionLabel}
+              Compare plans
             </Button>
           )}
           {onManageOrgProviders && (
@@ -156,7 +154,8 @@ export function ErrorBox({
             </Button>
           )}
         </div>
-        {!onManageOrgProviders && <p>{ASK_ORG_ADMIN}.</p>}
+        {!onManageOrgProviders && <p>Ask an organization admin to add an API key for this model.</p>}
+        {onResetChat && <Button variant="outline" onClick={onResetChat}>Reset chat</Button>}
       </div>
     );
   }

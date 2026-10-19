@@ -1140,7 +1140,7 @@ describe("expandModelChoices — harness × model support", () => {
         clientId: "h-claude",
         modelId: "openai/gpt-5.6-luna",
         reason: expect.stringContaining(
-          "The Claude Code client cannot run this model",
+          "This model isn’t supported by Claude Code",
         ),
       },
       {
@@ -1254,7 +1254,7 @@ describe("resolveComposerEnvironments — harness-incompatible cells", () => {
       {
         clientId: "h-codex",
         modelId: "openai/gpt-5.6-luna",
-        reason: expect.stringContaining("Codex client cannot run"),
+        reason: expect.stringContaining("model isn’t supported by Codex"),
       },
     ]);
     expect(describeSkippedModelCells(result.skipped, () => "Codex")).toMatch(
@@ -1291,7 +1291,7 @@ describe("resolveComposerEnvironments — harness-incompatible cells", () => {
       {
         clientId: "h-codex",
         modelId: "openai/gpt-5.6-luna",
-        reason: expect.stringContaining("Codex client cannot run"),
+        reason: expect.stringContaining("model isn’t supported by Codex"),
       },
     ]);
   });

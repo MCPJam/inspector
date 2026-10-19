@@ -188,7 +188,7 @@ export async function resolveLocalHarnessAvailability(
   if (!enabled) {
     return unavailable(
       "server-disabled",
-      "Local execution is unavailable. Choose cloud execution or contact the operator of this Inspector.",
+      `${query.target.harnessId === "codex" ? "Codex" : "Claude Code"} can’t run on this computer. Ask your MCPJam administrator to enable local execution.`,
     );
   }
   if (!isActorEligibleForLocalHarness(query.actor, query.scope)) {

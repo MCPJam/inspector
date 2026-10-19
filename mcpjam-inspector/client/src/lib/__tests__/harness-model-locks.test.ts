@@ -34,7 +34,7 @@ describe("harness model locks", () => {
         { harnessId: "codex" },
         "eval",
       ),
-    ).toMatch(/Codex client cannot run this model/);
+    ).toMatch(/model isn’t supported by Codex/);
     expect(
       harnessChoiceRefusalReason(
         { modelId: "openai/gpt-5.5" },
@@ -70,7 +70,7 @@ describe("harness model locks", () => {
     expect(locked[0]!.disabled).toBeFalsy();
     expect(locked[1]).toMatchObject({
       disabled: true,
-      disabledReason: expect.stringContaining("Codex client"),
+      disabledReason: expect.stringContaining("Codex"),
     });
     expect(locked[2]!.disabledReason).toBe("Out of credits");
   });
@@ -433,7 +433,7 @@ describe("harnessChoiceRefusalReason (a saved choice, no row)", () => {
         { harnessId: "codex" },
         "eval",
       ),
-    ).toMatch(/Codex client cannot run/);
+    ).toMatch(/model isn’t supported by Codex/);
     expect(
       harnessChoiceRefusalReason(
         { modelId: "openai/gpt-5.6-luna" },

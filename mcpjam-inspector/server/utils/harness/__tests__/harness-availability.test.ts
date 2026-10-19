@@ -113,7 +113,7 @@ describe("checkHarnessRuntimeAvailable", () => {
       args({ harnessId: "codex", model: { id: "anthropic/claude-haiku-4.5" } }),
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/cannot run this model/);
+    if (!r.ok) expect(r.reason).toMatch(/isn’t supported/);
   });
 
   // The gpt-5.6 line is hosted, Codex-mappable by the OLD `gpt-5` prefix rule,
@@ -135,7 +135,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.kind).toBe("model-unsupported");
-      expect(r.reason).toMatch(/cannot run this model/);
+      expect(r.reason).toMatch(/isn’t supported/);
     }
   });
 
@@ -285,7 +285,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
     const r = checkHarnessRuntimeAvailable(args());
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/cannot access model credentials/);
+    if (!r.ok) expect(r.reason).toMatch(/can’t access the credentials/);
   });
 
   it.each(["unset", "true"] as const)(
@@ -747,8 +747,7 @@ describe("version-keyed model support (evidence table)", () => {
       ok: false,
       kind: "model-unsupported",
       reason:
-        "The Claude Code client cannot run this model. " +
-        "Choose a model supported by Claude Code or another client.",
+        "This model isn’t supported by Claude Code. Choose a supported model or switch clients.",
     });
   });
 
@@ -922,7 +921,7 @@ describe("an effort the adapter applies but the model does not list", () => {
         modelEfforts: ["minimal", "low", "medium", "high"],
       }),
     ).toBe(
-      'This model does not support the "xhigh" reasoning effort. Choose "minimal", "low", "medium", or "high".',
+      'This model does not support the "xhigh" reasoning effort. Choose "minimal" or "low" or "medium" or "high".',
     );
     expect(
       harnessReasoningEffortRefusalReason({

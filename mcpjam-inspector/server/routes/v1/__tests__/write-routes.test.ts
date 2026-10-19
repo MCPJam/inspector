@@ -2703,7 +2703,7 @@ describe("v1 write routes", () => {
         const body = (await res.json()) as any;
         expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
         expect(body.message).toContain(
-          "The Codex client cannot run this model"
+          "This model isn’t supported by Codex"
         );
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
       } finally {
