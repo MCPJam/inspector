@@ -387,19 +387,17 @@ evals.post("/run-test-case", async (c) => {
     c,
     hostedRunTestCaseSchema,
     async (manager, body) =>
-      serverDrain.track(
-        "quick_run",
-        runEvalTestCaseWithManager(manager, {
-          ...body,
-          ...((await anyUnattendedLocalHarness(c.req.header("authorization"), body.projectId)) ? { runtimeVenue: "local" as const } : {}),
-          // The DELEGATED JWT: the run's Convex calls use this bearer, and an
-          // `sk_` API key 401s Convex's query and action surfaces.
-          convexAuthToken: await getConvexBearerForRequest(c),
-          ...(preflightEnvironment
-            ? { resolvedEnvironment: preflightEnvironment }
-            : {}),
-        }),
-      ),
+      // Drained by its admission until this answers; see refuseWhileDraining.
+      runEvalTestCaseWithManager(manager, {
+        ...body,
+        ...((await anyUnattendedLocalHarness(c.req.header("authorization"), body.projectId)) ? { runtimeVenue: "local" as const } : {}),
+        // The DELEGATED JWT: the run's Convex calls use this bearer, and an
+        // `sk_` API key 401s Convex's query and action surfaces.
+        convexAuthToken: await getConvexBearerForRequest(c),
+        ...(preflightEnvironment
+          ? { resolvedEnvironment: preflightEnvironment }
+          : {}),
+      }),
     {
       rpcLogs: false,
       beforeConnect: async (rawBody) => {
