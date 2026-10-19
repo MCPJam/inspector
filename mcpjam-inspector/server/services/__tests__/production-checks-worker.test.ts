@@ -1,13 +1,16 @@
 /**
- * Production checks worker — loop behavior and the evaluation of one claim.
+ * Production checks worker — how a claim response is read, the start gate,
+ * and the evaluation of one claim. The poll loop itself is tested in
+ * `workers/__tests__/claim-loop.test.ts`.
  *
- * The loop tests mirror `scheduled-evals-worker.test.ts` (same seams). The
- * evaluation tests drive `executeClaimedCheck` against a mocked service
+ * The evaluation tests drive `executeClaimedCheck` against a mocked service
  * fetch and assert what lands on /complete and /fail — the wire is the
  * contract, and reason strings are the evidence the panel renders.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import catalog from "../../../shared/telemetry-catalog.generated.json";
 import {
+  claimNextForTests,
   executeClaimedCheck,
   startProductionChecksWorker,
   type ClaimedProductionCheck,
@@ -157,86 +160,91 @@ describe("executeClaimedCheck", () => {
   });
 });
 
-describe("startProductionChecksWorker loop", () => {
+function stubClaimResponse(status: number, body: unknown) {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(new Response(JSON.stringify(body), { status }));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+describe("production-checks claim", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
   });
   afterEach(() => {
-    vi.useRealTimers();
     vi.unstubAllEnvs();
-    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  function flushLoop(times = 6) {
-    return (async () => {
-      for (let i = 0; i < times; i++) {
-        await vi.advanceTimersByTimeAsync(20_000);
-      }
-    })();
-  }
+  it("posts the worker's claimedBy and returns the claimed grade", async () => {
+    const fetchMock = stubClaimResponse(200, {
+      ok: true,
+      claimed: true,
+      ...BASE_CLAIM,
+    });
+
+    await expect(claimNextForTests("inspector-7")).resolves.toEqual(BASE_CLAIM);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://convex.test/internal/v1/production-checks/claim");
+    expect(JSON.parse(init.body)).toEqual({ claimedBy: "inspector-7" });
+  });
+
+  it("reads an empty queue as nothing to do", async () => {
+    stubClaimResponse(200, { ok: true, claimed: false });
+    await expect(claimNextForTests("inspector-7")).resolves.toBeNull();
+  });
+
+  it("reads a consumed stale trigger as drained, so the loop re-polls soon", async () => {
+    stubClaimResponse(200, { ok: true, claimed: false, retry: true });
+    await expect(claimNextForTests("inspector-7")).resolves.toBe("drained");
+  });
+
+  it("reads a 404 as the feature being off backend-side", async () => {
+    stubClaimResponse(404, { ok: false });
+    await expect(claimNextForTests("inspector-7")).resolves.toBe("disabled");
+  });
+
+  it("throws on a failed or malformed claim so the loop backs off", async () => {
+    stubClaimResponse(500, { ok: false });
+    await expect(claimNextForTests("inspector-7")).rejects.toThrow(
+      /claim failed \(500\)/,
+    );
+    stubClaimResponse(200, { ok: true, claimed: true, triggerId: "trig-1" });
+    await expect(claimNextForTests("inspector-7")).rejects.toThrow(
+      "claim returned a malformed payload",
+    );
+  });
+});
+
+describe("startProductionChecksWorker", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
 
   it("stays inert without the service-token env — the only gate there is", async () => {
     // No flag guards this worker, so a deployment that is not an
     // infrastructure peer must self-gate here or every local dev inspector
     // would start polling.
-    vi.unstubAllEnvs();
-    const claim = vi.fn();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
 
-    const handle = startProductionChecksWorker({ claim });
-    await flushLoop();
-    await handle.stop();
+    await startProductionChecksWorker().stop();
 
-    expect(claim).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("claims, executes, and keeps polling", async () => {
-    const claim = vi
-      .fn()
-      .mockResolvedValueOnce({ kind: "claimed", claim: BASE_CLAIM })
-      .mockResolvedValue({ kind: "empty" });
-    const execute = vi.fn().mockResolvedValue(undefined);
-
-    const handle = startProductionChecksWorker({ claim, execute });
-    await flushLoop();
-    handle.stop();
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledWith(BASE_CLAIM);
-    expect(claim.mock.calls.length).toBeGreaterThan(1);
-  });
-
-  it("re-polls immediately after a drained (stale) trigger", async () => {
-    const claim = vi
-      .fn()
-      .mockResolvedValueOnce({ kind: "drained" })
-      .mockResolvedValueOnce({ kind: "claimed", claim: BASE_CLAIM })
-      .mockResolvedValue({ kind: "empty" });
-    const execute = vi.fn().mockResolvedValue(undefined);
-
-    const handle = startProductionChecksWorker({ claim, execute });
-    await flushLoop();
-    handle.stop();
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    expect(execute).toHaveBeenCalledTimes(1);
-  });
-
-  it("survives claim errors with a backoff instead of crashing the loop", async () => {
-    const claim = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("backend down"))
-      .mockResolvedValue({ kind: "empty" });
-    const execute = vi.fn();
-
-    const handle = startProductionChecksWorker({ claim, execute });
-    await flushLoop(10);
-    handle.stop();
-    await vi.advanceTimersByTimeAsync(70_000);
-
-    expect(claim.mock.calls.length).toBeGreaterThan(1);
-    expect(execute).not.toHaveBeenCalled();
+  it("logs its lines as literals the telemetry catalog keeps", () => {
+    expect(catalog.messages).toEqual(
+      expect.arrayContaining([
+        "[production-checks] worker started",
+        "[production-checks] poll failed",
+        "[production-checks] worker stopped",
+      ]),
+    );
   });
 });

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import catalog from "../../../shared/telemetry-catalog.generated.json";
 import {
+  claimNextForTests,
   classifyFailure,
   startScheduledEvalsWorker,
 } from "../scheduled-evals-worker";
@@ -14,92 +16,87 @@ const CLAIM = {
   scheduledFor: 1700000000000,
 };
 
-function flushLoop(times = 6) {
-  // The loop interleaves awaits; advancing timers + draining microtasks a few
-  // times settles one or more iterations deterministically under fake timers.
-  return (async () => {
-    for (let i = 0; i < times; i++) {
-      await vi.advanceTimersByTimeAsync(20_000);
-    }
-  })();
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status });
 }
 
-describe("startScheduledEvalsWorker loop", () => {
+describe("scheduled-evals claim", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     vi.unstubAllEnvs();
-    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  it("claims and executes one trigger at a time, then keeps polling", async () => {
-    const claim = vi
+  it("posts the worker's claimedBy to the scheduled-eval claim route", async () => {
+    const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(CLAIM)
-      .mockResolvedValue(null);
-    const execute = vi.fn().mockResolvedValue(undefined);
+      .mockResolvedValue(jsonResponse(200, { ok: true, claimed: CLAIM }));
+    vi.stubGlobal("fetch", fetchMock);
 
-    const handle = startScheduledEvalsWorker({ claim, execute });
-    await flushLoop();
-    handle.stop();
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledWith(CLAIM);
-    expect(claim.mock.calls.length).toBeGreaterThan(1);
+    await expect(claimNextForTests("inspector-7")).resolves.toEqual(CLAIM);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://convex.test/internal/v1/scheduled-eval-runs/claim",
+    );
+    expect(JSON.parse(init.body)).toEqual({ claimedBy: "inspector-7" });
   });
 
-  it("survives claim errors with a backoff instead of crashing the loop", async () => {
-    const claim = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("backend down"))
-      .mockResolvedValue(null);
-    const execute = vi.fn();
-
-    const handle = startScheduledEvalsWorker({ claim, execute });
-    await flushLoop(8);
-    handle.stop();
-    await vi.advanceTimersByTimeAsync(70_000);
-
-    expect(execute) .not.toHaveBeenCalled();
-    expect(claim.mock.calls.length).toBeGreaterThan(1);
+  it("reads an empty queue as nothing to do", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { ok: true, claimed: null })),
+    );
+    await expect(claimNextForTests("inspector-7")).resolves.toBeNull();
   });
 
-  it("backs off without executing when the backend reports the feature disabled", async () => {
-    const claim = vi.fn().mockResolvedValue("disabled" as const);
-    const execute = vi.fn();
-
-    const handle = startScheduledEvalsWorker({ claim, execute });
-    await flushLoop(3);
-    handle.stop();
-    await vi.advanceTimersByTimeAsync(70_000);
-
-    expect(execute).not.toHaveBeenCalled();
-    expect(claim).toHaveBeenCalled();
+  it("reads a 404 as the feature being off backend-side", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(404, { ok: false })),
+    );
+    await expect(claimNextForTests("inspector-7")).resolves.toBe("disabled");
   });
 
-  it("stop() ends the loop", async () => {
-    const claim = vi.fn().mockResolvedValue(null);
-    const handle = startScheduledEvalsWorker({ claim, execute: vi.fn() });
-    await flushLoop(2);
-    handle.stop();
-    const callsAtStop = claim.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(claim.mock.calls.length).toBe(callsAtStop);
+  it("throws on any other failure so the loop backs off", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(500, { ok: false })),
+    );
+    await expect(claimNextForTests("inspector-7")).rejects.toThrow(
+      /claim failed \(500\)/,
+    );
+  });
+});
+
+describe("startScheduledEvalsWorker", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it("does not start without the service credentials", async () => {
-    vi.unstubAllEnvs();
-    const claim = vi.fn();
-    const handle = startScheduledEvalsWorker({ claim, execute: vi.fn() });
-    await flushLoop(2);
-    handle.stop();
-    expect(claim).not.toHaveBeenCalled();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await startScheduledEvalsWorker().stop();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("logs its lines as literals the telemetry catalog keeps", () => {
+    expect(catalog.messages).toEqual(
+      expect.arrayContaining([
+        "[scheduled-evals] worker started",
+        "[scheduled-evals] poll failed",
+        "[scheduled-evals] worker stopped",
+      ]),
+    );
   });
 });
 
