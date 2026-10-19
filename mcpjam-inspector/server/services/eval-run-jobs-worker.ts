@@ -143,7 +143,14 @@ export async function resumeDurableRun(
     // Not executed: let the lease lapse so a later attempt (or, past the
     // attempt budget, the stale watchdog) settles the run.
     if (!executed) handle.stop();
-    if (manager) await manager.disconnectAllServers().catch(() => {});
+    if (manager) {
+      await manager.disconnectAllServers().catch((error) =>
+        logger.warn("[eval-run-jobs] disconnect failed", {
+          ...logContext,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
   }
 }
 
