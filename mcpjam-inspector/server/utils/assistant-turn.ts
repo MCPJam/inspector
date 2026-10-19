@@ -714,19 +714,10 @@ export async function runAssistantTurn(
         : {}),
     });
     if (effortRefusal) {
-      throw new Error(
-        `This host runs the ${opts.harness} harness, which isn't available: ` +
-          `${effortRefusal}.`,
-      );
+      throw new Error(effortRefusal);
     }
     if (refusal) {
-      // Wrapped in the SAME sentence the chat routes build around a pre-flight
-      // refusal, so a reader who meets this in a run log and one who meets it in
-      // a 503 are reading the same thing.
-      throw new Error(
-        `This host runs the ${opts.harness} harness, which isn't available: ` +
-          `${refusal.reason}.`,
-      );
+      throw new Error(refusal.reason);
     }
     if (warning) {
       logger.warn("[assistant-turn] running an unverified harness model", {

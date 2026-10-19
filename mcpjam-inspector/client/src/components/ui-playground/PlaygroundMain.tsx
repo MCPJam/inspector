@@ -159,7 +159,7 @@ import {
   MultiModelStarterPromptsBlock,
   MultiModelStartersEmptyLayout,
 } from "@/components/chat-v2/multi-model-starters-empty";
-import { ErrorBox } from "@/components/chat-v2/error";
+import { TopupGatedErrorBox as ErrorBox } from "@/components/billing/TopupGatedErrorBox";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import {
   DETACH_FORK_FAILED_MESSAGE,
@@ -233,7 +233,7 @@ import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
-import { useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
+import { localHarnessSetupBlocksSend, useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
 import {
   LocalHarnessTrustDialog,
   LocalHarnessAutoApproveDialog,
@@ -4834,7 +4834,12 @@ export function PlaygroundMain({
       // authorization already exists (`preferredVenue === "local"`), and setup
       // is what creates it — so on a machine that never set this harness up,
       // returning here made the button do nothing at all.
-      if (!setup && !localHarnessRequested) return true;
+      if (!setup && !localHarnessRequested) {
+        return !localHarnessSetupBlocksSend({
+          inScope: localHarnessInScope,
+          phase: localHarness.phase,
+        });
+      }
       // A ready target sends without a readiness round trip (the turn's own
       // route re-checks it); only Off still confirms consent first.
       if (!setup && localHarness.phase === "ready") {
@@ -4866,7 +4871,7 @@ export function PlaygroundMain({
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
+    }, [localHarnessRequested, localHarnessInScope, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
 
   const extensionOwnerScope = JSON.stringify([
     currentUserForSender?._id,
@@ -6605,6 +6610,8 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                               onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
@@ -6677,6 +6684,8 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                               onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
@@ -6849,6 +6858,8 @@ export function PlaygroundMain({
                 {errorMessage && (
                   <div className="pb-3">
                     <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                       onManageOrgProviders={manageOrgProviders}
                       message={errorMessage.message}
                       errorDetails={errorMessage.details}
@@ -7133,6 +7144,8 @@ export function PlaygroundMain({
                     errorMessage ? (
                       <div className="max-w-4xl mx-auto px-4 pt-4">
                         <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                           onManageOrgProviders={manageOrgProviders}
                           message={errorMessage.message}
                           errorDetails={errorMessage.details}
@@ -7522,6 +7535,8 @@ export function PlaygroundMain({
                             {errorMessage && (
                               <div className="pb-3">
                                 <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                                   onManageOrgProviders={manageOrgProviders}
                                   message={errorMessage.message}
                                   errorDetails={errorMessage.details}

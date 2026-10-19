@@ -149,7 +149,7 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/evaluate/server-facts-model.ts", 2],
   ["components/EvaluateTab.tsx", 1],
   ["components/harness/LocalHarnessComposerNotice.tsx", 1],
-  ["components/harness/LocalHarnessTrustDialog.tsx", 3],
+  ["components/harness/LocalHarnessTrustDialog.tsx", 2],
   ["components/home/SharedSlackChannelCard.tsx", 1],
   ["components/hosted/ScenarioTaskChecklist.tsx", 1],
   ["components/hosts/comparison/support-level.ts", 1],

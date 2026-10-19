@@ -12,13 +12,13 @@ import {
   loadBootstrapFeatureFlags,
   refreshServerFeatureFlagsForActor,
 } from "../server-feature-flags";
-import { VITE_PUBLIC_POSTHOG_KEY } from "../PosthogUtils";
+import { POSTHOG_TAB_STORAGE_KEY } from "../posthog-tab-storage";
 import {
   resetSessionRevokedForTests,
   setSessionRevokedHandler,
 } from "../auth/session-revoked";
 
-const STORAGE_KEY = `ph_${VITE_PUBLIC_POSTHOG_KEY}_posthog`;
+const STORAGE_KEY = POSTHOG_TAB_STORAGE_KEY;
 
 function flagsResponse(flags: unknown, status = 200) {
   return new Response(JSON.stringify({ flags }), {
@@ -43,7 +43,7 @@ describe("server-evaluated feature flags", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
     guestState.session = null;
-    window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   afterEach(() => {
@@ -54,7 +54,7 @@ describe("server-evaluated feature flags", () => {
     it.each([true, false])(
       "loads the recording flag when it is %s",
       async (enabled) => {
-        window.localStorage.setItem(
+        window.sessionStorage.setItem(
           STORAGE_KEY,
           JSON.stringify({ distinct_id: "user_1" }),
         );
@@ -69,7 +69,7 @@ describe("server-evaluated feature flags", () => {
     );
 
     it("asks the server for the persisted PostHog id's flags and keeps allowlisted keys", async () => {
-      window.localStorage.setItem(
+      window.sessionStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({ distinct_id: "anon-device-1" }),
       );
@@ -100,7 +100,7 @@ describe("server-evaluated feature flags", () => {
     });
 
     it("sends the guest token only for that guest's id", async () => {
-      window.localStorage.setItem(
+      window.sessionStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({ distinct_id: "user_01HZX5J8K2" }),
       );
@@ -125,7 +125,7 @@ describe("server-evaluated feature flags", () => {
     });
 
     it("resolves to null on a failure or an empty answer", async () => {
-      window.localStorage.setItem(
+      window.sessionStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({ distinct_id: "anon-device-1" }),
       );
@@ -179,7 +179,7 @@ describe("server-evaluated feature flags", () => {
       });
     });
 
-    it("keeps the flags and reports a signed-out session", async () => {
+    it("clears stale flags and reports a signed-out session", async () => {
       resetSessionRevokedForTests();
       const onRevoked = vi.fn();
       setSessionRevokedHandler(onRevoked);
@@ -197,14 +197,14 @@ describe("server-evaluated feature flags", () => {
           getAccessToken: async () => "access-token",
         });
 
-        expect(posthog.updateFlags).not.toHaveBeenCalled();
+        expect(posthog.updateFlags).toHaveBeenCalledWith({});
         expect(onRevoked).toHaveBeenCalledOnce();
       } finally {
         resetSessionRevokedForTests();
       }
     });
 
-    it("does not refresh a signed-in actor without a token", async () => {
+    it("clears stale flags for a signed-in actor without a token", async () => {
       const posthog = { updateFlags: vi.fn() };
 
       await refreshServerFeatureFlagsForActor(posthog, {
@@ -214,7 +214,7 @@ describe("server-evaluated feature flags", () => {
       });
 
       expect(fetch).not.toHaveBeenCalled();
-      expect(posthog.updateFlags).not.toHaveBeenCalled();
+      expect(posthog.updateFlags).toHaveBeenCalledWith({});
     });
 
     it("uses the guest token for the guest this tab holds", async () => {
@@ -235,7 +235,7 @@ describe("server-evaluated feature flags", () => {
       expect(posthog.updateFlags).toHaveBeenCalledWith({ xaa: true });
     });
 
-    it("keeps the current flags when the server has no values", async () => {
+    it("clears stale flags when the server has no values", async () => {
       const posthog = { updateFlags: vi.fn() };
       vi.mocked(fetch).mockResolvedValueOnce(flagsResponse({}));
 
@@ -244,7 +244,7 @@ describe("server-evaluated feature flags", () => {
         isAuthedActor: false,
       });
 
-      expect(posthog.updateFlags).not.toHaveBeenCalled();
+      expect(posthog.updateFlags).toHaveBeenCalledWith({});
     });
 
     it("lets the newest refresh win", async () => {
