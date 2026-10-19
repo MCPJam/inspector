@@ -2367,7 +2367,11 @@ describe("PlaygroundMain", () => {
       // the branch is minted — so a refused rewind keeps its `?conversation=`.
       // It is read right there because this mock never mints the branch's own
       // session id: once the hook's mask lifts, its sync effect writes the
-      // mock's unchanged id, the original's, back into the URL.
+      // mock's unchanged id, the original's, back into the URL. The read sees
+      // the clear only because nothing here renders a router: the hook's
+      // navigate then falls back to a synchronous `history.replaceState`. A
+      // data router updates `window.location` later, and a `MemoryRouter`
+      // never does.
       let searchAfterBranch: string | undefined;
       mockUseChatSession.rewindToMessage = vi
         .fn()
