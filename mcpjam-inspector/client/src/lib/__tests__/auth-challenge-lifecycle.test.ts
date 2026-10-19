@@ -469,12 +469,10 @@ describe("auth challenge lifecycle", () => {
       );
     });
 
-    it("asks before re-running a call that may change something", async () => {
+    it("does not add a separate approval to a write replay", async () => {
       const card = await presentCard({ readOnly: false });
       await connectAuthChallenge(card, server, { isTrusted: true });
-      expect(peekPendingDirectScopeStepUpReplay()).toMatchObject({
-        requiresConfirmation: true,
-      });
+      expect(peekPendingDirectScopeStepUpReplay()?.requiresConfirmation).not.toBe(true);
     });
 
     it("keeps the scopes of a hosted grant the browser cannot see", async () => {

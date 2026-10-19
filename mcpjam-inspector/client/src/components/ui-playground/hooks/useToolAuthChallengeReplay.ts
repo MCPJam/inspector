@@ -7,13 +7,15 @@ import {
 } from "@/lib/scope-step-up-replay";
 import type { useOptionalSharedAppState } from "@/state/app-state-context";
 import { useCallback, useEffect } from "react";
-import { toast } from "sonner";
 import type {
   UseToolExecutionOptions,
   UseToolExecutionReturn,
 } from "./useToolExecution";
 
-type SharedState = ReturnType<typeof useOptionalSharedAppState>;
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import { applyParametersToFields, generateFormFieldsFromSchema } from "@/lib/tool-form";
+
+type SharedState = Pick<NonNullable<ReturnType<typeof useOptionalSharedAppState>>, "servers"> | null;
 export function useToolAuthChallengePresentation(
   sharedAppState: SharedState,
   tools: UseToolExecutionOptions["tools"],
@@ -71,57 +73,33 @@ export function useToolAuthChallengeReplay(
   sharedAppState: SharedState,
   executeTool: UseToolExecutionReturn["executeTool"],
 ) {
+  const tools = useUIPlaygroundStore((state) => state.tools);
   useEffect(() => {
     if (!serverName) return;
     const liveServer = sharedAppState?.servers[serverName];
     if (liveServer?.connectionStatus !== "connected") return;
-    // A call that may change something is never re-run on its own after a
-    // sign-in: the user confirms it first.
+    const currentTools = useUIPlaygroundStore.getState().tools;
     const waiting = peekPendingDirectScopeStepUpReplay();
-    if (
-      waiting?.phase === "ready" &&
-      waiting.requiresConfirmation &&
-      waiting.descriptor.kind === "tool" &&
-      waiting.descriptor.serverName === serverName &&
-      waiting.descriptor.surface === "playground"
-    ) {
-      const toolName = waiting.descriptor.toolName;
-      toast(`Signed in. Run ${toolName} again?`, {
-        id: `auth-challenge-run-again:${serverName}`,
-        duration: Infinity,
-        action: {
-          label: "Run again",
-          onClick: () => {
-            const claimed = claimPendingDirectScopeStepUpReplay({
-              serverName,
-              surface: "playground",
-            });
-            if (!claimed || claimed.descriptor.kind !== "tool") return;
-            const descriptor = claimed.descriptor;
-            void executeTool({
-              serverName: descriptor.serverName,
-              toolName: descriptor.toolName,
-              parameters: descriptor.parameters,
-              scopeStepUpReplay: true,
-              authAttempt: descriptor.authAttempt,
-            }).finally(() => {
-              clearPendingDirectScopeStepUpReplay(claimed);
-            });
-          },
-        },
-        cancel: {
-          label: "Not now",
-          onClick: () => clearPendingDirectScopeStepUpReplay(waiting),
-        },
-      });
-      return;
-    }
+    if (waiting?.descriptor.kind !== "tool" || !currentTools[waiting.descriptor.toolName]) return;
     const pending = claimPendingDirectScopeStepUpReplay({
       serverName,
       surface: "playground",
     });
     if (!pending || pending.descriptor.kind !== "tool") return;
     const descriptor = pending.descriptor;
+    const state = useUIPlaygroundStore.getState();
+    state.setSelectedTool(descriptor.toolName);
+    useUIPlaygroundStore.setState({
+      recoveredToolCall: {
+        serverName: descriptor.serverName,
+        toolName: descriptor.toolName,
+        parameters: descriptor.parameters,
+      },
+    });
+    state.setFormFields(applyParametersToFields(
+      generateFormFieldsFromSchema(currentTools[descriptor.toolName].inputSchema),
+      descriptor.parameters,
+    ));
     void executeTool({
       serverName: descriptor.serverName,
       toolName: descriptor.toolName,
@@ -131,5 +109,5 @@ export function useToolAuthChallengeReplay(
     }).finally(() => {
       clearPendingDirectScopeStepUpReplay(pending);
     });
-  }, [executeTool, serverName, sharedAppState]);
+  }, [executeTool, serverName, sharedAppState, tools]);
 }

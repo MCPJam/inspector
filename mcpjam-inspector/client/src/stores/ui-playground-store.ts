@@ -91,6 +91,12 @@ interface UIPlaygroundState {
 
   // Tool selection
   selectedTool: string | null;
+  // One-shot handoff to the visible server/tool tuple after OAuth replay.
+  recoveredToolCall: {
+    serverName: string;
+    toolName: string;
+    parameters: Record<string, unknown>;
+  } | null;
   tools: Record<string, Tool>;
   formFields: FormField[];
 
@@ -234,6 +240,7 @@ const initialDeviceType = getStoredDeviceType();
 const initialState = {
   isPlaygroundActive: false,
   selectedTool: null,
+  recoveredToolCall: null,
   tools: {},
   formFields: [],
   isExecuting: false,
@@ -265,6 +272,7 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
   setSelectedTool: (selectedTool) =>
     set({
       selectedTool,
+      formFields: [],
       toolOutput: null,
       toolResponseMetadata: null,
       executionError: null,

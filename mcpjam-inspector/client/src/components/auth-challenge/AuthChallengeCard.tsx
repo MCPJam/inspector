@@ -87,9 +87,7 @@ export function AuthChallengeCard({
     ? "This request expired. Sign in, then run it again."
     : card.action === "notify"
       ? "After you sign in, run it again."
-      : card.readOnly
-        ? `It runs again after you sign in. Expires in ${formatRemaining(remaining)}.`
-        : `After you sign in, you'll be asked before it runs again. Expires in ${formatRemaining(remaining)}.`;
+      : `It runs again after you sign in. Expires in ${formatRemaining(remaining)}.`;
 
   const scope = card.signal.requiredScope;
   const description = card.signal.errorDescription;

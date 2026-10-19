@@ -40,7 +40,6 @@ import {
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import {
   useToolAuthChallengePresentation,
-  useToolAuthChallengeReplay,
 } from "./useToolAuthChallengeReplay";
 
 
@@ -301,13 +300,6 @@ export function useToolExecution({
             toolName,
             parameters,
           },
-          // A call that may change something asks "Run again?" after the
-          // re-authorization instead of replaying its saved arguments.
-          requiresConfirmation:
-            (
-              tools?.[toolName]?.annotations as
-                { readOnlyHint?: unknown } | undefined
-            )?.readOnlyHint !== true,
         });
       }
       driveScopeStepUpFromChallenge(replayServer, challenge, {
@@ -565,7 +557,6 @@ export function useToolExecution({
     ],
   );
 
-  useToolAuthChallengeReplay(serverName, sharedAppState, executeTool);
 
   const injectToolResult = useCallback(
     async ({

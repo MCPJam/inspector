@@ -71,7 +71,7 @@ export interface AuthChallengeCard {
   signal: AuthChallengeSignal;
   /** `notify` signs in without re-running the call. */
   action: "prompt" | "notify";
-  /** The call declared `readOnlyHint: true`; otherwise it is not re-run on its own. */
+  /** Whether the call declared `readOnlyHint: true`. */
   readOnly: boolean;
   /** Developer-only explanation of the host's decision. Text only. */
   explanation: string;

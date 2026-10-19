@@ -622,15 +622,16 @@ describe("useChatSession mid-session sign-in", () => {
     } finally { clock.mockRestore(); }
   });
 
-  it("keeps the confirmation before retrying a call that may change data", async () => {
+  it("resumes an already approved write without a separate OAuth prompt", async () => {
     mockState.messages = unresolvedMessages();
     const hook = await renderChatSession();
     act(() => {
       savePendingChatScopeStepUp({ event: authRequiredEvent({ readOnly: false }) as AuthRequiredEvent & { continuationId: string }, serverName: "orders", chatSessionId: hook.result.current.chatSessionId });
       markPendingChatScopeStepUpReady("orders", "cont-1");
     });
-    expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })?.phase).toBe("ready");
-    expect(mockState.sendMessage).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, {
+      body: { scopeStepUpResume: { continuationId: "cont-1", toolCallId: "call-1" } },
+    }));
   });
 
 });

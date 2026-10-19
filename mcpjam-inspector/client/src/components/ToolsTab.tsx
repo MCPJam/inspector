@@ -60,7 +60,6 @@ import {
 import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
-  peekPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
   type DirectScopeStepUpReplayDescriptor,
   type PendingDirectScopeStepUpReplay,
@@ -73,7 +72,6 @@ import {
   AuthChallengeCards,
   authChallengeConnectMessage,
 } from "./auth-challenge/AuthChallengeCard";
-import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/state/app-types";
 import type { MCPServerConfig, TaskMode } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
@@ -240,9 +238,6 @@ export function ToolsTab({
    * after sign-in), or what a Connect click led to. Text only.
    */
   const [authNotice, setAuthNotice] = useState<string | null>(null);
-  /** A signed-in call that may change something, waiting on "Run again?". */
-  const [confirmReplay, setConfirmReplay] =
-    useState<PendingDirectScopeStepUpReplay | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
   const [highlightedRequestId, setHighlightedRequestId] = useState<
@@ -850,11 +845,6 @@ export function ToolsTab({
               operation: toolName,
             },
             descriptor: replayDescriptor,
-            // A call that may change something asks "Run again?" after the
-            // re-authorization instead of replaying its saved arguments.
-            requiresConfirmation: options?.pendingReplay
-              ? options.pendingReplay.requiresConfirmation === true
-              : !isReadOnlyTool(toolName),
           });
           traceChatAuthRecovery("direct_saved", {
             toolCallId: savedReplay.callId, projectId: savedReplay.projectId,
@@ -957,21 +947,6 @@ export function ToolsTab({
 
   useEffect(() => {
     if (!serverName || !isServerConnected) return;
-    // A call that may change something is never re-run on its own after a
-    // sign-in: the user confirms it first.
-    const waiting = peekPendingDirectScopeStepUpReplay();
-    if (
-      waiting?.phase === "ready" &&
-      waiting.requiresConfirmation &&
-      waiting.descriptor.serverName === serverName &&
-      waiting.descriptor.surface === "tools"
-    ) {
-      if (waiting.descriptor.kind === "tool") {
-        restoreReplaySelection(waiting.descriptor);
-      }
-      setConfirmReplay(waiting);
-      return;
-    }
     const pending = claimPendingDirectScopeStepUpReplay({
       serverName,
       surface: "tools",
@@ -979,31 +954,6 @@ export function ToolsTab({
     if (!pending) return;
     replayToolCall(pending);
   }, [isServerConnected, serverName]);
-
-  const runConfirmedReplay = () => {
-    setConfirmReplay(null);
-    if (!serverName) return;
-    const pending = claimPendingDirectScopeStepUpReplay({
-      serverName,
-      surface: "tools",
-    });
-    if (pending) replayToolCall(pending);
-    else {
-      setError(CHAT_AUTH_RECOVERY_MESSAGE);
-      setNormalizedError(null);
-      recordChatAuthRecoveryFailure(
-        confirmReplay && confirmReplay.expiresAt <= Date.now() ? "expired" : "missing_pending",
-        { toolCallId: confirmReplay?.callId, serverName, recoveryResult: "confirmation_not_claimed" },
-        { report: !(confirmReplay && confirmReplay.expiresAt <= Date.now()) },
-      );
-    }
-  };
-
-  const dismissConfirmedReplay = () => {
-    const pending = confirmReplay;
-    setConfirmReplay(null);
-    if (pending) clearPendingDirectScopeStepUpReplay(pending);
-  };
 
   const executeTool = async () => {
     // Captured before ANY await, as a local owned by THIS execution: the
@@ -1344,29 +1294,9 @@ export function ToolsTab({
     />
   );
 
-  const signInBanner =
-    confirmReplay?.descriptor.kind === "tool" ? (
-      <div
-        role="region"
-        aria-label="Run again after sign-in"
-        className="rounded-lg border border-border border-l-2 border-l-primary bg-card p-4 text-sm text-card-foreground"
-      >
-        <p>Signed in. Run {confirmReplay.descriptor.toolName} again?</p>
-        <div className="mt-3 flex gap-2">
-          <Button size="sm" onClick={runConfirmedReplay}>
-            Run again
-          </Button>
-          <Button size="sm" variant="ghost" onClick={dismissConfirmedReplay}>
-            Not now
-          </Button>
-        </div>
-      </div>
-    ) : null;
-
   const authChallengeContent =
-    signInBanner || authNotice || server ? (
+    authNotice || server ? (
       <div className="space-y-2 px-4 pt-4 empty:hidden">
-        {signInBanner}
         <AuthChallengeCards
           surface="tools"
           server={server}

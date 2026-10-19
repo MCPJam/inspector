@@ -4354,10 +4354,6 @@ export function useChatSession(
   // prevents the generic tool-output rule from recursively submitting the
   // same one-shot continuation descriptor.
   const scopeStepUpResumeInFlightRef = useRef(false);
-  /** Sign-in replays of a write tool the user confirmed with "Run again". */
-  const confirmedSignInReplaysRef = useRef(new Set<string>());
-  /** Sign-in replays already asked about, so the prompt shows once. */
-  const promptedSignInReplaysRef = useRef(new Set<string>());
   const [signInReplayTick, setSignInReplayTick] = useState(0);
 
   // useChat hook
@@ -4716,41 +4712,6 @@ export function useChatSession(
           );
         }, 30_000);
         return () => window.clearTimeout(timeout);
-      }
-      // A call that may change something is never re-run on its own after a
-      // sign-in: the user confirms it first, or it is cancelled.
-      const continuationId = pending.event.continuationId;
-      if (
-        isPendingChatAuthRequired(pending) &&
-        !pending.event.readOnly &&
-        !confirmedSignInReplaysRef.current.has(continuationId)
-      ) {
-        if (!promptedSignInReplaysRef.current.has(continuationId)) {
-          promptedSignInReplaysRef.current.add(continuationId);
-          toast(`Signed in. Run ${pending.event.operation.operation} again?`, {
-            id: `auth-challenge-run-again:${continuationId}`,
-            duration: Infinity,
-            action: {
-              label: "Run again",
-              onClick: () => {
-                confirmedSignInReplaysRef.current.add(continuationId);
-                setSignInReplayTick((tick) => tick + 1);
-              },
-            },
-            cancel: {
-              label: "Not now",
-              onClick: () => {
-                markPendingChatScopeStepUpCancelled(
-                  pending.serverName,
-                  "Signed in, but the user chose not to run the call again.",
-                  continuationId,
-                );
-                setSignInReplayTick((tick) => tick + 1);
-              },
-            },
-          });
-        }
-        return;
       }
     }
     // Local connections rebuild after a redirect. Do not consume the one

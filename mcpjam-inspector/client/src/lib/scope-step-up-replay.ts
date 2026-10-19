@@ -65,10 +65,7 @@ export type PendingDirectScopeStepUpReplay = {
    * Set for a mid-session sign-in. A step-up leaves it absent.
    */
   reason?: "authorization_required";
-  /**
-   * The call may change something (no `readOnlyHint: true`): after sign-in
-   * the surface asks "Run again?" instead of replaying it on its own.
-   */
+  /** Legacy storage field; OAuth recovery does not add tool approvals. */
   requiresConfirmation?: boolean;
 };
 
@@ -255,7 +252,7 @@ export function markPendingDirectScopeStepUpReplayReady(
   write({ ...pending, phase: "ready" });
 }
 
-/** The saved call, without claiming it (for a "Run again?" prompt). */
+/** Inspect the saved call without claiming its replay. */
 export function peekPendingDirectScopeStepUpReplay():
   PendingDirectScopeStepUpReplay | undefined {
   return readStored();

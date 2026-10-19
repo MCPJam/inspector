@@ -105,8 +105,7 @@ export async function connectAuthChallenge(
     }
   }
 
-  // Saved before the redirect, so the callback has something to settle. A
-  // call that may change something asks "Run again?" instead of replaying.
+  // Saved before the redirect, so the callback has something to settle.
   const savedReplay = Boolean(
     card.replay && card.action === "prompt" && !expired,
   );
@@ -128,7 +127,6 @@ export async function connectAuthChallenge(
         },
         descriptor: card.replay,
         reason: "authorization_required",
-        requiresConfirmation: !card.readOnly,
       });
       setPendingDirectScopeStepUpReplayCredentialBinding(
         server.name,

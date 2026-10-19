@@ -71,6 +71,7 @@ import type {
 } from "@/shared/inspector-command.js";
 import { getPlaygroundAgentControls } from "@/components/playground/playground-agent-controls-bridge";
 import { useSavedRequests, useServerKey, useToolExecution } from "./index";
+import { useToolAuthChallengeReplay } from "./useToolAuthChallengeReplay";
 import { PANEL_SIZES } from "../constants";
 
 const SERVER_SYNC_TIMEOUT_MS = 10000;
@@ -208,7 +209,6 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
   const prefersReducedMotion = useReducedMotion();
   const serverKey = useServerKey(serverConfig);
-
   const onboarding = useOnboarding({
     servers,
     onConnect: onConnect ?? (() => {}),
@@ -252,7 +252,6 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     setSidebarVisible,
   } = useUIPlaygroundStore();
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
-
   useLayoutEffect(() => {
     onOnboardingChange?.(false);
   }, [onOnboardingChange]);
@@ -425,8 +424,6 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   const fetchTools = useCallback(async () => {
     if (!serverName) return;
 
-    reset();
-    setToolsMetadata({});
     setFetchingTools(true);
     try {
       const data = await listTools({ serverId: serverName });
@@ -444,7 +441,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     } finally {
       setFetchingTools(false);
     }
-  }, [serverName, reset, setTools, setExecutionError, apiContextRevision]);
+  }, [serverName, setTools, setExecutionError, apiContextRevision]);
 
   const loadToolsUntilMatch = useCallback(
     async (toolName?: string) => {
@@ -573,20 +570,20 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
   useEffect(() => {
     const prev = prevServerRef.current;
-    const serverChanged = serverName !== prev.serverName;
+    const serverChanged = (serverName ?? null) !== prev.serverName;
     const statusChanged = serverConnectionStatus !== prev.status;
     prevServerRef.current = {
       serverName: serverName ?? null,
       status: serverConnectionStatus,
     };
 
+    if (serverChanged) reset();
     if (serverConfig && serverName && serverConnectionStatus === "connected") {
       if (!serverChanged && !statusChanged && Object.keys(tools).length > 0) {
         return;
       }
       fetchTools();
-    } else {
-      reset();
+    } else if (serverChanged) {
       setToolsMetadata({});
     }
   }, [
@@ -615,19 +612,22 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
       setFormFields(
-        generateFormFieldsFromSchema(tools[selectedTool].inputSchema)
+        applyParamsToFields(generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
+          buildParametersFromFields(useUIPlaygroundStore.getState().formFields))
       );
       return;
     }
     if (selectedAppToolDescriptor) {
       setFormFields(
-        generateFormFieldsFromSchema(selectedAppToolDescriptor.inputSchema)
+        applyParamsToFields(generateFormFieldsFromSchema(selectedAppToolDescriptor.inputSchema),
+          buildParametersFromFields(useUIPlaygroundStore.getState().formFields))
       );
       return;
     }
     setFormFields([]);
   }, [selectedTool, tools, selectedAppToolDescriptor, setFormFields]);
 
+  useToolAuthChallengeReplay(serverName, { servers }, executeTool);
   const selectToolForCommand = useCallback(
     async (
       command:

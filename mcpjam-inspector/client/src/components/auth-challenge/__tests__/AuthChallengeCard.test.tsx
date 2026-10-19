@@ -11,19 +11,20 @@ vi.mock("@/lib/auth-challenge-lifecycle", () => ({
   useAuthChallengeCards: () => [],
 }));
 
-it("keeps an early Connect click local and allows retry after restoration", async () => {
+it.each([true, false])("keeps Connect retryable without an extra approval promise (readOnly=%s)", async (readOnly) => {
   const card: Card = {
     key: "call", serverName: "bench", serverOrigin: "https://bench.example", surface: "chat",
     operation: { method: "tools/call", operation: "bench_read" },
     signal: { source: "http_401", effectiveAuth: "discover", facets: {
       challengeHeader: "bearer", hasResourceMetadata: true, hasScope: true, hasErrorParams: false,
     } },
-    action: "prompt", readOnly: true, explanation: "", expiresAt: Date.now() + 60_000,
+    action: "prompt", readOnly, explanation: "", expiresAt: Date.now() + 60_000,
   };
   const onResult = vi.fn();
   connect.mockResolvedValueOnce({ kind: "waiting", message: "Chats are still restoring. Please try Connect again in a moment." })
     .mockResolvedValueOnce({ kind: "started" });
   render(<AuthChallengeCard card={card} server={createServer({ name: "bench" })} onResult={onResult} />);
+  expect(screen.getByText(/It runs again after you sign in/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Connect", exact: true }));
   expect(await screen.findByRole("status")).toHaveTextContent("Chats are still restoring");
   expect(onResult).not.toHaveBeenCalled();
