@@ -35,6 +35,7 @@ import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
 
 import {
   definitionHash,
+  isEvalIterationTerminalStatus,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
   type EvaluationConfigSnapshot,
@@ -285,18 +286,8 @@ function stepReplayResult(
   return terminal ? null : { state: "pending", source: "live" };
 }
 
-const TERMINAL_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-  "setup_failed",
-  "skipped",
-]);
-
 function isTerminal(iteration: EvalIteration | null): boolean {
-  if (!iteration) return false;
-  return TERMINAL_STATUSES.has(iteration.status as string);
+  return iteration ? isEvalIterationTerminalStatus(iteration.status) : false;
 }
 
 /**

@@ -9,6 +9,7 @@
  * clears only inspect; typing touches neither; run start clears both.
  */
 
+import { isEvalIterationNonVerdictStatus } from "@mcpjam/sdk/contract";
 import { promptTurnsToSteps } from "@/shared/steps";
 import { computeIterationResult } from "../../evals/pass-criteria";
 import type {
@@ -170,13 +171,6 @@ export type TrialVerdict = {
   tone: TrialVerdictTone;
 };
 
-const LIFECYCLE_NO_VERDICT = new Set([
-  "cancelled",
-  "timed_out",
-  "setup_failed",
-  "skipped",
-]);
-
 function verdictFromComputed(
   computed: ReturnType<typeof computeIterationResult>,
   status: string,
@@ -184,7 +178,7 @@ function verdictFromComputed(
   if (status === "running" || status === "pending") {
     return { word: "Running", tone: "pending" };
   }
-  if (LIFECYCLE_NO_VERDICT.has(status)) {
+  if (isEvalIterationNonVerdictStatus(status)) {
     return { word: "No verdict", tone: "muted" };
   }
   if (computed === "passed") {
@@ -202,7 +196,7 @@ export function trialVerdict(trial: SelectedTrial): TrialVerdict {
     if (iteration.status === "running" || iteration.status === "pending") {
       return { word: "Running", tone: "pending" };
     }
-    if (LIFECYCLE_NO_VERDICT.has(iteration.status)) {
+    if (isEvalIterationNonVerdictStatus(iteration.status)) {
       return { word: "No verdict", tone: "muted" };
     }
     if (iteration.result === "pending") {
@@ -218,7 +212,7 @@ export function trialVerdict(trial: SelectedTrial): TrialVerdict {
   if (record.status === "running") {
     return { word: "Running", tone: "pending" };
   }
-  if (LIFECYCLE_NO_VERDICT.has(record.status)) {
+  if (isEvalIterationNonVerdictStatus(record.status)) {
     return { word: "No verdict", tone: "muted" };
   }
   if (record.status === "failed" && record.result !== "failed") {

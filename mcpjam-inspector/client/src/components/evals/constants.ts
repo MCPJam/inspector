@@ -53,25 +53,6 @@ export const RESULT_STATUS = {
 
 export type ResultStatus = (typeof RESULT_STATUS)[keyof typeof RESULT_STATUS];
 
-// Run statuses
-export const RUN_STATUS = {
-  PENDING: "pending",
-  RUNNING: "running",
-  /**
-   * Every trial finished; the run is HELD for its gating judge.
-   *
-   * Not terminal, and `result` is still `pending` — the backend's
-   * `finalizeAfterJudge` is what will decide it, within 30 minutes. Anything
-   * that reads this as done reports a run with no verdict as though it had one.
-   */
-  GRADING: "grading",
-  COMPLETED: "completed",
-  CANCELLED: "cancelled",
-  TIMED_OUT: "timed_out",
-} as const;
-
-export type RunStatus = (typeof RUN_STATUS)[keyof typeof RUN_STATUS];
-
 /** Pass/fail foreground text — same semantic tokens as charts/icons (`--success` / `--destructive` in index.css). */
 export const EVAL_OUTCOME_STATUS_TEXT_CLASS = {
   passed: "text-success",
