@@ -180,6 +180,16 @@ describe("humanizeSwarmAttemptError", () => {
     expect(info.code).toBe("provider_empty_response");
   });
 
+  it("keeps the HTTP status of an enclosing envelope", () => {
+    const info = humanizeSwarmAttemptError(
+      "Backend stream error: 502 Model tried to call unavailable tool 'execute'. Available tools: a",
+    );
+    expect(info.message).toBe(
+      "The model called `execute`, but your server has no tool by that name.",
+    );
+    expect(info.httpStatus).toBe(502);
+  });
+
   it("strips a URL out of the tool name", () => {
     const info = humanizeSwarmAttemptError(
       "Model tried to call unavailable tool 'https://evil.example/x'.",

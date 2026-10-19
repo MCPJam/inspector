@@ -465,7 +465,11 @@ export function humanizeSwarmAttemptError(
   if (unavailableTool !== undefined) {
     // The runner stores `info.code` when it has no reason of its own, so keep
     // the engine's "(provider_empty_response)" suffix code rather than drop it.
-    const code = errorCode ?? ENGINE_DETAIL_SUFFIX.exec(input)?.[1];
+    const suffix = ENGINE_DETAIL_SUFFIX.exec(input);
+    const code = errorCode ?? suffix?.[1];
+    const envelope = AGENT_ERROR_ENVELOPE.exec(input);
+    const status =
+      envelope?.[1] ?? envelope?.[2] ?? suffix?.[2] ?? suffix?.[3];
     const toolName = scrub(unavailableTool) || "a tool";
     return {
       message:
@@ -474,6 +478,7 @@ export function humanizeSwarmAttemptError(
           MAX_ATTEMPT_ERROR_CHARS,
         ),
       ...(code ? { code } : {}),
+      ...(status ? { httpStatus: Number(status) } : {}),
     };
   }
 
