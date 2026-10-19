@@ -166,6 +166,18 @@ If you're seeing **401 Unauthorized** errors when trying to connect to your serv
   process and identify where things might be going wrong.
 </Info>
 
+### 401 on one tool call after connecting
+
+If the server connected and listed its tools without a token, but one tool call fails with a **401**, the server is asking for sign-in for that call. This is a supported pattern, sometimes called lazy authentication.
+
+**Solution:**
+
+- **In the inspector:** a **Connect** card appears where the error would be, if the client you are emulating prompts for sign-in. Click **Connect** and sign in. A tool marked `readOnlyHint: true` runs again on its own; for any other tool, click **Run again** after you sign in.
+- **If you see a hint instead of a card:** the server's authentication setting cannot sign in. With **No Authentication**, switch it to **Auto** or **OAuth**. With **Bearer Token**, update the token. With enterprise-managed authorization (XAA), check the server's XAA configuration.
+- **From the CLI:** the command fails with `AUTH_REQUIRED`. Run `mcpjam oauth login --url <server-url> --credentials-out <file>`, then retry with `--credentials-file <file>`.
+
+A ChatGPT-style server signals the same thing with an `isError` tool result carrying `_meta["mcp/www_authenticate"]`. Whether MCPJam prompts for that depends on the client you are emulating. See [Mid-session sign-in](/inspector/lazy-authentication).
+
 ### OAuth connection failures
 
 When an OAuth flow fails, Inspector surfaces the failure directly in the connection UI so you can diagnose the problem without leaving the Servers tab.
