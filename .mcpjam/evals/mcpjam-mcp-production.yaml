@@ -231,15 +231,17 @@ cases:
         assertion:
           type: responseContains
           needle: selection
+      # The glossary names the stage `userValue` and titles it "User value";
+      # an answer may use either.
       - id: a4
         kind: assert
         assertion:
-          type: responseContains
-          needle: userValue
+          type: responseMatches
+          pattern: "[Uu]ser[ -]?[Vv]alue"
 
-  # --------------------------------------------------- negatives (no tools)
-  # Both of these are `isNegativeTest`, which tells the runner that NOT acting
-  # is the correct behaviour. Note the standing caveat: on a client with
+  # ----------------------------------------------------------- negatives
+  # The first is `isNegativeTest`, which tells the runner that NOT acting at
+  # all is the correct behaviour. Note the standing caveat: on a client with
   # progressive tool discovery the meta-tools (`search_mcp_tools`,
   # `load_mcp_tools`) still count as tool calls, so a negative case can fail
   # for reaching the catalog rather than for acting. Read a failure here
@@ -269,10 +271,10 @@ cases:
         assertion:
           type: finalAssistantMessageNonEmpty
 
+  # Not `isNegativeTest`: looking around the account is fine; a write is not.
   - id: c_q2UiZhqG8pEF-BTbuBo87
     title: asks rather than guessing when the request names nothing
     intent: negative
-    isNegativeTest: true
     steps:
       - id: s1
         kind: prompt
