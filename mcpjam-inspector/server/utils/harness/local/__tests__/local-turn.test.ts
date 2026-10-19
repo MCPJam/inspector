@@ -1,6 +1,7 @@
 import { readLocalHarnessAuthorization } from "../authorization.js";
 vi.mock("../authorization.js", () => ({ readLocalHarnessAuthorization: vi.fn(async () => ({ autoApproveAcknowledgedAt: "2026-10-04T00:00:00.000Z" })) }));
 import { toAdapterPath } from "../adapter-path.js";
+import { MCPClientManager } from "@mcpjam/sdk";
 import { resetLocalHarnessRegistryForTests } from "../session-registry.js";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -309,6 +310,25 @@ describe("a local turn on the organization's own key", () => {
 });
 
 describe("a local setup that succeeds", () => {
+  it("owns the MCP listener through pause, rebind, and stop-all cleanup", async () => {
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const manager = new MCPClientManager({});
+    const plane = await result.prepared.bindMcpPlane({ manager, serverIds: [], turnId: "first" });
+    const strategy = { ...plane.strategy };
+    expect(result.prepared.park({ generation: "generation", pendingApprovalIds: ["approval"] })).toBe(true);
+    const request = () => fetch(`${strategy.baseUrl}/selected`, {
+      method: "POST", headers: { "x-mcpjam-proxy-token": strategy.token },
+    });
+    expect((await request()).status).toBe(403);
+    const rebound = await result.prepared.bindMcpPlane({ manager, serverIds: [], turnId: "next" });
+    expect(rebound.strategy).toEqual(strategy);
+    expect((await request()).status).toBe(404);
+    await endLocalHarnessSession(turnArgs().sessionId);
+    await expect(request()).rejects.toThrow();
+  });
+
   it("registers the session and hands back a capability, never the lease", async () => {
     const result = await prepareLocalHarnessTurn(turnArgs());
     expect(result.ok).toBe(true);

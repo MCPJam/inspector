@@ -1554,37 +1554,35 @@ export async function runHarnessTurn(
           turnId,
         });
       }
-      if (harnessExecutionTarget && nativeMcpDelivery && (selectedServers?.length ?? 0) > 0) {
-        localMcpPlane = await startLocalHarnessMcpPlane({ manager: mcpClientManager, serverIds: selectedServers ?? [], turnId, toolPolicy: harnessToolPolicy, evidence: localEvidence?.evidence, failureReporter });
-      }
-      const proxyConfig = nativeMcpDelivery
-        ? await buildHarnessProxyMcpJsonFromManager({
-            manager: mcpClientManager,
-            selectedServerIds: selectedServers ?? [],
-            authHeader,
-            projectId,
-            strategy: localMcpPlane?.strategy ?? harnessMcpProxy ?? { plane: "local-mcp" },
-            scopeStepUpCorrelationId: turnId,
-            // The SAME per-turn id the scope-step-up correlation uses. It is
-            // already minted fresh for every turn attempt, which is exactly
-            // what evidence needs: a retry or resume files its calls under a
-            // new turn, so a stale attempt's rows stay addressable but out of
-            // the current turn's completeness check.
-            ...(evalIterationId
-              ? { evidenceScope: { iterationId: evalIterationId, turnId } }
-              : {}),
-            // Policied servers get a SEALED token instead of a bare one, so
-            // the sandbox's own MCP calls are enforced at the proxy.
-            ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
-            // INS-7: plugin-contributed servers ride this SAME proxy path as
-            // ordinary server ids (they are ordinary server ids) — the origin
-            // map only decides how a delivery failure is reported.
-            ...(pluginServerOrigins
-              ? { pluginOrigins: pluginServerOrigins }
-              : {}),
-          })
+      const buildNativeProxyConfig = () => buildHarnessProxyMcpJsonFromManager({
+        manager: mcpClientManager,
+        selectedServerIds: selectedServers ?? [],
+        authHeader,
+        projectId,
+        strategy: localMcpPlane?.strategy ?? harnessMcpProxy ?? { plane: "local-mcp" },
+        scopeStepUpCorrelationId: turnId,
+        // The SAME per-turn id the scope-step-up correlation uses. It is
+        // already minted fresh for every turn attempt, which is exactly
+        // what evidence needs: a retry or resume files its calls under a
+        // new turn, so a stale attempt's rows stay addressable but out of
+        // the current turn's completeness check.
+        ...(evalIterationId
+          ? { evidenceScope: { iterationId: evalIterationId, turnId } }
+          : {}),
+        // Policied servers get a SEALED token instead of a bare one, so
+        // the sandbox's own MCP calls are enforced at the proxy.
+        ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
+        // INS-7: plugin-contributed servers ride this SAME proxy path as
+        // ordinary server ids (they are ordinary server ids) — the origin
+        // map only decides how a delivery failure is reported.
+        ...(pluginServerOrigins
+          ? { pluginOrigins: pluginServerOrigins }
+          : {}),
+      });
+      const proxyConfig = nativeMcpDelivery && !harnessExecutionTarget
+        ? await buildNativeProxyConfig()
         : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
-      const { mcpJson, keyToServerId } = proxyConfig;
+      let { mcpJson, keyToServerId } = proxyConfig;
 
       // Report the run's frozen decision as the mint saw it. The driver reads
       // this to decide whether to read evidence for the turn at all — and it
@@ -1654,7 +1652,7 @@ export async function runHarnessTurn(
           : { tools: {}, keyToServerId: {} };
       // The attribution map is whichever mode produced one; they are the same
       // shape and the same sanitize+dedup, so `parseToolName` is identical.
-      const harnessKeyToServerId = nativeMcpDelivery
+      let harnessKeyToServerId = nativeMcpDelivery
         ? keyToServerId
         : hostExecutedMcp.keyToServerId;
 
@@ -2239,6 +2237,14 @@ export async function runHarnessTurn(
         localTeardown = preparation.prepared.teardown;
         discardLocalState = preparation.prepared.discardState;
         localUnpark = preparation.prepared.unpark;
+        if (nativeMcpDelivery && (selectedServers?.length ?? 0) > 0) {
+          localMcpPlane = await localPrepared.bindMcpPlane({
+            manager: mcpClientManager, serverIds: selectedServers ?? [], turnId,
+            toolPolicy: harnessToolPolicy, evidence: localEvidence?.evidence, failureReporter,
+          });
+          ({ mcpJson, keyToServerId } = await buildNativeProxyConfig());
+          harnessKeyToServerId = keyToServerId;
+        }
         // The mode the agent was already built around, against the mode the
         // prepared plan actually launched under. They come from the same
         // manifest mapping and should be identical; if they ever are not, the
@@ -4626,7 +4632,7 @@ export async function runHarnessTurn(
     // the other did. Bounded, because a stop that hangs must not take the whole
     // turn's teardown with it — the same lesson the revoke deadline below
     // encodes.
-    await localMcpPlane?.close();
+    if (!localParked) await localMcpPlane?.close();
     localMcpPlane = undefined;
     // A continuation that finished without pausing again (or failed) hands
     // its runtime back to ordinary teardown; a parked one keeps it.
