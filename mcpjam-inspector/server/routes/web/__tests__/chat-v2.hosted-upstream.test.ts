@@ -91,9 +91,16 @@ function json(body: unknown): Response {
   });
 }
 
+// A `new Request(input, init)` follows `init.signal` only through a weak
+// reference, so a stalled request nothing else holds can be garbage collected
+// and never see the abort. Holding it here until then keeps the abort visible.
+const stalledRequests = new Set<Request>();
+
 function stallUntilAborted(request: Request, onAbort: () => void) {
+  stalledRequests.add(request);
   return new Promise<Response>((_resolve, reject) => {
     const rejectOnAbort = () => {
+      stalledRequests.delete(request);
       onAbort();
       reject(request.signal.reason);
     };
