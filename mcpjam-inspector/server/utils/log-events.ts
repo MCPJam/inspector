@@ -534,24 +534,7 @@ export type RequestEventMap = {
 
 export type SystemEventMap = {
   telemetry_canary: Record<string, never>;
-  /**
-   * One per shutdown: how much accepted work this process held when the drain
-   * began and how much was still running when it ended. A non-zero remainder
-   * is work still running as the teardown starts, which is what deploy-loss
-   * measurement counts. Counts only, never ids.
-   */
-  "server.shutdown.drain": {
-    drainMs: number;
-    drainClamped: boolean;
-    drained: boolean;
-    waitedMs: number;
-    inFlightAtStart: number;
-    remainingClaimedJobs: number;
-    remainingEvalRuns: number;
-    remainingSwarmRuns: number;
-    remainingDoorbells: number;
-    remainingQuickRuns: number;
-  };
+  "server.shutdown.drain": import("./shutdown-drain-event.js").ShutdownDrainEvent;
   /** One per start: `web` runs no claim loops; `worker` and `all` do. */
   "server.process_role": { role: "all" | "web" | "worker" };
   llm_spend_unattested_ip_pooled: Record<string, never>;
