@@ -55,6 +55,7 @@ import {
   waitForListening,
 } from "./server-port-fallback.js";
 import { computeInstanceEnv } from "../bin/runtime-profile.mjs";
+import { DEFAULT_PORT_FALLBACK_ATTEMPTS } from "../bin/start-port.mjs";
 import log from "electron-log";
 import { registerListeners } from "./ipc/listeners-register.js";
 import { createSafeStorageKeyStore } from "./ipc/local-harness/local-harness-listeners.js";
@@ -436,7 +437,6 @@ function openSafeOAuthWindow(
 }
 
 const DEFAULT_SERVER_PORT = 6274;
-const SERVER_PORT_FALLBACK_ATTEMPTS = 10;
 
 // Cache the port we successfully probed on first launch so subsequent
 // startHonoServer() invocations (macOS dock activation after
@@ -486,7 +486,7 @@ async function startHonoServer(): Promise<number> {
       port = await probeFreePort(
         hostname,
         resolveServerStartPort(process.env, DEFAULT_SERVER_PORT),
-        resolveServerPortAttempts(process.env, SERVER_PORT_FALLBACK_ATTEMPTS),
+        resolveServerPortAttempts(process.env, DEFAULT_PORT_FALLBACK_ATTEMPTS),
         {
           onAttemptFailed: (failedPort, err) => {
             log.warn(
