@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { ConvexError } from "convex/values";
+import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -12,7 +13,7 @@ import { Pencil, Plus, Trash2, Zap } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
-import { useProjectMembers } from "@/hooks/useProjects";
+import { canManageHosts, useViewerProjectRole } from "@/hooks/useProjects";
 import { EVENT_SUBSCRIPTIONS_API } from "@/lib/apis/mcp-events-api";
 import {
   CURRENT_USER_QUERY,
@@ -55,16 +56,17 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
   // up, edit or enable its triggers (runs use the owner's credentials).
   const currentUserId = useQuery(CURRENT_USER_QUERY, {})?._id;
   // Stopping or deleting a teammate's trigger takes an org owner or admin,
-  // the role the backend's `requireOwnerOrProjectAdmin` checks. The tab only
-  // renders for signed-in members.
-  const { activeMembers, isLoading: membersLoading } = useProjectMembers({
+  // the role the backend's `requireOwnerOrProjectAdmin` checks. The hook
+  // keeps the last known role across a Convex reconnect, so an admin's
+  // controls don't flicker. The tab only renders for signed-in members.
+  const { user, isLoading: identityLoading } = useAuth();
+  const { role: callerRole, isLoading: roleLoading } = useViewerProjectRole({
     isAuthenticated: true,
     projectId,
+    viewerEmail: user?.email,
+    identityLoading,
   });
-  const callerRole = activeMembers.find(
-    (member) => member.userId === currentUserId,
-  )?.role;
-  const isOrgAdmin = callerRole === "owner" || callerRole === "admin";
+  const isOrgAdmin = canManageHosts(callerRole);
   const createTrigger = useMutation(EVENT_TRIGGERS_API.create);
   const updateTrigger = useMutation(EVENT_TRIGGERS_API.update);
   const setTriggerEnabled = useMutation(EVENT_TRIGGERS_API.setEnabled);
@@ -267,7 +269,7 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
       currentUserId !== undefined &&
       subscription?.ownerUserId === currentUserId;
     const canStop = ownsTrigger || isOrgAdmin;
-    const rolesKnown = currentUserId !== undefined && !membersLoading;
+    const rolesKnown = currentUserId !== undefined && !roleLoading;
     detail = (
       <div className="space-y-6 p-5">
         <header className="flex flex-wrap items-center gap-3">

@@ -29,9 +29,14 @@ vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => mockTrack(...args),
 }));
 
-let mockMembers: Array<{ userId: string; role: string }> = [];
-vi.mock("@/hooks/useProjects", () => ({
-  useProjectMembers: () => ({ activeMembers: mockMembers, isLoading: false }),
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { email: "me@example.com" }, isLoading: false }),
+}));
+
+let mockRole: string | undefined;
+vi.mock("@/hooks/useProjects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useProjects")>()),
+  useViewerProjectRole: () => ({ role: mockRole, isLoading: false }),
 }));
 
 const mockToastError = vi.fn();
@@ -100,7 +105,7 @@ describe("EventTriggersTab", () => {
     vi.clearAllMocks();
     queryResults.clear();
     mutations.clear();
-    mockMembers = [{ userId: "user_1", role: "member" }];
+    mockRole = "member";
     queryResults.set(CURRENT_USER_QUERY, { _id: "user_1" });
     queryResults.set(EVENT_SUBSCRIPTIONS_API.list, [
       subscription,
@@ -282,7 +287,7 @@ describe("EventTriggersTab", () => {
   });
 
   it("shows a teammate's trigger read-only to an admin, but lets them turn it off", async () => {
-    mockMembers = [{ userId: "user_1", role: "admin" }];
+    mockRole = "admin";
     queryResults.set(EVENT_TRIGGERS_API.list, [
       { ...trigger, subscriptionId: "sub_teammate" },
     ]);
@@ -326,7 +331,7 @@ describe("EventTriggersTab", () => {
   });
 
   it("does not offer turning on a teammate's disabled trigger", async () => {
-    mockMembers = [{ userId: "user_1", role: "admin" }];
+    mockRole = "admin";
     queryResults.set(EVENT_TRIGGERS_API.list, [
       { ...trigger, subscriptionId: "sub_teammate", enabled: false },
     ]);
