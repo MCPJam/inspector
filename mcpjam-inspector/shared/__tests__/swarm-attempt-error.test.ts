@@ -158,6 +158,17 @@ describe("humanizeSwarmAttemptError", () => {
     const info = humanizeSwarmAttemptError('{"error":"Nope","canTopUp":false}');
     expect(info.canTopUp).toBeUndefined();
   });
+
+  it("names the tool when the model called one the server does not have", () => {
+    const info = humanizeSwarmAttemptError(
+      `Backend step returned no content (stream error or empty response) — the model's tool call was rejected before it could run and nothing else was emitted this step: {"code":"unknown_error","message":"Model tried to call unavailable tool 'execute'. Available tools: wealth-engines-code-mode-call-tool, wealth-engines-code-mode-list-tools, wealth-engines-co`,
+      "provider_empty_response",
+    );
+    expect(info.message).toBe(
+      "The model called `execute`, but your server has no tool by that name.",
+    );
+    expect(info.code).toBe("provider_empty_response");
+  });
 });
 
 describe("humanizeSwarmAttemptError — sandbox error codes", () => {
