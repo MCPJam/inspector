@@ -256,7 +256,9 @@ export function OverallScoreCard({
     if (scored.outcome === "incomplete") {
       return `Incomplete. ${plural(scored.couldNotRun, "check")} could not run.`;
     }
-    return (scored.advisories?.length ?? 0) > 0
+    // A saved run carries no advisories list, but a passed run only scores
+    // under 100 when it has advisories.
+    return scored.score! < 100
       ? "Conformant, with advice."
       : "Fully conformant.";
   })();
