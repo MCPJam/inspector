@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getFunctionName } from "convex/server";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
@@ -480,7 +481,8 @@ describe.each(["local", "hosted"] as const)(
       };
       const convexClient = {
         query: vi.fn(async (name) =>
-          name === "testSuites:getTestSuiteRunDetails"
+          (typeof name === "string" ? name : getFunctionName(name)) ===
+          "testSuites:getTestSuiteRunDetails"
             ? { iterations: rows }
             : { status: "running" },
         ),
@@ -789,7 +791,8 @@ describe("hosted iteration box heartbeat", () => {
       modelApiKeys: { openai: "sk-test" },
       convexClient: {
         query: vi.fn(async (name) =>
-          name === "testSuites:getTestSuiteRunDetails"
+          (typeof name === "string" ? name : getFunctionName(name)) ===
+          "testSuites:getTestSuiteRunDetails"
             ? { iterations: [row] }
             : { status: "running" },
         ),

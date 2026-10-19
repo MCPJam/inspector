@@ -66,11 +66,22 @@ export type DispatchOutcome =
   | "not_a_member"
   | string;
 
+/** The fields this client reads from any job route's answer. */
+type JobReply = {
+  ok?: boolean;
+  claimed?: boolean;
+  noJob?: boolean;
+  job?: DurableClaim;
+  grant?: string;
+  leaseOk?: boolean;
+  reason?: string;
+} | null;
+
 async function postJobRoute(
   path: string,
   body: Record<string, unknown>,
   grant?: string,
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; body: JobReply }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) {
@@ -88,9 +99,9 @@ async function postJobRoute(
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(ROUTE_TIMEOUT_MS),
   });
-  let parsed: any = null;
+  let parsed: JobReply = null;
   try {
-    parsed = await response.json();
+    parsed = (await response.json()) as JobReply;
   } catch {
     // The status carries the signal.
   }

@@ -186,6 +186,7 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
   createSuiteRunRecorder,
@@ -1025,16 +1026,32 @@ function durableRefusalStop(reason: string): EvalRunStoppedError {
  * lost) row, paired the way `recorder.startIteration` pairs them. Only
  * `pending` rows run again.
  */
+/** The pre-created rows a resume pairs, typed (no string cast). */
+const RUN_DETAILS = makeFunctionReference<
+  "query",
+  { runId: string },
+  {
+    iterations?: {
+      status?: string;
+      testCaseId?: string;
+      iterationNumber?: number;
+      testCaseSnapshot?: {
+        title?: string;
+        query?: string;
+        model?: string;
+        provider?: string;
+      };
+    }[];
+  } | null
+>("testSuites:getTestSuiteRunDetails");
+
 async function recordedAttemptsByCase(
   convexClient: ConvexHttpClient,
   runId: string,
   tests: EvalTestCase[],
 ): Promise<Map<EvalTestCase, Set<number>>> {
-  const details = await convexClient.query(
-    "testSuites:getTestSuiteRunDetails" as any,
-    { runId },
-  );
-  const iterations: any[] = details?.iterations ?? [];
+  const details = await convexClient.query(RUN_DETAILS, { runId });
+  const iterations = details?.iterations ?? [];
   const byCase = new Map<EvalTestCase, Set<number>>();
   for (const test of tests) {
     const resolved = resolveEvalTestCase(test);
@@ -4871,6 +4888,9 @@ export const runEvalSuiteWithAiSdk = async ({
     }
     return undefined;
   } catch (error) {
+    // Setup failed after the durable heartbeat started: stop renewing a lease
+    // on a run this replica has given up.
+    durableRun?.stop();
     const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
