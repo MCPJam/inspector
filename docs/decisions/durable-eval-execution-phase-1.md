@@ -102,10 +102,13 @@ work, the others by source.
 3. **Denominators.** Accepted runs per source per week: `auditEvents` rows
    with action `eval.run.launched`, indexed by action and timestamp, with the
    source in `metadata.source`. `testSuiteRun.source` gives the same split, but
-   no index serves it by creation time. Quick-run iterations created:
-   `testIteration` rows with `trigger: 'quick'`, which includes compare
-   batches; quick runs have no run row, and `auditEvents` marks each start as
-   `eval.run.quick_started`. No saved query reads any of these yet.
+   no index serves it by creation time. Leave out `sdk`: those runs push
+   results from the caller's own process and never heartbeat (`sdk` is not in
+   `EVAL_RUN_HEARTBEAT_SOURCES`), so none can stop as `stale_worker`.
+   Quick-run iterations created: `testIteration` rows with `trigger: 'quick'`,
+   which includes compare batches; quick runs have no run row, and
+   `auditEvents` marks each start as `eval.run.quick_started`. No saved query
+   reads any of these yet.
 4. **Cost.** Credits refunded for stale-worker runs: `creditTransactions` rows
    keyed `refund:fee:eval_step:eval_step:run:<runId>` whose run ended with
    `stopReason: 'stale_worker'`. The ledger row has no reason field, so join on
@@ -113,19 +116,28 @@ work, the others by source.
    Quick runs whose inspector died are refunded only once
    MCPJam/mcpjam-backend#2254's watchdog is live, under
    `refund:fee:eval_step:eval_step:quick:<firstIterationId>`; main refunds a
-   quick batch only when its last iteration ends. From product analytics: how
-   often the same suite is launched again within the hour after a
-   `stale_worker` stop (`eval_suite_run_started_server`, with `suite_id` and
-   `run_id`), and the same case (`eval_test_case_run_started`, with
-   `test_case_id`).
+   quick batch only when its last iteration ends. From `auditEvents`, which
+   covers every source: how often the same suite is launched again within the
+   hour after a `stale_worker` stop (`eval.run.launched` with the same
+   `metadata.suiteId`, split by `metadata.source` because a schedule
+   relaunches on its own interval), and the same case
+   (`eval.run.quick_started` with the same `metadata.testCaseId`). The product
+   analytics events `eval_suite_run_started_server` and
+   `eval_test_case_run_started` see UI launches only.
 5. **Claimed-job recovery.** Neither inspector loop logs picking up a job
    whose lease expired, so this is read from the rows the backend's sweeps
    leave:
    - Scheduled runs: `scheduledRunTrigger` rows failed with
-     `failureReason: 'lease_expired'`. The 35 min lease covers only the claim
-     until the run exists, and an expired trigger is not retried. A scheduled
-     run that exists heartbeats like a UI run and is timed out as
-     `stale_worker` after 60 s, so it is counted in item 2.
+     `failureReason: 'lease_expired'`, which carry no `runId`. The worker
+     reports `complete` only after the run returns and nothing heartbeats the
+     trigger, so the 35 min lease covers the whole run, beside the run's own
+     heartbeat. A worker lost mid-run leaves both a `stale_worker` stop,
+     counted in item 2, and a `lease_expired` trigger; a healthy run that ends
+     more than 35 min after its claim leaves a `lease_expired` trigger too.
+     Count only `lease_expired` triggers with no `testSuiteRun` whose
+     `idempotencyKey` is the trigger id: the worker launches with that key, so
+     those lost the claim before the run existed. An expired trigger is not
+     retried.
    - GitHub checks: trigger rows failed with
      `failureReason: 'heartbeat_stale'` after 5 min without a heartbeat, ended
      as `infra_error` and not retried. The `github_checks_recovery_sweep` event
@@ -141,8 +153,8 @@ work, the others by source.
 The brief sets no threshold, and this record does not invent one. BB-315's
 owner states it, in the units above (for example stale-worker runs per
 thousand accepted runs, and credits refunded per week), in a follow-up pull
-request to this file merged before `<start>`. A threshold stated after the
-window opens does not count.
+request to this file that names them and is merged before `<start>`. A
+threshold stated after the window opens does not count.
 
 ## Evidence gathered in phase 1
 
@@ -195,7 +207,7 @@ it does not answer this gate.
 | API, MCP, agents, CLI, GitHub Action | v1 `eval-runs`, `eval-run-groups`, `rerun`, description experiments; detached on the web process | as UI                                                                    | as UI                                                      |
 | Quick run                            | `/run-test-case` (inline), `/stream-test-case` (SSE); no run row                                 | none until the quick-run watchdog                                        | Watchdog times out and refunds; drained                    |
 | Local mode                           | `/api/mcp/evals/run` on the user's machine                                                       | as UI                                                                    | Out of scope for the hosted drain                          |
-| Scheduled                            | backend cron, claimed by the scheduled-evals loop                                                | 35 min lease on the trigger claim until the run exists, then as UI       | Stops claiming at shutdown; drained; worker-role candidate |
+| Scheduled                            | backend cron, claimed by the scheduled-evals loop                                                | 35 min lease on the trigger for the whole run; the run heartbeats as UI  | Stops claiming at shutdown; drained; worker-role candidate |
 | GitHub check                         | webhook, claimed by the GitHub-checks loop                                                       | 60 s heartbeat, stale after 5 min                                        | as scheduled                                               |
 | Benchmark                            | claimed by the bench loop                                                                        | 20 s heartbeat, 90 s lease with `leaseGeneration`                        | as scheduled                                               |
 | Swarm run                            | `launchJourneyRun`; detached on the web process                                                  | heartbeat; aborted at teardown                                           | Drained and admission-checked                              |
