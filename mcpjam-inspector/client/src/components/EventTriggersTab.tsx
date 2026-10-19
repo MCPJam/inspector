@@ -12,6 +12,7 @@ import { Pencil, Plus, Trash2, Zap } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
+import { useProjectMembers } from "@/hooks/useProjects";
 import { EVENT_SUBSCRIPTIONS_API } from "@/lib/apis/mcp-events-api";
 import {
   CURRENT_USER_QUERY,
@@ -53,6 +54,17 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
   // The caller as the backend sees them. Only a subscription's owner can set
   // up, edit or enable its triggers (runs use the owner's credentials).
   const currentUserId = useQuery(CURRENT_USER_QUERY, {})?._id;
+  // Stopping or deleting a teammate's trigger takes an org owner or admin,
+  // the role the backend's `requireOwnerOrProjectAdmin` checks. The tab only
+  // renders for signed-in members.
+  const { activeMembers, isLoading: membersLoading } = useProjectMembers({
+    isAuthenticated: true,
+    projectId,
+  });
+  const callerRole = activeMembers.find(
+    (member) => member.userId === currentUserId,
+  )?.role;
+  const isOrgAdmin = callerRole === "owner" || callerRole === "admin";
   const createTrigger = useMutation(EVENT_TRIGGERS_API.create);
   const updateTrigger = useMutation(EVENT_TRIGGERS_API.update);
   const setTriggerEnabled = useMutation(EVENT_TRIGGERS_API.setEnabled);
@@ -254,6 +266,8 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
     const ownsTrigger =
       currentUserId !== undefined &&
       subscription?.ownerUserId === currentUserId;
+    const canStop = ownsTrigger || isOrgAdmin;
+    const rolesKnown = currentUserId !== undefined && !membersLoading;
     detail = (
       <div className="space-y-6 p-5">
         <header className="flex flex-wrap items-center gap-3">
@@ -264,7 +278,7 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
             <Switch
               id="trigger-enabled"
               checked={selectedTrigger.enabled}
-              disabled={!ownsTrigger && !selectedTrigger.enabled}
+              disabled={!ownsTrigger && !(canStop && selectedTrigger.enabled)}
               onCheckedChange={(checked) =>
                 void handleToggle(selectedTrigger, checked)
               }
@@ -285,20 +299,24 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
                 {editing ? "Close editor" : "Edit"}
               </Button>
             ) : null}
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs text-destructive hover:text-destructive"
-              onClick={() => void handleRemove(selectedTrigger)}
-            >
-              <Trash2 className="mr-1 h-3 w-3" />
-              Delete
-            </Button>
+            {canStop ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs text-destructive hover:text-destructive"
+                onClick={() => void handleRemove(selectedTrigger)}
+              >
+                <Trash2 className="mr-1 h-3 w-3" />
+                Delete
+              </Button>
+            ) : null}
           </div>
         </header>
-        {ownsTrigger || currentUserId === undefined ? null : (
+        {ownsTrigger || !rolesKnown ? null : (
           <p className="text-[11px] text-muted-foreground">
-            Only the subscription's owner can edit or turn on this trigger.
+            {isOrgAdmin
+              ? "Only the subscription's owner can edit or turn on this trigger."
+              : "Only the subscription's owner can change this trigger. A project admin can also turn it off or delete it."}
           </p>
         )}
         <dl className="grid grid-cols-2 gap-2 text-[11px] md:grid-cols-4">

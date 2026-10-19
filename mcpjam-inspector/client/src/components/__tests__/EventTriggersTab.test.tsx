@@ -29,6 +29,11 @@ vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => mockTrack(...args),
 }));
 
+let mockMembers: Array<{ userId: string; role: string }> = [];
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: () => ({ activeMembers: mockMembers, isLoading: false }),
+}));
+
 const mockToastError = vi.fn();
 vi.mock("sonner", () => ({
   toast: {
@@ -95,6 +100,7 @@ describe("EventTriggersTab", () => {
     vi.clearAllMocks();
     queryResults.clear();
     mutations.clear();
+    mockMembers = [{ userId: "user_1", role: "member" }];
     queryResults.set(CURRENT_USER_QUERY, { _id: "user_1" });
     queryResults.set(EVENT_SUBSCRIPTIONS_API.list, [
       subscription,
@@ -275,7 +281,8 @@ describe("EventTriggersTab", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
-  it("shows a teammate's trigger read-only, but still lets it be turned off", async () => {
+  it("shows a teammate's trigger read-only to an admin, but lets them turn it off", async () => {
+    mockMembers = [{ userId: "user_1", role: "admin" }];
     queryResults.set(EVENT_TRIGGERS_API.list, [
       { ...trigger, subscriptionId: "sub_teammate" },
     ]);
@@ -289,6 +296,7 @@ describe("EventTriggersTab", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
     const toggle = screen.getByRole("switch");
     expect(toggle).not.toBeDisabled();
     fireEvent.click(toggle);
@@ -299,7 +307,26 @@ describe("EventTriggersTab", () => {
     );
   });
 
+  it("gives a regular member no controls on a teammate's trigger", async () => {
+    queryResults.set(EVENT_TRIGGERS_API.list, [
+      { ...trigger, subscriptionId: "sub_teammate" },
+    ]);
+    queryResults.set(EVENT_TRIGGER_RUNS_API.listForTrigger, []);
+    render(<EventTriggersTab projectId="proj_1" isSignedInMember />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Triage new issues/ }));
+    expect(
+      await screen.findByText(
+        "Only the subscription's owner can change this trigger. A project admin can also turn it off or delete it.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.getByRole("switch")).toBeDisabled();
+  });
+
   it("does not offer turning on a teammate's disabled trigger", async () => {
+    mockMembers = [{ userId: "user_1", role: "admin" }];
     queryResults.set(EVENT_TRIGGERS_API.list, [
       { ...trigger, subscriptionId: "sub_teammate", enabled: false },
     ]);
