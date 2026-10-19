@@ -250,12 +250,47 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   extractInsufficientScopeChallenge,
+  extractAuthChallenge,
+  attachAuthChallenge,
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
 export type { InsufficientScopeChallenge } from "./mcp-client-manager/index.js";
+// Mid-session sign-in ("lazy authentication") challenges.
+export {
+  AUTH_CHALLENGE_ACTIONS,
+  AUTH_CHALLENGE_LIMITS,
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  TOOL_RESULT_AUTH_CHALLENGE_META_KEY,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+  authChallengeNotifyText,
+  authChallengePolicyFrom,
+  decideAuthChallengeAction,
+  describeAuthChallengeDecision,
+  hasOAuth2Scheme,
+  parseAuthChallengeSignal,
+  parseChallengeHeader,
+  parseToolResultAuthChallenge,
+  resolveToolSecuritySchemes,
+} from "./mcp-client-manager/auth-challenge.js";
+export type {
+  AuthChallengeAction,
+  AuthChallengeDecision,
+  AuthChallengeDecisionReason,
+  AuthChallengeEffectiveAuth,
+  AuthChallengeFacets,
+  AuthChallengePolicy,
+  AuthChallengeSignal,
+  AuthChallengeSource,
+  ToolResultAuthChallengeTrigger,
+  ToolSecurityScheme,
+  ToolSecuritySchemeResolution,
+  ToolSecuritySchemeSource,
+  UnauthorizedChallengeTrigger,
+} from "./mcp-client-manager/auth-challenge.js";
 export type { RetryPolicy } from "./retry.js";
 export {
   DEFAULT_RETRY_POLICY,
