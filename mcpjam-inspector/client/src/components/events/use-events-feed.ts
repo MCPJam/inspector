@@ -161,7 +161,8 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
 
   // A different feed (mode or project) starts from scratch.
   // The local runtime has one inbox; hosted has one per project.
-  const feedKey = hosted ? `hosted:${projectId ?? ""}` : "local";
+  const projectKey = projectId ?? "";
+  const feedKey = hosted ? `hosted:${projectKey}` : "local";
   if (feedKeyRef.current !== feedKey) {
     feedKeyRef.current = feedKey;
     seenRef.current = new Set();
