@@ -144,24 +144,40 @@ export function orgKeysRefusalCodeInText(
 }
 
 /**
- * `/stream/org` and the org resolver answer `provider_not_configured` when the
- * organization has no such provider turned on. Distinctive enough to read out
- * of free text, like the policy codes.
+ * The code a stored failure states where the backend writes one: a bare code
+ * (`infraError.code`), a JSON envelope's `code`, or a `"<code>:"` lead. Prose
+ * that merely names a code is never read.
  */
-const PROVIDER_NOT_CONFIGURED = /\bprovider_not_configured\b/i;
+function statedCode(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const code = (JSON.parse(trimmed) as { code?: unknown })?.code;
+      return typeof code === "string" ? code.trim().toLowerCase() : undefined;
+    } catch {
+      // Not JSON: the lead below still reads a code. The text is not logged;
+      // it can carry a provider's message.
+      console.debug("[org-keys-refusal] Error text is not JSON");
+    }
+  }
+  return /^([a-z_]+)\s*(?::|$)/i.exec(trimmed)?.[1]?.toLowerCase();
+}
 
 /**
- * {@link orgKeysRefusalCodeInText} for a run's stored failure, which also reads
- * `provider_not_configured` as `credential_missing`: the same missing org
- * provider, with the same fix. Chat still shows that code as the backend's own
- * sentence.
+ * {@link orgKeysRefusalCodeInText} for a run's stored failure, which also
+ * reads a stated `provider_not_configured` (`/stream/org`, the org resolver,
+ * the infra error a refused turn records) as `credential_missing`: the same
+ * missing org provider, with the same fix. Chat still shows that code as the
+ * backend's own sentence.
  */
 export function runRefusalCodeInText(
   ...texts: Array<string | null | undefined>
 ): string | undefined {
   return (
     orgKeysRefusalCodeInText(...texts) ??
-    (texts.some((text) => text && PROVIDER_NOT_CONFIGURED.test(text))
+    (texts.some(
+      (text) => text && statedCode(text) === "provider_not_configured",
+    )
       ? "credential_missing"
       : undefined)
   );

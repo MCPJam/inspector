@@ -212,6 +212,25 @@ describe("organization AI provider refusals", () => {
     ).toBe("serverError");
   });
 
+  it("reads the typed code on a refused turn recorded as a configuration error", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", {
+          status: "failed",
+          error: notTurnedOn,
+          errorDetails: JSON.stringify({ ok: false, error: notTurnedOn }),
+          infraError: {
+            class: "configuration",
+            layer: "model",
+            retryable: false,
+            code: "provider_not_configured",
+          },
+        } as Partial<EvalIteration>),
+        providerErrorChain,
+      ),
+    ).toBe("orgProviders");
+  });
+
   it("groups the run under one titled cause with the backend's reason", () => {
     expect(
       buildRunErrorBreakdown({

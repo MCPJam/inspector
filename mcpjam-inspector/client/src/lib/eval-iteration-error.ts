@@ -10,7 +10,7 @@ import {
 export function describeEvalIterationError(
   iteration: Pick<
     EvalIteration,
-    "status" | "result" | "error" | "errorDetails"
+    "status" | "result" | "error" | "errorDetails" | "infraError"
   >,
 ): NormalizedError | null {
   const timeout =
@@ -25,7 +25,11 @@ export function describeEvalIterationError(
   // model turn leaves the iteration completed with a failed result.
   const refusalCode =
     setup || iteration.status === "failed" || iteration.result === "failed"
-      ? runRefusalCodeInText(iteration.error, iteration.errorDetails)
+      ? runRefusalCodeInText(
+          iteration.error,
+          iteration.errorDetails,
+          iteration.infraError?.code,
+        )
       : undefined;
   if (!timeout && !setup && !cancelled && !iteration.error && !refusalCode)
     return null;

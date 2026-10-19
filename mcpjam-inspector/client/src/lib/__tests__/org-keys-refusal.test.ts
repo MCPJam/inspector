@@ -83,6 +83,16 @@ describe("org-keys refusal helpers", () => {
     expect(runRefusalCodeInText("Some other failure", undefined)).toBe(
       undefined,
     );
+    // The typed code a run row carries (`infraError.code`).
+    expect(runRefusalCodeInText(undefined, "provider_not_configured")).toBe(
+      "credential_missing",
+    );
+    // Prose that names the code is not a refusal.
+    expect(
+      runRefusalCodeInText(
+        "The tool said provider_not_configured, then retried and worked.",
+      ),
+    ).toBe(undefined);
     // Chat reads codes directly and keeps showing the backend's sentence.
     expect(orgKeysRefusalCodeOf("provider_not_configured")).toBe(undefined);
   });

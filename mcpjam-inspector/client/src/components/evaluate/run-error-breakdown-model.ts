@@ -164,14 +164,18 @@ function classifyReason(
 
   // The organization has no usable provider for the model: adding or
   // reconnecting one in Organization → AI providers lifts it. The code may
-  // sit only in the iteration's diagnostics. A failure the chain pins on the
-  // MCP server stays the server's, whatever its text looks like.
+  // sit only in the iteration's diagnostics or its infra error, and a
+  // recorded error whose text equals the iteration's own is treated as that
+  // same failure, so it reads them too. A failure the chain pins on the MCP
+  // server stays the server's, whatever its text looks like.
+  const ownFailure = error === iteration.error;
   const refusal =
     reasonCause === "serverUnreachable" || reasonCause === "serverError"
       ? undefined
       : runRefusalCodeInText(
           error,
-          error === iteration.error ? iteration.errorDetails : undefined,
+          ownFailure ? iteration.errorDetails : undefined,
+          ownFailure ? iteration.infraError?.code : undefined,
         );
   if (
     refusal &&
