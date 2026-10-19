@@ -1,3 +1,4 @@
+import { describeCloudCredential } from "../lib/credential-describe.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -154,11 +155,20 @@ function readSuiteFile(
 }
 
 function progressWriter(
-  quiet: boolean
+  quiet: boolean,
+  credentialSource: string
 ): (event: SuiteFileRunProgressEvent) => void {
   return (event) => {
     if (quiet) return;
     switch (event.type) {
+      case "identity":
+        process.stderr.write(
+          `MCPJam identity: ${credentialSource}; organization ${event.organizationId}; project ${event.projectId}.\n`
+        );
+        process.stderr.write(
+          "Run start recorded. Planned iterations are not completed usage. Results remain local.\n"
+        );
+        return;
       case "setup":
         if (event.stage === "connect" && event.server) {
           process.stderr.write(`Connecting to ${event.server}…\n`);
@@ -466,6 +476,7 @@ export function registerTestCommand(
           }
         }
         const runOptions: RunSuiteFileOptions = {
+          surface: "cli", clientVersion: program.version(),
           servers,
           ...(caseIds ? { caseIds } : {}),
           inference: {
@@ -496,7 +507,10 @@ export function registerTestCommand(
           setupTimeoutMs: globalOptions.timeout,
           signal: controller.signal,
           // Progress is always stderr, so stdout stays one document.
-          onProgress: progressWriter(globalOptions.quiet),
+          onProgress: progressWriter(
+            globalOptions.quiet,
+            describeCloudCredential(options, { env }).credential.source
+          ),
         };
         const runner = dependencies.runtime
           ? createSuiteFileRunner(dependencies.runtime)

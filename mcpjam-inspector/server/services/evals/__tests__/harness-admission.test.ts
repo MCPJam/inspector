@@ -127,7 +127,7 @@ describe("checkEvalHarnessAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("requires a supported model and an eligible Anthropic connection");
+    expect(verdict.reason).toContain("needs a supported model and an eligible Anthropic connection");
     expect(verdict.reason).toContain("byok case");
     expect(verdict.reason).not.toContain("hosted case");
   });
@@ -255,7 +255,7 @@ describe("checkEvalHarnessAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("broker");
+    expect(verdict.reason).toContain("can’t access the credentials");
   });
 
   it("admits Codex for a suite with MCP servers (host-executed delivery)", () => {
@@ -321,7 +321,7 @@ describe("checkEvalHarnessStaticAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("requires a supported model and an eligible Anthropic connection");
+    expect(verdict.reason).toContain("needs a supported model and an eligible Anthropic connection");
   });
 
   // The rule is asserted DIRECTLY rather than through a refusal, because no
@@ -364,7 +364,7 @@ describe("checkEvalHarnessStaticAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("unattended run");
+    expect(verdict.reason).toContain("cannot wait for tool approval in evals or swarms");
   });
 
   it("refuses the same approval host at the full, per-case check", () => {
@@ -375,7 +375,7 @@ describe("checkEvalHarnessStaticAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("unattended run");
+    expect(verdict.reason).toContain("cannot wait for tool approval in evals or swarms");
     expect(verdict.reason).not.toContain("Ineligible cases");
   });
 
@@ -822,7 +822,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("Codex harness can't run this host's model");
+    expect(verdict.reason).toMatch(/not.*verified/);
     expect(verdict.reason).toContain("Ineligible cases: luna");
     expect(verdict.reason).not.toContain("fine");
   });
@@ -842,7 +842,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
     expect(verdict.reason).toMatch(
-      /^not verified for claude-code \d+\.\d+\.\d+\. Ineligible cases: fable$/
+      /has not been verified for the Claude Code client.*Ineligible cases: fable$/
     );
   });
 
@@ -853,7 +853,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toMatch(/^not verified for claude-code /);
+    expect(verdict.reason).toMatch(/has not been verified for the Claude Code client/);
   });
 
   it("refuses a non-Anthropic model on Claude Code instead of letting the CLI default", () => {
@@ -865,7 +865,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
     expect(verdict.reason).toContain(
-      "Claude Code harness can't run this host's model"
+      "model isn’t supported by Claude Code"
     );
   });
 });

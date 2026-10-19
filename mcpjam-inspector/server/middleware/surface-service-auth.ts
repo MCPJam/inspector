@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Context } from "hono";
 import { ErrorCode } from "../routes/web/errors.js";
 import { setRequestLogContext } from "../utils/request-logger.js";
+import { logConvexId } from "../utils/log-convex-id.js";
 import {
   resolveSurfaceActingUser,
   SlackBackendUnavailable,
@@ -115,7 +116,7 @@ export async function handleSurfaceServiceAuth(
   c.set("mcpjamUserId", link.userId);
   c.set("mcpjamOrganizationId", link.organizationId);
   // See the note at the same call in `bearer-auth.ts`.
-  setRequestLogContext(c, { orgId: link.organizationId });
+  setRequestLogContext(c, { orgId: logConvexId(link.organizationId) });
   c.set("surfaceKind", surfaceKind);
   c.set("surfaceTenantId", tenantId);
   c.set("surfaceActorId", actorId);

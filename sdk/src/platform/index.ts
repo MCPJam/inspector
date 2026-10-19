@@ -264,6 +264,8 @@ export type {
   PlatformEnvironmentSecretSelection,
   PlatformJourney,
   PlatformGoal,
+  PlatformGoalJudge,
+  PlatformGoalJudgeWrite,
   PlatformJourneyRun,
   PlatformGoalRun,
   PlatformJourneyRunAttempt,

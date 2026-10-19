@@ -2714,5 +2714,24 @@ export function canonicalizeHostConfigV2(
       optionalServerIds,
       input.serverConnectionOverrides
     ),
+    ...(input.systemPromptDefault === undefined
+      ? {}
+      : {
+          systemPromptDefault: input.systemPromptDefault.source
+            ? {
+                source: {
+                  catalogEntryId:
+                    input.systemPromptDefault.source.catalogEntryId,
+                  revision: input.systemPromptDefault.source.revision,
+                  sourceUrl: input.systemPromptDefault.source.sourceUrl,
+                  ...(input.systemPromptDefault.source.publisher === undefined
+                    ? {}
+                    : {
+                        publisher: input.systemPromptDefault.source.publisher,
+                      }),
+                },
+              }
+            : {},
+        }),
   };
 }

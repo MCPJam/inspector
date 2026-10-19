@@ -366,7 +366,7 @@ describe("useChatSession — local computer engine transmission", () => {
 
   it("never sends the local engine when the turn routes to the org-aware web API", async () => {
     // The local engine only exists on the local /api/mcp path. A turn forced
-    // to /api/web/chat-v2 (org-runtime model, environment mode, etc.) must NOT
+    // to /api/web/chat-v2 (environment mode, a hidden environment) must NOT
     // carry the field or leak the consent header onto the web route.
     await renderWithEngine(
       { engine: "local", consentToken: "cap-token-123" },

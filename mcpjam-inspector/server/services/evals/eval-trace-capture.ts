@@ -1,3 +1,4 @@
+import { toolOrigin } from "@/shared/tool-origin";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCallToolResultError } from "@mcpjam/sdk";
@@ -75,6 +76,7 @@ export type AiSdkEvalTraceContext = {
       stepNumber: number;
       startAt: number;
       serverId?: string;
+      toolOrigin?: EvalTraceSpan["toolOrigin"];
       promptIndex: number;
     }
   >;
@@ -229,6 +231,8 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
   const out: Record<string, unknown> = { ...tools };
   for (const name of Object.keys(out)) {
     const raw = out[name] as {
+      _serverId?: string;
+      _toolOrigin?: string;
       execute?: (
         input: unknown,
         options: {
@@ -245,6 +249,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
       typeof (raw as { _serverId?: unknown })._serverId === "string"
         ? ((raw as { _serverId?: string })._serverId ?? undefined)
         : undefined;
+    const origin = toolOrigin(name, raw);
     out[name] = {
       ...raw,
       execute: async (
@@ -272,6 +277,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
           stepNumber,
           startAt: toolStartedAt,
           serverId,
+          toolOrigin: origin,
           promptIndex: resolvedPromptIndex,
         });
         let success = true;
@@ -312,6 +318,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               toolCallId,
               toolName: name,
               serverId,
+              toolOrigin: origin,
               status: success ? "ok" : "error",
               ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
@@ -542,6 +549,7 @@ export function finalizeAiSdkTraceOnFailure(
       toolCallId,
       toolName: t.toolName,
       serverId: t.serverId,
+      toolOrigin: t.toolOrigin,
       status: "error",
       ...createOffsetInterval(runStartedAt, t.startAt, failAt),
     });
@@ -805,6 +813,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
         },
       ) => unknown;
       _serverId?: string;
+      _toolOrigin?: string;
     };
     if (!raw || typeof raw.execute !== "function") {
       continue;
@@ -862,6 +871,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             toolCallId,
             toolName: name,
             serverId: raw._serverId,
+            toolOrigin: toolOrigin(name, raw),
             ...(toolConnectionAttribution(raw, input, toolCallId)
               ? {
                   connectionId: toolConnectionAttribution(

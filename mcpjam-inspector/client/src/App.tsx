@@ -1293,6 +1293,7 @@ function useTemplateVerifyDeepLink({
           projectId,
           name: template.label,
           input: { ...seed, serverIds: [] },
+          applyDefaultSystemPrompt: true,
         });
         navigate(buildHostVerifyLandingPath(hostId, requestedFocusTab), {
           replace: true,
@@ -1850,7 +1851,7 @@ function ScenariosRouteContent() {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
-    return null;
+    return <LoadingScreen />;
   }
 
   if (gate) {
@@ -1991,7 +1992,7 @@ function SwarmsRouteContent() {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
-    return null;
+    return <LoadingScreen />;
   }
 
   // Guests stop here. `null` means the viewer is a signed-in member.

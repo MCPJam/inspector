@@ -1,3 +1,4 @@
+import type { SystemPromptDefault } from "@mcpjam/sdk/host-config/internal";
 /**
  * Frontend types + utilities for HostConfig v2.
  *
@@ -169,6 +170,7 @@ export type HostConfigInputV2 = {
    */
   modelSelection?: ModelSelection | LegacyModelSelection;
   systemPrompt: string;
+  systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
   /**
@@ -293,6 +295,7 @@ export type HostConfigDtoV2 = {
    */
   modelSelection?: ModelSelection | LegacyModelSelection;
   systemPrompt: string;
+  systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
   /**
@@ -428,6 +431,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
       ? { modelSelection: dto.modelSelection }
       : {}),
     systemPrompt: dto.systemPrompt,
+    systemPromptDefault: dto.systemPromptDefault,
     temperature: dto.temperature,
     requireToolApproval: dto.requireToolApproval,
     // DTO carries `undefined` when the persisted row predates this

@@ -1007,7 +1007,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           422,
           ErrorCode.FEATURE_NOT_SUPPORTED,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+          hostModelRefusal,
           {
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,
@@ -1199,7 +1199,7 @@ chatV2.post("/", async (c) => {
           status === 503
             ? ErrorCode.INTERNAL_ERROR
             : ErrorCode.FEATURE_NOT_SUPPORTED,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          availability.reason,
           {
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,

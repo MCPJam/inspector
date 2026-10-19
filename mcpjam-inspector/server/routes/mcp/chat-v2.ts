@@ -1337,7 +1337,7 @@ chatV2.post("/", async (c) => {
       if (hostModelRefusal) {
         return c.json(
           {
-            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+            error: hostModelRefusal,
             code: "FEATURE_NOT_SUPPORTED",
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,
@@ -1657,7 +1657,7 @@ chatV2.post("/", async (c) => {
     // and authorization; a target minted for one is never valid for another.
     const localHarnessId = localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
     const localHarnessName = LOCAL_HARNESS_DISPLAY_NAMES[localHarnessId];
-    if (asksForLocalNative && !localSelected) return c.json({ error: `Local ${localHarnessName} is unavailable or no longer authorized for this project` }, 409);
+    if (asksForLocalNative && !localSelected) return c.json({ error: `Local ${localHarnessName} is unavailable. Set up this client again for this project.` }, 409);
     const harnessTargetParse = parseHarnessExecutionTarget({
       body: body.harnessTarget?.serverAuthorized === true ? {} : body,
       grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
@@ -1683,7 +1683,7 @@ chatV2.post("/", async (c) => {
       } catch (error) {
         // A local target that cannot be made ready is an actionable local
         // error (setup / Retry), never a silent switch to the cloud.
-        return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready`, ...(error instanceof LocalAutoApproveConsentRequiredError ? { status: error.status } : {}) }, 409);
+        return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready. Complete local setup and try again.`, ...(error instanceof LocalAutoApproveConsentRequiredError ? { status: error.status } : {}) }, 409);
       }
     }
 
@@ -1785,7 +1785,7 @@ chatV2.post("/", async (c) => {
         const status = harnessUnavailableHttpStatus(availability.kind);
         return c.json(
           {
-            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+            error: availability.reason,
             ...(status === 422 ? { code: "FEATURE_NOT_SUPPORTED" } : {}),
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,

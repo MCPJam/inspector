@@ -132,6 +132,34 @@ export function ErrorBox({
     </div>;
   }
 
+  if (refusalCode === "free_tier_model_restricted") {
+    return (
+      <div
+        role="alert"
+        className="flex flex-col gap-2 rounded border border-warning bg-warning/20 p-4 text-warning-foreground"
+      >
+        <p>
+          This model isn’t included in your free daily allowance.{" "}
+          {canTopUp && onTopUp ? "Upgrade your plan or use an organization API key." : "Use an organization API key."}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {canTopUp && onTopUp && (
+            <Button variant="outline" onClick={onTopUp}>
+              Compare plans
+            </Button>
+          )}
+          {onManageOrgProviders && (
+            <Button variant="outline" onClick={onManageOrgProviders}>
+              {MANAGE_AI_PROVIDERS}
+            </Button>
+          )}
+        </div>
+        {!onManageOrgProviders && <p>Ask an organization admin to add an API key for this model.</p>}
+        {onResetChat && <Button variant="outline" onClick={onResetChat}>Reset chat</Button>}
+      </div>
+    );
+  }
+
   const orgKeysCode = orgKeysRefusalCodeOf(refusalCode);
   if (orgKeysCode) {
     // The organization requires its own provider keys (or its provider

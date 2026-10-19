@@ -1370,9 +1370,9 @@ export function useServerState({
 
   const latestEffectiveServersRef = useRef(effectiveServers);
 
-  useEffect(() => {
-    latestEffectiveServersRef.current = effectiveServers;
-  }, [effectiveServers]);
+  // Child effects can request readiness before this hook's passive effects.
+  // Publish the rendered snapshot now so that first attempt sees its servers.
+  latestEffectiveServersRef.current = effectiveServers;
 
   const isClientConfigSyncPending = useProjectClientConfigSyncPending(
     effectiveActiveProjectId,

@@ -1,3 +1,9 @@
+import {
+  startEvalRun,
+  EvalRunStartError,
+  type EvalRunContext,
+} from "../eval-run-start.js";
+import { EvalBillingError } from "../eval-iteration-payment.js";
 /**
  * `runSuiteFile` — execute a suite file locally and decide it with the v2
  * verdict policy.
@@ -335,6 +341,18 @@ async function executeSuiteFile(
       };
     }
 
+    const started = await startEvalRun({
+      surface: options.surface, clientVersion: options.clientVersion,
+      mcpjamAuth: credentials.mcpjam,
+      mcpjam: credentials.mcpjam ? {
+        baseUrl: credentials.mcpjam.baseUrl, project: credentials.mcpjam.projectId,
+      } : undefined,
+      plannedIterations: plan.cases.reduce((total, entry) => total + entry.testCase.iterations, 0),
+      providers: plan.cases.map((entry) => entry.model.provider),
+      usedClientProfile: Boolean(plan.host), signal: runController.signal,
+    });
+    progress({ type: "identity", organizationId: started.organizationId, projectId: started.projectId });
+
     manager = runtime.createClientManager
       ? runtime.createClientManager()
       : new MCPClientManager({}, { lazyConnect: true });
@@ -570,6 +588,7 @@ async function executeSuiteFile(
     // ── 6. execute ───────────────────────────────────────────────────────────
     executed = await executeCases({
       plan,
+      runContext: started,
       tools: frozenTools,
       toolServers,
       snapshot,
@@ -612,6 +631,14 @@ async function executeSuiteFile(
     }
   }
   if (failure !== undefined) {
+    if (failure instanceof EvalRunStartError) {
+      throw new SuiteFileRunError({
+        code: failure.code === "CREDENTIALS_MISSING" ? "CREDENTIALS_MISSING"
+          : failure.code === "PLATFORM_UNAVAILABLE" ? "PLATFORM_UNAVAILABLE" : "CREDENTIALS_REJECTED",
+        phase: "setup", category: failure.code === "PLATFORM_UNAVAILABLE" ? "setup" : "credentials",
+        message: failure.message, cause: failure,
+      });
+    }
     if (failure instanceof SuiteFileRunError) {
       throw new SuiteFileRunError({
         code: failure.code,
@@ -671,6 +698,7 @@ async function executeSuiteFile(
 
 async function executeCases(args: {
   plan: SuiteFilePlan;
+  runContext: EvalRunContext;
   tools: ToolSet;
   toolServers: ReadonlyMap<string, string>;
   snapshot: ToolPolicySnapshot | undefined;
@@ -836,6 +864,7 @@ function authRequiredIssueMessage(
 
 async function executeCase(args: {
   plan: SuiteFilePlan;
+  runContext: EvalRunContext;
   planned: PlannedCase;
   tools: ToolSet;
   toolServers: ReadonlyMap<string, string>;
@@ -980,6 +1009,7 @@ async function executeCase(args: {
 
   const issues: SuiteFileRunIssue[] = [];
   let details: IterationResult[] = [];
+  let billingRefused = false;
   let evaluationConfig = planned.test.getEvaluationConfigSnapshot();
   try {
     const result = await planned.test.run(executor, {
@@ -989,9 +1019,10 @@ async function executeCase(args: {
       timeoutMs: plan.settings.iterationTimeoutMs,
       // Explicit: a local run never reports, whatever MCPJAM_API_KEY says.
       mcpjam: { enabled: false },
-      // Nor phones home: telemetry belongs to the caller, and the CLI's
+      // Analytics belong to the caller, and the CLI's
       // opt-outs (`--no-telemetry`, a persisted choice) are invisible here.
       __suppressTelemetry: true,
+      __evalRunContext: args.runContext,
       signal: caseController.signal,
       onProgress: (completed, total) =>
         args.progress({ type: "iteration", caseId, completed, total }),
@@ -1008,10 +1039,16 @@ async function executeCase(args: {
       });
     }
   } catch (error) {
+    const billing = error instanceof EvalBillingError;
+    if (billing) {
+      billingRefused = true;
+      details = planned.test.getResults()?.iterationDetails ?? [];
+      args.onStop("billing");
+    }
     issues.push({
-      code: "INTERNAL_ERROR",
+      code: billing ? "BILLING_REFUSED" : "INTERNAL_ERROR",
       phase: "execution",
-      category: "internal",
+      category: billing ? "billing" : "internal",
       message: `The case could not be executed: ${messageOf(error)}`,
       caseId,
     });
@@ -1031,6 +1068,12 @@ async function executeCase(args: {
   for (let index = 0; index < planned.testCase.iterations; index += 1) {
     const iterationNumber = index + 1;
     const recorded = details[index];
+    if (!recorded && billingRefused) {
+      const unstarted = unstartedIteration(iterationNumber, "skipped");
+      observations.push(unstarted.observation);
+      evidence.push(unstarted.evidence);
+      continue;
+    }
     if (!recorded) {
       // EvalTest itself failed: nothing about this iteration was observed.
       const unstarted = unstartedIteration(iterationNumber, "skipped");

@@ -102,6 +102,7 @@ const authRequiredSchema = z
 const iterationSchema = z
   .object({
     iterationNumber: z.number().int().min(1),
+    billingPaymentId: z.string().min(1).optional(),
     status: z.enum([
       "pending",
       "running",
@@ -488,6 +489,9 @@ function structuredCase(
       rail: entry.rail,
       iterations: entry.iterations.map((iteration) => ({
         iteration: iteration.iterationNumber,
+        ...(iteration.billingPaymentId
+          ? { billingPaymentId: iteration.billingPaymentId }
+          : {}),
         status: iteration.status,
         ...(iteration.taskVerdict
           ? { taskVerdict: iteration.taskVerdict }

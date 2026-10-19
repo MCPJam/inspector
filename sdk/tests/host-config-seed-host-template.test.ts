@@ -173,7 +173,7 @@ describe("seedHostTemplate", () => {
   it("seeds the real Claude Code harness + a personal computer", () => {
     const config = seedHostTemplate("claude-code", { theme: "dark" });
     expect(config.hostStyle).toBe("claude-code");
-    expect(config.modelId).toBe("anthropic/claude-haiku-4.5");
+    expect(config.modelId).toBe("anthropic/claude-haiku-5.5");
     expect(config.harness).toBe("claude-code");
     expect(config.computer).toEqual({ kind: "personal" });
     // requireToolApproval must be false — the harness rejects approval-gated turns.
