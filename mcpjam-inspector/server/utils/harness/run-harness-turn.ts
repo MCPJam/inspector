@@ -3534,29 +3534,6 @@ export async function runHarnessTurn(
           }
           const type = part.type;
           if (typeof type === "string") seenHarnessPartTypes.add(type);
-          // A failed call ends with `tool-error` (a non-zero Bash exit, a
-          // missing file, a failed Edit), not `tool-result`: it is no longer
-          // in flight either way.
-          if (type === "tool-error" || type === "tool-output-error") {
-            const failedToolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? "",
-            );
-            drainOpenToolCalls.delete(failedToolCallId);
-            // ...and its card settles as failed. The UI only: the transcript,
-            // spans and evals keep recording a failed built-in as before.
-            // Without it the card stayed "running" for good.
-            if (
-              toolMeta.has(failedToolCallId) &&
-              !failedToolCallIds.has(failedToolCallId)
-            ) {
-              failedToolCallIds.add(failedToolCallId);
-              emitToolOutputError(writer, {
-                toolCallId: failedToolCallId,
-                errorText: harnessToolErrorText(part),
-                providerExecuted: true,
-              });
-            }
-          }
           if (
             type === "reasoning-start" ||
             type === "reasoning-delta" ||
@@ -3726,12 +3703,27 @@ export async function runHarnessTurn(
             tryCreateHarnessScopeStepUp();
           } else if (
             type === "tool-result" ||
-            type === "tool-output-available"
+            type === "tool-output-available" ||
+            type === "tool-error" ||
+            type === "tool-output-error"
           ) {
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ?? "",
             );
             drainOpenToolCalls.delete(toolCallId);
+            const errorEvent =
+              type === "tool-error" || type === "tool-output-error";
+            const historicalCall = toolCallLookupFor(() => messageHistory)(
+              toolCallId,
+            );
+            if (errorEvent) {
+              // Ignore duplicate terminal events and errors for calls never issued.
+              if (
+                failedToolCallIds.has(toolCallId) ||
+                (!toolMeta.has(toolCallId) && !historicalCall)
+              ) continue;
+              failedToolCallIds.add(toolCallId);
+            }
             // HOST-EXECUTED delivery: prefer the raw result captured at
             // `execute()` time over the runtime's echo, which is the model-facing
             // projection we handed it. `has` rather than a truthiness check —
@@ -3739,13 +3731,16 @@ export async function runHarnessTurn(
             const hasRawHostExecuted = hostExecutedRawResults.has(toolCallId);
             const rawHostExecuted = hostExecutedRawResults.get(toolCallId);
             hostExecutedRawResults.delete(toolCallId);
-            const output = hasRawHostExecuted
+            const output = errorEvent
+              ? harnessToolErrorText(part)
+              : hasRawHostExecuted
               ? rawHostExecuted
               : (part as { output?: unknown }).output ??
                 (part as { result?: unknown }).result;
             // Surface tool failures the harness reports so eval/trace consumers
             // that key off isError classify them correctly.
             const isError =
+              errorEvent ||
               (part as { isError?: unknown }).isError === true ||
               (part as { error?: unknown }).error != null;
             // Reuse the identity resolved at tool-call time (the result part may
@@ -3757,7 +3752,11 @@ export async function runHarnessTurn(
             const meta =
               toolMeta.get(toolCallId) ??
               harnessAdapter.parseToolName(
-                String((part as { toolName?: unknown }).toolName ?? "tool"),
+                String(
+                  (part as { toolName?: unknown }).toolName ??
+                    historicalCall?.toolName ??
+                    "tool",
+                ),
                 harnessKeyToServerId,
               );
             // A tool call the MCP proxy blocked on policy, recognised only when
@@ -3822,15 +3821,23 @@ export async function runHarnessTurn(
               break harnessStream;
             }
             // Provider-executed (in-sandbox) — see tool-input-available above.
-            emitToolOutput(writer, {
-              toolCallId,
-              output,
-              providerMetadata: mergeMcpToolConnectionMetadata(
-                undefined,
-                accountByCall.get(toolCallId),
-              ),
-              providerExecuted: true,
-            });
+            if (errorEvent) {
+              emitToolOutputError(writer, {
+                toolCallId,
+                errorText: harnessToolErrorText(part),
+                providerExecuted: true,
+              });
+            } else {
+              emitToolOutput(writer, {
+                toolCallId,
+                output,
+                providerMetadata: mergeMcpToolConnectionMetadata(
+                  undefined,
+                  accountByCall.get(toolCallId),
+                ),
+                providerExecuted: true,
+              });
+            }
             // A policy block is neither a tool result nor a tool span: it never
             // reached the server, so counting it as either would attribute a
             // MCPJam refusal to the customer's tool (a `notMeasured` +
