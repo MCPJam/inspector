@@ -67,11 +67,46 @@ vi.mock("convex/browser", () => ({
   }),
 }));
 
-import v1Routes from "../index.js";
+import { serverDrain } from "../../../services/lifecycle/drain.js";
+import v1Evals from "../evals.js";
+import v1Routes, { V1_EVAL_LAUNCH_ROUTES } from "../index.js";
 
 const PROJECT_ID = "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx";
 const SUITE_ID = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
 const RUN_ID = "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+/** Each launch route, as `send` takes it. */
+const LAUNCH_PATHS = V1_EVAL_LAUNCH_ROUTES.map((route) =>
+  route
+    .replace("/projects/:projectId", "")
+    .replace(":runId", RUN_ID)
+    .replace(":experimentId", "exp1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"),
+);
+
+/** The POST routes in `evals.ts` that do not call `launchEvalRun`. */
+const NOT_LAUNCHES = [
+  "/projects/:projectId/eval-suites",
+  "/projects/:projectId/eval-suites/from-file",
+  "/projects/:projectId/eval-runs/:runId/insights",
+  "/projects/:projectId/eval-runs/:runId/judge",
+  "/projects/:projectId/eval-runs/:runId/cancel",
+  "/projects/:projectId/eval-runs/:runId/gate-waivers",
+  "/projects/:projectId/eval-runs/:runId/description-experiments",
+  "/projects/:projectId/eval-suites/:suiteId/environments",
+  "/projects/:projectId/eval-suites/:suiteId/cases",
+  "/projects/:projectId/eval-suites/:suiteId/cases/batch",
+  "/projects/:projectId/eval-suites/:suiteId/cases/generate",
+  "/projects/:projectId/eval-suites/:suiteId/cases/import",
+  "/projects/:projectId/eval-suites/:suiteId/authoring/:jobId/commit",
+];
+
+const preparedRun = () => ({
+  suiteId: SUITE_ID,
+  runId: RUN_ID,
+  caseUpsert: { committed: [], failed: [] },
+  recorder: { finalize: vi.fn() },
+  execute: vi.fn().mockResolvedValue(undefined),
+});
 
 function send(path: string, method = "POST", body?: unknown) {
   const app = new Hono();
@@ -108,13 +143,7 @@ beforeEach(() => {
     oauthServerUrls: {},
     authenticatedUserId: null,
   });
-  prepareEvalRunMock.mockResolvedValue({
-    suiteId: SUITE_ID,
-    runId: RUN_ID,
-    caseUpsert: { committed: [], failed: [] },
-    recorder: { finalize: vi.fn() },
-    execute: vi.fn().mockResolvedValue(undefined),
-  });
+  prepareEvalRunMock.mockImplementation(async () => preparedRun());
 });
 
 afterEach(() => {
@@ -123,12 +152,7 @@ afterEach(() => {
 });
 
 describe("v1 eval launches while the server drains", () => {
-  it.each([
-    "/eval-runs",
-    "/eval-run-groups",
-    `/eval-runs/${RUN_ID}/rerun`,
-    "/eval-description-experiments/exp1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/start",
-  ])(
+  it.each(LAUNCH_PATHS)(
     "refuses POST %s before preparing or connecting anything",
     async (path) => {
       drainState.draining = true;
@@ -154,6 +178,47 @@ describe("v1 eval launches while the server drains", () => {
 
     const res = await send(`/eval-runs/${RUN_ID}`, "GET");
     expect(res.status).toBe(200);
+  });
+
+  it("lists every POST route in evals.ts as a launch or not", () => {
+    // `launchEvalRun` is private to evals.ts, so a route added there fails
+    // here until it is classified, and a new launch route cannot start runs on
+    // a draining server unnoticed.
+    const posts = new Set(
+      v1Evals.routes
+        .filter((route) => route.method === "POST")
+        .map((route) => route.path),
+    );
+    expect([...posts].sort()).toEqual(
+      [...V1_EVAL_LAUNCH_ROUTES, ...NOT_LAUNCHES].sort(),
+    );
+  });
+
+  it("holds the drain for a launch still preparing when it begins", async () => {
+    let prepared!: () => void;
+    const preparing = new Promise<void>((resolve) => (prepared = resolve));
+    prepareEvalRunMock.mockImplementation(async () => {
+      await preparing;
+      return preparedRun();
+    });
+
+    const launch = send("/eval-runs", "POST", {
+      suiteId: SUITE_ID,
+      serverIds: ["s1"],
+    });
+    await vi.waitFor(() => expect(prepareEvalRunMock).toHaveBeenCalled());
+    drainState.draining = true;
+    let finished = false;
+    const drained = serverDrain.drain(60_000).finally(() => (finished = true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(finished).toBe(false);
+
+    prepared();
+    expect((await launch).status).toBe(202);
+    await expect(drained).resolves.toMatchObject({
+      drained: true,
+      inFlightAtStart: { eval_run: 1 },
+    });
   });
 
   it("starts runs as before when not draining", async () => {
