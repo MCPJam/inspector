@@ -125,6 +125,11 @@ import {
 } from "../../utils/model-resolution-local.js";
 import { routingSelectionForModel } from "../../utils/selection-rail.js";
 import {
+  claimDurableRun,
+  type DurableRunHandle,
+  type DurableRunInputs,
+} from "../../services/evals/durable-run.js";
+import {
   countModelSteps,
   isModelFree,
   normalizePromptTurns,
@@ -645,6 +650,12 @@ export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
  */
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
   runtimeVenue?: "local" | "hosted";
+  /**
+   * A durable hosted run (`services/evals/durable-run.ts`). `launch` asks for
+   * a worker job on this launch (the caller vouches that nothing it sent is
+   * request-only); `resume` is the job a recovering worker already claimed.
+   */
+  durable?: { launch: DurableRunInputs } | { resume: DurableRunHandle };
   /** Already resolved by the public inline-suite boundary. */
   hostAttachments?: Array<{
     namedHostId: string;
@@ -1456,6 +1467,11 @@ export type PreparedEvalRun = {
    */
   serverUnreachable?: boolean;
   /**
+   * A durable run whose job another replica (or, after the launch hold, the
+   * recovery worker) holds. Executing here too would run its trials twice.
+   */
+  durableHeldElsewhere?: boolean;
+  /**
    * Execute the prepared run to completion. `runEvalSuiteWithAiSdk` owns
    * terminal run status (completed/failed/cancelled); callers that detach
    * this (the async /api/v1 route) should still catch and defensively
@@ -1507,7 +1523,11 @@ export function shouldSkipExecution(prepared: {
   deduped?: boolean;
   status?: string;
   serverUnreachable?: boolean;
+  durableHeldElsewhere?: boolean;
 }): boolean {
+  // A durable run's job lease is the liveness signal described above: the
+  // replica holding it executes, every other one stands down.
+  if (prepared.durableHeldElsewhere === true) return true;
   return (
     prepared.deduped === true &&
     (prepared.serverUnreachable === true || isRunPastExecution(prepared.status))
@@ -2446,6 +2466,7 @@ export async function prepareEvalRun(
   request: RunEvalsWithManagerRequest,
 ): Promise<PreparedEvalRun> {
   const {
+    durable,
     suiteId,
     projectId,
     suiteName,
@@ -2497,6 +2518,13 @@ export async function prepareEvalRun(
     request.source === "benchmark"
       ? { source: "benchmark", benchmarkRunId: request.benchmarkRunId }
       : { source: request.source };
+  // Durable only when every input can be rebuilt: no keys that exist only in
+  // this request. A recovery lands on THIS run through its idempotency key —
+  // the caller's, or one the backend gives a keyless launch.
+  const durableLaunch =
+    durable && "launch" in durable && !hasModelApiKeys(modelApiKeys)
+      ? durable.launch
+      : undefined;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
     throw new WebRouteError(
@@ -2825,6 +2853,9 @@ export async function prepareEvalRun(
     ...(launchContext?.launcher ? { launcher: launchContext.launcher } : {}),
     ...(launchContext?.ciMetadata
       ? { ciMetadata: launchContext.ciMetadata }
+      : {}),
+    ...(durableLaunch
+      ? { durableJob: { inputs: JSON.stringify(durableLaunch) } }
       : {}),
   });
   // The preflight was waived only because the key already had a run to hand
@@ -3240,6 +3271,30 @@ export async function prepareEvalRun(
     }
   }
 
+  // A durable run executes only on the replica holding its job lease. The
+  // launcher claims its own job right away (the backend holds it for the
+  // launcher briefly); a recovering worker arrives with the job it claimed.
+  let durableRun: DurableRunHandle | undefined =
+    durable && "resume" in durable ? durable.resume : undefined;
+  let durableHeldElsewhere = false;
+  if (!durableRun && durableLaunch) {
+    try {
+      const claimed = await claimDurableRun(runId);
+      if (claimed && claimed !== "no_job") durableRun = claimed;
+      // Not claimable: another replica is driving it. "no_job": the backend
+      // kept it process-owned, so this replica runs it as before.
+      durableHeldElsewhere = claimed === null;
+    } catch (error) {
+      // Unknown, so stand down: after the launch hold the recovery worker
+      // claims it. Running it here too could run every trial twice.
+      logger.warn("[evals] durable run claim failed; leaving it to a worker", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      durableHeldElsewhere = true;
+    }
+  }
+
   // The model's tools come from the run's frozen selection PLUS its re-gated
   // plugin servers; the snapshot keeps plugin ids out of the host config.
   const executionConfig = withPluginExecutionServers(
@@ -3248,9 +3303,19 @@ export async function prepareEvalRun(
     clientManager,
   );
   const execute = async () => {
+    try {
+      await executeRun();
+    } finally {
+      // Releases the job once the runner finalized the run; a no-op after a
+      // lost lease, whose new holder finishes it.
+      await durableRun?.complete();
+    }
+  };
+  const executeRun = async () => {
     await runEvalSuiteWithAiSdk({
       suiteId: resolvedSuiteId,
       runId,
+      ...(durableRun ? { durableRun } : {}),
       // The budgets the LAUNCH froze. Omitted when the backend predates the
       // field, which the runner reads as "resolve the platform defaults" —
       // same code path, differing only in which rung each field came from.
@@ -3325,8 +3390,13 @@ export async function prepareEvalRun(
     recorder,
     deduped: runWasDeduped,
     status: existingRunStatus,
+    ...(durableHeldElsewhere ? { durableHeldElsewhere: true } : {}),
     execute,
   };
+}
+
+function hasModelApiKeys(keys: Record<string, string> | undefined): boolean {
+  return !!keys && Object.values(keys).some((value) => value.length > 0);
 }
 
 export async function runEvalsWithManager(

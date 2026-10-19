@@ -508,6 +508,46 @@ describe("web routes — evals", () => {
     },
   );
 
+  it("makes a saved-suite UI launch durable, but never one carrying OAuth tokens", async () => {
+    vi.stubEnv("EVAL_RUN_JOBS_ENABLED", "1");
+    try {
+      const prepared = () => ({
+        suiteId: "suite-1",
+        runId: "run-1",
+        caseUpsert: { committed: [], failed: [] },
+        recorder: { finalize: vi.fn() },
+        execute: vi.fn().mockResolvedValue(undefined),
+      });
+      prepareEvalRunMock.mockResolvedValueOnce(prepared());
+      const { app, token } = createEvalsTestApp();
+      const saved = { ...runSuiteBody, suiteId: "suite-1" };
+      await postJson(app, "/api/web/evals/run", saved, token);
+      expect(prepareEvalRunMock.mock.calls[0]?.[1]).toMatchObject({
+        durable: {
+          launch: {
+            suiteId: "suite-1",
+            projectId: "project-1",
+            serverIds: ["server-1"],
+            source: "ui",
+          },
+        },
+      });
+
+      prepareEvalRunMock.mockResolvedValueOnce(prepared());
+      await postJson(
+        app,
+        "/api/web/evals/run",
+        { ...saved, oauthTokens: { "server-1": "request-only-token" } },
+        token,
+      );
+      expect(prepareEvalRunMock.mock.calls[1]?.[1]).not.toHaveProperty(
+        "durable",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("enforces the RUN host's enterprise-managed authorization, not the body's", async () => {
     // The one connection fact where losing the host's word is a security
     // question rather than a fidelity one: a browser pointed at a different

@@ -9,9 +9,9 @@
  * the same run, never a second one. Trials the lost replica dispatched are
  * recorded by the backend and never re-run.
  *
- * Only runs whose every input can be rebuilt are durable: hosted, launched
- * with an idempotency key, and with no request-only credentials (keys or
- * OAuth tokens sent with the request). Everything else stays process-owned.
+ * Only runs whose every input can be rebuilt are durable: hosted, of a saved
+ * suite, and with no request-only credentials (keys or OAuth tokens sent with
+ * the request). Everything else stays process-owned.
  */
 import { HOSTED_MODE } from "../../config.js";
 import { logger } from "../../utils/logger";

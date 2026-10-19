@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { claimDurableRun } from "../durable-run.js";
 import { createSuiteRunRecorder } from "../recorder.js";
+import { shouldSkipExecution } from "../../../routes/shared/evals.js";
 
 /**
  * The Inspector end of durable hosted runs: the job lease, the dispatch
- * boundary before each trial.
+ * boundary before each trial, and the one-holder rule for execution.
  */
 
 const JOB = {
@@ -189,6 +190,15 @@ describe("dispatch gate in the recorder", () => {
     expect(client.mutation).toHaveBeenCalledWith(
       "testSuites:startTestIteration",
       { iterationId: "iter-1" },
+    );
+  });
+});
+
+describe("one holder executes a durable run", () => {
+  it("stands down when another replica holds the job", () => {
+    expect(shouldSkipExecution({ durableHeldElsewhere: true })).toBe(true);
+    expect(shouldSkipExecution({ deduped: true, status: "running" })).toBe(
+      false,
     );
   });
 });

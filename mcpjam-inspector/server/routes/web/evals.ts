@@ -61,8 +61,51 @@ import {
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
+import {
+  durableRunsEnabled,
+  type DurableRunInputs,
+} from "../../services/evals/durable-run.js";
 
 const evals = new Hono();
+
+/**
+ * A hosted UI launch of a saved suite can be recovered by another replica —
+ * unless it carried OAuth tokens, which exist only in this request (model keys
+ * are checked by the shared path).
+ */
+function durableUiLaunch(body: {
+  suiteId?: string;
+  projectId: string;
+  serverIds: string[];
+  serverNames?: string[];
+  environmentId?: string;
+  namedHostId?: string;
+  caseIds?: string[];
+  iterationOverride?: number;
+  runGroupId?: string;
+  oauthTokens?: Record<string, string>;
+}): { launch: DurableRunInputs } | undefined {
+  if (!durableRunsEnabled() || !body.suiteId) return undefined;
+  if (body.oauthTokens && Object.keys(body.oauthTokens).length > 0) {
+    return undefined;
+  }
+  return {
+    launch: {
+      suiteId: body.suiteId,
+      projectId: body.projectId,
+      serverIds: body.serverIds,
+      ...(body.serverNames ? { serverNames: body.serverNames } : {}),
+      ...(body.environmentId ? { environmentId: body.environmentId } : {}),
+      ...(body.namedHostId ? { namedHostId: body.namedHostId } : {}),
+      ...(body.caseIds ? { caseIds: body.caseIds } : {}),
+      ...(body.iterationOverride
+        ? { iterationOverride: body.iterationOverride }
+        : {}),
+      ...(body.runGroupId ? { runGroupId: body.runGroupId } : {}),
+      source: "ui",
+    },
+  };
+}
 
 const hostedBatchSchema = z.object({
   projectId: z.string().min(1),
@@ -215,10 +258,12 @@ evals.post("/run", async (c) =>
       );
       const { manager, body, convexAuthToken } = connection;
       let prepared: PreparedEvalRun;
+      const durable = durableUiLaunch(body);
 
       try {
         prepared = await prepareEvalRun(manager, {
           ...body,
+          ...(durable ? { durable } : {}),
           ...((await anyUnattendedLocalHarness(c.req.header("authorization"), typeof rawBody.projectId === "string" ? rawBody.projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
           convexAuthToken,
           ...(preflightEnvironment
