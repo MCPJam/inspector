@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getFunctionName, type FunctionReference } from "convex/server";
 import {
   createPausableDeadline,
   createTrialSlotDispatcher,
@@ -16,7 +17,8 @@ function fakeBackend(cap: number) {
   let peak = 0;
   const calls: { name: string; args: any }[] = [];
   const client = (): TrialSlotClient => ({
-    async mutation(name: string, args: any) {
+    async mutation(ref: FunctionReference<"mutation">, args: any) {
+      const name = getFunctionName(ref);
       calls.push({ name, args });
       const run = args.runId as string;
       const queue = queued.get(run) ?? [];
@@ -149,8 +151,8 @@ describe("trial slot dispatcher", () => {
 
   it("hands back queue expiry for the cases the backend expired", async () => {
     const client: TrialSlotClient = {
-      mutation: vi.fn(async (name: string) =>
-        name === "evalTrialSlots:claimTrialSlots"
+      mutation: vi.fn(async (ref: FunctionReference<"mutation">) =>
+        getFunctionName(ref) === "evalTrialSlots:claimTrialSlots"
           ? { status: "queue_expired", token: "t", expired: ["case:0"] }
           : { enqueued: 1 },
       ),
@@ -169,8 +171,10 @@ describe("trial slot dispatcher", () => {
 
   it("runs every case as before against a backend without slot functions", async () => {
     const client: TrialSlotClient = {
-      mutation: vi.fn(async (name: string) => {
-        throw new Error(`Could not find public function for '${name}'`);
+      mutation: vi.fn(async (ref: FunctionReference<"mutation">) => {
+        throw new Error(
+          `Could not find public function for '${getFunctionName(ref)}'`,
+        );
       }),
     };
     const dispatcher = createTrialSlotDispatcher({
@@ -187,16 +191,47 @@ describe("trial slot dispatcher", () => {
     expect(client.mutation).toHaveBeenCalledTimes(1);
   });
 
+  it("still caps a run locally when shared slots are unavailable", async () => {
+    const client: TrialSlotClient = {
+      mutation: vi.fn(async (ref: FunctionReference<"mutation">) => {
+        throw new Error(
+          `Could not find public function for '${getFunctionName(ref)}'`,
+        );
+      }),
+    };
+    const dispatcher = createTrialSlotDispatcher({
+      client,
+      runId: "run-a",
+      signal: new AbortController().signal,
+      executionMs: 60_000,
+      pollMs: 2,
+    });
+    await dispatcher.start(keys(6));
+    const outcomes = keys(6).map((key) => dispatcher.acquire(key));
+    for (const outcome of outcomes.slice(0, 4)) {
+      expect(await outcome).toBe("unthrottled");
+    }
+    expect(dispatcher.waiting()).toBe(2);
+    await dispatcher.release(trialKeyForCase(0));
+    expect(await outcomes[4]).toBe("unthrottled");
+    expect(dispatcher.waiting()).toBe(1);
+    await dispatcher.close();
+    expect(await outcomes[5]).toBe("stopped");
+  });
+
   it("keeps waiting through a transient backend error", async () => {
     const backend = fakeBackend(1);
     const real = backend.client();
     let failures = 2;
     const client: TrialSlotClient = {
-      mutation: async (name, args) => {
-        if (name === "evalTrialSlots:claimTrialSlots" && failures-- > 0) {
+      mutation: async (ref, args) => {
+        if (
+          getFunctionName(ref) === "evalTrialSlots:claimTrialSlots" &&
+          failures-- > 0
+        ) {
           throw new Error("fetch failed");
         }
-        return real.mutation(name, args);
+        return real.mutation(ref, args);
       },
     };
     const dispatcher = createTrialSlotDispatcher({

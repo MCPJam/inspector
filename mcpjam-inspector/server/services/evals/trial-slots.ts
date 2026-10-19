@@ -15,12 +15,28 @@
  * heartbeat that fails only logs: the backend keeps a lapsed slot until the
  * run ends, so a hiccup cannot double-book capacity.
  */
+import { makeFunctionReference, type FunctionReference } from "convex/server";
 import { HOSTED_MODE } from "../../config.js";
 import { logger } from "../../utils/logger";
 
 export type TrialSlotClient = {
-  mutation(name: any, args: Record<string, unknown>): Promise<any>;
+  mutation(
+    ref: FunctionReference<"mutation">,
+    args: Record<string, unknown>,
+  ): Promise<unknown>;
 };
+
+/** The fields this dispatcher reads from any slot call's answer. */
+type SlotReply = {
+  status?: string;
+  token?: string;
+  heartbeatMs?: number;
+  deadline?: number;
+  granted?: { trialKey: string }[];
+  expired?: string[];
+  lost?: string[];
+  more?: boolean;
+} | null;
 
 /**
  * - `granted`: the case may run now.
@@ -35,6 +51,12 @@ const MISSING_FUNCTION = /Could not find public function for '/;
 const ENQUEUE_BATCH = 500;
 const HEARTBEAT_BATCH = 64;
 const CLAIM_BATCH = 16;
+/**
+ * Cases one run may execute at once when shared slots are unavailable (an
+ * older backend, or a queue the backend refused): the backend's per-group
+ * cap, so a run is never unbounded just because the queue is down.
+ */
+const FALLBACK_CONCURRENCY = 4;
 const DEFAULT_POLL_MS = 2_000;
 const MAX_BACKOFF_MS = 10_000;
 const DEFAULT_HEARTBEAT_MS = 15_000;
@@ -112,20 +134,48 @@ export function createTrialSlotDispatcher(opts: {
       resolve(outcome);
       changed = true;
     }
-    if (changed) opts.onWaitingChange?.(waiters.size);
+    if (changed) opts.onWaitingChange?.(waitingCount());
   };
 
-  const call = (name: string, args: Record<string, unknown>) =>
-    opts.client.mutation(`evalTrialSlots:${name}`, {
-      runId: opts.runId,
-      ...args,
-    });
+  const call = async (
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<SlotReply> =>
+    (await opts.client.mutation(
+      makeFunctionReference<"mutation">(`evalTrialSlots:${name}`),
+      { runId: opts.runId, ...args },
+    )) as SlotReply;
+
+  // The local fallback cap (FALLBACK_CONCURRENCY) while shared slots are down.
+  const fallbackHeld = new Set<string>();
+  const fallbackQueue: {
+    key: string;
+    resolve: (outcome: TrialSlotOutcome) => void;
+  }[] = [];
+  const waitingCount = () => waiters.size + fallbackQueue.length;
+  const runLocally = (
+    key: string,
+    resolve: (outcome: TrialSlotOutcome) => void,
+  ) => {
+    if (fallbackHeld.size < FALLBACK_CONCURRENCY) {
+      fallbackHeld.add(key);
+      resolve("unthrottled");
+    } else {
+      fallbackQueue.push({ key, resolve });
+    }
+  };
 
   /** Stop throttling: an older backend, or a queue the backend refused. */
   const runUnthrottled = (reason: string, error?: unknown) => {
-    if (!unthrottled) log(`${reason}; cases run without shared slots`, error);
+    if (!unthrottled) {
+      log(`${reason}; cases run ${FALLBACK_CONCURRENCY} at a time locally`, error);
+    }
     unthrottled = true;
-    settle([...waiters.keys()], "unthrottled");
+    for (const [key, resolve] of [...waiters]) {
+      waiters.delete(key);
+      runLocally(key, resolve);
+    }
+    opts.onWaitingChange?.(waitingCount());
   };
 
   const enqueue = async (keys: string[]) => {
@@ -249,8 +299,9 @@ export function createTrialSlotDispatcher(opts: {
     if (closed) return;
     closed = true;
     settle([...waiters.keys()], "stopped");
+    for (const queued of fallbackQueue.splice(0)) queued.resolve("stopped");
     nudge();
-    await loop?.catch(() => undefined);
+    await loop?.catch((error) => log("slot loop failed while closing", error));
     if (unthrottled || queued.length === 0) return;
     // Free everything this run still queues or holds, in one call per batch.
     try {
@@ -275,7 +326,13 @@ export function createTrialSlotDispatcher(opts: {
     /** Wait for this case's slot. Registers synchronously, then waits. */
     acquire(key: string): Promise<TrialSlotOutcome> {
       if (closed || opts.signal.aborted) return Promise.resolve("stopped");
-      if (unthrottled) return Promise.resolve("unthrottled");
+      if (unthrottled) {
+        const local = new Promise<TrialSlotOutcome>((resolve) =>
+          runLocally(key, resolve),
+        );
+        opts.onWaitingChange?.(waitingCount());
+        return local;
+      }
       const outcome = new Promise<TrialSlotOutcome>((resolve) =>
         waiters.set(key, resolve),
       );
@@ -285,6 +342,15 @@ export function createTrialSlotDispatcher(opts: {
     },
     /** Give a case's slot back once the case settles. Never throws. */
     async release(key: string): Promise<void> {
+      if (fallbackHeld.delete(key)) {
+        const next = fallbackQueue.shift();
+        if (next) {
+          fallbackHeld.add(next.key);
+          next.resolve("unthrottled");
+        }
+        opts.onWaitingChange?.(waitingCount());
+        return;
+      }
       if (!held.delete(key) || unthrottled) return;
       try {
         await call("releaseTrialSlots", {
@@ -296,7 +362,7 @@ export function createTrialSlotDispatcher(opts: {
       }
       ensureLoop();
     },
-    waiting: () => waiters.size,
+    waiting: waitingCount,
     close,
   };
 }

@@ -191,6 +191,7 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
   createSuiteRunRecorder,
@@ -997,6 +998,11 @@ export function isRunDeletedError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("not found") || message.includes("unauthorized");
 }
+
+/** The queue-expiry iteration write, typed (no string cast). */
+const UPDATE_TEST_ITERATION = makeFunctionReference<"action">(
+  "testSuites:updateTestIteration",
+);
 
 const RUN_CANCELLED_ERROR = new EvalRunStoppedError({
   stopReason: "user_cancelled",
@@ -3051,7 +3057,7 @@ async function markCaseQueueExpired(args: {
     const iterationId = await findIterationIdForTimeout({ ...args, runIndex });
     if (!iterationId) continue;
     try {
-      await args.convexClient.action("testSuites:updateTestIteration" as any, {
+      await args.convexClient.action(UPDATE_TEST_ITERATION, {
         iterationId,
         status: "failed",
         result: "failed",

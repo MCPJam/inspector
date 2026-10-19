@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getFunctionName, type FunctionReference } from "convex/server";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
 const sharedCapacity = vi.hoisted(() => ({ enabled: false }));
+/** A Convex function's name, whether it was called by string or reference. */
+const fnName = (ref: unknown) =>
+  typeof ref === "string"
+    ? ref
+    : getFunctionName(ref as FunctionReference<"mutation">);
 vi.mock("../trial-slots.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   sharedEvalCapacityEnabled: () => sharedCapacity.enabled,
@@ -478,8 +484,8 @@ describe.each(["local", "hosted"] as const)(
             ? { iterations: rows }
             : { status: "running" },
         ),
-        mutation: vi.fn(async (name: string) => {
-          if (name !== "evalTrialSlots:claimTrialSlots") return {};
+        mutation: vi.fn(async (ref: unknown, _args?: unknown) => {
+          if (fnName(ref) !== "evalTrialSlots:claimTrialSlots") return {};
           return Date.now() < queuedUntil
             ? { status: "waiting", token: "tok" }
             : {
@@ -693,10 +699,10 @@ describe.each(["local", "hosted"] as const)(
           stopReason: "run_timeout",
         }),
       );
-      expect(convexClient.mutation).toHaveBeenCalledWith(
-        "evalTrialSlots:releaseTrialSlots",
-        expect.objectContaining({ runId: "run-1", token: "tok" }),
+      const releases = convexClient.mutation.mock.calls.filter(
+        ([ref]) => fnName(ref) === "evalTrialSlots:releaseTrialSlots",
       );
+      expect(releases[0]?.[1]).toMatchObject({ runId: "run-1", token: "tok" });
     });
 
     it("keeps completed evidence and finalizes the run deadline for the backend sweep", async () => {
