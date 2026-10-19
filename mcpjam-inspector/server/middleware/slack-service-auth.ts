@@ -31,6 +31,7 @@ import {
 import { logger } from "../utils/logger.js";
 import { scrubCredentialUrl } from "../../shared/credential-urls.js";
 import { setRequestLogContext } from "../utils/request-logger.js";
+import { logConvexId } from "../utils/log-convex-id.js";
 import {
   composeAllowedPaths,
   SLACK_ALLOWED_PATH_DELTAS,
@@ -334,7 +335,7 @@ export async function handleSlackServiceAuth(
   // `bearer-auth.ts`. Every branch that resolves an org sets it, so `orgId` is
   // a field an operator can rely on rather than one that happens to be present
   // depending on which credential the caller used.
-  setRequestLogContext(c, { orgId: link.organizationId });
+  setRequestLogContext(c, { orgId: logConvexId(link.organizationId) });
   // The CANONICAL surface trio, and nothing Slack-named beside it. Routes
   // read only these three, so a second wrapper (Discord) is a new auth branch
   // that sets the same three names and nothing downstream changes. Context

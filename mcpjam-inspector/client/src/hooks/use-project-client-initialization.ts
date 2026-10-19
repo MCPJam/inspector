@@ -37,7 +37,7 @@ type Failure = { refused: boolean; message: string; retryAfterMs?: number };
 
 /**
  * A deployment behind the browser rejects an argument it has not learnt yet
- * (`initializeComparison` before mcpjam-backend#1996) before the function
+ * (such as `initializeComparison`) before the function
  * runs. Convex discloses this one in production, unlike a throw from the
  * function itself, so the text can be matched: a browser ahead of its backend
  * then settles for what the backend can do instead of retrying and reporting

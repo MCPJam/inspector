@@ -1,3 +1,4 @@
+import type { SystemPromptDefault } from "./types.js";
 /**
  * `Host` — the public, developer-facing host configuration builder.
  *
@@ -188,6 +189,9 @@ export function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
     style: c.hostStyle,
     model: c.modelId,
     systemPrompt: c.systemPrompt,
+    ...(c.systemPromptDefault === undefined
+      ? {}
+      : { systemPromptDefault: c.systemPromptDefault }),
     temperature: c.temperature,
     requireToolApproval: c.requireToolApproval,
     servers: c.serverIds,
@@ -271,7 +275,19 @@ export class Host {
    */
   model: string;
 
-  systemPrompt: string;
+  private promptText = "";
+  private promptDefault?: SystemPromptDefault;
+
+  get systemPrompt(): string {
+    return this.promptText;
+  }
+  set systemPrompt(value: string) {
+    this.promptText = value;
+    this.promptDefault = undefined;
+  }
+  get systemPromptDefault(): SystemPromptDefault | undefined {
+    return structuredClone(this.promptDefault);
+  }
   temperature: number;
   requireToolApproval: boolean;
 
@@ -388,6 +404,7 @@ export class Host {
     this.model = cfg.model ?? "";
 
     this.systemPrompt = cfg.systemPrompt ?? "";
+    this.promptDefault = cfg.systemPromptDefault;
     this.temperature = cfg.temperature ?? DEFAULT_TEMPERATURE;
     this.requireToolApproval = cfg.requireToolApproval ?? false;
     this.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
@@ -568,6 +585,7 @@ export class Host {
       style: this.style,
       model: this.model,
       systemPrompt: this.systemPrompt,
+      systemPromptDefault: this.promptDefault,
       temperature: this.temperature,
       requireToolApproval: this.requireToolApproval,
       progressiveToolDiscovery: this.progressiveToolDiscovery,
@@ -592,6 +610,7 @@ export class Host {
       hostStyle: snap.style,
       modelId: snap.model,
       systemPrompt: snap.systemPrompt,
+      systemPromptDefault: snap.systemPromptDefault,
       temperature: snap.temperature,
       requireToolApproval: snap.requireToolApproval,
       serverIds: snap.servers,

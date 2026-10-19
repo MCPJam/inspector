@@ -19,6 +19,7 @@ import {
   Users,
   ShieldCheck,
   Loader2,
+  Download,
   Layers,
   Cable,
   MessagesSquare,
@@ -585,6 +586,7 @@ export function MCPSidebar({
   const learnMore = useLearnMore();
   const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
+  const isSidebarCollapsed = state === "collapsed" && !isMobile;
   const activeProject = projects[activeProjectId];
   const canOpenInviteDialog =
     isAuthenticated && !!user && !!activeOrganizationId;
@@ -801,20 +803,36 @@ export function MCPSidebar({
             onSwitchOrganization={onSwitchOrganization}
           />
           {showUpdateButton && (
-            <div className="px-3 pt-2">
+            <div
+              className={cn(
+                "pt-2",
+                isSidebarCollapsed ? "flex justify-center" : "px-3",
+              )}
+            >
               <Button
-                size="sm"
+                size={isSidebarCollapsed ? "icon" : "sm"}
+                aria-label={updateLabel}
+                title={isSidebarCollapsed ? updateLabel : undefined}
                 onClick={handleUpdateClick}
                 disabled={updateBusy}
                 className={cn(
-                  "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
+                  "gap-1 rounded-full bg-primary text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
+                  isSidebarCollapsed ? "size-8 p-0" : "h-5 w-full px-2",
                   updateBusy && "pointer-events-none hover:bg-primary",
                 )}
               >
-                {updateBusy && (
-                  <Loader2 className="size-2.5 animate-spin" aria-hidden />
-                )}
-                {updateLabel}
+                {updateBusy ? (
+                  <Loader2
+                    className={cn(
+                      "animate-spin",
+                      isSidebarCollapsed ? "size-4" : "size-2.5",
+                    )}
+                    aria-hidden
+                  />
+                ) : isSidebarCollapsed ? (
+                  <Download className="size-4" aria-hidden />
+                ) : null}
+                {!isSidebarCollapsed && updateLabel}
               </Button>
             </div>
           )}

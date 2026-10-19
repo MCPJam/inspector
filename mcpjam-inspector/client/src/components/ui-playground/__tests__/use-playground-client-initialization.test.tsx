@@ -370,7 +370,7 @@ describe("usePlaygroundClientInitialization", () => {
   });
 
   it("settles for the default alone on a backend that predates initializeComparison", async () => {
-    // The deploy-order window: this browser ships before mcpjam-backend#1996.
+    // A backend that does not yet accept `initializeComparison`.
     mocks.ensure.mockRejectedValue(
       new Error(
         "[CONVEX M(projectClients:ensureProjectClient)] [Request ID: 0123456789abcdef] ArgumentValidationError: Object contains extra field `initializeComparison` that is not in the validator.",

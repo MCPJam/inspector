@@ -1,4 +1,5 @@
 import { useInitialRenderOutcome } from "./use-initial-render-outcome";
+import { useSandboxProxyGeneration } from "./use-sandbox-proxy-generation";
 import { WidgetFullscreenPlacementContext } from "./widget-fullscreen-placement";
 import {
   negotiateResourceDisplayModes,
@@ -1402,7 +1403,6 @@ export function MCPAppsRendererSurface({
   const [openInAppUrlOverride, setOpenInAppUrlOverride] = useState<
     string | null
   >(null);
-  const [sandboxProxyReady, setSandboxProxyReady] = useState(false);
   // Where the proxy mounted the view, reported once per mount. Surfaced as the
   // Sandbox Stack "View origin" chip.
   const [viewMount, setViewMount] = useState<{
@@ -3874,9 +3874,21 @@ export function MCPAppsRendererSurface({
     ]
   );
 
+  // Bumps on every proxy load; the bridge effect below keys on it so a
+  // reloaded proxy gets a fresh bridge and the resource again.
+  const {
+    generation: sandboxProxyGeneration,
+    onReady: handleSandboxProxyReady,
+  } = useSandboxProxyGeneration({
+    bridgeTransportReady,
+    hasWidgetHtml,
+    logReady: (details) =>
+      logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", details),
+  });
+
   useEffect(() => {
     if (!widgetHtml) return;
-    if (!sandboxProxyReady) {
+    if (sandboxProxyGeneration === 0) {
       logWidgetDebug("host-to-ui", "debug/bridge-connect-skipped", {
         reason: "sandbox-proxy-not-ready",
       });
@@ -4063,7 +4075,8 @@ export function MCPAppsRendererSurface({
     };
   }, [
     widgetHtml,
-    sandboxProxyReady,
+    // A reloaded proxy is a new window with no view: reconnect to it.
+    sandboxProxyGeneration,
     registerBridgeHandlers,
     refreshAppProvidedTools,
     // Bridge must rebuild when the resolved sandbox policy changes — a host
@@ -4658,13 +4671,7 @@ export function MCPAppsRendererSurface({
       browserStorage={effectiveSandbox.browserStorage}
       colorScheme={resolvedTheme}
       recordMode={recordMode}
-      onProxyReady={() => {
-        setSandboxProxyReady(true);
-        logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", {
-          bridgeTransportReady,
-          hasWidgetHtml,
-        });
-      }}
+      onProxyReady={handleSandboxProxyReady}
       onMessage={handleSandboxMessage}
       title={`MCP App: ${toolName}`}
       hostedMode={host.surface.hostedMode}

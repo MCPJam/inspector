@@ -862,16 +862,34 @@ export function BehaviorTab({
       </FocusBlock>
 
       <FocusBlock title={fSystemPrompt.label}>
-        <Textarea
-          rows={10}
-          value={draft.systemPrompt}
-          onChange={(e) => update({ systemPrompt: e.target.value })}
-          placeholder="You are a helpful assistant…"
-          readOnly={readOnly}
-          className={
-            issues.has("systemPrompt") ? "border-amber-500/60" : undefined
-          }
-        />
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">Not editable</p>
+          <Textarea
+            rows={2}
+            disabled
+            value={
+              draft.systemPrompt
+                ? draft.systemPromptDefault?.source
+                  ? "Default system prompt applied"
+                  : "Custom system prompt applied"
+                : "No system prompt applied"
+            }
+            className="resize-none italic text-muted-foreground"
+          />
+          <p className="text-xs text-muted-foreground">
+            {draft.systemPrompt && draft.systemPromptDefault?.source ? (
+              <>
+                Source:{" "}
+                {draft.systemPromptDefault.source.publisher ?? "Not recorded"} ·{" "}
+                {draft.systemPromptDefault.source.revision.split(":")[0]}
+              </>
+            ) : draft.systemPrompt ? (
+              "Source: Saved custom text"
+            ) : (
+              "No saved prompt text. The runtime uses its default instructions."
+            )}
+          </p>
+        </div>
       </FocusBlock>
     </div>
   );
