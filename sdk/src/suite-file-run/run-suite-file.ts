@@ -1,3 +1,4 @@
+import { startEvalRun, EvalRunStartError } from "../eval-run-start.js";
 /**
  * `runSuiteFile` — execute a suite file locally and decide it with the v2
  * verdict policy.
@@ -327,6 +328,18 @@ async function executeSuiteFile(
       };
     }
 
+    const started = await startEvalRun({
+      surface: options.surface, clientVersion: options.clientVersion,
+      mcpjamAuth: credentials.mcpjam,
+      mcpjam: credentials.mcpjam ? {
+        baseUrl: credentials.mcpjam.baseUrl, project: credentials.mcpjam.projectId,
+      } : undefined,
+      plannedIterations: plan.cases.reduce((total, entry) => total + entry.testCase.iterations, 0),
+      providers: plan.cases.map((entry) => entry.model.provider),
+      usedClientProfile: Boolean(plan.host), signal: runController.signal,
+    });
+    progress({ type: "identity", organizationId: started.organizationId, projectId: started.projectId });
+
     manager = runtime.createClientManager
       ? runtime.createClientManager()
       : new MCPClientManager({}, { lazyConnect: true });
@@ -602,6 +615,14 @@ async function executeSuiteFile(
     }
   }
   if (failure !== undefined) {
+    if (failure instanceof EvalRunStartError) {
+      throw new SuiteFileRunError({
+        code: failure.code === "CREDENTIALS_MISSING" ? "CREDENTIALS_MISSING"
+          : failure.code === "PLATFORM_UNAVAILABLE" ? "PLATFORM_UNAVAILABLE" : "CREDENTIALS_REJECTED",
+        phase: "setup", category: failure.code === "PLATFORM_UNAVAILABLE" ? "setup" : "credentials",
+        message: failure.message, cause: failure,
+      });
+    }
     if (failure instanceof SuiteFileRunError) {
       throw new SuiteFileRunError({
         code: failure.code,
@@ -947,9 +968,10 @@ async function executeCase(args: {
       timeoutMs: plan.settings.iterationTimeoutMs,
       // Explicit: a local run never reports, whatever MCPJAM_API_KEY says.
       mcpjam: { enabled: false },
-      // Nor phones home: telemetry belongs to the caller, and the CLI's
+      // Analytics belong to the caller, and the CLI's
       // opt-outs (`--no-telemetry`, a persisted choice) are invisible here.
       __suppressTelemetry: true,
+      __evalRunStarted: true,
       signal: caseController.signal,
       onProgress: (completed, total) =>
         args.progress({ type: "iteration", caseId, completed, total }),
