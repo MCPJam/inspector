@@ -11,6 +11,7 @@ const { version: SDK_VERSION } = JSON.parse(
 export default defineConfig({
   entry: [
     "src/index.ts",
+    "src/platform-auth.ts",
     "src/browser.ts",
     "src/worker.ts",
     "src/operations.ts",

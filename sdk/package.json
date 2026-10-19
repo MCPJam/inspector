@@ -7,6 +7,11 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
+    "./platform-auth": {
+      "types": "./dist/platform-auth.d.ts",
+      "import": "./dist/platform-auth.js",
+      "default": "./dist/platform-auth.js"
+    },
     "./internal/telemetry": {
       "types": "./dist/internal/telemetry.d.ts",
       "import": "./dist/internal/telemetry.js",

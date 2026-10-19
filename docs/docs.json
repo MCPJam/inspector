@@ -23,11 +23,15 @@
   "fonts": {
     "heading": {
       "family": "Geist",
-      "weight": 500
+      "weight": 500,
+      "source": "/fonts/geist-latin-500-normal.woff2",
+      "format": "woff2"
     },
     "body": {
       "family": "Geist",
-      "weight": 400
+      "weight": 400,
+      "source": "/fonts/geist-latin-400-normal.woff2",
+      "format": "woff2"
     }
   },
   "styling": {
@@ -468,7 +472,22 @@
       "website": "https://mcpjam.com",
       "linkedin": "https://www.linkedin.com/company/109011364/",
       "x": "https://x.com/mcpjams"
-    }
+    },
+    "links": [
+      {
+        "header": "Legal",
+        "items": [
+          {
+            "label": "Privacy Policy",
+            "href": "https://www.mcpjam.com/privacy-policy"
+          },
+          {
+            "label": "Terms of Use",
+            "href": "https://www.mcpjam.com/terms-of-use"
+          }
+        ]
+      }
+    ]
   },
   "errors": {
     "404": {
