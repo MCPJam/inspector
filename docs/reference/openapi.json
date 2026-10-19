@@ -119,6 +119,92 @@
     }
   ],
   "paths": {
+      "/projects/{projectId}/eval-ingest/pay-iteration": {
+        "post": {
+          "operationId": "payEvalIteration",
+          "tags": [
+            "Eval runs"
+          ],
+          "summary": "Pay for one local eval iteration",
+          "description": "Collect the declared prompt fee and reserve one iteration atomically before execution. Retries with the same identity reuse the receipt; changed requests conflict. Uploads claim the payment without charging again.",
+          "parameters": [
+            {
+              "name": "projectId",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Project id, or default to resolve the authenticated organization's Default project."
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "runStartId",
+                    "iterationKey",
+                    "caseId",
+                    "billableSteps"
+                  ],
+                  "properties": {
+                    "runStartId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "iterationKey": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "caseId": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                    },
+                    "billableSteps": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Iteration payment receipt with paymentId, runStartId, iterationKey and billableSteps."
+            },
+            "400": {
+              "description": "Invalid request."
+            },
+            "401": {
+              "description": "Authentication required."
+            },
+            "403": {
+              "description": "Access or payment refused."
+            },
+            "404": {
+              "description": "Owned run start not found."
+            },
+            "409": {
+              "description": "Conflicting iteration payment."
+            },
+            "413": {
+              "description": "Request exceeds 8 KiB."
+            },
+            "429": {
+              "description": "Organization limit reached."
+            },
+            "503": {
+              "description": "Billing unavailable."
+            }
+          }
+        }
+      },
     "/projects/{projectId}/eval-runs/{runId}/judge/backtest": {
       "post": {
         "operationId": "backtestEvalRunJudge",

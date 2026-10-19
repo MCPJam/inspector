@@ -440,7 +440,7 @@ test("no credential reaches stdout, stderr or the artifact", async () => {
   }
 });
 
-test("records a start without uploading results or analytics", async () => {
+test("records start and payment without uploading results or analytics", async () => {
   const ws = workspace(suite(CASES.read));
   const realFetch = globalThis.fetch;
   const outbound: string[] = [];
@@ -465,6 +465,7 @@ test("records a start without uploading results or analytics", async () => {
   assert.deepEqual(outbound.map((url) => new URL(url).pathname), [
     "/api/v1/projects",
     "/api/v1/projects/project_fixture/eval-ingest/start-run",
+    "/api/v1/projects/project_fixture/eval-ingest/pay-iteration",
   ]);
 });
 

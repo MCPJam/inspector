@@ -31,7 +31,7 @@ export type HarnessModelSupportStatus = "supported" | "unsupported" | "unknown";
 /** One evidence row, exactly as it appears in the JSON table. */
 export type HarnessModelSupportRow = {
   harness: string;
-  /** `"*"` (any version, including an unknown one), `"<=A.B.x"` or `">A.B.x"`. */
+  /** `"*"` (any version, including an unknown one), `"<=A.B.x"`, `">A.B.x"` or `"A.B.x"`. */
   versionRange: string;
   /** Regular expression tested against the normalized canonical model id. */
   familyPattern: string;
@@ -79,7 +79,7 @@ export const HARNESS_MODEL_SUPPORT_ROWS: readonly HarnessModelSupportRow[] =
  */
 export const HARNESS_PINNED_VERSIONS = {
   "claude-code": "2.1.245",
-  codex: "0.149.1",
+  codex: "0.163.0",
   // The Cursor CLI build the hosted bootstrap installs (and the computer
   // template bakes), by the version string Cursor's own installer stamps in.
   // `server/utils/harness/cursor-bootstrap.ts` pins the download to exactly
@@ -236,19 +236,19 @@ function compareMajorMinor(
 }
 
 type ParsedRange =
-  { kind: "any" } | { kind: "lte" | "gt"; bound: [number, number] };
+  { kind: "any" } | { kind: "lte" | "gt" | "eq"; bound: [number, number] };
 
 function parseVersionRange(range: string): ParsedRange | undefined {
   if (range === "*") return { kind: "any" };
-  const match = range.match(/^(<=|>)(\d+)\.(\d+)\.x$/);
+  const match = range.match(/^(<=|>)?(\d+)\.(\d+)\.x$/);
   if (!match) return undefined;
   return {
-    kind: match[1] === "<=" ? "lte" : "gt",
+    kind: match[1] === "<=" ? "lte" : match[1] === ">" ? "gt" : "eq",
     bound: [Number(match[2]), Number(match[3])],
   };
 }
 
-/** Is `range` well-formed (`"*"`, `"<=A.B.x"` or `">A.B.x"`)? */
+/** Is `range` well-formed (`"*"`, `"<=A.B.x"`, `">A.B.x"` or `"A.B.x"`)? */
 export function isValidHarnessVersionRange(range: string): boolean {
   return parseVersionRange(range) !== undefined;
 }
@@ -268,7 +268,7 @@ export function harnessVersionInRange(
   const parsed = parseHarnessVersion(version);
   if (!parsed) return false;
   const cmp = compareMajorMinor(parsed, parsedRange.bound);
-  return parsedRange.kind === "lte" ? cmp <= 0 : cmp > 0;
+  return parsedRange.kind === "lte" ? cmp <= 0 : parsedRange.kind === "gt" ? cmp > 0 : cmp === 0;
 }
 
 // ── Model ids ────────────────────────────────────────────────────────────────

@@ -853,6 +853,7 @@ async function createHandler(c: Context, surface: Surface) {
         projectId,
         name: body.name,
         input,
+        ...(body.template ? { applyDefaultSystemPrompt: true } : {}),
       } as any,
     )) as { hostId: string };
   } catch (error) {

@@ -287,6 +287,7 @@ export function HostsTab({
             projectId: pid,
             name,
             input: { ...seed, serverIds: [] },
+            applyDefaultSystemPrompt: true,
           });
           setPreviewedHostId(hostId);
           onSelectHost(hostId);
@@ -295,7 +296,7 @@ export function HostsTab({
             hostId,
             name,
             template: templateId,
-            note: "The new host's editor is open. Change its model, system prompt, or behavior there; attach servers with ui_set_host_servers.",
+            note: "The new host's editor is open. Change its model or behavior there; attach servers with ui_set_host_servers.",
           };
         } catch (e) {
           throw createInspectorCommandClientError(

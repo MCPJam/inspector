@@ -1,3 +1,4 @@
+import type { EvalRunContext } from "./eval-run-start.js";
 import { SdkError } from "./errors.js";
 import type { McpjamAuthContext } from "./mcpjam-model-lease.js";
 import {
@@ -17,8 +18,8 @@ export interface EvalIdentityOptions {
   /** Recorded client surface; defaults to SDK. */
   surface?: "sdk" | "cli" | "vitest";
   clientVersion?: string;
-  /** @internal The parent runner has already received an online start response. */
-  __evalRunStarted?: boolean;
+  /** @internal Scoped online start and connection, never serialized in reports. */
+  __evalRunContext?: EvalRunContext;
 }
 
 export const EVAL_LOGIN_REQUIRED =
