@@ -1,6 +1,10 @@
 import type { MiddlewareHandler } from "hono";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
-import { serverDrain, type DrainCoordinator } from "./drain.js";
+import {
+  serverDrain,
+  type DrainCoordinator,
+  type InFlightKind,
+} from "./drain.js";
 
 /**
  * Seconds a refused caller is asked to wait. Short: a draining process is on
@@ -31,12 +35,21 @@ export function assertAdmitting(drain: DrainCoordinator = serverDrain): void {
 /**
  * `assertAdmitting` as middleware, for a router to list the routes that start
  * work; the router's own error handler renders the refusal in its envelope.
+ *
+ * An admitted request holds the drain until its handler returns. A launch is
+ * accepted here but registers its run only once it detaches, after auth, MCP
+ * connections and the backend writes; a drain that began in between would
+ * find nothing to wait for and close those connections under it. The run
+ * registers before the handler returns, so the two leave no gap.
  */
 export function refuseWhileDraining(
-  drain: DrainCoordinator = serverDrain,
+  kind: InFlightKind,
+  drain?: DrainCoordinator,
 ): MiddlewareHandler {
   return async (_c, next) => {
-    assertAdmitting(drain);
-    await next();
+    // Read per request: a test swaps the process drain after routers load.
+    const coordinator = drain ?? serverDrain;
+    assertAdmitting(coordinator);
+    await coordinator.track(kind, next());
   };
 }
