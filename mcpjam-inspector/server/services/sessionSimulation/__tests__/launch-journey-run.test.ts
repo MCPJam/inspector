@@ -819,14 +819,18 @@ describe("frozen execution budgets", () => {
     expect(startRunMock).not.toHaveBeenCalled();
   });
 
-  it("still refuses when closing the run fails", async () => {
+  it.each([
+    ["closing the run fails", DEPS, 1],
+    ["no run bearer can be minted", { ...DEPS, getRunBearer: () => Promise.reject(new Error("mint failed")) }, 0],
+  ])("still refuses when %s", async (_label, deps, closes) => {
     createRunMock.mockResolvedValue(withBudgets({ ...FROZEN, extraClockMs: 1 }));
     finalizeMock.mockRejectedValue(new Error("backend unavailable"));
 
-    await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+    await expect(launchJourneyRun(deps, INPUT)).rejects.toMatchObject({
       status: 409,
     });
     await settle();
+    expect(finalizeMock).toHaveBeenCalledTimes(closes);
     expect(startRunMock).not.toHaveBeenCalled();
   });
 });

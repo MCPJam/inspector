@@ -46,7 +46,6 @@ import { startJourneyRun } from "./swarm-runner.js";
 import {
   readFrozenSwarmBudgets,
   UNREADABLE_SWARM_BUDGETS_CODE,
-  UNREADABLE_SWARM_BUDGETS_MESSAGE,
 } from "./frozen-swarm-budgets.js";
 import { resolveTargetPluginServerIds } from "../journeys/plugin-servers.js";
 import { createConvexClient } from "../evals/route-helpers.js";
@@ -524,24 +523,24 @@ export async function launchJourneyRun(
       runId,
       issues: frozenBudgets.issues,
     });
-    await finalizePendingAttempts(convexHttpUrl, await deps.getRunBearer(), {
-      projectId,
-      runId,
-      terminalStatus: "failed",
-      errorCode: UNREADABLE_SWARM_BUDGETS_CODE,
-      errorMessage: UNREADABLE_SWARM_BUDGETS_MESSAGE,
-    }).catch((error: unknown) => {
-      // Best effort: the backend's stale-run cron still ends the run.
+    // The bearer is minted inside the guard too: closing the run is best
+    // effort, and nothing that fails here may replace the refusal.
+    try {
+      await finalizePendingAttempts(convexHttpUrl, await deps.getRunBearer(), {
+        projectId,
+        runId,
+        terminalStatus: "failed",
+        errorCode: UNREADABLE_SWARM_BUDGETS_CODE,
+        errorMessage: frozenBudgets.message,
+      });
+    } catch (error) {
+      // The backend's stale-run cron still ends the run.
       logger.warn("[swarm-runs] could not close the refused run", {
         runId,
         error: error instanceof Error ? error.message : String(error),
       });
-    });
-    throw new WebRouteError(
-      409,
-      ErrorCode.CONFLICT,
-      UNREADABLE_SWARM_BUDGETS_MESSAGE,
-    );
+    }
+    throw new WebRouteError(409, ErrorCode.CONFLICT, frozenBudgets.message);
   }
 
   // Client for the run's D2 re-gates. Constructed PER CALL and deliberately
