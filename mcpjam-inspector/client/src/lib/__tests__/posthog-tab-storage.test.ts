@@ -28,3 +28,8 @@ it("uses memory if sessionStorage is unavailable, avoiding SDK shared-storage fa
   vi.spyOn(window, "sessionStorage", "get").mockReturnValue(blocked);
   expect(getPostHogTabStorageOptions().persistence).toBe("memory");
 });
+
+it("uses memory when sessionStorage silently discards writes", () => {
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {});
+  expect(getPostHogTabStorageOptions().persistence).toBe("memory");
+});

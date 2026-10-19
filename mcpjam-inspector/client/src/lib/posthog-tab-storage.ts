@@ -9,8 +9,9 @@ export function getPostHogTabStorageOptions() {
   try {
     const probe = `${POSTHOG_TAB_STORAGE_KEY}_probe`;
     window.sessionStorage.setItem(probe, "1");
+    const available = window.sessionStorage.getItem(probe) === "1";
     window.sessionStorage.removeItem(probe);
-    persistence = "sessionStorage";
+    if (available) persistence = "sessionStorage";
   } catch {
     // The SDK otherwise falls back to shared localStorage/cookies, which
     // lets another actor's tab replace this tab's server-evaluated flags.

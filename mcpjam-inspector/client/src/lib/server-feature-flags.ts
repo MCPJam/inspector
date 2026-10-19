@@ -17,8 +17,8 @@ import { POSTHOG_TAB_STORAGE_KEY } from "./posthog-tab-storage";
  * (`getPostHogOptions`), then gets a fresh set whenever the PostHog identity
  * changes (`refreshServerFeatureFlagsForActor`). (MJ-015)
  *
- * Every failure here degrades to "no new values": posthog-js keeps the flags
- * it already has, and nothing on this path can fail the app's boot.
+ * Bootstrap failures return no values. An actor refresh clears stale values
+ * when it cannot obtain the new actor's evaluation.
  */
 
 const FLAGS_PATH = "/api/web/flags";
@@ -131,6 +131,7 @@ export async function refreshServerFeatureFlagsForActor(
   },
 ): Promise<void> {
   const generation = ++refreshGeneration;
+  let flags: ClientFeatureFlagValues | null = null;
   try {
     let bearer: string | null = null;
     if (actor.isAuthedActor) {
@@ -142,14 +143,13 @@ export async function refreshServerFeatureFlagsForActor(
       const guest = getCachedGuestSession();
       bearer = guest?.guestId === actor.actorKey ? guest.token : null;
     }
-    const flags = await fetchServerFeatureFlags({
+    flags = await fetchServerFeatureFlags({
       distinctId: actor.actorKey,
       bearer,
     });
-    if (generation !== refreshGeneration) return;
-    if (!flags || Object.keys(flags).length === 0) return;
-    posthog.updateFlags?.(flags);
   } catch {
-    // Flags stay as they are; nothing on this path may break the caller.
+    // A failed evaluation cannot preserve the previous actor's access flags.
+  } finally {
+    if (generation === refreshGeneration) posthog.updateFlags?.(flags ?? {});
   }
 }

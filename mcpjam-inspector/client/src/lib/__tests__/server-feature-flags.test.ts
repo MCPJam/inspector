@@ -179,7 +179,7 @@ describe("server-evaluated feature flags", () => {
       });
     });
 
-    it("keeps the flags and reports a signed-out session", async () => {
+    it("clears stale flags and reports a signed-out session", async () => {
       resetSessionRevokedForTests();
       const onRevoked = vi.fn();
       setSessionRevokedHandler(onRevoked);
@@ -197,14 +197,14 @@ describe("server-evaluated feature flags", () => {
           getAccessToken: async () => "access-token",
         });
 
-        expect(posthog.updateFlags).not.toHaveBeenCalled();
+        expect(posthog.updateFlags).toHaveBeenCalledWith({});
         expect(onRevoked).toHaveBeenCalledOnce();
       } finally {
         resetSessionRevokedForTests();
       }
     });
 
-    it("does not refresh a signed-in actor without a token", async () => {
+    it("clears stale flags for a signed-in actor without a token", async () => {
       const posthog = { updateFlags: vi.fn() };
 
       await refreshServerFeatureFlagsForActor(posthog, {
@@ -214,7 +214,7 @@ describe("server-evaluated feature flags", () => {
       });
 
       expect(fetch).not.toHaveBeenCalled();
-      expect(posthog.updateFlags).not.toHaveBeenCalled();
+      expect(posthog.updateFlags).toHaveBeenCalledWith({});
     });
 
     it("uses the guest token for the guest this tab holds", async () => {
@@ -235,7 +235,7 @@ describe("server-evaluated feature flags", () => {
       expect(posthog.updateFlags).toHaveBeenCalledWith({ xaa: true });
     });
 
-    it("keeps the current flags when the server has no values", async () => {
+    it("clears stale flags when the server has no values", async () => {
       const posthog = { updateFlags: vi.fn() };
       vi.mocked(fetch).mockResolvedValueOnce(flagsResponse({}));
 
@@ -244,7 +244,7 @@ describe("server-evaluated feature flags", () => {
         isAuthedActor: false,
       });
 
-      expect(posthog.updateFlags).not.toHaveBeenCalled();
+      expect(posthog.updateFlags).toHaveBeenCalledWith({});
     });
 
     it("lets the newest refresh win", async () => {
