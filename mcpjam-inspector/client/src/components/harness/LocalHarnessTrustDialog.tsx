@@ -261,31 +261,22 @@ export function LocalHarnessTrustDialog({
               ? `Run ${name} in ${displayRoot}?`
               : `Run ${name} on this machine?`}
           </DialogTitle>
-          <DialogDescription className="text-left leading-relaxed">
-            {isCodex ? (
-              <>
-                Codex will run on this computer as your user account, in a
-                runtime MCPJam manages, with models brokered by MCPJam. It does
-                not use a personal Codex or ChatGPT subscription. The folder is
-                where it starts. With Tool Approval on it asks before commands and file changes,
-                reads included. Turning it off requires a separate confirmation
-                to run without asking. In evals and swarms nobody is there to ask, so
-                Codex runs there only on platforms where MCPJam has verified
-                Codex's own sandbox: its commands can write only that run's
-                folder and a private temp folder, and have no network.
-                Elsewhere evals and swarms do not run Codex on this computer.
-                Reads are not restricted, and MCP tools run in MCPJam under
-                your tool policy, outside that sandbox.
-              </>
-            ) : (
-              <>
-                Claude Code will run on this computer as your user account. The
-                folder is where it starts, not a sandbox — anything you can read
-                or change, it can. With Tool Approval on, commands and changes ask for
-                approval in chat. Turning it off requires a separate confirmation
-                to run without asking.
-              </>
-            )}
+          <DialogDescription asChild>
+            <div className="space-y-2 text-left leading-relaxed">
+              {isCodex ? (
+                <>
+                  <p>Codex runs with your account’s permissions. With Tool Approval on, commands, file changes and reads need your approval.</p>
+                  <p>Personal Codex and ChatGPT subscriptions don’t cover usage here.</p>
+                  <p>See Details for eval and swarm restrictions.</p>
+                </>
+              ) : (
+                <>
+                  <p>Claude Code can read and change any files your account can access, including files outside this folder.</p>
+                  <p>With Tool Approval on, chat commands and file changes need your approval.</p>
+                  <p>Usage is billed through MCPJam credits or your organization’s API key. Personal Claude subscriptions don’t apply.</p>
+                </>
+              )}
+            </div>
           </DialogDescription>
         </DialogHeader>
 
@@ -371,8 +362,8 @@ export function LocalHarnessTrustDialog({
             </dd>
             <dt>Permissions</dt>
             <dd>
-              Tool Approval on asks for commands and changes; off pre-approves
-              them{isCodex ? "; evals and swarms only where sandboxed" : ""}
+              Turning Tool Approval off requires a separate confirmation, then commands and changes run without asking.
+              {isCodex && " Evals and swarms run locally only on verified platforms. Commands can write only the run folder and a private temp folder, and have no network. Reads are unrestricted. MCP tools run outside that sandbox under your tool policy. Elsewhere, evals and swarms run in the cloud."}
             </dd>
             <dt>Policy</dt>
             <dd className="font-mono">{availability?.policyVersion ?? "—"}</dd>
