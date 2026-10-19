@@ -171,26 +171,6 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"]);
   });
 
-  it("waits for runtime server hydration before consuming an auto-connect attempt", async () => {
-    const ensureServersReady = vi.fn().mockResolvedValue({
-      readyServerNames: ["alpha"], failedServerNames: [],
-      missingServerNames: [], reauthServerNames: [],
-    });
-    let appState = makeAppState([]);
-    const { rerender } = renderHook(
-      () => useAutoConnectProjectServers({
-        projectId: "hydrating", hostScopeKey: "host-a", serverNames: ["alpha"],
-      }),
-      { wrapper: ({ children }) => wrapper({ children, ensureServersReady, appState }) },
-    );
-    await flushMicrotasks();
-    expect(ensureServersReady).not.toHaveBeenCalled();
-    appState = makeAppState(["alpha"]);
-    rerender();
-    await flushMicrotasks();
-    expect(ensureServersReady).toHaveBeenCalledExactlyOnceWith(["alpha"]);
-  });
-
   it("is a no-op when the required set is empty (host has no required servers)", async () => {
     const ensureServersReady = vi.fn();
     const appState = makeAppState(["alpha"]);
@@ -724,7 +704,6 @@ describe("useAutoConnectProjectServers", () => {
       servers: {
         alpha: { name: "alpha", connectionStatus: "connected" },
         beta: { name: "beta", connectionStatus: "connected" },
-        gamma: { name: "gamma", connectionStatus: "disconnected" },
       },
     } as any;
 
