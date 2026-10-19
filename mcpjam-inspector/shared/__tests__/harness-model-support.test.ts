@@ -317,7 +317,7 @@ describe("evidence table", () => {
       join(here, "..", "harness-model-support-evidence.json"),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "5a42cd2272d1c5d4eade4344fbaf125af6422819911f809a84f62dc6bdfe0bf4",
+      "5fe308c63c1dff4fb5ecca374199f10085ffa7b1f25570fa1af0cdaa7b73525d",
     );
   });
 });
@@ -389,8 +389,8 @@ describe("harnessOrgProviderUnsupportedReason", () => {
 
 
 describe("Codex qualification model boundary", () => {
-  it.each(["openai/gpt-6-luna", "openai/gpt-6.1-sol"])("keeps %s unverified on the measured runtime", (modelId) => {
-    expect(harnessModelSupport({ harnessId: "codex", runtimeVersion: "0.163.0", modelId }).status).toBe("unknown");
+  it.each(["openai/gpt-6-luna", "openai/gpt-6.1-sol"])("admits qualified %s only on the measured runtime", (modelId) => {
+    expect(harnessModelSupport({ harnessId: "codex", runtimeVersion: "0.163.0", modelId }).status).toBe("supported");
     for (const runtimeVersion of ["0.149.1", "0.162.0", "0.164.0"]) {
       expect(harnessModelSupport({ harnessId: "codex", runtimeVersion, modelId }).status).toBe("unsupported");
     }

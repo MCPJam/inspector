@@ -29,16 +29,16 @@
       "harness": "codex",
       "versionRange": "0.163.x",
       "familyPattern": "^openai/gpt-6-luna($|-)",
-      "status": "unknown",
-      "evidence": "Codex 0.163.0 advertises this model through code-mode additional_tools. MCP integration qualification is pending.",
+      "status": "supported",
+      "evidence": "Codex 0.163.0 hosted qualification: 10/10 exact read_wiki_structure MCP calls succeeded with saved tool results and traces. The CLI advertises tools through code-mode additional_tools.",
       "observedAt": "2026-10-19"
     },
     {
       "harness": "codex",
       "versionRange": "0.163.x",
       "familyPattern": "^openai/gpt-6\\.1-sol($|-)",
-      "status": "unknown",
-      "evidence": "Codex 0.163.0 advertises this model through code-mode additional_tools. MCP integration qualification is pending.",
+      "status": "supported",
+      "evidence": "Codex 0.163.0 hosted qualification: 10/10 exact read_wiki_structure MCP calls succeeded with saved tool results and traces. The CLI advertises tools through code-mode additional_tools.",
       "observedAt": "2026-10-19"
     },
     {
