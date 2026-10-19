@@ -468,6 +468,22 @@ describe("ToolsTab mid-session sign-in", () => {
     expect(initiateOAuthMock).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps another pending call and explains why a scope upgrade cannot start", async () => {
+    const pending = JSON.stringify({
+      version: 1, phase: "awaiting_oauth",
+      operation: { resourceUrl: "https://other.example/mcp", method: "tools/call", operation: "read_other" },
+      descriptor: { kind: "tool", surface: "tools", serverName: "other", toolName: "read_other", parameters: {} },
+      returnPath: "/", createdAt: Date.now(), expiresAt: Date.now() + 60000,
+    });
+    sessionStorage.setItem("mcp-scope-step-up-replay-v1", pending);
+    mockExecuteToolApi.mockResolvedValue({ error: "Needs permission", insufficientScope: { requiredScope: "orders:read" } });
+    await runTool("list_orders");
+    await waitFor(() => expect(document.body.textContent).toContain("Another call is waiting for sign-in."));
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("mcp-scope-step-up-replay-v1")).toBe(pending);
+    expect(sessionStorage.getItem("mcp-chat-auth-recovery-v1") ?? "").not.toContain("save_failed");
+  });
+
   it.each([false, true])("stays on the tool when the next save fails (throws=%s)", async (throws) => {
     sessionStorage.setItem("mcp-scope-step-up-replay-v1", JSON.stringify({
       version: 1, phase: "ready", operation: { resourceUrl: "https://orders.example/mcp", method: "tools/call", operation: "cancel_order" },

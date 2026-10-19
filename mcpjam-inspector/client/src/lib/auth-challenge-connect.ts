@@ -20,6 +20,7 @@ import {
 import {
   clearPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
+  PendingDirectReplayConflictError,
   setPendingDirectScopeStepUpReplayCredentialBinding,
   setPendingDirectScopeStepUpReplayFlowDigest,
   settlePendingDirectScopeStepUpReplayAfterCallback,
@@ -133,7 +134,9 @@ export async function connectAuthChallenge(
         binding,
         pendingReplay,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof PendingDirectReplayConflictError)
+        return { kind: "failed", message: error.message };
       dropSavedReplay();
       recordChatAuthRecoveryFailure("save_failed", {
         toolCallId: card.attempt?.callId,

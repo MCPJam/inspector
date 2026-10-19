@@ -61,6 +61,7 @@ import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
+  PendingDirectReplayConflictError,
   type DirectScopeStepUpReplayDescriptor,
   type PendingDirectScopeStepUpReplay,
 } from "@/lib/scope-step-up-replay";
@@ -857,7 +858,12 @@ export function ToolsTab({
             toolCallId: savedReplay.callId, projectId: savedReplay.projectId,
             serverName, phase: savedReplay.phase, storageOutcome: "verified",
           });
-        } catch {
+        } catch (error) {
+          if (error instanceof PendingDirectReplayConflictError) {
+            setError(error.message);
+            setNormalizedError(null);
+            return;
+          }
           setError("MCPJam couldn’t save this call for sign-in. Please try again.");
           setNormalizedError(null);
           recordChatAuthRecoveryFailure("save_failed", {

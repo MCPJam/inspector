@@ -436,6 +436,23 @@ describe("auth challenge lifecycle", () => {
       expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("awaiting_oauth");
     });
 
+    it("explains a waiting call without replacing it or reporting failed storage", async () => {
+      const first = await presentCard();
+      await connectAuthChallenge(first, server, { isTrusted: true });
+      const waiting = peekPendingDirectScopeStepUpReplay();
+      const second = await presentCard({
+        operation: { method: "tools/call", operation: "another_tool" },
+        replay: { ...REPLAY, toolName: "another_tool" },
+      });
+      expect(await connectAuthChallenge(second, server, { isTrusted: true })).toEqual({
+        kind: "failed",
+        message: "Another call is waiting for sign-in. Finish that sign-in or wait for it to expire, then try again.",
+      });
+      expect(initiateOAuthMock).toHaveBeenCalledTimes(1);
+      expect(peekPendingDirectScopeStepUpReplay()).toEqual(waiting);
+      expect(sessionStorage.getItem("mcp-chat-auth-recovery-v1") ?? "").not.toContain("save_failed");
+    });
+
     it("reports failed replay storage without rejecting a successful sign-in", async () => {
       const card = await presentCard();
       await connectAuthChallenge(card, server, { isTrusted: true });

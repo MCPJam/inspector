@@ -113,6 +113,13 @@ function write(value: PendingDirectScopeStepUpReplay): void {
     throw new Error("MCPJam couldn’t save this call for sign-in. Please try again.");
 }
 
+export class PendingDirectReplayConflictError extends Error {
+  constructor() {
+    super("Another call is waiting for sign-in. Finish that sign-in or wait for it to expire, then try again.");
+    this.name = "PendingDirectReplayConflictError";
+  }
+}
+
 export function savePendingDirectScopeStepUpReplay(input: {
   operation: StepUpOperationKey;
   descriptor: DirectScopeStepUpReplayDescriptor;
@@ -123,9 +130,7 @@ export function savePendingDirectScopeStepUpReplay(input: {
   const previous = input.previous;
   const waiting = readStored();
   if (!previous && waiting && waiting.expiresAt > now) {
-    throw new Error(
-      "Another call is waiting for sign-in. Finish that sign-in or wait for it to expire, then try again.",
-    );
+    throw new PendingDirectReplayConflictError();
   }
   if (previous) {
     const current = readStored();

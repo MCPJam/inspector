@@ -702,7 +702,7 @@ describe("classifyToolAuthChallenge (mid-run sign-in)", () => {
     ).toBeUndefined();
   });
 
-  it("caps what it keeps: every challenge field as the SDK parser caps it", () => {
+  it("omits raw challenge text and bounds the retained summary", () => {
     const long = "x".repeat(5_000);
     const finding = classifyToolAuthChallenge({
       result: {
@@ -712,10 +712,8 @@ describe("classifyToolAuthChallenge (mid-run sign-in)", () => {
         },
       },
     });
-    expect(finding!.authChallenge.errorDescription!.length).toBeLessThanOrEqual(
-      512,
-    );
-    expect(finding!.authChallenge.raw!.length).toBeLessThanOrEqual(2048);
+    expect(finding!.authChallenge.errorDescription).toBeUndefined();
+    expect(finding!.authChallenge.raw).toBeUndefined();
     expect(finding!.line.length).toBeLessThanOrEqual(
       MAX_SETUP_FAILURE_LINE_CHARS,
     );
