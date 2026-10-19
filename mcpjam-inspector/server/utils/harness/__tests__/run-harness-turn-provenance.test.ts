@@ -52,6 +52,7 @@ vi.mock("../registry.js", () => ({
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
+    listBuiltinTools: () => [{ key: "Bash" }],
   })),
 }));
 
@@ -180,6 +181,23 @@ describe("runHarnessTurn history provenance (MJ-009)", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["bash", "native"],
+    ["mcp__docs__Bash", "mcp"],
+    ["unrecognized", "unknown"],
+  ])("attributes a result-only %s event after approval", async (toolName, origin) => {
+    harnessState.streamParts = [
+      { type: "tool-result", toolCallId: "paused-call", toolName, output: "done" },
+      { type: "text-delta", delta: "Done." },
+      { type: "finish", finishReason: "stop" },
+    ];
+    harnessState.finalText = "Done.";
+    const result = await runHarnessTurn(baseOptions() as never, "none");
+    expect(result.turnTrace?.spans).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "tool", toolCallId: "paused-call", toolOrigin: origin }),
+    ]));
   });
 
   it("signs the text it streams in hosted mode", async () => {

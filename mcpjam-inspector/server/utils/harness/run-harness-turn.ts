@@ -3865,7 +3865,13 @@ export async function runHarnessTurn(
                 toolName: meta.toolName,
                 toolOrigin:
                   toolMeta.get(toolCallId)?.toolOrigin ??
-                  (meta.serverId ? "mcp" : "unknown"),
+                  harnessToolOrigin({
+                    rawToolName: String((part as { toolName?: unknown }).toolName ?? meta.toolName),
+                    toolName: meta.toolName,
+                    serverId: meta.serverId,
+                    hostTools: hostExecutedTools,
+                    nativeTools: harnessAdapter.listBuiltinTools?.() ?? [],
+                  }),
                 ...(meta.serverId ? { serverId: meta.serverId } : {}),
                 ...(accountByCall.get(toolCallId)
                   ? {
