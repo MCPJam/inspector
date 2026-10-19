@@ -435,8 +435,12 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     async (hosted) => {
       personaDrivesOneTurn();
       await startJourneyRun(baseOpts({ modelId: "gpt-5-nano", hosted }));
+      // What this pins is the `hosted` flag reaching the turn. The source mock
+      // answers `mcpjam` for every row, so each turn takes the `/stream` rail
+      // and its id is canonicalized; in production `hosted: false` resolves to
+      // the org's own key and keeps the bare id (runner.dispatch.test.ts).
       expect(turnOptions().modelDefinition).toMatchObject({
-        id: "gpt-5-nano",
+        id: "openai/gpt-5-nano",
         provider: "openai",
       });
       expect((turnOptions().modelDefinition as { hosted?: boolean }).hosted).toBe(
@@ -444,6 +448,23 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
       );
     },
   );
+
+  it("records the pinned id on the session row while /stream runs the canonical one", async () => {
+    // The split is deliberate: the row says what the target pinned, the wire
+    // says what the hosted catalog serves. A change to either side should
+    // change this test, not drift silently.
+    personaDrivesOneTurn();
+    await startJourneyRun(baseOpts({ modelId: "gpt-5-nano" }));
+
+    expect(turnOptions().modelDefinition).toMatchObject({
+      id: "openai/gpt-5-nano",
+    });
+    const persistedModelIds = persistChatSessionToConvexMock.mock.calls.map(
+      ([args]) => (args as { modelId?: string }).modelId,
+    );
+    expect(persistedModelIds.length).toBeGreaterThan(0);
+    expect(new Set(persistedModelIds)).toEqual(new Set(["gpt-5-nano"]));
+  });
 
   it("provisions after the claim, binds the box, and releases it", async () => {
     await startJourneyRun(baseOpts());
@@ -1050,6 +1071,9 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     // The message names the ACTUAL configuration problem, not "swarms don't
     // support harnesses".
     expect(String(terminals[0]!.errorMessage)).toMatch(/computer image/i);
+    expect(String(terminals[0]!.errorMessage)).toMatch(
+      /execute in\. Choose an available computer image for this environment, then run the swarm again\.$/
+    );
   });
 
   it("FAILS CLOSED, without provisioning, when the target has no computer attached", async () => {
@@ -1059,7 +1083,7 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /no computer attached/i
+      /needs a computer.*Attach a computer/i
     );
   });
 
@@ -1129,7 +1153,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(runAssistantTurnMock).not.toHaveBeenCalled();
     expect(terminalReports()[0]).toMatchObject({
       status: "failed",
-      errorMessage: expect.stringMatching(/MCPJam-provided/i),
+      errorMessage: expect.stringMatching(/supported model and an eligible Anthropic connection/i),
     });
   });
 
@@ -1148,7 +1172,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     const terminals = terminalReports();
     expect(terminals[0]!.status).toBe("failed");
-    expect(String(terminals[0]!.errorMessage)).toMatch(/MCPJam-provided/i);
+    expect(String(terminals[0]!.errorMessage)).toMatch(/supported model and an eligible Anthropic connection/i);
   });
 
   it("refuses an enterprise-managed (XAA) target", async () => {
@@ -1169,7 +1193,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /enterprise-managed/i
+      /authorization policy/i
     );
   });
 
@@ -1206,7 +1230,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
 
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /unattended run/i
+      /cannot wait for tool approval in evals or swarms/i
     );
   });
 
@@ -1302,7 +1326,7 @@ describe("swarm runner — a bad target cannot take the run down with it", () =>
     // INVALID is treated exactly like ON — never more permissive than a policy
     // that parses.
     expect(String(byHost.get("host-1")!.errorMessage)).toMatch(
-      /enterprise-managed/i
+      /authorization policy/i
     );
     // ...while its sibling runs to completion.
     expect(byHost.get("host-2")).toMatchObject({ status: "succeeded" });
@@ -1365,7 +1389,7 @@ describe("swarm runner — a bad target cannot take the run down with it", () =>
       // the read could throw.
       expect(t.status).toBe("failed");
       expect(t.errorCode).toBe("session_failed");
-      expect(String(t.errorMessage)).toMatch(/enterprise-managed/i);
+      expect(String(t.errorMessage)).toMatch(/authorization policy/i);
     }
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
   });

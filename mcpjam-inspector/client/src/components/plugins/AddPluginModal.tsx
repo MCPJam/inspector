@@ -37,6 +37,7 @@ import {
   usePluginImportActions,
   usePluginSetupStatus,
   usePluginVersion,
+  useProjectPlugin,
 } from "@/hooks/usePluginImportApi";
 import { track } from "@/lib/analytics";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
@@ -224,11 +225,16 @@ export function AddPluginModal({
     row?.preview?.identity.displayName ||
     row?.preview?.identity.name ||
     "the plugin";
+  // Onboarding runs for the version a turn would use, so Set up is offered
+  // only once the enabled plugin points at this one, as in its Settings.
+  // "Install only" leaves a new version inactive.
+  const installedPlugin = useProjectPlugin(isInstalled ? row.pluginId : null);
   const offersOnboarding =
     isInstalled &&
+    !!installedPlugin?.enabled &&
+    installedPlugin.activeVersionId === row.pluginVersionId &&
     !!projectId &&
-    !!installedVersion?.onboarding &&
-    onboardingServerIds.length > 0;
+    !!installedVersion?.onboarding;
 
   const previewedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -682,10 +688,11 @@ export function AddPluginModal({
                 onClick={() => {
                   // Same path as the server menu's Run onboarding: the
                   // Playground runs the skill through normal chat once one of
-                  // this plugin's servers offers it.
+                  // this plugin's servers offers it, or the plugin if it has none.
                   usePluginOnboardingIntentStore.getState().request({
                     projectId: projectId!,
                     serverIds: onboardingServerIds,
+                    pluginId: row!.pluginId!,
                     pluginName: pluginLabel,
                     conversation: onboardingConversation,
                   });

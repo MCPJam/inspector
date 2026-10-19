@@ -598,8 +598,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       ok: false,
       kind: "model-not-hosted",
       reason:
-        "the claude-code harness only runs MCPJam-provided models — pick one " +
-        "on this host to run the real runtime",
+        "the Claude Code harness requires a supported model and an eligible Anthropic connection",
     });
 
     const app = createApp();
@@ -625,7 +624,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
 
     expect(response.status).toBe(422);
     const body = await response.json();
-    expect(body.error).toMatch(/MCPJam-provided models/);
+    expect(body.error).toMatch(/eligible Anthropic connection/);
     expect(body).toMatchObject({
       code: "FEATURE_NOT_SUPPORTED",
       reason: "HARNESS_UNAVAILABLE",

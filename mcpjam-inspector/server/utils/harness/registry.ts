@@ -318,12 +318,10 @@ type HarnessRuntimeAdapterBase = {
   /**
    * Does a PENDING approval live in the runtime PROCESS rather than on disk?
    *
-   * Claude Code's conversation is on disk, so a local turn paused on an
-   * approval can be torn down and re-driven. Codex app-server's pending
-   * approval is an open JSON-RPC request inside one live process (and, for a
-   * host tool, an open relay call), so a local pause must PARK that process
-   * (`local/approval-park.ts`) and the decision must be delivered to it —
-   * never replayed into a new one.
+   * Claude Code's canUseTool and Codex app-server approvals wait inside the
+   * live bridge. Local pauses must park that process and deliver the decision
+   * to it; restarting from the conversation on disk would rerun the prompt
+   * rather than answer the pending call.
    */
   liveApprovalRuntime?: boolean;
   /**
@@ -804,9 +802,9 @@ const CLAUDE_CODE_MODEL_FAMILIES = ["haiku", "sonnet", "opus"] as const;
  * Pinning the OTHER families' aliases (`ANTHROPIC_DEFAULT_<FAMILY>_MODEL`) to
  * the turn's canonical id sends those calls to the chosen model — the one
  * the lease admits exactly and the user is billed for. The chosen family's
- * own alias is left alone, so the main model keeps its existing path (the
- * bridge's Gateway model overrides). An id outside the three families pins
- * all three.
+ * own alias uses the bridge's Gateway model overrides. Haiku also pins its
+ * native alias and small-fast model so the requested version reaches those
+ * overrides. An id outside the three families pins all three.
  */
 function claudeCodeModelPins(modelId: string): Record<string, string> {
   const native = toClaudeCodeModel(modelId);
@@ -815,6 +813,11 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
       native === candidate || native?.startsWith(`claude-${candidate}-`),
   );
   const pins: Record<string, string> = {};
+  if (family === "haiku") {
+    const selectedHaiku = modelId.replace(/^anthropic\//, "").replace(/\./g, "-");
+    pins.ANTHROPIC_DEFAULT_HAIKU_MODEL = selectedHaiku;
+    pins.ANTHROPIC_SMALL_FAST_MODEL = selectedHaiku;
+  }
   for (const candidate of CLAUDE_CODE_MODEL_FAMILIES) {
     if (candidate === family) continue;
     pins[`ANTHROPIC_DEFAULT_${candidate.toUpperCase()}_MODEL`] = modelId;
@@ -877,6 +880,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY["claude-code"],
   // …through the SDK session configuration, without writing into the workspace.
   mcpNativeDelivery: "session-config",
+  liveApprovalRuntime: true,
   supportsSkills: true,
   skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
   // Mirrors `writeClaudeCodeSkills` in `@ai-sdk/harness-claude-code`.

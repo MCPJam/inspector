@@ -309,7 +309,7 @@ describe("analysisStatus — organization AI-key refusals", () => {
       NOW,
     );
     expect(status?.title).toBe("Not analyzed");
-    expect(status?.body).toMatch(/^Not analyzed[. ]/);
+    expect(status?.body).toMatch(/^Not analyzed\b/);
     expect(status?.action).toBeUndefined();
   });
 

@@ -1,3 +1,7 @@
+import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
+import { hasServiceCredential } from "../../services/service-credential.js";
+import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
+import { describePluginError } from "../../../shared/plugin-diagnostics.js";
 import { preparePluginMessageTurn } from "../../services/plugin-host/message.js";
 import {
   readOwnedTurnContext,
@@ -9,6 +13,7 @@ import { parseMrtrChatResumeRequest } from "@/shared/mrtr-continuation";
 import { installedFormClientCapabilities } from "../../services/plugin-host/owned-legacy.js";
 import {
   chatPluginFormPlan,
+  pluginModelMrtrEnabled,
   chatPluginToolExecutor,
 } from "./chat-v2-plugin-forms.js";
 import { createModelFormDispatch, createModelFormExecutor } from "../../services/plugin-host/model-forms.js";
@@ -41,12 +46,12 @@ import {
 import { webmcpPageToolsMode } from "../../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
+import { ranTurnSelection } from "../../utils/session-model-selection.js";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
 import {
   decideTurnRail,
-  readRoutingSelection,
-  routingSelectionForModel,
+  resolveChatSelection,
   withSelectionRouting,
 } from "../../utils/selection-rail.js";
 import {
@@ -95,7 +100,6 @@ import {
 } from "../../utils/chat-v2-orchestration.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
 import {
-  hostSelectionForTurn,
   parseChatReasoningEffort,
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
@@ -129,7 +133,6 @@ import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   fetchScenarioRuntimeConfig,
   isScenarioParticipant,
-  participantSafeStudyError,
   planScenarioSandbox,
   scenarioHarnessRepublishRefusal,
   shouldWarnSecretsUndelivered,
@@ -137,8 +140,11 @@ import {
   readComputerSandboxMode,
   readComputerSandboxHarness,
   type ScenarioEnvironmentRuntime,
-  type ScenarioSandboxPlan,
 } from "../../utils/scenario-runtime-config.js";
+import {
+  scenarioHarnessBoxRefusal,
+  scenarioHarnessProvisionRefusal,
+} from "./scenario-harness-refusals.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   applyHostConformanceKnobs,
@@ -248,100 +254,6 @@ const chatV2 = new Hono();
  * server-side against the durable record — this only rejects a broken body.
  */
 const parseMrtrResumeRequest = parseMrtrChatResumeRequest;
-
-/**
- * The refusal for a scenario HARNESS turn whose conversation box cannot be
- * used. Named per cause, because each one has a different fix and none of
- * them is "run it on your own computer".
- */
-function scenarioHarnessBoxRefusal(
-  harness: string,
-  reason: ScenarioSandboxPlan["suppressReason"],
-): WebRouteError {
-  const subject = `This scenario runs the ${harness} harness on a disposable computer`;
-  switch (reason) {
-    case "sandbox_mode_unavailable":
-      return new WebRouteError(
-        409,
-        ErrorCode.CONFLICT,
-        `${subject}, and its environment's computer image can't boot right now. Fix or rebuild the image, then retry.`,
-        { reason: "SANDBOX_IMAGE_UNAVAILABLE" },
-      );
-    case "not_a_data_plane":
-      return new WebRouteError(
-        503,
-        ErrorCode.FEATURE_NOT_SUPPORTED,
-        `${subject}, which this server can't run. Open the scenario in the MCPJam web app.`,
-        { reason: "NOT_A_DATA_PLANE" },
-      );
-    case "secrets_unavailable":
-      return new WebRouteError(
-        503,
-        ErrorCode.INTERNAL_ERROR,
-        `${subject}, and this turn couldn't confirm which of the environment's secrets it may hold. Retry in a moment.`,
-        { reason: "SECRETS_UNAVAILABLE" },
-      );
-    default:
-      return new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        `${subject}, which belongs to one conversation, and this turn named none.`,
-        { reason: "NO_CHAT_SESSION_ID" },
-      );
-  }
-}
-
-function scenarioHarnessProvisionRefusal(
-  harness: string,
-  refusal: { status: number; error: string; code?: string } | undefined,
-  /** A non-member participant: never shown the owner-facing detail. */
-  participant = false,
-): WebRouteError {
-  const participantMessage = participant
-    ? participantSafeStudyError(refusal ?? {})
-    : undefined;
-  // A PARTICIPANT past the scenario's caps. The backend's sentence already
-  // says which cap and when to come back; it is the whole message.
-  if (refusal?.status === 429) {
-    return new WebRouteError(
-      429,
-      ErrorCode.RATE_LIMITED,
-      participantMessage ??
-        (refusal.error ||
-          "This scenario has reached its limit for participant sessions. Try again later."),
-      {
-        reason: "SCENARIO_PARTICIPANT_CAP",
-        ...(refusal.code ? { code: refusal.code } : {}),
-      },
-    );
-  }
-  // A refusal that names a fix (an image, a secret, access) keeps its status.
-  if (refusal?.status === 409 || refusal?.status === 403) {
-    return new WebRouteError(
-      refusal.status,
-      refusal.status === 409 ? ErrorCode.CONFLICT : ErrorCode.FORBIDDEN,
-      participantMessage ??
-        `This scenario runs the ${harness} harness on a disposable computer, and one couldn't be started: ${refusal.error}`,
-      {
-        reason: "SANDBOX_PROVISION_FAILED",
-        ...(refusal.code ? { code: refusal.code } : {}),
-      },
-    );
-  }
-  const atCapacity = refusal?.status === 503;
-  return new WebRouteError(
-    atCapacity ? 503 : 502,
-    atCapacity ? ErrorCode.RATE_LIMITED : ErrorCode.INTERNAL_ERROR,
-    participantMessage ??
-      `This scenario runs the ${harness} harness on a disposable computer, and one couldn't be started` +
-        (refusal?.error ? `: ${refusal.error}` : ".") +
-        (atCapacity ? " Retry in a moment." : ""),
-    {
-      reason: "SANDBOX_PROVISION_FAILED",
-      ...(refusal?.code ? { code: refusal.code } : {}),
-    },
-  );
-}
 
 chatV2.post("/", async (c) => {
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
@@ -1094,7 +1006,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           422,
           ErrorCode.FEATURE_NOT_SUPPORTED,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+          hostModelRefusal,
           {
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,
@@ -1135,39 +1047,46 @@ chatV2.post("/", async (c) => {
     // hosted-list routing, byte for byte. A non-hosted selection stamps
     // `hosted: false` so the harness gate, skill gating and the dispatch in
     // `streamWebChatTurn` all agree with the rail.
-    const routingSelection =
-      (isScenarioSession
-        ? undefined
-        : routingSelectionForModel(
-            readRoutingSelection(rawBody.modelSelection),
-            modelDefinition,
-          )) ??
-      routingSelectionForModel(
-        resolvedExecution.routingSelection,
-        modelDefinition,
-      );
+    const selected = resolveChatSelection({
+      raw: rawBody.modelSelection,
+      inherited: resolvedExecution.routingSelection,
+      inheritedOrigin: resolvedExecution.modelSelectionOrigin,
+      model: modelDefinition,
+      hostWins: isScenarioSession,
+      allowLocal: false,
+    });
+    if (!selected.ok) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, selected.error);
+    }
+    let routingSelection = selected.selection;
+    const selectedTemperature = routingSelection?.source === "legacy"
+      ? undefined : routingSelection?.settings?.temperature;
+    const temperature = (selected.requestSelection ? body.temperature : undefined) ??
+      selectedTemperature ?? resolvedExecution.temperature;
     modelDefinition = withSelectionRouting(modelDefinition, routingSelection);
     const turnRail = decideTurnRail({
       selection: routingSelection,
       model: modelDefinition,
     });
     const systemPrompt = resolvedExecution.systemPrompt;
-    const temperature = resolvedExecution.temperature;
-    // Reasoning effort: the body's top-level field, else the selected host's
-    // saved effort — the latter only when the host's selection is for THIS
-    // turn's model. A scenario turn (share link) takes the host's alone.
+    // A picked selection owns its settings; scenarios force host settings.
     const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
     if (!bodyEffort.ok) {
       throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, bodyEffort.error);
     }
     const reasoningEffort = resolveChatReasoningEffort({
       bodyEffort: bodyEffort.effort,
-      hostSelection: hostSelectionForTurn(
-        resolvedExecution.modelSelection,
-        String(modelDefinition.id),
-      ),
+      hostSelection:
+        routingSelection?.source === "legacy" ? undefined : routingSelection,
+      requestSelection: selected.requestSelection,
       hostWins: isScenarioSession,
     });
+    if (routingSelection) {
+      routingSelection = ranTurnSelection({
+        selection: routingSelection, model: modelDefinition, reasoningEffort,
+        ...(reasoningEffort === undefined ? { temperature } : {}),
+      });
+    }
     const requireToolApproval = resolvedExecution.requireToolApproval;
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
@@ -1279,7 +1198,7 @@ chatV2.post("/", async (c) => {
           status === 503
             ? ErrorCode.INTERNAL_ERROR
             : ErrorCode.FEATURE_NOT_SUPPORTED,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          availability.reason,
           {
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,
@@ -1404,6 +1323,13 @@ chatV2.post("/", async (c) => {
       }
     }
 
+    const pluginWorkspace = parsePluginWorkspaceDescriptor(
+      body.pluginWorkspace,
+    );
+    const pluginExtensions = hostRuntimeConfig
+      ? resolvePluginExtensions(hostRuntimeConfig as Parameters<typeof resolvePluginExtensions>[0])
+      : undefined;
+
     // Registering the callback is what makes the SDK advertise `elicitation`,
     // so "who declares it" and "may we honor it" are one decision — see
     // `resolveElicitationGate` for why scenario turns must not read the body.
@@ -1430,10 +1356,10 @@ chatV2.post("/", async (c) => {
     });
 
     // ── Hosted MRTR (input_required, §12.5) gate + resume parse ─────────────
-    // MRTR suspend/resume rides the SAME elicitation capability (a round embeds
-    // `elicitation/create`), so it is enabled only alongside elicitation (both
-    // handlers present → legacy + MRTR both work) AND on its own version
-    // handshake so a stale browser fails fast. Emulated MCPJam engine only:
+    // Standard elicitation and saved OpenAI plugin Forms are independent
+    // declarations. Either installed consumer can drive MRTR; both require
+    // the browser version handshake so stale clients fail closed. The plugin
+    // workspace is admitted below before a manager is created. Emulated only:
     // BYOK (AI-SDK-owned loop) and harness (separate MCP plane) do not route a
     // suspend through this manager, so registering the collector there could
     // strand a round. `respectToolVisibility` is preserved across the retry
@@ -1446,9 +1372,18 @@ chatV2.post("/", async (c) => {
       .hostedMrtrVersion;
     const mrtrEnabled =
       isEmulatedMcpjam &&
-      elicitationEnabled &&
-      hostDeclaresElicitation(effectiveClientCapabilities) &&
-      rawMrtrVersion === HOSTED_MRTR_VERSION;
+      rawMrtrVersion === HOSTED_MRTR_VERSION &&
+      ((elicitationEnabled &&
+        hostDeclaresElicitation(effectiveClientCapabilities)) ||
+        pluginModelMrtrEnabled({
+          emulated: isEmulatedMcpjam,
+          workspace: !!pluginWorkspace && !isScenarioSession,
+          forms: pluginExtensions?.capabilities.forms,
+          serviceCredential: hasServiceCredential(),
+          elicitationHandshake:
+            hostedBody.hostedElicitationVersion === HOSTED_ELICITATION_VERSION,
+          mrtrHandshake: rawMrtrVersion === HOSTED_MRTR_VERSION,
+        }));
 
     const rawMrtrResume = (rawBody as Record<string, unknown>).mrtrResume;
     const mrtrResumeRequest = parseMrtrResumeRequest(rawMrtrResume);
@@ -1593,9 +1528,6 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    const pluginWorkspace = parsePluginWorkspaceDescriptor(
-      body.pluginWorkspace,
-    );
     let modelPluginAdmission:
       | import("../../services/plugin-host/admission.js").PluginWorkspaceAdmission
       | undefined;
@@ -1610,9 +1542,6 @@ chatV2.post("/", async (c) => {
     let modelMrtr: ReturnType<typeof createModelMrtrAdapter> | undefined;
     // The client's OpenAI plugin extensions setting decides whether the OpenAI
     // form extensions are advertised or handled at all.
-    const pluginExtensions = hostRuntimeConfig
-      ? resolvePluginExtensions(hostRuntimeConfig as Parameters<typeof resolvePluginExtensions>[0])
-      : undefined;
     // Emulated and Codex harness turns (whose MCP tools run here, in process)
     // take the same plugin executor; see `chatPluginFormPlan`.
     const pluginPins =
@@ -1661,9 +1590,35 @@ chatV2.post("/", async (c) => {
         legacy: legacyExecutor,
         pinFor: pluginPinFor,
         negotiatedVersion: (serverId) => pluginNegotiatedVersion(serverId),
+        onFailure: (execution, error) => {
+          // Suspensions are control flow. Stable host errors are diagnostics,
+          // never fabricated tools/call responses or raw upstream payloads.
+          if (!(error instanceof PluginInvocationError)) return;
+          rpcCollector?.rpcLogger({
+            direction: "receive",
+            serverId: execution.serverKey,
+            message: {
+              jsonrpc: "2.0",
+              method: `plugin-extensions/${error.code}`,
+              params: {
+                level: "error",
+                code: error.code,
+                description: describePluginError(error.code) ?? error.code,
+                outcomeUnknown: error.outcomeUnknown,
+              },
+            },
+          });
+        },
       });
     }
 
+    // A Playground turn runs its plugins' servers isolated: one that is
+    // refused or fails is left out of the turn instead of failing it (see
+    // `plugin-server-isolation.ts`). Scenario and harness turns stay strict.
+    const isolatedServerIds =
+      isScenarioSession || resolvedExecution.harness
+        ? []
+        : (effectiveCapabilities?.pluginServerIds ?? []);
     // Membership chat (no share/scenario token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / scenario)
@@ -1672,6 +1627,7 @@ chatV2.post("/", async (c) => {
       manager,
       oauthServerUrls: urls,
       authenticatedUserId,
+      refusedServers,
     } = await createAuthorizedManager(
       callerContextFromHono(c),
       bearerToken,
@@ -1693,6 +1649,7 @@ chatV2.post("/", async (c) => {
       ),
       {
         multiConnection: true,
+        tolerateServerRefusals: isolatedServerIds,
         ...(modelFormDispatch ? { extensionRequestHandlers: modelFormDispatch.handlers } : {}),
         ...(isScenarioSession ? { accessScope: "chat_v2" } : {}),
         scenarioId,
@@ -2720,7 +2677,7 @@ chatV2.post("/", async (c) => {
           ...(modelToolExecutor ? { modelToolExecutor } : {}),
           selectedServerIds: effectiveServerIds,
           modelDefinition,
-          ...(routingSelection ? { routingSelection } : {}),
+          ...(routingSelection ? { routingSelection, routingSelectionOrigin: selected.origin } : {}),
           systemPrompt: effectiveSystemPrompt,
           temperature,
           ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
@@ -2828,6 +2785,10 @@ chatV2.post("/", async (c) => {
             : effectiveCapabilities
               ? { effectiveCapabilities }
               : {}),
+          isolatedServers: {
+            serverIds: isolatedServerIds,
+            refused: refusedServers,
+          },
         },
         persist: {
           executionTarget: toResumeExecutionTarget(executionTarget),

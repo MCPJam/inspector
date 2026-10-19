@@ -1,3 +1,4 @@
+import type { SystemPromptDefault } from "@mcpjam/sdk/host-config/internal";
 /**
  * Frontend types + utilities for HostConfig v2.
  *
@@ -64,7 +65,11 @@ import type {
   McpProtocolVersion,
 } from "@mcpjam/sdk/host-config/internal";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
-import { selectionConfigKey, type ModelSelection } from "@mcpjam/sdk/browser";
+import {
+  selectionConfigKey,
+  type LegacyModelSelection,
+  type ModelSelection,
+} from "@mcpjam/sdk/browser";
 
 export {
   DEFAULT_TEMPERATURE_V2,
@@ -159,10 +164,13 @@ export type HostConfigInputV2 = {
    * The saved selection behind `modelId` (whose credentials run it). Optional;
    * when present its `modelId` equals `modelId` — the SDK canonicalizer and
    * the backend both refuse a disagreeing pair, so writers set or clear the
-   * two together.
+   * two together. The stored legacy form (a model id outside the hosted
+   * catalog, saved without a selection) round-trips unchanged: editors treat
+   * it as no selection (`nonLegacySelection`) and never write settings on it.
    */
-  modelSelection?: ModelSelection;
+  modelSelection?: ModelSelection | LegacyModelSelection;
   systemPrompt: string;
+  systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
   /**
@@ -280,9 +288,14 @@ export type HostConfigDtoV2 = {
   schemaVersion: number;
   hostStyle: HostStyleId;
   modelId: string;
-  /** Saved selection behind `modelId`; absent on rows saved without one. */
-  modelSelection?: ModelSelection;
+  /**
+   * Saved selection behind `modelId`; absent on rows saved without one. The
+   * backend's stored form: full, or legacy (`{ source: "legacy", modelId }`,
+   * no `fallback`, no `settings`) for an id outside the hosted catalog.
+   */
+  modelSelection?: ModelSelection | LegacyModelSelection;
   systemPrompt: string;
+  systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
   /**
@@ -418,6 +431,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
       ? { modelSelection: dto.modelSelection }
       : {}),
     systemPrompt: dto.systemPrompt,
+    systemPromptDefault: dto.systemPromptDefault,
     temperature: dto.temperature,
     requireToolApproval: dto.requireToolApproval,
     // DTO carries `undefined` when the persisted row predates this

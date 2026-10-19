@@ -176,12 +176,33 @@ WorkOS or guest cookie. `--server-port N` pins the port
 (`npm run electron:dev -w @mcpjam/inspector -- --server-port 7000`).
 
 Its `pre` step builds the SDK if `../sdk/dist` is stale and regenerates the
-gitignored bundles (`PluginShim.bundled.ts` and friends), so there is nothing to
-run first. Then it starts:
+gitignored bundles (`PluginShim.bundled.ts` and friends) and telemetry catalogs
+(`*telemetry-catalog.generated.json` and friends), so there is nothing to run
+first. Then it starts:
 
 - the Electron main process, with the embedded Hono server on the chosen port
 - Vite's dev server for the renderer, which is what the window loads
 - file watchers for the main and preload bundles
+- the telemetry catalog watcher
+
+**Telemetry catalogs** are build outputs too. The names the strict telemetry
+builders may forward (log messages, error classes, routes, source files) are
+read from source by `scripts/generate-telemetry-catalogs.mjs`, which `npm
+install`, every SDK and Inspector build, test and typecheck, and the dev loops
+(`dev`, `dev:app`, `dev:server`, `dev:client`, SDK `dev`, `electron:dev`,
+`test:watch`) run for you. A new logger message, route or error class is
+catalogued on save; there is no file to commit.
+
+**Does my field arrive?** Telemetry forwards only fields that have a rule, so a
+new diagnostic field can be dropped without any error. Check it in the test
+that adds it: `expectTelemetryFields(sample, ["statusCode"])` from
+`mcpjam-inspector/shared/__tests__/explain-telemetry.ts` runs the sample
+through the real log-row or server-analytics builder and fails with each
+missing field's drop reason (for example, "no field rule: declare it in
+server/utils/log-events.ts"). `explainTelemetry(sample)` returns the same
+`{ forwarded, dropped }` for a look before you write the assertion. An org,
+project or server ID arrives only from the server's request context, never
+from a payload; see `mcpjam-inspector/server/utils/LOGGING.md`.
 
 **Reload semantics**, which differ by process:
 

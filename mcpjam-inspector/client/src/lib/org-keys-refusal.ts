@@ -179,8 +179,8 @@ export function orgKeysRefusalNextStep(
       return "Choose a model from an organization provider.";
     case "configure_org_model_role":
       return admin
-        ? "Set the organization's default models in Organization → AI providers."
-        : "Ask an organization admin to set the organization's default models.";
+        ? "Set the organization's default AI model in Organization → AI providers."
+        : "Ask an organization admin to set the organization's default AI model.";
     case "add_org_provider":
       return admin
         ? "Add or reconnect a provider in Organization → AI providers."
@@ -204,7 +204,8 @@ export function orgKeysRefusalNextStep(
  * providers; `member` is told to ask an admin; `visitor` (a share-link reader
  * outside the org) gets one neutral sentence with no admin detail.
  * `selection` is who chose the refused model: a person (`picked`, the
- * default) or an organization model role (`role`).
+ * default), or nobody, for background work on the organization's default
+ * model (`background`).
  */
 export function describeOrgKeysRefusal(
   code: string | null | undefined,

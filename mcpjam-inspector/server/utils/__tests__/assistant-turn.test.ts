@@ -410,7 +410,7 @@ describe("runAssistantTurn", () => {
           } as ModelDefinition,
           "cursor"
         )
-      ).rejects.toThrow(/chooses its own model on your own account/);
+      ).rejects.toThrow(/chooses its own model/);
 
       // The load-bearing half: NEITHER engine ran. A resolved turn here is a
       // completed run that never touched Cursor — the emulated engine's only
@@ -461,7 +461,7 @@ describe("runAssistantTurn", () => {
           "claude-code"
         )
       ).rejects.toThrow(
-        /This host runs the claude-code harness, which isn't available: the Claude Code harness only runs MCPJam-provided models/
+        /Claude Code client needs a supported model and an eligible Anthropic connection/
       );
       expect(global.fetch).not.toHaveBeenCalled();
       expect(runHarnessTurnMock).not.toHaveBeenCalled();
@@ -529,7 +529,7 @@ describe("runAssistantTurn", () => {
           } as ModelDefinition,
           modelSelection: { ...ORG_ANTHROPIC, modelId: "openai/gpt-5" },
         }),
-      ).rejects.toThrow(/organization's Anthropic key/);
+      ).rejects.toThrow(/eligible Anthropic connection/);
       expect(runHarnessTurnMock).not.toHaveBeenCalled();
       expect(global.fetch).not.toHaveBeenCalled();
     });
@@ -538,7 +538,7 @@ describe("runAssistantTurn", () => {
       global.fetch = vi.fn();
       runHarnessTurnMock.mockClear();
       await expect(turn({})).rejects.toThrow(
-        /only runs MCPJam-provided models/,
+        /needs a supported model and an eligible Anthropic connection/,
       );
       expect(runHarnessTurnMock).not.toHaveBeenCalled();
     });
@@ -598,7 +598,7 @@ describe("runAssistantTurn", () => {
         global.fetch = vi.fn();
         runHarnessTurnMock.mockClear();
         await expect(withEffort({ reasoningEffort: "high" })).rejects.toThrow(
-          /which isn't available: the Claude Code harness can't apply a reasoning effort yet \("high"\)/
+          /Claude Code client does not support the "high" reasoning effort/
         );
         expect(runHarnessTurnMock).not.toHaveBeenCalled();
         expect(global.fetch).not.toHaveBeenCalled();
@@ -655,9 +655,7 @@ describe("runAssistantTurn", () => {
           "codex"
         )
       ).rejects.toThrow(
-        "This host runs the codex harness, which isn't available: the Codex " +
-          "harness can't run this host's model — pick a Codex-compatible " +
-          "model to run the real runtime."
+        /not.*verified/
       );
       expect(global.fetch).not.toHaveBeenCalled();
       expect(runHarnessTurnMock).not.toHaveBeenCalled();
@@ -677,7 +675,7 @@ describe("runAssistantTurn", () => {
             "claude-code",
             sourceType
           )
-        ).rejects.toThrow(/not verified for claude-code \d+\.\d+\.\d+/);
+        ).rejects.toThrow(/has not been verified for the Claude Code client/);
         expect(global.fetch).not.toHaveBeenCalled();
         expect(runHarnessTurnMock).not.toHaveBeenCalled();
       }

@@ -285,6 +285,7 @@ describe("the organization's AI models", () => {
       kinds: ["default"],
       models: { default: null },
       suggestions: { default: DEFAULT_MODEL },
+      connectionIds: {},
     });
   });
 });

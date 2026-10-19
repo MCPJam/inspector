@@ -39,13 +39,17 @@ RUN node -e 'const d="/usr/local/lib/node_modules/npm",v=require(d+"/package.jso
     && rm /tmp/brace-expansion-5.0.12.tgz /tmp/undici-6.29.0.tgz \
     && npm cache clean --force
 
+# sentry-cli uses the system trust store, absent from bookworm-slim. Install
+# it for both build-time uploads and runtime HTTPS without disabling TLS checks.
 # The newest node:24 bookworm-slim build ships perl-base 5.36.0-7+deb12u3,
 # which carries CRITICAL CVE-2026-13221, CVE-2026-42496 and CVE-2026-8376.
 # bookworm-security has the fix. Pinned, as the header above explains; the
 # install fails loudly once a later security update replaces this version in
 # the archive. Delete this step once the NODE_VERSION image ships deb12u4.
 RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u1 \
     && apt-get install -y --no-install-recommends --only-upgrade perl-base=5.36.0-7+deb12u4 \
+    && test -s /etc/ssl/certs/ca-certificates.crt \
     && rm -rf /var/lib/apt/lists/*
 
 ################################################################################
@@ -84,7 +88,7 @@ RUN npm prune --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fun
 
 ################################################################################
 # Build the inspector and its workspace dependencies.
-FROM deps AS build
+FROM deps AS server-build
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
@@ -99,22 +103,18 @@ ARG VITE_WORKOS_CLIENT_ID
 ARG VITE_MCPJAM_SANDBOX_ORIGIN
 ARG VITE_MCPJAM_VIEW_MOUNT
 ARG VITE_MCPJAM_VIEW_SUBDOMAINS
-# Public, read-only Meticulous recording token, read at BUILD time by
-# client/vite.config.ts. Absent, no recorder is injected. Set it as a Railway
-# service variable only on the environments that should record sessions.
-ARG METICULOUS_RECORDING_TOKEN
 # Not a VITE_ var — it is never bundled. `sentryVitePlugin` in
 # client/vite.config.ts reads it at BUILD time to upload source maps for the
 # release, and without it every hosted prod stack trace stays minified
 # (`index-<hash>.js:8:117100`) while Sentry falls back to scraping the asset
 # URL, which the SPA answers with index.html. Absent, the plugin warns and
-# skips the upload, so local and desktop builds are unaffected.
+# skips the upload, so local and desktop builds are unaffected. `build:server`
+# reads it the same way for the server's maps.
 #
-# ARG, and not a BuildKit secret mount, because Railway builds this image and
-# does not support `--mount=type=secret`: declaring an ARG of the same name as
-# a service variable is the only supported way to reach a build-time secret
-# there. The exposure that buys is bounded — the ARG is scoped to this build
-# stage, the token is never written to disk or promoted to ENV, and the runtime
+# Railway supplies build-time service variables as ARGs. Its Dockerfile builder
+# supports only cache mounts. Docker Hub uploads from an ephemeral container
+# after building this stage, so its token never enters the build. The ARG stays
+# in this build stage, never written to disk or promoted to ENV. The runtime
 # image below is a separate stage that copies artifacts rather than layers. It
 # would surface in this stage's build history and in `mode=max` provenance,
 # neither of which Railway publishes. Mark the variable Sealed in Railway so it
@@ -135,6 +135,9 @@ COPY mcpjam-inspector/lib/tsconfig.json mcpjam-inspector/lib/tsup.config.ts ./mc
 COPY mcpjam-inspector/server/tsconfig.json mcpjam-inspector/server/tsup.config.ts ./mcpjam-inspector/server/
 COPY mcpjam-inspector/bin ./mcpjam-inspector/bin
 COPY mcpjam-inspector/shared ./mcpjam-inspector/shared
+# Telemetry catalogs are build outputs. The SDK build writes the SDK catalog
+# here (no server or client yet); `build:server`'s pre-hook writes all four.
+COPY scripts/generate-telemetry-catalogs.mjs scripts/telemetry-route-catalog.mjs ./scripts/
 
 COPY sdk/src ./sdk/src
 COPY sdk/skills ./sdk/skills
@@ -178,13 +181,23 @@ COPY chat-ui ./chat-ui
 COPY widget-react ./widget-react
 COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
+# MCPJAM_BUILD_SURFACE is the Sentry `dist` this bundle reports and uploads
+# under. Without it this bundle's events resolve against the npm or desktop
+# artifacts, which share the same bare `release`. Railway keeps the `web`
+# default; docker-release.yml passes `local` so the Docker Hub image uses its
+# own source maps instead of the hosted app's. See
+# SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
+ARG MCPJAM_BUILD_SURFACE=web
+# The server bakes in the same `dist`. `build:server` injects and verifies its
+# debug IDs and, given Railway's SENTRY_AUTH_TOKEN, uploads its maps. Docker
+# Hub runs the uploader in this same stage with a runtime-only credential.
 RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
     npm run build:server -w @mcpjam/inspector
-# MCPJAM_BUILD_SURFACE is the Sentry `dist` this bundle reports and uploads
-# under. Hardcoded rather than an ARG: the web image is the only thing this
-# Dockerfile builds. Without it this bundle's events resolve against the npm or
-# desktop artifacts, which share the same bare `release`. See
-# SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
+
+# Both releases inherit the verified server bytes; only this intermediate
+# stage retains maps. They stay out of the published image and npm tarball.
+FROM server-build AS build
+RUN rm mcpjam-inspector/dist/server/*.map
 RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \
     if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_ENVIRONMENT" ]; then export VITE_ENVIRONMENT; fi; \
@@ -196,10 +209,7 @@ RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABL
     if [ -n "$VITE_MCPJAM_SANDBOX_ORIGIN" ]; then export VITE_MCPJAM_SANDBOX_ORIGIN; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_MOUNT" ]; then export VITE_MCPJAM_VIEW_MOUNT; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_SUBDOMAINS" ]; then export VITE_MCPJAM_VIEW_SUBDOMAINS; fi; \
-    if [ -n "$METICULOUS_RECORDING_TOKEN" ]; then export METICULOUS_RECORDING_TOKEN; fi; \
-    if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
-    if [ -n "$POSTHOG_PERSONAL_API_KEY" ]; then export POSTHOG_PERSONAL_API_KEY; fi; \
-    MCPJAM_BUILD_SURFACE=web npm run build:client -w @mcpjam/inspector
+    MCPJAM_BUILD_SURFACE="$MCPJAM_BUILD_SURFACE" npm run build:client -w @mcpjam/inspector
 
 ################################################################################
 # Runtime image.

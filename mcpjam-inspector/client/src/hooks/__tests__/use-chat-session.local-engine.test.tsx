@@ -290,6 +290,7 @@ describe("useChatSession — local computer engine transmission", () => {
         executionTarget: { kind: "environment", environmentId: "env-1" },
       },
       {
+        selectionIntent: "inherit",
         personalBrowserEngine: {
           engine: "local",
           consentToken: "browser-capability",
@@ -365,11 +366,12 @@ describe("useChatSession — local computer engine transmission", () => {
 
   it("never sends the local engine when the turn routes to the org-aware web API", async () => {
     // The local engine only exists on the local /api/mcp path. A turn forced
-    // to /api/web/chat-v2 (org-runtime model, environment mode, etc.) must NOT
+    // to /api/web/chat-v2 (environment mode, a hidden environment) must NOT
     // carry the field or leak the consent header onto the web route.
     await renderWithEngine(
       { engine: "local", consentToken: "cap-token-123" },
       { projectId: "proj-1", requiresWebChatApi: true },
+      { selectionIntent: "inherit" },
     );
     const { body, headers } = lastTransport();
     expect(body.computerEngine).toBeUndefined();

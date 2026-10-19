@@ -205,22 +205,8 @@ export interface CapturedRequest {
   body: Uint8Array | null;
 }
 
-export type Sink = "posthog" | "sentry" | "other";
-
-/** PostHog goes through the same-origin relay; Sentry straight to ingest. */
-export function sinkOf(url: string): Sink {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return "other";
-  }
-  if (/(^|\.)ingest\.([a-z]+\.)?sentry\.io$/i.test(parsed.hostname)) {
-    return "sentry";
-  }
-  if (/^\/(tlm|relay)(\/|$)/.test(parsed.pathname)) return "posthog";
-  return "other";
-}
+export { sinkOf, type Sink } from "./egress-sinks";
+import { sinkOf, decodeAxiomBody, type Sink } from "./egress-sinks";
 
 // ── Decoding ───────────────────────────────────────────────────────────
 
@@ -455,6 +441,7 @@ export function decodeSentryEnvelope(bytes: Uint8Array): DecodedEnvelope {
     ) as Record<string, unknown>;
     let payloadBytes: Uint8Array;
     if (typeof itemHeader.length === "number") {
+      if (!Number.isInteger(itemHeader.length) || itemHeader.length < 0 || itemHeader.length > body.length - afterItemHeader) throw new EgressDecodeError("invalid envelope item length");
       payloadBytes = body.subarray(
         afterItemHeader,
         afterItemHeader + itemHeader.length,
@@ -537,6 +524,7 @@ export interface DecodedRequest {
   sink: Sink;
   posthog?: DecodedPostHogRequest;
   sentry?: DecodedEnvelope;
+  axiom?: unknown;
 }
 
 /**
@@ -545,6 +533,10 @@ export interface DecodedRequest {
  */
 export function decodeRequest(request: CapturedRequest): DecodedRequest {
   const sink = sinkOf(request.url);
+  if (sink === "axiom") {
+    try { return { request, sink, axiom: decodeAxiomBody(request.body) }; }
+    catch { throw new EgressDecodeError("invalid Axiom JSON or NDJSON"); }
+  }
   if (sink === "posthog") {
     const decoded = decodePostHogBody(request.url, request.body);
     return {
@@ -619,7 +611,7 @@ export function scanRequest(decoded: DecodedRequest): SentinelHit[] {
     add(hits, `header:${name}`, value);
   }
   const structured =
-    decoded.posthog?.inflated ?? (decoded.sentry ? decoded.sentry : undefined);
+    decoded.posthog?.inflated ?? decoded.sentry ?? decoded.axiom;
   const structuredHits: SentinelHit[] = [];
   if (structured !== undefined) {
     for (const hit of findSentinelPaths(structured)) {

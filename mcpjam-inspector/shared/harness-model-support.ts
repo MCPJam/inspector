@@ -31,7 +31,7 @@ export type HarnessModelSupportStatus = "supported" | "unsupported" | "unknown";
 /** One evidence row, exactly as it appears in the JSON table. */
 export type HarnessModelSupportRow = {
   harness: string;
-  /** `"*"` (any version, including an unknown one), `"<=A.B.x"` or `">A.B.x"`. */
+  /** `"*"` (any version, including an unknown one), `"<=A.B.x"`, `">A.B.x"` or `"A.B.x"`. */
   versionRange: string;
   /** Regular expression tested against the normalized canonical model id. */
   familyPattern: string;
@@ -79,7 +79,7 @@ export const HARNESS_MODEL_SUPPORT_ROWS: readonly HarnessModelSupportRow[] =
  */
 export const HARNESS_PINNED_VERSIONS = {
   "claude-code": "2.1.245",
-  codex: "0.149.1",
+  codex: "0.163.0",
   // The Cursor CLI build the hosted bootstrap installs (and the computer
   // template bakes), by the version string Cursor's own installer stamps in.
   // `server/utils/harness/cursor-bootstrap.ts` pins the download to exactly
@@ -167,17 +167,20 @@ export type HarnessKeyPolicy = { requireOrgKeys?: boolean };
 /** The refusal copy for an org connection the harness cannot run on. */
 export function harnessOrgProviderUnsupportedReason(
   harnessId: string,
-  policy: HarnessKeyPolicy = {},
+  policy: HarnessKeyPolicy | null = {},
 ): string {
   const name = harnessDisplayName(harnessId);
   const upstream = harnessOrgUpstream(harnessId);
   if (!upstream) {
-    return `the ${name} harness does not run on an organization's provider key`;
+    return `The ${name} client does not support organization provider keys. Choose another client.`;
   }
   const vendor = ORG_PROVIDER_LABELS[upstream.provider];
+  if (policy === null) {
+    return `The ${name} client needs a supported model and an eligible ${vendor} connection. Choose another model or contact your organization admin.`;
+  }
   return policy.requireOrgKeys
-    ? `the ${name} harness runs only on your organization's ${vendor} key`
-    : `the ${name} harness runs MCPJam-provided models or your organization's ${vendor} key`;
+    ? `The ${name} client requires your organization's ${vendor} key. Choose an organization model or contact your organization admin.`
+    : `The ${name} client needs an MCPJam model or your organization's ${vendor} key. Choose a supported model.`;
 }
 
 /**
@@ -233,19 +236,19 @@ function compareMajorMinor(
 }
 
 type ParsedRange =
-  { kind: "any" } | { kind: "lte" | "gt"; bound: [number, number] };
+  { kind: "any" } | { kind: "lte" | "gt" | "eq"; bound: [number, number] };
 
 function parseVersionRange(range: string): ParsedRange | undefined {
   if (range === "*") return { kind: "any" };
-  const match = range.match(/^(<=|>)(\d+)\.(\d+)\.x$/);
+  const match = range.match(/^(<=|>)?(\d+)\.(\d+)\.x$/);
   if (!match) return undefined;
   return {
-    kind: match[1] === "<=" ? "lte" : "gt",
+    kind: match[1] === "<=" ? "lte" : match[1] === ">" ? "gt" : "eq",
     bound: [Number(match[2]), Number(match[3])],
   };
 }
 
-/** Is `range` well-formed (`"*"`, `"<=A.B.x"` or `">A.B.x"`)? */
+/** Is `range` well-formed (`"*"`, `"<=A.B.x"`, `">A.B.x"` or `"A.B.x"`)? */
 export function isValidHarnessVersionRange(range: string): boolean {
   return parseVersionRange(range) !== undefined;
 }
@@ -265,7 +268,7 @@ export function harnessVersionInRange(
   const parsed = parseHarnessVersion(version);
   if (!parsed) return false;
   const cmp = compareMajorMinor(parsed, parsedRange.bound);
-  return parsedRange.kind === "lte" ? cmp <= 0 : cmp > 0;
+  return parsedRange.kind === "lte" ? cmp <= 0 : parsedRange.kind === "gt" ? cmp > 0 : cmp === 0;
 }
 
 // ── Model ids ────────────────────────────────────────────────────────────────
@@ -310,18 +313,15 @@ function notVerifiedReason(
   const version =
     typeof runtimeVersion === "string" && runtimeVersion.trim()
       ? runtimeVersion.trim()
-      : "(unknown version)";
-  return `not verified for ${harnessId} ${version}`;
+      : "unknown version";
+  return `This model has not been verified for the ${harnessDisplayName(harnessId)} client (${version}). Choose a verified model or another client.`;
 }
 
 /** The refusal copy for an `unsupported` verdict — the same sentence the
  *  harness pre-flight has always used for a model the runtime can't run. */
 export function harnessModelUnsupportedReason(harnessId: string): string {
   const name = harnessDisplayName(harnessId);
-  return (
-    `the ${name} harness can't run this host's model — pick a ` +
-    `${name}-compatible model to run the real runtime`
-  );
+  return `This model isn’t supported by ${name}. Choose a supported model or switch clients.`;
 }
 
 /**

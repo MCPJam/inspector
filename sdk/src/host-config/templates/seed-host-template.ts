@@ -1025,7 +1025,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Same guest-allowed Anthropic model rationale as the Claude
         // template — the real CLI's model choice never crosses the MCP
         // wire, so this is a product default, not probe data.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
         // Run the REAL Claude Code runtime (the @ai-sdk/harness-claude-code
@@ -1942,11 +1942,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // surface colors + the shimmering "Thinking" indicator). See
         // CODEX_HOST_STYLE in client-styles/built-ins.ts.
         hostStyle: "codex",
-        // Canonical id (openai/<slug>) so the chat-composer model picker
-        // resolves it. gpt-5-nano is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so
-        // guests get it without an OpenAI key; users can swap to a
-        // codex-specific model after creation.
-        modelId: "openai/gpt-5-nano",
+        // Canonical hosted id so the chat-composer model picker resolves it.
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
         // Run the REAL OpenAI Codex runtime (the @ai-sdk/harness-codex adapter)
@@ -2005,6 +2002,16 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
         },
         apps: {
+          // The name is probed: the last capture reported `chatgpt`
+          // 26.825.32147 (the backend catalog's `codex` row). The version is
+          // ASSUMED, a deliberate bump past that capture to OpenAI's
+          // documented minimum desktop build for the DevDay 2026 extensions
+          // (mcp-extensions patterns.md), which Apps such as Bits & Bolts
+          // check before enabling themselves. Replace it with a newer
+          // host-probe capture.
+          uiInitialize: {
+            hostInfo: { name: "chatgpt", version: "26.928.20710" },
+          },
           // OpenAI plugin extensions are on by default for Codex; each one
           // can be switched off in the client's Apps tab.
           pluginExtensions: { enabled: true },
@@ -2232,13 +2239,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "copilot",
-        // Real Microsoft 365 Copilot routes through OpenAI's chat-class
-        // models under the hood, so the OpenAI-shaped Apps SDK is the
-        // right protocol bucket here. `openai/gpt-5.3-chat` is the closest
-        // MCPJam-guest-allowed analog (Copilot's flagship is chat-tuned,
-        // not nano-tier), so the App Builder works out-of-the-box without
-        // a BYOK while staying faithful to the host's real model class.
-        modelId: "openai/gpt-5.3-chat",
+        // Match the backend's supported default for Copilot so offline
+        // template creation uses the same model as the live catalog.
+        modelId: "openai/gpt-5.6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });

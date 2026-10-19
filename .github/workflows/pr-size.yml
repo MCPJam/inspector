@@ -1,7 +1,7 @@
 name: PR Size
 
 # Counts changed lines of hand-written source (scripts/slop/pr-size.mjs).
-# Over 400 asks for `large-pr`; over 1,500 fails unless labelled `mechanical`.
+# Over 800 asks for `large-pr`; over 1,500 fails unless labelled `mechanical`.
 # `labeled` / `unlabeled` re-run it when a label changes the verdict.
 on:
   pull_request:

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +12,7 @@ import { track } from "@/lib/analytics";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { markPendingInviteDialog } from "@/lib/pending-invite-dialog";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 
 const LOCATION = "invite_signup_nudge";
 
@@ -38,7 +39,7 @@ export function InviteTeamSignUpDialog({
   isOpen: boolean;
   onClose: () => void;
 }) {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp } = useInspectorAuth();
 
   // One impression per opening, not per render — StrictMode double-invokes
   // effects, so the ref is scoped to the open transition rather than mount.
@@ -103,6 +104,7 @@ export function InviteTeamSignUpDialog({
             Sign in
           </Button>
         </div>
+        <LegalConsentNotice />
       </DialogContent>
     </Dialog>
   );

@@ -1,3 +1,4 @@
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk";
 /**
  * A harness turn's lease wiring for the key it runs on, built once at the top
  * of `runHarnessTurn` from the turn's saved selection. The turn reserves its
@@ -19,6 +20,10 @@
  * A hosted turn's answers are the hosted defaults. Either kind reads the
  * proxy's recorded refusal back when it fails after a model call.
  */
+import {
+  desanitizeFromConvexTransport,
+  sanitizeForConvexTransport,
+} from "@/shared/convex-sanitize";
 import { harnessOrgUpstream } from "@/shared/harness-model-support";
 import { getCanonicalModelId } from "@/shared/types";
 import type {
@@ -56,6 +61,7 @@ export class OrgLeaseTurn {
   /** MCPJam's model proxy; on the org's key it serves a first-party provider. */
   readonly brokeredEndpoint: ModelEndpointOwnership;
   private readonly selection: OrgHarnessSelection | undefined;
+  private readonly requestedSelection: ModelSelection | undefined;
   /** The selection a reserve, start or local-prepare body carries. */
   private readonly selectionField: { modelSelection?: OrgHarnessSelection };
   private readonly profile: string | undefined;
@@ -79,6 +85,10 @@ export class OrgLeaseTurn {
     >,
   ) {
     this.selection = orgHarnessSelection(options.modelSelection);
+    this.requestedSelection =
+      options.modelSelection?.source === "hosted"
+        ? options.modelSelection
+        : this.selection;
     this.profile = this.selection
       ? harnessOrgUpstream(options.harness ?? "")?.profile
       : undefined;
@@ -90,6 +100,22 @@ export class OrgLeaseTurn {
     this.selectionField = this.selection
       ? { modelSelection: this.selection }
       : {};
+  }
+
+  private requestedSelectionField(reasoningEffort?: ModelReasoningEffort) {
+    if (!this.requestedSelection) return {};
+    return {
+      modelSelection:
+        reasoningEffort === undefined
+          ? this.requestedSelection
+          : {
+              ...this.requestedSelection,
+              settings: {
+                ...this.requestedSelection.settings,
+                reasoningEffort,
+              },
+            },
+    };
   }
 
   /** The turn's canonical model id. */
@@ -112,7 +138,13 @@ export class OrgLeaseTurn {
 
   /** The claimed state as the adapter wrote it; its stamp is kept here. */
   claimed<S extends { resumeState: unknown }>(state: S | null): S | null {
-    const claim = stateForTurn(state, Boolean(this.selection));
+    const claim = stateForTurn(
+      state && {
+        ...state,
+        resumeState: desanitizeFromConvexTransport(state.resumeState),
+      },
+      Boolean(this.selection),
+    );
     this.stampedRevision = claim.credentialRevision;
     return claim.state;
   }
@@ -155,7 +187,7 @@ export class OrgLeaseTurn {
   ) {
     const broker = await startHarnessModelBroker({
       ...args,
-      ...this.selectionField,
+      ...this.requestedSelectionField(args.reasoningEffort),
       ...(this.selection && this.preparedRevision
         ? { expectedCredentialRevision: this.preparedRevision }
         : {}),
@@ -183,7 +215,11 @@ export class OrgLeaseTurn {
   ) {
     const preparation = await prepareLocalOnOrgKey({
       prepare: (sessionId) =>
-        prepareLocalHarnessTurn({ ...args, sessionId, ...this.selectionField }),
+        prepareLocalHarnessTurn({
+          ...args,
+          sessionId,
+          ...this.requestedSelectionField(args.reasoningEffort),
+        }),
       sessionId: local.sessionId,
       onOrgKey: Boolean(this.selection),
       resumes: Boolean(local.eligibility?.resume),
@@ -241,9 +277,18 @@ export class OrgLeaseTurn {
     return upstream ? { upstream } : {};
   }
 
-  /** The resume state a turn commits, stamped with its lease's revision. */
+  /**
+   * The resume state a turn commits, stamped with its lease's revision.
+   *
+   * Escaped for storage: a paused turn's state carries the turn's tool
+   * definitions, and MCP tool schemas use `$schema`, `$ref` and `$defs`, field
+   * names Convex refuses. Unescaped, the commit fails and the approval is lost.
+   * `claimed` reverses it.
+   */
   commitState(resumeState: unknown): unknown {
-    return resumeStateToCommit(resumeState, this.upstream);
+    return sanitizeForConvexTransport(
+      resumeStateToCommit(resumeState, this.upstream),
+    );
   }
 
   /**

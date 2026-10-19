@@ -3125,6 +3125,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
         apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "chatgpt",
+              version: "26.928.20710",
+            },
+          },
           pluginExtensions: {
             enabled: true,
           },
@@ -3535,7 +3541,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       hostStyle: "copilot",
-      modelId: "openai/gpt-5.3-chat",
+      modelId: "openai/gpt-5.6-luna",
       systemPrompt: "",
       temperature: 0.7,
       requireToolApproval: false,

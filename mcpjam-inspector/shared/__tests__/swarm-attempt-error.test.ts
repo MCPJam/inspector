@@ -158,6 +158,46 @@ describe("humanizeSwarmAttemptError", () => {
     const info = humanizeSwarmAttemptError('{"error":"Nope","canTopUp":false}');
     expect(info.canTopUp).toBeUndefined();
   });
+
+  it("names the tool when the model called one the server does not have", () => {
+    const info = humanizeSwarmAttemptError(
+      `Backend step returned no content (stream error or empty response) — the model's tool call was rejected before it could run and nothing else was emitted this step: {"code":"unknown_error","message":"Model tried to call unavailable tool 'execute'. Available tools: wealth-engines-code-mode-call-tool, wealth-engines-code-mode-list-tools, wealth-engines-co`,
+      "provider_empty_response",
+    );
+    expect(info.message).toBe(
+      "The model called `execute`, but your server has no tool by that name.",
+    );
+    expect(info.code).toBe("provider_empty_response");
+  });
+
+  it("keeps the engine's suffix code when the caller passes none", () => {
+    const info = humanizeSwarmAttemptError(
+      "Backend step returned no content — Model tried to call unavailable tool 'computer'. Available tools: a, b (provider_empty_response)",
+    );
+    expect(info.message).toBe(
+      "The model called `computer`, but your server has no tool by that name.",
+    );
+    expect(info.code).toBe("provider_empty_response");
+  });
+
+  it("keeps the HTTP status of an enclosing envelope", () => {
+    const info = humanizeSwarmAttemptError(
+      "Backend stream error: 502 Model tried to call unavailable tool 'execute'. Available tools: a",
+    );
+    expect(info.message).toBe(
+      "The model called `execute`, but your server has no tool by that name.",
+    );
+    expect(info.httpStatus).toBe(502);
+  });
+
+  it("strips a URL out of the tool name", () => {
+    const info = humanizeSwarmAttemptError(
+      "Model tried to call unavailable tool 'https://evil.example/x'.",
+    );
+    expect(info.message).toBe(
+      "The model called `a tool`, but your server has no tool by that name.",
+    );
+  });
 });
 
 describe("humanizeSwarmAttemptError — sandbox error codes", () => {
@@ -246,6 +286,25 @@ describe("humanizeSwarmAttemptError — connect-time XAA failures", () => {
       );
       expect(info.message.length).toBeLessThanOrEqual(MAX_ATTEMPT_ERROR_CHARS);
     }
+  });
+
+  it("words a rejected sign-in for every registration type", () => {
+    expect(
+      humanizeSwarmAttemptError(undefined, "xaa_authorization_rejected")
+        .message,
+    ).toBe(
+      "The authorization server rejected MCPJam's access request. Check the server's auth settings.",
+    );
+  });
+
+  it("keeps a throttled sign-in's stored sentence under its sign-in code", () => {
+    const stored =
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.';
+    const info = humanizeSwarmAttemptError(stored, "xaa_authorization_rejected");
+
+    expect(info.message).toBe(stored);
+    expect(info.code).toBe("xaa_authorization_rejected");
+    expect(info.rerunnable).toBeUndefined();
   });
 });
 

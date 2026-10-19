@@ -5,7 +5,7 @@ import {
   composerMissingServerGroup,
   describeSkippedModelCells,
   isAdhocUnavailable,
-  lacksEvalServerSource,
+  lacksServerSource,
   resolveComposerEnvironments,
   type EnsureAdhocEnvironmentsFn,
 } from "../resolve-stacks";
@@ -341,9 +341,9 @@ describe("resolveComposerEnvironments — requireServerAttachment (evals)", () =
   });
 
   it("gates submit on the same rule", () => {
-    expect(lacksEvalServerSource({})).toBe(true);
-    expect(lacksEvalServerSource({ serverAttachmentId: "g" })).toBe(false);
-    expect(lacksEvalServerSource({ pluginVersionIds: ["pv"] })).toBe(false);
+    expect(lacksServerSource({})).toBe(true);
+    expect(lacksServerSource({ serverAttachmentId: "g" })).toBe(false);
+    expect(lacksServerSource({ pluginVersionIds: ["pv"] })).toBe(false);
     expect(
       composerMissingServerGroup(composeState({ hostIds: ["h1"] }), []),
     ).toBe(true);
@@ -1140,13 +1140,13 @@ describe("expandModelChoices — harness × model support", () => {
         clientId: "h-claude",
         modelId: "openai/gpt-5.6-luna",
         reason: expect.stringContaining(
-          "the Claude Code harness can't run this host's model",
+          "This model isn’t supported by Claude Code",
         ),
       },
       {
         clientId: "h-claude",
         modelId: "anthropic/claude-fable-5",
-        reason: expect.stringMatching(/^not verified for claude-code /),
+        reason: expect.stringMatching(/has not been verified for the Claude Code client/),
       },
     ]);
   });
@@ -1176,7 +1176,7 @@ describe("expandModelChoices — harness × model support", () => {
         harness: { harnessId: "codex", runtimeVersion: "0.160.0" },
       },
     );
-    expect(skipped[0]?.reason).toBe("not verified for codex 0.160.0");
+    expect(skipped[0]?.reason).toBe("This model has not been verified for the Codex client (0.160.0). Choose a verified model or another client.");
   });
 
   it("reads whose key a saved choice runs on: the org's own vendor runs, a local key or another vendor's connection is skipped", () => {
@@ -1254,7 +1254,7 @@ describe("resolveComposerEnvironments — harness-incompatible cells", () => {
       {
         clientId: "h-codex",
         modelId: "openai/gpt-5.6-luna",
-        reason: expect.stringContaining("Codex harness can't run"),
+        reason: expect.stringMatching(/not.*verified/),
       },
     ]);
     expect(describeSkippedModelCells(result.skipped, () => "Codex")).toMatch(
@@ -1291,7 +1291,7 @@ describe("resolveComposerEnvironments — harness-incompatible cells", () => {
       {
         clientId: "h-codex",
         modelId: "openai/gpt-5.6-luna",
-        reason: expect.stringContaining("Codex harness can't run"),
+        reason: expect.stringMatching(/not.*verified/),
       },
     ]);
   });

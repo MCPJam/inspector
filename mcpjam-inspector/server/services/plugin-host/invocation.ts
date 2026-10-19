@@ -3,6 +3,8 @@ import {
   INVOCATION_RECEIPT_MAX_ROUNDS,
 } from "../../../shared/plugin-invocation-receipts.js";
 import { createHash, randomBytes } from "node:crypto";
+import { logger } from "../../utils/logger.js";
+import { scrubLogPayload } from "../../../shared/log-scrubber.js";
 import type {
   DurableInvocationReceipt,
   PluginInvocationReceiptPort,
@@ -13,7 +15,7 @@ import {
 } from "@mcpjam/sdk/contract";
 import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
 import { stripPluginResourcePath } from "./resource-metadata.js";
-import { isPluginMentionTool } from "../../../shared/plugin-mentions.js";
+import { isPluginMentionSearchTool } from "../../../shared/plugin-mentions.js";
 import {
   describePluginError,
   pluginDiagnostic,
@@ -53,7 +55,14 @@ export interface AuthorizedInvocation {
   revision: string;
   owner: TrustedInvocationOwner;
   enabled: boolean;
-  tool: { name: string; _meta?: Record<string, unknown> };
+  tool: {
+    name: string;
+    annotations?: { readOnlyHint?: boolean };
+    _meta?: Record<string, unknown>;
+  };
+  /** The server's declared capabilities, for checks that depend on them. */
+  serverCapabilities?: unknown;
+  transport?: "legacy" | "mrtr";
   allowedOrigins: readonly PluginInvocationOrigin[];
   toolPolicy?: ToolPolicySnapshot;
   requiresApproval: boolean;
@@ -272,6 +281,41 @@ export class PluginInvocationError extends Error {
   ) {
     super(code);
     this.name = "PluginInvocationError";
+  }
+}
+
+/** Keep a known host cause without asserting that a dispatched effect failed.
+ * `outcomeUnknown` still prevents replay, including after receipt recovery. */
+function unknownInvocationFailure(error: unknown): never {
+  if (error instanceof PluginInvocationError) {
+    const failure = new PluginInvocationError(error.code, true);
+    failure.diagnostics = error.diagnostics;
+    throw failure;
+  }
+  throw new PluginInvocationError("INVOCATION_OUTCOME_UNKNOWN", true);
+}
+
+function logInvocationFailure(error: unknown, dispatched: boolean) {
+  try {
+    logger.debug(
+      "[plugin-invocation] failure",
+      scrubLogPayload({
+        dispatched,
+        name:
+          error instanceof Error
+            ? scrubLogPayload(error.name).slice(0, 96)
+            : "NonError",
+        message:
+          error instanceof Error
+            ? scrubLogPayload(error.message).slice(0, 1000)
+            : "Non-error thrown",
+        ...(error instanceof PluginInvocationError
+          ? { code: error.code.slice(0, 96) }
+          : {}),
+      }),
+    );
+  } catch {
+    /* Diagnostics cannot change an accepted effect. */
   }
 }
 
@@ -815,6 +859,7 @@ export class AuthorizedToolInvoker {
             error instanceof PluginContinuationTerminal &&
             !controller.signal.aborted &&
             !this.closed;
+          logInvocationFailure(error, dispatched);
           this.observation(
             invocationId,
             dispatched && !terminal ? "call-unknown" : "call-denied",
@@ -829,7 +874,7 @@ export class AuthorizedToolInvoker {
               dispatched && !terminal,
               controller.signal,
             );
-          if (dispatched && !terminal) fail("INVOCATION_OUTCOME_UNKNOWN", true);
+          if (dispatched && !terminal) unknownInvocationFailure(error);
           throw error;
         }
       })
@@ -950,7 +995,8 @@ export class AuthorizedToolInvoker {
         if (!unknown && !/^[A-Z0-9_]{1,96}$/.test(leg.errorCode ?? ""))
           fail("RECEIPT_STORE_INVALID");
         const code =
-          !unknown && /^[A-Z0-9_]{1,96}$/.test(leg.errorCode ?? "")
+          ["failed", "unknown", "unavailable"].includes(leg.state) &&
+          /^[A-Z0-9_]{1,96}$/.test(leg.errorCode ?? "")
             ? leg.errorCode!
             : "INVOCATION_OUTCOME_UNKNOWN";
         result = Promise.reject(new PluginInvocationError(code, unknown));
@@ -1090,11 +1136,12 @@ export class AuthorizedToolInvoker {
           writerHash,
           round,
           state: dispatched && !known ? "unknown" : "failed",
-          errorCode: !dispatched
-            ? code
-            : known
-              ? "TOOL_CALL_FAILED"
-              : "INVOCATION_OUTCOME_UNKNOWN",
+          errorCode:
+            !dispatched || error instanceof PluginInvocationError
+              ? code
+              : known
+                ? "TOOL_CALL_FAILED"
+                : "INVOCATION_OUTCOME_UNKNOWN",
         },
         signal,
       );
@@ -1156,7 +1203,10 @@ export class AuthorizedToolInvoker {
     )
       fail("TOOL_POLICY_DENIED");
     const visibility = getToolVisibility(authorization.tool._meta);
-    if (origin === "mention" && !isPluginMentionTool(authorization.tool))
+    if (
+      origin === "mention" &&
+      !isPluginMentionSearchTool(authorization.tool, authorization)
+    )
       fail("TOOL_MENTION_DECLARATION_DENIED");
     if (
       (origin === "model" && !visibility.includes("model")) ||
@@ -1305,6 +1355,7 @@ export class AuthorizedToolInvoker {
     } catch (error) {
       // A cancelled/revoked owner cannot deliver a result or safely retry a
       // write. Only an authoritative server failure is a known outcome.
+      logInvocationFailure(error, dispatched);
       let known = false;
       if (
         dispatched &&
@@ -1331,7 +1382,7 @@ export class AuthorizedToolInvoker {
         receipt.retryable = true;
         throw error;
       }
-      if (!known) fail("INVOCATION_OUTCOME_UNKNOWN", true);
+      if (!known) unknownInvocationFailure(error);
       throw error;
     }
   }

@@ -310,6 +310,74 @@ describe("web auth manager batching", () => {
     ]);
   });
 
+  it("keeps only the listed servers' refusals when given a list", async () => {
+    // A chat turn lists its plugins' servers: the member's own server must
+    // still fail the turn, a plugin server waiting on sign-in must not.
+    const batch = (chosenRefused: boolean) =>
+      vi.fn(async () =>
+        Response.json({
+          results: {
+            "srv-chosen": chosenRefused
+              ? {
+                  ok: false,
+                  status: 403,
+                  code: "FORBIDDEN",
+                  message: "srv-chosen failed",
+                }
+              : {
+                  ok: true,
+                  role: "member",
+                  accessLevel: "project_member",
+                  permissions: { chatOnly: false },
+                  serverConfig: {
+                    transportType: "http",
+                    url: "https://chosen.example.com/mcp",
+                  },
+                },
+            "srv-plugin": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://plugin.example.com/mcp",
+                useOAuth: true,
+              },
+            },
+          },
+        }),
+      ) as typeof fetch;
+    const run = () =>
+      createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["srv-chosen", "srv-plugin"],
+        10_000,
+        undefined,
+        undefined,
+        { tolerateServerRefusals: ["srv-plugin"] },
+      );
+
+    global.fetch = batch(false);
+    const result = await run();
+    expect(Object.keys(result.refusedServers ?? {})).toEqual(["srv-plugin"]);
+    expect(result.refusedServers?.["srv-plugin"]).toMatchObject({
+      status: 401,
+      details: { oauthRequired: true, serverId: "srv-plugin" },
+    });
+    expect(Object.keys(mcpClientManagerMock.mock.calls[0][0])).toEqual([
+      "srv-chosen",
+    ]);
+
+    global.fetch = batch(true);
+    await expect(run()).rejects.toMatchObject({
+      status: 403,
+      message: "srv-chosen failed",
+    });
+  });
+
   function xaaBatchFetch(): typeof fetch {
     return vi.fn(async () =>
       Response.json({

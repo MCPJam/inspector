@@ -14,6 +14,11 @@ import type {
   SwarmReport,
 } from "../contract/index.js";
 import type { CaseJudgeSettings } from "../contract/judge-settings.js";
+import type { PlatformGoalJudge } from "./goal-judge.js";
+export type {
+  PlatformGoalJudge,
+  PlatformGoalJudgeWrite,
+} from "./goal-judge.js";
 import type {
   JudgeRubric,
   JudgeEvidenceManifest,
@@ -28,6 +33,16 @@ import type {
   ModelReasoningEffort,
   RequestedModelSelection,
 } from "../host-config/model-selection.js";
+import type {
+  PlatformAnalysisRouting,
+  PlatformFindingsJobStatus,
+  PlatformReadinessObservationReason,
+} from "./analysis-outcome-types.js";
+export type {
+  PlatformAnalysisRouting,
+  PlatformFindingsJobStatus,
+  PlatformReadinessObservationReason,
+} from "./analysis-outcome-types.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -1449,14 +1464,7 @@ export interface PlatformAnalysisTouchpointDisclosure {
   rail: {
     fixed: "openrouter" | null;
     because: string;
-    /**
-     * `gateway_preferred`: Gateway when configured and priced there, else
-     * OpenRouter. `typed_decision`: a typed classifier through the Gateway,
-     * with a fallback model only when the classifier cannot be reached.
-     * `org_keys`: the organization requires its own provider keys, so the
-     * analyzer runs on its own provider connection.
-     */
-    routing?: "gateway_preferred" | "typed_decision" | "org_keys";
+    routing?: PlatformAnalysisRouting;
   };
   destinations: readonly string[];
   evidenceSent: readonly string[];
@@ -4108,6 +4116,8 @@ export interface PlatformGoal {
   iterations: number | null;
   maxTurns: number | null;
   setupWrites?: boolean;
+  /** The goal-completion judge. Absent on older API deployments. */
+  judge?: PlatformGoalJudge;
   createdAt: number;
   updatedAt: number;
 }
@@ -5294,12 +5304,7 @@ export interface PlatformUnifiedFindings {
   } | null;
   job: null | {
     kind: "build" | "enrich";
-    /**
-     * `skipped`: an automatic analysis was not started; `errorCode` says why
-     * (e.g. the organization requires its own provider keys and analysis
-     * can't run on its providers yet).
-     */
-    status: "pending" | "completed" | "failed" | "skipped";
+    status: PlatformFindingsJobStatus;
     startedAt: number;
     updatedAt: number;
     errorCode?: string;
@@ -5945,10 +5950,6 @@ export interface PlatformReadinessStageResult {
  * `platform_cap_reached` is its deliberate opposite: MCPJam's own daily budget
  * for observations is spent. Observations are MCPJam-paid, so there is nothing
  * for the customer to buy, and a client must NOT offer a top-up for it.
- *
- * `ai_unavailable`: the organization requires its own provider keys and has no
- * compatible provider for the observation pass, so no model ran. Not an
- * outage and not a top-up: the fix is an organization AI configuration change.
  */
 export interface PlatformReadinessObservationState {
   status:
@@ -5958,16 +5959,7 @@ export interface PlatformReadinessObservationState {
     | "billing-blocked"
     | "provider-failed"
     | "invalid-output";
-  reason?:
-    | "not_requested"
-    | "billing_limit_reached"
-    | "platform_cap_reached"
-    | "ai_unavailable"
-    | "provider_error"
-    | "provider_timeout"
-    | "schema_invalid"
-    | "no_evidence"
-    | "cancelled";
+  reason?: PlatformReadinessObservationReason;
   detail?: string;
 }
 

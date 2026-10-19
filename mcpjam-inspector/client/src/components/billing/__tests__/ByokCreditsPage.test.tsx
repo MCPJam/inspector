@@ -32,13 +32,13 @@ describe("ByokCreditsPage", () => {
     );
   });
 
-  it("does not claim features run on organization keys before they do", () => {
+  it("says background work waits for the organization's default AI model", () => {
     render(<ByokCreditsPage />);
     const section = sectionOf(
       "When your organization uses its keys for all AI features",
     );
     expect(section).toHaveTextContent(
-      "Features that can’t run on organization providers yet, such as Swarm, User Testing, and Insights, show “Not supported yet”",
+      "Swarm, User Testing and Insights are unavailable until an admin sets the organization’s default AI model in Organization → AI providers.",
     );
   });
 });

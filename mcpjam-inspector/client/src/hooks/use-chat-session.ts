@@ -1,3 +1,4 @@
+import { prepareRestoredHarnessApproval, type ApprovalServerSelection } from "@/lib/prepare-restored-harness-approval";
 import {
   orgPolicyBlocksChatSend,
   orgPolicySendRefusal,
@@ -79,12 +80,16 @@ import {
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
   MODEL_REASONING_EFFORTS,
   type ModelReasoningEffort,
+  type RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
+import { chatRequestSelection } from "@/lib/chat-request-selection";
+import { compareSelectionForRow, replaceLeadCompareSelection, resolveCompareSelectionRow } from "@/lib/compare-cards";
 import {
   reasoningEffortMemoryKey,
   reasoningEffortOptions,
@@ -104,6 +109,8 @@ import {
   loadLeadModelProviderHint,
   saveLastOwnProviderModelId,
   saveLeadModelProviderHint,
+  loadSelectedModelSelections,
+  saveSelectedModelSelections,
   type LeadModelProviderHint,
 } from "@/lib/selected-model-storage";
 import { resolveModelSelection } from "@/lib/model-selection";
@@ -279,8 +286,7 @@ import {
   isSandboxNoticeDataPart,
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
-import { isHistoryNoticeDataPart } from "@/shared/history-notice";
-import { useHistoryNoticeStore } from "@/stores/history-notice-store";
+import { noteTurnNoticePart } from "@/lib/turn-notice-parts";
 import {
   HOSTED_TASKS_VERSION,
   isTaskCreatedDataPart,
@@ -449,6 +455,9 @@ function pluginGlobalTurnFields(
 }
 
 export interface UseChatSessionOptions {
+  /** A card's saved choice; its connection and settings remain authoritative. */
+  pickedModelSelection?: RequestedModelSelection;
+  selectionIntent?: "picked" | "inherit";
   pluginContextReferences?: string[] | ((workspaceId: string) => string[]);
   /**
    * The Playground's global extension owner. Its Apps have no chat of their
@@ -648,6 +657,9 @@ export interface TokenUsage {
 }
 
 export interface SetSelectedModelOptions {
+  /** History choices stay local to this conversation. */
+  persist?: boolean;
+  selection?: RequestedModelSelection | null;
   /**
    * True only when this came from the model menu. Restores — a history
    * session, an eval hand-off — go through the same setter but must not
@@ -695,6 +707,8 @@ export interface UseChatSessionReturn {
     isCurrent?: () => boolean;
 
     pluginMentions?: PluginMentionSelection[];
+    /** Items an App's editable draft left in the composer, sent as-is. */
+    extraParts?: UIMessage["parts"];
     widgetModelContext?: WidgetModelContextEntry[];
     /**
      * Resolves `true` once the message was actually dispatched, `false` on
@@ -790,7 +804,7 @@ export interface UseChatSessionReturn {
   systemPrompt: string;
   setSystemPrompt: (prompt: string) => void;
   temperature: number;
-  setTemperature: (temp: number) => void;
+  setTemperature: (temp: number, userInitiated?: boolean) => void;
   /**
    * The effort this chat's selected model runs at, or undefined. Always one
    * of `reasoningEffortLevels` (an effort the model does not support is never
@@ -800,7 +814,7 @@ export interface UseChatSessionReturn {
   /** Levels the selected model supports here; empty hides the control. */
   reasoningEffortLevels: ModelReasoningEffort[];
   /** User pick: applies to the selected model and is remembered for it. */
-  setReasoningEffort: (effort: ModelReasoningEffort | undefined) => void;
+  setReasoningEffort: (effort: ModelReasoningEffort | undefined, userInitiated?: boolean) => void;
   /**
    * Default the effort for `model` (a host's saved effort, a reopened chat's
    * pin). Not remembered: only an explicit pick is.
@@ -926,6 +940,7 @@ export interface UseChatSessionReturn {
        * reasoning effort is seeded for it (not for the pre-restore selection).
        */
       restoredModel?: ModelDefinition;
+      restoredSelection?: RequestedModelSelection | null;
     },
   ) => Promise<void>;
   syncResumedVersion: (version: number | null, sessionId?: string) => void;
@@ -2002,6 +2017,8 @@ export function useChatSession(
     reasoningEffortEnabled = false,
     fixedReasoningEffort,
     pinnedModelProvider,
+    pickedModelSelection,
+    selectionIntent = "picked",
   } = options;
   // Caller-provided (Playground): send local only when it will actually run
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
@@ -2075,6 +2092,13 @@ export function useChatSession(
   // silently receive a message composed for the previous one.
   const hostedTargetKeyRef = useRef(hostedTargetKeyValue);
   hostedTargetKeyRef.current = hostedTargetKeyValue;
+  const [restoredChoice, setRestoredChoice] = useState<{
+    target: string; selection: RequestedModelSelection;
+  } | null>(null);
+  const [pickedTarget, setPickedTarget] = useState<string | null>(null);
+  const effectiveSelectionIntent = hostedScenarioId
+    ? "inherit"
+    : pickedTarget === hostedTargetKeyValue ? "picked" : selectionIntent;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedScenarioSurface = hostedContext?.scenarioSurface;
   // Published-scenario runtime sessions must use the org-aware web engine
@@ -2112,6 +2136,7 @@ export function useChatSession(
     onResetRef.current = onReset;
   }, [onReset]);
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const isMemberActor = useIsMemberActor();
   // Elicitation answers go straight to Convex — the blocked replica isn't
   // addressable from here (see `elicitation-api.ts`).
   const convexClient = useConvex();
@@ -2143,7 +2168,7 @@ export function useChatSession(
   const setSystemPrompt = useCallback((prompt: string) => {
     setSystemPromptState(resolveSystemPrompt(prompt));
   }, []);
-  const [temperature, setTemperature] = useState(initialTemperature);
+  const [temperatureOverride, setTemperatureOverride] = useState<number | undefined>(undefined);
   /**
    * The scenario whose transcript this surface may resume across a refresh, or
    * null for every other surface.
@@ -2505,6 +2530,7 @@ export function useChatSession(
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (noteTurnNoticePart(part, chatSessionIdRef.current)) return;
       if (part && typeof part === "object" && "type" in part && part.type === "data-platform-paid-fallback") {
         const session = chatSessionIdRef.current ?? "new";
         if (!paidFallbackNotices.current.has(session)) {
@@ -2763,18 +2789,6 @@ export function useChatSession(
           useHarnessAgentActivityStore
             .getState()
             .applyBackgroundTask(part.data);
-        } else if (isHistoryNoticeDataPart(part)) {
-          // Earlier replies in this chat are not in the model's context this
-          // turn; the thread says so, once, inline. Recorded for the chat the
-          // turn belongs to, which the part names: a part from an earlier
-          // turn can arrive after a reset, fork or thread switch.
-          const sessionId =
-            part.data.chatSessionId ?? chatSessionIdRef.current;
-          if (sessionId) {
-            useHistoryNoticeStore
-              .getState()
-              .noteEarlierRepliesNotSent(sessionId);
-          }
         } else if (isSandboxNoticeDataPart(part)) {
           // One-time fact about the scenario's ephemeral sandbox. Exactly-once
           // delivery is the BACKEND's job (it marks the notice consumed in the
@@ -2942,6 +2956,7 @@ export function useChatSession(
   // Model selection with persistence
   const {
     selectedModelId,
+    selectedModelSelection: savedLeadSelection,
     setSelectedModelId,
     selectedModelIds,
     setSelectedModelIds: persistSelectedModelIds,
@@ -2962,9 +2977,7 @@ export function useChatSession(
     [savedModelIdsSignature],
   );
 
-  // Build available models — the same composition every picker surface
-  // uses (see `composeAvailableModels`); only the org-config source is
-  // chat-specific (scenario embeds resolve a host-provided project context).
+  // Shared picker composition; scenario embeds use a host-provided org context.
   const outOfCreditsReason = useOutOfCreditsReason();
   const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
@@ -2973,7 +2986,7 @@ export function useChatSession(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
-        isAuthenticated,
+        isAuthenticated: isMemberActor === true,
         isOllamaRunning,
         ollamaModels,
         hasToken,
@@ -2991,7 +3004,7 @@ export function useChatSession(
       isOllamaRunning,
       ollamaModels,
       getAzureBaseUrl,
-      isAuthenticated,
+      isMemberActor,
       customProviders,
       hostedOrgModelConfig,
       outOfCredits,
@@ -3020,24 +3033,13 @@ export function useChatSession(
     [composedModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
   );
 
-  // Which provider the lead id was picked under. The id alone is ambiguous —
-  // see `saveLeadModelProviderHint`. State, not a read inside the memo below:
-  // re-picking the SAME id under a different provider (OpenRouter's
-  // `anthropic/claude-sonnet-5`, then the hosted one) leaves `selectedModelId`
-  // unchanged, so only a state change can re-run resolution. Re-read when the
-  // id changes from elsewhere (another tab); a hint for a different id is
-  // ignored at resolution, so a stale one is harmless.
+  // Compatibility ids can name several providers; keep their hint in state so
+  // a same-id provider change still resolves the intended row.
   const [leadProviderHint, setLeadProviderHint] =
     useState<LeadModelProviderHint | null>(() => loadLeadModelProviderHint());
   useEffect(() => {
     const stored = loadLeadModelProviderHint();
-    // Storage is not the authority when it has nothing for this id. The save
-    // swallows failures (quota exceeded, storage blocked), so after a pick the
-    // in-memory hint can be the only record of it — and replacing it with
-    // storage's null, or with a hint for an older id, would put an OpenRouter
-    // pick straight back on the hosted row (#5472). So: storage wins when it
-    // names this id (another tab picked it), then the state hint when IT names
-    // this id, and storage otherwise.
+    // A failed storage write must not discard the in-memory hint for this id.
     setLeadProviderHint((current) =>
       stored?.modelId === selectedModelId
         ? stored
@@ -3050,7 +3052,18 @@ export function useChatSession(
     () => availableModels.filter((model) => !model.disabled),
     [availableModels],
   );
+  const savedSelection = (restoredChoice?.target === hostedTargetKeyValue
+    ? restoredChoice.selection : undefined) ?? pickedModelSelection ??
+    (!initialModelId ? savedLeadSelection : undefined);
   const selectedModel = useMemo<ModelDefinition>(() => {
+    if (savedSelection) {
+      const candidates = initialModelId
+        ? availableModels.filter((row) => String(row.id) === initialModelId &&
+            (!pinnedModelProvider || row.provider === pinnedModelProvider))
+        : availableModels;
+      return resolveCompareSelectionRow(savedSelection, candidates, hostedOrgModelConfig) ??
+        { ...createLockedInitialModel(savedSelection.modelId), disabledReason: "The saved model or connection is unavailable. Choose a model again." };
+    }
     const fallback =
       (harnessId
         ? harnessDefaultModel(
@@ -3118,7 +3131,11 @@ export function useChatSession(
     requireOrgKeys,
     selectableModels,
     selectedModelId,
+    savedSelection,
+    hostedOrgModelConfig,
   ]);
+  const temperature = temperatureOverride ??
+    (savedSelection?.source !== "legacy" ? savedSelection?.settings?.temperature : undefined) ?? initialTemperature;
 
   // Reasoning effort, per model. The state holds only what this hook session
   // set or was seeded with; anything else reads the remembered pick. Derived
@@ -3136,10 +3153,10 @@ export function useChatSession(
         ? []
         : reasoningEffortOptions(
             model,
-            reasoningEffortRouteForRow(model),
+            reasoningEffortRouteForRow(model, hostedOrgModelConfig),
             reasoningEffortHarness,
           ),
-    [reasoningEffortHarness, reasoningEffortEnabled],
+    [reasoningEffortHarness, reasoningEffortEnabled, hostedOrgModelConfig],
   );
   const reasoningEffortLevels = useMemo(
     () => reasoningEffortLevelsFor(selectedModel),
@@ -3154,8 +3171,10 @@ export function useChatSession(
       ? (fixedReasoningEffort ?? undefined)
       : effortKey in effortByModel
         ? effortByModel[effortKey]
-        : rememberedEffort;
-  // Never report (so never send) a level the model does not offer here.
+        : savedSelection && savedSelection.source !== "legacy"
+          ? savedSelection.settings?.reasoningEffort
+          : rememberedEffort;
+  // The request boundary refuses unsupported saved efforts instead of dropping them.
   const reasoningEffort =
     reasoningEffortEnabled &&
     storedEffort &&
@@ -3163,12 +3182,21 @@ export function useChatSession(
       ? storedEffort
       : undefined;
   const setReasoningEffort = useCallback(
-    (effort: ModelReasoningEffort | undefined) => {
+    (effort: ModelReasoningEffort | undefined, userInitiated = false) => {
+      if (userInitiated) setPickedTarget(hostedTargetKeyValue);
       setEffortByModel((prev) => ({ ...prev, [effortKey]: effort }));
       saveRememberedReasoningEffort(effortKey, effort);
     },
-    [effortKey],
+    [effortKey, hostedTargetKeyValue],
   );
+  const setTemperature = useCallback((value: number, userInitiated = false) => {
+    setTemperatureOverride(value);
+    if (userInitiated) {
+      setPickedTarget(hostedTargetKeyValue);
+      setEffortByModel((prev) => ({ ...prev, [effortKey]: undefined }));
+      saveRememberedReasoningEffort(effortKey, undefined);
+    }
+  }, [effortKey, hostedTargetKeyValue]);
   const setReasoningEffortForModel = useCallback(
     (model: ModelDefinition, effort: ModelReasoningEffort | undefined) => {
       const key = reasoningEffortMemoryKey(model);
@@ -3209,6 +3237,7 @@ export function useChatSession(
     // The organization's AI settings are still loading: the list is a locked
     // placeholder, and its default must not be written back as a choice.
     if (hostedOrgModelConfig?.pending) return false;
+    if (savedSelection) return !selectedModel.disabled;
     // Nothing to offer at all: the placeholder is not a choice either.
     if (selectedModel === NO_ORG_MODEL_PLACEHOLDER) return false;
     if (!selectedModelId) return true;
@@ -3225,6 +3254,7 @@ export function useChatSession(
     isPersistedModelInitialized,
     selectedModel,
     selectedModelId,
+    savedSelection,
   ]);
 
   // Whether the organization's AI key policy leaves this chat no model to
@@ -3268,43 +3298,36 @@ export function useChatSession(
       if (initialModelId) {
         return;
       }
-      // Remember own-provider picks separately from the lead selection so the
-      // out-of-credits → "bring your own key" hand-off can restore the model
-      // the user actually wants instead of re-deriving one from list order.
-      // See `loadLastOwnProviderModelId` / BACK2-628.
-      //
-      // Only a pick from the menu counts. This setter is also how a history
-      // session and an eval hand-off restore *their* model, and letting those
-      // write would mean opening an old thread silently re-aims the next
-      // hand-off at whatever that thread happened to run on. Off by default so
-      // a new caller has to say it meant it.
+      // Only menu picks update the remembered own-provider hand-off.
       if (options?.userInitiated && !isMCPJamProvidedModelMenuItem(model)) {
         saveLastOwnProviderModelId(String(model.id));
       }
-      // Record the provider with the id, before the id, so resolution sees
-      // both together. Every caller here hands over a full definition — the
-      // picker, a history session, an eval hand-off — so each restores the
-      // exact row it means, not the first row that shares its id.
-      const hint = { modelId: String(model.id), provider: model.provider };
+      // Persist the full selection before its compatibility id/provider hint.
+      const saved = loadSelectedModelSelections() ?? [];
+      const existing = saved[0];
+      const selection = options?.selection ??
+        (existing && resolveCompareSelectionRow(existing, [model], hostedOrgModelConfig)
+          ? existing : compareSelectionForRow(model, hostedOrgModelConfig));
+      if (selection && options?.persist === false) {
+        setRestoredChoice({ target: hostedTargetKeyValue, selection });
+        setPickedTarget(hostedTargetKeyValue);
+        return;
+      }
+      setRestoredChoice(null);
+      if (selection) saveSelectedModelSelections(replaceLeadCompareSelection(saved, selection));
+      if (options?.userInitiated || options?.selection) setPickedTarget(hostedTargetKeyValue);
+      const modelId = selection?.modelId ?? String(model.id);
+      const hint = { modelId, provider: model.provider };
       saveLeadModelProviderHint(hint);
       setLeadProviderHint(hint);
-      setSelectedModelId(String(model.id));
+      setSelectedModelId(modelId);
     },
-    [initialModelId, setSelectedModelId],
+    [initialModelId, setSelectedModelId, hostedOrgModelConfig, hostedTargetKeyValue],
   );
 
   const setSelectedModelIds = useCallback(
     (modelIds: string[]) => {
-      // A surface with a pinned model — a hosted scenario or share link,
-      // where `executionConfig.modelId` names the model the scenario owner
-      // chose — is not expressing *this* user's choice. `setSelectedModel`
-      // already no-ops for that reason; this setter has to as well, because
-      // it ends in `saveSelectedModelId` (`use-persisted-model.ts:150-159`)
-      // and so writes the same global lead key. Without the guard, opening a
-      // share link overwrote the model the user had selected in their own
-      // chats — the load-time clobber of BACK2-628, by a second route that
-      // `isSelectedModelResolved` cannot gate (it short-circuits to true
-      // whenever `initialModelId` is set).
+      // A pinned scenario owns its model and cannot update the global picker.
       if (initialModelId) {
         return;
       }
@@ -3339,17 +3362,16 @@ export function useChatSession(
     });
   }, [appState, hostedProjectId, selectedServers]);
   // ── Hidden environment (a Playground chat's plugins) ────────────────────
-  //
-  // Only the web chat route resolves an environment, so a chat carries its
-  // hidden environment only where that route can run the turn. In the hosted
-  // app it always can. On this machine, a turn that has to stay on the local
-  // route — a client run here, a local-only server, a model keyed on this
-  // machine, this machine's browser or shell — runs as the plain client turn
-  // it would have been, and the surface says the plugins were off.
+  // Only the web chat route resolves an environment. On this machine a turn
+  // that must stay local (a client run here, a local-only server, a model
+  // keyed here, this machine's browser or shell) runs without its plugins and
+  // says so, unless they were composed for that client here (venue `local`).
   const hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null =
     !hostedHiddenEnvironment || HOSTED_MODE
       ? null
-      : !explicitRequiresWebChatApi && localHarnessExecution?.requested === true
+      : !explicitRequiresWebChatApi &&
+          localHarnessExecution?.requested === true &&
+          hostedHiddenEnvironment.venue !== "local"
         ? "local_harness"
         : hasLocalOnlySelectedServer
           ? "local_server"
@@ -3404,15 +3426,31 @@ export function useChatSession(
     !hostedScenarioId &&
     localHarnessExecution?.requested === true;
   const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi;
-  const shouldUseOrgAwareChatApi =
-    isHostedTransport ||
-    (selectedModelUsesOrgRuntime &&
-      !localMcpRuntimeRequired &&
-      // Local execution only exists on the local `/api/mcp` route. An
-      // org-runtime model would otherwise route an explicitly local turn to
-      // `/api/web/chat-v2`, which refuses the target — so the ask has to keep
-      // the turn on the route that can honour it.
-      !localHarnessRequested);
+  // An org-runtime model stays on the local `/api/mcp` route in a local build,
+  // like every other model. That route resolves the org connection itself (the
+  // key stays in Convex) and runs tools on this app's own MCP connections, so
+  // a tool result names its server the way the widget looks it up. The web
+  // route keys servers by Convex id — which the local widget endpoints can't
+  // resolve ("Unknown MCP server") — and reconnects every server per turn.
+  const shouldUseOrgAwareChatApi = isHostedTransport;
+  const requestChoice = useMemo(() => chatRequestSelection({
+    intent: effectiveSelectionIntent,
+    selection: savedSelection,
+    model: selectedModel,
+    orgConfig: hostedOrgModelConfig,
+    allowLocal: !shouldUseOrgAwareChatApi,
+    temperature: temperatureOverride,
+    effortLevels: reasoningEffortOptions(selectedModel,
+      reasoningEffortRouteForRow(selectedModel, hostedOrgModelConfig), reasoningEffortHarness),
+    effort: fixedReasoningEffort !== undefined ? fixedReasoningEffort :
+      effortKey in effortByModel ? effortByModel[effortKey] ?? null : undefined,
+  }), [effectiveSelectionIntent, savedSelection, selectedModel, hostedOrgModelConfig,
+    shouldUseOrgAwareChatApi, fixedReasoningEffort, effortKey, effortByModel,
+    temperatureOverride, reasoningEffortHarness]);
+  const requestChoiceRef = useRef(requestChoice);
+  requestChoiceRef.current = requestChoice;
+  const requestEffort = requestChoice.kind === "picked" && requestChoice.selection.source !== "legacy"
+    ? requestChoice.selection.settings?.reasoningEffort : reasoningEffort;
   const traceViewsSupported = HOSTED_MODE
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
@@ -3595,6 +3633,7 @@ export function useChatSession(
   // hosted send carries real ids for ad-hoc/App servers, not display names.
   // Carries the NAMES snapshot the ids were resolved from, so a selection
   // change during the async preflight can't pair stale ids with fresh names.
+  const restoredApprovalSelectionRef = useRef<ApprovalServerSelection | null>(null);
   const resolvedHostedServersRef = useRef<{
     serverIds: string[];
     serverNames: string[];
@@ -3638,11 +3677,10 @@ export function useChatSession(
     //
     // Scoped to the /api/mcp/chat-v2 path (`!shouldUseOrgAwareChatApi`): the
     // local engine only exists on the local server's mcp route (both this
-    // transmission AND the server-side resolver live there). An org-runtime
-    // model routes to /api/web/chat-v2, which has no local engine — so we send
-    // nothing local there (no stray consent header on the web route) and that
-    // turn's bash resolves cloud, as it must. Local engine + org model is a
-    // deliberate non-combo in v1.
+    // transmission AND the server-side resolver live there). A turn on
+    // /api/web/chat-v2 has no local engine — so we send nothing local there
+    // (no stray consent header on the web route) and that turn's bash
+    // resolves cloud, as it must.
     const sendLocalEngine =
       !shouldUseOrgAwareChatApi &&
       resolvedLocalEngine &&
@@ -3796,6 +3834,7 @@ export function useChatSession(
       api: chatApi,
       fetch: chatFetch,
       body: () => {
+        if (requestChoiceRef.current.kind === "blocked") throw new Error(requestChoiceRef.current.reason);
         // Capture the task scope this turn is SUBMITTED under, next to
         // `buildHostedBody` (which hard-requires the project id): hosted
         // turns scope created tasks by the turn's project, non-hosted turns
@@ -3821,6 +3860,7 @@ export function useChatSession(
             : undefined;
         return {
           model: selectedModel,
+          ...(requestChoice.kind === "picked" ? { modelSelection: requestChoice.selection } : {}),
           ...(shouldSendClientApiKey ? { apiKey } : {}),
           // Always send the user's slider value. The server's `prepareChatV2`
           // already drops temperature for GPT-5 before the LLM call (its API
@@ -3830,7 +3870,7 @@ export function useChatSession(
           // helper's 0.7 fallback regardless of the slider.
           // An effort and a temperature are mutually exclusive: the routes
           // refuse (or drop) a temperature under an effort, so send only one.
-          ...(reasoningEffort ? { reasoningEffort } : { temperature }),
+          ...(requestChoice.kind === "inherit" ? {} : requestEffort ? { reasoningEffort: requestEffort } : { temperature }),
           systemPrompt,
           ...(shouldUseOrgAwareChatApi
             ? buildHostedBody()
@@ -4021,6 +4061,8 @@ export function useChatSession(
     });
   }, [
     selectedModel,
+    requestChoice,
+    requestEffort,
     getToken,
     getCustomProviderByName,
     customProviders,
@@ -4349,15 +4391,32 @@ export function useChatSession(
   // UI/page tools are client-fulfilled. Their approval response must be
   // routed through the shared defer/fulfill handler; a raw AI SDK approval
   // response would leave a no-execute page tool without a result.
-  const addToolApprovalResponse = useMemo(
-    () =>
-      createUiAwareApprovalResponseHandler({
-        getMessages: () => messagesRef.current,
-        addToolApprovalResponse: sdkAddToolApprovalResponse,
-        addToolOutput,
-      }),
-    [sdkAddToolApprovalResponse, addToolOutput],
-  );
+  const addToolApprovalResponse = useMemo(() => {
+    const respond = createUiAwareApprovalResponseHandler({
+      getMessages: () => messagesRef.current,
+      addToolApprovalResponse: sdkAddToolApprovalResponse,
+      addToolOutput,
+    });
+    return async (response: Parameters<typeof respond>[0]) => {
+      const selection = restoredApprovalSelectionRef.current;
+      if (reasoningEffortHarness && isHostedTransport && hostedEnsureServerIds &&
+          selection?.sessionId === chatSessionIdRef.current) {
+        try {
+          resolvedHostedServersRef.current = await prepareRestoredHarnessApproval({
+            selection,
+            targetKey: hostedTargetKeyRef.current,
+            currentSessionId: () => chatSessionIdRef.current,
+            currentTargetKey: () => hostedTargetKeyRef.current,
+            resolve: hostedEnsureServerIds,
+          });
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Could not prepare the saved servers for this approval. Try approving again.");
+          return;
+        }
+      }
+      return respond(response);
+    };
+  }, [sdkAddToolApprovalResponse, addToolOutput, reasoningEffortHarness, isHostedTransport, hostedEnsureServerIds]);
 
   useEffect(() => {
     const sessionId = chatSessionIdRef.current;
@@ -4902,6 +4961,7 @@ export function useChatSession(
       pluginMessage?: PluginMessageIntent;
       isCurrent?: () => boolean;
       pluginMentions?: PluginMentionSelection[];
+      extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
     }) => {
       const {
@@ -4912,6 +4972,7 @@ export function useChatSession(
         pluginMessage,
         isCurrent,
         pluginMentions,
+        extraParts,
       } = options;
 
       // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
@@ -4931,6 +4992,10 @@ export function useChatSession(
       const orgPolicy = orgPolicySendRef.current;
       if (orgPolicy.blocked) {
         toast.error(orgPolicySendRefusal(orgPolicy.model, orgPolicy.pending));
+        return Promise.resolve(false);
+      }
+      if (requestChoiceRef.current.kind === "blocked") {
+        toast.error(requestChoiceRef.current.reason);
         return Promise.resolve(false);
       }
       chatToolCallRequestIdsRef.current.clear();
@@ -5056,12 +5121,13 @@ export function useChatSession(
               { parts: pluginMessageParts(pluginMessage.params), ...extra },
               { body: { pluginMessage } },
             );
-          } else if (pluginMentions?.length) {
+          } else if (pluginMentions?.length || extraParts?.length) {
             baseSendMessage({
               parts: [
-                ...buildMentionContextMessages(pluginMentions).flatMap(
+                ...buildMentionContextMessages(pluginMentions ?? []).flatMap(
                   (message) => message.parts,
                 ),
+                ...(extraParts ?? []),
                 { type: "text", text },
                 ...(files ?? []),
               ],
@@ -5541,6 +5607,7 @@ export function useChatSession(
         shouldRestoreResumeConfig?: () => boolean;
         shouldApply?: () => boolean;
         restoredModel?: ModelDefinition;
+        restoredSelection?: RequestedModelSelection | null;
       },
     ) => {
       // The resume pointer is only a destination hint. Read the existing
@@ -5620,16 +5687,16 @@ export function useChatSession(
         if (session.resumeConfig?.systemPrompt !== undefined) {
           setSystemPrompt(session.resumeConfig.systemPrompt);
         }
-        if (session.resumeConfig?.temperature !== undefined) {
-          setTemperature(session.resumeConfig.temperature);
-        }
+        const selectionSettings = options?.restoredSelection?.source !== "legacy"
+          ? options?.restoredSelection?.settings : undefined;
+        setTemperatureOverride(selectionSettings?.temperature ?? session.resumeConfig?.temperature);
         {
           // The chat pinned its effort: a reopened chat keeps it (for the
           // model the session restores; a level it does not offer is not sent).
           // One that pinned none runs at the model's default, not at whatever
           // effort was last remembered for that model. Tracked so a new chat
           // does not inherit it (see `resetChat`).
-          const pinned = session.resumeConfig?.reasoningEffort;
+          const pinned = selectionSettings?.reasoningEffort ?? session.resumeConfig?.reasoningEffort;
           const restoredEffort =
             typeof pinned === "string" &&
             (MODEL_REASONING_EFFORTS as readonly string[]).includes(pinned)
@@ -5656,6 +5723,9 @@ export function useChatSession(
         return;
       }
 
+      restoredApprovalSelectionRef.current = Array.isArray(session.resumeConfig?.selectedServers)
+        ? { sessionId: session.chatSessionId, serverNames: [...session.resumeConfig.selectedServers] }
+        : null;
       skipNextForkDetectionRef.current = true;
       rewindRef.current = null;
       await queueSessionHydration({
@@ -5696,7 +5766,7 @@ export function useChatSession(
 
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
-    setTemperature(executionTemperature ?? 0.7);
+    setTemperatureOverride(executionTemperature);
   }, [isExecutionConfigControlled, executionTemperature]);
 
   useEffect(() => {
@@ -6051,15 +6121,10 @@ export function useChatSession(
     requiresAuthForChat && isAuthenticated && !authHeaders;
   const orgOrHostedContextRequired =
     HOSTED_MODE || hostedRequiresWebChatApi || selectedModelUsesOrgRuntime;
-  const selectedServerIdsRequired =
-    HOSTED_MODE ||
-    hostedRequiresWebChatApi ||
-    (selectedModelUsesOrgRuntime &&
-      !localMcpRuntimeRequired &&
-      // Same carve-out as the route choice above, and for a sharper reason:
-      // this one feeds `hostedContextNotReady`, so getting it wrong leaves
-      // submit disabled forever with no way for the user to find out why.
-      !localHarnessRequested);
+  // Only the web route needs a Convex id per selected server. An org-runtime
+  // model in a local build runs on the local route by server name, so it needs
+  // the project (above) but never waits on ids.
+  const selectedServerIdsRequired = isHostedTransport;
   // When the surface provides a send-time resolver (`ensureServerIds`), the
   // preflight resolves ad-hoc/App server names → Convex ids at send, so a
   // pre-resolved id per selected server is NOT required up front — requiring
@@ -6148,6 +6213,7 @@ export function useChatSession(
     isAuthLoading ||
     authHeadersNotReady ||
     hostedContextNotReady ||
+    requestChoice.kind === "blocked" ||
     isNoRunnableHarnessModel(selectedModel) ||
     // The organization's AI key policy leaves no model to send to.
     orgPolicyBlocksSend;

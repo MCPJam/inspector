@@ -94,14 +94,6 @@ function isHealthPath(path: string): boolean {
   return normalized.endsWith("/health") || normalized.endsWith("/healthz");
 }
 
-// Inbound `x-request-id` is reflected in the response and stored in every
-// emitted log event. Without a guard, an attacker could forge log lines with
-// embedded newlines/control chars, blow up logging-backend cardinality with
-// arbitrarily long values, or inject characters that break downstream queries.
-// Accept the inbound value only if it matches a conservative shape; otherwise
-// mint a fresh UUID.
-const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
-
 /**
  * Make a caller-supplied user-agent safe to put in a log row.
  *
@@ -145,11 +137,7 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
 
   const startedAt = Date.now();
   const userAgent = sanitizeUserAgent(c.req.header("user-agent"));
-  const inboundRequestId = c.req.header("x-request-id");
-  const requestId =
-    inboundRequestId && REQUEST_ID_PATTERN.test(inboundRequestId)
-      ? inboundRequestId
-      : randomUUID();
+  const requestId = randomUUID();
   c.header("x-request-id", requestId);
 
   const baseContext: RequestLogContext = {

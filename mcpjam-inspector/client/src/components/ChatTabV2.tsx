@@ -8,6 +8,7 @@ import {
   compareSelectionForRow,
   mergePickedRows,
   resolveCompareCards,
+  resolveCompareSelectionRow,
   setCompareCardEffort,
   MAX_COMPARE_SELECTIONS,
   type CompareCard,
@@ -23,13 +24,17 @@ import {
 } from "react";
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   canManageOrgCredits,
   useOrganizationQueries,
 } from "@/hooks/useOrganizations";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
+import {
+  OrgAiRefusalHandoffProvider,
+  orgAiRefusalHandoff,
+} from "@/contexts/org-ai-refusal-context";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
@@ -245,7 +250,7 @@ export function ChatTabV2({
   onEvalChatHandoffConsumed,
   renderAssistantTurnActions,
 }: ChatTabProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useInspectorAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
@@ -390,6 +395,15 @@ export function ChatTabV2({
   // The model picker's "Your providers" footer points at the org whose keys back
   // this chat, so hosted surfaces (no org page to reach) get no footer.
   const manageOrgProviders = useOrgModelsHandoff(modelConfigOrganizationId);
+  // A hosted page's reader is a visitor: no organization configuration.
+  const refusalHandoff = useMemo(
+    () =>
+      orgAiRefusalHandoff({
+        visitor: Boolean(hostedContext?.projectId),
+        onManageOrgProviders: manageOrgProviders,
+      }),
+    [hostedContext?.projectId, manageOrgProviders],
+  );
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
@@ -500,6 +514,7 @@ export function ChatTabV2({
     reasoningEffortEnabled: !hostedContext?.scenarioId,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
+    selectionIntent: hostedContext?.hostId || hostedContext?.executionTarget ? "inherit" : "picked",
     hostedContext: {
       ...hostedContext,
       projectId: effectiveHostedProjectId,
@@ -807,13 +822,12 @@ export function ChatTabV2({
         turnTraces?: ChatHistoryTurnTrace[];
       }
     ) => {
-      // Resolved BEFORE the load so the pinned effort seeds for the model the
-      // session restores, not the one the picker is on now.
+      // Resolve history before seeding its saved effort.
       const restoredModel =
         ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
-          ? // By `modelSource` as well as id: an OpenRouter id can also be a
-            // hosted row, and this thread must reopen on the one it ran on (#5472).
-            resolveRestoredModel(
+          ? detail.modelSelection
+            ? resolveCompareSelectionRow(detail.modelSelection, availableModels, hostedOrgModelConfig)
+            : resolveRestoredModel(
               availableModels,
               detail.modelId,
               detail.modelSource
@@ -832,13 +846,14 @@ export function ChatTabV2({
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
           restoredModel,
+          restoredSelection: detail.modelSelection,
         }
       );
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
-      if (restoredModel) {
-        setSelectedModel(restoredModel);
+      if ((options?.shouldRestoreComposerState?.() ?? true) && (restoredModel || detail.modelSelection)) {
+        setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection, persist: false });
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -852,6 +867,8 @@ export function ChatTabV2({
     },
     [
       availableModels,
+      hostedOrgModelConfig,
+      selectedModel,
       loadChatSession,
       markHistorySessionRead,
       setSelectedModel,
@@ -1290,10 +1307,11 @@ export function ChatTabV2({
   const collapseCompareSelectionsTo = useCallback(
     (model: ModelDefinition) => {
       if (!compareSelections) return;
-      const selection = compareSelectionForRow(model, hostedOrgModelConfig);
+      const selection = compareCards?.find((card) => modelRowKey(card.model) === modelRowKey(model))?.selection ??
+        compareSelectionForRow(model, hostedOrgModelConfig);
       setCompareSelections(selection ? [selection] : []);
     },
-    [compareSelections, hostedOrgModelConfig, setCompareSelections]
+    [compareCards, compareSelections, hostedOrgModelConfig, setCompareSelections]
   );
   // What the grid renders: the v2 cards, else one card per v1 model (keyed by
   // its id, no per-card effort — exactly the v1 behaviour).
@@ -2403,7 +2421,7 @@ export function ChatTabV2({
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
-    onTemperatureChange: setTemperature,
+    onTemperatureChange: (value: number) => setTemperature(value, true),
     // In compare mode the chip edits the lead card's effort (each card has
     // its own chip too); before the v2 migration ran, cards carry no effort,
     // so the chip is withheld rather than shown doing nothing.
@@ -2413,7 +2431,7 @@ export function ChatTabV2({
           reasoningEffortLevels,
           onReasoningEffortChange: hostedContext?.scenarioId
             ? undefined
-            : setReasoningEffort,
+            : (effort: ModelReasoningEffort | undefined) => setReasoningEffort(effort, true),
         }
       : leadCompareCard?.editableSelection
       ? {
@@ -2485,7 +2503,7 @@ export function ChatTabV2({
     hostedScenarioId,
   });
 
-  return (
+  const surface = (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
       <ResizablePanelGroup
         direction="horizontal"
@@ -2735,6 +2753,8 @@ export function ChatTabV2({
                           compareId={key}
                           compareLabel={label}
                           model={model}
+                          selection={card?.selection}
+                          hostedOrgModelConfig={hostedOrgModelConfig}
                           reasoningEffort={card?.reasoningEffort}
                           effort={
                             card?.editableSelection
@@ -3324,5 +3344,13 @@ export function ChatTabV2({
         />
       )}
     </div>
+  );
+
+  // Parts of the thread that show a policy refusal (the web search tool
+  // card) read who is reading it, and the fix, from here.
+  return (
+    <OrgAiRefusalHandoffProvider value={refusalHandoff}>
+      {surface}
+    </OrgAiRefusalHandoffProvider>
   );
 }

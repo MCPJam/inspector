@@ -261,6 +261,25 @@ describe("runHarnessTurn on the organization's own key", () => {
       await result.response!.text();
       return events;
     }
+    it("delivers the recorded refusal code in the browser stream", async () => {
+      harnessState.streamParts = [{ type: "start-step" }];
+      harnessState.streamError = new Error("Model access refused");
+      harnessState.recordedRefusal = {
+        reason: "byok_credential_rejected",
+        at: Date.now() + 60_000,
+      };
+      const result = await runHarnessTurn(options(), "ui");
+      const body = await result.response!.text();
+      const chunks = body.split("\n")
+        .filter((line) => line.startsWith("data: {") )
+        .map((line) => JSON.parse(line.slice(6)));
+      const error = chunks.find((chunk) => chunk.type === "error");
+      expect(JSON.parse(error.errorText)).toEqual({
+        message: "Model access refused",
+        code: "byok_credential_rejected",
+      });
+    });
+
     // What the hosted Claude Code bridge sends for a model call the proxy
     // answered with its refusal status: a typed provider error carrying only
     // the status — the reason never reaches the sandbox runtime.

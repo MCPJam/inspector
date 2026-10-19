@@ -86,6 +86,7 @@ export interface RunAssistantTurnOptions {
   reasoningEffort?: ModelReasoningEffort;
   /** The saved selection; an org one runs a harness on the org's own key. */
   modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
 
   selectedServerIds?: string[];
   /**
@@ -496,6 +497,7 @@ function buildHandlerOptions(
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
       : {}),
+    modelSelectionOrigin: opts.modelSelectionOrigin,
     ...(opts.reasoningEffort !== undefined
       ? { reasoningEffort: opts.reasoningEffort }
       : {}),
@@ -509,10 +511,7 @@ function buildHandlerOptions(
     ...(opts.selectedServerIds
       ? { selectedServers: opts.selectedServerIds }
       : {}),
-    // Carry the harness selector through to the handler — runHarnessTurn reads it
-    // off MCPJamHandlerOptions and now REQUIRES it. Without this, eval/synthetic/
-    // unified harness turns reach runHarnessTurn with harness=undefined (the old
-    // `?? "claude-code"` default silently mis-ran a codex eval as claude-code).
+    // Pass the verified harness selector through to its driver.
     ...(opts.harness ? { harness: opts.harness } : {}),
     ...(opts.harnessExecutionTarget ? { harnessExecutionTarget: opts.harnessExecutionTarget } : {}),
     // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
@@ -714,19 +713,10 @@ export async function runAssistantTurn(
         : {}),
     });
     if (effortRefusal) {
-      throw new Error(
-        `This host runs the ${opts.harness} harness, which isn't available: ` +
-          `${effortRefusal}.`,
-      );
+      throw new Error(effortRefusal);
     }
     if (refusal) {
-      // Wrapped in the SAME sentence the chat routes build around a pre-flight
-      // refusal, so a reader who meets this in a run log and one who meets it in
-      // a 503 are reading the same thing.
-      throw new Error(
-        `This host runs the ${opts.harness} harness, which isn't available: ` +
-          `${refusal.reason}.`,
-      );
+      throw new Error(refusal.reason);
     }
     if (warning) {
       logger.warn("[assistant-turn] running an unverified harness model", {

@@ -103,8 +103,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "Model context isn't available for this App (the client has it turned off, or the App has closed).",
   INSTANCE_CONTEXT_SEQUENCE_DENIED:
     "A model-context update arrived out of order and was ignored. Send updates one at a time.",
-  INSTANCE_CONTEXT_REMOVAL_STALE:
-    "That context item already changed, so it couldn't be removed. Try again with the current context.",
+  INSTANCE_CONTEXT_REMOVAL_INVALID:
+    "That context removal didn't match this App's current context, so nothing was removed. Remove it again from the composer.",
   INSTANCE_CONTEXT_TOO_LARGE: "The App's model context is too large.",
   INSTANCE_CONTEXT_HELD:
     "You removed this App's context from the chat, so context the App sends on its own isn't attached. Use the App (for example its attach button) to attach it again.",
@@ -118,7 +118,7 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "This App was opened with different settings before. Close it and open it again.",
   // Tool calls
   INVOCATION_OUTCOME_UNKNOWN:
-    "The tool call reached the server but its result was lost, so MCPJam won't retry it automatically (it may have run). Check the server before trying again.",
+    "MCPJam couldn't confirm the tool call's outcome. It may have run, so it won't be retried automatically. Check the server before trying again.",
   INVOCATION_DENIED: "The tool call isn't allowed for this App.",
   INVOCATION_ID_REUSED:
     "The App reused a request ID for a different tool call.",
@@ -169,6 +169,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   PLUGIN_FORM_UNSUPPORTED:
     "This form uses a schema feature the client doesn't support.",
   PLUGIN_FORM_UNAVAILABLE: "The form couldn't be loaded.",
+  PLUGIN_FORM_SCHEMA_MISSING:
+    "This form keeps its fields in _meta[\"openai/elicitation\"].requestedSchema, but that schema is missing or isn't an object schema, so MCPJam refused the form rather than show it empty. Send the full form schema there (OpenAI's requestFormInput does).",
   PLUGIN_FORM_TOO_LARGE:
     "The form is too large (too many fields, options or bytes).",
   PLUGIN_FORM_PATTERN_UNSUPPORTED:

@@ -1,5 +1,69 @@
 # `@mcpjam/sdk` changelog
 
+## 9.3.1
+
+### Patch Changes
+
+- [#6385](https://github.com/MCPJam/inspector/pull/6385) [`2dfc194`](https://github.com/MCPJam/inspector/commit/2dfc19414efdda058c675fe7bc634c0108aa2096) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Show a clear generation failure and request ID when a model response cannot be validated.
+
+- [#6420](https://github.com/MCPJam/inspector/pull/6420) [`5777933`](https://github.com/MCPJam/inspector/commit/5777933e2985c3ee60a6723705eabc99e49bafdb) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The Codex client template now reports a ChatGPT desktop build (26.928.20710) as its MCP Apps `hostInfo`, so Apps that require OpenAI's minimum desktop version for the DevDay 2026 extensions (such as Bits & Bolts) run instead of asking for an update.
+
+- [#6405](https://github.com/MCPJam/inspector/pull/6405) [`e62d4d1`](https://github.com/MCPJam/inspector/commit/e62d4d18cf76c23d052eb85e95e4ca953578b297) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Publish hosted MCPJam's egress addresses for IP allowlists, at docs.mcpjam.com/hosted/network and as JSON at app.mcpjam.com/egress-ips.json, and point the "Proxy rejected" guidance to them.
+
+- [#6472](https://github.com/MCPJam/inspector/pull/6472) [`5dd89b5`](https://github.com/MCPJam/inspector/commit/5dd89b54aeae778e45baa79715a7fb581bc11285) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Release the latest Inspector, CLI, and SDK improvements together.
+
+- [#6369](https://github.com/MCPJam/inspector/pull/6369) [`10969cd`](https://github.com/MCPJam/inspector/commit/10969cd9c388d1f48f0503ab4c1289d365855da9) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Carry hosted lease selections for requested-versus-executed model evidence.
+
+- [#6366](https://github.com/MCPJam/inspector/pull/6366) [`6c082bf`](https://github.com/MCPJam/inspector/commit/6c082bf02c80be4474bc533f322f85e7001a5602) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Label AI requests with their client version and surface, and carry the platform agent's hosted model selection.
+
+- [#6417](https://github.com/MCPJam/inspector/pull/6417) [`13d207f`](https://github.com/MCPJam/inspector/commit/13d207f9d9bd4e67f817796d95da6dc723e3c63f) Thanks [@chelojimenez](https://github.com/chelojimenez)! - ChatGPT and Codex clients with the Display modes extension on follow OpenAI's display-mode rules for the Apps plugin extensions host (entrypoint Apps and the model-invoked Apps the extension workspace owns): an App whose resource declares both inline and fullscreen starts fullscreen, a preference picks the starting mode without narrowing the others, and an entrypoint App that says at initialization it can't show fullscreen is refused with a Logs entry instead of being forced fullscreen. Other MCP Apps keep the existing display-mode negotiation.
+
+- [#6415](https://github.com/MCPJam/inspector/pull/6415) [`acc9ddc`](https://github.com/MCPJam/inspector/commit/acc9ddc39ce33a2cce7cef81bf3a5d0c26fbe936) Thanks [@chelojimenez](https://github.com/chelojimenez)! - OpenAI extended forms work over MCP 2026-07-28 (MRTR): the ChatGPT and Codex clients advertise `extensions["openai/elicitation"]` alongside form elicitation, and a form's schema is read from `_meta["openai/elicitation"].requestedSchema` everywhere it is shown, bound and validated. A form whose extension schema is missing or invalid is refused with a described error instead of appearing empty.
+  
+  SDK: `setMrtrInputCollector` takes `extensionClaims` and `selectFormSchema`, and `runInputRequiredOperation` takes `selectFormSchema`, so an answer collected in-process is validated against the schema the form showed. A collector's extension claims are withheld on 2026-07-28 connections that don't drive MRTR rounds (`supportsMrtr: false`).
+
+- [#6364](https://github.com/MCPJam/inspector/pull/6364) [`3fee6ab`](https://github.com/MCPJam/inspector/commit/3fee6ab3931a5ff47e3f4ec95fd1d08c5aa998c0) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Preserve validated selection origins and own-key markers when reading execution records.
+
+- [#6430](https://github.com/MCPJam/inspector/pull/6430) [`297627a`](https://github.com/MCPJam/inspector/commit/297627a1ec742e1b25db90c64c29ace34a18a311) Thanks [@ZeHuari](https://github.com/ZeHuari)! - Name the MCP server in refused-connection and HTTP 404 connect errors, so a hosted chat or reconnect against a stopped server reports the server as the problem instead of an MCPJam outage.
+
+- [#6396](https://github.com/MCPJam/inspector/pull/6396) [`de063f1`](https://github.com/MCPJam/inspector/commit/de063f1691e9abaed6fa7dfaa9cec856224e50f0) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Restore reliable identity, error grouping, and delivery diagnostics while preserving organization telemetry restrictions and opt-outs.
+
+- [#6421](https://github.com/MCPJam/inspector/pull/6421) [`061e14f`](https://github.com/MCPJam/inspector/commit/061e14f6b51d29fdcb4d0e1f1181916dea3a5068) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Group SDK diagnostics by Sentry's default grouping and approved error codes instead of build-specific file and line positions, and keep verified SDK file and line locations when the SDK runs on Windows.
+
+- [#6340](https://github.com/MCPJam/inspector/pull/6340) [`f12d220`](https://github.com/MCPJam/inspector/commit/f12d22010b1e5ccfdefba798fcf29b8ee4c9f717) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Restrict SDK analytics to bounded run counts and honor telemetry opt-outs again before network delivery.
+
+- [#6332](https://github.com/MCPJam/inspector/pull/6332) [`5ebe792`](https://github.com/MCPJam/inspector/commit/5ebe7925319d9b7e498d64dc41f0f3b801d94eca) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add a reconstructive telemetry boundary for first-party clients.
+
+- [#6340](https://github.com/MCPJam/inspector/pull/6340) [`f12d220`](https://github.com/MCPJam/inspector/commit/f12d22010b1e5ccfdefba798fcf29b8ee4c9f717) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Keep verified SDK file and line locations in packaged diagnostics without sending function names or customer paths.
+
+## 9.3.0
+
+### Minor Changes
+
+- [#6120](https://github.com/MCPJam/inspector/pull/6120) [`2988f2c`](https://github.com/MCPJam/inspector/commit/2988f2cce072de6a7218bfc53900a40a1b74da7a) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - The default eval pass threshold is now 70% instead of 100%. A suite with no threshold of its own passes a run when at least 70% of it passes. The new `DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT` export is `70` (`LEGACY_SUITE_WIDE_THRESHOLD_PERCENT` is kept as a deprecated alias), so the reporter's local fallback, `cloud eval export` (`passThreshold: 0.7`) and the inspector's rerun and replay follow it. Suites with a threshold you set keep it, and past runs keep the result they were judged at.
+
+- [#6199](https://github.com/MCPJam/inspector/pull/6199) [`f123d6e`](https://github.com/MCPJam/inspector/commit/f123d6ebeae3e88f4a42069bbff94b5d7da2b31d) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Recognize the refusal codes MCPJam sends when an organization requires its own provider keys for AI features. The SDK exports the codes and how each is handled (`AI_EXECUTION_REFUSAL_CODES`, `AI_REUSED_REFUSAL_CODES`, `AI_REFUSAL_CODES`, `AI_CONFIGURATION_REFUSAL_CODES`, `AI_RETRYABLE_REFUSAL_CODES`, `aiRefusalClass`, `recognizedAiRefusalCode`, `isAiExecutionRefusalCode` and the `AiRefusalCode`, `AiExecutionRefusalCode` and `AiRefusalClass` types), and its error describer maps them to new `org/*` catalog entries (new `orgPolicySlugForCode` export). Directory-readiness observations accept the `platform_cap_reached` and `ai_unavailable` reasons, and `mcpjam eval run` exits 2 for a configuration refusal and 4 for a temporary one.
+
+- [#6247](https://github.com/MCPJam/inspector/pull/6247) [`7f179d5`](https://github.com/MCPJam/inspector/commit/7f179d552aaa1b5871c81f02c1f8a72544a99303) Thanks [@chelojimenez](https://github.com/chelojimenez)! - When an organization requires its own provider keys for AI features, the inspector server reads that policy before it routes a model: MCPJam-provided models, personal keys, keys sent with the request and local runtimes are refused with `org_keys_required`, and a policy that can't be read refuses the run instead of running it. Launch refusals now answer with their code and every listed problem rather than a server error. The SDK's model lease classifier reports these refusals as `policy` (never as a credential problem), and suite-file runs stop with the new `AI_POLICY_REFUSED` error code and `orgPolicy` refusal.
+
+- [#6132](https://github.com/MCPJam/inspector/pull/6132) [`6574269`](https://github.com/MCPJam/inspector/commit/6574269ad7ca942e03049e293811bbfb79c436c9) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Clients can now say whether the MCP App iframe shares the sandbox page's origin (`mcpProfile.apps.sandbox.sameOriginAppIframe`). When it is `false`, every App mounts with `srcdoc` and no `allow-same-origin`, so it runs in an opaque origin where storage throws and fetches send `Origin: null`. Claude, Claude Desktop, ChatGPT and Codex are measured as same-origin (`true`). Copilot is measured as not same-origin (`false`), so Apps in MCPJam's Copilot client now see storage throw and `Origin: null`, like they do in real Copilot. The setting is a toggle in the Clients tab and a "Same-origin app iframe" yes/no row on caniuse.
+
+### Patch Changes
+
+- [#6236](https://github.com/MCPJam/inspector/pull/6236) [`b552b02`](https://github.com/MCPJam/inspector/commit/b552b02828896ed660130bdb6ea87c5ad6b9a9d8) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Host templates now match how real clients treat `esm.sh` when an MCP App loads from it without declaring it. Claude and Claude Desktop no longer allow it, because real Claude blocks those loads. ChatGPT and Codex now allow it by default, because real ChatGPT and Codex load it. Clients already set up keep their old list until the user clicks "Update to latest".
+
+- [#6275](https://github.com/MCPJam/inspector/pull/6275) [`cd3e25a`](https://github.com/MCPJam/inspector/commit/cd3e25a7add70950f4479614ef7e5548bfef55bc) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - The bundled Codex and Copilot host templates now match the 2026-10-12 probes. Both connect at protocol 2026-07-28. Codex sends `openai-mcp (Codex)` 1.0.0, follows `nextCursor`, allows clipboard write and offers form elicitation only. Copilot sends `Sydney` 1.0.0 with hostInfo `M365Copilot` 1.0.0, allows clipboard write and advertises serverResources, logging and downloadFile.
+
+- [#6315](https://github.com/MCPJam/inspector/pull/6315) [`39152d5`](https://github.com/MCPJam/inspector/commit/39152d580a5c35831fc22c9f8b3680ebaa007244) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Use GPT-5.6 Luna as the default model for Copilot client templates.
+
+- [#6154](https://github.com/MCPJam/inspector/pull/6154) [`06e4846`](https://github.com/MCPJam/inspector/commit/06e48462f9402c3b841465cb2161aa136a1812bc) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Release the latest Inspector, CLI, and SDK improvements together.
+
+- [#6130](https://github.com/MCPJam/inspector/pull/6130) [`c059870`](https://github.com/MCPJam/inspector/commit/c059870df2f174c9103f475898e0c63cd6d98c0a) Thanks [@chelojimenez](https://github.com/chelojimenez)! - New MCPJam clients now default to Claude Haiku 5.5 (`anthropic/claude-haiku-5.5`) instead of Claude Haiku 4.5.
+
+- [#6175](https://github.com/MCPJam/inspector/pull/6175) [`970b8d4`](https://github.com/MCPJam/inspector/commit/970b8d4fabd081444bb10f4b5fca3b54235d352c) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Organization → AI providers gains a "Default AI model" card under the AI keys card. While "Use your keys for all AI features" is on, work nobody picks a model for (insights and findings, generation, typed decisions, simulated users) runs on this organization model; until an admin chooses one, that work is unavailable. Admins choose it from the organization's eligible providers that can run it, can apply MCPJam's suggestion with one click (it is never applied on its own), test it, and clear it; each row shows the last test's result and time. Like the switch, it is available on Enterprise plans, and a model saved before an organization left Enterprise stays visible and can be cleared. Members see it read-only. Model pickers never use it, and each suite still chooses its own judge. The AI keys card's feature coverage now says when a feature is waiting for the default model, and the billing page, error-code docs and SDK error hints say that Swarm and other background AI run on it.
+
+- [#6169](https://github.com/MCPJam/inspector/pull/6169) [`877ea00`](https://github.com/MCPJam/inspector/commit/877ea00012a2a2cb8aa42acd6ebe8fc76a23ecac) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Preserve organization-key policy refusals as unavailable analysis in readiness results.
+
 ## 9.2.0
 
 ### Minor Changes

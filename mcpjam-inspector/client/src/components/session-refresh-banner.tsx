@@ -1,4 +1,4 @@
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { CircleAlert, Loader2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
@@ -25,7 +25,7 @@ export function SessionRefreshBanner({
 }) {
   const status = useSessionRefreshStore((s) => s.status);
   const kind = useSessionRefreshStore((s) => s.kind);
-  const { signIn } = useAuth();
+  const { signIn } = useInspectorAuth();
 
   if (status === "idle" || !kind) return null;
 

@@ -352,9 +352,7 @@ describe("resolveTurnRuntime — runtime shape", () => {
         baseArgs({ modelDefinition: LOCAL_MODEL, harness: "claude-code" }),
       ),
     ).rejects.toThrow(
-      "This host runs the claude-code harness, which isn't available: the " +
-        "Claude Code harness only runs MCPJam-provided models — pick one on " +
-        "this host to run the real runtime.",
+      "The Claude Code client needs a supported model and an eligible Anthropic connection. Choose another model or contact your organization admin.",
     );
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
   });

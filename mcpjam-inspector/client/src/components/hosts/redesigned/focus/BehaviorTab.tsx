@@ -229,16 +229,16 @@ export function BehaviorTab({
       ),
     [catalogModels, draft.harness, requireOrgKeys],
   );
-  // With a saved selection, the row it names (an org OpenRouter row and the
-  // hosted row of the same id are different rows); else the legacy id.
+  // The row a saved selection names (under the policy, only that exact row).
   const resolvedModelRow = useMemo(
     () =>
       findModelForStoredChoice(
         { modelId: draft.modelId, selection: draft.modelSelection },
         availableModels,
         undefined,
+        { exactSelection: requireOrgKeys },
       ),
-    [availableModels, draft.modelId, draft.modelSelection],
+    [availableModels, draft.modelId, draft.modelSelection, requireOrgKeys],
   );
   const currentModel = useMemo<ModelDefinition>(() => {
     const match = resolvedModelRow;
@@ -862,16 +862,34 @@ export function BehaviorTab({
       </FocusBlock>
 
       <FocusBlock title={fSystemPrompt.label}>
-        <Textarea
-          rows={10}
-          value={draft.systemPrompt}
-          onChange={(e) => update({ systemPrompt: e.target.value })}
-          placeholder="You are a helpful assistant…"
-          readOnly={readOnly}
-          className={
-            issues.has("systemPrompt") ? "border-amber-500/60" : undefined
-          }
-        />
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">Not editable</p>
+          <Textarea
+            rows={2}
+            disabled
+            value={
+              draft.systemPrompt
+                ? draft.systemPromptDefault?.source
+                  ? "Default system prompt applied"
+                  : "Custom system prompt applied"
+                : "No system prompt applied"
+            }
+            className="resize-none italic text-muted-foreground"
+          />
+          <p className="text-xs text-muted-foreground">
+            {draft.systemPrompt && draft.systemPromptDefault?.source ? (
+              <>
+                Source:{" "}
+                {draft.systemPromptDefault.source.publisher ?? "Not recorded"} ·{" "}
+                {draft.systemPromptDefault.source.revision.split(":")[0]}
+              </>
+            ) : draft.systemPrompt ? (
+              "Source: Saved custom text"
+            ) : (
+              "No saved prompt text. The runtime uses its default instructions."
+            )}
+          </p>
+        </div>
       </FocusBlock>
     </div>
   );

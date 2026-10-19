@@ -144,7 +144,8 @@ export function ModelsPill({
     [targets],
   );
   // The row each explicit target refers to: the one its selection was saved
-  // from, else (a legacy pick) the hosted row with that id first.
+  // from, else (a legacy pick) the hosted row with that id first. Under the
+  // policy a saved selection matches only its own source and connection.
   const pickedRows = useMemo(
     () =>
       targets.map((target) => ({
@@ -155,9 +156,10 @@ export function ModelsPill({
           { modelId: target.modelId, selection: target.selection },
           availableModels,
           undefined,
+          { exactSelection: requireOrgKeys },
         ),
       })),
-    [targets, availableModels],
+    [targets, availableModels, requireOrgKeys],
   );
   // Two efforts of one model resolve to one row: the selector lists it once.
   const selectedModels = useMemo(() => {
@@ -239,6 +241,20 @@ export function ModelsPill({
       ...value,
       explicitTargets: targets.filter((target) => target.modelId !== modelId),
     });
+  // Only the targets of `modelId` that no row resolves. Under the policy a
+  // saved hosted target can be stale while an org target of the same id is
+  // not, and that one stays.
+  const removeStaleTargets = (modelId: string) => {
+    const stale = new Set(
+      pickedRows
+        .filter(({ id, row }) => id === modelId && !row)
+        .map(({ target }) => target),
+    );
+    emit({
+      ...value,
+      explicitTargets: targets.filter((target) => !stale.has(target)),
+    });
+  };
 
   const addModel = (model: ModelDefinition) => {
     const added = pickedTarget(model);
@@ -361,7 +377,7 @@ export function ModelsPill({
         ? "Not allowed here. Choose an organization model."
         : "No longer in the catalog",
       checked: true,
-      onSelect: () => removeModelId(id),
+      onSelect: () => removeStaleTargets(id),
     })),
   ];
 

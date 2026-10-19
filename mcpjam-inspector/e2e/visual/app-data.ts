@@ -24,6 +24,7 @@ export const queries: Record<string, unknown> = {
   },
   "projects:getMyProjects": [project],
   "organizations:getMyOrganizations": [],
+  "organizations:getMyPendingOrganizationDeletions": [],
   "servers:getProjectServers": [],
   "servers:listForProjects": {},
   "hostConfigsV2:getProjectDefault": null,
@@ -38,8 +39,25 @@ export const queries: Record<string, unknown> = {
   "projects:getProjectMembers": { members: [], canManageMembers: false },
 };
 
+// `hosts:listHosts` is empty, so the client selector asks for the default client.
+// `created: false` because the list never shows it: a created client would be
+// selected by the Playground and then fetched as if it existed.
+export const mutations: Record<string, unknown> = {
+  "projectClients:ensureProjectClient": {
+    hostId: "visual-client",
+    created: false,
+  },
+};
+
 export const responses: Record<string, unknown> = {
   "/api/session-token": { ok: true },
+  "/api/web/capabilities": {
+    hostedMode: false,
+    hostedServices: false,
+    hostedUrl: "https://app.mcpjam.com",
+    hostedOnly: [],
+    degraded: [],
+  },
   "/api/web/guest-session": {
     guestId: "visual-guest",
     token: "synthetic-guest-token",

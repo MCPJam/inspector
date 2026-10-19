@@ -36,6 +36,7 @@ export interface Organization {
    * row, which `getMyOrganizations` returns whole.
    */
   enterprisePrivacy?: boolean;
+  deletionCancellationWindowHours?: number;
 }
 
 export const ORGANIZATION_CREATION_LIMIT = 1;

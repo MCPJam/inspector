@@ -180,9 +180,9 @@ describe("aiRefusalRemediationFor", () => {
     }
   });
 
-  it("keeps the backend's role fix for role-backed work", () => {
+  it("keeps the backend's default-model fix for background work", () => {
     for (const code of modelCodes) {
-      expect(aiRefusalRemediationFor(code, "role")).toBe(
+      expect(aiRefusalRemediationFor(code, "background")).toBe(
         "configure_org_model_role",
       );
     }
@@ -193,7 +193,7 @@ describe("aiRefusalRemediationFor", () => {
       expect(aiRefusalRemediationFor(code, "picked")).toBe(
         aiRefusalRemediation(code),
       );
-      expect(aiRefusalRemediationFor(code, "role")).toBe(
+      expect(aiRefusalRemediationFor(code, "background")).toBe(
         aiRefusalRemediation(code),
       );
     }
@@ -264,13 +264,16 @@ describe("describeAiRefusal", () => {
       expect(picked.body).toMatch(/organization provider/);
       expect(picked.body).not.toMatch(/role/);
 
-      const roleAdmin = describeAiRefusal(code, "admin", "role");
-      expect(roleAdmin.remediation).toBe("configure_org_model_role");
-      expect(roleAdmin.body).toMatch(/its role in Organization → AI providers/);
+      const backgroundAdmin = describeAiRefusal(code, "admin", "background");
+      expect(backgroundAdmin.remediation).toBe("configure_org_model_role");
+      expect(backgroundAdmin.body).toMatch(
+        /different default model in Organization → AI providers/,
+      );
+      expect(backgroundAdmin.body).not.toMatch(/role/);
 
-      const roleMember = describeAiRefusal(code, "member", "role");
-      expect(roleMember.body).toMatch(/ask an organization admin/i);
-      expect(roleMember.body).not.toMatch(/Organization → AI providers/);
+      const backgroundMember = describeAiRefusal(code, "member", "background");
+      expect(backgroundMember.body).toMatch(/ask an organization admin/i);
+      expect(backgroundMember.body).not.toMatch(/Organization → AI providers/);
     }
   });
 

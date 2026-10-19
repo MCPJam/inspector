@@ -1,6 +1,6 @@
 import { renderSandboxProxyHtml } from "../../server/routes/apps/mcp-apps/sandbox-proxy-html";
 import type { BrowserContext, Route, WebSocketRoute } from "@playwright/test";
-import { FIXED_TIME, queries, responses } from "./app-data";
+import { FIXED_TIME, mutations, queries, responses } from "./app-data";
 
 const ORIGIN = "http://127.0.0.1:6289";
 type Message = {
@@ -18,6 +18,9 @@ export type AppFixture = {
   mutations?: Record<string, unknown>;
   signedIn?: boolean;
   statuses?: Record<string, number>;
+  convexOrigin?: string;
+  localAccessToken?: string;
+  seedOnboarding?: boolean;
 };
 
 function serveConvex(
@@ -155,13 +158,6 @@ async function serveHttp(
     url.pathname === "/repos/MCPJam/inspector"
   )
     return route.fulfill({ json: { stargazers_count: 2500 } });
-  if (
-    ["https://fonts.googleapis.com", "https://fonts.gstatic.com"].includes(
-      url.origin,
-    ) &&
-    route.request().method() === "GET"
-  )
-    return route.continue();
   failures.push(`HTTP: ${url.origin}${url.pathname}`);
   await route.abort("blockedbyclient");
 }
@@ -175,6 +171,7 @@ export async function prepareApp(
   const fixture = {
     ...overrides,
     queries: { ...queries, ...overrides.queries },
+    mutations: { ...mutations, ...overrides.mutations },
     responses: { ...responses, ...overrides.responses },
   };
   if (fixture.signedIn)
@@ -186,7 +183,8 @@ export async function prepareApp(
     page.on("pageerror", (error) => failures.push(error.message)),
   );
   await context.addInitScript(
-    ({ theme, time }) => {
+    ({ theme, time, localAccessToken, seedOnboarding, origin }) => {
+      if (window.location.origin !== origin) return;
       localStorage.setItem("themeMode", theme);
       // Match a returning visitor; the promotional sprites animate independently
       // of the navigation and screens covered by these snapshots.
@@ -194,10 +192,8 @@ export async function prepareApp(
         "mcpjam:platform-launch-2026-09:status",
         "dismissed",
       );
-      localStorage.setItem(
-        "mcpjam.local-access",
-        "visual-local-access-credential",
-      );
+      localStorage.setItem("mcpjam.local-access", localAccessToken);
+      if (!seedOnboarding) return;
       for (const key of [
         "mcp-onboarding-state",
         "mcp-first-run-server-choice-state",
@@ -212,13 +208,23 @@ export async function prepareApp(
         );
       }
     },
-    { theme, time: FIXED_TIME },
+    {
+      theme,
+      origin,
+      time: FIXED_TIME,
+      localAccessToken:
+        fixture.localAccessToken ?? "visual-local-access-credential",
+      seedOnboarding: fixture.seedOnboarding ?? true,
+    },
   );
   await context.route("**/*", (route) =>
     serveHttp(route, failures, fixture, origin),
   );
   await context.routeWebSocket("**/*", (socket) => {
-    if (new URL(socket.url()).origin === "wss://visual.invalid")
+    if (
+      new URL(socket.url()).origin ===
+      (fixture.convexOrigin ?? "wss://visual.invalid")
+    )
       return serveConvex(socket, failures, fixture);
     failures.push(`WebSocket: ${socket.url()}`);
     socket.close();

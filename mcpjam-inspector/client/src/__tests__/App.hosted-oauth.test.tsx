@@ -118,6 +118,7 @@ const {
     handleConnect: vi.fn(),
     handleDisconnect: vi.fn(),
     handleRuntimeDisconnect: vi.fn(),
+    clearAutoOAuthEscalation: vi.fn(),
     handleReconnect: vi.fn(),
     reconnectServerWithResult: vi
       .fn()
@@ -791,17 +792,20 @@ describe("App hosted OAuth callback handling", () => {
 
     it("shows the setup error when storage cannot record the reload", () => {
       setup();
-      const setItem = vi
-        .spyOn(Storage.prototype, "setItem")
-        .mockImplementation(() => {
+      const storage = sessionStorage;
+      vi.stubGlobal("sessionStorage", {
+        getItem: storage.getItem.bind(storage),
+        removeItem: storage.removeItem.bind(storage),
+        setItem: () => {
           throw new Error("QuotaExceededError");
-        });
+        },
+      });
       try {
         render(<App />);
         expect(reload).not.toHaveBeenCalled();
         expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
       } finally {
-        setItem.mockRestore();
+        vi.unstubAllGlobals();
       }
     });
 
@@ -5429,9 +5433,17 @@ describe("App hosted OAuth callback handling", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "replacement-token" },
     });
+    expect(appState.clearAutoOAuthEscalation).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
 
     await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledOnce());
+    // Authorize clears any Auto marker this page left pending, or the retry
+    // would fail with "still returns 401 after OAuth". (A marker from before
+    // the redirect is already unreachable: it is keyed by the old page's
+    // local project id.)
+    expect(appState.clearAutoOAuthEscalation).toHaveBeenCalledWith(
+      "OAuth server",
+    );
     expect(appState.handleConnect).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "OAuth server",
@@ -5513,6 +5525,9 @@ describe("App hosted OAuth callback handling", () => {
       }),
     ).toBeInTheDocument();
     expect(appState.clearPendingDashboardOAuth).toHaveBeenCalled();
+    expect(appState.clearAutoOAuthEscalation).toHaveBeenCalledWith(
+      "OAuth server",
+    );
     expect(
       screen.queryByRole("heading", { name: "Connecting to OAuth server" }),
     ).not.toBeInTheDocument();
@@ -5585,7 +5600,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(sonnerToast.success).not.toHaveBeenCalled();
   });
 
-  it.each(["connected", "reauth"] as const)(
+  it.each(["connected", "reauth", "superseded"] as const)(
     "reconnects once when OAuth callback recovery releases with %s outcome",
     async (reconnectStatus) => {
       clearHostedOAuthPendingState();
@@ -5617,11 +5632,16 @@ describe("App hosted OAuth callback handling", () => {
         },
       };
       const appState = createAppStateMock();
-      appState.reconnectServerWithResult.mockResolvedValue({
-        status: reconnectStatus,
-        error:
-          reconnectStatus === "reauth" ? "Authorization required" : undefined,
-      });
+      let resolveReconnect: (result: {
+        status: typeof reconnectStatus;
+        error?: string;
+      }) => void = () => {};
+      appState.reconnectServerWithResult.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveReconnect = resolve;
+          }),
+      );
       appState.appState.servers = { "OAuth server": server };
       appState.projectServers = { "OAuth server": server };
       appState.pendingDashboardOAuth = {
@@ -5655,8 +5675,24 @@ describe("App hosted OAuth callback handling", () => {
 
       rerender(<App />);
       expect(appState.reconnectServerWithResult).toHaveBeenCalledOnce();
+      await act(async () => {
+        resolveReconnect({
+          status: reconnectStatus,
+          error:
+            reconnectStatus === "reauth" ? "Authorization required" : undefined,
+        });
+      });
       if (reconnectStatus === "reauth") {
         await screen.findByText("Your server needs authorization to connect.");
+      }
+      if (reconnectStatus === "superseded") {
+        // A newer connect owns the outcome: keep waiting, no false error.
+        expect(
+          screen.queryByText("Your server needs authorization to connect."),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.getByRole("heading", { name: "Connecting to OAuth server" }),
+        ).toBeInTheDocument();
       }
     },
   );

@@ -40,7 +40,7 @@ telemetry exit, at every level, and never recorded at all. See
 | -------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
 | `off`    | Nothing. No recorder runs.                                         | Unchanged on an `off` surface; masked when the backend answered `off` |
 | `masked` | Layout and interaction only (see [Masked profile](#masked-profile)) | Element text and attributes masked; names scrubbed from URLs |
-| `full`   | The page, with inputs and annotated secrets masked                 | Unchanged                                            |
+| `full`   | Layout and interaction, masked as at `masked`; network requests keep their path minus credentials | Unchanged                                            |
 
 ## Who gets which level
 
@@ -221,11 +221,11 @@ masked-only extras are applied frame by frame (see below).
 `scrubNamesFromUrl` (`shared/telemetry-privacy.ts`, used by the client and the
 relay alike) scrubs URLs at `masked` and `pending`:
 
-- In `$current_url`, `$pathname` and the other URL properties
-  (`sanitizeAnalyticsProperties`).
-- In the `failed_request` attached to `$exception`.
-- In the replay page URL, and in Sentry breadcrumbs, page URLs, replay events
-  and performance spans.
+- In product event URL fields at the relay final serializer; strict events
+  retain canonical route templates.
+- In full-policy diagnostic URL fields at that same final serializer.
+- In the PostHog replay page URL. Strict Sentry envelopes use their final
+  serializer; Sentry replay never runs for masked or pending grants.
 
 Credentials come out of every URL first, at every level (see
 [Credential URLs](#credential-urls)): `scrubNamesFromUrl` runs the
@@ -284,17 +284,14 @@ Short of `full`:
   (`[aria-label="…"]`, `[title="…"]`, `[name="…"]`, `[alt="…"]`, `#…`: an id
   can be built from a name), the node's text-bearing attributes, `id` and
   `testId`, and the names in their page URL.
-- `beforeBreadcrumb` (`filterSentryBreadcrumb`) does the same for the
-  breadcrumbs error events carry, `ui.click` and `ui.input` selectors
-  included, as each breadcrumb is recorded.
-- Error events, transactions and replay events lose names from their page
-  URL, their `Referer` and their transaction name, which
-  `browserTracingIntegration` sets to the raw path on every navigation.
-  Transactions also lose resource URLs, peer host names and the attribute
-  values inside web-vitals element selectors (`lcp.element`, `cls.source.*`).
-  Standalone spans (web vitals such as INP, sent past `beforeSend` and
-  `beforeSendTransaction`) get the same in `beforeSendSpan`.
-- A `preprocessEvent` hook scrubs the replay event's `urls` list.
+- Capture hooks stamp policy without rebuilding payloads. The final Sentry
+  transport intersects capture and send policy, including child spans and
+  breadcrumbs collected under a stricter policy.
+- Strict error events, transactions and standalone spans are reconstructed from
+  closed schemas. Replay and unsupported envelope families are discarded.
+  Full events pass the credential and identity filters at the same transport.
+- Verified first-party stack files retain integer line/column locations only;
+  function labels and source context are discarded at every content level.
 
 ## Identity
 
@@ -317,17 +314,15 @@ Identity starts **id-only** and follows an explicit grant
   and memberships, so switching projects does not unname and rename anyone.
 
 **PostHog.** `usePostHogIdentify` sends name, email and occupation only under
-the grant. When the answer is `id_only`, it calls `unsetPersonProperties` to
-clear values sent earlier: once per actor, and again whenever the actor turns
-id-only after a `full` answer. The `before_send` stamp also
-strips naming person properties from any event captured while id-only, so a
-caller that sends them anyway is caught.
+the grant. The backend answers `id_only` only together with strict content,
+and strict content withholds identify, so no identify call is made while
+that answer holds. The `before_send` stamp records capture policy. The relay removes naming
+person properties according to that policy and its current backend answer.
 
 **Sentry.** The initial scope carries at most the desktop installation id.
 `setSentryActor` adds email and name only under the grant, and re-applies the
 actor whenever the grant changes. Every outbound event — errors, transactions
-and replay events, which never reach `beforeSend` — is filtered again in
-`postprocessEvent`/`beforeSend` (`filterSentryEventIdentity`). An event keeps
+and replay events — is filtered at the final transport. An event keeps
 names only if they were allowed both when it was captured and when it is
 sent. Existing error processors still run first.
 
@@ -373,9 +368,9 @@ browser, the server, Electron main and the relay all import the same code.
 
 | Sink                         | Where the scrubber runs                                                                                                                                           |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PostHog events               | `before_send`, last, after the capture-context stamp: every property, `$set`/`$set_once`, `$elements_chain` and `$elements`, `$external_click_url`, web vitals, heatmap data (keys included), `$exception_list`. |
-| PostHog replay               | `maskCapturedNetworkRequestFn` at every level keeps the scrubbed URL and timing only; `before_send` scrubs stylesheet text and every URL in the recording. |
-| Sentry                       | `beforeSend`, `beforeSendTransaction`, `beforeSendSpan` and `beforeBreadcrumb`, last in each; replay events in `postprocessEvent`; the recording in the transport. A credential route names its span by template (`/results/:runToken`). |
+| PostHog events               | The actual relay outbound fetch: strict events use the closed product schema; full events use the credential and identity walkers. Capture hooks add only the context stamp. |
+| PostHog replay               | Recorder masking prevents sensitive capture and persistence. The final relay validates policy and inspects decoded replay for credentials before vendor delivery. |
+| Sentry                       | One final transport reconstructs strict items or filters full items and replay recording. Capture hooks stamp policy only. A credential route names its span by template (`/results/:runToken`). |
 | Server logs (Axiom)          | Every log line and its context, before it is shipped.                                                                                                              |
 | `/relay` (PostHog proxy)     | Inside the privacy gate's rewrite: every event through the walker, a replay event holding a credential dropped, the query string scrubbed, `Referer` stripped. Metrics are scrubbed and re-encoded; logs are refused. |
 
@@ -472,9 +467,10 @@ monitor reports platform and version so those rows are told apart.
 
 ## Masking a secret
 
-At `full`, `maskAllInputs: true` covers every `<input>`. It cannot help with
-secrets rendered as **text**: OAuth access/refresh tokens in the flow diagram,
-the one-time API-key reveal, the SDK quickstart snippet.
+PostHog replay masks every text node and input at every level. Secrets
+rendered as **text** still need an annotation for autocapture and Sentry
+Replay: OAuth access/refresh tokens in the flow diagram, the one-time API-key
+reveal, the SDK quickstart snippet.
 
 There is **one** annotation for those, and it does double duty:
 
@@ -490,12 +486,11 @@ There is **one** annotation for those, and it does double duty:
 - `data-ph-no-capture` / `.ph-no-capture`: PostHog autocapture skips the
   element's text.
 - `.rr-block`: rrweb blocks the node in the recording.
-- `maskTextSelector: "[data-ph-no-capture]"`: the same attribute masks the text
-  in a `full` replay.
+- `[data-ph-no-capture]`: Sentry Replay blocks the element (`SENTRY_REPLAY_OPTIONS.block`).
 
 Annotate once, get all three. **Do not** introduce a second attribute for this.
 `SECRET_SURFACE_ATTRIBUTE` in `session-privacy.ts` is the single source of
-truth, and the selector is asserted in `posthog-utils.test.ts`.
+truth.
 
 Truncation is not masking: a truncated token prefix is still credential
 material. That is why `OAuthFlowProgress`'s token rows carry `sensitive: true`
@@ -603,8 +598,9 @@ posthog-js sends it. The aggregate `relay.stats` line counts
 `privacyReplayDropped` events; nothing logs payloads, credentials, names or
 emails.
 
-Sentry has no ingestion proxy: it is protected by its client capture options
-and the outbound filters above.
+Sentry has no ingestion proxy: its final transport owns content serialization,
+using capture policy stamps and the live policy. The browser tests inspect that
+transport and the real relay vendor fetch rather than raw first-party ingress.
 
 ## Testing
 
@@ -644,6 +640,9 @@ and the outbound filters above.
   are scrubbed at every level.
 - **Edge request logs.** The hosting provider's edge and CDN keep their own
   request logs. Nothing here runs before them.
+- **Names already on a PostHog person.** The client does not remove names
+  sent under an earlier full answer when the answer later turns `id_only`;
+  that needs a vendor-side person update.
 - **Old desktop builds.** See [Old desktop builds](#old-desktop-builds).
 
 ## Access and acceptance

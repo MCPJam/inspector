@@ -59,8 +59,8 @@ import type { ModelProvider } from "@/shared/types";
 import {
   decideTurnRail,
   harnessTurnRail,
-  readRoutingSelection,
-  routingSelectionForModel,
+  resolveChatSelection,
+  forwardableSelection,
   withSelectionRouting,
 } from "../../utils/selection-rail.js";
 import { backendModelSelection } from "../../utils/model-resolution-local.js";
@@ -126,7 +126,6 @@ import {
 import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
 import {
   directChatEffort,
-  hostSelectionForTurn,
   parseChatReasoningEffort,
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
@@ -561,7 +560,6 @@ function buildLocalScopeStepUpCancellation(input: {
  * is the SSE terminal — it wraps the helper's trace-event callbacks in
  * `createUIMessageStream` writer events and drives the result through
  * `result.toUIMessageStream(...)` into the writer.
- *
  * Eval's local-BYOK suite path (PR 4b) uses the same helper with the
  * headless terminal (`consumeDirectChatTurnHeadless`).
  */
@@ -1164,7 +1162,7 @@ chatV2.post("/", async (c) => {
       if (hostModelRefusal) {
         return c.json(
           {
-            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+            error: hostModelRefusal,
             code: "FEATURE_NOT_SUPPORTED",
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,
@@ -1204,7 +1202,6 @@ chatV2.post("/", async (c) => {
       resolvedModelOverride = hostModel;
     }
     const systemPrompt = resolvedExecution.systemPrompt;
-    const temperature = resolvedExecution.temperature;
     const requireToolApproval = resolvedExecution.requireToolApproval;
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
@@ -1251,19 +1248,22 @@ chatV2.post("/", async (c) => {
     // takes the host's alone: a share-link visitor owns the body. A stored
     // legacy selection is "own key only"; NO selection keeps today's
     // hosted-list routing, byte for byte.
-    const routingSelection =
-      (isScenarioSession
-        ? undefined
-        : routingSelectionForModel(
-            readRoutingSelection(
-              (body as { modelSelection?: unknown }).modelSelection,
-            ),
-            unroutedModelDefinition,
-          )) ??
-      routingSelectionForModel(
-        resolvedExecution.routingSelection,
-        unroutedModelDefinition,
-      );
+    const selected = resolveChatSelection({
+      raw: (body as { modelSelection?: unknown }).modelSelection,
+      inherited: resolvedExecution.routingSelection,
+      inheritedOrigin: resolvedExecution.modelSelectionOrigin,
+      model: unroutedModelDefinition,
+      hostWins: isScenarioSession,
+      allowLocal: true,
+    });
+    if (!selected.ok) {
+      return c.json({ error: selected.error, code: "invalid_model_selection" }, 400);
+    }
+    let routingSelection = selected.selection;
+    const selectedTemperature = routingSelection?.source === "legacy"
+      ? undefined : routingSelection?.settings?.temperature;
+    const temperature = (selected.requestSelection ? bodyTemperature : undefined) ??
+      selectedTemperature ?? resolvedExecution.temperature;
     // A non-hosted selection stamps `hosted: false`, so every downstream check
     // (harness eligibility, skills, the dispatch) agrees with the rail.
     const modelDefinition = withSelectionRouting(
@@ -1290,26 +1290,25 @@ chatV2.post("/", async (c) => {
       );
     }
 
-    // Reasoning effort: the body's top-level field, else the selected host's
-    // saved effort — the latter only when the host's selection is for THIS
-    // turn's model. A scenario turn takes the host's alone.
+    // A picked selection owns its settings; scenarios force host settings.
     const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
     if (!bodyEffort.ok) return c.json({ error: bodyEffort.error }, 400);
     const reasoningEffort = resolveChatReasoningEffort({
       bodyEffort: bodyEffort.effort,
-      hostSelection: hostSelectionForTurn(
-        resolvedExecution.modelSelection,
-        String(modelDefinition.id),
-      ),
+      hostSelection:
+        routingSelection?.source === "legacy" ? undefined : routingSelection,
+      requestSelection: selected.requestSelection,
       hostWins: isScenarioSession,
     });
-    // What the session records for this turn: the selection it ran, effort
-    // included (last turn wins, like its modelId).
-    const sessionModelSelection = ranTurnSelection({
+    // Apply settings independently of the session's origin-free saved choice.
+    const appliedModelSelection = ranTurnSelection({
       selection: routingSelection,
       model: modelDefinition,
       reasoningEffort,
+      ...(routingSelection && reasoningEffort === undefined ? { temperature } : {}),
     });
+    const sessionModelSelection = selected.origin ? undefined : appliedModelSelection;
+    if (routingSelection) routingSelection = appliedModelSelection;
     // Only a temperature sent ALONGSIDE a body effort counts as explicit: a
     // host default (or the slider value a client sends with a host's saved
     // effort) yields to the effort; an explicit pair is refused on the direct
@@ -1483,7 +1482,7 @@ chatV2.post("/", async (c) => {
     // and authorization; a target minted for one is never valid for another.
     const localHarnessId = localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
     const localHarnessName = LOCAL_HARNESS_DISPLAY_NAMES[localHarnessId];
-    if (asksForLocalNative && !localSelected) return c.json({ error: `Local ${localHarnessName} is unavailable or no longer authorized for this project` }, 409);
+    if (asksForLocalNative && !localSelected) return c.json({ error: `Local ${localHarnessName} is unavailable. Set up this client again for this project.` }, 409);
     const harnessTargetParse = parseHarnessExecutionTarget({
       body: body.harnessTarget?.serverAuthorized === true ? {} : body,
       grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
@@ -1509,7 +1508,7 @@ chatV2.post("/", async (c) => {
       } catch (error) {
         // A local target that cannot be made ready is an actionable local
         // error (setup / Retry), never a silent switch to the cloud.
-        return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready`, ...(error instanceof LocalAutoApproveConsentRequiredError ? { status: error.status } : {}) }, 409);
+        return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready. Complete local setup and try again.`, ...(error instanceof LocalAutoApproveConsentRequiredError ? { status: error.status } : {}) }, 409);
       }
     }
 
@@ -1611,7 +1610,7 @@ chatV2.post("/", async (c) => {
         const status = harnessUnavailableHttpStatus(availability.kind);
         return c.json(
           {
-            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+            error: availability.reason,
             ...(status === 422 ? { code: "FEATURE_NOT_SUPPORTED" } : {}),
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,
@@ -2499,6 +2498,14 @@ chatV2.post("/", async (c) => {
         clientIp: getSpendClientIp(c),
         mcpClientManager,
         selectedServers,
+        // Every turn, not just harness turns: the engine streams the persist
+        // receipt only when it knows the session. Without one the client cannot
+        // advance its version baseline, so the reactive history refresh
+        // rehydrates this thread after every turn — remounting each App iframe
+        // into a blank sandbox. Mirrors web-chat-turn.ts. The harness branch
+        // below also claims its continuity lane from these.
+        ...(chatSessionId ? { chatSessionId } : {}),
+        sourceType: chatSessionSourceType,
         requireToolApproval,
         modelVisibleMcpToolResults,
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
@@ -2526,8 +2533,10 @@ chatV2.post("/", async (c) => {
           taskCreatedBridge?.attachStreamWriter(writer);
           emitBrowserReadiness(writer);
         },
-        // The org selection the harness's lease is minted for.
-        ...(rail.orgSelection ? { modelSelection: rail.orgSelection } : {}),
+        // Preserve the resolved selection for hosted steps and harness leases.
+        ...(forwardableSelection(routingSelection)
+          ? { modelSelection: forwardableSelection(routingSelection), modelSelectionOrigin: selected.origin }
+          : {}),
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
@@ -2541,14 +2550,10 @@ chatV2.post("/", async (c) => {
               // adapter-http (the persistent singleton manager).
               harnessMcpProxy: { plane: "local-mcp" as const },
               // Multi-turn continuity: runHarnessTurn claims the harnessSessions
-              // lane from the chat OWNER (chatSessionId + sourceType). The web
-              // route threads these via streamWebChatTurn's persist; this route
-              // calls the handler directly, so without them the continuity gate
-              // is skipped and every harness turn starts a fresh (amnesiac)
-              // Claude Code session. Scoped to the harness branch — the emulated
-              // path persists via onConversationComplete and doesn't read these.
-              ...(chatSessionId ? { chatSessionId } : {}),
-              sourceType: chatSessionSourceType,
+              // lane from the chat OWNER (chatSessionId + sourceType, passed
+              // above for every turn). Without them the continuity gate is
+              // skipped and every harness turn starts a fresh (amnesiac)
+              // Claude Code session.
               ...(bodyScenarioId ? { scenarioId: bodyScenarioId } : {}),
             }
           : {}),
@@ -2769,8 +2774,6 @@ chatV2.post("/", async (c) => {
         : undefined;
 
       if (runtime.runtimeLocation === "local") {
-        // The inspector calls the provider on this runtime, so the effort is
-        // applied here as provider options, or refused before any spend.
         const localEffort = directChatEffort({
           providerKey: runtime.provider.providerKey,
           modelId,
@@ -2781,6 +2784,9 @@ chatV2.post("/", async (c) => {
         return handleLocalOrgChatModel({
           provider: runtime.provider,
           admission: runtime.admission,
+          modelSelection: routingSelection?.source === "org" ? routingSelection : undefined,
+          modelSelectionOrigin: selected.origin,
+          reasoningEffort,
           failureReporter: createRequestStreamFailureReporter(c, "chat"),
           projectId: body.projectId,
           modelId,
@@ -2827,6 +2833,12 @@ chatV2.post("/", async (c) => {
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
+        // Needed for the persist receipt — see the MCPJam call above.
+        chatSessionId,
+        sourceType: chatSessionSourceType,
+        ...(routingSelection?.source === "org"
+          ? { modelSelection: { ...routingSelection, source: "org" as const }, modelSelectionOrigin: selected.origin }
+          : {}),
         ...(typeof modelDefinition.nativeModelId === "string"
           ? { nativeModelId: modelDefinition.nativeModelId }
           : {}),
@@ -2870,7 +2882,7 @@ chatV2.post("/", async (c) => {
     // attempt we don't support; reject it regardless of the caller's identity.
     //
     // Ollama and custom endpoints use the local path. Their organization
-    // policy is checked below and again before every provider attempt.
+    // policy is checked below and again during the turn's provider attempts.
     const isCloudByokProvider =
       modelDefinition.provider !== "ollama" &&
       modelDefinition.provider !== "custom";
@@ -2897,6 +2909,7 @@ chatV2.post("/", async (c) => {
         serverIds: hostConfigServerIds,
       },
     };
+    const ownKeyCheckedAt = performance.now();
     const ownKeyRefusal = await ownKeyTurnRefusal(ownKeyTurn);
     if (ownKeyRefusal) {
       return webErrorFromRoute(c, mapRuntimeError(ownKeyRefusal));
@@ -2909,6 +2922,7 @@ chatV2.post("/", async (c) => {
         azure: body.azureBaseUrl,
       }, body.customProviders),
       ownKeyTurn,
+      { allowedAt: ownKeyCheckedAt },
     );
 
     const modelMessages = await convertToMcpjamModelMessages(

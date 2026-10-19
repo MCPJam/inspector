@@ -5349,7 +5349,7 @@ const runLocalIteration = async ({
         // releaseEvalSandbox silently no-ops, so each iteration would boot a
         // paid box only the backend TTL GC could reap. Fail loudly instead.
         const unavailable = harnessBoxUnavailableReason(
-          "This eval pins a reproducible computer environment",
+          "This eval needs its selected computer image",
         );
         if (unavailable) throw new Error(unavailable);
         const capacityBudgetMs = Math.min(
@@ -6795,10 +6795,10 @@ const runHostedIterationWithBrowser = async (
     if (sandboxNeed.needed && !harnessExecutionTarget) {
       const unavailable = harnessBoxUnavailableReason(
         sandboxNeed.runtimeKind === "desktop-browser"
-          ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration"
+          ? "This eval's browser tools need a cloud computer"
           : pinnedEnvironmentId && runId
-            ? "This eval pins a reproducible computer environment"
-            : "This eval runs on a harness, which boots a disposable computer per iteration",
+            ? "This eval needs its selected computer image"
+            : "This eval's client needs a cloud computer",
       );
       if (unavailable) throw new Error(unavailable);
       if (!runId) {

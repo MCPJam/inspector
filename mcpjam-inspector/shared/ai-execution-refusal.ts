@@ -102,15 +102,16 @@ export type AiRefusalRemediation =
  * who chose the model:
  *
  * - `picked`: a person chose it (chat, eval targets, the judge). The fix is to
- *   choose another model. Model roles never apply to a picker.
- * - `role`: background work MCPJam runs on the organization's default model
- *   for a role (Fast, Smart, Embedding, Transcription). The fix is to set a
- *   different model for that role.
+ *   choose another model. The organization's default model never applies to
+ *   a picker.
+ * - `background`: work nobody picks a model for, which MCPJam runs on the
+ *   organization's default model. The fix is an admin choosing a different
+ *   default model. The backend uses the same name.
  *
  * Only the wording and the next step differ; the classification (permanent,
  * not retryable) is the same either way.
  */
-export type AiRefusalSelection = "picked" | "role";
+export type AiRefusalSelection = "picked" | "background";
 
 const REMEDIATION_BY_CODE: Readonly<
   Record<AiRefusalCode, AiRefusalRemediation>
@@ -161,9 +162,10 @@ export function isModelRefusalCode(code: string): code is ModelRefusalCode {
 
 /**
  * The next step for `code` on a surface where the model was `selection`. The
- * backend pairs the three model codes with `configure_org_model_role`, which
- * is right for role-backed work and wrong for a model a person picked: there
- * the fix is choosing another model.
+ * backend pairs the three model codes with `configure_org_model_role` (the
+ * wire spelling for "set the organization's default model"), which is right
+ * for background work and wrong for a model a person picked: there the fix
+ * is choosing another model.
  */
 export function aiRefusalRemediationFor(
   code: string | null | undefined,

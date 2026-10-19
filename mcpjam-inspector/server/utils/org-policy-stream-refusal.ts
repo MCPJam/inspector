@@ -50,7 +50,7 @@ export function orgPolicyRefusalSlug(
 /**
  * The organization AI-key policy's refusals that are the backend working as
  * designed: the organization's own configuration said no (it requires its own
- * keys, has no model for the role, its connection is gone or its key was
+ * keys, has no default model set, its connection is gone or its key was
  * rejected) or its own provider is throttling. Recognized as expected
  * refusals at EVERY status — they arrive as 403, 422 and 503, not only as the
  * 200 spend-precheck shape — so none of them is captured as an MCPJam fault.

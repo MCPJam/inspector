@@ -11,7 +11,7 @@ import type { ErrorCatalogEntry, ErrorOrigin } from "./catalog.js";
 export const ORG_POLICY_ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Each is a backend refusal that is permanent until someone changes the
   // organization's configuration: the org requires its own keys and this
-  // request would use another source, no org model is set for the role, the
+  // request would use another source, the org's default model is not set, the
   // feature has no org-credential adapter, the data-owning org could not be
   // resolved, or the org's own provider rejected its key. None pages.
   "org/keys_required": "user_config",
@@ -22,6 +22,10 @@ export const ORG_POLICY_ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // `credential_missing` on the org route: the saved org connection is gone,
   // disabled, or has no key. Only an admin's configuration change fixes it.
   "org/credential_missing": "user_config",
+  // `model_not_allowed` on the org route: the org's provider connection serves
+  // only the models it lists (OpenRouter's selected models, Azure's
+  // deployments), and this one is not listed. Only an admin's change fixes it.
+  "org/model_not_allowed": "user_config",
   // The org's provider throttled or failed. The refusal does not settle
   // whose fault that was (the org's account limits, the provider's outage),
   // so it never pages and never blames the key.
@@ -64,12 +68,12 @@ export function orgPolicyCatalogEntries(
     "org/model_unconfigured": entry(
       "org/model_unconfigured",
       "Organization model not configured",
-      "This feature needs a default organization model, and none is set for it.",
+      "This feature runs on the organization's default AI model, and none is set.",
       [
-        "The organization requires its own provider keys and has no default model for this role (Fast, Smart, Embedding or Transcription).",
+        "The organization requires its own provider keys, and work nobody picks a model for (insights, findings, generation, simulated users) runs on its default AI model.",
       ],
       [
-        "Organization admins can set a default model for the role under Organization → AI providers.",
+        "Organization admins can choose one under Organization → AI providers → Default AI model.",
         "Members: ask an organization admin to configure one.",
       ],
       "organization-model-not-configured",
@@ -138,6 +142,19 @@ export function orgPolicyCatalogEntries(
         "Organization admins can add or reconnect the provider under Organization → AI providers.",
       ],
       "organization-provider-missing",
+    ),
+    "org/model_not_allowed": entry(
+      "org/model_not_allowed",
+      "Organization model not allowed",
+      "The organization provider this model runs on only allows certain models, and this model is not one of them.",
+      [
+        "The organization's OpenRouter provider has a list of selected models that leaves this model out, or its Azure OpenAI provider has no deployment for it.",
+      ],
+      [
+        "Choose a model the organization provider allows.",
+        "Organization admins can change the provider's models under Organization → AI providers.",
+      ],
+      "organization-model-not-allowed",
     ),
     "org/provider_unavailable": entry(
       "org/provider_unavailable",

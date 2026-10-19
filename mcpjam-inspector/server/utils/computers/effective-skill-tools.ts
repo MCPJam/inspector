@@ -31,7 +31,7 @@
  * Approval policy is the CALLER's: `prepareChatV2` wraps these with the host's
  * ordinary `requireToolApproval`. Plugin origin never bypasses approval.
  */
-import { tool } from "ai";
+import { skillTool as tool } from "../skill-tool.js";
 import { z } from "zod";
 import { getMimeType, isTextMimeType } from "../skill-parser.js";
 import { logger } from "../logger.js";
