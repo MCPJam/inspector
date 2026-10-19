@@ -169,6 +169,25 @@ describe("humanizeSwarmAttemptError", () => {
     );
     expect(info.code).toBe("provider_empty_response");
   });
+
+  it("keeps the engine's suffix code when the caller passes none", () => {
+    const info = humanizeSwarmAttemptError(
+      "Backend step returned no content — Model tried to call unavailable tool 'computer'. Available tools: a, b (provider_empty_response)",
+    );
+    expect(info.message).toBe(
+      "The model called `computer`, but your server has no tool by that name.",
+    );
+    expect(info.code).toBe("provider_empty_response");
+  });
+
+  it("strips a URL out of the tool name", () => {
+    const info = humanizeSwarmAttemptError(
+      "Model tried to call unavailable tool 'https://evil.example/x'.",
+    );
+    expect(info.message).toBe(
+      "The model called `a tool`, but your server has no tool by that name.",
+    );
+  });
 });
 
 describe("humanizeSwarmAttemptError — sandbox error codes", () => {

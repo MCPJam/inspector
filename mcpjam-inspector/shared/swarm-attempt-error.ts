@@ -462,14 +462,18 @@ export function humanizeSwarmAttemptError(
   if (!input) return { message: "The session failed for an unknown reason." };
 
   const unavailableTool = UNAVAILABLE_TOOL_CALL.exec(input)?.[1];
-  if (unavailableTool) {
+  if (unavailableTool !== undefined) {
+    // The runner stores `info.code` when it has no reason of its own, so keep
+    // the engine's "(provider_empty_response)" suffix code rather than drop it.
+    const code = errorCode ?? ENGINE_DETAIL_SUFFIX.exec(input)?.[1];
+    const toolName = scrub(unavailableTool) || "a tool";
     return {
       message:
-        `The model called \`${unavailableTool}\`, but your server has no tool by that name.`.slice(
+        `The model called \`${toolName}\`, but your server has no tool by that name.`.slice(
           0,
           MAX_ATTEMPT_ERROR_CHARS,
         ),
-      ...(errorCode ? { code: errorCode } : {}),
+      ...(code ? { code } : {}),
     };
   }
 
