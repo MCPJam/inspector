@@ -532,14 +532,16 @@ export function ModelSelector({
     }
   };
 
-  const handleManageOrgProviders = () => {
+  const handleManageOrgProviders = (
+    handoff = onManageOrgProviders ?? onAddProvider,
+  ) => {
     track("chat_model_selector_manage_org_models_clicked", {
       location: analyticsLocation,
     });
     // Navigating away from a chat while the popover is mounted leaves it
     // orphaned over the next screen, so close it before handing off.
     setIsOpen(false);
-    (onManageOrgProviders ?? onAddProvider)?.();
+    handoff?.();
   };
 
   const selectedModelsData = allowEmptySelection
@@ -1291,10 +1293,8 @@ export function ModelSelector({
                           <ModelSearchEmpty
                             query={search}
                             requireOrgKeys={requireOrgKeys}
-                            onAdd={
-                              (onManageOrgProviders ?? onAddProvider) &&
-                              handleManageOrgProviders
-                            }
+                            onAdd={onManageOrgProviders ?? onAddProvider}
+                            leaveTo={handleManageOrgProviders}
                           />
                         ) : (
                           "No matching models."
