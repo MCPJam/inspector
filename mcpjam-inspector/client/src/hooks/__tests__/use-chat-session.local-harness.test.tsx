@@ -406,7 +406,7 @@ describe("useChatSession — local Claude Code transmission", () => {
     // target and hand the user a cloud sandbox they never asked for.
     await renderWithHarness({ requested: true, resolveSendTarget: () => null });
     expect(() => sendRequest()).toThrow(
-      "Local execution is not authorized for this turn",
+      "Local execution is not authorized. Set up this client on your machine and try again.",
     );
   });
 

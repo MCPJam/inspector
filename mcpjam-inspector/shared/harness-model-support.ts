@@ -172,15 +172,15 @@ export function harnessOrgProviderUnsupportedReason(
   const name = harnessDisplayName(harnessId);
   const upstream = harnessOrgUpstream(harnessId);
   if (!upstream) {
-    return `the ${name} harness does not run on an organization's provider key`;
+    return `The ${name} client does not support organization provider keys. Choose another client.`;
   }
   const vendor = ORG_PROVIDER_LABELS[upstream.provider];
   if (policy === null) {
-    return `the ${name} harness requires a supported model and an eligible ${vendor} connection`;
+    return `The ${name} client needs a supported model and an eligible ${vendor} connection. Choose another model or contact your organization admin.`;
   }
   return policy.requireOrgKeys
-    ? `the ${name} harness runs only on your organization's ${vendor} key`
-    : `the ${name} harness runs MCPJam-provided models or your organization's ${vendor} key`;
+    ? `The ${name} client requires your organization's ${vendor} key. Choose an organization model or contact your organization admin.`
+    : `The ${name} client needs an MCPJam model or your organization's ${vendor} key. Choose a supported model.`;
 }
 
 /**
@@ -313,18 +313,15 @@ function notVerifiedReason(
   const version =
     typeof runtimeVersion === "string" && runtimeVersion.trim()
       ? runtimeVersion.trim()
-      : "(unknown version)";
-  return `not verified for ${harnessId} ${version}`;
+      : "unknown version";
+  return `This model has not been verified for the ${harnessDisplayName(harnessId)} client (${version}). Choose a verified model or another client.`;
 }
 
 /** The refusal copy for an `unsupported` verdict — the same sentence the
  *  harness pre-flight has always used for a model the runtime can't run. */
 export function harnessModelUnsupportedReason(harnessId: string): string {
   const name = harnessDisplayName(harnessId);
-  return (
-    `the ${name} harness can't run this host's model — pick a ` +
-    `${name}-compatible model to run the real runtime`
-  );
+  return `This model isn’t supported by ${name}. Choose a supported model or switch clients.`;
 }
 
 /**
