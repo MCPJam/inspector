@@ -66,3 +66,35 @@ export function readTranscriptApproval(part: Record<string, unknown>, resolved: 
     approval,
   };
 }
+
+/** A paused harness turn can span several persisted assistant segments. */
+export function mergeHarnessApprovalSegments(transcript: unknown[]): unknown[] {
+  const output: unknown[] = [];
+  let segment: Array<Record<string, unknown>> = [];
+  const flush = () => {
+    const hasHarnessApproval = segment.some((message) =>
+      Array.isArray(message.content) && message.content.some((part: unknown) =>
+        isRecord(part) && part.type === "tool-call" &&
+        part.providerExecuted === true && isRecord(part.approval),
+      ),
+    );
+    if (hasHarnessApproval && segment.length > 1) {
+      // useChat applies continuation results to the last assistant message.
+      // Keep all calls from that user turn there, including earlier native calls
+      // whose buffered results arrive after a later MCP approval.
+      output.push({ ...segment[0], content: segment.flatMap((message) =>
+        Array.isArray(message.content) ? message.content : [{ type: "text", text: message.content }],
+      ) });
+    } else output.push(...segment);
+    segment = [];
+  };
+  for (const message of transcript) {
+    if (isRecord(message) && message.role === "assistant") segment.push(message);
+    else {
+      flush();
+      output.push(message);
+    }
+  }
+  flush();
+  return output;
+}
