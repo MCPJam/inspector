@@ -294,7 +294,7 @@ afterEach(() => {
 });
 
 describe("host targeting dispatches the real harness", () => {
-  it("runs the harness an ENVIRONMENT's host declares, with an MCP proxy", async () => {
+  it("runs the environment's harness with its selected MCP servers", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({ harness: "claude-code", modelId: MODEL }),
     );
@@ -315,6 +315,7 @@ describe("host targeting dispatches the real harness", () => {
         harnessMcpProxy: expect.objectContaining({
           plane: "web-authorized",
         }),
+        selectedServerIds: ["srv_1"],
       }),
     );
     // The response SAYS which engine ran. This is the field whose absence let

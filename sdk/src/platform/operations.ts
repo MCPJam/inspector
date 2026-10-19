@@ -4502,10 +4502,13 @@ export const runEvalSuiteOperation: PlatformOperation<
       input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
-    const selectedHosts = resolveSuiteHostTargets(
+    const selectedClients = await resolveSuiteHostTargets(
+      client,
+      project,
       suite,
       detail,
-      input.host ? [input.host] : input.hosts ?? []
+      input.host ? [input.host] : input.hosts ?? [],
+      signal
     );
 
     // Attached environments arrive as bare IDS — the suite detail carries no
@@ -4547,8 +4550,11 @@ export const runEvalSuiteOperation: PlatformOperation<
             id: host.id,
             name: host.name,
           })),
-          selectedEnvironments,
-          selectedHosts,
+          selectedEnvironments: [
+            ...selectedEnvironments,
+            ...selectedClients.environments,
+          ],
+          selectedHosts: selectedClients.hosts,
           ...(input.allAttached !== undefined
             ? { allAttached: input.allAttached }
             : {}),
@@ -5039,16 +5045,21 @@ export const runEvalCaseOperation: PlatformOperation<
     // The suite detail is read ONLY when a host was named — a case run is
     // otherwise unchanged, and paying for an extra request on every call to
     // support an optional selector would be a tax on the common path.
-    const host = input.host
-      ? resolveSuiteHostTargets(
+    const selectedClients = input.host
+      ? await resolveSuiteHostTargets(
+          client,
+          project,
           suite,
           await client.getEvalSuite(
             { projectId: project.id, suiteId: suite.id },
             { signal }
           ),
-          [input.host]
-        )[0]!
+          [input.host],
+          signal
+        )
       : undefined;
+    const host = selectedClients?.hosts[0];
+    const clientEnvironment = selectedClients?.environments[0];
     const created = await createEvalRunOrReportCompose(composed, () =>
       client.createEvalRun(
         {
@@ -5071,6 +5082,7 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(composed ? { environmentId: composed.environment.id } : {}),
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
+            ...(clientEnvironment ? { environmentId: clientEnvironment.id } : {}),
             ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
             ...(input.iterations !== undefined ||
             input.repetitions !== undefined
@@ -5703,10 +5715,13 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
     // suite-base derivation, which a host config's own model/harness can
     // contradict. `testSuites:getRunDisclosure` now takes `namedHostId`, so
     // the refusal is gone and the host axis is disclosed for real.
-    const selectedHosts = resolveSuiteHostTargets(
+    const selectedClients = await resolveSuiteHostTargets(
+      client,
+      project,
       suite,
       detail,
-      input.host ? [input.host] : []
+      input.host ? [input.host] : [],
+      signal
     );
     const plan = computeRunTargets({
       attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
@@ -5719,8 +5734,11 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         id: host.id,
         name: host.name,
       })),
-      selectedEnvironments,
-      selectedHosts,
+      selectedEnvironments: [
+        ...selectedEnvironments,
+        ...selectedClients.environments,
+      ],
+      selectedHosts: selectedClients.hosts,
     });
     if (plan.kind === "target-required") {
       // `readOnly` wording: this operation spends nothing, and has no
