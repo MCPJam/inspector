@@ -91,9 +91,17 @@ function json(body: unknown): Response {
   });
 }
 
+// A real fetch keeps an in-flight request, and so its abort signal, reachable
+// until the exchange settles. Nothing else holds a stalled one here: the
+// request's signal follows its caller's only through a weak reference, so a
+// collection mid-stall would silently drop the abort this fixture reports.
+const stalledRequests = new Set<Request>();
+
 function stallUntilAborted(request: Request, onAbort: () => void) {
+  stalledRequests.add(request);
   return new Promise<Response>((_resolve, reject) => {
     const rejectOnAbort = () => {
+      stalledRequests.delete(request);
       onAbort();
       reject(request.signal.reason);
     };
