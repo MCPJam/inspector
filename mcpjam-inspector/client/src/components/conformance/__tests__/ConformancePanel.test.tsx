@@ -1172,4 +1172,37 @@ describe("ConformanceTab", () => {
     ).toBeDefined();
     expect(screen.getAllByText("404").length).toBe(2);
   });
+
+  it("shows why an OAuth step could not run", async () => {
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "incomplete",
+        steps: [
+          {
+            step: "request_resource_metadata",
+            title: "Request Resource Metadata",
+            summary: "The client requests RFC9728 resource metadata.",
+            status: "skipped",
+            skipReason: "could-not-run",
+            durationMs: 0,
+            logs: [],
+            httpAttempts: [],
+            error: { message: "The authorization server timed out." },
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    // On the row itself, not only inside its collapsed details.
+    const row = screen.getByText("Request Resource Metadata").closest("button");
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText("!")).toBeInTheDocument();
+    expect(
+      within(row!).getByText("The authorization server timed out."),
+    ).toBeInTheDocument();
+  });
 });

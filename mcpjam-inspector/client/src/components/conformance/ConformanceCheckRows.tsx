@@ -174,12 +174,16 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
         aria-expanded={expanded}
       >
         <span className="mt-0.5">
-          <StatusIcon status={step.status} />
+          <StatusIcon status={step.status} skipReason={step.skipReason} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="text-[13px]">{step.title}</span>
           {step.status === "failed" && step.error ? (
             <span className="text-[13px] font-medium text-red-600 dark:text-red-400 line-clamp-2">
+              {step.error.message}
+            </span>
+          ) : step.skipReason === "could-not-run" && step.error ? (
+            <span className="text-[13px] text-muted-foreground line-clamp-2">
               {step.error.message}
             </span>
           ) : null}
