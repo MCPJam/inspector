@@ -65,6 +65,20 @@ function claim(ids: string[]) {
 afterEach(() => resetApprovalParkForTests());
 
 describe("approval history converted by the AI SDK", () => {
+  it("does not treat a reused call id in a new runtime as an old completed call", async () => {
+    const messages = await convertToModelMessages([
+      { id: "user-1", role: "user", parts: [{ type: "text", text: "First model" }] },
+      { id: "assistant-1", role: "assistant", parts: [
+        { ...toolPart("old-approval", true, true), toolCallId: "mcpjam-host-1" },
+      ] },
+      { id: "user-2", role: "user", parts: [{ type: "text", text: "New model" }] },
+      { id: "assistant-2", role: "assistant", parts: [
+        { ...toolPart("new-approval", true, false), toolCallId: "mcpjam-host-1" },
+      ] },
+    ]);
+    expect(pendingApprovalContinuations(messages).map((part) => part.approvalId)).toEqual(["new-approval"]);
+  });
+
   it.each([
     [true, true],
     [true, false],

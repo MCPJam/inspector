@@ -4,7 +4,13 @@ import { collectHarnessAgentToolApprovalContinuations } from "@ai-sdk/harness/ag
 
 /** Full UI history repeats approval responses even after the call has finished. */
 export function pendingApprovalContinuations(messages: ModelMessage[]) {
-  messages = withoutSyntheticDenialResults(messages);
+  // A fresh runtime (for example after a model change) can reuse call ids.
+  // Only results from this user turn can settle its pending approvals.
+  let turnStart = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") { turnStart = index; break; }
+  }
+  messages = withoutSyntheticDenialResults(messages.slice(turnStart));
   const completed = new Set<string>();
   const calls = new Map<string, string>();
   for (const message of messages) {
