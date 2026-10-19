@@ -39,15 +39,17 @@ export function assertAdmitting(drain: DrainCoordinator = serverDrain): void {
  * An admitted request holds the drain until its handler returns. A launch is
  * accepted here but registers its run only once it detaches, after auth, MCP
  * connections and the backend writes; a drain that began in between would
- * find nothing to wait for and close those connections under it. The run
- * registers before the handler returns, so the two leave no gap.
+ * find nothing to wait for and close those connections under it. Work the
+ * handler leaves running once it returns is held only if it registers itself
+ * before then, as a detached run has to.
  */
 export function refuseWhileDraining(
   kind: InFlightKind,
   drain?: DrainCoordinator,
 ): MiddlewareHandler {
   return async (_c, next) => {
-    // Read per request: a test swaps the process drain after routers load.
+    // Resolved per request, not when the router is built at import, so it
+    // follows a process drain replaced after the routers load.
     const coordinator = drain ?? serverDrain;
     assertAdmitting(coordinator);
     await coordinator.track(kind, next());
