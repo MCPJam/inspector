@@ -171,6 +171,71 @@ describe("PersistConformanceRun", () => {
     );
   });
 
+  it("sends a suite's completed report only after its running update settles", async () => {
+    // The two uploads are separate actions with no ordering between them; a
+    // "running" that landed second would move the saved suite back to running.
+    let releaseRunning!: () => void;
+    upsertReport.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRunning = resolve;
+        }),
+    );
+    const persist = { projectId: "proj_1", serverId: "srv_1" };
+    const { rerender } = renderPersist(
+      snapshot({ runVersion: 1, isRunning: false }),
+    );
+    rerender(
+      <PersistConformanceRun
+        persist={persist}
+        server={httpServer()}
+        snapshot={snapshot({
+          runVersion: 2,
+          isRunning: true,
+          oauth: { status: "running" },
+        })}
+      />,
+    );
+    await waitFor(() =>
+      expect(upsertReport).toHaveBeenCalledWith(
+        expect.objectContaining({ suiteKind: "oauth", status: "running" }),
+      ),
+    );
+
+    rerender(
+      <PersistConformanceRun
+        persist={persist}
+        server={httpServer()}
+        snapshot={snapshot({
+          runVersion: 2,
+          isRunning: false,
+          oauth: {
+            status: "unavailable",
+            unavailableReason: "This server does not require authorization.",
+            result: {
+              outcome: "not-applicable",
+              passed: false,
+              summary: "This server does not require authorization.",
+              steps: [],
+              durationMs: 0,
+            } as never,
+          },
+        })}
+      />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(upsertReport).not.toHaveBeenCalledWith(
+      expect.objectContaining({ suiteKind: "oauth", status: "completed" }),
+    );
+
+    releaseRunning();
+    await waitFor(() =>
+      expect(upsertReport).toHaveBeenCalledWith(
+        expect.objectContaining({ suiteKind: "oauth", status: "completed" }),
+      ),
+    );
+  });
+
   it("closes out an OAuth suite that settles as not applicable", async () => {
     const persist = { projectId: "proj_1", serverId: "srv_1" };
     const { rerender } = renderPersist(
