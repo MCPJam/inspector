@@ -170,4 +170,56 @@ describe("PersistConformanceRun", () => {
       }),
     );
   });
+
+  it("closes out an OAuth suite that settles as not applicable", async () => {
+    const persist = { projectId: "proj_1", serverId: "srv_1" };
+    const { rerender } = renderPersist(
+      snapshot({ runVersion: 1, isRunning: false }),
+    );
+    rerender(
+      <PersistConformanceRun
+        persist={persist}
+        server={httpServer()}
+        snapshot={snapshot({
+          runVersion: 2,
+          isRunning: true,
+          oauth: { status: "running" },
+        })}
+      />,
+    );
+    await waitFor(() =>
+      expect(upsertReport).toHaveBeenCalledWith(
+        expect.objectContaining({ suiteKind: "oauth", status: "running" }),
+      ),
+    );
+
+    // A server that needs no auth: the suite ends "unavailable" with a result.
+    rerender(
+      <PersistConformanceRun
+        persist={persist}
+        server={httpServer()}
+        snapshot={snapshot({
+          runVersion: 2,
+          isRunning: false,
+          oauth: {
+            status: "unavailable",
+            unavailableReason: "This server does not require authorization.",
+            result: {
+              outcome: "not-applicable",
+              passed: false,
+              summary: "This server does not require authorization.",
+              steps: [],
+              durationMs: 0,
+            } as never,
+          },
+        })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(upsertReport).toHaveBeenCalledWith(
+        expect.objectContaining({ suiteKind: "oauth", status: "completed" }),
+      ),
+    );
+  });
 });

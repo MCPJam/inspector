@@ -33,7 +33,7 @@ function suiteReport(
     error?: string;
     verdict?: string;
     result?: unknown;
-  }
+  },
 ): ConformanceReport {
   if (state.result) {
     try {
@@ -57,10 +57,10 @@ function suiteReport(
     kind === "protocol"
       ? "protocol-conformance"
       : kind === "apps"
-      ? "apps-conformance"
-      : kind === "tasks"
-      ? "tasks-conformance"
-      : "oauth-conformance";
+        ? "apps-conformance"
+        : kind === "tasks"
+          ? "tasks-conformance"
+          : "oauth-conformance";
   const error = state.error ?? `${kind} suite did not produce a report`;
   return {
     schemaVersion: 1,
@@ -265,7 +265,7 @@ export function PersistConformanceRun({
         waitingForAuth?: boolean;
         verdict?: string;
         result?: { checks?: unknown[]; steps?: unknown[]; durationMs?: number };
-      }
+      },
     ) => {
       if (
         uploadedRef.current.has(`${kind}:done`) ||
@@ -294,6 +294,20 @@ export function PersistConformanceRun({
             status: "awaiting_authorization",
           });
         }
+        return;
+      }
+      // A suite that ran and found nothing to test (OAuth against a server
+      // that needs no auth) settles as "unavailable" WITH a result. It was
+      // already uploaded as running, so it must be closed out here too, or
+      // the saved report stays "running" forever.
+      if (state.status === "unavailable" && state.result) {
+        uploadedRef.current.add(`${kind}:done`);
+        queueUpload(`${kind}:done`, {
+          runId,
+          suiteKind: kind,
+          status: "completed",
+          report: suiteReport(kind, state),
+        });
         return;
       }
       if (state.status === "done" || state.status === "error") {
@@ -325,7 +339,7 @@ export function PersistConformanceRun({
     if (!runId || isRunning || runVersion === 0 || finalizedRef.current) return;
     const suites = requestedSuitesFor(server, snapshotRef.current);
     const settled = suites.every((kind) =>
-      isSettled(snapshotRef.current[kind].status)
+      isSettled(snapshotRef.current[kind].status),
     );
     if (!settled) return;
     if (finalizationScheduledRef.current) return;
