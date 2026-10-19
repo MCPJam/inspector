@@ -32,7 +32,12 @@ export type LegalAcceptanceStatus = {
 
 const acceptRef = makeFunctionReference<
   "mutation",
-  { termsVersion: string; privacyVersion: string; ageConfirmed: boolean },
+  {
+    termsVersion: string;
+    privacyVersion: string;
+    minimumAge: number;
+    ageConfirmed: boolean;
+  },
   { alreadyAccepted: boolean }
 >("legalAcceptance:accept");
 
@@ -68,11 +73,12 @@ function LegalAcceptanceDialog({ status }: { status: LegalAcceptanceStatus }) {
   const submit = async () => {
     setSaving(true);
     try {
-      // Echo the versions on screen: the backend refuses any other pair, so a
-      // tab opened before a new version cannot record consent to unseen text.
+      // Echo the versions and age on screen: the backend refuses any others,
+      // so a tab opened before a change cannot record consent to unseen text.
       await accept({
         termsVersion: status.termsVersion,
         privacyVersion: status.privacyVersion,
+        minimumAge: status.minimumAge,
         ageConfirmed,
       });
     } catch (error) {

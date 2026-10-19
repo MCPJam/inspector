@@ -65,7 +65,7 @@ const pending: LegalAcceptanceStatus = {
   needsAcceptance: true,
   termsVersion: "2026-01-29",
   privacyVersion: "2026-01-31",
-  minimumAge: 16,
+  minimumAge: 18,
 };
 
 function signIn() {
@@ -150,7 +150,7 @@ describe("LegalAcceptanceGate", () => {
         name: "Accept the Terms and Privacy Policy",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("I am at least 16 years old.")).toBeVisible();
+    expect(screen.getByLabelText("I am at least 18 years old.")).toBeVisible();
     expect(screen.getByRole("link", { name: "Terms of Use" })).toHaveAttribute(
       "href",
       "https://www.mcpjam.com/terms-of-use",
@@ -173,7 +173,7 @@ describe("LegalAcceptanceGate", () => {
     const user = userEvent.setup();
     const { rerender } = render(<LegalAcceptanceGate />);
 
-    await user.click(screen.getByLabelText("I am at least 16 years old."));
+    await user.click(screen.getByLabelText("I am at least 18 years old."));
     await user.click(
       screen.getByRole("button", { name: "Accept and continue" }),
     );
@@ -181,6 +181,7 @@ describe("LegalAcceptanceGate", () => {
     expect(state.accept).toHaveBeenCalledWith({
       termsVersion: "2026-01-29",
       privacyVersion: "2026-01-31",
+      minimumAge: 18,
       ageConfirmed: true,
     });
     rerender(<LegalAcceptanceGate />);
@@ -237,20 +238,21 @@ describe("LegalAcceptanceGate", () => {
     state.accept.mockRejectedValue(
       new ConvexError({
         code: "CONFLICT",
-        message: "The Terms or Privacy Policy changed since this page loaded.",
+        message:
+          "The Terms, Privacy Policy or minimum age changed since this page loaded.",
       }),
     );
     const user = userEvent.setup();
     render(<LegalAcceptanceGate />);
 
-    await user.click(screen.getByLabelText("I am at least 16 years old."));
+    await user.click(screen.getByLabelText("I am at least 18 years old."));
     await user.click(
       screen.getByRole("button", { name: "Accept and continue" }),
     );
 
     await waitFor(() =>
       expect(state.toastError).toHaveBeenCalledWith(
-        "The Terms or Privacy Policy changed since this page loaded.",
+        "The Terms, Privacy Policy or minimum age changed since this page loaded.",
       ),
     );
     expect(state.reportCaught).not.toHaveBeenCalled();
@@ -265,7 +267,7 @@ describe("LegalAcceptanceGate", () => {
     const user = userEvent.setup();
     render(<LegalAcceptanceGate />);
 
-    await user.click(screen.getByLabelText("I am at least 16 years old."));
+    await user.click(screen.getByLabelText("I am at least 18 years old."));
     await user.click(
       screen.getByRole("button", { name: "Accept and continue" }),
     );
