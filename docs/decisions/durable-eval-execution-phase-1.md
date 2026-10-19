@@ -72,9 +72,9 @@ work, the others by source.
    `iterationId`: one event per stopped iteration and attempt, and a run-level
    event only when no iteration of that attempt reported
    (`convex/lib/evalExecutionFailure.ts`). Counting events therefore counts
-   neither runs nor iterations, so the query counts distinct run ids. Quick-run
-   events carry no `runId`; count their `iterationId`s the same way. The same
-   parse the existing PAGE monitor uses
+   neither runs nor iterations, so the query counts distinct run ids, and
+   distinct iteration ids for quick runs, whose events carry no `runId`. The
+   same parse the existing PAGE monitor uses
    (`ops/axiom-monitors/monitors/eval-execution-stopped.json` in the backend)
    gives the weekly counts. `<start>` is the midnight UTC the window opens on,
    fixed before reading, and the weeks are counted from it, so the first and
@@ -87,9 +87,11 @@ work, the others by source.
    | where msg contains '[mcpjam_operational_event]' and msg contains '"event":"eval_execution_stopped"'
    | extend payload = parse_json(extract(@'\[mcpjam_operational_event\] (.*)', 1, msg))
    | extend Reason = tostring(payload.reason), Source = tostring(payload.source),
-            Run = tostring(payload.runId), Week = bin(_sysTime - datetime(<start>), 7d)
-   | where isnotempty(Run)
-   | summarize StoppedRuns = dcount(Run) by Week, Reason, Source
+            Run = tostring(payload.runId), Iteration = tostring(payload.iterationId),
+            Week = bin(_sysTime - datetime(<start>), 7d)
+   | summarize StoppedRuns = dcountif(Run, isnotempty(Run)),
+               StoppedQuickRunIterations = dcountif(Iteration, isempty(Run))
+       by Week, Reason, Source
    ```
 
    `stale_worker` is a lost worker (a deploy, a crash, an OOM). The other
