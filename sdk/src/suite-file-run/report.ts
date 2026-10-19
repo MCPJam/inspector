@@ -25,6 +25,7 @@ import {
   EVAL_VERDICT_DECISION_REASON_LABELS,
   TOOL_POLICY_DECISION_REASONS,
   evalVerdictDecisionSchema,
+  iterationStatusSchema,
   type EvalVerdictDecision,
 } from "../contract/index.js";
 import type {
@@ -71,16 +72,7 @@ const iterationSchema = z
   .object({
     iterationNumber: z.number().int().min(1),
     billingPaymentId: z.string().min(1).optional(),
-    status: z.enum([
-      "pending",
-      "running",
-      "completed",
-      "failed",
-      "cancelled",
-      "timed_out",
-      "setup_failed",
-      "skipped",
-    ]),
+    status: iterationStatusSchema,
     taskVerdict: z.enum(["passed", "failed"]).optional(),
     evaluatorError: z.boolean().optional(),
     error: z.string().optional(),

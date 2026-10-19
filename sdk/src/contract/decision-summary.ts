@@ -69,7 +69,10 @@ import {
   type FailureCategory,
   type UserValueStage,
 } from "./chain.js";
-import { isEvalRunTerminalStatus } from "./eval-lifecycle.js";
+import {
+  isEvalRunNonVerdictStatus,
+  isEvalRunTerminalStatus,
+} from "./eval-lifecycle.js";
 import { opaqueIdSchema } from "./identity.js";
 import {
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
@@ -645,22 +648,6 @@ export type EvalRunDecisionAssemblyInput = {
 };
 
 /**
- * Terminal statuses at which a LEGACY run's stored summary describes the
- * iterations it happened to record rather than the run it was asked to perform.
- *
- * Applied to legacy runs ONLY. A policy-v2 run is not resolved this way: its
- * validity phase is precisely where lifecycle enters the verdict (cancelled
- * trials are withdrawn from every denominator, unattempted configured trials
- * make the run `inconclusive`), and second-guessing that here would replace the
- * suite author's configured coverage rule with one this file invented.
- */
-const LEGACY_NON_VERDICT_STATUSES: ReadonlySet<string> = new Set([
-  "cancelled",
-  "timed_out",
-  "failed",
-]);
-
-/**
  * Build the canonical summary from one already-projected run and one page of
  * already-projected iterations.
  *
@@ -720,7 +707,15 @@ export function assembleEvalRunDecisionSummary(
     };
   }
 
-  if (LEGACY_NON_VERDICT_STATUSES.has(run.status)) {
+  // At a no-verdict terminal status a LEGACY run's stored summary describes the
+  // iterations it happened to record rather than the run it was asked to
+  // perform. Applied to legacy runs ONLY. A policy-v2 run is not resolved this
+  // way: its validity phase is precisely where lifecycle enters the verdict
+  // (cancelled trials are withdrawn from every denominator, unattempted
+  // configured trials make the run `inconclusive`), and second-guessing that
+  // here would replace the suite author's configured coverage rule with one
+  // this file invented.
+  if (isEvalRunNonVerdictStatus(run.status)) {
     return undecided("runStatusNotAVerdict");
   }
   if (run.result !== "passed" && run.result !== "failed") {
