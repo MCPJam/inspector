@@ -13385,6 +13385,71 @@ export const getGoalOperation: PlatformOperation<GetGoalInput, GetGoalResult> =
     },
   };
 
+/**
+ * A goal's judge, in the vocabulary `update_eval_suite`'s `settings.judge`
+ * uses. STRICT like `modelSelectionInput`: storage's spellings (`judgeModel`,
+ * `judgeSelection`) are refused rather than dropped.
+ */
+const goalJudgeInput = z
+  .object({
+    enabled: z
+      .boolean()
+      .optional()
+      .describe(
+        "Make the judge available on this goal. On its own this grades nothing — autoRun is what makes grading happen."
+      ),
+    autoRun: z
+      .boolean()
+      .optional()
+      .describe(
+        "Grade every session automatically as each run completes. SPENDS on each run."
+      ),
+    model: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Judge model id. `mcpjam/<vendor>/<model>` names a hosted model."
+      ),
+    modelSelection: z
+      .union([
+        modelSelectionInput,
+        // A STORED legacy selection, as get_goal can return one: accepted so
+        // a read can be sent back, never a way to pick a new judge.
+        z
+          .object({
+            source: z.literal("legacy"),
+            modelId: z.string().trim().min(1),
+            provider: z.string().min(1).optional(),
+          })
+          .strict(),
+      ])
+      .optional()
+      .describe(
+        "The judge's saved model choice (source, connection, effort). Must name `model` when both are sent; sent alone, it names the model."
+      ),
+    modelSelectionOrigin: z
+      .literal("backfill")
+      .optional()
+      .describe(
+        "Read-only marker from get_goal. Accepted so a read can be sent back; it changes nothing."
+      ),
+    threshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe("Advisory pass threshold, 0–1."),
+  })
+  .strict()
+  // The API refuses a judge that changes nothing; refusing it here reports
+  // that before the request goes out.
+  .refine(
+    (value) => Object.keys(value).some((key) => key !== "modelSelectionOrigin"),
+    { message: "Provide at least one judge field." }
+  );
+
 const createGoalInput = z.object({
   project: z
     .string()
@@ -13427,6 +13492,11 @@ const createGoalInput = z.object({
     .optional()
     .describe(
       "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
+  judge: goalJudgeInput
+    .optional()
+    .describe(
+      "The goal-completion judge that grades each session against the goal. Omit it for the managed defaults (enabled, automatic, the default judge model)."
     ),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
@@ -13472,6 +13542,7 @@ export const createGoalOperation: PlatformOperation<
         ...(input.environmentIds !== undefined
           ? { environmentIds: input.environmentIds }
           : {}),
+        ...(input.judge !== undefined ? { judge: input.judge } : {}),
       },
       {
         signal,
@@ -13498,6 +13569,12 @@ const updateGoalInput = goalSelectorInput.extend({
     .optional()
     .describe(
       "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing iterations/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
+  judge: goalJudgeInput
+    .nullable()
+    .optional()
+    .describe(
+      "Only the judge fields you pass change; a new model drops the stored selection unless it names the same model. null clears the judge back to the managed defaults."
     ),
 });
 
@@ -13542,6 +13619,7 @@ export const updateGoalOperation: PlatformOperation<
         ...(input.setupWrites !== undefined
           ? { setupWrites: input.setupWrites }
           : {}),
+        ...(input.judge !== undefined ? { judge: input.judge } : {}),
       },
       { signal }
     );
