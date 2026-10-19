@@ -10,6 +10,7 @@ import {
 } from "../scope-step-up-pending";
 import {
   claimPendingDirectScopeStepUpReplay,
+  setPendingDirectScopeStepUpReplayFlowDigest,
   markPendingDirectScopeStepUpReplayReady,
   savePendingDirectScopeStepUpReplay,
 } from "../scope-step-up-replay";
@@ -76,6 +77,15 @@ describe("scope step-up browser resume markers", () => {
     expect(claimCancelledChatScopeStepUp("chat-1")).toBeUndefined();
   });
 
+  it("never dispatches cancellation again after a reload or stale transition", () => {
+    savePendingChatScopeStepUp({ event, serverName: "Auth Bench", chatSessionId: "chat-1" });
+    markPendingChatScopeStepUpCancelled("Auth Bench", "failed");
+    expect(claimCancelledChatScopeStepUp("chat-1")).toBeDefined();
+    expect(readPendingChatScopeStepUp()?.phase).toBe("cancelling");
+    markPendingChatScopeStepUpCancelled("Auth Bench", "interrupted");
+    expect(claimCancelledChatScopeStepUp("chat-1")).toBeUndefined();
+  });
+
   it("claims a direct replay only on its original surface and server", () => {
     savePendingDirectScopeStepUpReplay({
       operation: {
@@ -91,7 +101,8 @@ describe("scope step-up browser resume markers", () => {
         parameters: { value: 7 },
       },
     });
-    markPendingDirectScopeStepUpReplayReady("Auth Bench");
+    setPendingDirectScopeStepUpReplayFlowDigest("Auth Bench", "flow");
+    markPendingDirectScopeStepUpReplayReady("Auth Bench", "flow");
     expect(
       claimPendingDirectScopeStepUpReplay({
         serverName: "Auth Bench",

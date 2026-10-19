@@ -996,3 +996,11 @@ export function resetToolCallStepUp(
       : undefined,
   );
 }
+
+export interface AuthChallengeAttempt {
+  projectId: string;
+  serverId: string;
+  surface: string;
+  callId: string;
+  chatSessionId?: string;
+}
