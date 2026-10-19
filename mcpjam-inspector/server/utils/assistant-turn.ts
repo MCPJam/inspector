@@ -179,8 +179,7 @@ export interface RunAssistantTurnOptions {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
-  /** See `MCPJamHandlerOptions.retrySpendingBusy`. Eval turns opt in. */
-  retrySpendingBusy?: boolean;
+  retrySpendingBusy?: boolean; // MCPJamHandlerOptions.retrySpendingBusy
   heartbeatIntervalMs?: number;
   maxSteps?: number;
 
