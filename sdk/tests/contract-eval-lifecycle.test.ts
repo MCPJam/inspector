@@ -93,9 +93,9 @@ describe("isEvalIterationTerminalStatus", () => {
     ]);
   });
 
-  it("stays derived from the contract, so a new status is terminal by default", () => {
-    // The safe direction: a status nobody listed ends the iteration rather
-    // than stalling a poller forever.
+  it("classifies every contract status, so a new one fails until it is listed", () => {
+    // No default is safe: a poller stalls on one direction, and the result
+    // write is skipped on the other. A new status shows up here as live.
     expect(
       ITERATION_STATUSES.filter(
         (status) => !isEvalIterationTerminalStatus(status)

@@ -22,7 +22,7 @@
  */
 
 import { z } from "zod";
-import { ITERATION_STATUSES, type IterationStatus } from "./chain.js";
+import type { IterationStatus } from "./chain.js";
 
 /**
  * Every status an eval run can be stored with. Mirrors the backend
@@ -77,29 +77,28 @@ export function isEvalRunPastExecution(
   return isEvalRunTerminalStatus(status) || status === "grading";
 }
 
-export type EvalIterationTerminalStatus = Exclude<
-  IterationStatus,
-  "pending" | "running"
->;
-
-function isFinishedIterationStatus(
-  status: IterationStatus
-): status is EvalIterationTerminalStatus {
-  return status !== "pending" && status !== "running";
-}
-
 /**
  * The iteration statuses at which the harness is done with a trial.
  *
- * Derived from {@link ITERATION_STATUSES} by removing the two live states
- * rather than by listing the terminal ones: a status added to the contract is
- * then terminal by default, the safe direction, since treating a finished
- * iteration as live stalls a poller while the reverse only shortens a
- * duration. `setup_failed` and `skipped` are terminal here like `failed`; they
- * differ from it wherever a verdict is derived, not here.
+ * Listed rather than derived from the contract's `ITERATION_STATUSES`, because
+ * neither default is safe: a finished iteration read as live stalls a poller,
+ * and a live one read as terminal is skipped by the write that records its
+ * result. The contract test pins this list against the full status set, so a
+ * status added to the contract fails it until someone classifies it.
+ * `setup_failed` and `skipped` are terminal here like `failed`; they differ
+ * from it wherever a verdict is derived, not here.
  */
-export const EVAL_ITERATION_TERMINAL_STATUSES: readonly EvalIterationTerminalStatus[] =
-  ITERATION_STATUSES.filter(isFinishedIterationStatus);
+export const EVAL_ITERATION_TERMINAL_STATUSES = [
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+  "setup_failed",
+  "skipped",
+] as const satisfies readonly IterationStatus[];
+
+export type EvalIterationTerminalStatus =
+  (typeof EVAL_ITERATION_TERMINAL_STATUSES)[number];
 
 /** Whether an iteration status means the iteration has finished. */
 export function isEvalIterationTerminalStatus(
