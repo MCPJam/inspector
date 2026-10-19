@@ -254,12 +254,14 @@ export function LocalHarnessTrustDialog({
         className="sm:max-w-lg"
         data-testid="local-harness-trust-dialog"
       >
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <Laptop className="size-4 text-muted-foreground" aria-hidden />
-            {displayRoot
-              ? `Run ${name} in ${displayRoot}?`
-              : `Run ${name} on this machine?`}
+        <DialogHeader className="min-w-0">
+          <DialogTitle className="flex min-w-0 items-center gap-2 break-words text-base">
+            <Laptop className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="min-w-0 break-words">
+              {displayRoot
+                ? `Run ${name} in ${displayRoot}?`
+                : `Run ${name} on this machine?`}
+            </span>
           </DialogTitle>
           <DialogDescription asChild>
             <div className="space-y-2 text-left leading-relaxed">
@@ -280,8 +282,8 @@ export function LocalHarnessTrustDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-muted/20 px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border/60 bg-muted/20 px-3 py-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <FolderOpen
               className="size-4 shrink-0 text-muted-foreground"
               aria-hidden
@@ -344,7 +346,7 @@ export function LocalHarnessTrustDialog({
         </button>
         {detailsOpen ? (
           <dl
-            className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-muted-foreground"
+            className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs text-muted-foreground"
             data-testid="local-harness-trust-details"
           >
             <dt>Runtime</dt>
@@ -504,7 +506,7 @@ export function LocalHarnessAutoApproveDialog({
           if (working) event.preventDefault();
         }}
       >
-        <DialogHeader>
+        <DialogHeader className="min-w-0">
           <DialogTitle>Run commands without asking?</DialogTitle>
           <DialogDescription>
             {name} will run commands and change files on this computer as your
