@@ -525,8 +525,12 @@ function AuthoringDraftSettings({
   draft: GeneratedDraft;
   disabled: boolean;
 }) {
-  const { availableModels, requireOrgKeys, onManageOrgProviders } =
-    useAvailableModels({ projectId: scope.projectId });
+  const {
+    availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
+    onAddProvider,
+  } = useAvailableModels({ projectId: scope.projectId });
   return (
     <div className="space-y-4">
       <RunIterationControl
@@ -562,6 +566,7 @@ function AuthoringDraftSettings({
         availableModels={availableModels}
         requireOrgKeys={requireOrgKeys}
         onManageOrgProviders={onManageOrgProviders}
+        onAddProvider={onAddProvider}
         value={{
           includeClientDefaults: false,
           // A draft persisted by an older build, or staged from a case that
