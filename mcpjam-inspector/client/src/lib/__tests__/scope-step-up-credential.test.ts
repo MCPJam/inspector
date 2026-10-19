@@ -24,6 +24,7 @@ import {
 } from "../scope-step-up-pending";
 import {
   claimPendingDirectScopeStepUpReplay,
+  clearPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
   setPendingDirectScopeStepUpReplayCredentialBinding,
   setPendingDirectScopeStepUpReplayFlowDigest,
@@ -245,12 +246,12 @@ describe("settling the pending stores on the callback", () => {
     expect(
       settlePendingDirectScopeStepUpReplayAfterCallback("orders", "c9", "flow"),
     ).toBeUndefined();
-    expect(
-      claimPendingDirectScopeStepUpReplay({
-        serverName: "orders",
-        surface: "tools",
-      }),
-    ).toBeDefined();
+    const claimed = claimPendingDirectScopeStepUpReplay({
+      serverName: "orders",
+      surface: "tools",
+    });
+    expect(claimed).toBeDefined();
+    if (claimed) clearPendingDirectScopeStepUpReplay(claimed);
 
     save();
     setPendingDirectScopeStepUpReplayFlowDigest("orders", "flow");
