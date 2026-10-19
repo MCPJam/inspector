@@ -313,6 +313,12 @@ describe("harness registry", () => {
         haiku: "anthropic/claude-haiku-4.5",
       }),
     });
+    expect(withEnv("haiku", { ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-5-5" })).toEqual({
+      modelOverrides: expect.objectContaining({
+        haiku: "anthropic/claude-haiku-5.5",
+        "claude-haiku-5-5": "anthropic/claude-haiku-5.5",
+      }),
+    });
     // The query reads the profile from `start.env`, never the bridge process.
     expect(content).toContain(
       "gatewayModelOverrideSettingsFor(start.model, start.env)",

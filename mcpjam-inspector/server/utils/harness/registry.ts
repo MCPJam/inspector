@@ -804,9 +804,9 @@ const CLAUDE_CODE_MODEL_FAMILIES = ["haiku", "sonnet", "opus"] as const;
  * Pinning the OTHER families' aliases (`ANTHROPIC_DEFAULT_<FAMILY>_MODEL`) to
  * the turn's canonical id sends those calls to the chosen model — the one
  * the lease admits exactly and the user is billed for. The chosen family's
- * own alias is left alone, so the main model keeps its existing path (the
- * bridge's Gateway model overrides). An id outside the three families pins
- * all three.
+ * own alias uses the bridge's Gateway model overrides. Haiku also pins its
+ * native alias and small-fast model so the requested version reaches those
+ * overrides. An id outside the three families pins all three.
  */
 function claudeCodeModelPins(modelId: string): Record<string, string> {
   const native = toClaudeCodeModel(modelId);
@@ -815,6 +815,11 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
       native === candidate || native?.startsWith(`claude-${candidate}-`),
   );
   const pins: Record<string, string> = {};
+  if (family === "haiku") {
+    const selectedHaiku = modelId.replace(/^anthropic\//, "").replace(/\./g, "-");
+    pins.ANTHROPIC_DEFAULT_HAIKU_MODEL = selectedHaiku;
+    pins.ANTHROPIC_SMALL_FAST_MODEL = selectedHaiku;
+  }
   for (const candidate of CLAUDE_CODE_MODEL_FAMILIES) {
     if (candidate === family) continue;
     pins[`ANTHROPIC_DEFAULT_${candidate.toUpperCase()}_MODEL`] = modelId;
