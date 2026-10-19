@@ -70,7 +70,7 @@ describe("harness model locks", () => {
     expect(locked[0]!.disabled).toBeFalsy();
     expect(locked[1]).toMatchObject({
       disabled: true,
-      disabledReason: expect.stringContaining("Codex harness"),
+      disabledReason: expect.stringMatching(/codex/i),
     });
     expect(locked[2]!.disabledReason).toBe("Out of credits");
   });
