@@ -270,6 +270,21 @@ function ConformanceContent({
       (suite) => suite.status === "done" || suite.status === "error",
     );
 
+  // DELIBERATELY OUTSIDE `runAll` AND THE POOLED SCORE. A hosted readiness
+  // run takes minutes, so joining the shared `isRunning` would hold the Run
+  // button and the protocol-version select hostage for its duration — and
+  // readiness produces lanes and coverage rather than passed/failed checks,
+  // so there is no number to pool. Each section owns its own run control and
+  // recovers a run still in flight when it mounts, so it shows before the
+  // suites have run, too.
+  const readiness = (
+    <div className="space-y-4">
+      <DirectoryReadinessSection publisher="claude" server={server} />
+      <DirectoryReadinessSection publisher="openai" server={server} />
+      <DirectoryReadinessSection publisher="muse" server={server} />
+    </div>
+  );
+
   const runButton = (
     <Button size="sm" onClick={handleRun} disabled={isRunning}>
       {isRunning ? (
@@ -312,7 +327,7 @@ function ConformanceContent({
             {history}
           </div>
         ) : !hasStarted ? (
-          <ConformancePreRun runButton={runButton} />
+          <ConformancePreRun runButton={runButton} footer={readiness} />
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-8">
             <OverallScoreCard
@@ -448,19 +463,7 @@ function ConformanceContent({
               </SuiteSection>
             </div>
 
-            <div className="mt-6 space-y-4">
-              {/*
-          DELIBERATELY OUTSIDE `runAll` AND THE POOLED SCORE. A hosted
-          readiness run takes minutes, so joining the shared `isRunning` would
-          hold the Run button and the protocol-version select hostage for its
-          duration — and readiness produces lanes and coverage rather than
-          passed/failed checks, so there is no number to pool. Each section
-          owns its own run control.
-        */}
-              <DirectoryReadinessSection publisher="claude" server={server} />
-              <DirectoryReadinessSection publisher="openai" server={server} />
-              <DirectoryReadinessSection publisher="muse" server={server} />
-            </div>
+            <div className="mt-6">{readiness}</div>
           </div>
         )}
       </ConformanceTabPanel>
@@ -491,6 +494,9 @@ export function ConformanceTab({
       : "overview",
   );
   const showHistory = history !== undefined;
+  // `?view=history` can outlive the History tab, e.g. a run link opened where
+  // no history is passed. With the tabs hidden there would be no way back.
+  const activeView: ConformanceView = showHistory ? view : "overview";
   const serverPicker =
     servers && onSelectServer ? (
       <ConformanceServerPicker
@@ -520,7 +526,7 @@ export function ConformanceTab({
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <ConformanceHeader
-          view={view}
+          view={activeView}
           onViewChange={setView}
           showHistory={showHistory}
         >
@@ -528,8 +534,8 @@ export function ConformanceTab({
           <ProtocolVersionSelect value="auto" disabled />
           {noServerRunButton}
         </ConformanceHeader>
-        <ConformanceTabPanel view={view}>
-          {view === "history" ? (
+        <ConformanceTabPanel view={activeView}>
+          {activeView === "history" ? (
             <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
               {history}
             </div>
@@ -546,7 +552,7 @@ export function ConformanceTab({
       key={server.name}
       server={server}
       persist={persist}
-      view={view}
+      view={activeView}
       onViewChange={setView}
       showHistory={showHistory}
       history={history}

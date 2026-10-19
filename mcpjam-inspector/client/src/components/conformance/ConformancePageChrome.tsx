@@ -19,21 +19,36 @@ import { ConformanceScorePreview } from "./ConformanceScorePreview";
 
 export const RUN_LABEL = "Run conformance checks";
 
-/** The pre-run page: the animated score card above the first-run prompt. */
-export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
+/**
+ * The pre-run page: the animated score card above the first-run prompt, and
+ * anything that runs on its own (`footer`) below it.
+ */
+export function ConformancePreRun({
+  runButton,
+  footer,
+}: {
+  runButton: ReactNode;
+  footer?: ReactNode;
+}) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-8 py-10">
-      <ConformanceScorePreview />
-      <div className="flex flex-col items-center gap-2 pt-2 text-center">
-        <h3 className="text-xl font-semibold tracking-tight">
-          Run your first conformance check
-        </h3>
-        <p className="text-sm text-muted-foreground">
-          We assess protocol, apps, tasks, and OAuth on the server of your
-          choice.
-        </p>
-        <div className="pt-4">{runButton}</div>
+    // `my-auto` rather than `justify-center`: it centers the prompt while
+    // there is room and, unlike justify-center, never clips the top once a
+    // footer makes the page scroll.
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-10">
+      <div className="my-auto flex flex-col items-center gap-4">
+        <ConformanceScorePreview />
+        <div className="flex flex-col items-center gap-2 pt-2 text-center">
+          <h3 className="text-xl font-semibold tracking-tight">
+            Run your first conformance check
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            We assess protocol, apps, tasks, and OAuth on the server of your
+            choice.
+          </p>
+          <div className="pt-4">{runButton}</div>
+        </div>
       </div>
+      {footer ? <div className="mt-10">{footer}</div> : null}
     </div>
   );
 }

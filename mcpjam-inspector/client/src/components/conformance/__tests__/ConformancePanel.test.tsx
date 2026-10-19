@@ -422,17 +422,36 @@ describe("ConformanceTab", () => {
     }
   });
 
-  it("shows the readiness sections without a flag of their own", async () => {
+  it("shows the readiness sections without a flag of their own", () => {
     // This file mocks no feature-flag provider, so the sections appearing here
     // IS the assertion: reaching this page already required
     // `mcpjam-conformance`, and a second flag would have gated an audience
     // against itself. If one is ever reintroduced, this fails.
-    setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
-    await runToCompletion();
 
+    // Before any run, too: readiness has its own run control and recovers an
+    // in-flight run on mount, so hiding it until the suites run would strand
+    // both behind the full run, OAuth browser flow included.
+    expect(
+      screen.getByText("Run your first conformance check"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Claude Directory Readiness")).toBeDefined();
     expect(screen.getByText("OpenAI Directory Readiness")).toBeDefined();
+  });
+
+  it("falls back to Overview when ?view=history has no History tab", () => {
+    window.history.replaceState(null, "", "/?view=history");
+    try {
+      render(<ConformanceTab server={createHttpServer()} />);
+
+      // No history was passed, so there is no tab to return from.
+      expect(screen.queryByRole("tab", { name: "History" })).toBeNull();
+      expect(
+        screen.getByText("Run your first conformance check"),
+      ).toBeInTheDocument();
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
   });
 
   it("runs the tasks suite and badges its verdict", async () => {
