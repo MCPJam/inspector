@@ -108,3 +108,46 @@ export function isEvalIterationTerminalStatus(
     status
   );
 }
+
+/**
+ * The run statuses that ended WITHOUT A VERDICT: the run stopped before its
+ * cases could be decided, so a gate must not read its `result` as a pass or a
+ * fail. `completed` is the only terminal status that carries one.
+ */
+export const EVAL_RUN_NON_VERDICT_STATUSES = [
+  "failed",
+  "cancelled",
+  "timed_out",
+] as const satisfies readonly EvalRunTerminalStatus[];
+export type EvalRunNonVerdictStatus =
+  (typeof EVAL_RUN_NON_VERDICT_STATUSES)[number];
+
+/** Whether a run status means the run stopped without a verdict. */
+export function isEvalRunNonVerdictStatus(
+  status: unknown
+): status is EvalRunNonVerdictStatus {
+  return (EVAL_RUN_NON_VERDICT_STATUSES as readonly unknown[]).includes(status);
+}
+
+/**
+ * The iteration statuses that finished WITHOUT A VERDICT on the case: the
+ * trial never reached its judge. `failed` is absent because a failed iteration
+ * is a verdict on the case; these four say nothing about it.
+ */
+export const EVAL_ITERATION_NON_VERDICT_STATUSES = [
+  "cancelled",
+  "timed_out",
+  "setup_failed",
+  "skipped",
+] as const satisfies readonly EvalIterationTerminalStatus[];
+export type EvalIterationNonVerdictStatus =
+  (typeof EVAL_ITERATION_NON_VERDICT_STATUSES)[number];
+
+/** Whether an iteration status means the trial finished without a verdict. */
+export function isEvalIterationNonVerdictStatus(
+  status: unknown
+): status is EvalIterationNonVerdictStatus {
+  return (EVAL_ITERATION_NON_VERDICT_STATUSES as readonly unknown[]).includes(
+    status
+  );
+}
