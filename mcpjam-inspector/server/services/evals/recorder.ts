@@ -795,7 +795,11 @@ export const startSuiteRunWithRecorder = async ({
    * interactive paths — the mutation's fingerprint window covers those.
    */
   idempotencyKey?: string;
-  /** Make the run durable (`services/evals/durable-run.ts`); needs the key. */
+  /**
+   * Make the run durable (`services/evals/durable-run.ts`). Without an
+   * `idempotencyKey` (the hosted UI) the backend gives the run its own
+   * recovery key and keeps the launch's fingerprint dedupe.
+   */
   durableJob?: { inputs: string };
   /**
    * SHA-256 hex of the suite-file bytes that launched this run. Forwarded to
@@ -891,7 +895,7 @@ export const startSuiteRunWithRecorder = async ({
       // leased and the MCP session already opened.
       ...(benchmarkRunId ? { benchmarkRunId } : {}),
       ...(idempotencyKey ? { idempotencyKey } : {}),
-      ...(idempotencyKey && durableJob ? { durableJob } : {}),
+      ...(durableJob ? { durableJob } : {}),
       ...(sourceHash ? { sourceHash } : {}),
       ...(skillsOverride ? { skillsOverride } : {}),
       ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
