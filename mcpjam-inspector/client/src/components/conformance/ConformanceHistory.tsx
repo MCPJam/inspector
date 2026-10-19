@@ -617,7 +617,8 @@ function SuiteReportCases({
       ) : null}
       {!reportUrl || cases === "error" ? (
         <p className="py-3 pl-7 text-[13px] text-muted-foreground">
-          The detailed report for this suite is not available.
+          The detailed report for this suite is not available. Run the checks
+          again to generate a new one.
         </p>
       ) : cases === null ? (
         <p className="flex items-center gap-2 py-3 pl-7 text-[13px] text-muted-foreground">
