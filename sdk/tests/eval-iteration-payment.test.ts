@@ -2,6 +2,11 @@ import { afterEach, expect, it, vi } from "vitest";
 vi.unmock("../src/eval-run-start.js");
 vi.unmock("../src/eval-iteration-payment.js");
 import { EvalTest } from "../src/EvalTest.js";
+import { EvalSuite } from "../src/EvalSuite.js";
+import {
+  runToEvalResults,
+  suiteRunToEvalResults,
+} from "../src/eval-result-mapping.js";
 import * as reporting from "../src/eval-reporting-receipt.js";
 import { PromptResult } from "../src/PromptResult.js";
 import type { HostExecutor } from "../src/HostExecutor.js";
@@ -82,6 +87,14 @@ it("pays once before callbacks and reuses payment across retries", async () => {
   expect(attempts).toBe(2);
   expect(payments).toHaveLength(1);
   expect(result.iterationDetails[0].billingPaymentId).toBe("payment-1");
+  expect(
+    runToEvalResults(result, { casePrefix: "paid" })[0].billingPaymentId
+  ).toBe("payment-1");
+  expect(
+    suiteRunToEvalResults(new Map([["paid", result]]), {
+      casePrefix: "suite",
+    })[0].billingPaymentId
+  ).toBe("payment-1");
   expect(Object.keys(payments[0]).sort()).toEqual([
     "billableSteps",
     "caseId",
@@ -241,4 +254,55 @@ it("keeps the terminal billing reason when strict partial reporting fails", asyn
     })
   );
   expect(test.getReportingReceipt().state).toBe("failed");
+});
+
+it("stops the suite after a payment refusal and reports its paid partial result", async () => {
+  const payments = online((body) =>
+    payments.length === 1
+      ? Response.json({ ok: true, ...body, paymentId: "first-payment" })
+      : Response.json(
+          { code: "FORBIDDEN", details: { reason: "PLATFORM_FEE_REQUIRED" } },
+          { status: 403 }
+        )
+  );
+  const capture = vi
+    .spyOn(reporting, "captureEvalReporting")
+    .mockResolvedValue({
+      error: new Error("report failed"),
+      receipt: {
+        schemaVersion: 1,
+        state: "failed",
+        acceptedIterations: 1,
+        acknowledgedIterations: null,
+        pendingIterations: null,
+        error: { code: "EVAL_REPORTING_FAILED", message: "Report failed." },
+      },
+    });
+  const first = vi.fn(async () => {});
+  const later = vi.fn(async () => {});
+  const suite = new EvalSuite({ name: "partial" });
+  suite.add(new EvalTest({ id: "first", name: "first", execute: first }));
+  suite.add(new EvalTest({ id: "later", name: "later", execute: later }));
+  await expect(
+    suite.run(executor(), {
+      ...options,
+      iterations: 3,
+      concurrency: 1,
+      mcpjam: {
+        ...options.mcpjam,
+        enabled: true,
+        apiKey: "sk_test",
+        strict: true,
+      },
+    })
+  ).rejects.toMatchObject({ code: "PLATFORM_FEE_REQUIRED" });
+  expect(first).toHaveBeenCalledTimes(1);
+  expect(later).not.toHaveBeenCalled();
+  expect(payments).toHaveLength(2);
+  expect(capture).toHaveBeenCalledWith(
+    expect.objectContaining({
+      expectedIterations: 1,
+      results: [expect.objectContaining({ billingPaymentId: "first-payment" })],
+    })
+  );
 });

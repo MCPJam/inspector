@@ -1,4 +1,5 @@
 import { startEvalRun, executorProviders } from "./eval-run-start.js";
+import { EvalBillingError } from "./eval-iteration-payment.js";
 import { randomUUID } from "node:crypto";
 import {
   createSavedClientRunner,
@@ -739,6 +740,7 @@ export class EvalSuite {
         plannedIterations,
         providers: executorProviders(executor),
       }));
+    let billingError: EvalBillingError | undefined;
     const testResults = new Map<string, EvalRunResult>();
 
     // Track total progress across all tests
@@ -767,9 +769,17 @@ export class EvalSuite {
           : undefined,
       };
 
-      const result = await test.run(executor, testOptions);
-      testResults.set(name, result);
-      completedIterations += iterations!;
+      try {
+        const result = await test.run(executor, testOptions);
+        testResults.set(name, result);
+        completedIterations += result.iterations;
+      } catch (error) {
+        if (!(error instanceof EvalBillingError)) throw error;
+        billingError = error;
+        const partial = test.getResults();
+        if (partial) testResults.set(name, partial);
+        break;
+      }
     }
 
     // Aggregate results
@@ -793,6 +803,8 @@ export class EvalSuite {
         suiteReportingConfig,
         executor
       );
+    } catch (error) {
+      if (!billingError) throw error;
     } finally {
       if (options.summary === "table") {
         try {
@@ -802,6 +814,7 @@ export class EvalSuite {
         }
       }
     }
+    if (billingError) throw billingError;
     return runResult;
   }
 
@@ -862,12 +875,10 @@ export class EvalSuite {
       runEvaluations: scope.result?.runEvaluationsByCase
         ? Object.values(scope.result.runEvaluationsByCase)
         : undefined,
-      expectedIterations:
-        config?.expectedIterations ??
-        Array.from(testResults.values()).reduce(
-          (count, result) => count + result.iterations,
-          0
-        ),
+      expectedIterations: Array.from(testResults.values()).reduce(
+        (count, result) => count + result.iterations,
+        0
+      ),
       suiteName: config?.suiteName ?? this.name,
       suiteDescription: config?.suiteDescription,
       serverNames: config?.serverNames,

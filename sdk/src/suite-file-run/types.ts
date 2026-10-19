@@ -165,6 +165,7 @@ export type SuiteFileRefusalAttribution =
   "credentials" | "billing" | "orgPolicy" | "rateLimited" | "unavailable";
 
 export type SuiteFileIterationEvidence = {
+  billingPaymentId?: string;
   iterationNumber: number;
   /** The LIFECYCLE — never inferred from a pass/fail. */
   status: IterationStatus;
