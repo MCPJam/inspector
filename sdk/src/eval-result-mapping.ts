@@ -627,6 +627,9 @@ export function iterationToEvalResult(
 
   return {
     caseTitle: options.caseTitle,
+    ...(iteration.billingPaymentId
+      ? { billingPaymentId: iteration.billingPaymentId }
+      : {}),
     ...(options.caseId !== undefined ? { caseId: options.caseId } : {}),
     ...(options.intent !== undefined ? { intent: options.intent } : {}),
     query: selectedPrompt?.getPrompt(),

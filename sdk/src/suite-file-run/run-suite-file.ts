@@ -3,6 +3,7 @@ import {
   EvalRunStartError,
   type EvalRunContext,
 } from "../eval-run-start.js";
+import { EvalBillingError } from "../eval-iteration-payment.js";
 /**
  * `runSuiteFile` — execute a suite file locally and decide it with the v2
  * verdict policy.
@@ -966,6 +967,7 @@ async function executeCase(args: {
 
   const issues: SuiteFileRunIssue[] = [];
   let details: IterationResult[] = [];
+  let billingRefused = false;
   let evaluationConfig = planned.test.getEvaluationConfigSnapshot();
   try {
     const result = await planned.test.run(executor, {
@@ -995,10 +997,16 @@ async function executeCase(args: {
       });
     }
   } catch (error) {
+    const billing = error instanceof EvalBillingError;
+    if (billing) {
+      billingRefused = true;
+      details = planned.test.getResults()?.iterationDetails ?? [];
+      args.onStop("billing");
+    }
     issues.push({
-      code: "INTERNAL_ERROR",
+      code: billing ? "BILLING_REFUSED" : "INTERNAL_ERROR",
       phase: "execution",
-      category: "internal",
+      category: billing ? "billing" : "internal",
       message: `The case could not be executed: ${messageOf(error)}`,
       caseId,
     });
@@ -1014,6 +1022,12 @@ async function executeCase(args: {
   for (let index = 0; index < planned.testCase.iterations; index += 1) {
     const iterationNumber = index + 1;
     const recorded = details[index];
+    if (!recorded && billingRefused) {
+      const unstarted = unstartedIteration(iterationNumber, "skipped");
+      observations.push(unstarted.observation);
+      evidence.push(unstarted.evidence);
+      continue;
+    }
     if (!recorded) {
       // EvalTest itself failed: nothing about this iteration was observed.
       const unstarted = unstartedIteration(iterationNumber, "skipped");
