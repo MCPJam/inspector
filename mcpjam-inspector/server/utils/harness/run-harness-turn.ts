@@ -1,3 +1,4 @@
+import { harnessToolOrigin, type ToolOrigin } from "@/shared/tool-origin";
 import {
   diskResumeState,
   sessionResumeStateFrom,
@@ -3478,7 +3479,7 @@ export async function runHarnessTurn(
         const accountByCall = new Map<string, McpConnectionAttribution>();
         const toolMeta = new Map<
           string,
-          { serverId?: string; toolName: string }
+          { serverId?: string; toolName: string; toolOrigin?: ToolOrigin }
         >();
         const toolStartMs = new Map<string, number>();
         const failedToolCallIds = new Set<string>();
@@ -3669,6 +3670,13 @@ export async function runHarnessTurn(
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
               toolName,
+              toolOrigin: harnessToolOrigin({
+                rawToolName,
+                toolName,
+                serverId,
+                hostTools: hostExecutedTools,
+                nativeTools: harnessAdapter.listBuiltinTools?.() ?? [],
+              }),
             });
             // Stand-in ToolSet entry so emitTraceSnapshot's collectActualToolCalls
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
@@ -3855,6 +3863,9 @@ export async function runHarnessTurn(
                 status: isError ? "error" : "ok",
                 toolCallId,
                 toolName: meta.toolName,
+                toolOrigin:
+                  toolMeta.get(toolCallId)?.toolOrigin ??
+                  (meta.serverId ? "mcp" : "unknown"),
                 ...(meta.serverId ? { serverId: meta.serverId } : {}),
                 ...(accountByCall.get(toolCallId)
                   ? {
@@ -3903,7 +3914,10 @@ export async function runHarnessTurn(
                 path: (part as { path?: unknown }).path,
               });
               const startMs = Date.now();
-              toolMeta.set(toolCallId, { toolName: fcName });
+              toolMeta.set(toolCallId, {
+                toolName: fcName,
+                toolOrigin: "native",
+              });
               toolSetForTrace[fcName] = {};
               emitToolInput(writer, {
                 toolCallId,
@@ -3953,6 +3967,7 @@ export async function runHarnessTurn(
                 status: "ok",
                 toolCallId,
                 toolName: fcName,
+                toolOrigin: "native",
               });
               pendingResults.push({
                 toolCallId,
