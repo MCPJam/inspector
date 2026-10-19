@@ -85,7 +85,6 @@ function toErrorInfo(error: unknown): StageAnalyticsErrorInfo {
   };
 }
 
-
 /**
  * How long to keep asking while the document says it is not settled yet.
  *
