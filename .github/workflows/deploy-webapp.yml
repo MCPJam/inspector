@@ -82,6 +82,10 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # For `announce-result`, which posts once `smoke` has finished too.
+    outputs:
+      announced: ${{ steps.announce.outcome == 'success' || steps.announce.outcome == 'failure' }}
+      announced_at: ${{ steps.announce.outputs.at }}
     environment:
       name: production
       url: ${{ vars.PRODUCTION_APP_URL || 'https://app.mcpjam.com' }}
@@ -298,24 +302,44 @@ jobs:
             | curl -fsS --max-time 20 --retry 2 -o /dev/null -X POST https://api.axiom.co/v2/annotations \
                 -H @"$auth" -H 'Content-Type: application/json' -d @-
 
-      # Only after a start post, so a release's own webapp deploy stays quiet.
+  smoke:
+    needs: deploy
+    uses: ./.github/workflows/post-deploy-smoke.yml
+    with:
+      base_url: ${{ vars.PRODUCTION_APP_URL || 'https://app.mcpjam.com' }}
+      label: production
+      run_e2e: ${{ inputs.run_e2e == true || inputs.run_e2e == 'true' }}
+
+  # How a deploy started on its own ended, posted after `smoke` so "done" means
+  # production passed its smoke check too, and a smoke failure is announced.
+  # Only after a start post, so a release's own webapp deploy stays quiet.
+  announce-result:
+    needs: [deploy, smoke]
+    if: always() && needs.deploy.outputs.announced == 'true'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
       - name: Announce the result in Slack
-        if: always() && steps.announce.outcome != 'skipped'
         continue-on-error: true
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYS_WEBHOOK_URL }}
-          STARTED: ${{ steps.announce.outputs.at }}
-          STATUS: ${{ job.status }}
+          STARTED: ${{ needs.deploy.outputs.announced_at }}
+          DEPLOY: ${{ needs.deploy.result }}
+          SMOKE: ${{ needs.smoke.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
           [ -n "${SLACK_WEBHOOK_URL:-}" ] || exit 0
           mins=$(( ( $(date -u +%s) - ${STARTED:-$(date -u +%s)} ) / 60 ))
-          case "$STATUS" in
-            success) text="✅ Webapp → prod done (${mins}m) · <$RUN_URL|run>" ;;
-            cancelled) text="⚪ Webapp → prod cancelled (${mins}m) · <$RUN_URL|run>" ;;
-            *) text="❌ Webapp → prod failed (${mins}m) · <$RUN_URL|run>" ;;
-          esac
+          if [ "$DEPLOY" = cancelled ] || [ "$SMOKE" = cancelled ]; then
+            text="⚪ Webapp → prod cancelled (${mins}m) · <$RUN_URL|run>"
+          elif [ "$DEPLOY" != success ]; then
+            text="❌ Webapp → prod failed (${mins}m) · <$RUN_URL|run>"
+          elif [ "$SMOKE" != success ]; then
+            text="❌ Webapp → prod deployed, but the production smoke check failed (${mins}m) · <$RUN_URL|run>"
+          else
+            text="✅ Webapp → prod done, smoke check passed (${mins}m) · <$RUN_URL|run>"
+          fi
           # The webhook URL is a credential too, so curl reads it from a config
           # file (mktemp: mode 0600) rather than from its command line.
           cfg="$(mktemp)"
@@ -324,11 +348,3 @@ jobs:
           jq -n --arg text "$text" '{text: $text}' \
             | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
                 -d @- -K "$cfg"
-
-  smoke:
-    needs: deploy
-    uses: ./.github/workflows/post-deploy-smoke.yml
-    with:
-      base_url: ${{ vars.PRODUCTION_APP_URL || 'https://app.mcpjam.com' }}
-      label: production
-      run_e2e: ${{ inputs.run_e2e == true || inputs.run_e2e == 'true' }}
