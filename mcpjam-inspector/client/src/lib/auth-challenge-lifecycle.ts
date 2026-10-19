@@ -16,7 +16,6 @@ import type { ServerWithName } from "@/state/app-types";
 import { type DirectScopeStepUpReplayDescriptor } from "@/lib/scope-step-up-replay";
 import { SCOPE_STEP_UP_LIVE_TTL_MS } from "@/shared/scope-step-up";
 import { track } from "@/lib/analytics";
-import { connectAuthChallenge } from "./auth-challenge-connect";
 import {
   isAuthChallengeDismissed,
   rememberDismissed,

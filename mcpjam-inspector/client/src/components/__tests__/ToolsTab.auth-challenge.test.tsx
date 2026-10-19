@@ -331,27 +331,110 @@ describe("ToolsTab mid-session sign-in", () => {
     expect(document.body.textContent).toContain(failed ? "replayed-orders-failure" : "replayed-orders");
   });
 
-  it.each([false, true])("restores a second flow and bounds refusal (refuses=%s)", async (refuses) => {
-    const oauthServer = { ...server, useOAuth: true };
-    sessionStorage.setItem("mcp-scope-step-up-replay-v1", JSON.stringify({
-      version: 1, phase: "ready", operation: { resourceUrl: "https://orders.example/mcp", method: "tools/call", operation: "cancel_order" },
-      descriptor: { kind: "tool", surface: "tools", serverName: "orders", toolName: "cancel_order", parameters: { id: "42" } },
-      returnPath: "/", createdAt: Date.now(), expiresAt: Date.now() + 60000,
-      reason: "authorization_required", requiresConfirmation: true,
+  it("keeps edited replay inputs through tool-list refresh", async () => {
+    sessionStorage.setItem(
+      "mcp-scope-step-up-replay-v1",
+      JSON.stringify({
+        version: 1,
+        phase: "ready",
+        operation: {
+          resourceUrl: "https://orders.example/mcp",
+          method: "tools/call",
+          operation: "lookup",
+        },
+        descriptor: {
+          kind: "tool",
+          surface: "tools",
+          serverName: "orders",
+          toolName: "lookup",
+          parameters: { id: "original" },
+        },
+        returnPath: "/",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60000,
+      }),
+    );
+    mockListTools.mockImplementation(async () => ({
+      tools: [
+        {
+          name: "lookup",
+          inputSchema: {
+            type: "object",
+            properties: { id: { type: "string" } },
+          },
+        },
+      ],
     }));
+    mockExecuteToolApi.mockResolvedValue({
+      status: "completed",
+      result: { content: [{ type: "text", text: "done" }] },
+    });
+    const view = render(
+      <ToolsTab
+        serverConfig={serverConfig}
+        serverName="orders"
+        server={server}
+      />,
+    );
+    const field = await screen.findByDisplayValue("original");
+    fireEvent.change(field, { target: { value: "edited" } });
+    view.rerender(
+      <ToolsTab
+        serverConfig={{ ...serverConfig }}
+        serverName="orders"
+        server={{ ...server }}
+      />,
+    );
+    await waitFor(() =>
+      expect(mockListTools.mock.calls.length).toBeGreaterThan(1),
+    );
+    expect(screen.getByDisplayValue("edited")).toBeInTheDocument();
+  });
+
+  it.each([false, true])("restores a second flow and bounds refusal (refuses=%s)", async (refuses) => {
+    const configuredServer = { ...server, useOAuth: true };
+    sessionStorage.setItem(
+      "mcp-scope-step-up-replay-v1",
+      JSON.stringify({
+        version: 1,
+        phase: "ready",
+        operation: {
+          resourceUrl: "https://orders.example/mcp",
+          method: "tools/call",
+          operation: "cancel_order",
+        },
+        descriptor: {
+          kind: "tool",
+          surface: "tools",
+          serverName: "orders",
+          toolName: "cancel_order",
+          parameters: { id: "42" },
+        },
+        returnPath: "/",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60000,
+        reason: "authorization_required",
+      }),
+    );
     mockListTools.mockResolvedValue({ tools: [{ name: "cancel_order", inputSchema: { type: "object", properties: { id: { type: "string" } } } }] });
     initiateOAuthMock.mockImplementation(async (options) => {
       await options.onAuthorizationRedirect?.({ state: "second-flow" });
       return { success: true };
     });
     mockExecuteToolApi.mockResolvedValue({ error: "Needs write permission", insufficientScope: { requiredScope: "orders:write" } });
-    const view = render(<ToolsTab serverConfig={serverConfig} serverName="orders" server={oauthServer} />);
+    const view = render(
+      <ToolsTab
+        serverConfig={serverConfig}
+        serverName="orders"
+        server={configuredServer}
+      />,
+    );
     await waitFor(() => expect(initiateOAuthMock).toHaveBeenCalledTimes(1));
     await waitFor(() => {
       const pending = JSON.parse(sessionStorage.getItem("mcp-scope-step-up-replay-v1") ?? "null");
       expect(pending?.phase).toBe("awaiting_oauth");
       expect(pending?.descriptor.parameters).toEqual({ id: "42" });
-      expect(pending?.requiresConfirmation).not.toBe(true);
+      expect(pending).not.toHaveProperty("requiresConfirmation");
       expect(pending?.flowDigest).toBeTruthy();
     });
     const pending = JSON.parse(sessionStorage.getItem("mcp-scope-step-up-replay-v1")!);
@@ -361,11 +444,23 @@ describe("ToolsTab mid-session sign-in", () => {
       ? { error: "Still needs write permission", insufficientScope: { requiredScope: "orders:write" } }
       : { status: "completed", result: { content: [{ type: "text", text: "write completed once" }] } });
     const expectedText = refuses ? "MCPJam couldn’t continue this call after sign-in" : "write completed once";
-    const restored = render(<ToolsTab serverConfig={serverConfig} serverName="orders" server={oauthServer} />);
+    const restored = render(
+      <ToolsTab
+        serverConfig={serverConfig}
+        serverName="orders"
+        server={configuredServer}
+      />,
+    );
     await waitFor(() => expect(document.body.textContent).toContain(expectedText));
     expect(mockExecuteToolApi).toHaveBeenCalledTimes(2);
     expect(mockExecuteToolApi).toHaveBeenLastCalledWith("orders", "cancel_order", { id: "42" }, undefined, undefined);
-    restored.rerender(<ToolsTab serverConfig={{ ...serverConfig }} serverName="orders" server={{ ...oauthServer }} />);
+    restored.rerender(
+      <ToolsTab
+        serverConfig={{ ...serverConfig }}
+        serverName="orders"
+        server={{ ...configuredServer }}
+      />,
+    );
     await waitFor(() => expect(mockListTools.mock.calls.length).toBeGreaterThan(2));
     expect(screen.queryByText("No selection")).not.toBeInTheDocument();
     expect(document.body.textContent).toContain(expectedText);
@@ -401,7 +496,7 @@ describe("ToolsTab mid-session sign-in", () => {
     } finally { restoreStorage(); }
   });
 
-  it("replays an already requested write without an extra OAuth approval, including legacy records", async () => {
+  it("replays an already requested write using the existing approval policy", async () => {
     sessionStorage.setItem(
       "mcp-scope-step-up-replay-v1",
       JSON.stringify({
@@ -423,7 +518,6 @@ describe("ToolsTab mid-session sign-in", () => {
         createdAt: Date.now(),
         expiresAt: Date.now() + 60_000,
         reason: "authorization_required",
-        requiresConfirmation: true,
       }),
     );
     mockListTools.mockResolvedValue({ tools: [] });
@@ -447,7 +541,9 @@ describe("ToolsTab mid-session sign-in", () => {
         undefined,
       ),
     );
-    expect(screen.queryByRole("button", { name: "Run again" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Run again" }),
+    ).not.toBeInTheDocument();
     expect(mockExecuteToolApi).toHaveBeenCalledTimes(1);
   });
 });

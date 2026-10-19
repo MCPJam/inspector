@@ -89,3 +89,19 @@ test("the sign-in hint never quotes a scope that could expand in a shell", () =>
   assert.match(hint, /--scopes "<scopes>"/);
   assert.doesNotMatch(hint, /\$\(/);
 });
+
+test("sign-in hints omit credential-bearing URLs and quote safe URLs", () => {
+  for (const url of [
+    "https://user:secret@example.test/mcp",
+    "https://example.test/mcp?api_key=secret&x=y",
+    "https://example.test/mcp#secret",
+  ]) {
+    const hint = authChallengeHint({}, url);
+    assert.doesNotMatch(hint, /secret/);
+    assert.match(hint, /--url <server-url>/);
+  }
+  assert.match(
+    authChallengeHint({}, "https://example.test/mcp"),
+    /--url 'https:\/\/example.test\/mcp'/,
+  );
+});

@@ -1,3 +1,4 @@
+import { projectAuthChallenge } from "../../utils/hosted-upstream-projection.js";
 import { logger } from "../../utils/logger.js";
 import {
   parseAuthChallengeSignal,
@@ -30,7 +31,7 @@ export const MAX_TOOL_AUTH_CHALLENGES = 5;
 export type ToolAuthChallengeFinding = {
   setupFailureSource: typeof TOOL_AUTH_CHALLENGE_SOURCE;
   attribution: SetupAttribution;
-  /** As parsed: length-capped server text, to be rendered as text only. */
+  /** Only allowlisted challenge fields may be persisted. */
   authChallenge: AuthChallengeSignal;
   /** What to do about it. Evals never sign in on their own. */
   remediation: string;
@@ -124,10 +125,9 @@ export function classifyChallengedToolCall(
   outcome: { error?: unknown; result?: unknown },
   ctx?: { serverId?: string; serverLabel?: string; toolName?: string },
 ): ToolAuthChallengeFinding | undefined {
-  const authChallenge = readToolAuthChallenge(outcome);
+  const authChallenge = projectAuthChallenge(readToolAuthChallenge(outcome));
   if (!authChallenge) return undefined;
-  // Only the challenge's short tokens are quoted; the server's free-text
-  // description stays on `authChallenge`.
+  // Free-text server descriptions are excluded from persisted findings.
   const detail = [
     authChallenge.error,
     authChallenge.requiredScope !== undefined

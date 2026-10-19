@@ -3113,11 +3113,20 @@ export default function App() {
       )
         return;
       if (errorMessage && callbackContext.serverName) {
-        void authorizationFlowDigest(state).then(digest => cancelPendingChatScopeStepUpForCallback(
-          callbackContext.serverName, errorMessage, digest, callbackContext.chatAuthContinuationId))
-          .catch((error: unknown) => {
+        void authorizationFlowDigest(state)
+          .then((digest) =>
+            cancelPendingChatScopeStepUpForCallback(
+              callbackContext.serverName,
+              errorMessage,
+              digest,
+              callbackContext.chatAuthContinuationId,
+            ),
+          )
+          .catch(() => {
             // Without a verified digest, do not cancel a different pending flow.
-            console.debug("Could not settle the failed sign-in callback", error);
+            console.warn(
+              "Could not settle the failed sign-in callback; no call was cancelled.",
+            );
           });
       }
       if (callbackContext.serverName) {

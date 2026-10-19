@@ -39,3 +39,22 @@ it.each([false, true])("restores the call before executing after delayed tool lo
   expect(state.selectedTool).toBe("write");
   expect(failed ? state.executionError : state.toolOutput).toEqual(failed ? "Server refused the retry" : { value: "saved" });
 });
+
+it("retains edited fields when the current tool is selected again", () => {
+  const state = useUIPlaygroundStore.getState();
+  state.setSelectedTool("write");
+  state.setFormFields([
+    {
+      name: "value",
+      type: "string",
+      value: "edited",
+      required: true,
+      isSet: true,
+    },
+  ]);
+  const fields = useUIPlaygroundStore.getState().formFields;
+  state.setSelectedTool("write");
+  expect(useUIPlaygroundStore.getState().formFields).toBe(fields);
+  state.setSelectedTool("other");
+  expect(useUIPlaygroundStore.getState().formFields).toEqual([]);
+});

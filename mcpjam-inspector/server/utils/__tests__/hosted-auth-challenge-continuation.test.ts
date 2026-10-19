@@ -234,6 +234,22 @@ describe("hosted sign-in continuations", () => {
     ).rejects.toThrow("auth_challenge_continuation_cancelled");
   });
 
+  it("rejects a reused call ID whose stored inputs cannot be verified", async () => {
+    store.create.mockResolvedValueOnce({
+      ok: true,
+      idempotent: true,
+      status: "awaiting_input",
+      expiresAt: Date.now() + 60000,
+    });
+    await expect(
+      createHostedAuthChallengeContinuation({
+        ...BASE,
+        toolInput: { since: "different" },
+        manager: manager(),
+      }),
+    ).rejects.toThrow("auth_challenge_continuation_awaiting_input");
+  });
+
   describe("credential binding", () => {
     it("binds nothing for a tokenless call", async () => {
       const ownsCredential = vi.fn();

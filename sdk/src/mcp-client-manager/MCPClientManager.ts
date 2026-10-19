@@ -4859,7 +4859,6 @@ export class MCPClientManager {
   ): Promise<T> {
     const serverConfig = this.registeredServers.get(serverId)?.config;
     if (
-      config.authChallengeOperation &&
       !config.authChallengeIsolated &&
       serverConfig &&
       this.isHttpConfig(serverConfig) &&
@@ -4867,12 +4866,13 @@ export class MCPClientManager {
     ) {
       return isolateAuthChallenge(
         this,
-        JSON.stringify([serverId, config.authChallengeOperation]),
+        serverId,
         () =>
           this.runRetriedOperation(serverId, options, retryPolicy, operation, {
             ...config,
             authChallengeIsolated: true,
-          })
+          }),
+        options?.signal
       );
     }
     const { signal, cleanup } = this.createRetrySignal(

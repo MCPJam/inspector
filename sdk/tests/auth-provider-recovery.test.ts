@@ -136,3 +136,31 @@ describe("refresh error provenance", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 });
+
+it("aborts a queued call without releasing the following call early", async () => {
+  const manager = {};
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const first = isolateAuthChallenge(manager, "server", () => gate);
+  const controller = new AbortController();
+  const run = vi.fn();
+  const middle = isolateAuthChallenge(
+    manager,
+    "server",
+    run,
+    controller.signal
+  );
+  const rejected = expect(middle).rejects.toThrow();
+  const lastRun = vi.fn();
+  const last = isolateAuthChallenge(manager, "server", lastRun);
+  controller.abort();
+  await rejected;
+  expect(run).not.toHaveBeenCalled();
+  expect(lastRun).not.toHaveBeenCalled();
+  release();
+  await first;
+  await last;
+  expect(lastRun).toHaveBeenCalledOnce();
+});

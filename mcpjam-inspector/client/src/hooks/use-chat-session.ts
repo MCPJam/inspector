@@ -2605,7 +2605,6 @@ export function useChatSession(
         serverId: event.serverId,
         serverName: event.serverName,
       });
-      presentedSignInCardsRef.current.add(event.toolCallId);
       const server = resolveScopeStepUpServer(appState, {
         serverId: event.serverId,
         serverName: event.serverName,
@@ -2623,6 +2622,7 @@ export function useChatSession(
         });
         return;
       }
+      presentedSignInCardsRef.current.add(event.toolCallId);
       const sessionId = chatSessionIdRef.current;
       const resumable =
         event.action === "prompt" &&

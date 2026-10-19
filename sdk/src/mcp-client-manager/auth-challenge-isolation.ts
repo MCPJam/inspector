@@ -6,15 +6,16 @@ import {
 import type { AuthChallengeRecorder } from "./http-error-fetch.js";
 /**
  * The transport's auth-provider error drops its JSON-RPC id. Serialize calls
- * to the same operation on that transport so the fallback recorder cannot
- * attach a sibling call's challenge. Other operations remain concurrent.
+ * on that transport so reset cannot close a sibling call in flight.
+ * Different servers remain concurrent.
  */
 const queues = new WeakMap<object, Map<string, Promise<void>>>();
 
 export async function isolateAuthChallenge<T>(
   manager: object,
   key: string,
-  operation: () => Promise<T>
+  operation: () => Promise<T>,
+  signal?: AbortSignal
 ): Promise<T> {
   let queue = queues.get(manager);
   if (!queue) queues.set(manager, (queue = new Map()));
@@ -24,12 +25,29 @@ export async function isolateAuthChallenge<T>(
     release = resolve;
   });
   queue.set(key, completed);
-  await previous;
   try {
+    if (signal) {
+      await new Promise<void>((resolve, reject) => {
+        const abort = () =>
+          reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+        if (signal.aborted) return abort();
+        signal.addEventListener("abort", abort, { once: true });
+        previous.then(() => {
+          signal.removeEventListener("abort", abort);
+          resolve();
+        });
+      });
+      signal.throwIfAborted();
+    } else {
+      await previous;
+    }
     return await operation();
   } finally {
-    release();
-    if (queue.get(key) === completed) queue.delete(key);
+    // A cancelled waiter must not let the next caller overtake its predecessor.
+    void previous.then(() => {
+      release();
+      if (queue.get(key) === completed) queue.delete(key);
+    });
   }
 }
 

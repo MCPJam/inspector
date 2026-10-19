@@ -242,7 +242,7 @@ export function authChallengeConnectMessage(
     case "blocked":
       return result.hint;
     case "failed":
-      return `Sign-in could not start: ${result.message}. Check the server settings and try again.`;
+      return result.message;
     case "permanent":
       return "This server still asked for sign-in after you signed in, so the call was not retried. Check with the server admin about your access.";
     case "refused":

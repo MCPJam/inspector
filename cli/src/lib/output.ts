@@ -56,6 +56,19 @@ export function displayableScope(scope: string | undefined): string | undefined 
     : "<scopes>";
 }
 
+/** Avoid exposing credentials or executable shell syntax in sign-in hints. */
+export function signInUrlArgument(value?: string): string {
+  if (!value) return "<server-url>";
+  try {
+    const url = new URL(value);
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || url.hash)
+      return "<server-url>";
+    return "'" + url.toString().replace(/'/g, "'\\''") + "'";
+  } catch {
+    return "<server-url>";
+  }
+}
+
 /**
  * The command that obtains a token for a server that asked for sign-in.
  * `--scopes` only when the challenge named them; otherwise the server's
@@ -67,9 +80,9 @@ export function authChallengeHint(
 ): string {
   const scope = displayableScope(challenge.requiredScope);
   const scopes = scope ? ` --scopes "${scope}"` : "";
-  return `Sign in with \`mcpjam oauth login --url ${
-    serverUrl ?? "<server-url>"
-  }${scopes} --credentials-out <file>\`, then retry with \`--credentials-file <file>\`.`;
+  return `Sign in with \`mcpjam oauth login --url ${signInUrlArgument(
+    serverUrl,
+  )}${scopes} --credentials-out <file>\`, then retry with \`--credentials-file <file>\`.`;
 }
 
 /**

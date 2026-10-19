@@ -96,3 +96,17 @@ it("restores the exact server and inputs when its tools arrive, retaining them a
     }),
   );
 });
+
+it("discards recovered inputs when their server is disabled", () => {
+  useUIPlaygroundStore.setState({
+    recoveredToolCall: {
+      serverName: "bench",
+      toolName: "write",
+      parameters: { value: "old" },
+    },
+  });
+  const view = render(<MultiServerToolsPaneInner activeServerNames={[]} />);
+  expect(useUIPlaygroundStore.getState().recoveredToolCall).toBeNull();
+  view.rerender(<MultiServerToolsPaneInner activeServerNames={["bench"]} />);
+  expect(useUIPlaygroundStore.getState().recoveredToolCall).toBeNull();
+});

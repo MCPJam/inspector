@@ -197,6 +197,9 @@ describe("a tool step that hit a sign-in challenge", () => {
         }),
       }),
     ]);
+    expect(
+      JSON.stringify(value[TOOL_AUTH_CHALLENGES_METADATA_KEY]),
+    ).not.toMatch(/"raw"|"errorDescription"/);
     // A completed iteration is not declared stopped by it.
     expect(value.evalExecutionFailure).toBeUndefined();
   });

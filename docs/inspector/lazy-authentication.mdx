@@ -115,8 +115,7 @@ When the action is **Prompt to sign in** or **Notify**, MCPJam shows a card in p
 
 ### After you sign in
 
-- A tool marked `readOnlyHint: true` runs again automatically.
-- **Any other tool is not run again on its own**, because it might change something. MCPJam asks **Signed in. Run ‹tool› again?** and runs it only when you click **Run again**.
+- The original call resumes after sign-in using the tool-approval policy in **Clients**. OAuth does not add a separate **Run again** prompt.
 - If the server still asks for sign-in right after you signed in, MCPJam does not retry. The call fails with a message saying the server still asked for sign-in. Your account may not have access to that tool.
 
 ## Which servers can sign in

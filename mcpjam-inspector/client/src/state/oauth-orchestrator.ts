@@ -1318,7 +1318,7 @@ export function gateAuthChallenge(
       return {
         kind: "blocked",
         reason: "unknown",
-        hint: "MCPJam could not confirm how this server authenticates, so it will not start sign-in. Reconnect the server and try again.",
+        hint: "Could not start sign-in. Reconnect the server and try again.",
       };
   }
 }

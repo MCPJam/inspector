@@ -2896,3 +2896,5 @@ When `MCPJAM_API_KEY` is set to an active `sk_` key, `logout` prints a warning t
 | `130` | Interrupted by a signal (`tasks watch` aborted, or a second Ctrl-C during `tunnel` shutdown) |
 
 Codes above `2` are reserved for outcomes a script should act on *differently* — not merely for naming a failure. See [MCP Tasks](/cli/tasks#watch-exit-codes) for the full `tasks watch` mapping.
+
+Readiness probes invoke tools on the target server with test inputs, which can be empty. `readOnlyHint` is a server-provided hint, not a guarantee against side effects. Use a trusted test server and disposable data; authenticated step-up probes may execute an operation when the supplied credential already grants its scope.

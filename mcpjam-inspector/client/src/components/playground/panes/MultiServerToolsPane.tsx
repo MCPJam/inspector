@@ -154,7 +154,11 @@ export function MultiServerToolsPaneInner({
   }, [selected?.serverId, selected?.toolName, selected?.recoveredParameters]);
 
   useEffect(() => {
-    if (!recoveredCall || !activeServerNames.includes(recoveredCall.serverName)) return;
+    if (!recoveredCall) return;
+    if (!activeServerNames.includes(recoveredCall.serverName)) {
+      useUIPlaygroundStore.setState({ recoveredToolCall: null });
+      return;
+    }
     const entry = flat.find((tool) => tool.serverId === recoveredCall.serverName &&
       tool.toolName === recoveredCall.toolName);
     if (!entry) return;

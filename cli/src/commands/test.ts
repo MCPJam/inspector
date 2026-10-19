@@ -30,6 +30,7 @@ import {
 import {
   CliError,
   authChallengeHint,
+  signInUrlArgument,
   displayableScope,
   cliError,
   setProcessExitCode,
@@ -304,9 +305,9 @@ export function localSignInHints(
     }
     const scopes =
       requiredScope !== undefined ? ` --scopes "${requiredScope}"` : "";
-    return `${lead} Sign in with \`mcpjam oauth login --url ${
-      url ?? "<server-url>"
-    }${scopes} --credentials-out <file>\`, then set "credentialsFile" to that file in the "${name}" entry of your MCP config.`;
+    return `${lead} Sign in with \`mcpjam oauth login --url ${signInUrlArgument(
+      url,
+    )}${scopes} --credentials-out <file>\`, then set "credentialsFile" to that file in the "${name}" entry of your MCP config.`;
   });
 }
 

@@ -678,8 +678,9 @@ export function buildLocalSuspendedCallSettlement(input: {
         toolCallId,
         bindingKey: input.bindingKey,
       });
-      if (!cancelled.cancelled) return UNAPPROVED_HISTORY_CALL_RESULT;
-      if (cancelled.serverId) {
+      if (!cancelled.found)
+        return "Sign-in recovery could not be completed. This call was not retried.";
+      if (cancelled.cancelled && cancelled.serverId) {
         input.getWriter()?.write({
           type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
           data: {

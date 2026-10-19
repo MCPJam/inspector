@@ -283,9 +283,12 @@ export async function settleSignInCallback(
       callback.credentialId,
       digest,
     );
-  } catch (error) {
+  } catch {
     // A storage failure prevents replay, but does not undo the completed sign-in.
-    console.debug("Could not save the signed-in call for replay", error);
+    recordChatAuthRecoveryFailure("save_failed", {
+      serverName,
+      recoveryResult: "callback_storage_failed",
+    });
     directMessage = CHAT_AUTH_RECOVERY_MESSAGE;
   }
   return chatSettlement.kind === "failed"

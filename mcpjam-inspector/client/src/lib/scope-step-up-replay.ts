@@ -65,8 +65,6 @@ export type PendingDirectScopeStepUpReplay = {
    * Set for a mid-session sign-in. A step-up leaves it absent.
    */
   reason?: "authorization_required";
-  /** Legacy storage field; OAuth recovery does not add tool approvals. */
-  requiresConfirmation?: boolean;
 };
 
 function readStored(): PendingDirectScopeStepUpReplay | undefined {
@@ -76,8 +74,10 @@ function readStored(): PendingDirectScopeStepUpReplay | undefined {
     const value = JSON.parse(raw) as Partial<PendingDirectScopeStepUpReplay>;
     if (
       value.version !== 1 ||
-      (value.callId !== undefined && (typeof value.callId !== "string" || !value.callId)) ||
-      (value.generation !== undefined && (!Number.isSafeInteger(value.generation) || value.generation < 1)) ||
+      (value.callId !== undefined &&
+        (typeof value.callId !== "string" || !value.callId)) ||
+      (value.generation !== undefined &&
+        (!Number.isSafeInteger(value.generation) || value.generation < 1)) ||
       (value.projectId !== undefined && typeof value.projectId !== "string") ||
       (value.phase !== "awaiting_oauth" &&
         value.phase !== "ready" &&
@@ -91,10 +91,7 @@ function readStored(): PendingDirectScopeStepUpReplay | undefined {
         !isStepUpCredentialBinding(value.credentialBinding)) ||
       (value.flowDigest !== undefined &&
         typeof value.flowDigest !== "string") ||
-      (value.reason !== undefined &&
-        value.reason !== "authorization_required") ||
-      (value.requiresConfirmation !== undefined &&
-        typeof value.requiresConfirmation !== "boolean")
+      (value.reason !== undefined && value.reason !== "authorization_required")
     ) {
       sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
       return undefined;
@@ -120,11 +117,16 @@ export function savePendingDirectScopeStepUpReplay(input: {
   operation: StepUpOperationKey;
   descriptor: DirectScopeStepUpReplayDescriptor;
   reason?: "authorization_required";
-  requiresConfirmation?: boolean;
   previous?: PendingDirectScopeStepUpReplay;
 }): PendingDirectScopeStepUpReplay {
   const now = Date.now();
   const previous = input.previous;
+  const waiting = readStored();
+  if (!previous && waiting && waiting.expiresAt > now) {
+    throw new Error(
+      "Another call is waiting for sign-in. Finish that sign-in or wait for it to expire, then try again.",
+    );
+  }
   if (previous) {
     const current = readStored();
     if (
@@ -151,7 +153,6 @@ export function savePendingDirectScopeStepUpReplay(input: {
     createdAt: previous?.createdAt ?? now,
     expiresAt: previous?.expiresAt ?? now + SCOPE_STEP_UP_LIVE_TTL_MS,
     ...(input.reason ? { reason: input.reason } : {}),
-    ...(input.requiresConfirmation ? { requiresConfirmation: true } : {}),
   };
   write(value);
   return value;

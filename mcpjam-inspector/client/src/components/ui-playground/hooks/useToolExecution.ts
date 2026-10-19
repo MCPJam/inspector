@@ -391,6 +391,13 @@ export function useToolExecution({
         };
       }
 
+      const liveServer = sharedAppState?.servers[effectiveServerName];
+      if (liveServer && liveServer.connectionStatus !== "connected") {
+        const error = "Reconnect the server before running this tool.";
+        setExecutionError(error);
+        return { ok: false, error };
+      }
+
       setIsExecuting(true);
       setExecutionError(null);
 

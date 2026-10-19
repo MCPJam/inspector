@@ -62,6 +62,7 @@ describe("direct replay identity", () => {
         surface: "tools",
       }),
     ).toBeUndefined();
+    clearPendingDirectScopeStepUpReplay(peekPendingDirectScopeStepUpReplay()!);
     save("b");
     markPendingDirectScopeStepUpReplayReady("same", "flow-b");
     expect(
@@ -130,6 +131,9 @@ describe("direct replay identity", () => {
   it("an old request finishing cannot clean up a newer pending call", () => {
     save("a");
     const old = peekPendingDirectScopeStepUpReplay()!;
+    expect(() => save("b")).toThrow("Another call is waiting");
+    expect(peekPendingDirectScopeStepUpReplay()).toEqual(old);
+    clearPendingDirectScopeStepUpReplay(old);
     save("b");
     clearPendingDirectScopeStepUpReplay(old);
     expect(

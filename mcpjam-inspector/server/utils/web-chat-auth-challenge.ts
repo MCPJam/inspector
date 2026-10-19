@@ -1,4 +1,3 @@
-import { UNAPPROVED_HISTORY_CALL_RESULT } from "./tool-approval-token.js";
 import { authChallengeCancelledText } from "@/shared/auth-challenge";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import {
@@ -120,7 +119,8 @@ export function buildWebChatAuthChallenge(input: {
                 bearer: scopeStepUpRuntime.bearer,
                 continuationId: splicedScopeStepUpCancel.continuationId,
               });
-            if (!cancelled) return UNAPPROVED_HISTORY_CALL_RESULT;
+            if (!cancelled)
+              return "Sign-in recovery could not be completed. This call was not retried.";
             if (typeof serverId === "string") {
               try {
                 getWriter()?.write({

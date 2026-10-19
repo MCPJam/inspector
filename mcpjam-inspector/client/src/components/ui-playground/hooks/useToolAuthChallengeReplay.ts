@@ -74,13 +74,18 @@ export function useToolAuthChallengeReplay(
   executeTool: UseToolExecutionReturn["executeTool"],
 ) {
   const tools = useUIPlaygroundStore((state) => state.tools);
+  const servers = sharedAppState?.servers;
   useEffect(() => {
     if (!serverName) return;
-    const liveServer = sharedAppState?.servers[serverName];
+    const liveServer = servers?.[serverName];
     if (liveServer?.connectionStatus !== "connected") return;
     const currentTools = useUIPlaygroundStore.getState().tools;
     const waiting = peekPendingDirectScopeStepUpReplay();
-    if (waiting?.descriptor.kind !== "tool" || !currentTools[waiting.descriptor.toolName]) return;
+    if (
+      waiting?.descriptor.kind !== "tool" ||
+      !currentTools[waiting.descriptor.toolName]
+    )
+      return;
     const pending = claimPendingDirectScopeStepUpReplay({
       serverName,
       surface: "playground",
@@ -96,10 +101,14 @@ export function useToolAuthChallengeReplay(
         parameters: descriptor.parameters,
       },
     });
-    state.setFormFields(applyParametersToFields(
-      generateFormFieldsFromSchema(currentTools[descriptor.toolName].inputSchema),
-      descriptor.parameters,
-    ));
+    state.setFormFields(
+      applyParametersToFields(
+        generateFormFieldsFromSchema(
+          currentTools[descriptor.toolName].inputSchema,
+        ),
+        descriptor.parameters,
+      ),
+    );
     void executeTool({
       serverName: descriptor.serverName,
       toolName: descriptor.toolName,
@@ -109,5 +118,5 @@ export function useToolAuthChallengeReplay(
     }).finally(() => {
       clearPendingDirectScopeStepUpReplay(pending);
     });
-  }, [executeTool, serverName, sharedAppState, tools]);
+  }, [executeTool, serverName, servers, tools]);
 }

@@ -270,16 +270,16 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
   setTools: (tools) => set({ tools }),
 
   setSelectedTool: (selectedTool) =>
-    set({
+    set((state) => ({
       selectedTool,
-      formFields: [],
+      formFields: state.selectedTool === selectedTool ? state.formFields : [],
       toolOutput: null,
       toolResponseMetadata: null,
       executionError: null,
       widgetUrl: null,
       widgetState: null,
       isWidgetTool: false,
-    }),
+    })),
 
   setFormFields: (formFields) => set({ formFields }),
 

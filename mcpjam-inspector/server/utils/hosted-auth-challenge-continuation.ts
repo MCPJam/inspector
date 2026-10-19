@@ -186,8 +186,9 @@ export async function createHostedAuthChallengeContinuation(input: {
       `auth_challenge_continuation_create_failed:${created.error}`,
     );
   }
-  if (created.idempotent && created.status !== "awaiting_input") {
-    // This call already suspended once and settled; it is not offered again.
+  if (created.idempotent) {
+    // The create response does not expose the stored input or credential. A
+    // reused provider call ID cannot safely authorize a newly observed call.
     throw new Error(`auth_challenge_continuation_${created.status}`);
   }
   return { continuationId, expiresAt: created.expiresAt, credentialBinding };

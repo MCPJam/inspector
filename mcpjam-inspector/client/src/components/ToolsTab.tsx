@@ -213,7 +213,8 @@ export function ToolsTab({
 }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const [tools, setTools] = useState<ToolMap>({});
-  const replayParametersRef = useRef<Record<string, unknown> | null>(null);
+  const formSelectionRef = useRef("");
+  const restoringInputsRef = useRef<{ toolName: string; parameters: Record<string, unknown> } | null>(null);
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<CallToolResult | null>(null);
@@ -373,7 +374,8 @@ export function ToolsTab({
     }
     setTools({});
     if (clearSelection) {
-      replayParametersRef.current = null;
+      formSelectionRef.current = "";
+      restoringInputsRef.current = null;
       setSelectedTool("");
       setFormFields([]);
       setResult(null);
@@ -525,10 +527,15 @@ export function ToolsTab({
 
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
-      setFormFields(
+      const sameTool = formSelectionRef.current === selectedTool;
+      const restoring = restoringInputsRef.current;
+      const restoredParameters = restoring?.toolName === selectedTool ? restoring.parameters : undefined;
+      restoringInputsRef.current = null;
+      formSelectionRef.current = selectedTool;
+      setFormFields((current) =>
         applyParamsToFields(
           generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
-          replayParametersRef.current ?? {},
+          restoredParameters ?? (sameTool ? buildParametersFromFields(current) : {}),
         ),
       );
     }
@@ -884,15 +891,10 @@ export function ToolsTab({
   const restoreReplaySelection = (
     descriptor: Extract<DirectScopeStepUpReplayDescriptor, { kind: "tool" }>,
   ) => {
-    replayParametersRef.current = descriptor.parameters;
-    setFormFields(
-      applyParamsToFields(
-        generateFormFieldsFromSchema(
-          tools[descriptor.toolName]?.inputSchema ?? {},
-        ),
-        descriptor.parameters,
-      ),
-    );
+    restoringInputsRef.current = {
+      toolName: descriptor.toolName,
+      parameters: descriptor.parameters,
+    };
     setLastToolName(descriptor.toolName);
     setSelectedTool(descriptor.toolName);
   };
@@ -1244,8 +1246,7 @@ export function ToolsTab({
       onRefresh={handleToolRefresh}
       servedFromCache={servedFromCache}
       onSelectTool={(name) => {
-        replayParametersRef.current = null;
-        setSelectedTool(name);
+          setSelectedTool(name);
       }}
       savedRequests={filteredSavedRequests}
       highlightedRequestId={highlightedRequestId}

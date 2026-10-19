@@ -583,8 +583,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         return;
       }
       fetchTools();
-    } else if (serverChanged) {
-      setToolsMetadata({});
+    } else {
+      if (Object.keys(tools).length > 0) setTools({});
+      if (serverChanged || statusChanged) setToolsMetadata({});
     }
   }, [
     serverConfig,
@@ -624,7 +625,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       );
       return;
     }
-    setFormFields([]);
+    if (!selectedTool) setFormFields([]);
   }, [selectedTool, tools, selectedAppToolDescriptor, setFormFields]);
 
   useToolAuthChallengeReplay(serverName, { servers }, executeTool);

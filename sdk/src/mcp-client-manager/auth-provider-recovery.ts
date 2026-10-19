@@ -16,7 +16,7 @@ export async function recoverAuthProviderSession<T>(input: {
   reset: () => Promise<void>;
   retry: () => Promise<T>;
 }): Promise<{ recovered: true; result: T } | { recovered: false }> {
-  if (isUnauthorized401(input.error)) {
+  if (input.challenged && isUnauthorized401(input.error)) {
     // A redirect interrupted the call. The next explicit retry initializes a
     // new session after finishAuth rather than reusing the anonymous session.
     await input.reset();

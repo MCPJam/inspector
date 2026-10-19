@@ -563,6 +563,45 @@ describe("useChatSession mid-session sign-in", () => {
     await waitFor(() => expect(Object.values(useAuthChallengeCardStore.getState().cards)).toHaveLength(1));
     expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
+  it("restores a pending card when its server hydrates after history", async () => {
+    sessionStorage.setItem(
+      "mcp-scope-step-up-chat-v2",
+      JSON.stringify({
+        version: 2,
+        entries: [
+          {
+            version: 1,
+            phase: "awaiting_oauth",
+            event: authRequiredEvent(),
+            serverName: "orders",
+            chatSessionId: "chat-session-1",
+            returnPath: "/",
+            createdAt: Date.now(),
+            flowDigest: "old-flow",
+          },
+        ],
+      }),
+    );
+    mockState.messages = unresolvedMessages();
+    appState = { servers: {}, projects: {}, activeProjectId: "none" } as never;
+    const hook = await renderChatSession();
+    expect(
+      Object.values(useAuthChallengeCardStore.getState().cards),
+    ).toHaveLength(0);
+    appState = {
+      servers: { orders: server },
+      projects: {},
+      activeProjectId: "none",
+    } as never;
+    hook.rerender();
+    await waitFor(() =>
+      expect(
+        Object.values(useAuthChallengeCardStore.getState().cards),
+      ).toHaveLength(1),
+    );
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("expires abandoned sign-in with one cancellation and a durable notice", async () => {
     sessionStorage.setItem("mcp-scope-step-up-chat-v2", JSON.stringify({ version: 2, entries: [{
       version: 1, phase: "awaiting_oauth", event: authRequiredEvent({ expiresAt: Date.now() - 1 }), serverName: "orders",
