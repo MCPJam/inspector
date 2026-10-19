@@ -339,10 +339,10 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     // The published pack and lifecycle-conformance checks below still gate
     // every target. Windows also initializes its sandbox before any thread.
     nativePlatforms: ["darwin", "linux", "win32"],
-    nativeTargets: ["darwin-arm64", "linux-x64", "win32-x64"],
-    // No target has passed the unattended sandbox probe on the pinned binary
-    // yet, so unattended local Codex is refused everywhere.
-    unattendedSandboxTargets: [],
+    nativeTargets: ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"],
+    // Unattended Codex is eligible only on Apple silicon. The published pack
+    // and its lifecycle-conformance record must still pass the checks below.
+    unattendedSandboxTargets: ["darwin-arm64"],
     unattendedSandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY,
     isolatedBackends: {},
     // From the generated record, like Claude Code's: dark until the Codex

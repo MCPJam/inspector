@@ -333,8 +333,25 @@ describe("codex runs locally only on the app-server adapter, attended, where cer
       expect(localSandboxPolicyFor(harnessId, profile, kind, scope)).toBeNull();
   });
 
-  it("records no target as passing the unattended sandbox yet", () => {
-    expect(LOCAL_HARNESS_MANIFEST.codex.unattendedSandboxTargets).toEqual([]);
+  it("limits unattended Codex to a conformed Apple silicon pack", () => {
+    expect(LOCAL_HARNESS_MANIFEST.codex.unattendedSandboxTargets).toEqual(["darwin-arm64"]);
+    for (const packTarget of ["darwin-arm64", "darwin-x64", "win32-x64"] as const) {
+      const query = {
+        harnessId: "codex", platform: packTarget === "win32-x64" ? "win32" : "darwin",
+        packTarget, targetKind: "local-native", installedAdapterVersion: PINNED_CODEX,
+        permissionProfile: "unrestricted", scope: "unattended",
+      } as const;
+      expect(resolveLocalCompatibility(query, codex()).ok).toBe(packTarget === "darwin-arm64");
+      expect(resolveLocalCompatibility(query, codex({ lifecycleConformanceVersion: "" })).ok).toBe(false);
+    }
+  });
+
+  it("supports attended Codex on conformed Intel Mac packs", () => {
+    expect(resolveLocalCompatibility({
+      harnessId: "codex", platform: "darwin", packTarget: "darwin-x64",
+      targetKind: "local-native", installedAdapterVersion: PINNED_CODEX,
+      permissionProfile: "workspace-edits",
+    }, codex())).toMatchObject({ ok: true, permissionMode: "allow-edits" });
   });
 });
 
