@@ -1,3 +1,5 @@
+import { runOperationWithAuthRecovery } from "./auth-provider-recovery.js";
+import { isolateAuthChallenge, matchingRecordedChallenge, attachRecordedAuthChallenge } from "./auth-challenge-isolation.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 /**
@@ -24,7 +26,15 @@ import {
 } from "@modelcontextprotocol/client";
 // beta.4 moved the Node stdio client transport to the `/stdio` subpath.
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { wrapFetchForHttpErrors } from "./http-error-fetch.js";
+import {
+  wrapFetchForHttpErrors,
+  authChallengeOperationKey,
+  type AuthChallengeRecorder,
+} from "./http-error-fetch.js";
+import {
+  resolveToolSecuritySchemes,
+  type ToolSecuritySchemeResolution,
+} from "./auth-challenge.js";
 
 import type {
   MCPClientManagerConfig,
@@ -670,7 +680,7 @@ export class MCPClientManager {
       } else {
         const url = new URL(config.url);
         transportType =
-          config.preferSSE ?? url.pathname.endsWith("/sse")
+          (config.preferSSE ?? url.pathname.endsWith("/sse"))
             ? "sse"
             : "streamable-http";
       }
@@ -791,8 +801,8 @@ export class MCPClientManager {
         negotiation === undefined
           ? "legacy"
           : negotiation.mode === "auto"
-          ? "auto"
-          : "modern-pin";
+            ? "auto"
+            : "modern-pin";
 
       let negotiatedEra: "legacy" | "modern" | undefined;
       let negotiatedProtocolVersion: string | undefined;
@@ -1006,6 +1016,29 @@ export class MCPClientManager {
     return this.toolDeclarationCapture.read(serverId);
   }
 
+  /**
+   * A tool's `securitySchemes`, resolved by OpenAI's inheritance rule.
+   *
+   * Read from the raw `tools/list` frames (the upstream schema strips the
+   * top-level field). Where a server advertises the default a tool without
+   * schemes inherits is not known, so such a tool resolves as `unresolved`.
+   */
+  getToolSecuritySchemes(
+    serverId: string,
+    toolName: string
+  ): ToolSecuritySchemeResolution {
+    const declaration = this.toolDeclarationCapture
+      .read(serverId)
+      ?.tools.find((tool) => tool.name === toolName);
+    const cachedMeta = this.toolsMetadataCache.get(serverId)?.get(toolName);
+    return resolveToolSecuritySchemes({
+      declaration: declaration ?? {
+        _meta:
+          cachedMeta && typeof cachedMeta === "object" ? cachedMeta : undefined,
+      },
+    });
+  }
+
   hasCachedToolAnnotations(serverId: string): boolean {
     return this.toolsAnnotationsCache.has(serverId);
   }
@@ -1061,8 +1094,8 @@ export class MCPClientManager {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
-      ? [serverIds]
-      : this.listServers();
+        ? [serverIds]
+        : this.listServers();
 
     const perServerTools = await Promise.all(
       ids.map(async (id) => {
@@ -1320,7 +1353,13 @@ export class MCPClientManager {
       serverId,
       request.request,
       request.retry ?? { retries: 0, retryDelayMs: 0 },
-      operation
+      operation,
+      {
+        authChallengeOperation: authChallengeOperationKey(
+          "tools/call",
+          toolName
+        ),
+      }
     );
   }
 
@@ -1432,8 +1471,15 @@ export class MCPClientManager {
         mrtrCollect
       );
     }
-    return this.runRetryableReadOperation(serverId, options, (client) =>
-      client.readResource(params, this.withProgressHandler(serverId, options))
+    return this.runRetryableReadOperation(
+      serverId,
+      options,
+      (client) =>
+        client.readResource(
+          params,
+          this.withProgressHandler(serverId, options)
+        ),
+      authChallengeOperationKey("resources/read", params.uri)
     );
   }
 
@@ -1531,8 +1577,12 @@ export class MCPClientManager {
         mrtrCollect
       );
     }
-    return this.runRetryableReadOperation(serverId, options, (client) =>
-      client.getPrompt(params, this.withProgressHandler(serverId, options))
+    return this.runRetryableReadOperation(
+      serverId,
+      options,
+      (client) =>
+        client.getPrompt(params, this.withProgressHandler(serverId, options)),
+      authChallengeOperationKey("prompts/get", params.name)
     );
   }
 
@@ -2546,11 +2596,11 @@ export class MCPClientManager {
       // against every version supported by the upstream SDK.
       const resolvedSupportedProtocolVersions = wantsAutoNegotiation
         ? undefined
-        : config.supportedProtocolVersions ??
+        : (config.supportedProtocolVersions ??
           this.defaultSupportedProtocolVersions ??
           (!wantsStateless && resolvedProtocolVersion !== undefined
             ? [resolvedProtocolVersion]
-            : undefined);
+            : undefined));
       // Send the version that was actually PINNED, not whatever happens to
       // sit at index 0 of the accept-list.
       //
@@ -2919,6 +2969,8 @@ export class MCPClientManager {
       config.requestInit
     );
     const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
+    const authChallengeRecorder: AuthChallengeRecorder = {};
+    state.authChallengeRecorder = authChallengeRecorder;
 
     let streamableError: unknown;
 
@@ -2933,7 +2985,8 @@ export class MCPClientManager {
         // `httpLogger` is configured — see `buildTransportFetch`.
         fetch: wrapFetchForHttpErrors(
           this.buildTransportFetch(serverId, config),
-          effectiveAuthProvider !== undefined
+          effectiveAuthProvider !== undefined,
+          authChallengeRecorder
         ),
         reconnectionOptions: config.reconnectionOptions,
         authProvider: effectiveAuthProvider,
@@ -3080,7 +3133,14 @@ export class MCPClientManager {
       // GET SSE is the connection, not the listen channel, so `listens:false`
       // is a documented no-op here rather than a connection failure (a real
       // client on HTTP+SSE cannot not-listen either).
-      fetch: this.buildTransportFetch(serverId, config, { listenGuard: false }),
+      // The same challenge-preserving wrapper as Streamable HTTP. It only acts
+      // on POSTs, so the GET event stream is untouched; a `_meta` challenge
+      // delivered over that stream is read from the result, not here.
+      fetch: wrapFetchForHttpErrors(
+        this.buildTransportFetch(serverId, config, { listenGuard: false }),
+        effectiveAuthProvider !== undefined,
+        authChallengeRecorder
+      ),
       eventSourceInit: config.eventSourceInit,
       authProvider: effectiveAuthProvider,
     });
@@ -3983,8 +4043,7 @@ export class MCPClientManager {
     state?: LiveClientState
   ): DeclaredElicitationCapability {
     const capabilities = state?.initializedClientCapabilities as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const elicitation = capabilities?.elicitation;
     return elicitation != null
       ? (elicitation as DeclaredElicitationCapability)
@@ -4111,11 +4170,11 @@ export class MCPClientManager {
   ): value is ExecuteToolRequest {
     return Boolean(
       value &&
-        typeof value === "object" &&
-        ("request" in value ||
-          "retry" in value ||
-          "allowTaskResult" in value ||
-          "metadata" in value)
+      typeof value === "object" &&
+      ("request" in value ||
+        "retry" in value ||
+        "allowTaskResult" in value ||
+        "metadata" in value)
     );
   }
 
@@ -4244,6 +4303,12 @@ export class MCPClientManager {
                 }
               ) as Promise<CallToolResult | InputRequiredResult>
           );
+        },
+        {
+          authChallengeOperation: authChallengeOperationKey(
+            "tools/call",
+            callParams.name
+          ),
         }
       );
 
@@ -4277,7 +4342,8 @@ export class MCPClientManager {
           client.readResource(req.params as ReadResourceParams, {
             ...this.withProgressHandler(serverId, options),
             allowInputRequired: true,
-          }) as Promise<ReadResourceResult | InputRequiredResult>
+          }) as Promise<ReadResourceResult | InputRequiredResult>,
+        authChallengeOperationKey("resources/read", params.uri)
       );
 
     return runInputRequiredOperation<ReadResourceResult>({
@@ -4316,7 +4382,8 @@ export class MCPClientManager {
               ...this.withProgressHandler(serverId, options),
               allowInputRequired: true,
             }
-          ) as Promise<GetPromptResult | InputRequiredResult>
+          ) as Promise<GetPromptResult | InputRequiredResult>,
+        authChallengeOperationKey("prompts/get", params.name)
       );
 
     return runInputRequiredOperation<GetPromptResult>({
@@ -4761,7 +4828,8 @@ export class MCPClientManager {
   private async runRetryableReadOperation<T>(
     serverId: string,
     options: RequestOptions | undefined,
-    operation: (client: ManagedMcpClient) => Promise<T>
+    operation: (client: ManagedMcpClient) => Promise<T>,
+    authChallengeOperation?: string
   ): Promise<T> {
     return this.runRetriedOperation(
       serverId,
@@ -4771,7 +4839,10 @@ export class MCPClientManager {
         await this.ensureConnected(serverId, signal);
         return operation(this.getClientOrThrow(serverId));
       },
-      { resetConnectionOnRetry: false }
+      {
+        resetConnectionOnRetry: false,
+        ...(authChallengeOperation ? { authChallengeOperation } : {}),
+      }
     );
   }
 
@@ -4781,13 +4852,40 @@ export class MCPClientManager {
     retryPolicy: RetryPolicy,
     operation: (signal?: AbortSignal) => Promise<T>,
     config: {
+      authChallengeIsolated?: boolean;
       resetConnectionOnRetry?: boolean;
+      authChallengeOperation?: string;
     } = {}
   ): Promise<T> {
+    const serverConfig = this.registeredServers.get(serverId)?.config;
+    if (
+      !config.authChallengeIsolated &&
+      serverConfig &&
+      this.isHttpConfig(serverConfig) &&
+      (serverConfig.authProvider || serverConfig.refreshToken)
+    ) {
+      return isolateAuthChallenge(
+        this,
+        serverId,
+        () =>
+          this.runRetriedOperation(serverId, options, retryPolicy, operation, {
+            ...config,
+            authChallengeIsolated: true,
+          }),
+        options?.signal
+      );
+    }
     const { signal, cleanup } = this.createRetrySignal(
       serverId,
       options?.signal
     );
+    const startedAt = Date.now();
+    if (config.authChallengeIsolated && config.authChallengeOperation)
+      this.liveClientStates
+        .get(serverId)
+        ?.authChallengeRecorder?.byOperation?.delete(
+          config.authChallengeOperation
+        );
 
     const runWithTransientRetry = () =>
       retryWithPolicy({
@@ -4805,19 +4903,26 @@ export class MCPClientManager {
       });
 
     try {
-      try {
-        return await runWithTransientRetry();
-      } catch (error) {
-        const refreshed = await this.refreshAccessTokenAfterUnauthorized(
-          serverId,
-          error,
-          signal
-        );
-        if (!refreshed) {
-          throw error;
-        }
-        return await runWithTransientRetry();
-      }
+      return await runOperationWithAuthRecovery({
+        run: runWithTransientRetry,
+        usesAuthProvider:
+          !!serverConfig &&
+          this.isHttpConfig(serverConfig) &&
+          !!(serverConfig.authProvider || serverConfig.refreshToken),
+        attach: (error) =>
+          attachRecordedAuthChallenge(
+            this.liveClientStates.get(serverId)?.authChallengeRecorder,
+            error,
+            startedAt,
+            config.authChallengeOperation
+          ),
+        hasChallenge: () => !!matchingRecordedChallenge(
+          this.liveClientStates.get(serverId)?.authChallengeRecorder, startedAt, config.authChallengeOperation),
+        reset: () =>
+          this.destroyLiveState(serverId, { abortRetryOperations: false }),
+        refresh: (error) =>
+          this.refreshAccessTokenAfterUnauthorized(serverId, error, signal),
+      });
     } finally {
       cleanup();
     }
