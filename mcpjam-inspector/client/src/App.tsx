@@ -1698,6 +1698,7 @@ export function ConformanceRoute() {
       history={
         convexProjectId ? (
           <ConformanceHistory
+            key={convexProjectId}
             projectId={convexProjectId}
             serverNames={serversById}
           />
