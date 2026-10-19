@@ -23,6 +23,9 @@ const receiptSchema = z.object({
   projectId: z.string().min(1),
 });
 export type EvalRunStartReceipt = z.infer<typeof receiptSchema>;
+export type EvalRunContext = EvalRunStartReceipt & {
+  connection: Awaited<ReturnType<typeof resolveEvalRunCredential>>;
+};
 const refusalMessages: Record<string, string> = {
   UNAUTHORIZED:
     "Your MCPJam credential is invalid or revoked. Create a new sk_ key or run `mcpjam cloud login` again.",
@@ -50,7 +53,7 @@ export async function startEvalRun(
     usedClientProfile?: boolean | "unknown";
     signal?: AbortSignal;
   }
-): Promise<EvalRunStartReceipt> {
+): Promise<EvalRunContext> {
   const credential = await resolveEvalRunCredential({
     ...options,
     apiKey: options.apiKey ?? options.mcpjam?.apiKey,
@@ -71,7 +74,7 @@ export async function startEvalRun(
   )}/eval-ingest/start-run`;
   const deadlineAt = Date.now() + 10_000;
   try {
-    return await reportingRequest(
+    const receipt = await reportingRequest(
       {
         timeoutMs: 3000,
         operationTimeoutMs: 10_000,
@@ -107,6 +110,7 @@ export async function startEvalRun(
         return { headers };
       }
     );
+    return { ...receipt, connection: credential };
   } catch (error) {
     if (options.signal?.aborted) throw options.signal.reason;
     if (error instanceof EvalRunStartError) throw error;

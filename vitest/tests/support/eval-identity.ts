@@ -11,6 +11,10 @@ const server = createServer(async (req, res) => {
     res.writeHead(401).end(JSON.stringify({ code: "UNAUTHORIZED" }));
     return;
   }
+  if (req.url?.endsWith("/eval-ingest/pay-iteration")) {
+    res.end(JSON.stringify({ ok: true, ...request, paymentId: request.iterationKey }));
+    return;
+  }
   res.end(JSON.stringify({ ok: true, runStartId: request.runStartId, organizationId: "org", projectId: "project" }));
 });
 beforeAll(async () => {

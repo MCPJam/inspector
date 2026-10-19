@@ -15,6 +15,7 @@ afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers();
 describe("eval run identity", () => {
   it("requires credentials without invoking fetch", async () => {
     vi.stubEnv("MCPJAM_API_KEY", "");
+    vi.stubEnv("MCPJAM_AUTH_FILE", join(tmpdir(), `missing-eval-auth-${crypto.randomUUID()}.json`));
     const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
     await expect(startEvalRun({ plannedIterations: 1 })).rejects.toMatchObject({ code: "CREDENTIALS_MISSING" });
     expect(fetcher).not.toHaveBeenCalled();

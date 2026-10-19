@@ -13,6 +13,13 @@ export async function evalIdentityFixture() {
       res.end(JSON.stringify({ items: [{ id: "project_fixture", name: "Default", organizationId: "org_fixture", updatedAt: 1 }], nextCursor: null }));
       return;
     }
+    if (req.url === "/api/v1/projects/project_fixture/eval-ingest/pay-iteration") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const parsed = JSON.parse(body);
+      res.end(JSON.stringify({ ok: true, ...parsed, paymentId: parsed.iterationKey }));
+      return;
+    }
     if (req.url === "/api/v1/projects/project_fixture/eval-ingest/start-run") {
       let body = "";
       for await (const chunk of req) body += chunk;

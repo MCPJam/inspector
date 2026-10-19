@@ -1,3 +1,8 @@
+import type { EvalRunContext } from "./eval-run-start.js";
+import {
+  EvalBillingError,
+  payEvalIteration,
+} from "./eval-iteration-payment.js";
 import type { HostExecutor } from "./HostExecutor.js";
 
 function mergeAbortSignals(
@@ -61,4 +66,73 @@ export function wrapAgentWithAbortSignal(
       ? () => agent.getServerReplayConfigs!()
       : undefined,
   };
+}
+
+export function wrapBillableExecutor(
+  executor: HostExecutor,
+  billableSteps: number
+) {
+  let issued = 0;
+  let violation: EvalBillingError | undefined;
+  const assertWithinBudget = () => {
+    if (violation) throw violation;
+  };
+  const wrap = (agent: HostExecutor): HostExecutor => ({
+    ...agent,
+    run: (message, options) => {
+      if (++issued > billableSteps) {
+        violation ??= new EvalBillingError(
+          `This eval exceeded its ${billableSteps} declared prompts. Increase billableSteps before running it again.`,
+          "BILLABLE_STEPS_EXCEEDED"
+        );
+      }
+      assertWithinBudget();
+      return agent.run(message, options);
+    },
+    withOptions: (options) => wrap(agent.withOptions(options)),
+    getPromptHistory: () => agent.getPromptHistory(),
+    resetPromptHistory: () => agent.resetPromptHistory(),
+  });
+  return { executor: wrap(executor), assertWithinBudget };
+}
+
+export async function executePaidIterations<T>(
+  context: EvalRunContext,
+  options: {
+    total: number;
+    concurrency: number;
+    caseId: string;
+    billableSteps: number;
+    signal?: AbortSignal;
+  },
+  execute: (index: number) => Promise<T>,
+  state: { error?: unknown }
+): Promise<Array<T & { billingPaymentId: string }>> {
+  const results: Array<T & { billingPaymentId: string }> = [];
+  let next = 0;
+  await Promise.all(
+    Array.from(
+      { length: Math.min(options.concurrency, options.total) },
+      async () => {
+        while (next < options.total && state.error === undefined) {
+          const index = next++;
+          try {
+            const billingPaymentId = await payEvalIteration(
+              context,
+              {
+                iterationKey: crypto.randomUUID(),
+                caseId: options.caseId,
+                billableSteps: options.billableSteps,
+              },
+              options.signal
+            );
+            results[index] = { ...(await execute(index)), billingPaymentId };
+          } catch (error) {
+            state.error ??= error;
+          }
+        }
+      }
+    )
+  );
+  return results.filter((result) => result !== undefined);
 }

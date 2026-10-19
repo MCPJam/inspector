@@ -1308,6 +1308,9 @@ export function iterationsToEvalResultInputs(
     });
 
     return {
+      ...(iteration.billingPaymentId
+        ? { billingPaymentId: iteration.billingPaymentId }
+        : {}),
       caseTitle: testName,
       query: prompts[0]?.getPrompt() ?? testName,
       passed,

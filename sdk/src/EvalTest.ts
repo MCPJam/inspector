@@ -1,5 +1,18 @@
-import { wrapAgentWithAbortSignal } from "./eval-executor-wrapper.js";
-import { startEvalRun, executorProviders, type EvalIdentityOptions } from "./eval-run-start.js";
+import {
+  EvalBillingError,
+  billingAttemptError,
+  validateBillableSteps,
+} from "./eval-iteration-payment.js";
+import {
+  wrapAgentWithAbortSignal,
+  wrapBillableExecutor,
+  executePaidIterations,
+} from "./eval-executor-wrapper.js";
+import {
+  startEvalRun,
+  executorProviders,
+  type EvalIdentityOptions,
+} from "./eval-run-start.js";
 import {
   assertEvalCaptureWithinLimit,
   DEFAULT_MAX_CAPTURED_BYTES,
@@ -328,6 +341,8 @@ export type EvaluatorOverride = {
 };
 
 export interface EvalTestConfig {
+  /** Prompts prepaid per iteration; retries reuse payment. Defaults to one. */
+  billableSteps?: number;
   /**
    * This case's DECLARED identity. Required.
    *
@@ -470,6 +485,7 @@ export interface EvalTestRunOptions extends EvalIdentityOptions {
  * Result details for a single iteration
  */
 export interface IterationResult {
+  billingPaymentId?: string;
   passed: boolean;
   /**
    * What happened to this iteration's EXECUTION, independent of `passed`.
@@ -687,6 +703,7 @@ export class EvalTest {
       }
       config = rest;
     }
+    validateBillableSteps(config.billableSteps);
     assertDeclaredCaseId(config);
     // After `assertDeclaredCaseId`, so a config with an `externalCaseId` and
     // no `id` gets the missing-id error that already names `id := externalCaseId`
@@ -849,10 +866,13 @@ export class EvalTest {
           }),
         };
       }
-      if (!options.__evalRunStarted) await startEvalRun({
-        ...identityOptions, plannedIterations: options.iterations,
-        providers: executorProviders(executor),
-      });
+      const runContext =
+        options.__evalRunContext ??
+        (await startEvalRun({
+          ...identityOptions,
+          plannedIterations: options.iterations,
+          providers: executorProviders(executor),
+        }));
       this.lastReportingReceipt = notRequestedReceipt("disabled");
       const controller = new AbortController();
       const cancel = () =>
@@ -905,6 +925,7 @@ export class EvalTest {
         const onProgress = options.onProgress;
 
         let completedCount = 0;
+        const billingState: { error?: unknown } = {};
 
         const testFn =
           this.config.test ??
@@ -952,13 +973,18 @@ export class EvalTest {
                 attempt
               );
 
+              let budget: ReturnType<typeof wrapBillableExecutor> | undefined;
               try {
                 // Create a fresh agent clone for this iteration to avoid race conditions
                 // when multiple iterations run concurrently
-                iterationAgent = wrapAgentWithAbortSignal(
-                  agent.withOptions({}),
-                  abortController.signal
+                budget = wrapBillableExecutor(
+                  wrapAgentWithAbortSignal(
+                    agent.withOptions({}),
+                    abortController.signal
+                  ),
+                  this.config.billableSteps ?? 1
                 );
+                iterationAgent = budget.executor;
                 const hardTimeoutPromise = new Promise<never>((_, reject) => {
                   timeoutId = setTimeout(() => {
                     timeoutTriggered = true;
@@ -986,6 +1012,7 @@ export class EvalTest {
                   hardTimeoutPromise,
                   cancelled,
                 ]);
+                budget.assertWithinBudget();
                 // Disarm BEFORE scoring. The iteration timeout bounds the agent
                 // run; scorers carry their own per-scorer bound. Leaving it armed
                 // meant a slow judge could trip it and stamp "Operation timed out"
@@ -1069,9 +1096,15 @@ export class EvalTest {
                   scores: graded.scores,
                   evaluatorResults: graded.scores.map(toEvaluatorResult),
                 };
-              } catch (error) {
+              } catch (caughtError) {
+                const error = billingAttemptError(caughtError, budget);
                 reportedEvidence = capture.close();
                 if (error instanceof EvalCaptureLimitError) throw error;
+                if (error instanceof EvalBillingError) {
+                  billingState.error = error;
+                  lastError = error.message;
+                  break;
+                }
                 assertEvalCaptureWithinLimit(
                   {
                     prompts: iterationAgent?.getPromptHistory() ?? [],
@@ -1209,24 +1242,29 @@ export class EvalTest {
           }
         };
 
-        // Only active workers allocate promises; queued iterations never clone an executor.
-        const results = new Array<IterationResult>(total);
-        let next = 0;
-        await Promise.all(
-          Array.from({ length: Math.min(concurrency, total) }, async () => {
-            while (next < total) {
-              const index = next++;
-              results[index] = await runSingleIteration(index);
-            }
-          })
+        iterationResults.push(
+          ...(await executePaidIterations(
+            runContext,
+            {
+              total,
+              concurrency,
+              caseId: this.config.id,
+              billableSteps: this.config.billableSteps ?? 1,
+              signal: options.signal,
+            },
+            runSingleIteration,
+            billingState
+          ))
         );
-        iterationResults.push(...results);
 
         const runResult = this.aggregateResults(
           iterationResults,
           evaluationConfig
         );
-        if (this.config.runEvaluators?.length) {
+        if (
+          this.config.runEvaluators?.length &&
+          billingState.error === undefined
+        ) {
           let context:
             ReturnType<typeof runEvaluatorContextFromIterations> | undefined;
           const identity = {
@@ -1276,6 +1314,9 @@ export class EvalTest {
           runResult.observerErrors = observerErrors;
         try {
           await this.autoSaveRunIfConfigured(runResult, options, agent);
+        } catch (error) {
+          // Reporting diagnostics remain in the receipt; preserve the execution refusal.
+          if (billingState.error === undefined) throw error;
         } finally {
           if (options.summary === "table") {
             try {
@@ -1288,6 +1329,7 @@ export class EvalTest {
           }
         }
 
+        if (billingState.error !== undefined) throw billingState.error;
         return runResult;
       } finally {
         this.running = false;
@@ -1370,7 +1412,7 @@ export class EvalTest {
         ...config?.transport,
         signal: config?.transport?.signal,
       },
-      expectedIterations: config?.expectedIterations ?? options.iterations,
+      expectedIterations: runResult.iterations,
       suiteName: config?.suiteName ?? `EvalTest: ${this.getName()}`,
       suiteDescription: config?.suiteDescription,
       serverNames: config?.serverNames,
