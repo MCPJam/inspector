@@ -1,8 +1,10 @@
+import { harnessToolOrigin, type ToolOrigin } from "@/shared/tool-origin";
 import {
   diskResumeState,
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
+import { withoutSyntheticDenialResults } from "./harness-approval-messages.js";
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalRuntimeBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
@@ -1370,7 +1372,7 @@ export async function runHarnessTurn(
       // continues the paused turn rather than starting a new prompt.
       const approvalContinuations =
         collectHarnessAgentToolApprovalContinuations({
-          messages: messages as never,
+          messages: withoutSyntheticDenialResults(messages) as never,
         });
       const isApprovalResume = approvalContinuations.length > 0;
       // Composer attachments come OUT of the prompt here (no adapter takes a
@@ -2451,6 +2453,7 @@ export async function runHarnessTurn(
           : createHarnessSandboxProvider({
               sandboxId: sandboxId!,
               defaultWorkingDirectory,
+              proxyUrl: () => auth.ANTHROPIC_BASE_URL ?? auth.OPENAI_BASE_URL,
               // The materialized secrets, as a session-wide env bag on every `run`
               // and `spawn`. This is the whole of materialized delivery on the
               // harness path: the agent runs `stripe customers list`, and
@@ -3133,6 +3136,13 @@ export async function runHarnessTurn(
       const resumeFromApproval =
         isApprovalResume && resumable?.awaitingApproval === true;
       if (isApprovalResume && !resumeFromApproval) {
+        const reason = eligibility.reason ?? (continuity?.runtimeChanged ? "runtime-changed" : "missing-paused-state");
+        logger.info(`[harness] approval continuation refused: ${reason} (${selectedServers?.length ?? 0} servers)`, {
+          harness: harnessAdapter.id,
+          reason,
+          stateVersion: continuity?.stateVersion,
+          selectedServerCount: selectedServers?.length ?? 0,
+        });
         // A scenario conversation's box stops heartbeating when a turn pauses
         // for approval, and idles out if the answer comes late; this turn was
         // handed its replacement. Say what happened and what to do.
@@ -3359,7 +3369,9 @@ export async function runHarnessTurn(
               toolName: string;
               input: unknown;
               providerOptions?: Record<string, unknown>;
+              providerExecuted: true;
             }
+          | { type: "tool-approval-request"; approvalId: string; toolCallId: string }
         > = [];
         const pendingResults: Array<{
           toolCallId: string;
@@ -3478,7 +3490,7 @@ export async function runHarnessTurn(
         const accountByCall = new Map<string, McpConnectionAttribution>();
         const toolMeta = new Map<
           string,
-          { serverId?: string; toolName: string }
+          { serverId?: string; toolName: string; toolOrigin?: ToolOrigin }
         >();
         const toolStartMs = new Map<string, number>();
         const failedToolCallIds = new Set<string>();
@@ -3533,29 +3545,6 @@ export async function runHarnessTurn(
           }
           const type = part.type;
           if (typeof type === "string") seenHarnessPartTypes.add(type);
-          // A failed call ends with `tool-error` (a non-zero Bash exit, a
-          // missing file, a failed Edit), not `tool-result`: it is no longer
-          // in flight either way.
-          if (type === "tool-error" || type === "tool-output-error") {
-            const failedToolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? "",
-            );
-            drainOpenToolCalls.delete(failedToolCallId);
-            // ...and its card settles as failed. The UI only: the transcript,
-            // spans and evals keep recording a failed built-in as before.
-            // Without it the card stayed "running" for good.
-            if (
-              toolMeta.has(failedToolCallId) &&
-              !failedToolCallIds.has(failedToolCallId)
-            ) {
-              failedToolCallIds.add(failedToolCallId);
-              emitToolOutputError(writer, {
-                toolCallId: failedToolCallId,
-                errorText: harnessToolErrorText(part),
-                providerExecuted: true,
-              });
-            }
-          }
           if (
             type === "reasoning-start" ||
             type === "reasoning-delta" ||
@@ -3669,6 +3658,13 @@ export async function runHarnessTurn(
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
               toolName,
+              toolOrigin: harnessToolOrigin({
+                rawToolName,
+                toolName,
+                serverId,
+                hostTools: hostExecutedTools,
+                nativeTools: harnessAdapter.listBuiltinTools?.() ?? [],
+              }),
             });
             // Stand-in ToolSet entry so emitTraceSnapshot's collectActualToolCalls
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
@@ -3705,6 +3701,7 @@ export async function runHarnessTurn(
               toolCallId,
               toolName,
               input,
+              providerExecuted: true,
               ...(providerMetadata
                 ? { providerOptions: providerMetadata }
                 : {}),
@@ -3718,12 +3715,27 @@ export async function runHarnessTurn(
             tryCreateHarnessScopeStepUp();
           } else if (
             type === "tool-result" ||
-            type === "tool-output-available"
+            type === "tool-output-available" ||
+            type === "tool-error" ||
+            type === "tool-output-error"
           ) {
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ?? "",
             );
             drainOpenToolCalls.delete(toolCallId);
+            const errorEvent =
+              type === "tool-error" || type === "tool-output-error";
+            const historicalCall = toolCallLookupFor(() => messageHistory)(
+              toolCallId,
+            );
+            if (errorEvent) {
+              // Ignore duplicate terminal events and errors for calls never issued.
+              if (
+                failedToolCallIds.has(toolCallId) ||
+                (!toolMeta.has(toolCallId) && !historicalCall)
+              ) continue;
+              failedToolCallIds.add(toolCallId);
+            }
             // HOST-EXECUTED delivery: prefer the raw result captured at
             // `execute()` time over the runtime's echo, which is the model-facing
             // projection we handed it. `has` rather than a truthiness check —
@@ -3731,27 +3743,34 @@ export async function runHarnessTurn(
             const hasRawHostExecuted = hostExecutedRawResults.has(toolCallId);
             const rawHostExecuted = hostExecutedRawResults.get(toolCallId);
             hostExecutedRawResults.delete(toolCallId);
-            const output = hasRawHostExecuted
+            const output = errorEvent
+              ? harnessToolErrorText(part)
+              : hasRawHostExecuted
               ? rawHostExecuted
               : (part as { output?: unknown }).output ??
                 (part as { result?: unknown }).result;
             // Surface tool failures the harness reports so eval/trace consumers
             // that key off isError classify them correctly.
             const isError =
+              errorEvent ||
               (part as { isError?: unknown }).isError === true ||
               (part as { error?: unknown }).error != null;
-            // Reuse the identity resolved at tool-call time (the result part may
-            // omit the name); fall back to parsing the result's own toolName.
-            // Name-only on purpose: a RESULT part carries no call input, so
-            // `attributeToolCall` would have nothing extra to work with. The
-            // identity resolved at call time (above) is the real answer and this
-            // is only its fallback.
-            const meta =
-              toolMeta.get(toolCallId) ??
-              harnessAdapter.parseToolName(
-                String((part as { toolName?: unknown }).toolName ?? "tool"),
-                harnessKeyToServerId,
-              );
+            // Result-only resumes retain the saved MCP identity even when the
+            // runtime echoes an unqualified tool name.
+            const parsedMeta = harnessAdapter.parseToolName(
+              String(
+                (part as { toolName?: unknown }).toolName ??
+                  historicalCall?.toolName ??
+                  "tool",
+              ),
+              harnessKeyToServerId,
+            );
+            const meta = toolMeta.get(toolCallId) ?? {
+              ...parsedMeta,
+              ...(historicalCall?.serverId
+                ? { serverId: historicalCall.serverId }
+                : {}),
+            };
             // A tool call the MCP proxy blocked on policy, recognised only when
             // THIS run sealed a policy for that server, and only ever with the
             // verdict that snapshot already holds — a server echoing the block
@@ -3814,15 +3833,23 @@ export async function runHarnessTurn(
               break harnessStream;
             }
             // Provider-executed (in-sandbox) — see tool-input-available above.
-            emitToolOutput(writer, {
-              toolCallId,
-              output,
-              providerMetadata: mergeMcpToolConnectionMetadata(
-                undefined,
-                accountByCall.get(toolCallId),
-              ),
-              providerExecuted: true,
-            });
+            if (errorEvent) {
+              emitToolOutputError(writer, {
+                toolCallId,
+                errorText: harnessToolErrorText(part),
+                providerExecuted: true,
+              });
+            } else {
+              emitToolOutput(writer, {
+                toolCallId,
+                output,
+                providerMetadata: mergeMcpToolConnectionMetadata(
+                  undefined,
+                  accountByCall.get(toolCallId),
+                ),
+                providerExecuted: true,
+              });
+            }
             // A policy block is neither a tool result nor a tool span: it never
             // reached the server, so counting it as either would attribute a
             // MCPJam refusal to the customer's tool (a `notMeasured` +
@@ -3855,6 +3882,15 @@ export async function runHarnessTurn(
                 status: isError ? "error" : "ok",
                 toolCallId,
                 toolName: meta.toolName,
+                toolOrigin:
+                  toolMeta.get(toolCallId)?.toolOrigin ??
+                  harnessToolOrigin({
+                    rawToolName: String((part as { toolName?: unknown }).toolName ?? meta.toolName),
+                    toolName: meta.toolName,
+                    serverId: meta.serverId,
+                    hostTools: hostExecutedTools,
+                    nativeTools: harnessAdapter.listBuiltinTools?.() ?? [],
+                  }),
                 ...(meta.serverId ? { serverId: meta.serverId } : {}),
                 ...(accountByCall.get(toolCallId)
                   ? {
@@ -3903,7 +3939,10 @@ export async function runHarnessTurn(
                 path: (part as { path?: unknown }).path,
               });
               const startMs = Date.now();
-              toolMeta.set(toolCallId, { toolName: fcName });
+              toolMeta.set(toolCallId, {
+                toolName: fcName,
+                toolOrigin: "native",
+              });
               toolSetForTrace[fcName] = {};
               emitToolInput(writer, {
                 toolCallId,
@@ -3926,6 +3965,7 @@ export async function runHarnessTurn(
                 toolCallId,
                 toolName: fcName,
                 input,
+                providerExecuted: true,
               });
               // The part is self-contained (no separate result frame) — emit a
               // matching result immediately so the pair stays balanced.
@@ -3953,6 +3993,7 @@ export async function runHarnessTurn(
                 status: "ok",
                 toolCallId,
                 toolName: fcName,
+                toolOrigin: "native",
               });
               pendingResults.push({
                 toolCallId,
@@ -4001,6 +4042,7 @@ export async function runHarnessTurn(
               emitTextEnd(writer, textId);
               textId = undefined;
             }
+            assistantParts.push({ type: "tool-approval-request", approvalId, toolCallId });
             emitToolApprovalRequest(writer, { approvalId, toolCallId });
             pendingApprovalIds.push(approvalId);
             pausedForApproval = true;

@@ -184,10 +184,13 @@ export function useHost({
 }
 
 export function useHostMutations() {
-  const createHost = useMutation("hosts:createHost" as any) as unknown as (args: {
+  const createHost = useMutation(
+    "hosts:createHost" as any,
+  ) as unknown as (args: {
     projectId: string;
     name: string;
     input: HostConfigInputV2;
+    applyDefaultSystemPrompt?: boolean;
     // `'journeys'` → mint a standalone (scenario-less) host owned by the Swarm
     // surface. `'user_testing'` → mint the host, an ad-hoc environment over
     // it, and an ENVIRONMENT-backed scenario, all in one transaction; the
