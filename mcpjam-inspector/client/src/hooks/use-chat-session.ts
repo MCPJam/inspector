@@ -4410,7 +4410,7 @@ export function useChatSession(
             resolve: hostedEnsureServerIds,
           });
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : "Couldn't prepare the saved servers for this approval.");
+          toast.error(error instanceof Error ? error.message : "Could not prepare the saved servers for this approval. Try approving again.");
           return;
         }
       }
