@@ -50,51 +50,6 @@ export function evalGateExitCode(report: GateReport): number {
 }
 
 /**
- * Statuses at which a run has stopped changing.
- *
- * Colocated with {@link NON_VERDICT_STATUSES} on purpose: they are one
- * vocabulary, and splitting them across files is how a newly-added terminal
- * status ends up in one set and not the other — making `--wait` poll a finished
- * run until the deadline and then report a wait timeout.
- *
- * `grading` IS NOT HERE, and must not be. A run held for its gating judge has
- * run every trial but has no verdict — `result` is still `pending` — so a gate
- * that treated it as terminal would decide on the summary written BEFORE the
- * judge's rows landed. Because it never reaches this set, it never reaches
- * `NON_VERDICT_STATUSES` or the exit-code mapping either: `--wait` keeps
- * polling, and a wait that runs out reports an incomplete gate (exit 3) rather
- * than a verdict.
- */
-export const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
-/**
- * Terminal run statuses that make a gate undecidable rather than failed.
- *
- * `"failed"` belongs here because it is an EXECUTION state, not a verdict:
- * the platform vocabulary separates `status` ("completed" | "failed" |
- * "cancelled") from `result` ("passed" | "failed"), and a run whose runner
- * crashed mid-flight still carries the summary of the iterations it managed
- * to record. Gating that partial summary is fail-OPEN — a run that dies after
- * 3 passing iterations of 30 reads as a 100% pass rate and exits 0. Only
- * `status: "completed"` has a summary that describes the whole run.
- */
-const NON_VERDICT_STATUSES = new Set(["cancelled", "timed_out", "failed"]);
-
-/**
- * Whether a hosted run's status means "no verdict was established", as opposed
- * to "the verdict was a failure". A cancelled run has not told us the server
- * regressed; it has told us nothing.
- */
-export function isNonVerdictRunStatus(status: string | undefined): boolean {
-  return status !== undefined && NON_VERDICT_STATUSES.has(status);
-}
-
-/**
  * Whether the platform itself declined to decide this run.
  *
  * Verdict policy 2 adds a third `result`, `inconclusive`: the run finished,

@@ -164,9 +164,10 @@ import {
   hostClientCapabilities,
 } from "../../services/host-connection-pins.js";
 import {
-  TERMINAL_ITERATION_STATUSES,
-  TERMINAL_RUN_STATUSES,
-} from "../../services/evals/run-status.js";
+  isEvalIterationTerminalStatus,
+  isEvalRunTerminalStatus,
+} from "@mcpjam/sdk/contract";
+import { isRunAlreadyTerminal } from "../../services/evals/detached-run.js";
 import { shouldSkipExecution } from "../shared/evals.js";
 import {
   createEvalCasesInBatches,
@@ -1671,30 +1672,6 @@ export async function fetchSuiteRunServerSelection(
   return { serverIds, serverNames };
 }
 
-/**
- * Whether the run record already reached a terminal status. Used by the
- * detached-execution catch: `runEvalSuiteWithAiSdk` finalizes a failed run
- * itself before rethrowing, so a rejected `execute()` usually means the
- * terminal write already happened — re-finalizing would restamp
- * `completedAt` and overwrite the runner's notes.
- */
-async function isRunAlreadyTerminal(
-  convexAuthToken: string,
-  runId: string,
-): Promise<boolean> {
-  try {
-    const run: RunDoc | null = await createConvexReadClient(
-      convexAuthToken,
-    ).query("testSuites:getTestSuiteRun" as any, { runId });
-    return TERMINAL_RUN_STATUSES.has(String(run?.status));
-  } catch {
-    // Can't tell — let the defensive finalize proceed. recorder.finalize
-    // tolerates deleted/unauthorized runs, so the worst case is the
-    // duplicate terminal write we'd have done unconditionally before.
-    return false;
-  }
-}
-
 // ── DTO mapping ──────────────────────────────────────────────────────
 
 type RunDoc = Record<string, any>;
@@ -2136,7 +2113,7 @@ function toIterationDto(
   // with the trial, so its duration is measurable (a setup failure has a real
   // elapsed time) and withholding it would report `durationMs: null` for the
   // one class of failure an operator is trying to time.
-  const isTerminal = TERMINAL_ITERATION_STATUSES.has(iteration.status);
+  const isTerminal = isEvalIterationTerminalStatus(iteration.status);
   const durationMs =
     isTerminal && startedAt !== null && typeof iteration.updatedAt === "number"
       ? Math.max(iteration.updatedAt - startedAt, 0)
@@ -6080,7 +6057,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
     return v1Resource(c, toRunDto(run!));
   }
   // Completed/failed runs can't be cancelled — surface a clear 409.
-  if (TERMINAL_RUN_STATUSES.has(status)) {
+  if (isEvalRunTerminalStatus(status)) {
     throw new WebRouteError(
       409,
       ErrorCode.VALIDATION_ERROR,

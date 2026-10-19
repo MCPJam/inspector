@@ -112,6 +112,8 @@ import {
   EVAL_SUITE_SCHEMA_VERSION,
   EVAL_SUITE_SCHEMA_VERSIONS,
   composeSuiteGateWithBaseReport,
+  isEvalRunNonVerdictStatus,
+  isEvalRunTerminalStatus,
   type EvalSuiteSchemaVersion,
 } from "@mcpjam/sdk/contract";
 import type {
@@ -159,10 +161,8 @@ import {
 import {
   EVAL_GATE_INCOMPLETE_EXIT_CODE,
   EVAL_GATE_USAGE_EXIT_CODE,
-  TERMINAL_RUN_STATUSES,
   evalGateExitCode,
   isNonVerdictRunResult,
-  isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
   activeWaiverForRun,
@@ -1463,7 +1463,7 @@ async function waitForEvalRun(
 ) {
   let extended = false;
   let run = await client.getEvalRun({ projectId, runId }, { signal });
-  while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+  while (!isEvalRunTerminalStatus(run.status)) {
     if (run.status === "grading" && !extended && gradingExtensionMs > 0) {
       extended = true;
       deadline = Math.max(deadline, Date.now() + gradingExtensionMs);
@@ -1680,7 +1680,7 @@ async function runEvalGate(
           { signal }
         );
 
-        while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+        while (!isEvalRunTerminalStatus(run.status)) {
           // Granted once, on first seeing the hold. See `waitForEvalRun`.
           if (
             run.status === "grading" &&
@@ -1766,7 +1766,7 @@ async function runEvalGate(
         }
 
         if (
-          isNonVerdictRunStatus(run.status) ||
+          isEvalRunNonVerdictStatus(run.status) ||
           isNonVerdictRunResult(run.result)
         ) {
           decisionSummary =
@@ -4051,7 +4051,7 @@ export function registerEvalCommands(program: Command): void {
               const soloSummary =
                 result.targets.length === 1 &&
                 runs.length === 1 &&
-                TERMINAL_RUN_STATUSES.has(runs[0]!.status)
+                isEvalRunTerminalStatus(runs[0]!.status)
                   ? await readEvalRunDecisionSummary(
                       client,
                       signal,
@@ -4367,7 +4367,7 @@ export function registerEvalCommands(program: Command): void {
             // network read (and, on old deployments, a second iteration walk).
             if (
               globalOptions.format === "human" &&
-              TERMINAL_RUN_STATUSES.has(result.run.status) &&
+              isEvalRunTerminalStatus(result.run.status) &&
               result.run.result !== "passed"
             ) {
               decisionSummary = result.decisionSummary;
