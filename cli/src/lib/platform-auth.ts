@@ -3,9 +3,7 @@
  *
  * Resolution precedence for platform commands:
  *   1. `--api-key` flag      (explicit `mcpjam_...` legacy keys hard-error)
- *   2. `MCPJAM_API_KEY` env  (`mcpjam_...` warns and falls through — that
- *                             env var is shared with SDK eval reporting,
- *                             which still uses legacy keys)
+ *   2. `MCPJAM_API_KEY` env  (legacy keys warn and fall through for non-eval commands)
  *   3. stored OAuth login    (`mcpjam cloud login`, refreshed when near expiry)
  *
  * Login is Authorization Code + PKCE through the hosted bridge
@@ -90,8 +88,8 @@ export function resolvePlatformCredential(
     if (!envKey.startsWith(LEGACY_API_KEY_PREFIX)) {
       return { kind: "api-key", getAuth: async () => envKey };
     }
-    // A legacy key in the shared env var is a valid eval-reporting setup, so
-    // it must not break platform commands for a logged-in user: warn, ignore it.
+    // Non-eval platform commands retain their migration fallback. Eval runs
+    // reject an explicitly selected legacy key before reaching this resolver.
     warn(
       `Ignoring legacy mcpjam_ key in MCPJAM_API_KEY for this command. ${LEGACY_KEY_REMEDY}`
     );
