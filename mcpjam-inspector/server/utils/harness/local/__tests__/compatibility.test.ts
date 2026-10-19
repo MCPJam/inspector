@@ -245,8 +245,15 @@ describe("codex runs locally only on the app-server adapter, attended, where cer
     expect((result as { message: string }).message).toMatch(/certified/);
   });
 
-  it("refuses Windows until its sandbox setup has evidence", () => {
-    expect(LOCAL_HARNESS_MANIFEST.codex.nativePlatforms).not.toContain("win32");
+  it("allows attended Windows only with a compatible, conformed pack", () => {
+    const query = {
+      harnessId: "codex", platform: "win32", targetKind: "local-native",
+      packTarget: "win32-x64", installedAdapterVersion: PINNED_CODEX,
+      permissionProfile: "workspace-edits",
+    } as const;
+    expect(resolveLocalCompatibility(query, codex())).toMatchObject({ ok: true });
+    expect(resolveLocalCompatibility(query, codex({ lifecycleConformanceVersion: "" })))
+      .toMatchObject({ ok: false, status: "conformance-missing" });
   });
 
   const unattended = (
