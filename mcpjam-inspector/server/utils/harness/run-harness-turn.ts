@@ -3,6 +3,7 @@ import {
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
+import { withoutSyntheticDenialResults } from "./harness-approval-messages.js";
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalRuntimeBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
@@ -1370,7 +1371,7 @@ export async function runHarnessTurn(
       // continues the paused turn rather than starting a new prompt.
       const approvalContinuations =
         collectHarnessAgentToolApprovalContinuations({
-          messages: messages as never,
+          messages: withoutSyntheticDenialResults(messages) as never,
         });
       const isApprovalResume = approvalContinuations.length > 0;
       // Composer attachments come OUT of the prompt here (no adapter takes a
