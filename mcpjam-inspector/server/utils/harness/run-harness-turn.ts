@@ -3612,6 +3612,13 @@ export async function runHarnessTurn(
             }
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
+            const toolCallId = String(
+              (part as { toolCallId?: unknown }).toolCallId ??
+                crypto.randomUUID(),
+            );
+            // The SDK emits the raw call and its validated projection with the
+            // same id. One execution must remain one card and transcript row.
+            if (toolMeta.has(toolCallId)) continue;
             closeReasoning();
             // A tool-call after tool results begins the next step.
             if (pendingResults.length > 0) {
@@ -3625,10 +3632,6 @@ export async function runHarnessTurn(
               emitTextEnd(writer, textId);
               textId = undefined;
             }
-            const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ??
-                crypto.randomUUID(),
-            );
             const rawToolName = String(
               (part as { toolName?: unknown }).toolName ?? "tool",
             );
@@ -4000,7 +4003,10 @@ export async function runHarnessTurn(
             emitToolApprovalRequest(writer, { approvalId, toolCallId });
             pendingApprovalIds.push(approvalId);
             pausedForApproval = true;
-            break;
+            // The SDK settles the pause after this event, publishing buffered
+            // results first. Cancelling its iterator here loses those results
+            // and can leave the saved continuation without a pending turn.
+            continue;
           } else if (type === "raw") {
             const rawValue = (part as { rawValue?: unknown }).rawValue;
             // The Claude Code bridge's background drain: progress becomes a

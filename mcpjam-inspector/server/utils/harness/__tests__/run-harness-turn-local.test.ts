@@ -424,6 +424,26 @@ describe("runHarnessTurn local continuity", () => {
     expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
   });
 
+  it("drains buffered results after an approval without duplicating tool calls", async () => {
+    const call = { type: "tool-call", toolCallId: "parallel-1", toolName: "bash", input: { command: "printf OK" } };
+    harnessState.streamParts = [
+      call,
+      call,
+      { type: "tool-call", toolCallId: "parallel-2", toolName: "bash", input: { command: "printf NEXT" } },
+      { type: "tool-approval-request", approvalId: "approval-2", toolCallId: "parallel-2" },
+      // HarnessAgent publishes buffered outcomes while settling its approval pause.
+      { type: "tool-result", toolCallId: "parallel-1", toolName: "bash", output: "OK" },
+    ];
+    const result = await runHarnessTurn(baseOptions() as any, "ui");
+    const stream = await result.response!.text();
+    expect(stream.match(/"type":"tool-input-available","toolCallId":"parallel-1"/g)).toHaveLength(1);
+    expect(stream).toContain('"type":"tool-output-available","toolCallId":"parallel-1"');
+    const parts = result.messageHistory.flatMap(message => Array.isArray(message.content) ? message.content : []);
+    expect(parts.filter(part => part.type === "tool-call" && part.toolCallId === "parallel-1")).toHaveLength(1);
+    expect(parts).toContainEqual(expect.objectContaining({ type: "tool-result", toolCallId: "parallel-1" }));
+    expect(harnessState.session.suspendTurn).toHaveBeenCalledOnce();
+  });
+
   it("closes a denied call in the UI so the decision is not re-sent", async () => {
     resume(true);
     harnessState.continuations = [
