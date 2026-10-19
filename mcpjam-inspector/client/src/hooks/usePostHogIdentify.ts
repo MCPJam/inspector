@@ -3,6 +3,10 @@ import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { detectPlatform } from "@/lib/PosthogUtils";
+import {
+  retryPersonProfile,
+  type PersonProfileProperties,
+} from "@/lib/analytics";
 import { refreshServerFeatureFlagsForActor } from "@/lib/server-feature-flags";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActorKey } from "@/hooks/use-actor-key";
@@ -10,6 +14,7 @@ import {
   subscribeTelemetryPolicy,
   currentTelemetryCaptureContext,
   currentTelemetryActor,
+  currentTelemetryProfileRetryRevision,
   telemetryIdentityFor,
 } from "@/lib/telemetry-context";
 
@@ -28,7 +33,8 @@ import {
  * content, so no identify call is made while that answer holds; names sent
  * under an earlier full answer stay on the PostHog person. This is
  * independent of the session's replay recording level. Desktop content
- * remains strict, so identify is withheld.
+ * remains strict, so identify is withheld. A delivery-blocking permission
+ * window permits one fresh profile retry after full content returns.
  */
 export function usePostHogIdentify() {
   const posthog = usePostHog();
@@ -45,6 +51,15 @@ export function usePostHogIdentify() {
   const contentFull = useSyncExternalStore(subscribeTelemetryPolicy, () =>
     currentTelemetryCaptureContext().policy.content === "full",
   );
+  const profileRetryRevision = useSyncExternalStore(
+    subscribeTelemetryPolicy,
+    currentTelemetryProfileRetryRevision,
+  );
+  const profileAttemptRef = useRef<{
+    actor: string;
+    revision: number;
+    client: typeof posthog;
+  } | null>(null);
   const previousActorRef = useRef<{ key: string; wasAuthed: boolean } | null>(
     null,
   );
@@ -90,7 +105,7 @@ export function usePostHogIdentify() {
     // super prop rides events, while `/flags` targeting reads person
     // properties. Set for every actor (guest included) so a cohort rule like
     // "self_hosted signed-in users" evaluates correctly.
-    let personProperties: Record<string, string | null | undefined> = {
+    let personProperties: PersonProfileProperties = {
       deployment: HOSTED_MODE ? "hosted" : "self_hosted",
     };
     if (isAuthedActor && user && currentIdentity === "full") {
@@ -114,12 +129,30 @@ export function usePostHogIdentify() {
     }
 
     // Re-read after layout effects: this render may precede an actor/context reset.
-    // A locally accepted identify cannot be retried after the relay rejects it.
+    // The SDK caches accepted profiles before compression and the live policy check.
     const canIdentify =
       contentFull &&
       currentTelemetryActor() === actorKey &&
       currentTelemetryCaptureContext().policy.content === "full";
-    if (canIdentify) posthog.identify(actorKey, personProperties);
+    if (canIdentify) {
+      posthog.identify(actorKey, personProperties);
+      const previousAttempt = profileAttemptRef.current;
+      if (
+        !isActorChange &&
+        previousAttempt?.actor === actorKey &&
+        previousAttempt.client === posthog &&
+        previousAttempt.revision !== profileRetryRevision
+      ) {
+        // Bypass SDK profile dedup after a delivery-blocking permission window.
+        // capture still enforces opt-out, capture-time grants and live send policy.
+        retryPersonProfile(posthog, personProperties);
+      }
+      profileAttemptRef.current = {
+        actor: actorKey,
+        revision: profileRetryRevision,
+        client: posthog,
+      };
+    }
     if (isActorChange) {
       posthog.register({ user_id: actorKey });
       previousActorRef.current = { key: actorKey, wasAuthed: isAuthedActor };
@@ -131,5 +164,13 @@ export function usePostHogIdentify() {
         getAccessToken: getAccessTokenRef.current,
       });
     }
-  }, [posthog, actorKey, user, convexUser, identity, contentFull]);
+  }, [
+    posthog,
+    actorKey,
+    user,
+    convexUser,
+    identity,
+    contentFull,
+    profileRetryRevision,
+  ]);
 }

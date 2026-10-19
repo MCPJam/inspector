@@ -46,7 +46,10 @@ import {
   PluginDeepLinkError,
 } from "../../../shared/plugin-deep-link.js";
 import settingsRoutes from "./plugin-settings.js";
-import { readServerOnboarding } from "../../services/plugin-host/onboarding.js";
+import {
+  onboardingRequestSchema,
+  readOnboarding,
+} from "../../services/plugin-host/onboarding.js";
 import { pluginContextRoutes } from "./plugin-context.js";
 import { PluginModelContextError } from "../../../shared/plugin-model-context.js";
 
@@ -516,16 +519,9 @@ instances.post("/discover", (c) =>
 
 instances.post("/onboarding", (c) =>
   route(c, async () => {
-    const body = serverSchema
-      .extend({ content: z.boolean() })
-      .parse(await c.req.json());
+    const body = onboardingRequestSchema.parse(await c.req.json());
     const { admission, bearer, actor } = await admitted(c, body);
-    const result = await readServerOnboarding({
-      ...body,
-      actorId: actor.actorId,
-      bearer,
-      signal: c.req.raw.signal,
-    });
+    const result = await readOnboarding(body, actor, bearer, c.req.raw.signal);
     await admission.revalidate({ signal: c.req.raw.signal });
     return c.json(result);
   }),

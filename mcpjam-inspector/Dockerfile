@@ -103,10 +103,6 @@ ARG VITE_WORKOS_CLIENT_ID
 ARG VITE_MCPJAM_SANDBOX_ORIGIN
 ARG VITE_MCPJAM_VIEW_MOUNT
 ARG VITE_MCPJAM_VIEW_SUBDOMAINS
-# Public, read-only Meticulous recording token, read at BUILD time by
-# client/vite.config.ts. Absent, no recorder is injected. Set it as a Railway
-# service variable only on the environments that should record sessions.
-ARG METICULOUS_RECORDING_TOKEN
 # Not a VITE_ var — it is never bundled. `sentryVitePlugin` in
 # client/vite.config.ts reads it at BUILD time to upload source maps for the
 # release, and without it every hosted prod stack trace stays minified
@@ -139,6 +135,9 @@ COPY mcpjam-inspector/lib/tsconfig.json mcpjam-inspector/lib/tsup.config.ts ./mc
 COPY mcpjam-inspector/server/tsconfig.json mcpjam-inspector/server/tsup.config.ts ./mcpjam-inspector/server/
 COPY mcpjam-inspector/bin ./mcpjam-inspector/bin
 COPY mcpjam-inspector/shared ./mcpjam-inspector/shared
+# Telemetry catalogs are build outputs. The SDK build writes the SDK catalog
+# here (no server or client yet); `build:server`'s pre-hook writes all four.
+COPY scripts/generate-telemetry-catalogs.mjs scripts/telemetry-route-catalog.mjs ./scripts/
 
 COPY sdk/src ./sdk/src
 COPY sdk/skills ./sdk/skills
@@ -210,7 +209,6 @@ RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABL
     if [ -n "$VITE_MCPJAM_SANDBOX_ORIGIN" ]; then export VITE_MCPJAM_SANDBOX_ORIGIN; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_MOUNT" ]; then export VITE_MCPJAM_VIEW_MOUNT; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_SUBDOMAINS" ]; then export VITE_MCPJAM_VIEW_SUBDOMAINS; fi; \
-    if [ -n "$METICULOUS_RECORDING_TOKEN" ]; then export METICULOUS_RECORDING_TOKEN; fi; \
     MCPJAM_BUILD_SURFACE="$MCPJAM_BUILD_SURFACE" npm run build:client -w @mcpjam/inspector
 
 ################################################################################

@@ -1,8 +1,48 @@
 import { describe, expect, it } from "vitest";
-import { buildLegacyLogRow, buildStrictLogRow } from "../strict-log";
+import {
+  buildLegacyLogRow,
+  buildStrictLogRow,
+  strictLogFieldRule,
+} from "../strict-log";
 import catalog from "../telemetry-catalog.generated.json";
 
 describe("strict log boundary", () => {
+  it.each(["fetch_failed", "invalid_catalog"])(
+    "retains a catalog refresh failure with bounded reason %s and warning level",
+    (reason) => {
+      const row = buildStrictLogRow(
+        "model_catalog.refresh.failed",
+        {},
+        {
+          reason,
+          level: "error",
+          url: "PRIVATE_SENTINEL",
+          error: "PRIVATE_SENTINEL",
+        },
+      );
+      expect(row).toMatchObject({
+        event: "model_catalog.refresh.failed",
+        level: "warn",
+        reason,
+      });
+      expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
+    },
+  );
+  it.each(["startup", "PRIVATE_SENTINEL", undefined])(
+    "omits a reason outside the catalog-refresh enum: %s",
+    (reason) => {
+      const row = buildStrictLogRow(
+        "model_catalog.refresh.failed",
+        {},
+        { reason },
+      );
+      expect(row).toMatchObject({
+        event: "model_catalog.refresh.failed",
+        level: "warn",
+      });
+      expect(row).not.toHaveProperty("reason");
+    },
+  );
   it("retains the exact payment refusal only on its billing failure event", () => {
     const context = { reason: "payment_not_confirmed" };
     const payload = { errorCode: "agent_billing_rejected" };
@@ -146,5 +186,51 @@ describe("strict log boundary", () => {
     expect(row).toMatchObject({ event: "log.unknown", route: "unknown_route" });
     expect(row).not.toHaveProperty("durationMs");
     expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
+  });
+  it("copies Convex IDs from the server's context and never from a payload", () => {
+    const [org, project, server, forged] = ["org", "project", "server", "forged"]
+      .map((seed) => seed.padEnd(32, "0"));
+    const payload = { orgId: forged, projectId: forged, serverId: forged };
+    expect(
+      buildStrictLogRow(
+        "mcp.tool.execution.failed",
+        { orgId: org, projectId: project, serverId: server, sessionId: server },
+        payload,
+      ),
+    ).toMatchObject({ orgId: org, projectId: project, serverId: server });
+    for (const context of [
+      {},
+      { orgId: null, projectId: null, serverId: null },
+      { orgId: forged.toUpperCase(), projectId: `${project}0`, serverId: 7 },
+      { orgId: `PRIVATE_SENTINEL ${org}` },
+    ]) {
+      const row = buildStrictLogRow("mcp.tool.execution.failed", context, payload);
+      for (const key of ["orgId", "projectId", "serverId", "sessionId"])
+        expect(row).not.toHaveProperty(key);
+      expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
+    }
+  });
+  it("takes no ID from a legacy row's context, harness rows included", () => {
+    const ids = { orgId: "org".padEnd(32, "0"), projectId: "p".padEnd(32, "0") };
+    for (const message of ["[harness][timing] claim=1ms", "[harness] turn failed"]) {
+      const row = buildLegacyLogRow(message, { ...ids, harnessId: "codex" });
+      expect(row).toMatchObject({ harnessId: "codex" });
+      expect(row).not.toHaveProperty("orgId");
+      expect(row).not.toHaveProperty("projectId");
+    }
+  });
+  it("drops fields named after Object.prototype members instead of throwing", () => {
+    const fields = JSON.parse(
+      '{"toString":"x","constructor":"ok","hasOwnProperty":1,"valueOf":true,"__proto__":"x"}',
+    );
+    for (const key of Object.keys(fields))
+      expect(strictLogFieldRule(key)).toBeUndefined();
+    const row = buildStrictLogRow("http.request.failed", fields, fields);
+    for (const key of Object.keys(fields))
+      expect(Object.hasOwn(row, key)).toBe(false);
+    expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
+    expect(buildLegacyLogRow("[harness] turn failed", fields)).toMatchObject({
+      event: "harness.turn.failed",
+    });
   });
 });

@@ -14,6 +14,8 @@ export type CaseLaunchTarget = {
   model: string;
   hostId?: string;
   environmentId?: string;
+  targetIndex?: number;
+  clientDefault?: boolean;
 };
 export type PendingCaseRow = EvalIteration &
   CaseLaunchTarget & {
@@ -63,7 +65,7 @@ export function beginCaseLaunch(
       ...target,
       _id: `pending:${id}:${targetIndex}:${index}`,
       launchId: id,
-      targetIndex,
+      targetIndex: target.targetIndex ?? targetIndex,
       testCaseId: scope.caseId,
       projectId: scope.projectId,
       createdAt,
@@ -173,7 +175,8 @@ export function caseRowArrived(
             caseRowArrived(other, [iteration], runs, [], runIds),
         )) &&
       iteration.iterationNumber === row.iterationNumber &&
-      (row.model === "Client default" ||
+      (row.clientDefault ||
+        row.model === "Client default" ||
         runIterationTargetKey(run, iteration) === row.model)
     );
   });

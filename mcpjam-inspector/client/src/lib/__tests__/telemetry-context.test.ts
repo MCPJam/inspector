@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   currentTelemetryCaptureContext,
+  currentTelemetryProfileRetryRevision,
+  setTelemetryCaptureContextAndContent,
+  subscribeTelemetryPolicy,
   resetTelemetryIdentity,
   setTelemetryActor,
   setTelemetryContentPolicy,
@@ -27,6 +30,33 @@ describe("the identity grant", () => {
     setSessionPrivacy("full");
     setTelemetryCaptureContext({ projectIds: ["project_identity"], organizationIds: [] });
     setTelemetryContentPolicy("user_A", "full");
+  });
+
+  it("versions only delivery-blocking windows, including credential locations", () => {
+    const initial = currentTelemetryProfileRetryRevision();
+    setTelemetryContentPolicy("user_A", "full");
+    expect(currentTelemetryProfileRetryRevision()).toBe(initial);
+    setTelemetryContentPolicy("user_A", "strict");
+    setTelemetryContentPolicy("user_A", "full");
+    expect(currentTelemetryProfileRetryRevision()).toBe(initial + 1);
+    const listener = vi.fn();
+    const unsubscribe = subscribeTelemetryPolicy(listener);
+    setTelemetryCaptureContextAndContent(
+      { projectIds: ["project_next"], organizationIds: [] },
+      "user_A",
+      "full",
+    );
+    unsubscribe();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(currentTelemetryProfileRetryRevision()).toBe(initial + 1);
+    const ids = { projectIds: ["project_next"], organizationIds: [] };
+    window.history.replaceState(null, "", "/results/fixture");
+    setTelemetryCaptureContextAndContent(ids, "user_A", "full");
+    expect(currentTelemetryCaptureContext().policy.content).toBe("strict");
+    window.history.replaceState(null, "", "/");
+    setTelemetryCaptureContextAndContent(ids, "user_A", "full");
+    expect(currentTelemetryProfileRetryRevision()).toBe(initial + 2);
+    expect(currentTelemetryCaptureContext().policy.content).toBe("full");
   });
 
   it("is withheld until the backend answers full for the current actor", () => {

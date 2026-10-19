@@ -38,6 +38,7 @@ import { scrubCredentialsInText } from "./credential-urls";
 import {
   authHeaderLike,
   jwtLike,
+  providerTokenLike,
   secretParamLike,
   skKeyLike,
   tokenLike,
@@ -264,6 +265,7 @@ function scrubString(s: string): string {
     .replace(urlBasicAuthLike(), "$1[redacted]@")
     .replace(EMAIL_LIKE, "[redacted-email]")
     .replace(skKeyLike(), "[redacted-secret]")
+    .replace(providerTokenLike(), "[redacted-secret]")
     .replace(secretParamLike(), "$1[redacted]");
 }
 

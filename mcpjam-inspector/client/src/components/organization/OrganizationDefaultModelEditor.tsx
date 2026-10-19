@@ -91,7 +91,7 @@ export function ModelEditor({
   } | null>(null);
 
   if (eligibleProviders.length === 0) {
-    return <NoEligibleProvider noun={noun} onCancel={onCancel} />;
+    return <NoEligibleProvider kind={kind} noun={noun} onCancel={onCancel} />;
   }
 
   const provider = eligibleProviders.find((p) => p.id === connectionId);
@@ -163,18 +163,28 @@ export function ModelEditor({
 }
 
 function NoEligibleProvider({
+  kind,
   noun,
   onCancel,
 }: {
+  kind: OrgAiModelKind;
   noun: string;
   onCancel: () => void;
 }) {
   return (
     <div className="space-y-2 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
-      <p>
-        No eligible organization provider. Add a direct cloud provider below to
-        run the {noun}; OpenRouter and local providers aren&apos;t eligible.
-      </p>
+      {kind === "search" ? (
+        <p>
+          No organization provider can run web search. Add an Anthropic or
+          OpenAI provider below to choose a {noun}.
+        </p>
+      ) : (
+        <p>
+          No eligible organization provider. Add a direct cloud provider below
+          to run the {noun}; OpenRouter and local providers aren&apos;t
+          eligible.
+        </p>
+      )}
       <Button variant="ghost" size="sm" onClick={onCancel}>
         Cancel
       </Button>

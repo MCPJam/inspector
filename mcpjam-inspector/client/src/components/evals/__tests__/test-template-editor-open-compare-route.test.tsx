@@ -79,6 +79,9 @@ vi.mock("@/components/evaluate/suite-run-review", () => ({
         <output data-testid="case-run-block">{props.disabledReason}</output>
         <button onClick={async () => {
           try {
+            // The real sheet saves the clicked draft before it prepares the run.
+            if (props.saveBeforeRun && !(await props.saveBeforeRun()))
+              throw new Error("Save refused");
             await props.onStart({ ...props.suite, environmentIds: ["one-run", "second-client"] }, {
               iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
             });

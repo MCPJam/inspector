@@ -1,6 +1,7 @@
 import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
+import type { LogConvexId } from "./log-convex-id.js";
 
 export type Environment =
   | "prod"
@@ -57,14 +58,15 @@ interface CommonLogContext {
   userExternalId?: string | null;
   guestExternalId?: string | null;
   emailDomain?: string | null;
-  orgId?: string | null;
+  orgId?: LogConvexId | null;
   orgPlan?: string | null;
   orgSeatQuantity?: number | null;
   orgCreatedBy?: string | null;
-  projectId?: string | null;
+  projectId?: LogConvexId | null;
   projectRole?: ProjectRole | null;
   accessLevel?: AccessLevel | null;
-  serverId?: string | null;
+  serverId?: LogConvexId | null;
+  /** Not logged until a verified producer writes it. */
   sessionId?: string | null;
   scenarioId?: string | null;
   surface?: Surface | null;
@@ -420,6 +422,30 @@ export type RequestEventMap = {
     totalMs: number;
     spans: Record<string, { count: number; totalMs: number; maxMs: number }>;
   };
+  /**
+   * One plugin onboarding turn (the Playground's Run onboarding or Set up),
+   * from its request to its terminal result. `phases` holds the ms since the
+   * request at which each phase was first reached. IDs, codes, counts and
+   * timings only; never skill text, credentials or tool arguments.
+   */
+  "plugin.onboarding.turn": {
+    attemptId: string;
+    pluginVersionId: string;
+    outcome: "success" | "error" | "cancelled";
+    code?: string;
+    statusCode: number;
+    totalMs: number;
+    phases: Record<string, number>;
+    unavailableServers: number;
+  };
+  /** The same turn, unfinished when its watchdog fired: where it stopped. */
+  "plugin.onboarding.turn.stalled": {
+    attemptId: string;
+    pluginVersionId: string;
+    lastPhase: string;
+    elapsedMs: number;
+    phases: Record<string, number>;
+  };
   "mcp.tool.execution.failed": {
     toolName: string;
     serverId?: string;
@@ -511,6 +537,9 @@ export type RequestEventMap = {
 export type SystemEventMap = {
   telemetry_canary: Record<string, never>;
   llm_spend_unattested_ip_pooled: Record<string, never>;
+  "model_catalog.refresh.failed": {
+    reason: "fetch_failed" | "invalid_catalog";
+  };
   "harness.timing": {
     harnessId?: "claude-code" | "codex" | "cursor";
     harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";

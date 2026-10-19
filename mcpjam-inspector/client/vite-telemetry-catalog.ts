@@ -1,6 +1,41 @@
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
 import { sentryInjectedDebugId } from "../../sdk/src/internal/sentry-protocol";
+
+/**
+ * The source catalogs the client imports are build outputs. A build writes
+ * them before Rollup resolves those imports; the dev server writes them before
+ * its first request and keeps a watcher running, so a source edit updates the
+ * JSON and Vite reloads its importers.
+ */
+export function telemetrySourceCatalogsPlugin(): Plugin {
+  // Resolved here, not at import: Vite configs load with a file URL, while the
+  // client test project imports this module under jsdom, where it is not one.
+  const GENERATOR = fileURLToPath(new URL("../../scripts/generate-telemetry-catalogs.mjs", import.meta.url));
+  let watcher: ChildProcess | undefined;
+  const generate = () => execFileSync(process.execPath, [GENERATOR], { stdio: "inherit" });
+  const stop = () => {
+    if (watcher?.exitCode === null) watcher.kill();
+  };
+  return {
+    name: "telemetry-source-catalogs",
+    configureServer(server) {
+      generate();
+      // A second watcher for the same checkout (from `npm run dev`) stands by
+      // and takes over if the first stops.
+      watcher = spawn(process.execPath, [GENERATOR, "--watch"], {
+        stdio: ["ignore", "inherit", "inherit", "ipc"],
+      });
+      server.httpServer?.once("close", stop);
+      process.once("exit", stop);
+    },
+    buildStart() {
+      if (!watcher) generate();
+    },
+  };
+}
 
 /** Only exact emitted app files can appear in outgoing frame locations. */
 export function telemetryCatalogPlugin(): Plugin {

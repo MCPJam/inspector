@@ -22,12 +22,18 @@
  */
 
 import {
-  isSecretLikeValue,
-  PluginIssueCollector,
-  SECRET_FIELD_NAME,
-  sanitizeUnknownRecord,
-  type PluginIssueCode,
-} from "./validation.js";
+  checkServerUrl,
+  normalizeEnv,
+  normalizeHeaders,
+  normalizeOAuthHint,
+  resolveWorkingDirectory,
+} from "./mcp-entry-values.js";
+import {
+  readOpenAiServerAuth,
+  withApiKeyHeader,
+  type PluginServerAuth,
+} from "./openai-auth.js";
+import { PluginIssueCollector, type PluginIssueCode } from "./validation.js";
 import { resolveContainedPath } from "./paths.js";
 
 /**
@@ -68,45 +74,8 @@ export function containsPluginPlaceholder(value: string): boolean {
   );
 }
 
-/** `${SOME_VAR}`-style reference that must be resolved by the user at setup. */
-const ENV_REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
-
-/** Every `${VAR}` reference inside a composite value. */
-const ENV_REFERENCE_GLOBAL = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
-
-/**
- * A PURE placeholder path template: the placeholder itself, optionally
- * followed by a path-y remainder. Anything else — including a secret with a
- * placeholder smuggled onto the end ("sk-live-...${PLUGIN_ROOT}") — takes
- * the normal literal-value path.
- */
-const PURE_PLACEHOLDER_TEMPLATE =
-  /^\$\{(?:PLUGIN_ROOT|PLUGIN_DATA)\}[A-Za-z0-9._/-]*$/;
-
-const RESERVED_ENV_KEYS = new Set(["PLUGIN_ROOT", "PLUGIN_DATA"]);
-
-/**
- * Characters allowed in the non-reference remainder of a composite template
- * ("postgres://${DB_HOST}:${DB_PORT}/x"). A remainder outside this set, or
- * one containing a long opaque token run, looks like an embedded credential:
- * the template is then dropped instead of stored.
- */
-const TEMPLATE_SAFE_REMAINDER = /^[A-Za-z0-9.:/@,+_-]*$/;
-const LONG_TOKEN_RUN = /[A-Za-z0-9_-]{16,}/;
-
-/** Header names that carry credentials (drives `secret: true`). */
-const SECRET_HEADER_NAME =
-  /(authorization|token|secret|api[-_]?key|cookie|password|credential)/i;
-
 const SERVER_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-/** Agent Plugins cwd rule: `./…`, `${PLUGIN_ROOT}…`, or `${PLUGIN_DATA}…`. */
-const AP_CWD =
-  /^(?:\.\/|\$\{PLUGIN_ROOT\}(?:\/|$)|\$\{PLUGIN_DATA\}(?:\/|$))/;
-
-function byName<T extends { name: string }>(a: T, b: T): number {
-  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-}
 
 export interface PluginEnvRequirement {
   name: string;
@@ -132,6 +101,8 @@ export interface PluginHeaderRequirement {
   secret: boolean;
   /** Screened non-secret literal header value, when declared. */
   value?: string;
+  /** Set on an API key's header: how the supplied credential is sent. */
+  scheme?: "bearer" | "basic" | "custom_header";
 }
 
 export interface NormalizedPluginOAuthHint {
@@ -156,6 +127,8 @@ export type NormalizedPluginMcpServer =
       url: string;
       headerRequirements: PluginHeaderRequirement[];
       oauth?: NormalizedPluginOAuthHint;
+      /** OpenAI's typed auth declaration, read under openai-compatible only. */
+      auth?: PluginServerAuth;
     };
 
 export interface ParsedPluginServer {
@@ -172,7 +145,7 @@ export interface ParsedPluginServer {
 
 /** One skipped component, per the spec's failure-isolation boundaries. */
 export interface PluginSkippedComponent {
-  kind: "server" | "skill" | "mcp-config";
+  kind: "server" | "skill" | "mcp-config" | "app";
   /** Server key, skill directory name, or the config path. */
   key: string;
   reason: string;
@@ -192,196 +165,6 @@ const HTTP_KNOWN_FIELDS = new Set([
   "oauth",
   "authentication",
 ]);
-
-function normalizeEnv(
-  serverKey: string,
-  componentKey: string,
-  env: unknown,
-  issues: PluginIssueCollector
-): PluginEnvRequirement[] | null {
-  if (env === undefined) return [];
-  if (env === null || typeof env !== "object" || Array.isArray(env)) {
-    issues.error(
-      "MCP_INVALID_ENV",
-      `server "${serverKey}": "env" must be an object`,
-      { componentKey }
-    );
-    return null;
-  }
-  const byNameMap = new Map<string, PluginEnvRequirement>();
-  const referencedVars = new Set<string>();
-  for (const [name, value] of Object.entries(env as Record<string, unknown>)) {
-    if (RESERVED_ENV_KEYS.has(name)) {
-      // Spec: env may not define the client-controlled placeholder keys.
-      issues.error(
-        "MCP_RESERVED_ENV_KEY",
-        `server "${serverKey}": env may not define "${name}" — it is client-controlled`,
-        { componentKey }
-      );
-      return null;
-    }
-    if (typeof value !== "string") {
-      issues.error(
-        "MCP_INVALID_ENV",
-        `server "${serverKey}": env "${name}" must be a string`,
-        { componentKey }
-      );
-      continue;
-    }
-    if (PURE_PLACEHOLDER_TEMPLATE.test(value)) {
-      // Pure path template resolved by the runtime at launch — not a secret.
-      byNameMap.set(name, { name, required: false, valueTemplate: value });
-      continue;
-    }
-    if (value === "" || ENV_REFERENCE.test(value)) {
-      byNameMap.set(name, { name, required: true });
-      continue;
-    }
-    const refs = [...value.matchAll(ENV_REFERENCE_GLOBAL)]
-      .map((match) => match[1])
-      .filter((variable) => !RESERVED_ENV_KEYS.has(variable));
-    if (refs.length > 0) {
-      // Composite template ("postgres://${DB_HOST}:${DB_PORT}/x"): store it
-      // with placeholders preserved only when the literal remainder cannot
-      // plausibly be a credential; always register the referenced variables
-      // as required setup.
-      const remainder = value.replace(ENV_REFERENCE_GLOBAL, "");
-      const safeRemainder =
-        TEMPLATE_SAFE_REMAINDER.test(remainder) &&
-        !LONG_TOKEN_RUN.test(remainder) &&
-        !SECRET_FIELD_NAME.test(name);
-      if (safeRemainder) {
-        byNameMap.set(name, { name, required: false, valueTemplate: value });
-        for (const variable of refs) referencedVars.add(variable);
-        continue;
-      }
-    } else if (!SECRET_FIELD_NAME.test(name) && !isSecretLikeValue(value)) {
-      // Plain literal that passed the secret screen: store it, so portable
-      // plugins declaring non-secret config ({"MODE": "production"}) run
-      // without a setup step.
-      byNameMap.set(name, { name, required: false, value });
-      continue;
-    }
-    // A secret-looking literal (or a composite whose remainder failed the
-    // screen). Never persist it — it may be a credential. The bundle DID
-    // declare a value here, so the component cannot run until the user
-    // re-supplies one: the requirement is required, not optional.
-    byNameMap.set(name, { name, required: true });
-    issues.warn(
-      "MCP_ENV_VALUE_OMITTED",
-      `server "${serverKey}": literal value of env "${name}" is not stored; configure it during setup`,
-      { componentKey }
-    );
-  }
-  for (const variable of referencedVars) {
-    if (!byNameMap.has(variable)) {
-      byNameMap.set(variable, { name: variable, required: true });
-    }
-  }
-  // Sorted so the configHash is insensitive to source key order.
-  return [...byNameMap.values()].sort(byName);
-}
-
-function normalizeHeaders(
-  serverKey: string,
-  componentKey: string,
-  headers: unknown,
-  issues: PluginIssueCollector
-): PluginHeaderRequirement[] | null {
-  if (headers === undefined) return [];
-  if (
-    headers === null ||
-    typeof headers !== "object" ||
-    Array.isArray(headers)
-  ) {
-    issues.error(
-      "MCP_INVALID_HEADERS",
-      `server "${serverKey}": "headers" must be an object`,
-      { componentKey }
-    );
-    return null;
-  }
-  const requirements: PluginHeaderRequirement[] = [];
-  for (const [name, value] of Object.entries(
-    headers as Record<string, unknown>
-  )) {
-    if (typeof value !== "string") {
-      issues.error(
-        "MCP_INVALID_HEADERS",
-        `server "${serverKey}": header "${name}" must be a string`,
-        { componentKey }
-      );
-      continue;
-    }
-    const secretName = SECRET_HEADER_NAME.test(name);
-    if (value === "" || ENV_REFERENCE.test(value)) {
-      requirements.push({ name, secret: secretName });
-      continue;
-    }
-    const secretValue = isSecretLikeValue(value);
-    if (!secretName && !secretValue) {
-      // Screened non-secret literal ("X-Api-Version: 2") — store it.
-      requirements.push({ name, secret: false, value });
-      continue;
-    }
-    issues.warn(
-      "MCP_HEADER_VALUE_OMITTED",
-      `server "${serverKey}": literal value of header "${name}" is not stored; configure it during setup`,
-      { componentKey }
-    );
-    // A value that LOOKED secret marks the header secret even under an
-    // innocuous name, so setup UIs mask what the user re-enters.
-    requirements.push({ name, secret: secretName || secretValue });
-  }
-  // Sorted so the configHash is insensitive to source key order.
-  return requirements.sort(byName);
-}
-
-function normalizeOAuthHint(
-  serverKey: string,
-  componentKey: string,
-  raw: Record<string, unknown>,
-  issues: PluginIssueCollector
-): NormalizedPluginOAuthHint {
-  const hint: NormalizedPluginOAuthHint = {};
-
-  const authentication = raw.authentication;
-  if (typeof authentication === "string") {
-    const timing = authentication.toLowerCase();
-    if (timing === "on_install") hint.timing = "on_install";
-    else if (timing === "on_use") hint.timing = "on_use";
-  }
-
-  const oauth =
-    raw.oauth ??
-    (typeof authentication === "object" ? authentication : undefined);
-  if (oauth && typeof oauth === "object" && !Array.isArray(oauth)) {
-    const oauthRecord = oauth as Record<string, unknown>;
-    const scopes = oauthRecord.scopes;
-    if (
-      Array.isArray(scopes) &&
-      scopes.every((scope) => typeof scope === "string")
-    ) {
-      hint.scopes = scopes as string[];
-    }
-    const candidates: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(oauthRecord)) {
-      if (key === "scopes") continue;
-      candidates[key] = value;
-    }
-    // Recursive sanitation: this metadata lands in the hashed config DTO, so
-    // no secret-looking key OR value at any depth may survive.
-    const metadata = sanitizeUnknownRecord(candidates, {
-      issues,
-      secretCode: "MCP_SECRET_FIELD_OMITTED",
-      label: `server "${serverKey}": oauth`,
-      context: { componentKey },
-    });
-    if (Object.keys(metadata).length > 0) hint.metadata = metadata;
-  }
-
-  return hint;
-}
 
 /**
  * Result of {@link detectPluginMcpTransport}. `ok: false` carries the same
@@ -494,7 +277,8 @@ function normalizeServer(
   serverKey: string,
   sourcePath: string,
   raw: unknown,
-  issues: PluginIssueCollector
+  issues: PluginIssueCollector,
+  entryExtensions: boolean
 ): Omit<ParsedPluginServer, "configHash"> | null {
   const componentKey = `server:${serverKey}`;
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -519,7 +303,7 @@ function normalizeServer(
   const knownFields =
     declared === "stdio" ? STDIO_KNOWN_FIELDS : HTTP_KNOWN_FIELDS;
   for (const key of Object.keys(record)) {
-    if (!knownFields.has(key)) {
+    if (!knownFields.has(key) && !(entryExtensions && key === "extensions")) {
       issues.error(
         "MCP_UNKNOWN_FIELD",
         `server "${serverKey}": field "${key}" is not part of the Agent Plugins ${declared} entry schema`,
@@ -589,46 +373,19 @@ function normalizeServer(
     );
     if (envRequirements === null) return null;
 
+    // `./` working directories canonicalize to the `${PLUGIN_ROOT}` form,
+    // same as commands: the bare relative string carries no placeholder,
+    // so nothing downstream would ever resolve it against the bundle.
     let workingDirectory: string | undefined;
     if (record.cwd !== undefined) {
-      const cwd = record.cwd;
-      if (typeof cwd !== "string") {
-        issues.error(
-          "MCP_INVALID_SERVER",
-          `server "${serverKey}": "cwd" must be a string`,
-          { componentKey }
-        );
+      const cwd = resolveWorkingDirectory(record.cwd);
+      if (!cwd.ok) {
+        issues.error(cwd.code, `server "${serverKey}": ${cwd.message}`, {
+          componentKey,
+        });
         return null;
       }
-      if (!AP_CWD.test(cwd)) {
-        issues.error(
-          "MCP_INVALID_WORKING_DIRECTORY",
-          `server "${serverKey}": "cwd" must start with "./", "\${PLUGIN_ROOT}", or "\${PLUGIN_DATA}"`,
-          { componentKey }
-        );
-        return null;
-      }
-      // `./` working directories canonicalize to the `${PLUGIN_ROOT}` form,
-      // same as commands: the bare relative string carries no placeholder,
-      // so nothing downstream would ever resolve it against the bundle.
-      if (cwd.startsWith("./")) {
-        if (cwd === "./") {
-          workingDirectory = PLUGIN_ROOT_PLACEHOLDER;
-        } else {
-          const resolved = resolveContainedPath("", cwd);
-          if (!resolved.ok) {
-            issues.error(
-              resolved.code,
-              `server "${serverKey}": ${resolved.message}`,
-              { componentKey }
-            );
-            return null;
-          }
-          workingDirectory = `${PLUGIN_ROOT_PLACEHOLDER}/${resolved.path}`;
-        }
-      } else {
-        workingDirectory = cwd;
-      }
+      workingDirectory = cwd.value;
     }
 
     return {
@@ -655,38 +412,19 @@ function normalizeServer(
     );
     return null;
   }
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(url);
-  } catch {
-    issues.error(
-      "MCP_INVALID_SERVER",
-      `server "${serverKey}": "url" is not a valid URL`,
-      { componentKey }
-    );
+  const urlCheck = checkServerUrl(url);
+  if (!urlCheck.ok) {
+    issues.error(urlCheck.code, `server "${serverKey}": ${urlCheck.message}`, {
+      componentKey,
+    });
     return null;
   }
-  if (parsedUrl.protocol !== "https:") {
-    const isLoopback =
-      parsedUrl.protocol === "http:" &&
-      (parsedUrl.hostname === "localhost" ||
-        parsedUrl.hostname === "127.0.0.1" ||
-        parsedUrl.hostname === "[::1]" ||
-        parsedUrl.hostname === "::1");
-    if (isLoopback) {
-      issues.warn(
-        "MCP_INSECURE_URL_LOCALHOST",
-        `server "${serverKey}": plain-HTTP loopback URL only works in local development`,
-        { componentKey }
-      );
-    } else {
-      issues.error(
-        "MCP_INSECURE_URL",
-        `server "${serverKey}": remote MCP servers must use HTTPS`,
-        { componentKey }
-      );
-      return null;
-    }
+  if (urlCheck.loopbackHttp) {
+    issues.warn(
+      "MCP_INSECURE_URL_LOCALHOST",
+      `server "${serverKey}": plain-HTTP loopback URL only works in local development`,
+      { componentKey }
+    );
   }
   const headerRequirements = normalizeHeaders(
     serverKey,
@@ -701,6 +439,19 @@ function normalizeServer(
   const oauth = hasOAuthHint
     ? normalizeOAuthHint(serverKey, componentKey, record, issues)
     : undefined;
+  const declaredAuth = readOpenAiServerAuth(
+    entryExtensions ? record.extensions : undefined,
+    { serverKey, componentKey, issues }
+  );
+  if (declaredAuth.error !== undefined) {
+    issues.error(
+      "MCP_INVALID_SERVER",
+      `server "${serverKey}": ${declaredAuth.error}`,
+      { componentKey }
+    );
+    return null;
+  }
+  const auth = declaredAuth.auth;
 
   return {
     componentKey,
@@ -710,8 +461,12 @@ function normalizeServer(
       transport: "http",
       httpVariant: declared,
       url,
-      headerRequirements,
+      headerRequirements:
+        auth?.type === "api_key"
+          ? withApiKeyHeader(headerRequirements, auth)
+          : headerRequirements,
       ...(oauth !== undefined ? { oauth } : {}),
+      ...(auth !== undefined ? { auth } : {}),
     },
   };
 }
@@ -867,6 +622,8 @@ export function normalizePluginMcpConfig(
      * error-severity issue — the caller's throw makes it bundle-fatal.
      */
     maxServers?: number;
+    /** Accept entry `extensions` (OpenAI auth); openai-compatible only. */
+    entryExtensions?: boolean;
   }
 ): PluginMcpConfigNormalization {
   const { sourcePath, manifestSchemaVersion, issues, maxServers } = context;
@@ -972,7 +729,13 @@ export function normalizePluginMcpConfig(
       skip(serverKey, scoped);
       continue;
     }
-    const server = normalizeServer(serverKey, sourcePath, config, scoped);
+    const server = normalizeServer(
+      serverKey,
+      sourcePath,
+      config,
+      scoped,
+      context.entryExtensions === true
+    );
     if (server === null || scoped.hasErrors()) {
       skip(serverKey, scoped);
       continue;

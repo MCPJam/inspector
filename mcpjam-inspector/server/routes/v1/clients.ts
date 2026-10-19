@@ -43,7 +43,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
-import { ConvexHttpClient } from "convex/browser";
+import { createConvexClient } from "./convex-client.js";
+import { repairEmptyClientList } from "./client-list-repair.js";
 import {
   bundledHostCompatCatalog,
   fetchHostCompatCatalog,
@@ -62,7 +63,10 @@ import { markDeprecated as markDeprecatedResponse } from "./deprecation.js";
 import { logger } from "../../utils/logger.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
-import { redactedReadRefusalError } from "./convex-read-errors.js";
+import {
+  isMissingConvexFunction,
+  redactedReadRefusalError,
+} from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
   requestedModelSelectionSchema,
@@ -275,20 +279,6 @@ async function resolveHostTemplateInput(
   return input;
 }
 
-function createConvexClient(convexAuthToken: string): ConvexHttpClient {
-  const convexUrl = process.env.CONVEX_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration",
-    );
-  }
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(convexAuthToken);
-  return client;
-}
-
 /**
  * Convex collapses "project missing", "not a project member", and "client
  * missing" into the same generic error, and the v1 surface deliberately
@@ -379,23 +369,6 @@ async function readHostDetail(
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Client not found");
   }
   return detail;
-}
-
-/**
- * Does this failure mean the backend has no such Convex function?
- *
- * Narrow ON PURPOSE. Treating any error from `resolveHostByNameOrId` as skew
- * would swallow an authorization refusal, an ambiguity error, and every
- * ordinary backend failure into a list-and-scan that answers a different
- * question — including, for the ambiguity case, silently picking one of two
- * clients. Only a genuinely absent function falls back.
- */
-function isMissingConvexFunction(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    /could not find (public )?function/i.test(message) ||
-    /function not found/i.test(message)
-  );
 }
 
 /**
@@ -785,10 +758,16 @@ type Surface = { legacy: boolean };
 
 async function listHandler(c: Context, { legacy }: Surface) {
   const projectId = pathParam(c, "projectId");
-  const rows = await listHostRows(
-    await getConvexBearerForRequest(c),
-    projectId,
-  );
+  const token = await getConvexBearerForRequest(c);
+  let rows = await listHostRows(token, projectId);
+  const visibleCount = rows.filter((row) => !isPrivateBacking(row)).length;
+  // The deprecated surface stays read-only, as it always was.
+  if (
+    !legacy &&
+    (await repairEmptyClientList(token, projectId, visibleCount))
+  ) {
+    rows = await listHostRows(token, projectId);
+  }
   if (legacy) {
     markDeprecated(c);
     return v1PageJson(c, rows.map(toLegacyHostDto));
