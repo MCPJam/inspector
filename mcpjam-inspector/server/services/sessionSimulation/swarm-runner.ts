@@ -1,3 +1,4 @@
+import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
 import {
@@ -1089,32 +1090,26 @@ async function runJourneyFanOut(
                 // harness's own vendor runs on the organization's key.
                 ...(modelSelection ? { selection: modelSelection } : {}),
               });
+        const harnessName = harnessDisplayName(target.harness ?? "");
         harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined
           : !targetWantsHarnessBox(target)
-            ? "This target runs the " +
-              target.harness +
-              " harness but has no computer attached, so there is nothing to run " +
-              "it on. Attach a computer to this host."
-            : harnessAvailability && !harnessAvailability.ok
-              ? "This target runs the " +
-                target.harness +
-                " harness, which isn't available: " +
-                harnessAvailability.reason +
-                "."
-              : harnessTargetIntent?.kind === "skip"
-                ? "This target runs the " +
-                  target.harness +
-                  " harness, which needs a disposable sandbox per session. " +
-                  // Only an UNAVAILABLE pin lands here, and only on a run
-                  // created before the backend began refusing such a target at
-                  // launch: a harness target that pinned nothing boots the
-                  // default template instead (`sandboxIntentFor`). The reason
-                  // names the broken pin, and the target is refused before any
-                  // box is booted for it.
-                  (harnessTargetIntent.reason ??
-                    "The computer image this target pinned is unavailable, so one cannot be created.")
-                : undefined;
+          ? `The ${harnessName} client needs a computer. Attach a computer to this client to continue.`
+          : harnessAvailability && !harnessAvailability.ok
+          ? harnessAvailability.reason
+          : harnessTargetIntent?.kind === "skip"
+          ? `The ${harnessName} client needs a cloud computer. ` +
+            // Only an UNAVAILABLE pin lands here, and only on a run
+            // created before the backend began refusing such a target at
+            // launch: a harness target that pinned nothing boots the
+            // default template instead (`sandboxIntentFor`). The reason
+            // names the broken pin, and the target is refused before any
+            // box is booted for it.
+            `${(harnessTargetIntent.reason ?? "The computer image this target pinned is unavailable")
+              .trim()
+              .replace(/\.$/, "")}. ` +
+            "Choose an available computer image for this environment, then run the swarm again."
+          : undefined;
       } catch (err) {
         // Fail CLOSED and name what happened. We do not know WHICH rule threw,
         // so the message stays honest about that rather than guessing.

@@ -995,6 +995,7 @@ export type HostConfigInputV2 = {
   // byte-identically. Never carries a secret (unknown keys are rejected).
   modelSelection?: ModelSelection;
   systemPrompt: string;
+  systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
   // Host-level opt-in for progressive MCP tool discovery. Optional + defaults
@@ -1103,6 +1104,7 @@ export type CanonicalHostConfigV2 = {
   // byte-identically.
   modelSelection?: ModelSelection;
   systemPrompt: string;
+  systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
   // Mirrors HostConfigInputV2.progressiveToolDiscovery. Optional so absent
@@ -1157,4 +1159,9 @@ export type CanonicalHostConfigV2 = {
       mcpProtocolVersionOverride?: McpProtocolVersion;
     }
   >;
+};
+
+/** Saved automatic eligibility and the source of the applied text. */
+export type SystemPromptDefault = {
+  source?: { catalogEntryId: string; revision: string; sourceUrl: string; publisher?: string };
 };
