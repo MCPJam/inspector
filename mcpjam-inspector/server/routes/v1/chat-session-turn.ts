@@ -2001,6 +2001,7 @@ async function handleTurn(c: Context): Promise<Response> {
       tools,
       ...(builtInTools ? { builtInTools } : {}),
       mcpClientManager: manager,
+      selectedServerIds,
       authContext: { kind: "user_bearer", token: authHeader },
       sourceType: "direct",
       origin: "api",
