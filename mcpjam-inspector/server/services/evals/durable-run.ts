@@ -15,11 +15,10 @@
  */
 import { HOSTED_MODE } from "../../config.js";
 import { logger } from "../../utils/logger";
-import { getServiceCredential } from "../service-credential.js";
+import { postServiceRoute } from "../internal-backend.js";
 
 const JOB_PATH = "/internal/v1/eval-run-jobs";
 const GRANT_HEADER = "x-mcpjam-eval-run-grant";
-const ROUTE_TIMEOUT_MS = 15_000;
 const DEFAULT_HEARTBEAT_MS = 20_000;
 
 /** Durable runs need the backend routes and a worker to recover them. */
@@ -77,35 +76,18 @@ type JobReply = {
   reason?: string;
 } | null;
 
+/** One job route, with this run's grant when it holds one. */
 async function postJobRoute(
   path: string,
   body: Record<string, unknown>,
   grant?: string,
 ): Promise<{ status: number; body: JobReply }> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = getServiceCredential();
-  if (!convexUrl || !serviceToken) {
-    throw new Error(
-      "Durable eval runs require CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN",
-    );
-  }
-  const response = await fetch(`${convexUrl}${JOB_PATH}/${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-inspector-service-token": serviceToken,
-      ...(grant ? { [GRANT_HEADER]: grant } : {}),
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(ROUTE_TIMEOUT_MS),
-  });
-  let parsed: JobReply = null;
-  try {
-    parsed = (await response.json()) as JobReply;
-  } catch {
-    // The status carries the signal.
-  }
-  return { status: response.status, body: parsed };
+  const response = await postServiceRoute(
+    `${JOB_PATH}/${path}`,
+    body,
+    grant ? { headers: { [GRANT_HEADER]: grant } } : undefined,
+  );
+  return { status: response.status, body: response.body as JobReply };
 }
 
 export function workerName(): string {
