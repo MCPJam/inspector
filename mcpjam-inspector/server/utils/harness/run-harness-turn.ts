@@ -2446,6 +2446,7 @@ export async function runHarnessTurn(
           : createHarnessSandboxProvider({
               sandboxId: sandboxId!,
               defaultWorkingDirectory,
+              proxyUrl: () => auth.ANTHROPIC_BASE_URL ?? auth.OPENAI_BASE_URL,
               // The materialized secrets, as a session-wide env bag on every `run`
               // and `spawn`. This is the whole of materialized delivery on the
               // harness path: the agent runs `stripe customers list`, and

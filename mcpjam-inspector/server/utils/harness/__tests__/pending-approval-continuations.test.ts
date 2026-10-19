@@ -84,9 +84,9 @@ describe("approval history converted by the AI SDK", () => {
       // The real conversion repeats the completed provider-executed approval.
       expect(
         collectHarnessAgentToolApprovalContinuations({
-          messages: messages as never,
+          messages,
         }),
-      ).toHaveLength(2);
+      ).toHaveLength(second ? 2 : 1);
       const next = pendingApprovalContinuations(messages);
       expect(next.map((part) => [part.approvalId, part.approved])).toEqual([
         ["a2", second],

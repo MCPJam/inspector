@@ -1,8 +1,10 @@
+import { withoutSyntheticDenialResults } from "./harness-approval-messages.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { collectHarnessAgentToolApprovalContinuations } from "@ai-sdk/harness/agent";
 
 /** Full UI history repeats approval responses even after the call has finished. */
 export function pendingApprovalContinuations(messages: ModelMessage[]) {
+  messages = withoutSyntheticDenialResults(messages);
   const completed = new Set<string>();
   const calls = new Map<string, string>();
   for (const message of messages) {
@@ -15,7 +17,7 @@ export function pendingApprovalContinuations(messages: ModelMessage[]) {
     }
   }
   return collectHarnessAgentToolApprovalContinuations({
-    messages: messages as never,
+    messages,
   }).filter((continuation) => {
     const callId = calls.get(continuation.approvalId);
     return callId === undefined || !completed.has(callId);
