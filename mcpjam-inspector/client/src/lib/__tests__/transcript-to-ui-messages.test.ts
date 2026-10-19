@@ -50,6 +50,27 @@ describe("transcriptToUIMessages", () => {
     })]);
   });
 
+  it("keeps earlier harness calls in the message receiving continuation results", async () => {
+    const messages = transcriptToUIMessages([
+      ...approvalTranscript(),
+      { role: "tool", content: [{ type: "tool-approval-response", approvalId: "approval", approved: true }] },
+      { role: "assistant", content: [
+        { type: "tool-call", toolCallId: "mcp", toolName: "wiki", input: {}, providerExecuted: true },
+        { type: "tool-approval-request", approvalId: "mcp-approval", toolCallId: "mcp" },
+      ] },
+    ]);
+    expect(messages).toHaveLength(2);
+    expect(messages[1].parts).toEqual([
+      expect.objectContaining({ toolCallId: "call", state: "approval-responded" }),
+      expect.objectContaining({ toolCallId: "mcp", state: "approval-requested" }),
+    ]);
+    const model = await convertToModelMessages(messages);
+    expect(model[1].content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "tool-call", toolCallId: "call" }),
+      expect.objectContaining({ type: "tool-call", toolCallId: "mcp" }),
+    ]));
+  });
+
   it("converts basic user/assistant transcript to UIMessages", () => {
     const transcript = [
       { role: "user", content: "Hello" },
