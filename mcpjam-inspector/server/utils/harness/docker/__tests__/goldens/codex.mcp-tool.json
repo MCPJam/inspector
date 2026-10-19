@@ -79,6 +79,7 @@
                   "input": {
                     "message": "conformance"
                   },
+                  "providerExecuted": true,
                   "providerOptions": {
                     "mcpjam": {
                       "serverId": "probe"
@@ -203,6 +204,7 @@
                   "input": {
                     "message": "conformance"
                   },
+                  "providerExecuted": true,
                   "providerOptions": {
                     "mcpjam": {
                       "serverId": "probe"
@@ -357,6 +359,7 @@
             "input": {
               "message": "conformance"
             },
+            "providerExecuted": true,
             "providerOptions": {
               "mcpjam": {
                 "serverId": "probe"

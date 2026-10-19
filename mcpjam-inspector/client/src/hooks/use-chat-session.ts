@@ -1,3 +1,4 @@
+import { prepareRestoredHarnessApproval, type ApprovalServerSelection } from "@/lib/prepare-restored-harness-approval";
 import {
   orgPolicyBlocksChatSend,
   orgPolicySendRefusal,
@@ -3632,6 +3633,7 @@ export function useChatSession(
   // hosted send carries real ids for ad-hoc/App servers, not display names.
   // Carries the NAMES snapshot the ids were resolved from, so a selection
   // change during the async preflight can't pair stale ids with fresh names.
+  const restoredApprovalSelectionRef = useRef<ApprovalServerSelection | null>(null);
   const resolvedHostedServersRef = useRef<{
     serverIds: string[];
     serverNames: string[];
@@ -4389,15 +4391,32 @@ export function useChatSession(
   // UI/page tools are client-fulfilled. Their approval response must be
   // routed through the shared defer/fulfill handler; a raw AI SDK approval
   // response would leave a no-execute page tool without a result.
-  const addToolApprovalResponse = useMemo(
-    () =>
-      createUiAwareApprovalResponseHandler({
-        getMessages: () => messagesRef.current,
-        addToolApprovalResponse: sdkAddToolApprovalResponse,
-        addToolOutput,
-      }),
-    [sdkAddToolApprovalResponse, addToolOutput],
-  );
+  const addToolApprovalResponse = useMemo(() => {
+    const respond = createUiAwareApprovalResponseHandler({
+      getMessages: () => messagesRef.current,
+      addToolApprovalResponse: sdkAddToolApprovalResponse,
+      addToolOutput,
+    });
+    return async (response: Parameters<typeof respond>[0]) => {
+      const selection = restoredApprovalSelectionRef.current;
+      if (reasoningEffortHarness && isHostedTransport && hostedEnsureServerIds &&
+          selection?.sessionId === chatSessionIdRef.current) {
+        try {
+          resolvedHostedServersRef.current = await prepareRestoredHarnessApproval({
+            selection,
+            targetKey: hostedTargetKeyRef.current,
+            currentSessionId: () => chatSessionIdRef.current,
+            currentTargetKey: () => hostedTargetKeyRef.current,
+            resolve: hostedEnsureServerIds,
+          });
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Could not prepare the saved servers for this approval. Try approving again.");
+          return;
+        }
+      }
+      return respond(response);
+    };
+  }, [sdkAddToolApprovalResponse, addToolOutput, reasoningEffortHarness, isHostedTransport, hostedEnsureServerIds]);
 
   useEffect(() => {
     const sessionId = chatSessionIdRef.current;
@@ -5704,6 +5723,9 @@ export function useChatSession(
         return;
       }
 
+      restoredApprovalSelectionRef.current = Array.isArray(session.resumeConfig?.selectedServers)
+        ? { sessionId: session.chatSessionId, serverNames: [...session.resumeConfig.selectedServers] }
+        : null;
       skipNextForkDetectionRef.current = true;
       rewindRef.current = null;
       await queueSessionHydration({

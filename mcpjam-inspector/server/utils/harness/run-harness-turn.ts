@@ -3,6 +3,7 @@ import {
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
+import { withoutSyntheticDenialResults } from "./harness-approval-messages.js";
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalRuntimeBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
@@ -1370,7 +1371,7 @@ export async function runHarnessTurn(
       // continues the paused turn rather than starting a new prompt.
       const approvalContinuations =
         collectHarnessAgentToolApprovalContinuations({
-          messages: messages as never,
+          messages: withoutSyntheticDenialResults(messages) as never,
         });
       const isApprovalResume = approvalContinuations.length > 0;
       // Composer attachments come OUT of the prompt here (no adapter takes a
@@ -2451,6 +2452,7 @@ export async function runHarnessTurn(
           : createHarnessSandboxProvider({
               sandboxId: sandboxId!,
               defaultWorkingDirectory,
+              proxyUrl: () => auth.ANTHROPIC_BASE_URL ?? auth.OPENAI_BASE_URL,
               // The materialized secrets, as a session-wide env bag on every `run`
               // and `spawn`. This is the whole of materialized delivery on the
               // harness path: the agent runs `stripe customers list`, and
@@ -3133,6 +3135,13 @@ export async function runHarnessTurn(
       const resumeFromApproval =
         isApprovalResume && resumable?.awaitingApproval === true;
       if (isApprovalResume && !resumeFromApproval) {
+        const reason = eligibility.reason ?? (continuity?.runtimeChanged ? "runtime-changed" : "missing-paused-state");
+        logger.info(`[harness] approval continuation refused: ${reason} (${selectedServers?.length ?? 0} servers)`, {
+          harness: harnessAdapter.id,
+          reason,
+          stateVersion: continuity?.stateVersion,
+          selectedServerCount: selectedServers?.length ?? 0,
+        });
         // A scenario conversation's box stops heartbeating when a turn pauses
         // for approval, and idles out if the answer comes late; this turn was
         // handed its replacement. Say what happened and what to do.
@@ -3359,7 +3368,9 @@ export async function runHarnessTurn(
               toolName: string;
               input: unknown;
               providerOptions?: Record<string, unknown>;
+              providerExecuted: true;
             }
+          | { type: "tool-approval-request"; approvalId: string; toolCallId: string }
         > = [];
         const pendingResults: Array<{
           toolCallId: string;
@@ -3705,6 +3716,7 @@ export async function runHarnessTurn(
               toolCallId,
               toolName,
               input,
+              providerExecuted: true,
               ...(providerMetadata
                 ? { providerOptions: providerMetadata }
                 : {}),
@@ -3926,6 +3938,7 @@ export async function runHarnessTurn(
                 toolCallId,
                 toolName: fcName,
                 input,
+                providerExecuted: true,
               });
               // The part is self-contained (no separate result frame) — emit a
               // matching result immediately so the pair stays balanced.
@@ -4001,6 +4014,7 @@ export async function runHarnessTurn(
               emitTextEnd(writer, textId);
               textId = undefined;
             }
+            assistantParts.push({ type: "tool-approval-request", approvalId, toolCallId });
             emitToolApprovalRequest(writer, { approvalId, toolCallId });
             pendingApprovalIds.push(approvalId);
             pausedForApproval = true;
