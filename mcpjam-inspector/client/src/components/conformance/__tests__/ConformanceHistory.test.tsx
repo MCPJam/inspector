@@ -80,7 +80,7 @@ describe("ConformanceHistory", () => {
     // A Convex-id-shaped project: the run link carries the project in its
     // PATH now, and the builder refuses to put an unusable id there.
     const projectId = "k5700000000000000000000000a";
-    render(<ConformanceHistory projectId={projectId} serverId="srv_1" />);
+    render(<ConformanceHistory projectId={projectId} />);
 
     await user.click(screen.getByTestId("conformance-history-row"));
 
@@ -98,7 +98,7 @@ describe("ConformanceHistory", () => {
       isDone: true,
       continueCursor: "",
     });
-    render(<ConformanceHistory projectId="proj_1" serverId="srv_1" />);
+    render(<ConformanceHistory projectId="proj_1" />);
 
     // The history sits in a shrink-0 container above the suites; a
     // viewport-height empty state pushed them out of view.
