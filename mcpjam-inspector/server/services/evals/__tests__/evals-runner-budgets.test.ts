@@ -429,7 +429,11 @@ describe.each(["local", "hosted"] as const)(
         capacity?: boolean;
         capacityAbort?: boolean;
         /** A durable run: resumed with these rows' statuses, or losing its lease. */
-        durable?: { statuses?: string[]; loseLease?: boolean };
+        durable?: {
+          statuses?: string[];
+          loseLease?: boolean;
+          failResumeRead?: boolean;
+        };
       } = {},
     ) {
       vi.useFakeTimers();
@@ -480,12 +484,15 @@ describe.each(["local", "hosted"] as const)(
         finalize: vi.fn(async () => {}),
       };
       const convexClient = {
-        query: vi.fn(async (name) =>
-          (typeof name === "string" ? name : getFunctionName(name)) ===
-          "testSuites:getTestSuiteRunDetails"
-            ? { iterations: rows }
-            : { status: "running" },
-        ),
+        query: vi.fn(async (name) => {
+          const isDetails =
+            (typeof name === "string" ? name : getFunctionName(name)) ===
+            "testSuites:getTestSuiteRunDetails";
+          if (isDetails && options.durable?.failResumeRead) {
+            throw new Error("run details unavailable");
+          }
+          return isDetails ? { iterations: rows } : { status: "running" };
+        }),
         mutation: vi.fn(async () => ({})),
         action: vi.fn(async (name, args) => {
           if (name === "testSuites:updateTestIteration")
@@ -614,8 +621,13 @@ describe.each(["local", "hosted"] as const)(
           runTimeoutMs: options.runDeadline ? 50 : 1000,
         },
       } as any);
+      // A failed setup finalizes the run, then rethrows to the caller; handled
+      // at once so the rejection never goes unobserved while timers advance.
+      const settled = pending.catch((error: unknown) => {
+        if (!options.durable?.failResumeRead) throw error;
+      });
       await vi.advanceTimersByTimeAsync(options.capacityAbort ? 350 : 150);
-      await pending;
+      await settled;
       return { rows, recorder, convexClient, durableRun };
     }
 
@@ -688,6 +700,17 @@ describe.each(["local", "hosted"] as const)(
         "timed_out",
         "completed",
       ]);
+    });
+
+    it("a setup failure after the durable heartbeat started stops it", async () => {
+      const { durableRun, recorder } = await startRun({
+        durable: { statuses: ["pending", "pending", "pending"], failResumeRead: true },
+      });
+      expect(durableRun!.startHeartbeat).toHaveBeenCalledTimes(1);
+      expect(durableRun!.stop).toHaveBeenCalled();
+      expect(recorder.finalize).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "failed" }),
+      );
     });
 
     it("a replica that loses the durable lease stands down without finalizing", async () => {
