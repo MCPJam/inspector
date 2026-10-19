@@ -1479,6 +1479,7 @@ export async function runSyntheticHostSession(
       // Do not retry a rejected turn from the terminal empty-session fallback.
       anyTurnPersisted = true;
       await requirePersistedHarnessTurn({
+        turnError: failedTurn,
         outcome: turnPersist,
         commit: harnessSessionCommit,
         projectId,

@@ -17,9 +17,8 @@ export function failedHarnessPersist(
 ): (error: unknown) => PersistChatOutcome {
   return (error) => {
     if (!commit) throw error;
-    logger.error("[sessionSimulation] harness turn persist threw", {
+    logger.error("[sessionSimulation] harness turn persist threw", error, {
       chatSessionId: commit.chatSessionId,
-      error: error instanceof Error ? error.message : String(error),
     });
     return { outcome: "failed", failureKind: "exception" };
   };
@@ -33,6 +32,7 @@ export async function requirePersistedHarnessTurn(args: {
   journeyRunId?: string;
   hostId?: string;
   bearer: string;
+  turnError?: unknown;
 }): Promise<void> {
   const { commit, outcome } = args;
   if (
@@ -52,6 +52,7 @@ export async function requirePersistedHarnessTurn(args: {
     ...(args.journeyRunId ? { journeyRunId: args.journeyRunId } : {}),
     ...(args.hostId ? { hostId: args.hostId } : {}),
   });
+  if (args.turnError) throw args.turnError;
   throw Object.assign(
     new Error(
       "The conversation could not be saved. Start a new run to try again.",
