@@ -22,6 +22,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { gatherClaudeReadinessEvidence } from "../../src/claude-readiness/gather.js";
 import { gradeClaudeReadiness } from "../../src/claude-readiness/runner.js";
+import {
+  gatherOpenAIReadinessEvidence,
+  gradeOpenAIReadiness,
+} from "../../src/openai-readiness/runner.js";
 import { resolveLazyAuthProbeMode } from "../../src/directory-readiness/lazy-auth.js";
 import { probeLazyAuthentication } from "../../src/directory-readiness/lazy-auth-probe.js";
 import { dialToolListing, dialInitialize } from "../../src/directory-readiness/mcp-dial.js";
@@ -437,6 +441,128 @@ describe("Claude: the probe and the metadata only the protected call reveals", (
 });
 
 // ── OpenAI ──────────────────────────────────────────────────────────────
+
+describe("OpenAI: the runtime challenge, observed", () => {
+  it("satisfies runtime-challenge from a _meta array on an oauth2 tool, and grades the PRM it names", async () => {
+    const server = await startLazyServer({ refusal: "meta", metaShape: "array" });
+    const evidence = await gatherOpenAIReadinessEvidence({
+      target: server.url,
+      mode: "mcp-only",
+      fetchFn: fetch,
+      mcpHeaders: { authorization: TOKEN },
+      // No names: the probe picks by securitySchemes — `noauth` for the
+      // public call, `oauth2` only for the protected one.
+      lazyAuthProbe: { enabled: true },
+      claimedFeatures: ["lazy-authentication"],
+      now: NOW,
+    });
+    const result = gradeOpenAIReadiness(evidence);
+
+    expect(evidence.lazyAuthProbe?.publicCall).toMatchObject({
+      toolName: "get_weather",
+      selectedBy: "security-schemes",
+      outcome: "succeeded",
+    });
+    expect(evidence.lazyAuthProbe?.protectedCall).toMatchObject({
+      toolName: "get_my_orders",
+      selectedBy: "security-schemes",
+      outcome: "tool-error",
+      challenge: {
+        source: "tool_result_meta",
+        facets: { hasErrorParams: true, hasResourceMetadata: true },
+      },
+    });
+    expect(evidence.lazyAuthProbe?.rediscovery).toMatchObject({
+      trigger: "resource_metadata",
+      source: "tool_result_meta",
+      prmFound: true,
+    });
+
+    expect(byId(result.findings, "openai.auth.runtime-challenge").status).toBe("satisfied");
+    expect(byId(result.findings, "openai.auth.prm-discoverable").status).toBe("satisfied");
+    expect(byId(result.findings, "openai.auth.pkce-s256").status).toBe("satisfied");
+    expect(byId(result.findings, "openai.auth.challenge").status).toBe("not-applicable");
+    expect(
+      result.badges.find((badge) => badge.id === "openai.feature.lazy-authentication"),
+    ).toMatchObject({ state: "supported" });
+
+    const calls = toolCalls(server.hits);
+    expect(calls).toHaveLength(2);
+    expect(calls.every((hit) => hit.authorization === undefined)).toBe(true);
+    expect(calls.some((hit) => hit.tool === "cancel_order")).toBe(false);
+  });
+
+  it("requires both error and error_description in the _meta challenge", async () => {
+    const server = await startLazyServer({ refusal: "meta", metaShape: "string", metaErrorParams: false });
+    const result = gradeOpenAIReadiness(
+      await gatherOpenAIReadinessEvidence({
+        target: server.url,
+        mode: "mcp-only",
+        fetchFn: fetch,
+        lazyAuthProbe: { enabled: true },
+        now: NOW,
+      }),
+    );
+    const runtime = byId(result.findings, "openai.auth.runtime-challenge");
+    expect(runtime.status).toBe("violated");
+    expect(runtime.remediation).toMatch(/error and error_description/);
+  });
+
+  it("reports an undeclared tool as inheriting the server default (unresolved), not as no OAuth", async () => {
+    const server = await startLazyServer({ refusal: "meta", protectedSchemes: null });
+    const result = gradeOpenAIReadiness(
+      await gatherOpenAIReadinessEvidence({
+        target: server.url,
+        mode: "mcp-only",
+        fetchFn: fetch,
+        lazyAuthProbe: { enabled: true, toolName: "get_my_orders" },
+        now: NOW,
+      }),
+    );
+    const runtime = byId(result.findings, "openai.auth.runtime-challenge");
+    expect(runtime.status).toBe("not-evaluated");
+    expect(runtime.notEvaluatedReason).toMatch(/inherits the server default \(unresolved\)/);
+    const schemes = byId(result.findings, "openai.tools.security-schemes");
+    expect(schemes.details?.inheritsServerDefault).toEqual(["get_my_orders"]);
+  });
+
+  it("keeps discovered PRM when later challenge rediscovery fails", async () => {
+    const server = await startLazyServer({ refusal: "bearer-401", prmAt: "well-known" });
+    let metadataReads = 0;
+    const fetchFn: typeof fetch = (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("oauth-protected-resource") || url.endsWith(POINTER_PATH)) {
+        metadataReads++;
+        if (metadataReads > 1) return Promise.resolve(new Response("not found", { status: 404 }));
+      }
+      return fetch(input, init);
+    };
+    const evidence = await gatherOpenAIReadinessEvidence({
+      target: server.url, mode: "mcp-only", fetchFn,
+      lazyAuthProbe: { enabled: true }, now: NOW,
+    });
+    expect(evidence.lazyAuthProbe?.rediscovery?.prmFound).toBe(false);
+    expect(byId(gradeOpenAIReadiness(evidence).findings, "openai.auth.prm-discoverable").status).toBe("satisfied");
+  });
+
+  it("says a 401 is not the tool-level trigger ChatGPT documents", async () => {
+    const server = await startLazyServer({ refusal: "bearer-401" });
+    const evidence = await gatherOpenAIReadinessEvidence({
+      target: server.url,
+      mode: "mcp-only",
+      fetchFn: fetch,
+      lazyAuthProbe: { enabled: true },
+      now: NOW,
+    });
+    const result = gradeOpenAIReadiness(evidence);
+    expect(byId(result.findings, "openai.auth.runtime-challenge").status).toBe("violated");
+    // Any client follows a 401, so the metadata it names is still graded.
+    expect(evidence.lazyAuthProbe?.rediscovery?.prmFound).toBe(true);
+    expect(byId(result.findings, "openai.auth.prm-discoverable").status).toBe("satisfied");
+  });
+});
+
+// ── The gate ────────────────────────────────────────────────────────────
 
 describe("the probe's empty arguments", () => {
   it.each(["rpc-error", "tool-error"] as const)(
