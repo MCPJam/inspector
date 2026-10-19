@@ -5217,8 +5217,7 @@ const runLocalIteration = async ({
   // Reproducible-evals sandbox: provisioned per-iteration inside the try (so a
   // failure is a recorded failed iteration), released in the finally. Declared
   // here so the finally always sees it.
-  let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
-    null;
+  let evalBox: HarnessBox | null = null;
   // D7: `prepared` (and its `allTools`) is declared inside the try below, so
   // it is out of scope in the catch's own `buildIterationFinishParams` call.
   // Captured here, set once `prepared` is assigned, so BOTH the success and
@@ -5346,7 +5345,7 @@ const runLocalIteration = async ({
         // Don't provision unless this server is a fully-configured data plane.
         // Provisioning only needs the user bearer, but EXEC needs E2B_API_KEY
         // and RELEASE needs a server-to-server credential — without them
-        // releaseEvalSandbox silently no-ops, so each iteration would boot a
+        // the box release silently no-ops, so each iteration would boot a
         // paid box only the backend TTL GC could reap. Fail loudly instead.
         const unavailable = harnessBoxUnavailableReason(
           "This eval needs its selected computer image",
@@ -5357,19 +5356,38 @@ const runLocalIteration = async ({
           Math.max(0, iterationDeadlineAt - Date.now()),
         );
         const capacityStartedAt = Date.now();
-        evalSandbox = await provisionEvalSandbox({
-          timeoutMs: capacityBudgetMs,
-          bearer: convexAuthToken,
-          runId: String(runId),
-          ...(iterationId ? { iterationId: String(iterationId) } : {}),
+        // The shared box holder keeps the box's idle clock running while the
+        // iteration does, so an iteration that outlasts the box's idle TTL
+        // keeps its box.
+        const acquired = await acquireHarnessBox({
+          surface: "eval",
+          provision: async () => {
+            const result = await provisionEvalSandbox({
+              timeoutMs: capacityBudgetMs,
+              bearer: convexAuthToken,
+              runId: String(runId),
+              ...(iterationId ? { iterationId: String(iterationId) } : {}),
+              ...(abortSignal ? { signal: abortSignal } : {}),
+            });
+            return result.ok
+              ? {
+                  ok: true as const,
+                  box: {
+                    sandboxRowId: result.value.sandboxRowId,
+                    sandboxId: result.value.sandboxId,
+                  },
+                }
+              : { ok: false as const, refusal: result };
+          },
+          // The ITERATION signal. An abandoned iteration may never reach the
+          // finally; the abort still stops the heartbeat, so the box goes idle
+          // and the reaper takes it.
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
-        if (!evalSandbox.ok) {
-          const error = new Error(describeEvalSandboxRefusal(evalSandbox));
-          if (
-            evalSandbox.status === 503 &&
-            evalSandbox.code === "at_capacity"
-          ) {
+        if (!acquired.ok) {
+          const refusal = acquired.refusal;
+          const error = new Error(describeEvalSandboxRefusal(refusal));
+          if (refusal.status === 503 && refusal.code === "at_capacity") {
             iterationMetadataBase.timeout = {
               clock: "sandboxCapacity",
               budgetMs: capacityBudgetMs,
@@ -5382,6 +5400,8 @@ const runLocalIteration = async ({
           }
           throw error;
         }
+        const box = acquired.box;
+        evalBox = box;
         // COMP-17: seed the case's pinned attachments into the fresh box before
         // it's exposed as `bash`. Runs BEFORE buildEvalBashTool so the model's
         // first turn already sees the files. Fail-honest — a seed failure throws
@@ -5406,12 +5426,12 @@ const runLocalIteration = async ({
           // reconcile them rather than pick one, or a case would seed its
           // attachments under one id and be policy-gated under the other.
           testCaseId: test.testCaseId ?? testCaseId,
-          sandboxId: evalSandbox.value.sandboxId,
+          sandboxId: box.binding.sandboxId,
           promptTurns,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
-          sandboxId: evalSandbox.value.sandboxId,
+          sandboxId: box.binding.sandboxId,
         });
       }
 
@@ -6255,7 +6275,7 @@ const runLocalIteration = async ({
     };
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
-    if (evalSandbox?.ok) {
+    if (evalBox) {
       // FORGET, not collect — and the difference is deliberate. This runner is
       // the local-BYOK path: its box is TERMINAL ONLY (see the provisioning
       // comment above), so a hosted browser can never be advertised here and
@@ -6266,10 +6286,8 @@ const runLocalIteration = async ({
       // entry instead keeps a stray take from outliving its box; if this
       // runner ever does bind a hosted browser, the collect belongs before the
       // finalize, the way the hosted runner does it.
-      forgetHostedRecording(evalSandbox.value.sandboxRowId);
-      await releaseEvalSandbox({
-        sandboxRowId: evalSandbox.value.sandboxRowId,
-      }).catch(() => {});
+      forgetHostedRecording(evalBox.binding.sandboxRowId);
+      await evalBox.release();
     }
     // PR 9: tear down the harness (and its headless Chromium, if launched) on
     // success, failure, OR mid-stream abort. No-op when never constructed.

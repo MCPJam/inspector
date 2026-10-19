@@ -986,3 +986,162 @@ describe("cancellation checker: deleted run", () => {
     ).toBe(true);
   });
 });
+
+describe("local iteration box heartbeat", () => {
+  afterEach(() => {
+    harnessBoxOptionsOverride.current = undefined;
+    seedAttachmentsOverride.current = undefined;
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  /**
+   * One local-BYOK iteration on a pinned computer, with the box stubbed so only
+   * its heartbeat and release are observed. The model must be off the hosted
+   * catalog (`gpt-4` is; `gpt-4-turbo` is on it) and run on the user's own
+   * key, or the case takes the hosted path. The heartbeat is shortened so
+   * beats land inside the iteration.
+   */
+  async function runOnLocalBox(turn: "hangs" | "throws") {
+    vi.useFakeTimers();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+    vi.stubEnv("MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT", "1");
+    vi.stubEnv("E2B_API_KEY", "test-key");
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-secret");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-token");
+    const touch = vi.fn(async () => "touched" as const);
+    const release = vi.fn(async () => {});
+    const seen: { surface?: string; signal?: AbortSignal; release?: unknown } =
+      {};
+    harnessBoxOptionsOverride.current = (options) => {
+      seen.surface = options.surface;
+      seen.signal = options.signal;
+      seen.release = options.release;
+      return {
+        ...options,
+        provision: async () => ({
+          ok: true as const,
+          box: { sandboxRowId: "row-1", sandboxId: "sbx-1" },
+        }),
+        release,
+        touch,
+        heartbeatIntervalMs: 10,
+      };
+    };
+    seedAttachmentsOverride.current = async () => ({ note: null });
+    executeStepsMock.mockImplementation(() =>
+      turn === "hangs"
+        ? // Ignores its abort: the iteration is abandoned after the grace.
+          new Promise(() => {})
+        : new Promise((_resolve, reject) =>
+            setTimeout(() => reject(new Error("engine blew up")), 50),
+          ),
+    );
+    const snapshot = {
+      title: "Case",
+      query: "Hello",
+      model: "gpt-4",
+      provider: "openai",
+    };
+    const row: Record<string, any> = {
+      _id: "iter-1",
+      testCaseId: "case-1",
+      iterationNumber: 1,
+      testCaseSnapshot: snapshot,
+      status: "pending",
+      result: "pending",
+    };
+    const pending = runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-1",
+      recorder: {
+        startIteration: vi.fn(async () => row._id),
+        beginExecutionAttempt: vi.fn(async () => {}),
+        finishIteration: vi.fn(async (args) => Object.assign(row, args)),
+        finalize: vi.fn(async () => {}),
+      },
+      config: {
+        tests: [
+          {
+            ...snapshot,
+            runs: 1,
+            testCaseId: "case-1",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+          },
+        ],
+        environment: { servers: ["srv-1"], computerEnvironmentId: "env-1" },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: {
+        query: vi.fn(async (name) =>
+          name === "testSuites:getTestSuiteRunDetails"
+            ? { iterations: [row] }
+            : { status: "running" },
+        ),
+        mutation: vi.fn(async () => ({})),
+        action: vi.fn(async (name, args) => {
+          if (name === "testSuites:updateTestIteration")
+            Object.assign(row, args);
+        }),
+      },
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: {
+        getToolsForAiSdk: vi.fn(async () => ({})),
+        listTools: vi.fn(async () => ({ tools: [] })),
+        getAllToolAnnotations: vi.fn(() => ({})),
+        hasCachedToolAnnotations: vi.fn(() => true),
+        getConnectionStatus: vi.fn(() => "connected"),
+        listServers: vi.fn(() => ["srv-1"]),
+        getAllToolsMetadata: vi.fn(() => ({})),
+        executeTool: vi.fn(),
+      },
+      executionBudgets: {
+        ...defaultEvalExecutionBudgets(),
+        unitTimeoutMs: 100,
+        runTimeoutMs: 10 * 60_000,
+      },
+    } as any);
+    // Past the iteration budget AND its 30s unwind grace.
+    await vi.advanceTimersByTimeAsync(31_000);
+    await pending;
+    return { row, touch, release, seen };
+  }
+
+  it("keeps the box alive while the iteration runs, and stops when it is abandoned", async () => {
+    const { row, touch, release, seen } = await runOnLocalBox("hangs");
+    // The local path uses the holder's default release; the hosted path
+    // passes its own, so this pins which runner took the case.
+    expect(seen.release).toBeUndefined();
+    expect(seen.surface).toBe("eval");
+    expect(seen.signal).toBeInstanceOf(AbortSignal);
+    expect(row.status).toBe("timed_out");
+    // Without the holder the local path never beat at all, so a long
+    // iteration lost its box to the 30-minute idle reaper.
+    expect(touch).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row-1", sandboxId: "sbx-1" }),
+    );
+    const beats = touch.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(2 * 30 * 60_000);
+    expect(touch).toHaveBeenCalledTimes(beats);
+    // The abort is not a teardown; the idle reaper takes the box.
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("releases the box once when the turn throws, and stops beating", async () => {
+    const { touch, release, seen } = await runOnLocalBox("throws");
+    expect(seen.release).toBeUndefined();
+    expect(seen.surface).toBe("eval");
+    expect(touch).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row-1", sandboxId: "sbx-1" }),
+    );
+    expect(release).toHaveBeenCalledTimes(1);
+    const beats = touch.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(2 * 30 * 60_000);
+    expect(touch).toHaveBeenCalledTimes(beats);
+  });
+});
