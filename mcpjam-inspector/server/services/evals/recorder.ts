@@ -187,6 +187,12 @@ export type SuiteRunRecorder = {
    * not just that iteration's writes. Optional: provided recorders may omit it.
    */
   isRunDeleted?(): boolean;
+  /**
+   * A durable run's dispatch check (`services/evals/durable-run.ts`), run
+   * after the pre-created row is found and BEFORE it is marked running. A
+   * throw stops that trial from starting and propagates to the caller.
+   */
+  setDispatchGate?(gate: (iterationId: string) => Promise<void>): void;
   finalize(args: {
     status: "completed" | "failed" | "cancelled" | "timed_out";
     summary?: {
@@ -213,6 +219,59 @@ function isSuiteRunEnvironmentSnapshot(
   );
 }
 
+/**
+ * The pre-created row a trial runs against: by snapshot (title, query, model,
+ * provider) when the caller has one, else by test case. Shared with the
+ * durable-run resume so both pair rows the same way.
+ */
+export function matchPrecreatedIteration<
+  T extends {
+    testCaseId?: string;
+    iterationNumber?: number;
+    testCaseSnapshot?: {
+      title?: string;
+      query?: string;
+      model?: string;
+      provider?: string;
+    };
+  },
+>(
+  iterations: T[],
+  args: {
+    testCaseId?: string;
+    testCaseSnapshot?: {
+      title: string;
+      query: string;
+      model: string;
+      provider: string;
+    };
+    iterationNumber: number;
+  },
+): T | undefined {
+  const { testCaseId, testCaseSnapshot, iterationNumber } = args;
+  return iterations.find((iter) => {
+    if (testCaseSnapshot && iter.testCaseSnapshot) {
+      return (
+        iter.testCaseSnapshot.title === testCaseSnapshot.title &&
+        iter.testCaseSnapshot.query === testCaseSnapshot.query &&
+        iter.testCaseSnapshot.model === testCaseSnapshot.model &&
+        iter.testCaseSnapshot.provider === testCaseSnapshot.provider &&
+        iter.iterationNumber === iterationNumber
+      );
+    }
+    return (
+      iter.testCaseId === testCaseId && iter.iterationNumber === iterationNumber
+    );
+  });
+}
+
+/** Carries a dispatch-gate refusal out past `startIteration`'s own catch. */
+class DispatchGateError extends Error {
+  constructor(readonly inner: unknown) {
+    super("dispatch refused");
+  }
+}
+
 export const createSuiteRunRecorder = ({
   convexClient,
   suiteId,
@@ -223,6 +282,7 @@ export const createSuiteRunRecorder = ({
   runId: string;
 }): SuiteRunRecorder => {
   let runDeleted = false; // Track if run was deleted
+  let dispatchGate: ((iterationId: string) => Promise<void>) | undefined;
   let runtimeAttempt:
     | { attemptId: string; monotonicStartedAt: number }
     | undefined;
@@ -285,6 +345,9 @@ export const createSuiteRunRecorder = ({
     runId,
     suiteId,
     isRunDeleted: () => runDeleted,
+    setDispatchGate(gate) {
+      dispatchGate = gate;
+    },
     async beginExecutionAttempt(metadata) {
       runtimeAttempt = undefined;
       iterationRuntime.clear();
@@ -340,22 +403,10 @@ export const createSuiteRunRecorder = ({
 
         // Find the iteration that matches this test case and iteration number
         // Match by testCaseSnapshot if available, otherwise by testCaseId
-        const matchingIteration = iterations.find((iter: any) => {
-          if (testCaseSnapshot && iter.testCaseSnapshot) {
-            // Match by model and provider from snapshot
-            return (
-              iter.testCaseSnapshot.title === testCaseSnapshot.title &&
-              iter.testCaseSnapshot.query === testCaseSnapshot.query &&
-              iter.testCaseSnapshot.model === testCaseSnapshot.model &&
-              iter.testCaseSnapshot.provider === testCaseSnapshot.provider &&
-              iter.iterationNumber === iterationNumber
-            );
-          }
-          // Fallback to matching by testCaseId and iteration number
-          return (
-            iter.testCaseId === testCaseId &&
-            iter.iterationNumber === iterationNumber
-          );
+        const matchingIteration = matchPrecreatedIteration<any>(iterations, {
+          testCaseId,
+          testCaseSnapshot,
+          iterationNumber,
         });
 
         if (!matchingIteration) {
@@ -369,6 +420,14 @@ export const createSuiteRunRecorder = ({
             },
           );
           return undefined;
+        }
+
+        if (dispatchGate) {
+          try {
+            await dispatchGate(matchingIteration._id as string);
+          } catch (error) {
+            throw new DispatchGateError(error);
+          }
         }
 
         // Mark it as running
@@ -406,6 +465,7 @@ export const createSuiteRunRecorder = ({
 
         return matchingIteration._id as string;
       } catch (error) {
+        if (error instanceof DispatchGateError) throw error.inner;
         const errorMessage =
           error instanceof Error ? error.message : String(error);
 
@@ -611,6 +671,7 @@ export const startSuiteRunWithRecorder = async ({
   source,
   benchmarkRunId,
   idempotencyKey,
+  durableJob,
   sourceHash,
   skillsOverride,
   toolDescriptionOverride,
@@ -735,6 +796,12 @@ export const startSuiteRunWithRecorder = async ({
    */
   idempotencyKey?: string;
   /**
+   * Make the run durable (`services/evals/durable-run.ts`). Without an
+   * `idempotencyKey` (the hosted UI) the backend gives the run its own
+   * recovery key and keeps the launch's fingerprint dedupe.
+   */
+  durableJob?: { inputs: string };
+  /**
    * SHA-256 hex of the suite-file bytes that launched this run. Forwarded to
    * Convex `startTestSuiteRun.sourceHash` so a file-owned run records the
    * exact bytes it ran.
@@ -828,6 +895,7 @@ export const startSuiteRunWithRecorder = async ({
       // leased and the MCP session already opened.
       ...(benchmarkRunId ? { benchmarkRunId } : {}),
       ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(durableJob ? { durableJob } : {}),
       ...(sourceHash ? { sourceHash } : {}),
       ...(skillsOverride ? { skillsOverride } : {}),
       ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getFunctionName } from "convex/server";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
@@ -427,6 +428,12 @@ describe.each(["local", "hosted"] as const)(
         turnTimeout?: boolean;
         capacity?: boolean;
         capacityAbort?: boolean;
+        /** A durable run: resumed with these rows' statuses, or losing its lease. */
+        durable?: {
+          statuses?: string[];
+          loseLease?: boolean;
+          failResumeRead?: boolean;
+        };
       } = {},
     ) {
       vi.useFakeTimers();
@@ -450,6 +457,19 @@ describe.each(["local", "hosted"] as const)(
         status: "pending",
         result: "pending",
       })) as Array<Record<string, any>>;
+      options.durable?.statuses?.forEach((status, index) => {
+        rows[index].status = status;
+      });
+      const durableRun = options.durable
+        ? {
+            resumed: options.durable.statuses !== undefined,
+            startHeartbeat: vi.fn((onLeaseLost: () => void) => {
+              if (options.durable?.loseLease) setTimeout(onLeaseLost, 5);
+            }),
+            dispatch: vi.fn(async () => "ok"),
+            stop: vi.fn(),
+          }
+        : undefined;
       const recorder = {
         startIteration: vi.fn(
           async ({ iterationNumber }) => rows[iterationNumber - 1]._id,
@@ -464,11 +484,15 @@ describe.each(["local", "hosted"] as const)(
         finalize: vi.fn(async () => {}),
       };
       const convexClient = {
-        query: vi.fn(async (name) =>
-          name === "testSuites:getTestSuiteRunDetails"
-            ? { iterations: rows }
-            : { status: "running" },
-        ),
+        query: vi.fn(async (name) => {
+          const isDetails =
+            (typeof name === "string" ? name : getFunctionName(name)) ===
+            "testSuites:getTestSuiteRunDetails";
+          if (isDetails && options.durable?.failResumeRead) {
+            throw new Error("run details unavailable");
+          }
+          return isDetails ? { iterations: rows } : { status: "running" };
+        }),
         mutation: vi.fn(async () => ({})),
         action: vi.fn(async (name, args) => {
           if (name === "testSuites:updateTestIteration")
@@ -589,6 +613,7 @@ describe.each(["local", "hosted"] as const)(
         convexHttpUrl: "https://example.convex.site",
         convexAuthToken: "token",
         mcpClientManager: manager,
+        ...(durableRun ? { durableRun } : {}),
         executionBudgets: {
           ...defaultEvalExecutionBudgets(),
           turnTimeoutMs: options.turnTimeout ? 20 : 1000,
@@ -596,9 +621,14 @@ describe.each(["local", "hosted"] as const)(
           runTimeoutMs: options.runDeadline ? 50 : 1000,
         },
       } as any);
+      // A failed setup finalizes the run, then rethrows to the caller; handled
+      // at once so the rejection never goes unobserved while timers advance.
+      const settled = pending.catch((error: unknown) => {
+        if (!options.durable?.failResumeRead) throw error;
+      });
       await vi.advanceTimersByTimeAsync(options.capacityAbort ? 350 : 150);
-      await pending;
-      return { rows, recorder, convexClient };
+      await settled;
+      return { rows, recorder, convexClient, durableRun };
     }
 
     it("persists the turn clock before the iteration budget expires", async () => {
@@ -654,6 +684,42 @@ describe.each(["local", "hosted"] as const)(
           stopReason: "iteration_timeout",
         }),
       );
+    });
+
+    it("a resumed durable run runs only the attempts still pending", async () => {
+      const { rows, recorder } = await startRun({
+        durable: { statuses: ["completed", "timed_out", "pending"] },
+      });
+      // The recorded attempt and the lost one are never started again.
+      expect(recorder.startIteration).toHaveBeenCalledTimes(1);
+      expect(recorder.startIteration).toHaveBeenCalledWith(
+        expect.objectContaining({ iterationNumber: 3 }),
+      );
+      expect(rows.map((row) => row.status)).toEqual([
+        "completed",
+        "timed_out",
+        "completed",
+      ]);
+    });
+
+    it("a setup failure after the durable heartbeat started stops it", async () => {
+      const { durableRun, recorder } = await startRun({
+        durable: { statuses: ["pending", "pending", "pending"], failResumeRead: true },
+      });
+      expect(durableRun!.startHeartbeat).toHaveBeenCalledTimes(1);
+      expect(durableRun!.stop).toHaveBeenCalled();
+      expect(recorder.finalize).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "failed" }),
+      );
+    });
+
+    it("a replica that loses the durable lease stands down without finalizing", async () => {
+      const { recorder, durableRun } = await startRun({
+        durable: { loseLease: true },
+      });
+      expect(durableRun!.startHeartbeat).toHaveBeenCalledTimes(1);
+      expect(durableRun!.stop).toHaveBeenCalled();
+      expect(recorder.finalize).not.toHaveBeenCalled();
     });
 
     it("keeps completed evidence and finalizes the run deadline for the backend sweep", async () => {
@@ -748,7 +814,8 @@ describe("hosted iteration box heartbeat", () => {
       modelApiKeys: { openai: "sk-test" },
       convexClient: {
         query: vi.fn(async (name) =>
-          name === "testSuites:getTestSuiteRunDetails"
+          (typeof name === "string" ? name : getFunctionName(name)) ===
+          "testSuites:getTestSuiteRunDetails"
             ? { iterations: [row] }
             : { status: "running" },
         ),

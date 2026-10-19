@@ -115,6 +115,7 @@ import {
 } from "./browserd/hosted-recording.js";
 import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
+import type { DurableRunHandle } from "./evals/durable-run.js";
 import {
   platformExecutionBudgetCeilings,
   platformExecutionBudgetDefaults,
@@ -185,9 +186,11 @@ import {
 } from "@/shared/progressive-tool-discovery";
 import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
   createSuiteRunRecorder,
+  matchPrecreatedIteration,
   type SuiteRunRecorder,
 } from "./evals/recorder";
 import { finalizeAiSdkTraceOnFailure } from "./evals/eval-trace-capture";
@@ -793,6 +796,13 @@ export type RunEvalSuiteOptions = {
    * into the one the run's cleanup will read.
    */
   benchmarkWriteGuard?: BenchmarkWriteGuard;
+  /**
+   * The job lease this replica holds for a durable hosted run
+   * (`evals/durable-run.ts`): heartbeated for the run's life, consulted before
+   * every trial's first model call, and on a resume used to skip the trials
+   * already recorded.
+   */
+  durableRun?: DurableRunHandle;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -990,6 +1000,86 @@ export function isRunDeletedError(error: unknown): boolean {
   }
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("not found") || message.includes("unauthorized");
+}
+
+/** This replica lost a durable run's job lease; another one finishes it. */
+const DURABLE_LEASE_LOST = new EvalRunStoppedError({
+  stopReason: "user_cancelled",
+  terminalStatus: "cancelled",
+  notes: "This Inspector replica lost the run to another one.",
+});
+
+/**
+ * The backend refused to dispatch a trial: the run ended, or its launcher
+ * can no longer run it (removed, suspended, or barred by the AI key policy).
+ */
+function durableRefusalStop(reason: string): EvalRunStoppedError {
+  return new EvalRunStoppedError({
+    stopReason: "user_cancelled",
+    terminalStatus: "cancelled",
+    notes: `Run stopped: the platform refused to start a trial (${reason}).`,
+  });
+}
+
+/**
+ * A durable resume: which attempts of each case already have a recorded (or
+ * lost) row, paired the way `recorder.startIteration` pairs them. Only
+ * `pending` rows run again.
+ */
+/** The pre-created rows a resume pairs, typed (no string cast). */
+const RUN_DETAILS = makeFunctionReference<
+  "query",
+  { runId: string },
+  {
+    iterations?: {
+      status?: string;
+      testCaseId?: string;
+      iterationNumber?: number;
+      testCaseSnapshot?: {
+        title?: string;
+        query?: string;
+        model?: string;
+        provider?: string;
+      };
+    }[];
+  } | null
+>("testSuites:getTestSuiteRunDetails");
+
+async function recordedAttemptsByCase(
+  convexClient: ConvexHttpClient,
+  runId: string,
+  tests: EvalTestCase[],
+): Promise<Map<EvalTestCase, Set<number>>> {
+  const details = await convexClient.query(RUN_DETAILS, { runId });
+  const iterations = details?.iterations ?? [];
+  const byCase = new Map<EvalTestCase, Set<number>>();
+  for (const test of tests) {
+    const resolved = resolveEvalTestCase(test);
+    const pinned = isPinnedOnly({
+      caseType: test.caseType,
+      promptTurns: resolved.promptTurns,
+    });
+    const done = new Set<number>();
+    for (let runIndex = 0; runIndex < (test.runs || 1); runIndex++) {
+      const row = matchPrecreatedIteration(iterations, {
+        testCaseId: test.testCaseId,
+        ...(pinned
+          ? {}
+          : {
+              testCaseSnapshot: {
+                title: test.title,
+                query: resolved.query,
+                model: test.model,
+                provider: test.provider,
+              },
+            }),
+        iterationNumber: runIndex + 1,
+      });
+      if (row && row.status !== "pending") done.add(runIndex);
+    }
+    byCase.set(test, done);
+  }
+  return byCase;
 }
 
 const RUN_CANCELLED_ERROR = new EvalRunStoppedError({
@@ -3229,6 +3319,8 @@ const executeTestCase = async (params: {
    * case before any model or tool call instead of creating an unpinned row.
    */
   committedIterationIds?: string[];
+  /** A durable resume's attempts already recorded (or lost); never re-run. */
+  skipAttempts?: ReadonlySet<number>;
   /**
    * Told the attempt index each time an attempt takes ownership of its
    * committed row (see `executeCommittedTestCase`). An entered attempt
@@ -3302,6 +3394,7 @@ const executeTestCase = async (params: {
     abortRun,
     compareRunId,
     committedIterationIds,
+    skipAttempts,
     onCommittedAttemptEntered,
     toolDescriptionOverride,
     emit,
@@ -3788,6 +3881,7 @@ const executeTestCase = async (params: {
   }
 
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    if (skipAttempts?.has(runIndex)) continue;
     // A stopped run leaves this and every later committed attempt unentered;
     // `executeCommittedTestCase` settles their rows.
     if (committedIterationIds && abortSignal?.aborted) break;
@@ -4123,6 +4217,7 @@ export const runEvalSuiteWithAiSdk = async ({
   toolPolicy,
   benchmarkWriteGuard,
   extraHeaders,
+  durableRun,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
     (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
@@ -4360,6 +4455,27 @@ export const runEvalSuiteWithAiSdk = async ({
       }
     }
 
+    // A durable run: keep the job lease, and clear each trial with the backend
+    // before its first model call. A lost lease stops this replica WITHOUT
+    // finalizing (the new holder owns the run); a refusal stops the run.
+    if (durableRun && recorder) {
+      durableRun.startHeartbeat(() => abortRun(DURABLE_LEASE_LOST));
+      recorder.setDispatchGate?.(async (iterationId) => {
+        const outcome = await durableRun.dispatch(iterationId);
+        if (outcome === "ok") return;
+        const stop =
+          outcome === "lease_lost"
+            ? DURABLE_LEASE_LOST
+            : durableRefusalStop(outcome);
+        abortRun(stop);
+        throw stop;
+      });
+    }
+    const skipAttemptsByCase =
+      durableRun?.resumed && runId !== null
+        ? await recordedAttemptsByCase(convexClient, runId, tests)
+        : undefined;
+
     let stopControls = false;
     let runTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -4412,6 +4528,9 @@ export const runEvalSuiteWithAiSdk = async ({
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
+        ...(skipAttemptsByCase?.has(test)
+          ? { skipAttempts: skipAttemptsByCase.get(test) }
+          : {}),
         budgets,
         tools,
         selectedServers: serverIds,
@@ -4624,6 +4743,11 @@ export const runEvalSuiteWithAiSdk = async ({
         throw abortController.signal.reason;
       }
     } catch (error) {
+      if (error === DURABLE_LEASE_LOST) {
+        // Another replica holds the run now and will finalize it.
+        logger.warn("[evals] durable run lease lost; standing down", { runId });
+        return undefined;
+      }
       if (isEvalRunStoppedError(error)) {
         logger.debug("[evals] Run stopped by lifecycle guard", {
           reason: error.stopReason,
@@ -4650,6 +4774,7 @@ export const runEvalSuiteWithAiSdk = async ({
       if (runTimeoutId) {
         clearTimeout(runTimeoutId);
       }
+      durableRun?.stop();
       void heartbeatLoop;
     }
 
@@ -4763,6 +4888,9 @@ export const runEvalSuiteWithAiSdk = async ({
     }
     return undefined;
   } catch (error) {
+    // Setup failed after the durable heartbeat started: stop renewing a lease
+    // on a run this replica has given up.
+    durableRun?.stop();
     const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
