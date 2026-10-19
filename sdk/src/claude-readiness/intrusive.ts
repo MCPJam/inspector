@@ -8,6 +8,14 @@
  * on a schedule, across a directory feed, against a production tenant — they
  * are indistinguishable from an attack.
  *
+ * THE STEP-UP PROBE is the gentlest of the three and the narrowest: it calls
+ * the ONE declared tool, once, with the caller's own access token — one that
+ * lacks the scope the tool needs — and records whether the server answered
+ * with a 403 `insufficient_scope` challenge. It refuses any tool not annotated
+ * `readOnlyHint: true`, and it never spends, refreshes or forwards the token
+ * anywhere but the MCP endpoint. The gatherer runs it only for an armed mode
+ * with a declared tool and a credential to call it with.
+ *
  * SO THE GATE IS SDK-ENFORCED, NOT CALL-SITE-ENFORCED. {@link
  * resolveClaudeIntrusiveMode} is the only way to obtain the token these probes
  * require, and it refuses unless every condition below is met. A call site
@@ -30,7 +38,16 @@
  *      registration that cannot be cleaned up is reported rather than hidden.
  */
 
-import { parseBearerAuthenticateParameters } from "../oauth/state-machines/shared/challenges.js";
+export {
+  probeStepUpChallenge,
+  type ClaudeStepUpProbeOptions,
+} from "./step-up-probe.js";
+
+
+import {
+  parseBearerAuthenticateParameters,
+  parseInsufficientScopeChallenge,
+} from "../oauth/state-machines/shared/challenges.js";
 import { claudePolicySource } from "./manifest.js";
 import type { ClaudeReadinessFinding } from "./types.js";
 import {
@@ -40,6 +57,7 @@ import {
   type ClaudeCheckDefinition,
   type ClaudeCheckStamp,
 } from "./checks/helpers.js";
+
 
 /**
  * Where the grant these probes spend came from.
@@ -113,7 +131,7 @@ const AUTHORIZATION = Object.freeze({}) as IntrusiveAuthorization;
  * true of the type and false of the runtime, which is the worse of the two
  * places for it to be true.
  */
-function assertArmed(mode: ClaudeIntrusiveMode): asserts mode is Extract<
+export function assertArmed(mode: ClaudeIntrusiveMode): asserts mode is Extract<
   ClaudeIntrusiveMode,
   { enabled: true }
 > {
@@ -293,6 +311,9 @@ export interface ClaudeIntrusiveObservations {
   };
 }
 
+/** Why the probes below did not run, when the run never got as far as them. */
+const PROBE_NOT_RUN = "this probe did not run in this run";
+
 /**
  * The scopes a step-up challenge asked for, beside the ones the run expected.
  *
@@ -369,8 +390,10 @@ export function gradeClaudeIntrusiveObservations(
       notEvaluated(
         DCR_REGISTER,
         stamp,
-        registration?.error ??
-          "no registration was attempted; the authorization server advertised no registration endpoint",
+        // The probe's own reason when it ran and declined; otherwise only
+        // that it did not run. Guessing "no registration endpoint" here would
+        // blame the server for a probe nobody started.
+        registration?.error ?? `the dynamic-registration ${PROBE_NOT_RUN}`,
       ),
     );
   } else if (registration.status < 200 || registration.status >= 300) {
@@ -489,10 +512,26 @@ export function gradeClaudeIntrusiveObservations(
     findings.push(
       notEvaluated(STEP_UP, stamp, stepUp?.error ?? "the step-up probe did not run"),
     );
+  } else if (stepUp.status >= 200 && stepUp.status < 300) {
+    // THE TOKEN ALREADY HELD THE SCOPE, or the tool needs none. Either way the
+    // server was never asked the question this check grades, and failing it
+    // would accuse a submitter of a probe misconfiguration.
+    findings.push(
+      notEvaluated(
+        STEP_UP,
+        stamp,
+        `\`${stepUp.toolName}\` succeeded with the supplied token, so no step-up was needed; supply a token that lacks the tool's scope`,
+        {
+          status: stepUp.status,
+          ...summarizeStepUpScopes(undefined, mode.expectedScopes),
+        },
+      ),
+    );
   } else {
     const challenged =
       stepUp.status === 403 &&
-      /insufficient_scope/.test(stepUp.wwwAuthenticate ?? "");
+      parseInsufficientScopeChallenge(stepUp.wwwAuthenticate)
+        .isInsufficientScope;
     // WHAT THE CONFIG PROMISED, MEASURED. `expectedScopes` is required
     // alongside `protectedToolName` so the run states what it is asserting,
     // but nothing compared it, so the requirement bought a config error and no
