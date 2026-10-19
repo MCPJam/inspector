@@ -221,6 +221,32 @@ describe("v1 eval launches while the server drains", () => {
     });
   });
 
+  it("holds the drain for the detached run after the launch answers", async () => {
+    let finish!: () => void;
+    const running = new Promise<void>((resolve) => (finish = resolve));
+    prepareEvalRunMock.mockImplementation(async () => ({
+      ...preparedRun(),
+      execute: vi.fn(() => running),
+    }));
+
+    const res = await send("/eval-runs", "POST", {
+      suiteId: SUITE_ID,
+      serverIds: ["s1"],
+    });
+    expect(res.status).toBe(202);
+
+    drainState.draining = true;
+    await expect(serverDrain.drain(20)).resolves.toMatchObject({
+      drained: false,
+      remaining: { eval_run: 1 },
+    });
+
+    finish();
+    await expect(serverDrain.drain(60_000)).resolves.toMatchObject({
+      drained: true,
+    });
+  });
+
   it("starts runs as before when not draining", async () => {
     const res = await send("/eval-runs", "POST", {
       suiteId: SUITE_ID,
