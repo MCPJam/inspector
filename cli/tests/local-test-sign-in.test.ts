@@ -213,6 +213,8 @@ test("end to end: the iteration is classified, the report carries it, and stderr
         "json",
         "test",
         ".mcpjam/evals/example.yaml",
+        "--inference",
+        "byok",
       ],
       {
         telemetry: telemetryDisabled,
