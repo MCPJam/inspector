@@ -20,6 +20,8 @@ import { prepareEvalRun, shouldSkipExecution } from "../routes/shared/evals.js";
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { createConvexClient } from "./evals/route-helpers.js";
+import { serviceRouteEnv } from "./internal-backend.js";
+import { startClaimLoop, type ClaimLoop } from "./workers/claim-loop.js";
 import {
   environmentServerIds,
   environmentServerNames,
@@ -34,9 +36,6 @@ import {
   type DurableRunInputs,
 } from "./evals/durable-run.js";
 
-const POLL_INTERVAL_MS = 15_000;
-const POLL_JITTER_MS = 5_000;
-const ERROR_BACKOFF_MS = 60_000;
 
 /** Resume one claimed run end-to-end. Never throws. */
 export async function resumeDurableRun(
@@ -154,60 +153,34 @@ export async function resumeDurableRun(
   }
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
-  });
-}
-
-export interface EvalRunJobsWorkerHandle {
-  stop: () => Promise<void>;
-}
+export type EvalRunJobsWorkerHandle = ClaimLoop;
 
 export function isEvalRunJobsWorkerEnabled(): boolean {
   return durableRunsEnabled();
 }
 
-export function startEvalRunJobsWorker(options?: {
-  claim?: () => Promise<DurableRunHandle | "no_job" | null>;
-  resume?: typeof resumeDurableRun;
-}): EvalRunJobsWorkerHandle {
-  const abort = new AbortController();
-  const claim = options?.claim ?? (() => claimDurableRun());
-  const resume = options?.resume ?? resumeDurableRun;
-  logger.info("[eval-run-jobs] worker started");
-  const loop = (async () => {
-    while (!abort.signal.aborted) {
-      let waitMs =
-        POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
-      try {
-        const claimed = await claim();
-        if (claimed && claimed !== "no_job") {
-          await resume(claimed);
-          waitMs = 1_000;
-        }
-      } catch (error) {
-        logger.warn("[eval-run-jobs] poll failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        waitMs = ERROR_BACKOFF_MS;
-      }
-      await sleep(waitMs, abort.signal);
-    }
-    logger.info("[eval-run-jobs] worker stopped");
-  })();
-  return {
-    stop: async () => {
-      abort.abort();
-      await loop;
+/** Start the recovery loop on the shared claim loop; one resumed run at a time. */
+export function startEvalRunJobsWorker(): EvalRunJobsWorkerHandle {
+  if (!serviceRouteEnv()) {
+    logger.warn(
+      "[eval-run-jobs] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
+    );
+    return { stop: async () => {} };
+  }
+  return startClaimLoop<DurableRunHandle>({
+    claimedByPrefix: "inspector-",
+    // `claimDurableRun` names this replica the same way the loop does.
+    claim: async () => {
+      const claimed = await claimDurableRun();
+      return claimed === "no_job" ? null : claimed;
     },
-  };
+    execute: (handle) => resumeDurableRun(handle),
+    log: {
+      started: (claimedBy) =>
+        logger.info("[eval-run-jobs] worker started", { claimedBy }),
+      pollFailed: (error) =>
+        logger.warn("[eval-run-jobs] poll failed", { error }),
+      stopped: () => logger.info("[eval-run-jobs] worker stopped"),
+    },
+  });
 }
