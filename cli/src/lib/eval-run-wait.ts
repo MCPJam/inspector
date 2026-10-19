@@ -42,12 +42,14 @@ async function finishedTrials(
   runId: string
 ): Promise<number | null> {
   try {
-    const { items } = await fetchAllIterations(
+    const { items, complete } = await fetchAllIterations(
       client,
       signal,
       projectId,
       runId
     );
+    // A partial walk is not the run: treat it as unknown, never as a count.
+    if (!complete) return null;
     return items.filter(
       (iteration) =>
         iteration.status !== "pending" && iteration.status !== "running"
@@ -77,14 +79,17 @@ export async function startRunWaitClock(args: {
     async expired() {
       if (Date.now() < deadline) return false;
       if (args.budget.strict) return true;
-      if (Date.now() - startedAt >= RUN_WAIT_CEILING_MS) return true;
       const now = await count();
       if (now === null || finished === null || now <= finished) return true;
       // Trials finished during this window: the run is moving, so it earns a
-      // new window from here.
+      // new window from here, never past the ceiling. (A grading extension,
+      // set through `extend`, is not capped.)
       finished = now;
-      deadline = Date.now() + args.budget.ms;
-      return false;
+      deadline = Math.min(
+        Date.now() + args.budget.ms,
+        startedAt + RUN_WAIT_CEILING_MS
+      );
+      return Date.now() >= deadline;
     },
   };
 }

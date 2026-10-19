@@ -139,3 +139,49 @@ test("a trial count that cannot be read counts as no progress", async (t) => {
   t.mock.timers.tick(1_000);
   assert.equal(await clock.expired(), true);
 });
+
+test("a partial iteration walk counts as no progress", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"] });
+  let done = 0;
+  const client = {
+    async listEvalRunIterations() {
+      // Always another page: the walk stops at its bound, incomplete.
+      return {
+        items: [{ id: `it-${done}`, status: done++ ? "completed" : "pending" }],
+        nextCursor: "more",
+      } as never;
+    },
+  };
+  const clock = await startRunWaitClock({
+    client,
+    signal: new AbortController().signal,
+    projectId: "proj",
+    runId: "run",
+    budget: { ms: 1_000, strict: false },
+  });
+  t.mock.timers.tick(1_000);
+  assert.equal(await clock.expired(), true);
+});
+
+test("progress renewals never run past the ceiling", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"] });
+  let done = 0;
+  const run = fakeRun(() => [
+    ...Array<string>(done).fill("completed"),
+    "pending",
+  ]);
+  const clock = await clockFor(run, {
+    ms: RUN_WAIT_CEILING_MS - 1_000,
+    strict: false,
+  });
+  done = 1;
+  t.mock.timers.tick(RUN_WAIT_CEILING_MS - 1_000);
+  // Progress renews, but only up to the ceiling...
+  assert.equal(await clock.expired(), false);
+  t.mock.timers.tick(999);
+  assert.equal(await clock.expired(), false);
+  done = 2;
+  t.mock.timers.tick(1);
+  // ...where even a moving run stops.
+  assert.equal(await clock.expired(), true);
+});
