@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   MCPConformanceResult,
@@ -37,7 +43,10 @@ vi.mock("@/components/oauth/utils", () => ({
   }),
 }));
 
+import { toast } from "@/lib/toast";
 import { ConformanceTab } from "../ConformancePanel";
+import { RUN_LABEL } from "../ConformancePageChrome";
+import { SUITE_COPY } from "../conformance-ui";
 
 function createProtocolResult(
   overrides: Partial<MCPConformanceResult> = {},
@@ -147,6 +156,37 @@ function clickRow(title: string) {
   const button = screen.getByText(title).closest("button");
   expect(button).not.toBeNull();
   fireEvent.click(button!);
+}
+
+/** Before a run the header and the pre-run prompt both offer Run; either starts it. */
+function clickRun() {
+  fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+}
+
+/** Starts a run and waits until no suite is still running. */
+async function runToCompletion() {
+  clickRun();
+  await waitFor(() => {
+    expect(screen.queryByText("RUNNING")).toBeNull();
+    expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
+  });
+}
+
+/** A suite's header row, found by its description (unique, unlike titles). */
+function suiteHeader(suite: keyof typeof SUITE_COPY) {
+  const button = screen
+    .getByText(SUITE_COPY[suite].description)
+    .closest("button");
+  expect(button).not.toBeNull();
+  return button!;
+}
+
+/**
+ * Collapsed content stays mounted so it can slide shut, marked `inert`
+ * instead; "hidden" means inside an inert subtree, not absent.
+ */
+function isCollapsed(element: HTMLElement) {
+  return element.closest("[inert]") !== null;
 }
 
 function createDeferred<T>() {
@@ -274,117 +314,120 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: /run available checks/i }),
-    );
+    await runToCompletion();
 
     // Pooled: 4/4 applicable across the suites, one SHOULD advisory (-2)
-    // from protocol readiness = 98. The number appears twice: the pooled
-    // headline and the Protocol suite chip (the clean suites' chips read
-    // 100/100).
-    // The headline's own text node is the bare number (the /100 is a child
-    // span); the Protocol suite chip renders the combined "98/100".
-    await waitFor(() => expect(screen.getByText("98")).toBeInTheDocument());
-    expect(screen.getByText("98/100")).toBeInTheDocument();
-    expect(screen.getByText("Conformant, with advice")).toBeInTheDocument();
+    // from protocol readiness = 98. The number shows on the headline and on
+    // the Protocol row, which carries the same advisory.
+    expect(screen.getAllByText("98").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Conformant, with advice.")).toBeInTheDocument();
     // The denominator travels with the number.
-    expect(
-      screen.getByText(/4\/4 applicable checks passed/),
-    ).toBeInTheDocument();
+    expect(screen.getByText("4/4")).toBeInTheDocument();
 
     // The advisory that deducted is visible, tier and all.
     expect(screen.getByText("Metadata Quality")).toBeInTheDocument();
     expect(screen.getByText("(SHOULD)")).toBeInTheDocument();
   });
 
-  it("renders no score card when nothing was applicable", async () => {
+  it("shows no number when nothing was applicable", async () => {
     setupSuccessfulRunMocks();
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: /run available checks/i }),
-    );
+    await runToCompletion();
 
-    await waitFor(() =>
-      expect(screen.getByText("Protocol summary")).toBeInTheDocument(),
-    );
-    // Empty fixtures leave zero applicable checks everywhere: a "—/100" card
-    // would be noise dressed as a number, so no card renders at all.
-    expect(screen.queryByText("/100")).not.toBeInTheDocument();
+    // Empty fixtures leave zero applicable checks everywhere: a percentage
+    // would be noise dressed as a number, so the card says so in words.
+    expect(
+      screen.getByText("Nothing applicable to score on this server."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("%")).toBeNull();
   });
 
-  it("renders the tab title for an HTTP server", () => {
+  it("opens on the first-run prompt for an HTTP server", () => {
     render(<ConformanceTab server={createHttpServer()} />);
 
-    expect(screen.getByText("Conformance")).toBeDefined();
-    expect(screen.getByText("Run available checks")).toBeDefined();
     expect(
-      screen.getByText(/Run Protocol, Apps, Tasks, and OAuth checks against/),
-    ).toBeDefined();
+      screen.getByRole("heading", { name: "Conformance" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Run your first conformance check"),
+    ).toBeInTheDocument();
+    // The header's Run and the prompt's Run.
+    expect(screen.getAllByRole("button", { name: RUN_LABEL })).toHaveLength(2);
+    // Suites appear only once a run starts.
+    expect(screen.queryByText(SUITE_COPY.protocol.description)).toBeNull();
   });
 
-  it("shows an empty state when no server is selected", () => {
+  it("asks for a server instead of running when none is selected", () => {
+    const info = vi.spyOn(toast, "info");
     render(<ConformanceTab server={null} />);
 
-    expect(screen.getByText("No server selected")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Select a connected server above to run conformance checks.",
-      ),
+      screen.getByText("Run your first conformance check"),
     ).toBeInTheDocument();
+    clickRun();
+
+    expect(info).toHaveBeenCalledWith(
+      "Connect an MCP server to run conformance checks.",
+    );
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    info.mockRestore();
   });
 
-  it("shows all suite sections", () => {
+  it("shows every suite once a run starts", async () => {
+    setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
 
-    expect(screen.getByText("Protocol")).toBeDefined();
-    expect(screen.getByText("Apps")).toBeDefined();
-    expect(screen.getByText("Tasks")).toBeDefined();
-    expect(screen.getByText("OAuth")).toBeDefined();
+    for (const suite of ["protocol", "apps", "tasks", "oauth"] as const) {
+      expect(
+        within(suiteHeader(suite)).getByText(SUITE_COPY[suite].title),
+      ).toBeInTheDocument();
+    }
   });
 
-  it("shows the readiness sections without a flag of their own", () => {
+  it("shows the readiness sections without a flag of their own", async () => {
     // This file mocks no feature-flag provider, so the sections appearing here
     // IS the assertion: reaching this page already required
     // `mcpjam-conformance`, and a second flag would have gated an audience
     // against itself. If one is ever reintroduced, this fails.
+    setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
 
     expect(screen.getByText("Claude Directory Readiness")).toBeDefined();
     expect(screen.getByText("OpenAI Directory Readiness")).toBeDefined();
   });
 
-  it("runs the tasks suite and renders its summary with the resolved wire", async () => {
+  it("runs the tasks suite and badges its verdict", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
 
-    fireEvent.click(screen.getByText("Run available checks"));
-
-    await waitFor(() => {
-      expect(mockRunTasks).toHaveBeenCalledWith("http-server");
-    });
-    await waitFor(() => {
-      expect(
-        screen.getByText(/Tasks summary \(wire: extension\)/),
-      ).toBeDefined();
-    });
+    expect(mockRunTasks).toHaveBeenCalledWith("http-server");
+    expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
   });
 
-  it("marks Protocol and OAuth as unavailable for stdio servers", () => {
+  it("marks Protocol and OAuth as not applicable for stdio servers", async () => {
+    setupSuccessfulRunMocks();
     render(<ConformanceTab server={createStdioServer()} />);
+    await runToCompletion();
 
     // Both suites share the same reason from the SDK's canRunConformance.
-    const unavailableMessages = screen.getAllByText(
-      /requires an HTTP transport/i,
+    expect(
+      screen.getAllByText(/requires an HTTP transport/i).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("NOT APPLICABLE").length).toBeGreaterThanOrEqual(
+      2,
     );
-    expect(unavailableMessages.length).toBeGreaterThanOrEqual(2);
+    expect(mockRunProtocol).not.toHaveBeenCalled();
   });
 
   it("runs unpinned by default and forwards the OAuth profile's own version", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
 
-    fireEvent.click(screen.getByText("Run available checks"));
+    clickRun();
 
     await waitFor(() => {
       expect(mockRunProtocol).toHaveBeenCalledWith("http-server", {
@@ -412,7 +455,7 @@ describe("ConformanceTab", () => {
     );
     await user.click(screen.getByRole("option", { name: "2026-07-28" }));
 
-    fireEvent.click(screen.getByText("Run available checks"));
+    clickRun();
 
     await waitFor(() => {
       expect(mockRunProtocol).toHaveBeenCalledWith("http-server", {
@@ -430,41 +473,34 @@ describe("ConformanceTab", () => {
     });
   });
 
-  it("reveals what a suite will run when its header is clicked", async () => {
-    const user = userEvent.setup();
+  it("opens an errored suite on its error and what it would have run", async () => {
+    setupSuccessfulRunMocks();
+    mockRunProtocol.mockRejectedValue(new Error("protocol endpoint down"));
     render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
 
-    // Nothing has run, so the sections start closed.
-    expect(screen.queryByText("Ping")).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: /Protocol/ }));
-
-    expect(screen.getByText("Ping")).toBeDefined();
+    expect(within(suiteHeader("protocol")).getByText("ERROR")).toBeDefined();
+    expect(screen.getByText("protocol endpoint down")).toBeInTheDocument();
     expect(
       screen.getByText(/checks in this suite — not run yet/),
-    ).toBeDefined();
-  });
+    ).toBeInTheDocument();
 
-  it("explains a check when its catalog row is clicked", async () => {
-    const user = userEvent.setup();
-    render(<ConformanceTab server={createHttpServer()} />);
-
-    await user.click(screen.getByRole("button", { name: /Protocol/ }));
-
-    // The row shows the canonical title; the explanation stays hidden until
+    // The row shows the canonical title; the explanation stays shut until
     // the row itself is opened.
-    expect(screen.queryByText("Server responds to ping requests.")).toBeNull();
+    const explanation = screen.getByText("Server responds to ping requests.");
+    expect(isCollapsed(explanation)).toBe(true);
 
-    await user.click(screen.getByRole("button", { name: /^Ping/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Ping/ }));
 
-    expect(screen.getByText("Server responds to ping requests.")).toBeDefined();
+    expect(isCollapsed(explanation)).toBe(false);
   });
 
   it("narrows the protocol catalog to the pinned version's era", async () => {
     const user = userEvent.setup();
+    setupSuccessfulRunMocks();
+    mockRunProtocol.mockRejectedValue(new Error("protocol endpoint down"));
     render(<ConformanceTab server={createHttpServer()} />);
-
-    await user.click(screen.getByRole("button", { name: /Protocol/ }));
+    await runToCompletion();
 
     // On "auto" the era is unknown, so both eras are listed.
     expect(screen.getByText("Ping")).toBeDefined();
@@ -496,15 +532,13 @@ describe("ConformanceTab", () => {
       }),
     });
     render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
 
-    fireEvent.click(screen.getByText("Run available checks"));
-    await screen.findByText("Protocol summary");
-
-    // The suite auto-opens on completion and the preview line is gone.
+    expect(screen.getByText("Round trip")).toBeInTheDocument();
     expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
   });
 
-  it("keeps a running suite open instead of falling back to the catalog", async () => {
+  it("shows a running suite as running, not as the not-yet-run catalog", async () => {
     const pending = createDeferred<{
       success: true;
       result: MCPConformanceResult;
@@ -513,15 +547,18 @@ describe("ConformanceTab", () => {
     mockRunProtocol.mockReturnValue(pending.promise);
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(screen.getByText("Run available checks"));
+    clickRun();
 
-    // Mid-run the section opens itself and says so. The catalog line would
-    // read "not run yet", which is exactly wrong while the run is live.
+    // The catalog line would read "not run yet", which is exactly wrong
+    // while the run is live.
     await screen.findByText(/Running \d+ checks/);
+    expect(within(suiteHeader("protocol")).getByText("RUNNING")).toBeDefined();
     expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
 
     pending.resolve({ success: true, result: createProtocolResult() });
-    await screen.findByText("Protocol summary");
+    await waitFor(() => {
+      expect(within(suiteHeader("protocol")).getByText("PASSED")).toBeDefined();
+    });
   });
 
   it("stays in the run for OAuth between the callback and the result", async () => {
@@ -539,13 +576,13 @@ describe("ConformanceTab", () => {
     mockCompleteOAuth.mockReturnValue(poll.promise);
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(screen.getByText("Run available checks"));
+    clickRun();
 
     await screen.findByText("Waiting for browser authorization...");
+    expect(suiteHeader("oauth").getAttribute("aria-expanded")).toBe("true");
 
-    // The callback lands and the run moves from "waiting" to polling. Keyed on
-    // `hasResult` alone that dropped back to false, snapping the section shut
-    // and offering the pre-run catalog for a run already in flight.
+    // The callback lands and the run moves from "waiting" to polling. The
+    // suite must still read as a live run, never as the pre-run catalog.
     window.dispatchEvent(
       new MessageEvent("message", {
         origin: window.location.origin,
@@ -556,12 +593,13 @@ describe("ConformanceTab", () => {
     await waitFor(() => {
       expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1");
     });
-    const oauthHeader = screen.getByRole("button", { name: /OAuth/ });
-    expect(oauthHeader.getAttribute("aria-expanded")).toBe("true");
+    expect(within(suiteHeader("oauth")).getByText("RUNNING")).toBeDefined();
     expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
 
     poll.resolve({ phase: "complete", result: createOAuthResult() });
-    await screen.findByText("OAuth summary");
+    await waitFor(() => {
+      expect(within(suiteHeader("oauth")).getByText("PASSED")).toBeDefined();
+    });
     openSpy.mockRestore();
   });
 
@@ -573,7 +611,7 @@ describe("ConformanceTab", () => {
     // them, and the client sends no opt-in flag.
     expect(screen.queryByText("Run negative OAuth checks")).toBeNull();
 
-    fireEvent.click(screen.getByText("Run available checks"));
+    clickRun();
 
     await waitFor(() => {
       expect(mockStartOAuth).toHaveBeenCalledTimes(1);
@@ -581,6 +619,34 @@ describe("ConformanceTab", () => {
     expect(mockStartOAuth.mock.calls[0][0]).not.toHaveProperty(
       "runNegativeChecks",
     );
+  });
+
+  it("keeps a passing suite shut until it is opened", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        checks: [
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Round trip",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+      }),
+    });
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    const header = suiteHeader("protocol");
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(isCollapsed(screen.getByText("Ping"))).toBe(true);
+
+    fireEvent.click(header);
+
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(isCollapsed(screen.getByText("Ping"))).toBe(false);
   });
 
   it("expands passed protocol rows and shows descriptions and details", async () => {
@@ -604,22 +670,23 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+    fireEvent.click(suiteHeader("protocol"));
 
-    fireEvent.click(screen.getByText("Run available checks"));
-    await screen.findByText("Protocol summary");
-
-    expect(screen.queryByText("Protocol detail body")).toBeNull();
+    const body = screen.getByText("Protocol detail body");
+    expect(isCollapsed(body)).toBe(true);
     clickRow("Ping");
 
-    expect(screen.queryByText("Protocol detail body")).not.toBeNull();
-    expect(screen.queryByText(/Round Trip Ms:/)).not.toBeNull();
-    expect(screen.queryByText(/"tools"/)).not.toBeNull();
-    expect(screen.queryByText(/"resources"/)).not.toBeNull();
+    expect(isCollapsed(body)).toBe(false);
+    expect(screen.getByText(/Round Trip Ms:/)).toBeInTheDocument();
+    expect(screen.getByText(/"tools"/)).toBeInTheDocument();
+    expect(screen.getByText(/"resources"/)).toBeInTheDocument();
   });
 
   it("expands failed apps rows and shows description, warnings, and errors", async () => {
     setupSuccessfulRunMocks({
       apps: createAppsResult({
+        passed: false,
         checks: [
           {
             id: "ui-tool-metadata-valid",
@@ -637,20 +704,21 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
 
-    fireEvent.click(screen.getByText("Run available checks"));
-    await screen.findByText("Apps summary");
-
+    // A failing suite opens itself.
+    expect(suiteHeader("apps").getAttribute("aria-expanded")).toBe("true");
     clickRow("UI Tool Metadata Valid");
 
-    expect(screen.queryByText("Apps detail body")).not.toBeNull();
-    expect(screen.queryByText("Warnings")).not.toBeNull();
+    expect(isCollapsed(screen.getByText("Apps detail body"))).toBe(false);
+    expect(screen.getByText("Warnings")).toBeInTheDocument();
     expect(
-      screen.queryByText("Missing optional output template"),
-    ).not.toBeNull();
+      screen.getByText("Missing optional output template"),
+    ).toBeInTheDocument();
+    // Once in the row's summary line, once in the opened error banner.
     expect(
-      screen.queryByText("Required tool metadata is missing"),
-    ).not.toBeNull();
+      screen.getAllByText("Required tool metadata is missing"),
+    ).toHaveLength(2);
   });
 
   it("allows skipped protocol rows to expand", async () => {
@@ -670,13 +738,12 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-
-    fireEvent.click(screen.getByText("Run available checks"));
-    await screen.findByText("Protocol summary");
+    await runToCompletion();
+    fireEvent.click(suiteHeader("protocol"));
 
     clickRow("Logging Set Level");
 
-    expect(screen.queryByText("Skipped detail body")).not.toBeNull();
+    expect(isCollapsed(screen.getByText("Skipped detail body"))).toBe(false);
   });
 
   it("expands OAuth rows for passed and failed steps", async () => {
@@ -710,29 +777,34 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-
-    fireEvent.click(screen.getByText("Run available checks"));
-    await screen.findByText("OAuth summary");
+    await runToCompletion();
+    fireEvent.click(suiteHeader("oauth"));
 
     clickRow("OAuth Check: Invalid Client");
     expect(
-      screen.queryByText("Reject an invalid client during token exchange."),
-    ).not.toBeNull();
-    expect(
-      screen.queryByText(
-        "Authorization servers should reject unknown clients.",
+      isCollapsed(
+        screen.getByText("Reject an invalid client during token exchange."),
       ),
-    ).not.toBeNull();
+    ).toBe(false);
+    expect(
+      isCollapsed(
+        screen.getByText(
+          "Authorization servers should reject unknown clients.",
+        ),
+      ),
+    ).toBe(false);
 
     clickRow("OAuth Check: Invalid Redirect URI");
     expect(
-      screen.queryByText(
-        "Reject mismatched redirect URIs at the token endpoint.",
+      isCollapsed(
+        screen.getByText(
+          "Reject mismatched redirect URIs at the token endpoint.",
+        ),
       ),
-    ).not.toBeNull();
+    ).toBe(false);
     expect(
-      screen.queryByText("Server accepted the mismatched redirect URI."),
-    ).not.toBeNull();
+      screen.getAllByText("Server accepted the mismatched redirect URI."),
+    ).toHaveLength(2);
   });
 
   it("renders warnings on a passed OAuth step without an error banner", async () => {
@@ -756,16 +828,15 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-
-    fireEvent.click(screen.getByText("Run available checks"));
-    await screen.findByText("OAuth summary");
+    await runToCompletion();
+    fireEvent.click(suiteHeader("oauth"));
 
     clickRow("OAuth Check: Stale Session Rejection");
     const warning = screen.getByText(
       "Rejected with HTTP 400 (the transport spec prefers 404)",
     );
-    expect(warning).not.toBeNull();
-    expect(screen.queryByText("Warnings")).not.toBeNull();
+    expect(isCollapsed(warning)).toBe(false);
+    expect(screen.getByText("Warnings")).toBeInTheDocument();
     // Warnings render in the muted style, never the red error treatment.
     expect(warning.closest("div")?.className).not.toContain("red");
   });
@@ -787,18 +858,20 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-
-    fireEvent.click(screen.getByText("Run available checks"));
-    await screen.findByText("Protocol summary");
+    await runToCompletion();
+    fireEvent.click(suiteHeader("protocol"));
 
     clickRow("Ping");
-    expect(screen.queryByText("Rerun detail body")).not.toBeNull();
+    expect(isCollapsed(screen.getByText("Rerun detail body"))).toBe(false);
 
-    fireEvent.click(screen.getByText("Run available checks"));
+    await runToCompletion();
 
-    await waitFor(() => {
-      expect(screen.queryByText("Rerun detail body")).toBeNull();
-    });
+    expect(isCollapsed(screen.getByText("Rerun detail body"))).toBe(true);
+    expect(
+      screen
+        .getByRole("button", { name: /^Ping/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
   });
 
   it("resets state on server switch and ignores stale async completions", async () => {
@@ -807,15 +880,8 @@ describe("ConformanceTab", () => {
       result: MCPConformanceResult;
     }>();
 
+    setupSuccessfulRunMocks();
     mockRunProtocol.mockImplementationOnce(() => staleProtocolRun.promise);
-    mockRunApps.mockResolvedValue({
-      success: true,
-      result: createAppsResult(),
-    });
-    mockStartOAuth.mockResolvedValue({
-      phase: "complete",
-      result: createOAuthResult(),
-    });
 
     const serverA = createHttpServer({
       name: "http-server-a",
@@ -834,39 +900,43 @@ describe("ConformanceTab", () => {
 
     const { rerender } = render(<ConformanceTab server={serverA} />);
 
-    fireEvent.click(screen.getByText("Run available checks"));
-    await screen.findByText("Apps summary");
+    clickRun();
+    await waitFor(() => {
+      expect(within(suiteHeader("apps")).getByText("PASSED")).toBeDefined();
+    });
 
     rerender(<ConformanceTab server={serverB} />);
 
-    expect(screen.queryByText("Apps summary")).toBeNull();
-    expect(screen.queryByText("Protocol summary")).toBeNull();
+    // A new server starts over at the first-run prompt.
+    expect(screen.queryByText(SUITE_COPY.apps.description)).toBeNull();
     expect(
-      screen.getByText(
-        /Run Protocol, Apps, Tasks, and OAuth checks against http-server-b/,
-      ),
+      screen.getByText("Run your first conformance check"),
     ).toBeInTheDocument();
 
+    const check = (title: string) => ({
+      id: "ping" as const,
+      category: "core" as const,
+      title,
+      description: `${title} body`,
+      status: "passed" as const,
+      durationMs: 1,
+    });
     mockRunProtocol.mockResolvedValueOnce({
       success: true,
-      result: createProtocolResult({
-        summary: "Fresh protocol summary",
-      }),
+      result: createProtocolResult({ checks: [check("Fresh check")] }),
     });
 
-    fireEvent.click(screen.getByText("Run available checks"));
-    await screen.findByText("Fresh protocol summary");
+    clickRun();
+    await screen.findByText("Fresh check");
 
     staleProtocolRun.resolve({
       success: true,
-      result: createProtocolResult({
-        summary: "Stale protocol summary",
-      }),
+      result: createProtocolResult({ checks: [check("Stale check")] }),
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Fresh protocol summary")).toBeInTheDocument();
-      expect(screen.queryByText("Stale protocol summary")).toBeNull();
+      expect(screen.getByText("Fresh check")).toBeInTheDocument();
+      expect(screen.queryByText("Stale check")).toBeNull();
     });
   });
 
@@ -881,28 +951,29 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(screen.getByText("Run available checks"));
+    await runToCompletion();
 
-    await waitFor(() => {
-      expect(screen.getByText(/not applicable/i)).toBeDefined();
-    });
-    // Reported as unavailable rather than a red failure.
-    expect(screen.getAllByText("Unavailable").length).toBeGreaterThanOrEqual(1);
+    // The reason replaces the suite's description, under a neutral chip
+    // rather than a red failure.
+    const header = screen
+      .getByText(/OAuth conformance not applicable/)
+      .closest("button")!;
+    expect(within(header).getByText("NOT APPLICABLE")).toBeDefined();
+    expect(within(header).queryByText("FAILED")).toBeNull();
   });
 
-  it("badges a finished-but-failing suite as Failed, not green Done", async () => {
+  it("badges a finished-but-failing suite as failed, not passed", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({ passed: false }),
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(screen.getByText("Run available checks"));
+    await runToCompletion();
 
-    await screen.findByText("Protocol summary");
-
-    // "Done" only said the run ended; a failing suite must not read as green.
-    expect(screen.queryByText("Done")).toBeNull();
-    expect(screen.getByText("Failed")).toBeDefined();
+    // Finishing only says the run ended; a failing suite must not read green.
+    const header = suiteHeader("protocol");
+    expect(within(header).getByText("FAILED")).toBeDefined();
+    expect(within(header).queryByText("PASSED")).toBeNull();
   });
 
   it("marks a pending failed protocol check unscored and leaves a scored failure unmarked", async () => {
@@ -940,8 +1011,7 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(screen.getByText("Run available checks"));
-    await screen.findByText("Protocol summary");
+    await runToCompletion();
 
     const pendingRow = screen
       .getByText("Wire schema is valid")
@@ -963,11 +1033,9 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(screen.getByText("Run available checks"));
+    await runToCompletion();
 
-    await waitFor(() => {
-      expect(screen.getByText("Incomplete")).toBeDefined();
-    });
+    expect(within(suiteHeader("tasks")).getByText("INCOMPLETE")).toBeDefined();
   });
 
   it("shows which URLs were probed on a failed OAuth step", async () => {
@@ -1019,13 +1087,12 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(screen.getByText("Run available checks"));
+    await runToCompletion();
 
-    await screen.findByText("Request Resource Metadata");
     clickRow("Request Resource Metadata");
 
     // Both fallback probes are named, so the reader knows what to implement.
-    expect(screen.getByText("Requests tried")).toBeDefined();
+    expect(isCollapsed(screen.getByText("Requests tried"))).toBe(false);
     expect(
       screen.getByText(
         "https://example.com/.well-known/oauth-protected-resource/mcp",
