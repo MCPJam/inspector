@@ -21,6 +21,7 @@ import type { SuiteFileAuthRequired, SuiteFileRunResult } from "@mcpjam/sdk";
 import { main } from "../src/index.js";
 import { localSignInHints } from "../src/commands/test.js";
 import { captureProcessOutput, telemetryDisabled } from "./support/cli-run.js";
+import { evalIdentityFixture } from "./support/eval-identity.mjs";
 
 const FIXTURE = fileURLToPath(
   new URL("./fixtures/sign-in-target-server.mjs", import.meta.url)
@@ -74,7 +75,7 @@ test("a --url binding is told to sign in and pass --credentials-file", () => {
     },
   });
   assert.deepEqual(hints, [
-    'Server "orders" asked for sign-in when "list_orders" was called; a local run never signs in. Sign in with `mcpjam oauth login --url https://orders.example/mcp --scopes "orders:read" --credentials-out <file>`, then retry with `--credentials-file <file>`.',
+    'Server "orders" asked for sign-in when "list_orders" was called; a local run never signs in. Sign in with `mcpjam oauth login --url \'https://orders.example/mcp\' --scopes "orders:read" --credentials-out <file>`, then retry with `--credentials-file <file>`.',
   ]);
 });
 
@@ -87,7 +88,7 @@ test("any other binding is told to set credentialsFile in its MCP config entry",
   });
   assert.equal(
     hint,
-    'Server "orders" asked for sign-in when "list_orders" was called; a local run never signs in. Sign in with `mcpjam oauth login --url https://orders.example/mcp --scopes "orders:read" --credentials-out <file>`, then set "credentialsFile" to that file in the "orders" entry of your MCP config.'
+    'Server "orders" asked for sign-in when "list_orders" was called; a local run never signs in. Sign in with `mcpjam oauth login --url \'https://orders.example/mcp\' --scopes "orders:read" --credentials-out <file>`, then set "credentialsFile" to that file in the "orders" entry of your MCP config.'
   );
 });
 
@@ -187,7 +188,9 @@ cases:
           toolName: list_orders
 `;
 
-test("end to end: the iteration is classified, the report carries it, and stderr says what to run", async () => {
+test("end to end: the iteration is classified, the report carries it, and stderr says what to run", async (t) => {
+  const platform = await evalIdentityFixture();
+  t.after(() => platform.close());
   const dir = mkdtempSync(path.join(tmpdir(), "mcpjam-test-sign-in-"));
   const callsFile = path.join(dir, "calls.log");
   mkdirSync(path.join(dir, ".mcpjam", "evals"), { recursive: true });
@@ -224,6 +227,7 @@ test("end to end: the iteration is classified, the report carries it, and stderr
             PATH: process.env.PATH ?? "",
             CALLS_FILE: callsFile,
             ANTHROPIC_API_KEY: "sk-ant-api03-CLISENTINELCLISENTINELCLISENTINEL",
+            ...platform.env,
           },
           runtime: { createLanguageModel: () => scripted() as never },
         },
