@@ -85,11 +85,11 @@ describe("harnessModelSupport — seed evidence", () => {
     "openai/gpt-5.6-luna",
     "openai/gpt-5.6-sol",
     "openai/GPT-5.6-Terra",
-  ])("codex at the pinned version refuses %s", (modelId) => {
+  ])("codex at the pinned version has not qualified %s", (modelId) => {
     expect(
       harnessModelSupportAtPinnedVersion({ harnessId: "codex", modelId })
         .status,
-    ).toBe("unsupported");
+    ).toBe("unknown");
   });
 
   it("the gpt-5.6 rows do not swallow a longer numeric line (gpt-5.60)", () => {
@@ -316,7 +316,7 @@ describe("evidence table", () => {
       join(here, "..", "harness-model-support-evidence.json"),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "41b4b5c1219d35ba8891280f22a6600273a60c202de52f66dd5eda47d82068ee",
+      "5fe308c63c1dff4fb5ecca374199f10085ffa7b1f25570fa1af0cdaa7b73525d",
     );
   });
 });
@@ -383,5 +383,21 @@ describe("harnessOrgProviderUnsupportedReason", () => {
     expect(
       harnessOrgProviderUnsupportedReason("codex", { requireOrgKeys: true }),
     ).toBe("The Codex client requires your organization's OpenAI key. Choose an organization model or contact your organization admin.");
+  });
+});
+
+
+describe("Codex qualification model boundary", () => {
+  it.each(["openai/gpt-6-luna", "openai/gpt-6.1-sol"])("admits qualified %s only on the measured runtime", (modelId) => {
+    expect(harnessModelSupport({ harnessId: "codex", runtimeVersion: "0.163.0", modelId }).status).toBe("supported");
+    for (const runtimeVersion of ["0.149.1", "0.162.0", "0.164.0"]) {
+      expect(harnessModelSupport({ harnessId: "codex", runtimeVersion, modelId }).status).toBe("unsupported");
+    }
+  });
+  it("matches only the specified minor runtime", () => {
+    expect(isValidHarnessVersionRange("0.163.x")).toBe(true);
+    expect(harnessVersionInRange("0.163.x", "0.163.9")).toBe(true);
+    expect(harnessVersionInRange("0.163.x", "0.164.0")).toBe(false);
+    expect(harnessVersionInRange("0.163.x", undefined)).toBe(false);
   });
 });

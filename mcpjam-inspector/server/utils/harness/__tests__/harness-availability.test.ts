@@ -127,15 +127,15 @@ describe("checkHarnessRuntimeAvailable", () => {
     ["openai/gpt-5.6-terra"],
     ["openai/gpt-5.6-sol"],
     ["openai/gpt-5.6-luna"],
-  ])("refuses %s on Codex as model-unsupported", (modelId) => {
+  ])("refuses %s on Codex as model-unverified", (modelId) => {
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
       args({ harnessId: "codex", model: { id: modelId, provider: "openai" } }),
     );
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.kind).toBe("model-unsupported");
-      expect(r.reason).toMatch(/isn’t supported/);
+      expect(r.kind).toBe("model-unverified");
+      expect(r.reason).toMatch(/not.*verified/);
     }
   });
 
@@ -787,7 +787,7 @@ describe("version-keyed model support (evidence table)", () => {
     const r = checkHarnessRuntimeAvailable(
       args({
         harnessId: "codex",
-        model: { id: "openai/gpt-5.6-luna", provider: "openai" },
+        model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
         purpose: "chat",
       }),
     );

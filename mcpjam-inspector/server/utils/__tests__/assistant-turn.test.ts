@@ -655,7 +655,7 @@ describe("runAssistantTurn", () => {
           "codex"
         )
       ).rejects.toThrow(
-        "This model isn’t supported by Codex. Choose a supported model or switch clients."
+        /not.*verified/
       );
       expect(global.fetch).not.toHaveBeenCalled();
       expect(runHarnessTurnMock).not.toHaveBeenCalled();

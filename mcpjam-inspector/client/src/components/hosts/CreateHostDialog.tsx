@@ -294,6 +294,7 @@ export function CreateHostDialog({
         projectId,
         name: trimmed,
         input: { ...seed, serverIds: [] },
+        applyDefaultSystemPrompt: true,
         // Standalone (Swarms-owned) host when requested; omitted → legacy
         // scenario-minting path.
         ...(owner ? { owner } : {}),

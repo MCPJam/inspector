@@ -1292,6 +1292,7 @@ function useTemplateVerifyDeepLink({
           projectId,
           name: template.label,
           input: { ...seed, serverIds: [] },
+          applyDefaultSystemPrompt: true,
         });
         navigate(buildHostVerifyLandingPath(hostId, requestedFocusTab), {
           replace: true,
