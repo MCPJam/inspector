@@ -243,9 +243,14 @@ export function OverallScoreCard({
   const initials = serverName.replace(/[^a-z0-9]/gi, "").slice(0, 2) || "?";
 
   const verdict = (() => {
+    // A partial score is no verdict: a clean Protocol would read "Fully
+    // conformant." until a suite still running fails.
+    if (isRunning) return "Running conformance checks...";
     if (!scored) {
-      return isRunning
-        ? "Running conformance checks..."
+      // A run that ended before any check was scored, such as one that timed
+      // out, is incomplete rather than empty.
+      return score?.outcome === "incomplete"
+        ? "Incomplete. No check finished, so there is no score."
         : "Nothing applicable to score on this server.";
     }
     const plural = (n: number, word: string) =>

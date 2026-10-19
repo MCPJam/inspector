@@ -36,4 +36,43 @@ describe("OverallScoreCard", () => {
     );
     expect(screen.getByText("Fully conformant.")).toBeInTheDocument();
   });
+
+  it("gives no verdict on a partial score while suites are still running", () => {
+    render(
+      <OverallScoreCard
+        score={passedScore(100)}
+        serverName="srv"
+        version="Auto"
+        isRunning
+      />,
+    );
+    expect(screen.queryByText("Fully conformant.")).toBeNull();
+    expect(
+      screen.getByText("Running conformance checks..."),
+    ).toBeInTheDocument();
+  });
+
+  it("reads a run that ended without a score as incomplete, not empty", () => {
+    // A timed-out run is saved with outcome "incomplete" and no score.
+    render(
+      <OverallScoreCard
+        score={{
+          score: null,
+          outcome: "incomplete",
+          applicable: 0,
+          passed: 0,
+          failed: 0,
+          couldNotRun: 0,
+        }}
+        serverName="srv"
+        version="Auto"
+      />,
+    );
+    expect(
+      screen.getByText("Incomplete. No check finished, so there is no score."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Nothing applicable to score on this server."),
+    ).toBeNull();
+  });
 });

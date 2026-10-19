@@ -330,17 +330,54 @@ describe("ConformanceTab", () => {
   });
 
   it("shows no number when nothing was applicable", async () => {
+    const notApplicable = (id: string) => ({
+      id,
+      category: "tools" as const,
+      title: id,
+      description: id,
+      status: "skipped" as const,
+      skipReason: "not-applicable" as const,
+      durationMs: 0,
+    });
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        checks: [notApplicable("tools-list")],
+      }),
+      apps: createAppsResult({
+        checks: [notApplicable("ui-tools-present")],
+      }),
+      oauth: createOAuthResult({ passed: false, outcome: "not-applicable" }),
+    });
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({
+        checks: [
+          { ...notApplicable("tasks-wire-resolvable"), category: "dispatch" },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    // Every check ran and none applied: a percentage would be noise dressed
+    // as a number, so the card says so in words.
+    expect(
+      screen.getByText("Nothing applicable to score on this server."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("%")).toBeNull();
+  });
+
+  it("reads suites that ran no checks as incomplete, not as nothing applicable", async () => {
+    // Zero checks establishes nothing, so the SDK scores it incomplete.
     setupSuccessfulRunMocks();
 
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // Empty fixtures leave zero applicable checks everywhere: a percentage
-    // would be noise dressed as a number, so the card says so in words.
     expect(
-      screen.getByText("Nothing applicable to score on this server."),
+      screen.getByText("Incomplete. No check finished, so there is no score."),
     ).toBeInTheDocument();
-    expect(screen.queryByText("%")).toBeNull();
   });
 
   it("opens on the first-run prompt for an HTTP server", () => {
