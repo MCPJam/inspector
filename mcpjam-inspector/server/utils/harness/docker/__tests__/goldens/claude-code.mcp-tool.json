@@ -86,6 +86,7 @@
                 },
                 {
                   "input": {},
+                  "providerExecuted": true,
                   "providerOptions": {
                     "mcpjam": {
                       "serverId": "delivery_probe"
@@ -206,6 +207,7 @@
                 },
                 {
                   "input": {},
+                  "providerExecuted": true,
                   "providerOptions": {
                     "mcpjam": {
                       "serverId": "delivery_probe"
@@ -358,6 +360,7 @@
           },
           {
             "input": {},
+            "providerExecuted": true,
             "providerOptions": {
               "mcpjam": {
                 "serverId": "delivery_probe"

@@ -90,6 +90,7 @@
                     ],
                     "cwd": "."
                   },
+                  "providerExecuted": true,
                   "toolCallId": "<id-2>",
                   "toolName": "bash",
                   "type": "tool-call"
@@ -212,6 +213,7 @@
                     ],
                     "cwd": "."
                   },
+                  "providerExecuted": true,
                   "toolCallId": "<id-2>",
                   "toolName": "bash",
                   "type": "tool-call"
@@ -358,6 +360,7 @@
               ],
               "cwd": "."
             },
+            "providerExecuted": true,
             "toolCallId": "<id-2>",
             "toolName": "bash",
             "type": "tool-call"
