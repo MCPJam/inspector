@@ -456,7 +456,9 @@ export type ScopeChallengeProjection = {
 
 /**
  * An insufficient-scope challenge, reduced to what a step-up reads: its scope
- * tokens and a valid metadata URL. The description is not kept.
+ * tokens and a valid metadata URL. The description is not kept. A challenge
+ * with neither is still kept, as `{}`: a bare `insufficient_scope` is a
+ * step-up request too, and re-authorizes with discovery's scope selection.
  */
 export function projectScopeChallenge(
   value: unknown,
@@ -467,10 +469,138 @@ export function projectScopeChallenge(
       ? projectTokenList(value.requiredScope.split(/\s+/).filter(Boolean))
       : undefined;
   const resourceMetadataUrl = parseHttpUrl(value.resourceMetadataUrl);
-  if (!scopes && resourceMetadataUrl === undefined) return undefined;
   return {
     ...(scopes ? { requiredScope: scopes.join(" ") } : {}),
     ...(resourceMetadataUrl !== undefined ? { resourceMetadataUrl } : {}),
+  };
+}
+
+const EFFECTIVE_AUTH_VALUES: ReadonlySet<string> = new Set([
+  "discover",
+  "oauth",
+  "xaa",
+  "bearer",
+  "none",
+]);
+const CHALLENGE_SOURCES: ReadonlySet<string> = new Set([
+  "http_401",
+  "http_403_insufficient_scope",
+  "tool_result_meta",
+]);
+const CHALLENGE_HEADER_FACETS: ReadonlySet<string> = new Set([
+  "none",
+  "bearer",
+  "other-scheme",
+]);
+
+export type AuthChallengeProjection = {
+  source: "http_401" | "http_403_insufficient_scope" | "tool_result_meta";
+  error?: string;
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+  effectiveAuth?: "discover" | "oauth" | "xaa" | "bearer" | "none";
+  facets: {
+    challengeHeader: "none" | "bearer" | "other-scheme";
+    hasResourceMetadata: boolean;
+    hasScope: boolean;
+    hasErrorParams: boolean;
+  };
+};
+
+/**
+ * A sign-in challenge, reduced to what a sign-in reads: its source, the
+ * `error` token, its scope tokens, a valid metadata URL, the server-stamped
+ * effective auth method, and the facets (which are booleans this server
+ * computed). The description and the raw header are not kept.
+ *
+ * Unlike a scope challenge, a challenge with neither scope nor URL is kept:
+ * a bare 401 is still a request to sign in, and discovery falls back to the
+ * well-known paths.
+ */
+export function projectAuthChallenge(
+  value: unknown,
+): AuthChallengeProjection | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  if (typeof value.source !== "string" || !CHALLENGE_SOURCES.has(value.source))
+    return undefined;
+  const error =
+    typeof value.error === "string"
+      ? projectTokenList([value.error])?.[0]
+      : undefined;
+  const scopes =
+    typeof value.requiredScope === "string"
+      ? projectTokenList(value.requiredScope.split(/\s+/).filter(Boolean))
+      : undefined;
+  const resourceMetadataUrl = parseHttpUrl(value.resourceMetadataUrl);
+  const facets = isPlainRecord(value.facets) ? value.facets : {};
+  const challengeHeader =
+    typeof facets.challengeHeader === "string" &&
+    CHALLENGE_HEADER_FACETS.has(facets.challengeHeader)
+      ? (facets.challengeHeader as AuthChallengeProjection["facets"]["challengeHeader"])
+      : "none";
+  return {
+    source: value.source as AuthChallengeProjection["source"],
+    ...(error ? { error } : {}),
+    ...(scopes ? { requiredScope: scopes.join(" ") } : {}),
+    ...(resourceMetadataUrl !== undefined ? { resourceMetadataUrl } : {}),
+    ...(typeof value.effectiveAuth === "string" &&
+    EFFECTIVE_AUTH_VALUES.has(value.effectiveAuth)
+      ? {
+          effectiveAuth:
+            value.effectiveAuth as AuthChallengeProjection["effectiveAuth"],
+        }
+      : {}),
+    facets: {
+      challengeHeader,
+      hasResourceMetadata: facets.hasResourceMetadata === true,
+      hasScope: facets.hasScope === true,
+      hasErrorParams: facets.hasErrorParams === true,
+    },
+  };
+}
+
+const TOOL_SECURITY_SCHEME_SOURCES: ReadonlySet<string> = new Set([
+  "tool",
+  "tool-meta",
+  "server-default",
+  "unresolved",
+  "none",
+]);
+const MAX_TOOL_SECURITY_SCHEMES = 8;
+
+export type ToolSecuritySchemesProjection = {
+  schemes: Array<{ type: string; scopes?: string[] }>;
+  source: "tool" | "tool-meta" | "server-default" | "unresolved" | "none";
+};
+
+/**
+ * A challenged tool's resolved `securitySchemes`, reduced to scheme type
+ * tokens and scope tokens. A malformed resolution becomes `unresolved`,
+ * which never prompts.
+ */
+export function projectToolSecuritySchemes(
+  value: unknown,
+): ToolSecuritySchemesProjection | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !isPlainRecord(value) ||
+    typeof value.source !== "string" ||
+    !TOOL_SECURITY_SCHEME_SOURCES.has(value.source) ||
+    !Array.isArray(value.schemes)
+  ) {
+    return { schemes: [], source: "unresolved" };
+  }
+  const schemes: ToolSecuritySchemesProjection["schemes"] = [];
+  for (const entry of value.schemes.slice(0, MAX_TOOL_SECURITY_SCHEMES)) {
+    if (!isPlainRecord(entry)) continue;
+    const type = projectTokenList([entry.type])?.[0];
+    if (!type) continue;
+    const scopes = projectTokenList(entry.scopes);
+    schemes.push({ type, ...(scopes ? { scopes } : {}) });
+  }
+  return {
+    schemes,
+    source: value.source as ToolSecuritySchemesProjection["source"],
   };
 }
 
