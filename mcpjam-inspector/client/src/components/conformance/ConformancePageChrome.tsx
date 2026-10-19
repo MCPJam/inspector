@@ -40,6 +40,29 @@ export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
 
 export type ConformanceView = "overview" | "history";
 
+const tabId = (view: ConformanceView) => `conformance-tab-${view}`;
+const panelId = (view: ConformanceView) => `conformance-panel-${view}`;
+
+/** The active view's content, labelled by its tab in the header. */
+export function ConformanceTabPanel({
+  view,
+  children,
+}: {
+  view: ConformanceView;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="tabpanel"
+      id={panelId(view)}
+      aria-labelledby={tabId(view)}
+      className="flex min-h-0 flex-1 flex-col"
+    >
+      {children}
+    </div>
+  );
+}
+
 /**
  * Title, Overview/History tabs and the page's controls (server picker,
  * protocol version, run). The controls arrive as children because the run
@@ -73,15 +96,34 @@ export function ConformanceHeader({
           </h2>
           <div className="h-4 w-px shrink-0 bg-border" />
           <div role="tablist" className="flex min-w-0 gap-1">
-            {tabs.map((tab) => {
+            {tabs.map((tab, index) => {
               const active = view === tab.id;
               return (
                 <button
                   key={tab.id}
                   type="button"
                   role="tab"
+                  id={tabId(tab.id)}
+                  // Only the active view's panel is mounted; pointing the
+                  // other tab at a missing id gives a screen reader a dead end.
+                  aria-controls={active ? panelId(tab.id) : undefined}
                   aria-selected={active}
+                  tabIndex={active ? 0 : -1}
                   onClick={() => onViewChange(tab.id)}
+                  onKeyDown={(event) => {
+                    const step =
+                      event.key === "ArrowRight"
+                        ? 1
+                        : event.key === "ArrowLeft"
+                          ? -1
+                          : 0;
+                    if (step === 0) return;
+                    event.preventDefault();
+                    const next =
+                      tabs[(index + step + tabs.length) % tabs.length];
+                    onViewChange(next.id);
+                    document.getElementById(tabId(next.id))?.focus();
+                  }}
                   className={cn(
                     "relative min-h-8 px-3.5 py-1 text-sm font-medium transition-colors",
                     active

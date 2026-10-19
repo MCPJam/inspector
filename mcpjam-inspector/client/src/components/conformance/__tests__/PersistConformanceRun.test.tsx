@@ -216,9 +216,22 @@ describe("PersistConformanceRun", () => {
       />,
     );
 
+    // The real result is persisted as a non-scoring report, not the
+    // synthetic "did not produce a report" fallback, which scores as one
+    // check that could not run.
     await waitFor(() =>
       expect(upsertReport).toHaveBeenCalledWith(
-        expect.objectContaining({ suiteKind: "oauth", status: "completed" }),
+        expect.objectContaining({
+          suiteKind: "oauth",
+          status: "completed",
+          report: expect.objectContaining({
+            score: expect.objectContaining({
+              score: null,
+              applicable: 0,
+              outcome: "passed",
+            }),
+          }),
+        }),
       ),
     );
   });

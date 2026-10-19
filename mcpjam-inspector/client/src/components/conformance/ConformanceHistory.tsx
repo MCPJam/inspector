@@ -163,7 +163,9 @@ export function ConformanceHistory({
     (run.serverId ? serverNames?.get(run.serverId) : undefined) ??
     run.targetKey.replace(/^server:/, "");
 
-  if (page === undefined) {
+  // "Load more" changes the query's cursor, and the query reads undefined
+  // again while that page loads: only the first page may replace the table.
+  if (page === undefined && rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground" role="status">
         Loading run history…
@@ -233,7 +235,11 @@ export function ConformanceHistory({
         </ul>
       </div>
 
-      {!page.isDone ? (
+      {page === undefined ? (
+        <Button variant="outline" size="sm" disabled>
+          Loading…
+        </Button>
+      ) : !page.isDone ? (
         <Button
           variant="outline"
           size="sm"

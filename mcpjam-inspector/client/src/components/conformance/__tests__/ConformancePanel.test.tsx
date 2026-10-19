@@ -358,6 +358,42 @@ describe("ConformanceTab", () => {
     expect(screen.queryByText(SUITE_COPY.protocol.description)).toBeNull();
   });
 
+  it("moves between Overview and History with the arrow keys", async () => {
+    const user = userEvent.setup();
+    render(
+      <ConformanceTab
+        server={createHttpServer()}
+        history={<p>History table</p>}
+      />,
+    );
+
+    const overview = screen.getByRole("tab", { name: "Overview" });
+    const history = screen.getByRole("tab", { name: "History" });
+    // Roving focus: only the active tab is in the tab order.
+    expect(overview).toHaveAttribute("tabindex", "0");
+    expect(history).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      overview.id,
+    );
+
+    overview.focus();
+    await user.keyboard("{ArrowRight}");
+
+    expect(history).toHaveFocus();
+    expect(history).toHaveAttribute("aria-selected", "true");
+    expect(history).toHaveAttribute(
+      "aria-controls",
+      "conformance-panel-history",
+    );
+    expect(overview).not.toHaveAttribute("aria-controls");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("History table");
+
+    // Wraps around at either end.
+    await user.keyboard("{ArrowRight}");
+    expect(overview).toHaveFocus();
+  });
+
   it("asks for a server instead of running when none is selected", () => {
     const info = vi.spyOn(toast, "info");
     render(<ConformanceTab server={null} />);

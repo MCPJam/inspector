@@ -19,8 +19,7 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/lib/app-navigation", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/app-navigation")>();
+  const actual = await importOriginal<typeof import("@/lib/app-navigation")>();
   return {
     ...actual,
     useAppNavigate: () => navigateMock,
@@ -107,5 +106,28 @@ describe("ConformanceHistory", () => {
       .closest(".flex.items-center.justify-center");
     expect(emptyState).not.toBeNull();
     expect(emptyState!.className).not.toMatch(/100vh/);
+  });
+
+  it("keeps loaded rows while the next page loads", async () => {
+    const user = userEvent.setup();
+    // Convex reads undefined again whenever the cursor changes. The first
+    // page is one object, as Convex returns it: a fresh one per render would
+    // re-fire the rows effect forever.
+    const firstPage = {
+      page: [makeRun()],
+      isDone: false,
+      continueCursor: "cursor_2",
+    };
+    useQueryMock.mockImplementation(
+      (_name: string, args: { paginationOpts: { cursor: string | null } }) =>
+        args.paginationOpts.cursor === null ? firstPage : undefined,
+    );
+    render(<ConformanceHistory projectId="proj_1" />);
+
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+
+    expect(screen.queryByText("Loading run history…")).toBeNull();
+    expect(screen.getAllByTestId("conformance-history-row")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Loading…" })).toBeDisabled();
   });
 });
