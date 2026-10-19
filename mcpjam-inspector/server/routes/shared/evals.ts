@@ -2518,10 +2518,11 @@ export async function prepareEvalRun(
     request.source === "benchmark"
       ? { source: "benchmark", benchmarkRunId: request.benchmarkRunId }
       : { source: request.source };
-  // Durable only when every input can be rebuilt: an idempotency key to land
-  // a recovery on THIS run, and no keys that exist only in this request.
+  // Durable only when every input can be rebuilt: no keys that exist only in
+  // this request. A recovery lands on THIS run through its idempotency key —
+  // the caller's, or one the backend gives a keyless launch.
   const durableLaunch =
-    durable && "launch" in durable && idempotencyKey && !hasModelApiKeys(modelApiKeys)
+    durable && "launch" in durable && !hasModelApiKeys(modelApiKeys)
       ? durable.launch
       : undefined;
 

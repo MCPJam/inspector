@@ -115,6 +115,18 @@ describe("durable eval launch", () => {
     expect(shouldSkipExecution(prepared)).toBe(true);
   });
 
+  it("asks for a job on a keyless (hosted UI) launch too", async () => {
+    claimAnswers({ claimed: false, noJob: true });
+    await launch({ idempotencyKey: undefined });
+    const start = mocks.mutation.mock.calls.find(
+      ([name]) => name === "testSuites:startTestSuiteRun",
+    );
+    expect(start?.[1]).toMatchObject({
+      durableJob: { inputs: JSON.stringify(INPUTS) },
+    });
+    expect(start?.[1]).not.toHaveProperty("idempotencyKey");
+  });
+
   it("runs a launch the backend kept process-owned", async () => {
     claimAnswers({ claimed: false, noJob: true });
     const prepared = await launch();
