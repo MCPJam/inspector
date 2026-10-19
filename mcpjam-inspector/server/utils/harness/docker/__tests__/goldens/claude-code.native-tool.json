@@ -87,6 +87,7 @@
                   "input": {
                     "command": "echo golden-$((6*7))"
                   },
+                  "providerExecuted": true,
                   "toolCallId": "<id-3>",
                   "toolName": "bash",
                   "type": "tool-call"
@@ -200,6 +201,7 @@
                   "input": {
                     "command": "echo golden-$((6*7))"
                   },
+                  "providerExecuted": true,
                   "toolCallId": "<id-3>",
                   "toolName": "bash",
                   "type": "tool-call"
@@ -344,6 +346,7 @@
             "input": {
               "command": "echo golden-$((6*7))"
             },
+            "providerExecuted": true,
             "toolCallId": "<id-3>",
             "toolName": "bash",
             "type": "tool-call"
