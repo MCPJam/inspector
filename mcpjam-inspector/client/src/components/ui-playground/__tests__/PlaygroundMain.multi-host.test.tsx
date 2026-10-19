@@ -536,7 +536,8 @@ mockHostMutations.createHost = mockCreateHost;
 const localHarnessFixture = vi.hoisted(() => ({
   requestedTarget: "local-native" as string | null,
 }));
-vi.mock("@/hooks/useLocalHarnessTarget", () => ({
+vi.mock("@/hooks/useLocalHarnessTarget", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useLocalHarnessTarget")>()),
   // ONLY `requestedTarget` is meaningful here — it is what the per-column
   // derivation reads, and it is what these tests assert on. The rest is filler
   // to satisfy the shape. `needs-consent` rather than `ready` because `ready`

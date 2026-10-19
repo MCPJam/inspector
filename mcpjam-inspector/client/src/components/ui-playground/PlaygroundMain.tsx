@@ -233,7 +233,7 @@ import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
-import { useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
+import { localHarnessSetupBlocksSend, useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
 import {
   LocalHarnessTrustDialog,
   LocalHarnessAutoApproveDialog,
@@ -4834,7 +4834,12 @@ export function PlaygroundMain({
       // authorization already exists (`preferredVenue === "local"`), and setup
       // is what creates it — so on a machine that never set this harness up,
       // returning here made the button do nothing at all.
-      if (!setup && !localHarnessRequested) return true;
+      if (!setup && !localHarnessRequested) {
+        return !localHarnessSetupBlocksSend({
+          inScope: localHarnessInScope,
+          phase: localHarness.phase,
+        });
+      }
       // A ready target sends without a readiness round trip (the turn's own
       // route re-checks it); only Off still confirms consent first.
       if (!setup && localHarness.phase === "ready") {
@@ -4866,7 +4871,7 @@ export function PlaygroundMain({
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
+    }, [localHarnessRequested, localHarnessInScope, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
 
   const extensionOwnerScope = JSON.stringify([
     currentUserForSender?._id,

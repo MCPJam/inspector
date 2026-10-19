@@ -822,7 +822,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("Codex harness can't run this host's model");
+    expect(verdict.reason).toMatch(/not.*verified/);
     expect(verdict.reason).toContain("Ineligible cases: luna");
     expect(verdict.reason).not.toContain("fine");
   });

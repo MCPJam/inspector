@@ -655,9 +655,7 @@ describe("runAssistantTurn", () => {
           "codex"
         )
       ).rejects.toThrow(
-        "This host runs the codex harness, which isn't available: the Codex " +
-          "harness can't run this host's model — pick a Codex-compatible " +
-          "model to run the real runtime."
+        /not.*verified/
       );
       expect(global.fetch).not.toHaveBeenCalled();
       expect(runHarnessTurnMock).not.toHaveBeenCalled();

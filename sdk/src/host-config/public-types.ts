@@ -14,6 +14,7 @@
 
 import type {
   CspDomainSet,
+  SystemPromptDefault,
   HostConfigComputer,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
@@ -42,6 +43,7 @@ export type {
   HostStyleId,
   Harness,
   CspDomainSet,
+  SystemPromptDefault,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
   ModelVisibleMcpToolResults,
@@ -124,6 +126,7 @@ export interface HostJson {
   style: HostStyleId;
   model: string;
   systemPrompt: string;
+  systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
   progressiveToolDiscovery?: boolean;
@@ -182,6 +185,7 @@ export interface HostInit {
   /** LLM model id (e.g. "anthropic/claude-sonnet-4-6"). Required at `toJSON()`; no SDK default. */
   model?: string;
   systemPrompt?: string;
+  systemPromptDefault?: SystemPromptDefault;
   /** Sampling temperature. Default: 0.7. */
   temperature?: number;
   requireToolApproval?: boolean;
