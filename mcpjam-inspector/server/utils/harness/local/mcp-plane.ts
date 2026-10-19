@@ -15,16 +15,19 @@ import { publishHarnessPolicyBlock } from "../harness-policy-block-channel.js";
 import { publishHarnessScopeStepUp } from "../harness-scope-step-up.js";
 import { scopeStepUpInfoFromToolError } from "../../insufficient-scope-step-up.js";
 
-export async function startLocalHarnessMcpPlane(args: {
+export interface LocalHarnessMcpPlaneArgs {
   manager: MCPClientManager;
   serverIds: string[];
   turnId: string;
   toolPolicy?: Record<string, ToolPolicySnapshot>;
   evidence?: () => ToolCallEvidenceHook;
   failureReporter?: StreamFailureReporter;
-}) {
+}
+
+export async function startLocalHarnessMcpPlane(args: LocalHarnessMcpPlaneArgs) {
   const token = randomBytes(32).toString("base64url");
-  const allowed = new Set(args.serverIds);
+  let active: LocalHarnessMcpPlaneArgs | undefined = args;
+  let allowed = new Set(args.serverIds);
   let closed = false;
   let windowStart = Date.now();
   let requests = 0;
@@ -35,7 +38,8 @@ export async function startLocalHarnessMcpPlane(args: {
     };
     try {
       const presented = request.headers["x-mcpjam-proxy-token"];
-      if (closed || typeof presented !== "string" || Buffer.byteLength(presented) !== Buffer.byteLength(token) || !timingSafeEqual(Buffer.from(presented), Buffer.from(token))) {
+      const current = active;
+      if (closed || !current || typeof presented !== "string" || Buffer.byteLength(presented) !== Buffer.byteLength(token) || !timingSafeEqual(Buffer.from(presented), Buffer.from(token))) {
         finish(403); return;
       }
       // Browser pages never get cross-origin access, even if a capability leaks.
@@ -54,27 +58,27 @@ export async function startLocalHarnessMcpPlane(args: {
       }
       const parsed = await parseAndValidateJsonRpc(async () => JSON.parse(Buffer.concat(chunks).toString("utf8")));
       if (!parsed.ok) { finish(parsed.status, parsed.response); return; }
-      if (isCrossServerToolCall(args.manager, serverId, parsed.body)) {
+      if (isCrossServerToolCall(current.manager, serverId, parsed.body)) {
         finish(400, { jsonrpc: "2.0", id: parsed.body.id ?? null, error: { code: -32602, message: "Tool is outside this server's scope" } }); return;
       }
-      const policy = args.toolPolicy?.[serverId];
+      const policy = current.toolPolicy?.[serverId];
       if (policy) {
-        const block = evaluateHarnessProxyToolPolicy({ body: parsed.body, policyServerId: serverId, policy, hasServer: id => args.manager.hasServer(id) });
+        const block = evaluateHarnessProxyToolPolicy({ body: parsed.body, policyServerId: serverId, policy, hasServer: id => current.manager.hasServer(id) });
         if (block) {
-          publishHarnessPolicyBlock(args.turnId, { serverId, ...block.marker, at: Date.now() });
+          publishHarnessPolicyBlock(current.turnId, { serverId, ...block.marker, at: Date.now() });
           finish(200, block.response); return;
         }
       }
       // The bridge accepts prefixed tool names; limit its resolver to this entry
       // so a server's capability cannot route to another configured server.
-      const manager = pinMcpManagerToServer(args.manager, serverId);
+      const manager = pinMcpManagerToServer(current.manager, serverId);
       rpcLogBus.publish({ serverId, direction: "send", timestamp: new Date().toISOString(), message: parsed.body });
       const result = await handleJsonRpc(serverId, parsed.body, manager, "adapter", {
-        failureReporter: args.failureReporter,
-        ...(args.evidence ? { toolCallEvidence: args.evidence() } : {}),
+        failureReporter: current.failureReporter,
+        ...(current.evidence ? { toolCallEvidence: current.evidence() } : {}),
         onToolCallError: async context => {
           const info = scopeStepUpInfoFromToolError(context);
-          if (info) publishHarnessScopeStepUp(args.turnId, info);
+          if (info) publishHarnessScopeStepUp(current.turnId, info);
         },
       });
       if (result !== null) rpcLogBus.publish({ serverId, direction: "receive", timestamp: new Date().toISOString(), message: result });
@@ -92,9 +96,16 @@ export async function startLocalHarnessMcpPlane(args: {
   if (!address || typeof address === "string") throw new Error("No loopback MCP listener");
   return {
     strategy: { plane: "local-loopback" as const, baseUrl: `http://127.0.0.1:${address.port}`, token },
+    hold: () => { active = undefined; allowed.clear(); },
+    rebind: (next: LocalHarnessMcpPlaneArgs) => {
+      if (closed) throw new Error("Cannot rebind a closed local MCP listener");
+      allowed = new Set(next.serverIds);
+      active = next;
+    },
     close: async () => {
       if (closed) return;
       closed = true;
+      active = undefined;
       await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
     },
   };

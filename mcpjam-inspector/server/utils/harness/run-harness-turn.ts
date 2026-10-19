@@ -4,7 +4,6 @@ import {
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
-import { withoutSyntheticDenialResults } from "./harness-approval-messages.js";
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalRuntimeBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
@@ -67,10 +66,8 @@ import {
   type ToolSet,
   type UIMessageChunk,
 } from "ai";
-import {
-  HarnessAgent,
-  collectHarnessAgentToolApprovalContinuations,
-} from "@ai-sdk/harness/agent";
+import { HarnessAgent } from "@ai-sdk/harness/agent";
+import { pendingApprovalContinuations } from "./pending-approval-continuations.js";
 import {
   emitTraceSnapshot,
   getPromptIndex,
@@ -1370,10 +1367,7 @@ export async function runHarnessTurn(
       // Detect an approval-response resume up front (the inbound messages carry
       // the user's decision as trailing tool-approval-response parts); a resume
       // continues the paused turn rather than starting a new prompt.
-      const approvalContinuations =
-        collectHarnessAgentToolApprovalContinuations({
-          messages: withoutSyntheticDenialResults(messages) as never,
-        });
+      const approvalContinuations = pendingApprovalContinuations(messages);
       const isApprovalResume = approvalContinuations.length > 0;
       // Composer attachments come OUT of the prompt here (no adapter takes a
       // file part), land on the session's disk in `onSandboxSession`, and reach
@@ -1561,37 +1555,35 @@ export async function runHarnessTurn(
           turnId,
         });
       }
-      if (harnessExecutionTarget && nativeMcpDelivery && (selectedServers?.length ?? 0) > 0) {
-        localMcpPlane = await startLocalHarnessMcpPlane({ manager: mcpClientManager, serverIds: selectedServers ?? [], turnId, toolPolicy: harnessToolPolicy, evidence: localEvidence?.evidence, failureReporter });
-      }
-      const proxyConfig = nativeMcpDelivery
-        ? await buildHarnessProxyMcpJsonFromManager({
-            manager: mcpClientManager,
-            selectedServerIds: selectedServers ?? [],
-            authHeader,
-            projectId,
-            strategy: localMcpPlane?.strategy ?? harnessMcpProxy ?? { plane: "local-mcp" },
-            scopeStepUpCorrelationId: turnId,
-            // The SAME per-turn id the scope-step-up correlation uses. It is
-            // already minted fresh for every turn attempt, which is exactly
-            // what evidence needs: a retry or resume files its calls under a
-            // new turn, so a stale attempt's rows stay addressable but out of
-            // the current turn's completeness check.
-            ...(evalIterationId
-              ? { evidenceScope: { iterationId: evalIterationId, turnId } }
-              : {}),
-            // Policied servers get a SEALED token instead of a bare one, so
-            // the sandbox's own MCP calls are enforced at the proxy.
-            ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
-            // INS-7: plugin-contributed servers ride this SAME proxy path as
-            // ordinary server ids (they are ordinary server ids) — the origin
-            // map only decides how a delivery failure is reported.
-            ...(pluginServerOrigins
-              ? { pluginOrigins: pluginServerOrigins }
-              : {}),
-          })
+      const buildNativeProxyConfig = () => buildHarnessProxyMcpJsonFromManager({
+        manager: mcpClientManager,
+        selectedServerIds: selectedServers ?? [],
+        authHeader,
+        projectId,
+        strategy: localMcpPlane?.strategy ?? harnessMcpProxy ?? { plane: "local-mcp" },
+        scopeStepUpCorrelationId: turnId,
+        // The SAME per-turn id the scope-step-up correlation uses. It is
+        // already minted fresh for every turn attempt, which is exactly
+        // what evidence needs: a retry or resume files its calls under a
+        // new turn, so a stale attempt's rows stay addressable but out of
+        // the current turn's completeness check.
+        ...(evalIterationId
+          ? { evidenceScope: { iterationId: evalIterationId, turnId } }
+          : {}),
+        // Policied servers get a SEALED token instead of a bare one, so
+        // the sandbox's own MCP calls are enforced at the proxy.
+        ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
+        // INS-7: plugin-contributed servers ride this SAME proxy path as
+        // ordinary server ids (they are ordinary server ids) — the origin
+        // map only decides how a delivery failure is reported.
+        ...(pluginServerOrigins
+          ? { pluginOrigins: pluginServerOrigins }
+          : {}),
+      });
+      const proxyConfig = nativeMcpDelivery && !harnessExecutionTarget
+        ? await buildNativeProxyConfig()
         : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
-      const { mcpJson, keyToServerId } = proxyConfig;
+      let { mcpJson, keyToServerId } = proxyConfig;
 
       // Report the run's frozen decision as the mint saw it. The driver reads
       // this to decide whether to read evidence for the turn at all — and it
@@ -1661,7 +1653,7 @@ export async function runHarnessTurn(
           : { tools: {}, keyToServerId: {} };
       // The attribution map is whichever mode produced one; they are the same
       // shape and the same sanitize+dedup, so `parseToolName` is identical.
-      const harnessKeyToServerId = nativeMcpDelivery
+      let harnessKeyToServerId = nativeMcpDelivery
         ? keyToServerId
         : hostExecutedMcp.keyToServerId;
 
@@ -2246,6 +2238,14 @@ export async function runHarnessTurn(
         localTeardown = preparation.prepared.teardown;
         discardLocalState = preparation.prepared.discardState;
         localUnpark = preparation.prepared.unpark;
+        if (nativeMcpDelivery && (selectedServers?.length ?? 0) > 0) {
+          localMcpPlane = await localPrepared.bindMcpPlane({
+            manager: mcpClientManager, serverIds: selectedServers ?? [], turnId,
+            toolPolicy: harnessToolPolicy, evidence: localEvidence?.evidence, failureReporter,
+          });
+          ({ mcpJson, keyToServerId } = await buildNativeProxyConfig());
+          harnessKeyToServerId = keyToServerId;
+        }
         // The mode the agent was already built around, against the mode the
         // prepared plan actually launched under. They come from the same
         // manifest mapping and should be identical; if they ever are not, the
@@ -3605,6 +3605,13 @@ export async function runHarnessTurn(
             }
             onLiveTextDelta?.(delta);
           } else if (type === "tool-call" || type === "tool-input-available") {
+            const toolCallId = String(
+              (part as { toolCallId?: unknown }).toolCallId ??
+                crypto.randomUUID(),
+            );
+            // The SDK emits the raw call and its validated projection with the
+            // same id. One execution must remain one card and transcript row.
+            if (toolMeta.has(toolCallId)) continue;
             closeReasoning();
             // A tool-call after tool results begins the next step.
             if (pendingResults.length > 0) {
@@ -3618,10 +3625,6 @@ export async function runHarnessTurn(
               emitTextEnd(writer, textId);
               textId = undefined;
             }
-            const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ??
-                crypto.randomUUID(),
-            );
             const rawToolName = String(
               (part as { toolName?: unknown }).toolName ?? "tool",
             );
@@ -4046,7 +4049,10 @@ export async function runHarnessTurn(
             emitToolApprovalRequest(writer, { approvalId, toolCallId });
             pendingApprovalIds.push(approvalId);
             pausedForApproval = true;
-            break;
+            // The SDK settles the pause after this event, publishing buffered
+            // results first. Cancelling its iterator here loses those results
+            // and can leave the saved continuation without a pending turn.
+            continue;
           } else if (type === "raw") {
             const rawValue = (part as { rawValue?: unknown }).rawValue;
             // The Claude Code bridge's background drain: progress becomes a
@@ -4656,7 +4662,7 @@ export async function runHarnessTurn(
     // the other did. Bounded, because a stop that hangs must not take the whole
     // turn's teardown with it — the same lesson the revoke deadline below
     // encodes.
-    await localMcpPlane?.close();
+    if (!localParked) await localMcpPlane?.close();
     localMcpPlane = undefined;
     // A continuation that finished without pausing again (or failed) hands
     // its runtime back to ordinary teardown; a parked one keeps it.
