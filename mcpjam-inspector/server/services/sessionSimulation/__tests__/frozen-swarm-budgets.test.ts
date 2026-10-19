@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { readFrozenSwarmBudgets } from "../frozen-swarm-budgets.js";
+import {
+  readFrozenSwarmBudgets,
+  UNREADABLE_SWARM_BUDGETS_MESSAGE,
+  UNSUPPORTED_SWARM_BUDGETS_MESSAGE,
+} from "../frozen-swarm-budgets.js";
 
 const FROZEN = {
   turnTimeoutMs: 6 * 60_000,
@@ -14,35 +18,61 @@ const FROZEN = {
   },
 };
 
+// Only `executionBudgets` is read, so the rest of the snapshot is left out.
+const launched = (fields: Record<string, unknown>) =>
+  fields as Parameters<typeof readFrozenSwarmBudgets>[0];
+
 describe("readFrozenSwarmBudgets", () => {
   it("reads budgets the backend froze into the snapshot", () => {
-    expect(readFrozenSwarmBudgets({ executionBudgets: FROZEN })).toEqual({
-      ok: true,
-      budgets: FROZEN,
-    });
+    expect(
+      readFrozenSwarmBudgets(launched({ executionBudgets: FROZEN })),
+    ).toEqual({ ok: true, budgets: FROZEN });
   });
 
   it("reports none for a snapshot from a backend that froze none", () => {
-    expect(readFrozenSwarmBudgets({ hosts: [] })).toEqual({ ok: true });
-    expect(readFrozenSwarmBudgets({ executionBudgets: undefined })).toEqual({
+    expect(readFrozenSwarmBudgets(launched({ hosts: [] }))).toEqual({
       ok: true,
     });
+    expect(
+      readFrozenSwarmBudgets(launched({ executionBudgets: undefined })),
+    ).toEqual({ ok: true });
   });
 
   it.each([
     ["a zero clock from a misconfigured org ceiling", { unitTimeoutMs: 0 }],
     ["a fractional clock", { runTimeoutMs: 1.5 }],
-    ["a clock this runner does not know", { sessionGapMs: 1_000 }],
     ["a missing clock", { turnTimeoutMs: undefined }],
-  ])("refuses %s rather than defaulting it", (_label, change) => {
-    const result = readFrozenSwarmBudgets({
-      executionBudgets: { ...FROZEN, ...change },
+  ])("refuses %s and points at the org's limits", (_label, change) => {
+    const result = readFrozenSwarmBudgets(
+      launched({ executionBudgets: { ...FROZEN, ...change } }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      message: UNREADABLE_SWARM_BUDGETS_MESSAGE,
     });
-    expect(result.ok).toBe(false);
+  });
+
+  it.each([
+    ["a clock this runner does not know", { sessionGapMs: 1_000 }],
+    [
+      "a provenance this runner does not know",
+      { sources: { ...FROZEN.sources, runTimeoutMs: "ceiling" } },
+    ],
+  ])("refuses %s and asks for an update, not an admin", (_label, change) => {
+    const result = readFrozenSwarmBudgets(
+      launched({ executionBudgets: { ...FROZEN, ...change } }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      message: UNSUPPORTED_SWARM_BUDGETS_MESSAGE,
+    });
   });
 
   it("refuses a value that is not an object", () => {
-    expect(readFrozenSwarmBudgets({ executionBudgets: null }).ok).toBe(false);
-    expect(readFrozenSwarmBudgets({ executionBudgets: "2h" }).ok).toBe(false);
+    for (const executionBudgets of [null, "2h"]) {
+      expect(
+        readFrozenSwarmBudgets(launched({ executionBudgets })),
+      ).toMatchObject({ ok: false, message: UNREADABLE_SWARM_BUDGETS_MESSAGE });
+    }
   });
 });
