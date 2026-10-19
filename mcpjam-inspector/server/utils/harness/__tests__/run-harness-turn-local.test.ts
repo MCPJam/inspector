@@ -676,7 +676,11 @@ describe("runHarnessTurn local continuity", () => {
 
     it("parks the live runtime at an approval pause instead of tearing it down", async () => {
       harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
-      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      const result = await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      expect(result.messageHistory).toContainEqual(expect.objectContaining({
+        role: "assistant",
+        content: expect.arrayContaining([{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }]),
+      }));
       expect(commitHarnessSessionState).toHaveBeenCalledWith(expect.objectContaining({ awaitingApproval: true }));
       expect(harnessState.park).toHaveBeenCalledWith({ generation: "gen-1", pendingApprovalIds: ["approval-1"] });
       // The parked record owns cleanup now: no teardown, no discard, and the

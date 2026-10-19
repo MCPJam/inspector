@@ -234,7 +234,12 @@ export function useAutoConnectProjectServers({
       return null;
     }
     const candidates = catalogNames.filter((name) => {
-      const status = sharedAppState.servers[name]?.connectionStatus;
+      // The cloud catalog can arrive before the local runtime's server map.
+      // A missing entry cannot be connected yet; consuming its one attempt
+      // here leaves every server disconnected after a cold reload.
+      const server = sharedAppState.servers[name];
+      if (!server) return false;
+      const status = server.connectionStatus;
       return (
         status !== "connected" &&
         status !== "connecting" &&
