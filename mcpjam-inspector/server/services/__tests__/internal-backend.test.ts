@@ -159,8 +159,8 @@ describe("postServiceRoute", () => {
       {
         headers: {
           "x-mcpjam-eval-run-grant": "grant-1",
-          "x-inspector-service-token": "forged",
-          "Content-Type": "text/plain",
+          "X-Inspector-Service-Token": "forged",
+          "content-type": "text/plain",
         },
       }
     );

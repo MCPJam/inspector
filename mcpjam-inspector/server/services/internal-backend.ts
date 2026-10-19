@@ -111,6 +111,23 @@ function serviceRouteOrigin(convexUrl: string): string {
   return convexUrl.replace(/\/$/, "");
 }
 
+const PROTECTED_HEADERS = new Set(["content-type", "x-inspector-service-token"]);
+
+/**
+ * A caller's extra headers without the ones the transport sets itself. Header
+ * names ignore case, so `X-Inspector-Service-Token` would otherwise survive
+ * the spread and reach the server as a second token value.
+ */
+function extraHeaders(
+  headers: Record<string, string> | undefined,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers ?? {}).filter(
+      ([name]) => !PROTECTED_HEADERS.has(name.toLowerCase()),
+    ),
+  );
+}
+
 /**
  * POST a JSON body to a service-token-gated route and return its status and
  * parsed body. Every status is returned, not thrown; callers classify it.
@@ -141,7 +158,7 @@ export async function postServiceRoute(
     const response = await fetch(`${origin}${path}`, {
       method: "POST",
       headers: {
-        ...options?.headers,
+        ...extraHeaders(options?.headers),
         "Content-Type": "application/json",
         "x-inspector-service-token": env.serviceToken,
       },
