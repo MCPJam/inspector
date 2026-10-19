@@ -327,6 +327,8 @@ import { normalizeFinishReason } from "@/shared/eval-trace";
 import {
   describeEmptyStepFailure,
   hasSettledToolCallThisPrompt,
+  isMcpjamOwnedEmptyStep,
+  type EmptyStepFacts,
 } from "./empty-step-failure.js";
 import {
   mergeLiveChatTraceUsage,
@@ -4729,13 +4731,15 @@ async function processOneStep(ctx: StepContext): Promise<{
   // chunk: `didEmitFinish: false` with `shouldContinue: false` is the pair the
   // agentic loop reads as `settledWithError`.
   if (contentParts.length === 0 && !quietFinishAfterToolCall) {
-    const emptyStepMessage = describeEmptyStepFailure({
+    const emptyStepFacts: EmptyStepFacts = {
       finishReason: harnessSpanMeta.finishReason,
       toolInputErrors,
       unfinishedToolNames,
       outputTokens: stepUsage?.outputTokens,
-    });
+    };
+    const emptyStepMessage = describeEmptyStepFailure(emptyStepFacts);
     const emptyStepNormalized = describeError(emptyStepMessage);
+    const emptyStepOwnedByMcpjam = isMcpjamOwnedEmptyStep(emptyStepFacts);
     pushBackendStepLlmFailureSpans(
       traceTurn.turnSpans,
       traceTurn.turnStartedAt,
@@ -4771,10 +4775,16 @@ async function processOneStep(ctx: StepContext): Promise<{
           message: "[mcpjam-stream-handler] backend step returned no content",
           error: new Error(emptyStepMessage),
           source: "mcp.chat-v2.engine-step",
-          // The model rail is MCPJam's own hosted provider, not the user's MCP
-          // server. Filing this against `user_server_hop` would blame the server
-          // under test for its host's outage.
-          hop: "mcpjam_internal",
+          // The hop is chosen on the provider's own usage report, like the
+          // recognized-denial split at the backend-stream site. The catalog
+          // files the slug `ambiguous`; `mcpjam_internal` promotes it to a
+          // page. That is right only when the provider generated content our
+          // rail failed to deliver (see `isMcpjamOwnedEmptyStep`). A provider
+          // that reports 0 output tokens, or a named model-side cause (the
+          // token limit, a rejected tool input, a safety filter), stays
+          // `ambiguous` on `user_server_hop`, the same hop the agentic loop
+          // files provider errors on — unpromoted, not blamed on the server.
+          hop: emptyStepOwnedByMcpjam ? "mcpjam_internal" : "user_server_hop",
           transport: "http_stream",
           normalized: emptyStepNormalized,
           context: {
@@ -4787,14 +4797,17 @@ async function processOneStep(ctx: StepContext): Promise<{
             // budget reasoning from a provider outage, or say which model.
             modelId,
             outputTokens: stepUsage?.outputTokens,
+            ownedByMcpjam: emptyStepOwnedByMcpjam,
           },
           ...(failureCapture
             ? {
-                // An empty stream is malformed output from our model rail — an
-                // incident, grouped apart from throws on the same source.
+                // Ask MCPJam captures every failure. Content our rail lost is
+                // an incident, grouped apart from throws on the same source;
+                // an empty reply the provider owns pings only on a spike.
                 capture: failureCapture.policyFor({
                   source: "mcp.chat-v2.engine-step",
                   code: "provider_empty_response",
+                  ...(emptyStepOwnedByMcpjam ? {} : { pageClass: "routine" }),
                 }),
               }
             : {}),

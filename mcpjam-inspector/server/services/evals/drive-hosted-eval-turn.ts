@@ -1071,7 +1071,15 @@ export async function driveHostedEvalTurn(
           iterationErrorDetails: lastEngineError.rawText,
         }
       : { iterationError: fallbackError };
-    logger.error(logLine);
+    // `logger.error` with no error object always captures. An empty step was
+    // already reported once by the engine, which decided whether it is ours
+    // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
+    // page on the provider-owned ones that verdict declines.
+    if (lastEngineError?.code === "provider_empty_response") {
+      logger.warn(logLine);
+    } else {
+      logger.error(logLine);
+    }
     sinks.onTurnFailure?.(failure);
     // WHICH LAYER, from the engine's own report rather than from this call
     // site's position.

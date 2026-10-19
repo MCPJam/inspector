@@ -350,6 +350,49 @@ describe("engine failure telemetry", () => {
     });
   });
 
+  it("files an empty step the provider generated nothing for on the user hop", async () => {
+    // The provider's own usage says 0 output tokens: there was no content for
+    // our rail to lose, so the empty reply must not promote to an MCPJam page.
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      {
+        type: "finish",
+        finishReason: "other",
+        totalUsage: { inputTokens: 270482, outputTokens: 0, totalTokens: 270482 },
+      },
+    ]));
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      source: "mcp.chat-v2.engine-step",
+      hop: "user_server_hop",
+      context: { outputTokens: 0, ownedByMcpjam: false },
+    });
+    expect(originOf(calls[0].normalized)).toBe("ambiguous");
+  });
+
+  it("keeps an empty step on the internal hop when the provider generated tokens we never received", async () => {
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      {
+        type: "finish",
+        finishReason: "stop",
+        totalUsage: { inputTokens: 7, outputTokens: 50, totalTokens: 57 },
+      },
+    ]));
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      source: "mcp.chat-v2.engine-step",
+      hop: "mcpjam_internal",
+      context: { outputTokens: 50, ownedByMcpjam: true },
+    });
+  });
+
   it("does not claim a mid-stream provider 5xx as MCPJam's", async () => {
     // `statusCode` in an error chunk is the UPSTREAM provider's, copied off
     // its error — not our backend's response status. Reading it with the
