@@ -81,6 +81,19 @@ export interface SkillsExtListResult {
   cacheScope?: string;
 }
 
+/**
+ * `skills/get` result: the `{ skill }` envelope with its SEP-2549 caching
+ * attributes. The stable spec requires both fields; they stay optional here
+ * so a server that omits them is parsed and can be reported, not refused.
+ */
+export interface SkillsExtGetResult {
+  skill: SkillEntry;
+  /** SEP-2549: how long this entry may be treated as current, in milliseconds. */
+  ttlMs?: number;
+  /** SEP-2549: the scope the cache entry is valid for. */
+  cacheScope?: string;
+}
+
 /** One entry from the optional `resources/directory/read`. */
 export interface SkillsDirectoryEntry {
   uri: string;
@@ -89,9 +102,14 @@ export interface SkillsDirectoryEntry {
   size?: number;
 }
 
+/** `resources/directory/read` result, with SEP-2549 caching attributes preserved. */
 export interface SkillsDirectoryReadResult {
   resources: SkillsDirectoryEntry[];
   nextCursor?: string;
+  /** SEP-2549: how long this listing may be cached, in milliseconds. */
+  ttlMs?: number;
+  /** SEP-2549: the scope the cache entry is valid for. */
+  cacheScope?: string;
 }
 
 /** The mimeType that marks a directory resource (SEP-2640). */

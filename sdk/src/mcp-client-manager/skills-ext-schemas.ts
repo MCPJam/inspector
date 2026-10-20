@@ -1,5 +1,5 @@
 /**
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  * Re-diff against that commit when re-syncing.
  */
 /**
@@ -95,25 +95,32 @@ export const skillEntrySchema = z
   .loose();
 
 /**
- * `skills/list` result.
+ * SEP-2549 caching attributes, shared by every result of this extension.
  *
- * `ttlMs` / `cacheScope` are SEP-2549 (client-side caching) attributes that
- * MAY ride any paginated list result. They are preserved through the guard
- * and surfaced to callers rather than dropped: the capture coordinator uses
- * them to decide how long a drained listing stays fresh, and dropping a
- * caching directive silently would make MCPJam a worse citizen than the hosts
- * it emulates.
+ * The stable spec requires `ttlMs` and `cacheScope` on `skills/list`,
+ * `skills/get` and `resources/directory/read`. They are OPTIONAL here so a
+ * server that omits them still parses and can be reported by name, and they
+ * are preserved through the guards rather than dropped: the capture
+ * coordinator uses them to decide how long a drained listing stays fresh,
+ * and dropping a caching directive would make MCPJam a worse citizen than
+ * the hosts it emulates.
+ *
+ * `ttlMs` is a non-negative integer: this is untrusted server input that
+ * flows into a freshness calculation, and a negative or fractional TTL has
+ * no meaning there. Constrained at the boundary rather than left for each
+ * consumer to guess at.
  */
+const cacheableResultShape = {
+  ttlMs: z.number().int().nonnegative().optional(),
+  cacheScope: z.string().optional(),
+};
+
+/** `skills/list` result. */
 export const skillsListResultSchema = z
   .object({
     skills: z.array(skillEntrySchema),
     nextCursor: z.string().optional(),
-    // Non-negative integer: this is untrusted server input that flows into a
-    // freshness calculation, and a negative or fractional TTL has no meaning
-    // there. Constrained at the boundary rather than left for each consumer
-    // to guess at.
-    ttlMs: z.number().int().nonnegative().optional(),
-    cacheScope: z.string().optional(),
+    ...cacheableResultShape,
   })
   .loose();
 
@@ -143,6 +150,7 @@ export const directoryReadResultSchema = z
     // repeats our mistake.
     resources: z.array(directoryEntrySchema),
     nextCursor: z.string().optional(),
+    ...cacheableResultShape,
   })
   .loose();
 
@@ -157,6 +165,7 @@ export const directoryReadResultSchema = z
 export const skillsGetResultSchema = z
   .object({
     skill: skillEntrySchema,
+    ...cacheableResultShape,
   })
   .loose();
 

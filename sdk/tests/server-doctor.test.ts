@@ -140,6 +140,7 @@ describe("the skills check", () => {
       }),
       listServerSkills: jest.fn().mockResolvedValue({ skills: [entry] }),
       getServerSkill: jest.fn().mockResolvedValue(entry),
+      getServerSkillResult: jest.fn().mockResolvedValue({ skill: entry }),
       readResource: jest.fn().mockResolvedValue({
         contents: [
           { uri: SKILL_URI, text: MARKDOWN, mimeType: "text/markdown" },
@@ -185,6 +186,11 @@ describe("the skills check", () => {
         .mockImplementation(async (_serverId: string, uri: string) =>
           byUri.get(uri)
         ),
+      getServerSkillResult: jest
+        .fn()
+        .mockImplementation(async (_serverId: string, uri: string) => ({
+          skill: byUri.get(uri),
+        })),
       readResource: jest
         .fn()
         .mockImplementation(
@@ -316,6 +322,7 @@ describe("the skills check", () => {
         .fn()
         .mockResolvedValue({ skills: [good, escaping] }),
       getServerSkill: jest.fn().mockResolvedValue(good),
+      getServerSkillResult: jest.fn().mockResolvedValue({ skill: good }),
       readResource: jest.fn().mockResolvedValue({
         contents: [
           { uri: SKILL_URI, text: MARKDOWN, mimeType: "text/markdown" },

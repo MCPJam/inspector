@@ -368,8 +368,14 @@ export async function startSkillsFixture(
     }
     // The SEP's envelope: `{ skill }`. Spreading the entry at the top level
     // would let a client that forgot to unwrap pass — the fixture would then
-    // be validating the client's bug instead of the protocol.
-    return { resultType: "complete", skill: entryOf(skill) };
+    // be validating the client's bug instead of the protocol. The stable spec
+    // requires the cache attributes here as on `skills/list`.
+    return {
+      resultType: "complete",
+      skill: entryOf(skill),
+      ttlMs: LIST_RESULT_TTL_MS,
+      cacheScope: LIST_RESULT_CACHE_SCOPE,
+    };
   }
 
   function handleResourcesRead(
@@ -487,6 +493,10 @@ export async function startSkillsFixture(
         );
         return {
           resultType: "complete",
+          // Required on directory reads since the 2026-10-11 ext-skills
+          // decision, with `resources/list` semantics.
+          ttlMs: LIST_RESULT_TTL_MS,
+          cacheScope: LIST_RESULT_CACHE_SCOPE,
           resources: (skill?.files ?? []).map((file) => ({
             uri: fileUriFor(skill!, file.path),
             name: file.path,
