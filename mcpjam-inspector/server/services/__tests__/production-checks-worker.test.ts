@@ -248,6 +248,40 @@ describe("startProductionChecksWorker", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("grades a claimed check through to its completion report", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    vi.stubEnv("RAILWAY_REPLICA_ID", "replica-1");
+    const requests: Array<{ path: string; body: any }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        const path = new URL(url).pathname;
+        requests.push({ path, body: JSON.parse(String(init.body)) });
+        const body = path.endsWith("/claim")
+          ? requests.length === 1
+            ? { ok: true, claimed: true, ...BASE_CLAIM }
+            : { ok: true, claimed: false }
+          : { ok: true, applied: true };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+    vi.spyOn(logger, "info").mockImplementation(() => {});
+
+    const worker = startProductionChecksWorker();
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    await worker.stop();
+
+    expect(requests[0]).toEqual({
+      path: "/internal/v1/production-checks/claim",
+      body: { claimedBy: "inspector-replica-1" },
+    });
+    expect(requests[1]).toMatchObject({
+      path: "/internal/v1/production-checks/complete",
+      body: { checkDocId: "check-1", generation: 1 },
+    });
+  });
+
   it("logs its lines as literals the telemetry catalog keeps", () => {
     expect(catalog.messages).toEqual(
       expect.arrayContaining([

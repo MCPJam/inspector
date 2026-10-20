@@ -103,6 +103,44 @@ describe("startScheduledEvalsWorker", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("runs a claimed trigger through to its completion report", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    vi.stubEnv("RAILWAY_REPLICA_ID", "replica-1");
+    const requests: Array<{ path: string; body: any }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        const path = new URL(url).pathname;
+        requests.push({ path, body: JSON.parse(String(init.body)) });
+        // No project: the run reports back at once, with no other I/O.
+        const claimed = { ...CLAIM, projectId: null };
+        return jsonResponse(
+          200,
+          path.endsWith("/claim")
+            ? { ok: true, claimed: requests.length === 1 ? claimed : null }
+            : { ok: true },
+        );
+      }),
+    );
+    vi.spyOn(logger, "info").mockImplementation(() => {});
+
+    const worker = startScheduledEvalsWorker();
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    await worker.stop();
+
+    expect(requests).toEqual([
+      {
+        path: "/internal/v1/scheduled-eval-runs/claim",
+        body: { claimedBy: "inspector-replica-1" },
+      },
+      {
+        path: "/internal/v1/scheduled-eval-runs/complete",
+        body: expect.objectContaining({ triggerId: "trig-1", ok: false }),
+      },
+    ]);
+  });
+
   it("logs its lines as literals the telemetry catalog keeps", () => {
     expect(catalog.messages).toEqual(
       expect.arrayContaining([
