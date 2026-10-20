@@ -127,6 +127,7 @@ export interface PinnedHostExecutionSpec {
    */
   computerUnavailableReason?: string;
   harness?: Harness;
+  agentLoop?: Harness;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;

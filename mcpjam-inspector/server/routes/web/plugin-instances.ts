@@ -1,3 +1,4 @@
+import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { pluginModelAppRoutes } from "./plugin-model-apps.js";
 import { preparePluginMessageTurn } from "../../services/plugin-host/message.js";
 import {
@@ -1515,6 +1516,7 @@ instances.post("/deep-link/resolve", (c) =>
     if (!config) throw denied();
     assertPluginWorkspaceRuntime({
       harness: config.harness,
+      agentLoop: config.agentLoop,
       hostPolicy: { hostStyle: config.hostStyle },
     });
     assertPluginExtensionEnabled(pluginHostExtensions(config), "deepLinks");
@@ -1533,7 +1535,7 @@ instances.post("/deep-link/resolve", (c) =>
         })
       : new Map();
     const { link, servers } = resolvePluginDeepLinkTarget(body.url, {
-      runtime: config.harness === "codex" ? "codex" : "chatgpt",
+      runtime: (config.agentLoop && usesMcpjamClient(config) || config.harness === "codex") ? "codex" : "chatgpt",
       candidates: identities.map((candidate) => ({
         ...candidate,
         ...(candidate.serverIdentity.kind === "plugin" &&

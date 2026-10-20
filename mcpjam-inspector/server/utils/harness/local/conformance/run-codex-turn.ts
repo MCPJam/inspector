@@ -420,7 +420,7 @@ async function main() {
   // Narrowed on the delivery mode, as the turn runner does: local Codex's MCP
   // tools are host-executed, so its adapter takes no MCP config at all.
   const adapter = getHarnessAdapter("codex");
-  if (adapter.mcpDelivery !== "host-executed") {
+  if (adapter.mcpDelivery !== "mcpjam") {
     throw new Error("local Codex must use host-executed MCP delivery");
   }
   const harness = adapter.createHarness({

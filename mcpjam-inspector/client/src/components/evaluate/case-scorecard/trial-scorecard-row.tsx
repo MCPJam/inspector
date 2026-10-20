@@ -230,6 +230,16 @@ export function TrialScorecardRow({
           </p>
         ) : (
           <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm leading-relaxed sm:grid-cols-[7rem_minmax(0,1fr)]">
+            {body ? (
+              <>
+                <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Judge
+                </dt>
+                <dd className="min-w-0" data-testid="trial-scorecard-judge">
+                  {body}
+                </dd>
+              </>
+            ) : null}
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Expected
             </dt>
@@ -270,7 +280,8 @@ export function TrialScorecardRow({
             — this scorer's role has changed since the run.
           </p>
         )}
-        {body && <div className="pt-2">{body}</div>}
+        {/* While withheld, the panel that lifts the mask sits below. */}
+        {body && withheld && <div className="pt-2">{body}</div>}
       </li>
     );
   }
