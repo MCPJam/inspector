@@ -16,6 +16,8 @@ import {
   type BenchmarkRosterEntry,
   type ClaimedBenchmarkJob,
 } from "../bench-worker";
+import { logger } from "../../utils/logger";
+import catalog from "../../../shared/telemetry-catalog.generated.json";
 
 const CLAIMED_BY = "inspector-bench-test";
 const DEFINITION_HASH = "def-hash-1";
@@ -1445,64 +1447,78 @@ describe("heartbeat transport", () => {
   });
 });
 
-describe("startBenchWorker loop", () => {
+// The poll loop itself is tested in `workers/__tests__/claim-loop.test.ts`.
+// These tests cover what stays with this worker: its start gates and the
+// claim route and identity it hands the loop.
+describe("startBenchWorker", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
     vi.stubEnv("CONVEX_URL", "https://convex.test");
+    vi.stubEnv("RAILWAY_REPLICA_ID", "replica-1");
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it("claims and executes one job at a time, then keeps polling", async () => {
-    const claimed = job();
-    const claim = vi
-      .fn()
-      .mockResolvedValueOnce(claimed)
-      .mockResolvedValue(null);
-    const execute = vi.fn().mockResolvedValue(undefined);
+  /**
+   * Starts and stops the worker with `fetch` and the logger stubbed. The loop
+   * logs "worker started" synchronously, so a gate that held is visible as
+   * that line never firing.
+   */
+  async function startAndStop() {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, claimed: null }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const info = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    await startBenchWorker().stop();
+    const started = info.mock.calls.some(
+      ([message]) => message === "[bench] worker started",
+    );
+    return { fetchMock, warn, started };
+  }
 
-    const handle = startBenchWorker({ claim, execute });
-    for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(20_000);
-    void handle.stop();
-    await vi.advanceTimersByTimeAsync(30_000);
+  it("claims as this replica on the bench claim route", async () => {
+    const { fetchMock, started } = await startAndStop();
 
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledWith(claimed, expect.any(String));
-    expect(claim.mock.calls.length).toBeGreaterThan(1);
+    expect(started).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://convex.test/internal/v1/bench/jobs/claim");
+    expect(JSON.parse(init.body)).toMatchObject({
+      claimedBy: "inspector-bench-replica-1",
+    });
   });
 
-  it("backs off without executing when the backend reports the feature disabled", async () => {
-    const claim = vi.fn().mockResolvedValue("disabled" as const);
-    const execute = vi.fn();
+  // An unset or unsafe CONVEX_HTTP_URL is a deployment mistake: a worker that
+  // started anyway would throw the same config error into the backoff path
+  // every poll, where nobody reads it.
+  it.each([
+    {
+      label: "without the service credentials",
+      env: { INSPECTOR_SERVICE_TOKEN: "" },
+    },
+    {
+      label: "on a remote http origin",
+      env: { CONVEX_HTTP_URL: "http://convex.test" },
+    },
+  ])("does not start $label", async ({ env }) => {
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
 
-    const handle = startBenchWorker({ claim, execute });
-    for (let i = 0; i < 3; i++) await vi.advanceTimersByTimeAsync(20_000);
-    void handle.stop();
-    await vi.advanceTimersByTimeAsync(70_000);
+    const { fetchMock, warn, started } = await startAndStop();
 
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it("survives claim errors with a backoff instead of crashing the loop", async () => {
-    const claim = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("backend down"))
-      .mockResolvedValue(null);
-    const execute = vi.fn();
-
-    const handle = startBenchWorker({ claim, execute });
-    for (let i = 0; i < 8; i++) await vi.advanceTimersByTimeAsync(20_000);
-    void handle.stop();
-    await vi.advanceTimersByTimeAsync(70_000);
-
-    expect(execute).not.toHaveBeenCalled();
-    expect(claim.mock.calls.length).toBeGreaterThan(1);
+    expect(warn).toHaveBeenCalledWith(
+      "[bench] worker enabled but not startable",
+      expect.anything(),
+    );
+    expect(started).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("does not start without the Convex url the eval pipeline needs", async () => {
@@ -1510,12 +1526,23 @@ describe("startBenchWorker loop", () => {
     // job, admit a budget against it, and fail every cell — the failure is
     // deeper than the claim, so it is checked before the loop starts.
     vi.stubEnv("CONVEX_URL", "");
-    const claim = vi.fn();
 
-    const handle = startBenchWorker({ claim });
-    await vi.advanceTimersByTimeAsync(60_000);
-    await handle.stop();
+    const { fetchMock, warn, started } = await startAndStop();
 
-    expect(claim).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "[bench] worker enabled but CONVEX_URL missing; not starting (queued jobs stay claimable)",
+    );
+    expect(started).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("logs its loop lines as literals the telemetry catalog keeps", () => {
+    expect(catalog.messages).toEqual(
+      expect.arrayContaining([
+        "[bench] worker started",
+        "[bench] poll failed",
+        "[bench] worker stopped",
+      ]),
+    );
   });
 });

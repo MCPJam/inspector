@@ -55,15 +55,18 @@ describe("startClaimLoop", () => {
     ["60 s while the feature is off", "disabled", 60_000],
   ])("claims again %s", async (_label, first, delayMs) => {
     const claim = makeClaim().mockResolvedValueOnce(first);
+    const execute = vi.fn(async () => {});
     const loop = startClaimLoop({
       claimedByPrefix: "test-",
       claim,
-      execute: vi.fn(async () => {}),
+      execute,
       log: makeLog(),
     });
 
     await settle();
     expect(claim).toHaveBeenCalledTimes(1);
+    // Only a job runs; an empty, drained or disabled claim never does.
+    expect(execute).toHaveBeenCalledTimes(first === JOB ? 1 : 0);
     await vi.advanceTimersByTimeAsync(delayMs - 1);
     expect(claim).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);

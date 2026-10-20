@@ -36,6 +36,8 @@ import {
   type AttemptInput,
   type CheckPlanSession,
 } from "../github-checks/check-plan";
+import { logger } from "../../utils/logger";
+import catalog from "../../../shared/telemetry-catalog.generated.json";
 
 // Three invariants drive every test here, because all three are visible on
 // somebody's pull request when they break:
@@ -1339,151 +1341,101 @@ describe("effectiveRunResult", () => {
   });
 });
 
-describe("startGithubChecksWorker loop", () => {
+// The poll loop itself is tested in `workers/__tests__/claim-loop.test.ts`.
+// These tests cover what stays with this worker: the three start gates and
+// the claim route and identity it hands the loop.
+describe("startGithubChecksWorker", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     // A SEPARATE variable from the one above, read much later (when the ephemeral
     // server is created) and therefore also part of the startup gate.
     vi.stubEnv("CONVEX_URL", "https://convex.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
-    // The sandbox configuration is part of the startup gate: without it the
-    // worker refuses to poll (see the test at the end of this block).
     vi.stubEnv("E2B_API_KEY", "e2b_test");
     vi.stubEnv("GITHUB_CHECKS_E2B_TEMPLATE_ID", "tmpl_test");
+    vi.stubEnv("RAILWAY_REPLICA_ID", "replica-1");
   });
   afterEach(() => {
-    vi.useRealTimers();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  async function flush(times = 6) {
-    for (let i = 0; i < times; i += 1) {
-      await vi.advanceTimersByTimeAsync(20_000);
-    }
+  /**
+   * Starts and stops the worker with `fetch` and the logger stubbed. The loop
+   * logs "worker started" synchronously, so a gate that held is visible as
+   * that line never firing, even though `fetch` alone could not show it.
+   */
+  async function startAndStop() {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, claimed: null }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const info = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    await startGithubChecksWorker().stop();
+    const started = info.mock.calls.some(
+      ([message]) => message === "[github-checks] worker started",
+    );
+    return { fetchMock, warn, started };
   }
 
-  it("executes one claim at a time and keeps polling", async () => {
-    const claim = vi.fn().mockResolvedValueOnce(CLAIM).mockResolvedValue(null);
-    const execute = vi.fn().mockResolvedValue(undefined);
+  it("claims as this replica on the GitHub-checks claim route", async () => {
+    const { fetchMock, started } = await startAndStop();
 
-    const handle = startGithubChecksWorker({ claim, execute });
-    await flush();
-    await handle.stop();
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0][0]).toEqual(CLAIM);
-    // The claimedBy identity is threaded through so heartbeats match the claim.
-    expect(execute.mock.calls[0][1]).toEqual(claim.mock.calls[0][0]);
-    expect(claim.mock.calls.length).toBeGreaterThan(1);
+    expect(started).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://convex.test/internal/v1/github-checks/claim");
+    expect(JSON.parse(init.body)).toMatchObject({
+      claimedBy: "inspector-gh-replica-1",
+    });
   });
 
-  it("stops promptly when the abort lands while a claim is in flight", async () => {
-    // The loop only tests `aborted` at the top, so a claim that settles AFTER
-    // `stop()` falls through to the backoff sleep with an already-aborted signal.
-    // An `abort` event that has already fired never fires again, so a listener
-    // registered at that point waits out the full 60s backoff and the caller's
-    // shutdown timer force-exits an otherwise idle worker.
-    vi.useRealTimers();
-    let releaseClaim: (value: null) => void = () => {};
-    const claim = vi.fn().mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          releaseClaim = resolve;
-        }),
+  it.each([
+    {
+      gate: "the service credentials",
+      env: { INSPECTOR_SERVICE_TOKEN: "" },
+      warning:
+        "[github-checks] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
+    },
+    {
+      // `CONVEX_URL` is only read when the ephemeral server is created, after
+      // the box is provisioned and the PR is built. Claiming without it would
+      // spend ten minutes on a trigger and then conclude `infra_error`,
+      // permanently, since a verdict is final.
+      gate: "CONVEX_URL",
+      env: { CONVEX_URL: "" },
+      warning:
+        "[github-checks] worker enabled but CONVEX_URL missing; not starting (queued checks stay claimable)",
+    },
+    {
+      // Without E2B every queued trigger would be claimed, fail to provision
+      // and be concluded `infra_error`. Not polling leaves them claimable.
+      gate: "the sandbox configuration",
+      env: { E2B_API_KEY: "", GITHUB_CHECKS_E2B_TEMPLATE_ID: "" },
+      warning:
+        "[github-checks] worker enabled but E2B_API_KEY / GITHUB_CHECKS_E2B_TEMPLATE_ID missing; not starting (queued checks stay claimable)",
+    },
+  ])("does not start without $gate", async ({ env, warning }) => {
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+
+    const { fetchMock, warn, started } = await startAndStop();
+
+    expect(warn).toHaveBeenCalledWith(warning);
+    expect(started).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("logs its loop lines as literals the telemetry catalog keeps", () => {
+    expect(catalog.messages).toEqual(
+      expect.arrayContaining([
+        "[github-checks] worker started",
+        "[github-checks] poll failed",
+        "[github-checks] worker stopped",
+      ]),
     );
-    const handle = startGithubChecksWorker({ claim, execute: vi.fn() });
-    // Wait until the loop is parked inside claim().
-    while (claim.mock.calls.length === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
-
-    const stopped = handle.stop();
-    // Settle the claim after the abort, which is the race under test.
-    releaseClaim(null);
-
-    const outcome = await Promise.race([
-      stopped.then(() => "stopped" as const),
-      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 500)),
-    ]);
-    expect(outcome).toBe("stopped");
-  });
-
-  it("backs off without executing when the backend reports the feature disabled", async () => {
-    const claim = vi.fn().mockResolvedValue("disabled" as const);
-    const execute = vi.fn();
-    const handle = startGithubChecksWorker({ claim, execute });
-    await flush(3);
-    await handle.stop();
-    expect(execute).not.toHaveBeenCalled();
-    expect(claim).toHaveBeenCalled();
-  });
-
-  it("refuses to poll when CONVEX_URL is missing", async () => {
-    // `CONVEX_URL` is only read when the ephemeral server is created — after the
-    // box is provisioned and the PR is built. Claiming without it would spend ten
-    // minutes on a trigger and then conclude `infra_error`, permanently, since a
-    // verdict is final. Not polling leaves the check claimable until the deploy is
-    // fixed, which is the same reasoning as the sandbox gate.
-    vi.stubEnv("CONVEX_URL", "");
-    const claim = vi.fn().mockResolvedValue(null);
-
-    const worker = startGithubChecksWorker({ claim, claimedBy: "worker-1" });
-    onTestFinished(async () => {
-      await worker.stop();
-    });
-    await flush();
-    expect(claim).not.toHaveBeenCalled();
-  });
-
-  it("refuses to poll when the sandbox is not configured", async () => {
-    // Claiming without E2B is worse than not starting: every queued trigger would
-    // be claimed, fail to provision, and be concluded `infra_error` — and a
-    // verdict is final. Not polling leaves them claimable until the deploy is fixed.
-    vi.stubEnv("E2B_API_KEY", "");
-    vi.stubEnv("GITHUB_CHECKS_E2B_TEMPLATE_ID", "");
-    const claim = vi.fn().mockResolvedValue(null);
-
-    const worker = startGithubChecksWorker({ claim, claimedBy: "worker-1" });
-    onTestFinished(async () => {
-      await worker.stop();
-    });
-    await flush();
-
-    expect(claim).not.toHaveBeenCalled();
-  });
-
-  it("survives claim errors instead of crashing the loop", async () => {
-    const claim = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("backend down"))
-      .mockResolvedValue(null);
-    const handle = startGithubChecksWorker({ claim, execute: vi.fn() });
-    await flush(8);
-    await handle.stop();
-    expect(claim.mock.calls.length).toBeGreaterThan(1);
-  });
-
-  it("stop() ends the loop", async () => {
-    const claim = vi.fn().mockResolvedValue(null);
-    const handle = startGithubChecksWorker({ claim, execute: vi.fn() });
-    await flush(2);
-    const stopped = handle.stop();
-    await vi.advanceTimersByTimeAsync(1);
-    await stopped;
-    const callsAtStop = claim.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(claim.mock.calls.length).toBe(callsAtStop);
-  });
-
-  it("does not start without the service credentials", async () => {
-    vi.unstubAllEnvs();
-    const claim = vi.fn();
-    const handle = startGithubChecksWorker({ claim, execute: vi.fn() });
-    await flush(2);
-    await handle.stop();
-    expect(claim).not.toHaveBeenCalled();
   });
 });
 
