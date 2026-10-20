@@ -103,7 +103,7 @@ export function useHarnessBuiltinTools(hostId: string | null): {
 } {
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({ isAuthenticated, hostId });
-  const harnessId = host?.config?.harness ?? null;
+  const harnessId = host?.config?.agentLoop ?? host?.config?.harness ?? null;
   const { tools, loading } = useHarnessBuiltinToolCatalog(harnessId);
   return { harnessId, tools, loading };
 }
