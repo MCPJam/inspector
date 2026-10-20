@@ -378,5 +378,7 @@ describe("useAvailableModels", () => {
     expect(result.current.requireOrgKeys).toBe(false);
     // Off the policy the pickers look as they always have: no handoff.
     expect(result.current.onManageOrgProviders).toBeUndefined();
+    // Only a search with no match offers an admin "Add a provider".
+    expect(result.current.onAddProvider).toBe(manageOrgProviders);
   });
 });
