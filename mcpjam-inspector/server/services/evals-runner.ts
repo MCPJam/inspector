@@ -7251,6 +7251,7 @@ const runHostedIterationWithBrowser = async (
     maxSteps: MAX_STEPS,
     runStartedAt,
     isAborted,
+    agentLoop: resolvedExecution.agentLoop,
     harness: resolvedExecution.harness,
     requireToolApproval: resolvedExecution.requireToolApproval,
     // ── Harness execution (harness hosts only; every field below is inert on

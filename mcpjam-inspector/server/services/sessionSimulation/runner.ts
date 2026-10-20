@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import {
   AdmissionWaitBudget,
@@ -411,6 +412,8 @@ export interface SyntheticHostRuntime {
   harnessSandboxBinding?: TrustedHarnessSandboxBinding;
   harnessExecutionTarget?: LocalHarnessExecutionTarget;
   harness?: Harness;
+  agentLoop?: Harness;
+  tasks?: MCPJamHandlerOptions["tasks"];
   /**
    * Scenario-access version for the drain's `/stream/org/resolve` authorization
    * and the scenario-scoped widget capture. Set on the scenario surface; the
@@ -567,7 +570,9 @@ export async function runSyntheticHostSession(
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     computer,
-    harness,
+    harness: configuredHarness,
+    agentLoop,
+    tasks,
     sandboxBinding,
     harnessSandboxBinding,
     harnessExecutionTarget,
@@ -598,7 +603,7 @@ export async function runSyntheticHostSession(
   // the swarm runner knows whether the ephemeral regime is in force, and a
   // rule here that assumed it would refuse every harness on the legacy path
   // too. The runner sets this whenever it could not produce a binding.
-  if (runtime.harness && runtime.harnessBlockedReason) {
+  if ((agentLoop ?? configuredHarness) && runtime.harnessBlockedReason) {
     const reason = runtime.harnessBlockedReason;
     logger.warn("[sessionSimulation.runner] harness turn refused", {
       runId: adapter.runId,
@@ -612,6 +617,16 @@ export async function runSyntheticHostSession(
       message: reason,
     });
     return { outcome: "failed", errorMessage: reason };
+  }
+
+  let harness: ReturnType<typeof resolveAgentLoop>["harnessId"];
+  try {
+    harness = resolveAgentLoop({ agentLoop, harness: configuredHarness }).harnessId;
+  } catch (error) {
+    return {
+      outcome: "failed",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
   }
 
   const sessionStartedAt = Date.now();
@@ -1040,6 +1055,7 @@ export async function runSyntheticHostSession(
       requireToolApproval,
       respectToolVisibility,
       modelVisibleMcpToolResults,
+      tasks,
       ...(harness ? { harness } : {}),
       ...(progressiveToolDiscovery !== undefined
         ? {
@@ -1282,6 +1298,10 @@ export async function runSyntheticHostSession(
             selectedServers: selectedServerIds,
             requireToolApproval,
             ...(harness ? { harness } : {}),
+            agentLoop,
+            tasks,
+            respectToolVisibility,
+            modelVisibleMcpToolResults,
             // Harness MCP-proxy plane (harness hosts with MCP servers) + swarm
             // continuity identity (`swarm-chat` owner lane). `harnessMcpProxy` is
             // resolved once above; `journeyRunId`/`hostId` are the swarm run + pinned
@@ -2117,7 +2137,7 @@ export async function drainAssistantTurn(
     chatSessionId: args.chatSessionId,
     requireToolApproval: args.requireToolApproval,
     tools: args.tools as ToolSet,
-    ...(args.harness ? { harness: args.harness } : {}),
+    ...((args.agentLoop ?? args.harness) ? { harness: args.agentLoop ?? args.harness } : {}),
     ...(mergedExtraBodyFields
       ? { extraBodyFields: mergedExtraBodyFields }
       : {}),
@@ -2148,7 +2168,7 @@ export async function drainAssistantTurn(
     if (
       rt.runtime.kind !== "hosted" ||
       rt.modelSource !== "mcpjam" ||
-      args.harness ||
+      args.agentLoop || args.harness ||
       rt.runtime.harness ||
       !journeyRunId ||
       !hostId
@@ -2189,6 +2209,10 @@ export async function drainAssistantTurn(
       streamSink: "none",
       messages: args.messages,
       systemPrompt: args.systemPrompt,
+    agentLoop: args.agentLoop,
+    respectToolVisibility: args.respectToolVisibility,
+    tasks: args.tasks,
+    harnessTurnContext: args.harnessTurnContext,
       ...(args.temperature !== undefined
         ? { temperature: args.temperature }
         : {}),
@@ -2302,6 +2326,10 @@ export async function drainAssistantTurn(
     messages: args.messages,
     modelDefinition: turnModelDefinition,
     systemPrompt: args.systemPrompt,
+    agentLoop: args.agentLoop,
+    respectToolVisibility: args.respectToolVisibility,
+    tasks: args.tasks,
+    harnessTurnContext: args.harnessTurnContext,
     ...(args.temperature !== undefined
       ? { temperature: args.temperature }
       : {}),
