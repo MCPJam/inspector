@@ -355,6 +355,31 @@ describe("run results matrix", () => {
     ).toEqual({ passed: 0, failed: 1, pending: 1, cancelled: 1 });
   });
 
+  it("never counts skipped or setup-failed iterations as pending", () => {
+    // A run that ended with 4 failed and 12 skipped iterations showed
+    // "PENDING 12" and "Running" in every cell, long after it finished.
+    const finished = [
+      // The shape env.dev stores: no resultSource, so the status decides.
+      iteration("i1", "one", {
+        result: "failed",
+        resultSource: undefined,
+        status: "skipped",
+      }),
+      iteration("i2", "one", {
+        result: "failed",
+        resultSource: undefined,
+        status: "setup_failed",
+      }),
+    ];
+    expect(resultCounts(finished)).toEqual({
+      passed: 0,
+      failed: 0,
+      pending: 0,
+      cancelled: 2,
+    });
+    expect(cellResult(finished)).not.toBe("pending");
+  });
+
   it("splits legacy mixed-model runs and preserves an empty sibling column", () => {
     const current = run("one", { effectiveModelId: undefined });
     const first = iteration("i1", "one");

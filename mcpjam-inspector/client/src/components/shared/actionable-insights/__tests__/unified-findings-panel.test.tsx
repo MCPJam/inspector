@@ -614,6 +614,25 @@ describe("analysis states and provenance", () => {
     );
     expect(summary).toHaveTextContent(/\b1 iteration\b/);
   });
+  it("never calls an excluded iteration of a settled run still running", () => {
+    // Snapshots exist only for settled runs. Iterations that ended setup_failed
+    // or skipped count as `notExecuted`; older snapshots counted them as
+    // `notTerminal`.
+    renderPanel({
+      findings: [],
+      observationCoverage: {
+        total: 10,
+        analyzed: 7,
+        gradedCount: 7,
+        exclusions: { notExecuted: 2, notTerminal: 1 },
+      } as never,
+    });
+    const summary = screen.getByTestId("unified-findings-exclusion-summary");
+    expect(summary).toHaveTextContent("2 iterations that never ran");
+    expect(summary).toHaveTextContent("1 iteration that did not finish");
+    expect(summary).not.toHaveTextContent("still running");
+    expect(summary).not.toHaveTextContent("notExecuted");
+  });
   it("reports backend availability and stale analysis without showing mode tabs", () => {
     renderPanel({
       backendUnavailableNote: "Findings temporarily unavailable",

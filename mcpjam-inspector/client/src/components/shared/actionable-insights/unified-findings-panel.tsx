@@ -105,7 +105,11 @@ function StateNote({
 }
 
 const EXCLUSION_WORDS: Record<string, string> = {
-  notTerminal: "still running",
+  // Snapshots exist only for settled runs, so nothing counted here is still
+  // running. Snapshots stored before `notExecuted` existed also count
+  // setup_failed and skipped iterations here.
+  notTerminal: "that did not finish",
+  notExecuted: "that never ran",
   cancelled: "cancelled",
   chainMissing: "with no recorded contract chain",
   chainUnverified: "without a verified stage chain",

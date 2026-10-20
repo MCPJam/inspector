@@ -49,7 +49,15 @@ export function resultCounts(iterations: readonly EvalIteration[]) {
     const result = computeIterationResult(iteration);
     if (result === "passed") counts.passed++;
     else if (result === "failed" || result === "timed_out") counts.failed++;
-    else if (result === "cancelled") counts.cancelled++;
+    // `setup_failed` and `skipped` never ran a gradeable trial, but they are
+    // finished: like `cancelled` they leave the pass rate, and they must never
+    // read as pending (a cell of them would otherwise say "Running" forever).
+    else if (
+      result === "cancelled" ||
+      result === "setup_failed" ||
+      result === "skipped"
+    )
+      counts.cancelled++;
     else counts.pending++;
   }
   return counts;

@@ -10,10 +10,8 @@ import type {
 } from "@mcpjam/sdk/contract";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
-import {
-  evalRunDecisionRevision,
-  isTerminalEvalRunStatus,
-} from "@/lib/evals/eval-decision-summary-store";
+import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
@@ -189,7 +187,7 @@ export function CombinedRunContent({
     runs.every((run) => history.details.has(run._id)) &&
     launchRuns.every(
       (run) =>
-        history.details.has(run._id) && isTerminalEvalRunStatus(run.status),
+        history.details.has(run._id) && isEvalRunTerminalStatus(run.status),
     ) &&
     launchReports.length === launchRuns.length &&
     launchReports.every((report) => !report.pending)
@@ -471,7 +469,7 @@ function MemberDecision({
   onReport: (id: string, report: MemberReport) => void;
 }) {
   const active =
-    Boolean(projectId) && enabled && isTerminalEvalRunStatus(run.status);
+    Boolean(projectId) && enabled && isEvalRunTerminalStatus(run.status);
   const detail = useEvalRunDecisionDetail({
     projectId,
     runId: run._id,

@@ -53,6 +53,21 @@ describe("getEvalOutcome", () => {
     expect(outcome.dotClass).toBe("bg-amber-500");
     expect(outcome.pulse).toBe(true);
   });
+
+  it.each([
+    ["timed_out", "Timed out"],
+    ["setup_failed", "Setup failed"],
+    ["skipped", "Skipped"],
+    ["cancelled", "Cancelled"],
+  ])("shows a finished %s run or iteration as settled, not running", (status, label) => {
+    // These used to reach the default arm and pulse amber, telling an agent
+    // to keep polling a run or row that will never change.
+    const outcome = getEvalOutcome(status, null);
+
+    expect(outcome.label).toBe(label);
+    expect(outcome.pulse).toBeUndefined();
+    expect(outcome.dotClass).not.toBe("bg-amber-500");
+  });
 });
 
 describe("summaryResult — the suite card's latest-run verdict", () => {
