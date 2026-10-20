@@ -149,7 +149,7 @@ describe("engine failure telemetry", () => {
     delete process.env.CONVEX_HTTP_URL;
   });
 
-  it("retries a busy Swarm model step without replaying an executed tool", async () => {
+  it.each([true, false])("reports a busy Swarm step without replaying tools (canWait=%s)", async (canWait) => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0);
     const fetchMock = vi.fn()
@@ -190,6 +190,7 @@ describe("engine failure telemetry", () => {
     const onConversationComplete = vi.fn();
     const turn = runTurn({
       sourceType: "swarm",
+      remainingTurnMs: () => (canWait ? 60_000 : 1000),
       failureReporter: reporter,
       onEngineError,
       onConversationComplete,
@@ -198,13 +199,19 @@ describe("engine failure telemetry", () => {
     await vi.runAllTimersAsync();
     await turn;
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(executeToolCallsFromMessages).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[2][1].body).toBe(fetchMock.mock.calls[1][1].body);
-    expect(calls).toEqual([]);
-    expect(onEngineError).not.toHaveBeenCalled();
-    expect(errorChunks()).toEqual([]);
-    expect(onConversationComplete).toHaveBeenCalledTimes(1);
+    if (canWait) {
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls[2][1].body).toBe(fetchMock.mock.calls[1][1].body);
+      expect(calls).toEqual([]);
+      expect(onEngineError).not.toHaveBeenCalled();
+      expect(errorChunks()).toEqual([]);
+      expect(onConversationComplete).toHaveBeenCalledTimes(1);
+    } else {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      expect(errorChunks()).toHaveLength(1);
+    }
   });
 
   it("reports a backend /stream transport failure once, with the internal hop", async () => {

@@ -90,6 +90,24 @@ describe("Swarm step admission retry", () => {
     },
   );
 
+  it("returns the refusal instead of waiting past the remaining turn budget", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const response = busy();
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(response)
+      .mockResolvedValue(new Response("ok"));
+    const result = withSwarmStepAdmissionRetry(request, {
+      ...options(),
+      remainingTurnMs: () => 1000,
+    });
+    await vi.runAllTimersAsync();
+    expect(await result).toBe(response);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(response.bodyUsed).toBe(false);
+  });
+
   it("returns the final response intact after bounded retries", async () => {
     vi.useFakeTimers();
     const responses = [busy(), busy()];

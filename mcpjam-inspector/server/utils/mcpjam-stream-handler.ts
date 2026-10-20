@@ -1461,6 +1461,8 @@ export interface MCPJamHandlerOptions {
    * release per-request resources (e.g. MCPClientManager teardown).
    */
   abortSignal?: AbortSignal;
+  /** Remaining execution time; admission waits must leave room to report. */
+  remainingTurnMs?: () => number;
   /**
    * Idle heartbeat interval. While the stream has been silent for at least
    * this many ms, the handler writes a transient `heartbeat` trace event so
@@ -1567,6 +1569,7 @@ interface StepContext {
   // Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing.
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   abortSignal?: AbortSignal;
+  remainingTurnMs?: () => number;
 }
 
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
@@ -3840,7 +3843,13 @@ async function processOneStep(ctx: StepContext): Promise<{
       }),
       ...(abortSignal ? { signal: abortSignal } : {}),
     }),
-    { sourceType, stepIndex, budget: ctx.admissionBudget, signal: abortSignal },
+    {
+      sourceType,
+      stepIndex,
+      budget: ctx.admissionBudget,
+      signal: abortSignal,
+      remainingTurnMs: ctx.remainingTurnMs,
+    },
   );
 
   // A 200 OK with Content-Type: application/json is a non-stream denial
@@ -5471,6 +5480,7 @@ export async function runChatEngineLoop(
             // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
             prepareAdvertisedTools,
             abortSignal,
+            remainingTurnMs: options.remainingTurnMs,
           });
 
         steps++;

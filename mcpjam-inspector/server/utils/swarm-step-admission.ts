@@ -28,6 +28,7 @@ export async function withSwarmStepAdmissionRetry(
     stepIndex: number;
     budget: AdmissionWaitBudget;
     signal?: AbortSignal;
+    remainingTurnMs?: () => number;
   },
 ): Promise<Response> {
   // The session runner retries empty turns. After a tool ran, only the
@@ -35,6 +36,7 @@ export async function withSwarmStepAdmissionRetry(
   if (options.sourceType !== "swarm" || options.stepIndex === 0) {
     return request();
   }
+  let pendingRefusal: AdmissionResponseError | undefined;
   try {
     return await withAdmissionRetry(async () => {
       const response = await request();
@@ -52,7 +54,7 @@ export async function withSwarmStepAdmissionRetry(
       });
       if (!parsed.success) return response;
       const body = parsed.value;
-      throw new AdmissionResponseError(response, {
+      pendingRefusal = new AdmissionResponseError(response, {
         code: "spending_reservation_busy",
         httpStatus: response.status,
         ...(typeof body.retryAfter === "number" &&
@@ -60,7 +62,21 @@ export async function withSwarmStepAdmissionRetry(
           ? { retryAfterMs: body.retryAfter }
           : {}),
       });
-    }, options);
+      throw pendingRefusal;
+    }, {
+      ...options,
+      onWait: (delayMs) => {
+        // Keep the refusal on the normal reporting path rather than let an
+        // admission wait exhaust the turn clock and silently discard its trace.
+        if (
+          pendingRefusal &&
+          options.remainingTurnMs &&
+          delayMs >= options.remainingTurnMs()
+        ) {
+          throw pendingRefusal;
+        }
+      },
+    });
   } catch (error) {
     // Preserve the final refusal for the engine's normal error reporting.
     if (error instanceof AdmissionResponseError) return error.response;
