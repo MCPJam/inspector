@@ -39,8 +39,15 @@ export async function withSwarmStepAdmissionRetry(
     return await withAdmissionRetry(async () => {
       const response = await request();
       if (response.status !== 503) return response;
+      let responseText: string;
+      try {
+        responseText = await response.clone().text();
+      } catch {
+        // Inspection is optional; preserve the backend refusal for reporting.
+        return response;
+      }
       const parsed = await safeParseJSON({
-        text: await response.clone().text(),
+        text: responseText,
         schema: busyResponseSchema,
       });
       if (!parsed.success) return response;

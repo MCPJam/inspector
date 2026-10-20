@@ -63,6 +63,33 @@ describe("Swarm step admission retry", () => {
     expect(response.bodyUsed).toBe(false);
   });
 
+  it.each(["clone", "read"])(
+    "preserves the original refusal when inspection fails during %s",
+    async (failure) => {
+      const response = busy();
+      if (failure === "clone") {
+        vi.spyOn(response, "clone").mockImplementationOnce(() => {
+          throw new TypeError("Response cannot be cloned");
+        });
+      } else {
+        const inspected = response.clone();
+        vi.spyOn(inspected, "text").mockRejectedValueOnce(
+          new Error("Response body inspection failed"),
+        );
+        vi.spyOn(response, "clone").mockReturnValueOnce(inspected);
+      }
+      const request = vi.fn().mockResolvedValue(response);
+
+      expect(await withSwarmStepAdmissionRetry(request, options())).toBe(response);
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(response.bodyUsed).toBe(false);
+      expect(response.headers.get("Retry-After")).toBe("2");
+      expect(await response.json()).toMatchObject({
+        code: "spending_reservation_busy",
+      });
+    },
+  );
+
   it("returns the final response intact after bounded retries", async () => {
     vi.useFakeTimers();
     const responses = [busy(), busy()];
