@@ -236,6 +236,11 @@ export const options = {
   get opt_out_persistence_by_default() {
     return !hasAnalyticsConsent();
   },
+  // Conversations ignores opt-out outside cookieless mode and writes a widget
+  // session id to localStorage, so it stays off until consent.
+  get disable_conversations() {
+    return !hasAnalyticsConsent();
+  },
   // Fetch keeps the SDK bearer and the live-policy guard on unload batches.
   disable_beacon: true,
   // Capture records policy only; the relay owns the final vendor serializer.

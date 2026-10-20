@@ -57,12 +57,13 @@ export function AboutSettings() {
         <GitHubStarButton />
       </header>
 
-      <dl className="flex items-center justify-between gap-4 border-y border-border py-4 text-sm">
-        <dt className="font-medium text-accent-foreground">Version</dt>
-        <dd className="text-foreground">v{__APP_VERSION__}</dd>
-      </dl>
-
-      <AnalyticsConsentSetting />
+      <div className="divide-y divide-border border-y border-border">
+        <dl className="flex items-center justify-between gap-4 py-4 text-sm">
+          <dt className="font-medium text-accent-foreground">Version</dt>
+          <dd className="text-foreground">v{__APP_VERSION__}</dd>
+        </dl>
+        <AnalyticsConsentSetting />
+      </div>
 
       <nav
         aria-label="MCPJam resources"

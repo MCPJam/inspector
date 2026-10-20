@@ -27,6 +27,7 @@ describe("analytics consent", () => {
     window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
     expect(options.opt_out_capturing_by_default).toBe(true);
     expect(options.opt_out_persistence_by_default).toBe(true);
+    expect(options.disable_conversations).toBe(true);
 
     const posthog = client();
     setAnalyticsConsent(posthog, "granted");

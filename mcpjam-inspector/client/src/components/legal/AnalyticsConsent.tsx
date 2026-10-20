@@ -67,7 +67,7 @@ export function AnalyticsConsentSetting() {
   if (!posthog || !consentApplies()) return null;
 
   return (
-    <div className="flex items-center justify-between gap-4 border-y border-border py-4 text-sm">
+    <div className="flex items-center justify-between gap-4 py-4 text-sm">
       <label htmlFor={id} className="space-y-1">
         <span className="block font-medium text-accent-foreground">
           Analytics and session replay
