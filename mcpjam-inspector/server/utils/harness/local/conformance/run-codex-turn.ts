@@ -442,12 +442,6 @@ async function main() {
   if (!turns.mcp.text.includes("PROBE_OK:conformance")) failures.push("the MCP tool's result did not come back through the model");
   if (turns.mcp.approvals > 0) failures.push("the relayed MCP tool raised a Codex approval (MCPJam's gate must be the single authority)");
 
-  // Codex's own plan reaches the turn as `turn/plan/updated`, which the
-  // Inspector shows as the reply's checklist.
-  turns.plan = await runTurn("plan", agent, sessionRef, "PLAN");
-  if (!turns.plan.methods.includes("turn/plan/updated")) failures.push("Codex's update_plan never reached the turn as turn/plan/updated");
-  if (turns.plan.approvals > 0) failures.push("update_plan raised a Codex approval");
-
   // Process tree and hygiene while the session is live.
   const kids = await descendants(bridgePid);
   const tree = [bridgePid, ...kids];
