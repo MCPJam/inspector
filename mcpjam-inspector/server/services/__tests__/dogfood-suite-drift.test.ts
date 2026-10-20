@@ -79,4 +79,24 @@ describe("the dogfood eval suites", () => {
     });
     expect(targets).toEqual(["mcpjam-mcp-staging", "mcpjam-mcp"]);
   });
+
+  it("make 'asks rather than guessing' require a question put to the user", () => {
+    const source = read(STAGING);
+    const block = source.slice(source.indexOf("asks rather than guessing"));
+    const match = /^ {10}pattern: '(.+)'$/m.exec(block);
+    expect(
+      match,
+      "the case must check the answer with a pattern",
+    ).not.toBeNull();
+    // Built the way the evaluator builds it: `new RegExp(pattern)`, no flags.
+    const asks = new RegExp(match![1]);
+
+    expect(asks.test("Which project are you having trouble with?")).toBe(true);
+    expect(asks.test("What error do you see, and where?")).toBe(true);
+    // A guessed cause with a question mark in it is still a guess.
+    expect(
+      asks.test("The cause is probably an expired token? Restart it."),
+    ).toBe(false);
+    expect(asks.test("Your project looks healthy.")).toBe(false);
+  });
 });

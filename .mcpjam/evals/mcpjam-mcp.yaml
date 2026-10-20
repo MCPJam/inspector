@@ -344,9 +344,11 @@ cases:
         assertion:
           type: finalAssistantMessageNonEmpty
       # Asking is the point of the case: the answer has to put a question to
-      # the user rather than settle on a project or a cause by itself.
+      # the user ("which project do you mean?") rather than settle on a project
+      # or a cause by itself. A bare question mark is not enough: "probably an
+      # expired token?" is still a guess.
       - id: a12
         kind: assert
         assertion:
           type: responseMatches
-          pattern: '\?'
+          pattern: '\b[Yy]our?\b[^.!?\n]*\?'
