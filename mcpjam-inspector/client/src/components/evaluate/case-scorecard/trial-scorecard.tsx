@@ -607,7 +607,7 @@ export function TrialScorecard({
 }
 
 const CHAIN_NOTICE_COPY = {
-  error: "Couldn't load this iteration's stage results.",
+  error: "Couldn't load this iteration's stage results. Select Retry to try again.",
   // Covers both causes `trialChainDisplay` folds in (page cap, another run),
   // so it names neither.
   notLoaded:

@@ -118,7 +118,7 @@ describe("TrialScorecard", () => {
     expect(screen.queryByText("No observation recorded.")).toBeNull();
   });
   it.each([
-    ["error", "Couldn't load this iteration's stage results."],
+    ["error", "Couldn't load this iteration's stage results. Select Retry to try again."],
     [
       "notLoaded",
       "Stage results weren't loaded for this iteration. Each check below still shows its result.",
