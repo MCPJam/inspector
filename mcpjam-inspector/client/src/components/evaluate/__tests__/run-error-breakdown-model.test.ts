@@ -242,7 +242,8 @@ describe("organization AI provider refusals", () => {
     ).toEqual([
       {
         cause: "orgProviders",
-        title: "Your organization's AI provider settings stopped the run",
+        title:
+          "Your organization's AI provider settings stopped the run. An organization admin can add or reconnect the provider.",
         count: 1,
         errors: [{ message: notTurnedOn, count: 1 }],
       },

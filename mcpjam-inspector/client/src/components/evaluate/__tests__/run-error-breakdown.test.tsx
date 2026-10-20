@@ -65,7 +65,8 @@ describe("RunErrorBreakdownDescription — organization AI provider refusals", (
     groups: [
       {
         cause: "orgProviders",
-        title: "Your organization's AI provider settings stopped the run",
+        title:
+          "Your organization's AI provider settings stopped the run. An organization admin can add or reconnect the provider.",
         errors: [
           { message: "The anthropic provider isn't turned on", count: 1 },
         ],
@@ -89,17 +90,18 @@ describe("RunErrorBreakdownDescription — organization AI provider refusals", (
     expect(manage).toHaveBeenCalledTimes(1);
   });
 
-  it("sends a member to an admin instead of a screen they can't open", () => {
+  it("leaves a member the title's pointer to an admin, with no button", () => {
     handoff.manage = undefined;
     render(<RunErrorBreakdownDescription breakdown={refused} projectId="p1" />);
     expect(
       screen.queryByRole("button", { name: "Manage AI providers" }),
     ).not.toBeInTheDocument();
+    // The title already says an admin can fix it; a second line would repeat it.
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Ask an organization admin to add or reconnect a provider.",
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
   });
 
   it("adds nothing to other causes", () => {

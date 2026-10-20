@@ -52,7 +52,8 @@ const CAUSE_COPY: Record<RunErrorCause, string> = {
   serverError: "Your MCP server returned an error",
   testInput: "Your server rejected the tool inputs saved in the test",
   settings: "A test or workspace setting stopped the run",
-  orgProviders: "Your organization's AI provider settings stopped the run",
+  orgProviders:
+    "Your organization's AI provider settings stopped the run. An organization admin can add or reconnect the provider.",
   platform: "MCPJam or the AI model provider failed",
   unknown: "The cause wasn't recorded",
 };

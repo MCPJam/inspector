@@ -1,10 +1,7 @@
 import { useEffect } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
-import {
-  MANAGE_AI_PROVIDERS,
-  orgKeysRefusalNextStep,
-} from "@/lib/org-keys-refusal";
+import { MANAGE_AI_PROVIDERS } from "@/lib/org-keys-refusal";
 import { toast } from "@/lib/toast";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import { findProjectByAnyId } from "@/state/app-types";
@@ -14,7 +11,10 @@ import type { RunErrorBreakdown } from "./run-error-breakdown-model";
 const toastedRuns = new Set<string>();
 const BREAKDOWN_TOAST_DURATION_MS = 20_000;
 
-/** The fix when the organization has no usable provider for the model. */
+/**
+ * The fix when the organization has no usable provider for the model, for a
+ * viewer who can apply it. The group title already says an admin can.
+ */
 function OrgProvidersFix({ projectId }: { projectId?: string }) {
   const appState = useOptionalSharedAppState();
   const organizationId = projectId
@@ -31,11 +31,7 @@ function OrgProvidersFix({ projectId }: { projectId?: string }) {
     >
       {MANAGE_AI_PROVIDERS}
     </Button>
-  ) : (
-    <p className="mt-1 text-muted-foreground">
-      {orgKeysRefusalNextStep("add_org_provider")}
-    </p>
-  );
+  ) : null;
 }
 
 export function RunErrorBreakdownDescription({
