@@ -27,7 +27,6 @@ let flagState: boolean | undefined = undefined;
 const PROJECT_ID = "v977phvmg9dtt6exdykq890rjs8awe54";
 const SESSION_ID = "qh75b50ftsbdat1mmsgjvtep8n8d9ysj";
 
-vi.mock("../lazy-route-tabs", () => import("@/test/mocks/eager-route-tabs"));
 vi.mock("../hooks/useUnifiedSessionsEnabled", () => ({
   UNIFIED_SESSIONS_FEATURE_FLAG: "unified-sessions-enabled",
   useUnifiedSessionsEnabledState: () => flagState,

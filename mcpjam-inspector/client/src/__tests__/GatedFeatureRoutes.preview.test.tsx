@@ -54,7 +54,6 @@ const {
     },
   }));
 
-vi.mock("../lazy-route-tabs", () => import("@/test/mocks/eager-route-tabs"));
 vi.mock("@/lib/config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/config")>();
   return { ...actual, HOSTED_MODE: true };

@@ -1,6 +1,4 @@
-// Eager stand-in for `lazy-route-tabs`. Route tests render a route body
-// without waiting for a lazy chunk, so they read the components directly:
-// `vi.mock("../lazy-route-tabs", () => import("@/test/mocks/eager-route-tabs"))`.
+// Eager stand-in for `lazy-route-tabs`, registered in `test/setup.ts`.
 export { CiEvalsTab } from "@/components/CiEvalsTab";
 export { EvalsTab } from "@/components/EvalsTab";
 export { EvaluateTab } from "@/components/EvaluateTab";

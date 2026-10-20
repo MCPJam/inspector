@@ -9,7 +9,6 @@ import { routePaths } from "../lib/app-navigation";
 // opens /webmcp directly would otherwise be bounced before the flag resolves.
 let flagState: boolean | undefined = undefined;
 
-vi.mock("../lazy-route-tabs", () => import("@/test/mocks/eager-route-tabs"));
 vi.mock("../hooks/useWebmcpInspectorEnabled", () => ({
   WEBMCP_INSPECTOR_FEATURE_FLAG: "local-browser-enabled",
   useWebmcpInspectorEnabledState: () => flagState,

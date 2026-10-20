@@ -669,7 +669,6 @@ function AppChromeHeader({ hidden, settings, ...props }: AppChromeHeaderProps) {
   return <Header {...props} />;
 }
 
-
 /**
  * The no-router render path.
  *
