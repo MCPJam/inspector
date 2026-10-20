@@ -227,6 +227,7 @@ export type HostConfigInputV2 = {
    * emulated engine. Server-authoritative — never sourced from a chat body.
    */
   harness?: HostConfigHarnessV2;
+  agentLoop?: HostConfigHarnessV2;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -331,6 +332,7 @@ export type HostConfigDtoV2 = {
    * rows and non-harness hosts omit it.
    */
   harness?: HostConfigHarnessV2;
+  agentLoop?: HostConfigHarnessV2;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -465,6 +467,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
     browserProfileId: dto.browserProfileId,
     // String literal pass-through; absent ⇒ emulated engine.
     harness: dto.harness,
+    agentLoop: dto.agentLoop,
     connectionDefaults: {
       headers: { ...dto.connectionDefaults.headers },
       requestTimeout: dto.connectionDefaults.requestTimeout,
@@ -1243,7 +1246,7 @@ export function hostConfigInputsEqual(
   if (a.browserProfileId !== b.browserProfileId) return false;
   // Harness selector: undefined vs "claude-code" are distinct states (backend
   // hashes them distinctly). Switching engines marks the draft dirty.
-  if (a.harness !== b.harness) return false;
+  if (a.harness !== b.harness || a.agentLoop !== b.agentLoop) return false;
   if (
     a.connectionDefaults.requestTimeout !== b.connectionDefaults.requestTimeout
   )

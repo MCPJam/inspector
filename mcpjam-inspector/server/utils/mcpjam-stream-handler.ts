@@ -1,3 +1,4 @@
+import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -1154,6 +1155,9 @@ export interface MCPJamHandlerOptions {
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
    *  When "claude-code", handleMCPJamFreeChatModel routes to runHarnessTurn. */
   harness?: Harness;
+  agentLoop?: Harness;
+  harnessTurnContext?: string;
+  harnessUnavailableAppTools?: boolean;
   /** Which MCP-proxy plane the harness uses to route its MCP through MCPJam —
    *  set by the CALLER ROUTE (local `/api/mcp/*` vs hosted `/api/web/*`), not a
    *  global env. Absent ⇒ harness runs without proxied MCP. See
@@ -5862,7 +5866,10 @@ export async function handleMCPJamFreeChatModel(
   // validated HarnessId (readHarness → isHarness) or undefined, so a truthiness
   // check is the right gate — runHarnessTurn re-resolves the adapter defensively.
   // Both satisfy the same ChatEngineLoopResult contract (streamSink "ui" → Response).
-  const useHarness = Boolean(options.harness && !options.scopeStepUpResume);
+  const dispatch = resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : options.harness });
+  options = { ...options, harness: dispatch.harnessId };
+  assertAgentLoopResume(options.agentLoop, Boolean(options.scopeStepUpResume));
+  const useHarness = Boolean((options.agentLoop ?? options.harness) && !options.scopeStepUpResume);
   const result = await (useHarness
     ? runHarnessTurn(options, "ui")
     : runChatEngineLoop(options, "ui"));
