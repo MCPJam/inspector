@@ -239,6 +239,8 @@ Every server skill is verified before it is loaded: MCPJam fetches each file lis
 
 Each server skill row shows the origin server's label as a badge directly on the row, so provenance is visible wherever the skill appears in the list. A server that has not mutually declared the extension contributes no rows — "this host and server never had a skills conversation" is a different fact from "this server has no skills".
 
+The [stable spec](https://github.com/modelcontextprotocol/ext-skills/blob/main/specification/stable/skills.mdx) is written against protocol revision 2026-07-28. MCPJam also sends `skills/*` on a 2025-era connection when both sides declared the extension, which is outside the spec's baseline; the request `_meta` envelope the spec requires exists only on 2026-07-28 connections.
+
 The tab's single refresh button reloads both the project skill store and all server skill catalogs at once. It remains visible even when the project store is hidden, since server skills are the only list in that case.
 
 ### Inspecting a server's skills from the CLI

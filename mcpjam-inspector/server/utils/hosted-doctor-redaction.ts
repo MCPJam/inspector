@@ -293,7 +293,7 @@ const SKILLS_FINDINGS =
  * are present the findings are reduced to their counts as usual.
  */
 const SKILLS_CONFORMANCE_CLAUSE =
-  "(?:the extension is declared without the `resources` capability it depends on|`skills/(?:list|get)` omitted required (?:`ttlMs` and `cacheScope`|`ttlMs`|`cacheScope`))";
+  "(?:the extension is declared without the `resources` capability it depends on|`skills/(?:list|get)` omitted required (?:`ttlMs` and `cacheScope`|`ttlMs`|`cacheScope`)|listed skills omitted required `size` on their files)";
 const SKILLS_CONFORMANCE = new RegExp(
   `^(not conformant to the stable Skills extension spec: ${SKILLS_CONFORMANCE_CLAUSE}(?:; ${SKILLS_CONFORMANCE_CLAUSE})*)(?:\\.|; (\\d{1,6}) (of \\d{1,6} sampled skills failed verification|listed (?:entry|entries) rejected as malformed): .*)$`,
   "s",

@@ -1111,7 +1111,7 @@ describe("hosted doctor answer projection", () => {
   );
 
   const CONFORMANCE =
-    "not conformant to the stable Skills extension spec: the extension is declared without the `resources` capability it depends on; `skills/list` omitted required `ttlMs` and `cacheScope`; `skills/get` omitted required `cacheScope`";
+    "not conformant to the stable Skills extension spec: the extension is declared without the `resources` capability it depends on; `skills/list` omitted required `ttlMs` and `cacheScope`; listed skills omitted required `size` on their files; `skills/get` omitted required `cacheScope`";
 
   it.each([
     // Conformance clauses are fixed phrases with no server text, so they pass.

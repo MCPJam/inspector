@@ -1,7 +1,7 @@
 /**
  * Skills over MCP (SEP-2640) — the live chat wrapper.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  *
  * The wrapper's contract has three load-bearing properties, and each gets a
  * test that would fail loudly if it regressed:

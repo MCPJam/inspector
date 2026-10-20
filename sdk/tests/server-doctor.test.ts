@@ -127,6 +127,8 @@ describe("the skills check", () => {
       omitCacheAttributes?: boolean;
       /** Declare the extension without the `resources` capability. */
       omitResourcesCapability?: boolean;
+      /** List the file without its `size`, as servers built on the draft do. */
+      omitSize?: boolean;
     } = {}
   ) {
     const cacheable = options.omitCacheAttributes ? {} : CACHEABLE;
@@ -139,7 +141,9 @@ describe("the skills check", () => {
           digest: `sha256:${await sha256(
             options.tamper ? "different bytes entirely" : MARKDOWN
           )}`,
-          size: new TextEncoder().encode(MARKDOWN).byteLength,
+          ...(options.omitSize
+            ? {}
+            : { size: new TextEncoder().encode(MARKDOWN).byteLength }),
         },
       ],
     };
@@ -408,6 +412,19 @@ describe("the skills check", () => {
     expect(result.checks.skills.status).toBe("error");
     expect(result.checks.skills.detail).toContain(
       "without the `resources` capability"
+    );
+  });
+
+  it("names a file entry that omits its size", async () => {
+    // The verifier reports an unchecked size rather than refusing, so without
+    // this the skill loads and the author never learns the manifest is short.
+    const manager = await skillsManager({ omitSize: true });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("error");
+    expect(result.checks.skills.detail).toContain(
+      "listed skills omitted required `size` on their files"
     );
   });
 

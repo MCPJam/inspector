@@ -19,14 +19,14 @@ export interface SkillResourceRef {
   digest: string;
   /**
    * Length in bytes of the file's raw content — the same bytes `digest`
-   * covers. The draft makes this REQUIRED, and a read whose byte length
+   * covers. The stable spec makes this REQUIRED, and a read whose byte length
    * differs is "a verification failure equivalent to a digest mismatch".
    *
-   * Optional HERE because the SEP is unratified and servers built against the
-   * earlier draft omit it. MCPJam enforces it wherever the server sent one and
-   * reports its absence rather than refusing the skill — refusing would make
-   * us incompatible with every implementation that predates the field, which
-   * is a bad trade for a debugger. See `verifySize`.
+   * Optional HERE because servers built against the earlier draft omit it.
+   * MCPJam enforces it wherever the server sent one, loads the skill without
+   * it, and names the omission in `server doctor` — refusing would make us
+   * incompatible with every implementation that predates the field, which is
+   * a bad trade for a debugger. See `verifySize`.
    */
   size?: number;
 }
@@ -64,11 +64,17 @@ export interface SkillEntry {
    * of any URI absent from an enumerated manifest MUST fail (SEP-2640
    * integrity rules).
    *
-   * The draft makes this REQUIRED. It stays optional in the TYPE so a server
+   * The spec makes this REQUIRED. It stays optional in the TYPE so a server
    * that omits it is still parseable and can be refused by name; MCPJam
    * refuses to load an entry without an enumerated manifest either way.
    */
   resources?: SkillResourceRef[] | typeof DYNAMIC_SKILL_RESOURCES;
+  /**
+   * Transport-level metadata. Keys the extension defines use the
+   * `io.modelcontextprotocol.skills/` prefix; intermediaries may add their
+   * own under their own prefix. MCPJam assigns none of them semantics.
+   */
+  _meta?: Record<string, unknown>;
 }
 
 /** `skills/list` result, with SEP-2549 caching attributes preserved. */

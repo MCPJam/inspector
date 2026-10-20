@@ -42,11 +42,12 @@ export const skillResourceRefSchema = z
   .object({
     uri: z.string().min(1),
     digest: z.string().min(1),
-    // REQUIRED by the draft, optional here. A non-negative integer when
+    // REQUIRED by the spec, optional here. A non-negative integer when
     // present: this is untrusted input that flows into a length comparison and
     // a pre-fetch budget, and a negative or fractional byte count has no
     // meaning in either. Absence is a server that predates the field, which
-    // `verifySize` reports rather than refuses — see `skills-ext-types.ts`.
+    // `verifySize` reports and `server doctor` names rather than refuses —
+    // see `skills-ext-types.ts`.
     size: z.number().int().nonnegative().optional(),
   })
   .loose();

@@ -311,10 +311,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * telling the truth about what it serves.
  *
  * Spec requirements the SDK accepts leniently are also `error` here: a
- * missing `ttlMs` / `cacheScope` on `skills/list` or `skills/get`, and an
- * extension declaration without the `resources` capability it depends on.
- * The host loads such a server anyway, and this check is the one place the
- * author is told their server is not conformant.
+ * missing `ttlMs` / `cacheScope` on `skills/list` or `skills/get`, a file
+ * entry without `size`, and an extension declaration without the `resources`
+ * capability it depends on. The host loads such a server anyway, and this
+ * check is the one place the author is told their server is not conformant.
  */
 async function collectSkills(
   manager: MCPClientManager,
@@ -352,6 +352,16 @@ async function collectSkills(
       conformance.push(
         `\`skills/list\` omitted required ${listMissing.join(" and ")}`
       );
+    }
+    if (
+      listing.skills.some((skill) =>
+        skill.resources.some((resource) => resource.size === undefined)
+      )
+    ) {
+      // `verifySize` reports an unchecked size rather than refusing, so a
+      // server that predates the field still loads; this is where it hears
+      // about it.
+      conformance.push("listed skills omitted required `size` on their files");
     }
 
     const failures: string[] = [];

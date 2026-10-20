@@ -50,7 +50,7 @@
  * frontmatter drift, URI/name identity, the manifest as a read allowlist, and
  * the origin banner.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import { skillTool as tool } from "./skill-tool.js";

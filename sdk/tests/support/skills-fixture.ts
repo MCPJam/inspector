@@ -2,7 +2,7 @@
  * A raw `io.modelcontextprotocol/skills` (SEP-2640) fixture server, spoken
  * over Streamable HTTP on a real socket.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  * Every wire shape below is copied from that commit — re-diff when re-syncing.
  *
  * Why hand-rolled JSON-RPC rather than `@modelcontextprotocol/server`:

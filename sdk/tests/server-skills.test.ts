@@ -1,7 +1,7 @@
 /**
  * Skills over MCP (SEP-2640) — the verified read path's POLICY layer.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  *
  * `server-skills.ts` had no direct test: it was covered only transitively,
  * through the chat wrapper. These cover the decisions that are MCPJam's rather
