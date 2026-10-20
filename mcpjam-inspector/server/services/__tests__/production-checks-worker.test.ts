@@ -15,6 +15,7 @@ import {
   startProductionChecksWorker,
   type ClaimedProductionCheck,
 } from "../production-checks-worker";
+import { logger } from "../../utils/logger";
 
 const BASE_CLAIM: ClaimedProductionCheck = {
   triggerId: "trig-1",
@@ -222,6 +223,7 @@ describe("startProductionChecksWorker", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("stays inert without the service-token env — the only gate there is", async () => {
@@ -232,9 +234,17 @@ describe("startProductionChecksWorker", () => {
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => {});
 
     await startProductionChecksWorker().stop();
 
+    // `fetch` alone cannot prove the gate: without credentials the transport
+    // throws before `fetch` anyway. The loop logs "worker started"
+    // synchronously, so its absence is what shows the gate held.
+    expect(infoSpy).not.toHaveBeenCalledWith(
+      "[production-checks] worker started",
+      expect.anything(),
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

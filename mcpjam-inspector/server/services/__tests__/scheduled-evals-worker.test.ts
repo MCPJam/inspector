@@ -5,6 +5,7 @@ import {
   classifyFailure,
   startScheduledEvalsWorker,
 } from "../scheduled-evals-worker";
+import { logger } from "../../utils/logger";
 
 const CLAIM = {
   triggerId: "trig-1",
@@ -76,6 +77,7 @@ describe("startScheduledEvalsWorker", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("does not start without the service credentials", async () => {
@@ -83,9 +85,21 @@ describe("startScheduledEvalsWorker", () => {
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
     await startScheduledEvalsWorker().stop();
 
+    // `fetch` alone cannot prove the gate: without credentials the transport
+    // throws before `fetch` anyway. The loop logs "worker started"
+    // synchronously, so its absence is what shows the gate held.
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[scheduled-evals] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
+    );
+    expect(infoSpy).not.toHaveBeenCalledWith(
+      "[scheduled-evals] worker started",
+      expect.anything(),
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
