@@ -391,36 +391,6 @@ export function TrialScorecard({
     return reason ? { text: reason, source: "chain" } : null;
   };
 
-  const userValueStage = chainRows.get("userValue");
-  const userValuePassRows = groups
-    .flatMap((group) => group.rows)
-    .filter(
-      (row) =>
-        row.stage === "userValue" &&
-        row.provenance !== "rubricCheck" &&
-        row.result.state === "passed",
-    );
-  const userValueEvidence = [
-    ...new Set(
-      [
-        ...(userValueStage?.state === "passed"
-          ? userValueStage.evidence?.predicateReasons ?? []
-          : []),
-        ...userValuePassRows.flatMap((row) => [
-          ...("reason" in row.result && row.result.reason
-            ? [row.result.reason]
-            : []),
-          ...(row.evidence?.scoreEvidence ?? []),
-        ]),
-      ]
-        .map((text) => text.trim())
-        .filter(Boolean),
-    ),
-  ];
-  const showUserValueEvidence =
-    !judgeHidden &&
-    (userValueStage?.state === "passed" || userValuePassRows.length > 0);
-
   // One section per stage that has rows or a chain row, in chain order. A
   // stage the chain reports but nothing on the card covers (Selection or User
   // value with nothing graded, a stage the chain calls not applicable) still
@@ -527,18 +497,6 @@ export function TrialScorecard({
                   : {})}
             >
               <FindingText text={sentence.text} />
-            </p>
-          ) : undefined
-        }
-        footer={
-          section.stage === "userValue" &&
-          showUserValueEvidence &&
-          userValueEvidence.length > 0 ? (
-            <p
-              className="text-xs text-muted-foreground"
-              data-testid="user-value-pass-evidence"
-            >
-              {userValueEvidence.join(" ")}
             </p>
           ) : undefined
         }

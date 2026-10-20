@@ -220,7 +220,7 @@ describe("TrialScorecard", () => {
     expect(screen.queryByTestId("trial-scorecard-summary")).toBeNull();
   });
 
-  it("shows the judge's recorded passing rationale without expanding a row", () => {
+  it("shows the judge's passing rationale once, as its row's ACTUAL", () => {
     renderCard({
       judgeCase: {
         status: "completed",
@@ -230,12 +230,15 @@ describe("TrialScorecard", () => {
           "The rendered diagram contains Begin, Decision, and End with connecting lines.",
       } as never,
     });
-    expect(screen.getByTestId("user-value-pass-evidence")).toHaveTextContent(
-      "The rendered diagram contains Begin, Decision, and End with connecting lines.",
-    );
+    expect(
+      screen.getAllByText(
+        "The rendered diagram contains Begin, Decision, and End with connecting lines.",
+      ),
+    ).toHaveLength(1);
+    expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
   });
 
-  it("shows supporting stage evidence and stays quiet when there is none", async () => {
+  it("does not list the case's own checks as the judge's evidence", () => {
     const chain = {
       status: "verified",
       stages: [
@@ -248,28 +251,11 @@ describe("TrialScorecard", () => {
         },
       ],
     } as never;
-    const { rerender } = renderCard({ chain });
-    expect(screen.getByTestId("user-value-pass-evidence")).toHaveTextContent(
-      "All three diagram labels were visible.",
-    );
-    rerender(
-      <TrialScorecard
-        authored={authored}
-        iteration={iteration()}
-        steps={steps}
-        chain={
-          {
-            status: "verified",
-            stages: [{ stage: "userValue", state: "passed" }],
-          } as never
-        }
-      />,
-    );
+    renderCard({ chain });
+    expect(screen.queryByTestId("trial-scorecard-evidence")).toBeNull();
     expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
     expect(
-      screen.queryByText(
-        "This run recorded a pass without supporting evidence.",
-      ),
+      screen.queryByText("All three diagram labels were visible."),
     ).toBeNull();
   });
 
