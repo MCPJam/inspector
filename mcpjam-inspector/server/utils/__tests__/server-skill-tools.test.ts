@@ -191,6 +191,13 @@ async function makeManager(
       throw new Error(`Resource not found: ${params.uri}`);
     }),
   };
+  // The verified load path asks for the `skills/get` ENVELOPE; the double
+  // answers it from the same entry `getServerSkill` returns.
+  Object.assign(manager, {
+    getServerSkillResult: vi.fn(async (serverId: string, uri: string) => ({
+      skill: await manager.getServerSkill(serverId, uri),
+    })),
+  });
   return manager as unknown as Parameters<
     typeof withServerSkills
   >[1]["manager"] & {
