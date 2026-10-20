@@ -71,7 +71,7 @@ const machineCtl = vi.hoisted(() => ({
     | ((
         update: (u: Partial<OAuthFlowState>) => void,
         getState: () => OAuthFlowState,
-      ) => void)
+      ) => void | Promise<void>)
     | null,
   updateState: null as ((u: Partial<OAuthFlowState>) => void) | null,
 }));
@@ -84,7 +84,7 @@ vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
     machineCtl.updateState = opts.updateState;
     return {
       proceedToNextStep: async () => {
-        machineCtl.onAdvance?.(opts.updateState, opts.getState);
+        await machineCtl.onAdvance?.(opts.updateState, opts.getState);
       },
     };
   },
@@ -130,6 +130,7 @@ vi.mock("../oauth/OAuthFlowLogger", () => ({
 type LoggerActions = {
   onContinue?: () => Promise<void>;
   continueLabel?: string;
+  continuePending?: boolean;
 };
 const latestLoggerActions = (): LoggerActions =>
   (captureLoggerProps.mock.lastCall?.[0] as { actions: LoggerActions })
@@ -505,6 +506,101 @@ describe("OAuthFlowTab, after the AS rejects the authorization code", () => {
     });
 
     expect(advances).toBe(1);
+  });
+});
+
+describe("OAuthFlowTab, when the authorization callback delivers the code", () => {
+  // The machine's real steps from sign-in to tokens, recording the step each
+  // advance started from. The token request resolves only when released, so
+  // a test can look at the tab while the exchange is in flight.
+  function scriptRedemption(tokenOutcome: Partial<OAuthFlowState>) {
+    const startedFrom: string[] = [];
+    let releaseTokenRequest: (() => void) | undefined;
+    machineCtl.onAdvance = (update, getState) => {
+      const step = getState().currentStep;
+      startedFrom.push(step);
+      if (step === "authorization_request") {
+        update({ currentStep: "received_authorization_code" });
+      } else if (step === "received_authorization_code") {
+        update({ currentStep: "token_request" });
+      } else if (step === "token_request") {
+        return new Promise<void>((resolve) => {
+          releaseTokenRequest = () => {
+            update(tokenOutcome);
+            resolve();
+          };
+        });
+      }
+    };
+    return {
+      startedFrom,
+      tokenRequestSent: () => releaseTokenRequest !== undefined,
+      respond: () => act(async () => releaseTokenRequest?.()),
+    };
+  }
+
+  async function signInAndReturn() {
+    renderTab();
+    await act(async () => {
+      machineCtl.updateState?.({
+        currentStep: "authorization_request",
+        state: "flow-state",
+        authorizationUrl: "https://auth.example.com/authorize?x=1",
+      });
+    });
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: window.location.origin,
+          data: {
+            type: "OAUTH_CALLBACK",
+            code: "fresh-code",
+            state: "flow-state",
+          },
+        }),
+      );
+    });
+  }
+
+  it("redeems the code without waiting for Continue, with Continue held off meanwhile", async () => {
+    const exchange = scriptRedemption({
+      currentStep: "received_access_token",
+      accessToken: "access-token",
+    });
+    await signInAndReturn();
+
+    await waitFor(() => expect(exchange.tokenRequestSent()).toBe(true), {
+      timeout: 2_000,
+    });
+    expect(latestLoggerActions().continuePending).toBe(true);
+
+    await exchange.respond();
+
+    expect(exchange.startedFrom).toEqual([
+      "authorization_request",
+      "received_authorization_code",
+      "token_request",
+    ]);
+    await waitFor(() =>
+      expect(latestLoggerActions().continuePending).toBe(false),
+    );
+  });
+
+  it("stops at a rejected code instead of sending it again", async () => {
+    const exchange = scriptRedemption(REJECTED_EXCHANGE);
+    await signInAndReturn();
+    await waitFor(() => expect(exchange.tokenRequestSent()).toBe(true), {
+      timeout: 2_000,
+    });
+
+    await exchange.respond();
+
+    await waitFor(() =>
+      expect(latestLoggerActions().continueLabel).toBe("Authorize"),
+    );
+    expect(
+      exchange.startedFrom.filter((step) => step === "token_request"),
+    ).toHaveLength(1);
   });
 });
 
