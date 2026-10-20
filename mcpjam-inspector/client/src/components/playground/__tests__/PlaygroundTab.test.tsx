@@ -8,7 +8,7 @@ import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ComponentProps, ReactNode } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import {
   dismissRail,
   revealRail,
@@ -171,7 +171,13 @@ vi.mock("../PlaygroundPreviewedClientSync", () => ({
   PlaygroundPreviewedClientSync: () => null,
 }));
 vi.mock("../PlaygroundLeftRail", () => ({
-  PlaygroundLeftRail: () => <div data-testid="playground-left-rail" />,
+  PlaygroundLeftRail: ({ onClose }: { onClose?: () => void }) => (
+    <div data-testid="playground-left-rail">
+      {onClose ? (
+        <button type="button" aria-label="Collapse panel" onClick={onClose} />
+      ) : null}
+    </div>
+  ),
 }));
 
 import { PlaygroundTab } from "../PlaygroundTab";
@@ -202,19 +208,24 @@ describe("PlaygroundTab loading branch", () => {
 
     render(<PlaygroundTab {...baseProps} />);
 
-    // Beside the chat it would squeeze it to a sliver, so it starts closed.
-    expect(screen.queryByTestId("playground-left-rail")).toBeNull();
+    // Beside the chat it would squeeze it to a sliver, so it starts closed:
+    // mounted off screen so it can slide in, and out of reach meanwhile.
+    const overlay = screen.getByTestId("playground-left-rail-overlay");
+    expect(overlay).toHaveAttribute("data-state", "closed");
+    expect(overlay).toHaveAttribute("inert");
 
     fireEvent.click(screen.getByTestId("collapsed-left-rail"));
 
-    expect(screen.getByTestId("playground-left-rail-overlay")).toContainElement(
-      screen.getByTestId("playground-left-rail"),
-    );
+    expect(overlay).toHaveAttribute("data-state", "open");
+    expect(overlay).not.toHaveAttribute("inert");
     expect(screen.getByTestId("playground-center")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Close panel" }));
+    // The same Collapse panel control the right rail has.
+    fireEvent.click(
+      within(overlay).getByRole("button", { name: "Collapse panel" }),
+    );
 
-    expect(screen.queryByTestId("playground-left-rail")).toBeNull();
+    expect(overlay).toHaveAttribute("data-state", "closed");
   });
 
   it("keeps the Sessions and Tools rail beside the chat on a wider screen", () => {
@@ -224,6 +235,12 @@ describe("PlaygroundTab loading branch", () => {
 
     expect(screen.getByTestId("playground-left-rail")).toBeInTheDocument();
     expect(screen.queryByTestId("playground-left-rail-overlay")).toBeNull();
+    // Beside the chat there is a divider to drag, so no collapse button.
+    expect(
+      within(screen.getByTestId("playground-left-rail")).queryByRole("button", {
+        name: "Collapse panel",
+      }),
+    ).toBeNull();
   });
 
   it("suspends route-level auto-connect while onboarding is open", () => {

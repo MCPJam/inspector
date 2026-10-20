@@ -11,8 +11,6 @@ import LoadingScreen from "@/components/LoadingScreen";
 import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Button } from "@mcpjam/design-system/button";
-import { X } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
@@ -481,7 +479,11 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           onCollapse={collapseRightRail}
           composerRoot={panelGroupElement}
         />
-        <div ref={setPanelGroupElement} className="relative flex min-h-0 flex-1">
+        <div
+          ref={setPanelGroupElement}
+          // Clips the phone rails while they sit off screen.
+          className="relative flex min-h-0 flex-1 overflow-hidden"
+        >
         <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
           {isLeftRailVisible && !isMobile ? (
             <>
@@ -619,11 +621,17 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           >
             <div
               data-right-rail-overlay={railOverlay || undefined}
+              inert={isMobile && !isRightRailVisible}
               className={cn(
                 "h-full min-h-0 overflow-hidden",
                 // Positioned against the panel group, not the panel: the
                 // App keeps its DOM parent while it covers the chat.
                 railOverlay && "absolute inset-0 z-40 bg-background",
+                // On a phone the rail always covers the chat, and slides in
+                // from the right edge and back out instead of popping.
+                isMobile &&
+                  "absolute inset-0 z-40 bg-background transition-transform duration-300 ease-out motion-reduce:transition-none",
+                isMobile && !isRightRailVisible && "translate-x-full",
               )}
             >
               <PlaygroundRightRail
@@ -652,24 +660,21 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
             />
           )}
         </ResizablePanelGroup>
-        {isMobile && isLeftRailVisible ? (
+        {isMobile ? (
+          // Stays mounted so it can slide out the way it slid in.
           <div
             data-testid="playground-left-rail-overlay"
-            className="absolute inset-0 z-40 flex min-h-0 flex-col bg-background"
+            data-state={isLeftRailVisible ? "open" : "closed"}
+            inert={!isLeftRailVisible}
+            className={cn(
+              "absolute inset-0 z-40 flex min-h-0 flex-col bg-background transition-transform duration-300 ease-out motion-reduce:transition-none",
+              !isLeftRailVisible && "-translate-x-full",
+            )}
           >
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Close panel"
-              className="absolute top-1.5 right-2 z-10 size-8"
-              onClick={() => setIsLeftRailVisible(false)}
-            >
-              <X className="size-4" />
-            </Button>
             <PlaygroundLeftRail
               previewedHostId={previewedHostId}
               projectId={props.sharedProjectId ?? props.activeProjectId ?? null}
+              onClose={() => setIsLeftRailVisible(false)}
             />
           </div>
         ) : null}
