@@ -16,6 +16,7 @@
  * The Saved tab renders an empty state pointing this out.
  */
 import { useEffect, useMemo, useState } from "react";
+import { PlaygroundAuthChallengeCards } from "@/components/auth-challenge/PlaygroundAuthChallengeCards";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
@@ -45,7 +46,12 @@ import {
   getToolVisibility,
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { generateFormFieldsFromSchema, type FormField } from "@/lib/tool-form";
+import {
+  applyParametersToFields,
+  generateFormFieldsFromSchema,
+  type FormField,
+} from "@/lib/tool-form";
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { cn } from "@/lib/utils";
 
 interface InnerProps {
@@ -63,6 +69,7 @@ interface InnerProps {
 }
 
 interface Selection {
+  recoveredParameters?: Record<string, unknown>;
   serverId: string;
   toolName: string;
 }
@@ -74,6 +81,7 @@ export function MultiServerToolsPaneInner({
   browserTools,
 }: InnerProps) {
   const state = usePlaygroundStateContext();
+  const recoveredCall = useUIPlaygroundStore((store) => store.recoveredToolCall);
   const appState = useSharedAppState();
   const reconnectingServerNames = useMemo(
     () =>
@@ -134,11 +142,35 @@ export function MultiServerToolsPaneInner({
         e.serverId === selected.serverId && e.toolName === selected.toolName,
     );
     if (entry) {
-      setFormFields(generateFormFieldsFromSchema(entry.tool.inputSchema));
+      setFormFields(
+        applyParametersToFields(
+          generateFormFieldsFromSchema(entry.tool.inputSchema),
+          selected.recoveredParameters ?? {},
+        ),
+      );
     }
     // Intentionally not depending on `flat` — refetches shouldn't reset the form.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.serverId, selected?.toolName]);
+  }, [selected?.serverId, selected?.toolName, selected?.recoveredParameters]);
+
+  useEffect(() => {
+    if (!recoveredCall) return;
+    if (!activeServerNames.includes(recoveredCall.serverName)) {
+      useUIPlaygroundStore.setState({ recoveredToolCall: null });
+      return;
+    }
+    const entry = flat.find((tool) => tool.serverId === recoveredCall.serverName &&
+      tool.toolName === recoveredCall.toolName);
+    if (!entry) return;
+    setSelected({
+      serverId: recoveredCall.serverName,
+      toolName: recoveredCall.toolName,
+      recoveredParameters: recoveredCall.parameters,
+    });
+    setIsListExpanded(false);
+    setActiveTab("tools");
+    useUIPlaygroundStore.setState({ recoveredToolCall: null });
+  }, [recoveredCall, flat, activeServerNames]);
 
   // Drop the selection if the user toggles off its server.
   useEffect(() => {
@@ -270,6 +302,8 @@ export function MultiServerToolsPaneInner({
         onSave={() => {}}
         onRefresh={() => void refetch()}
       />
+
+      <PlaygroundAuthChallengeCards />
 
       <div className="flex-1 min-h-0">
         {activeTab === "saved" ? (
