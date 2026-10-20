@@ -9,8 +9,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
  * Drives the real `main.ts` lifecycle against a real `@hono/node-server` bind
  * on a real port, with Electron and the side-effecting modules stubbed. The
  * desktop app must never start a second server when macOS emits `activate`
- * during launch, never bootstrap in an instance that lost the single-instance
- * lock, and turn any server `error` into a dialog or a log line, not a crash.
+ * during launch, and never bootstrap in an instance that lost the
+ * single-instance lock.
  */
 const h = vi.hoisted(() => ({
   gotLock: true,
@@ -18,8 +18,7 @@ const h = vi.hoisted(() => ({
   windows: [] as object[],
   onCreateHonoApp: (): Promise<void> | void => undefined,
   createHonoApp: vi.fn(),
-  injectWebSocket: vi.fn((_server: NodeJS.EventEmitter) => undefined),
-  dialog: vi.fn((_options: { message: string; detail: string }) => 2),
+  dialog: vi.fn(() => 2),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   userData: "",
 }));
@@ -70,7 +69,10 @@ vi.mock("electron", async () => {
 vi.mock("electron-log", () => ({
   default: { ...h.log, transports: { file: {}, console: {} } },
 }));
-vi.mock("./strict-sentry.js", () => ({ initDesktopSentry: vi.fn() }));
+vi.mock("./strict-sentry.js", () => ({
+  initDesktopSentry: vi.fn(),
+  reportDesktopStartupFailure: vi.fn(),
+}));
 // Stubbed so an uncaught exception reaches the test instead of a logger.
 vi.mock("./crash-reporting.js", () => ({
   registerMainProcessCrashHandlers: vi.fn(),
@@ -120,8 +122,6 @@ vi.mock("../server/services/session-token.js", () => ({
 }));
 vi.mock("../server/app.js", () => ({ createHonoApp: h.createHonoApp }));
 
-let port = 0;
-let holder: net.Server | undefined;
 let env: NodeJS.ProcessEnv;
 const uncaught = vi.fn();
 
@@ -131,13 +131,6 @@ async function freePort(): Promise<number> {
   const { port: free } = probe.address() as net.AddressInfo;
   await new Promise((resolve) => probe.close(resolve));
   return free;
-}
-
-/** Another process taking the port, as far as the app can tell. */
-async function holdPort(): Promise<void> {
-  const server = net.createServer().listen(port, "127.0.0.1");
-  await once(server, "listening");
-  holder = server;
 }
 
 async function launch() {
@@ -157,8 +150,7 @@ beforeEach(async () => {
   env = { ...process.env };
   vi.resetModules();
   vi.clearAllMocks();
-  port = await freePort();
-  process.env.SERVER_PORT = String(port);
+  process.env.SERVER_PORT = String(await freePort());
   h.userData = fs.mkdtempSync(path.join(os.tmpdir(), "plb336-"));
   h.gotLock = true;
   h.windows.length = 0;
@@ -167,7 +159,7 @@ beforeEach(async () => {
     await h.onCreateHonoApp();
     return {
       app: { fetch: () => new Response("ok") },
-      injectWebSocket: h.injectWebSocket,
+      injectWebSocket: vi.fn(),
     };
   });
   process.on("uncaughtException", uncaught);
@@ -181,27 +173,11 @@ afterEach(async () => {
   app.emit("before-quit", { preventDefault: vi.fn() });
   app.removeAllListeners();
   ipcMain.removeAllListeners();
-  await new Promise((resolve) => (holder ? holder.close(resolve) : resolve(0)));
-  holder = undefined;
   for (const key of Object.keys(process.env)) {
     if (!(key in env)) delete process.env[key];
   }
   Object.assign(process.env, env);
   fs.rmSync(h.userData, { recursive: true, force: true });
-});
-
-it("shows the startup dialog when the port is taken between probe and bind", async () => {
-  h.onCreateHonoApp = holdPort;
-  await launch();
-
-  await vi.waitFor(() => expect(h.dialog).toHaveBeenCalledTimes(1));
-  expect(h.dialog.mock.calls[0][0]).toMatchObject({
-    message: "Couldn't start the internal server.",
-    detail: expect.stringContaining(
-      `EADDRINUSE: address already in use 127.0.0.1:${port}`,
-    ),
-  });
-  expect(uncaught).not.toHaveBeenCalled();
 });
 
 it("starts one server when macOS emits activate during launch", async () => {
@@ -217,6 +193,8 @@ it("starts one server when macOS emits activate during launch", async () => {
   await settle();
   expect(h.createHonoApp).toHaveBeenCalledTimes(1);
   expect(h.windows).toHaveLength(1);
+  const { app } = await import("electron");
+  expect(app.relaunch).not.toHaveBeenCalled();
   expect(uncaught).not.toHaveBeenCalled();
 });
 
@@ -232,31 +210,4 @@ it("does not start a server in an instance that lost the single-instance lock", 
   );
   expect(h.createHonoApp).not.toHaveBeenCalled();
   expect(h.windows).toHaveLength(0);
-});
-
-it("logs a server error after the bind instead of crashing", async () => {
-  await launch();
-  await bootstrapped();
-  const [server] = h.injectWebSocket.mock.calls[0];
-  const error = Object.assign(new Error("accept EMFILE"), { code: "EMFILE" });
-
-  expect(() => server.emit("error", error)).not.toThrow();
-  expect(h.log.error).toHaveBeenCalledWith("Hono server error:", error);
-});
-
-it("handles a port held by another process when the dock reopens the window", async () => {
-  const app = await launch();
-  await bootstrapped();
-  h.windows.length = 0;
-  app.emit("window-all-closed");
-  await vi.waitFor(holdPort);
-
-  app.emit("activate");
-
-  await vi.waitFor(() => expect(h.dialog).toHaveBeenCalledTimes(1));
-  expect(h.dialog.mock.calls[0][0]).toMatchObject({
-    message: "Couldn't start the internal server.",
-  });
-  expect(h.windows).toHaveLength(0);
-  expect(uncaught).not.toHaveBeenCalled();
 });

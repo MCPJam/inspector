@@ -6,6 +6,7 @@ import type { ScenarioMode } from "./useScenarios";
 import { shouldQueryProjectId } from "./useProjects";
 import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 import { resolveClientDisplayNames } from "@/lib/client-display-name";
+import { ensureProjectClientMutation } from "@/shared/ensure-project-client";
 
 /**
  * Product ownership of a host. Defined in `@/lib/host-owner-scope` alongside
@@ -183,10 +184,13 @@ export function useHost({
 }
 
 export function useHostMutations() {
-  const createHost = useMutation("hosts:createHost" as any) as unknown as (args: {
+  const createHost = useMutation(
+    "hosts:createHost" as any,
+  ) as unknown as (args: {
     projectId: string;
     name: string;
     input: HostConfigInputV2;
+    applyDefaultSystemPrompt?: boolean;
     // `'journeys'` → mint a standalone (scenario-less) host owned by the Swarm
     // surface. `'user_testing'` → mint the host, an ad-hoc environment over
     // it, and an ENVIRONMENT-backed scenario, all in one transaction; the
@@ -241,11 +245,14 @@ export function useHostMutations() {
     name?: string;
   }) => Promise<{ hostId: string; hostConfigId: string }>;
 
+  const ensureProjectClient = useMutation(ensureProjectClientMutation);
+
   return {
     createHost,
     updateHost,
     updateHostServers,
     deleteHost,
     duplicateHost,
+    ensureProjectClient,
   };
 }

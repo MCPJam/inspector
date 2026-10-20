@@ -10,7 +10,10 @@ import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 // WS_NO_BUFFER_UTIL is set -- the #4208 path `ws-native-fallback.test.ts` pins.
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
 import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
-import { initDesktopSentry } from "./strict-sentry.js";
+import {
+  initDesktopSentry,
+  reportDesktopStartupFailure,
+} from "./strict-sentry.js";
 import { recordUpdateShutdown } from "./ipc/update/update-shutdown.js";
 import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
 import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
@@ -34,7 +37,6 @@ const desktopSentryIdentity = installDesktopSentryIdentity();
 
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
-import { once } from "events";
 import path from "path";
 import fs from "fs";
 // IMPORTANT: do NOT statically import "../server/app.js" or anything that
@@ -44,9 +46,13 @@ import fs from "fs";
 // BEFORE the server module graph is first evaluated. The dynamic import
 // in `startHonoServer()` enforces that ordering.
 import {
+  describeStartupFailure,
+  PORT_RETRY_ARG,
   probeFreePort,
   resolveServerPortAttempts,
   resolveServerStartPort,
+  shouldRestartForPortConflict,
+  waitForListening,
 } from "./server-port-fallback.js";
 import { computeInstanceEnv } from "../bin/runtime-profile.mjs";
 import log from "electron-log";
@@ -459,6 +465,10 @@ async function startHonoServer(): Promise<number> {
 
     let port: number;
     if (cachedProbedPort !== null) {
+      // Re-use the port from first launch — server/config.ts is already
+      // module-cached against this value; probing again would risk
+      // picking a different free port and silently desyncing CORS,
+      // origin validation, and LOCAL_SERVER_ADDR from the bound port.
       port = cachedProbedPort;
       log.info(`Reusing previously-probed port ${port} for server restart`);
     } else {
@@ -592,7 +602,7 @@ async function startHonoServer(): Promise<number> {
     shutdownLocalBrowserFrames = shutdownLocalBrowserFrameSockets;
     killLocalBrowserFrames = killLocalBrowserFrameSockets;
 
-    const httpServer = serve(
+    server = serve(
       {
         fetch: honoApp.fetch,
         port,
@@ -603,16 +613,22 @@ async function startHonoServer(): Promise<number> {
           hosted: process.env.VITE_MCPJAM_HOSTED_MODE === "true",
           warn: (message) => log.warn(message),
         });
-        httpServer.once("close", cleanup);
+        server?.once("close", cleanup);
       },
     );
+    try {
+      // Without this, a port taken after the probe (see `probeFreePort`)
+      // surfaces as an uncaught EADDRINUSE that kills the app instead of
+      // reaching the startup failure dialog.
+      await waitForListening(server);
+    } catch (error) {
+      server = null;
+      throw error;
+    }
     registerBrowserController(`http://127.0.0.1:${port}`);
     // Attach the computer terminal WebSocket upgrade handler (mirror of
     // server/index.ts). Without this the Computer tab's Shell can't upgrade.
-    injectWebSocket(httpServer);
-    // serve() adds no error listener: bind first, then replace `server`.
-    await once(httpServer, "listening");
-    server = httpServer.on("error", (e) => log.error("Hono server error:", e));
+    injectWebSocket(server);
 
     if (port !== DEFAULT_SERVER_PORT) {
       log.warn(
@@ -998,10 +1014,16 @@ function summarizeInitError(error: unknown): {
       ? error
       : new Error(String(error ?? "Unknown error"));
 
+  const failure = describeStartupFailure(error);
   const isServerStartFailure = /bind server|EADDRINUSE|Hono/i.test(err.message);
-  const message = isServerStartFailure
-    ? "Couldn't start the internal server."
-    : "Initialization failed.";
+  const message =
+    failure.code === "port_taken"
+      ? `Another app is using ${
+          failure.port === undefined ? "MCPJam's port" : `port ${failure.port}`
+        }.`
+      : isServerStartFailure
+        ? "Couldn't start the internal server."
+        : "Initialization failed.";
 
   const logsPath = (() => {
     try {
@@ -1011,7 +1033,11 @@ function summarizeInitError(error: unknown): {
     }
   })();
 
-  const detail = `${err.message}\n\nLogs: ${logsPath}`;
+  const advice =
+    failure.code === "port_taken"
+      ? "Quit and reopen MCPJam to pick a free port."
+      : err.message;
+  const detail = `${advice}\n\nLogs: ${logsPath}`;
   return { message, detail };
 }
 
@@ -1081,10 +1107,59 @@ function showStartupFailureDialog(error: unknown): void {
   app.quit();
 }
 
+/**
+ * The one place a failed start ends up: restart once for a lost port race,
+ * otherwise the startup dialog.
+ *
+ * The restart is how the app "switches" ports: this process cannot rebind,
+ * because server config froze to the first port at module load, but a fresh
+ * one probes again and lands on a free port. It mirrors the dialog's Reset
+ * (`relaunch` + `quit`, so normal quit cleanup runs) and keeps the original
+ * arguments, so a Windows `mcpjam://` launch URL survives it.
+ *
+ * `alreadyRetried` is the loop guard. When the restarted copy fails too, the
+ * user gets the dialog and #mcpjam-alerts gets paged.
+ */
+async function handleServerStartFailure(
+  error: unknown,
+  { alreadyRetried }: { alreadyRetried: boolean },
+): Promise<void> {
+  if (
+    shouldRestartForPortConflict(error, { alreadyRetried, env: process.env })
+  ) {
+    log.warn(
+      "Server port was taken after the free-port check; restarting once to pick a free port",
+    );
+    app.relaunch({
+      args: [
+        ...process.argv.slice(1).filter((arg) => arg !== PORT_RETRY_ARG),
+        PORT_RETRY_ARG,
+      ],
+    });
+    app.quit();
+    return;
+  }
+  if (alreadyRetried) {
+    try {
+      await reportDesktopStartupFailure(describeStartupFailure(error));
+    } catch (reportErr) {
+      log.warn("Failed to report startup failure to Sentry:", reportErr);
+    }
+  }
+  try {
+    showStartupFailureDialog(error);
+  } catch (dialogErr) {
+    log.error(
+      "Failed to show startup failure dialog; quitting silently:",
+      dialogErr,
+    );
+    app.quit();
+  }
+}
+
 // App event handlers
 app.whenReady().then(async () => {
-  // A second instance still gets `ready` while it quits: never bind there.
-  if (!gotTheLock) return;
+  if (!gotTheLock) return; // A quitting second instance still gets `ready`.
   try {
     // Best-effort cleanup of GPU/HTTP caches when the app version changes.
     // Stale caches from a previous build can crash the renderer/GPU process
@@ -1133,15 +1208,9 @@ app.whenReady().then(async () => {
     log.info("MCPJam Electron app ready");
   } catch (error) {
     log.error("Failed to initialize app:", error);
-    try {
-      showStartupFailureDialog(error);
-    } catch (dialogErr) {
-      log.error(
-        "Failed to show startup failure dialog; quitting silently:",
-        dialogErr,
-      );
-      app.quit();
-    }
+    await handleServerStartFailure(error, {
+      alreadyRetried: process.argv.includes(PORT_RETRY_ARG),
+    });
   }
 });
 
@@ -1204,8 +1273,7 @@ function visibleWindows(): BrowserWindow[] {
 }
 
 async function handleActivate(): Promise<void> {
-  // macOS can emit `activate` mid-launch; the bootstrap makes the window.
-  if (!appBootstrapped) return;
+  if (!appBootstrapped) return; // Launch emits it too; bootstrap opens that window.
   // On macOS, re-create window when the dock icon is clicked
   if (visibleWindows().length === 0) {
     // A quick reopen can arrive while the browser closed by
@@ -1219,14 +1287,24 @@ async function handleActivate(): Promise<void> {
     // Re-asked after the await: the teardown is long enough for a window to
     // have appeared, and building a second one is worse than doing nothing.
     if (visibleWindows().length > 0) return;
-    try {
-      if (serverPort === 0) serverPort = await startHonoServer();
-    } catch (error) {
-      showStartupFailureDialog(error);
-      return;
+    if (serverPort > 0) {
+      mainWindow = createMainWindow(getServerUrl());
+      setTrustedUpdateWindow(mainWindow);
+    } else {
+      // Restart server if needed
+      try {
+        serverPort = await startHonoServer();
+        mainWindow = createMainWindow(getServerUrl());
+        setTrustedUpdateWindow(mainWindow);
+      } catch (error) {
+        log.error("Failed to restart server:", error);
+        // No server means no window, and every retry here reuses the same
+        // cached port: restart the app instead, or show the dialog. Never
+        // `alreadyRetried`: this process may have been started by a restart
+        // hours ago, and the restart this triggers is the guarded launch.
+        await handleServerStartFailure(error, { alreadyRetried: false });
+      }
     }
-    mainWindow = createMainWindow(getServerUrl());
-    setTrustedUpdateWindow(mainWindow);
   }
 }
 

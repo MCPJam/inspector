@@ -951,5 +951,10 @@ export function resolveHostTools(
     logger.warn("[built-in-tools] unknown builtInToolId; skipping", { id });
   }
 
+  for (const name of Object.keys(out)) {
+    out[name] = Object.assign({}, out[name], {
+      _toolOrigin: "builtin" as const,
+    });
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }

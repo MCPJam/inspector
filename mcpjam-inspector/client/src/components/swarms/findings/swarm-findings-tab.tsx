@@ -54,6 +54,7 @@ import {
   clampNarration,
   composeFindingsSummary,
   composeWireFindingsSummary,
+  wireFindingsFootnotes,
   type SwarmNarration,
 } from "./findings-headline";
 import type { JourneyStageId } from "./journey-stages";
@@ -265,6 +266,7 @@ export function SwarmFindingsTab({
           recommendation={recommendation}
           narration={waveProse}
           launchReason={launchReason}
+          footnotes={wireFindingsFootnotes(journeyFindings)}
         />
       </div>
     );
@@ -290,6 +292,9 @@ export function SwarmFindingsTab({
         recommendation={recommendation}
         narration={waveProse}
         launchReason={launchReason}
+        footnotes={
+          journeyFindings ? wireFindingsFootnotes(journeyFindings) : []
+        }
       />
       <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">

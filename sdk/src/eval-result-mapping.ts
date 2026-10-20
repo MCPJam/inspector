@@ -627,6 +627,9 @@ export function iterationToEvalResult(
 
   return {
     caseTitle: options.caseTitle,
+    ...(iteration.billingPaymentId
+      ? { billingPaymentId: iteration.billingPaymentId }
+      : {}),
     ...(options.caseId !== undefined ? { caseId: options.caseId } : {}),
     ...(options.intent !== undefined ? { intent: options.intent } : {}),
     query: selectedPrompt?.getPrompt(),
@@ -1308,6 +1311,9 @@ export function iterationsToEvalResultInputs(
     });
 
     return {
+      ...(iteration.billingPaymentId
+        ? { billingPaymentId: iteration.billingPaymentId }
+        : {}),
       caseTitle: testName,
       query: prompts[0]?.getPrompt() ?? testName,
       passed,
@@ -1396,119 +1402,26 @@ export function suiteTestResultsToEvalResultInputs(
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
-    const expectedToolCalls = expectedToolCallsByTest?.[testName];
-    const predicates = predicatesByTest?.[testName];
-    const matchOptions = matchOptionsByTest?.[testName];
-    // One steps array per case — see `syntheticStepsForCase`.
-    const advancedConfig = syntheticStepsForCase(
+    const identity = caseIdentityByTest?.[testName];
+    const mapped = iterationsToEvalResultInputs(
+      testName,
       testResult.iterationDetails,
-      predicates
+      expectedToolCallsByTest?.[testName],
+      failOnToolError,
+      hostExtras,
+      predicatesByTest?.[testName],
+      matchOptionsByTest?.[testName],
+      testResult.evaluationConfig,
+      identity,
+      variant
     );
-    for (let index = 0; index < testResult.iterationDetails.length; index++) {
-      const iteration = testResult.iterationDetails[index];
-      const prompts = iteration.prompts ?? [];
-      const durationMs = iteration.latencies.reduce(
-        (sum, latency) => sum + latency.e2eMs,
-        0
-      );
-      const actualToolCalls = actualToolCallsFromPrompts(prompts);
-      const traceMessages = traceMessagesFromPrompts(prompts);
-      const widgetSnapshots = prompts.flatMap((prompt) =>
-        prompt.getWidgetSnapshots()
-      );
-      const trace = iterationTraceFromPrompts(prompts, traceMessages);
-
-      const passed = finalizePassedForEval({
-        matchPassed: iteration.passed,
-        trace,
-        iterationError: iteration.error,
-        failOnToolError,
-        predicateResults: iteration.predicateResults,
-      });
-
-      const identity = caseIdentityByTest?.[testName];
-      const stepResults = stepResultsForIteration({
-        iteration,
-        prompts,
-        expectedToolCalls,
-        predicates,
-        isNegativeTest: identity?.isNegativeTest,
-      });
-      inputs.push({
-        caseTitle: testName,
-        query: prompts[0]?.getPrompt() ?? testName,
-        passed,
-        status: resolveIterationLifecycleStatus(iteration),
-        durationMs: durationMs > 0 ? durationMs : undefined,
-        ...variantFromPrompts(prompts, variant),
-        expectedToolCalls,
-        actualToolCalls: iteration.captureError ? undefined : actualToolCalls,
-        ...(identity?.caseId !== undefined
-          ? {
-              caseId: identity.caseId,
-              ...(testResult.runEvaluation
-                ? { externalIterationId: `${identity.caseId}:${index}` }
-                : {}),
-            }
-          : {}),
-        ...(identity?.externalCaseId !== undefined
-          ? { externalCaseId: identity.externalCaseId }
-          : {}),
-        ...(identity?.intent !== undefined ? { intent: identity.intent } : {}),
-        ...(identity?.isNegativeTest !== undefined
-          ? { isNegativeTest: identity.isNegativeTest }
-          : {}),
-        ...(identity?.expectedOutput !== undefined
-          ? { expectedOutput: identity.expectedOutput }
-          : {}),
-        tokens: iteration.captureError
-          ? undefined
-          : {
-              input: iteration.tokens.input,
-              output: iteration.tokens.output,
-              total: iteration.tokens.total,
-            },
-        error: iteration.error,
-        trace: iteration.captureError ? undefined : trace,
-        widgetSnapshots:
-          widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
-        advancedConfig,
-        matchOptions,
-        metadata: mergeHostExtrasIntoMetadata(
-          {
-            testName,
-            iterationNumber: index + 1,
-            retryCount: iteration.retryCount ?? 0,
-            ...(iteration.captureError
-              ? {
-                  captureError: iteration.captureError,
-                  captureCompleteness: "unavailable",
-                }
-              : {}),
-            ...(iteration.predicateResults
-              ? { predicates: iteration.predicateResults }
-              : {}),
-            ...(stepResults.length > 0 ? { stepResults } : {}),
-            ...iterationScoreMetadata(iteration, testResult.evaluationConfig),
-            ...attachStageMeasurements(
-              stageDerivationToMetadata(
-                deriveSdkStageResults({
-                  iteration,
-                  trace,
-                  expectedToolCalls,
-                  predicates,
-                  caseIdentity: identity,
-                })
-              ),
-              trace && typeof trace === "object" && !Array.isArray(trace)
-                ? trace.spans
-                : undefined
-            ),
-          },
-          resolveIterationHostExtras(iteration, hostExtras)
-        ),
-      });
-    }
+    mapped.forEach((input, index) => {
+      if (identity?.caseId !== undefined && testResult.runEvaluation) {
+        input.externalIterationId = `${identity.caseId}:${index}`;
+      }
+      input.metadata = { ...input.metadata, testName };
+    });
+    inputs.push(...mapped);
   }
   return inputs;
 }

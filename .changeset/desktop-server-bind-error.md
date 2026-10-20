@@ -2,4 +2,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Stop the desktop app from crashing at launch with "address already in use": a dock click or a second launch no longer starts a second internal server, and a port taken by another program shows the startup error dialog instead of crashing.
+The desktop app no longer restarts or crashes right after launch when macOS reports a dock click during startup or when the app is opened twice: only the first launch starts the internal server.

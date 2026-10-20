@@ -173,7 +173,7 @@ function PluginServerDetailModal({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         translate="no"
-        className="notranslate sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
+        className="notranslate sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
         }}
@@ -843,7 +843,7 @@ function ProjectServerDetailModal({
             }}
             className="flex min-h-0 flex-col"
           >
-            <TabsList className="-ml-1 flex h-9 w-full p-[3px]">
+            <TabsList className="-ml-1 flex h-9 w-full shrink-0 p-[3px]">
               <TabsTrigger
                 value="configuration"
                 aria-label="Configuration"
@@ -885,12 +885,12 @@ function ProjectServerDetailModal({
               )}
             </TabsList>
 
-            <div className="relative mt-4 -mr-6 -ml-1">
+            <div className="relative mt-4 -mr-6 -ml-1 flex min-h-0 flex-col overflow-hidden">
               {/* Configuration: always rendered via forceMount, sets container height */}
               <TabsContent
                 value="configuration"
                 forceMount
-                className="mt-0 flex-none max-h-[60vh] overflow-y-auto data-[state=inactive]:invisible"
+                className="mt-0 min-h-0 max-h-[60vh] overflow-y-auto data-[state=inactive]:invisible"
               >
                 <div className="pl-1 pr-6">
                   <EditServerFormContent

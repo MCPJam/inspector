@@ -43,14 +43,17 @@ export function describePluginStatus(input: {
   activeVersionId: string | null | undefined;
   row?: Pick<ActivePluginRow, "status" | "reason"> | null;
   readiness?: PluginComponentReadiness;
+  /** This card's server, when an active plugin runs without it for now. */
+  unavailable?: ActivePluginSkipReason;
 }): PluginStatusPresentation {
   if (!input.enabled || input.row?.reason === "disabled") {
     return { label: "Disabled", tone: "muted" };
   }
-  if (input.row?.status === "active") {
+  if (input.row?.status === "active" && !input.unavailable) {
     return { label: "Active", tone: "active" };
   }
-  const reason = input.row?.status === "skipped" ? input.row.reason : undefined;
+  const reason =
+    input.row?.status === "skipped" ? input.row.reason : input.unavailable;
   // Installed without an active version ("Install only"): nothing runs until
   // one is activated in its Settings.
   if (!input.activeVersionId || reason === "no_active_version") {

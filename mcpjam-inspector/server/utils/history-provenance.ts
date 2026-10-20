@@ -77,6 +77,7 @@ import type { ToolSet, UIMessageChunk } from "ai";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import { isSkillToolName } from "@/shared/eval-matching";
 import { hydratedToolResultOutput } from "@/shared/hydrated-tool-output";
+import { readMcpToolOriginServerId } from "@/shared/mcp-tool-origin-metadata";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import {
   canonicalDigest,
@@ -639,6 +640,7 @@ function mark(
 /** A tool call the signer knows of. */
 export interface KnownToolCall {
   toolName: string;
+  serverId?: string;
   input: unknown;
   /**
    * The history marks this call as not issued by the server
@@ -669,7 +671,12 @@ export function toolCallLookupFor(
           continue;
         }
         // The latest call with this id names it.
-        found = { toolName: part.toolName, input: part.input };
+        const serverId = readMcpToolOriginServerId(part.providerOptions);
+        found = {
+          toolName: part.toolName,
+          input: part.input,
+          ...(serverId ? { serverId } : {}),
+        };
         if (isMarkedUnverifiedCall(part.providerOptions)) unverified = true;
       }
     }

@@ -469,7 +469,7 @@ export function checkEvalHarnessAdmission(args: {
     return {
       ok: false,
       harness,
-      reason: `${ineligible[0]!.reason}. Ineligible cases: ${names
+      reason: `${ineligible[0]!.reason.replace(/\.$/, "")}. Ineligible cases: ${names
         .slice(0, 10)
         .join(", ")}${names.length > 10 ? `, +${names.length - 10} more` : ""}`,
     };
