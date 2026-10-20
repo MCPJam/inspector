@@ -117,16 +117,18 @@ async function fetchTokenWithRetry(
   // status/reason fields and a fixed message; reporting cannot block recovery.
   try {
     const failure = guestFailureExtra(lastError);
-    // A throw with no status never got an answer. On a self-hosted install
-    // the guest request goes to this tab's own loopback server, so that is
-    // the local inspector process being gone (npx killed, laptop asleep),
-    // not the guest authority failing: still a Sentry event, but a `routine`
-    // one the paging rule skips (INSPECTOR-CLIENT-2RP).
+    // A guest throw with no status never got an answer. On a self-hosted
+    // install the guest request goes to this tab's own loopback server, so
+    // that is the local inspector process being gone (npx killed, laptop
+    // asleep), not the guest authority failing: still a Sentry event, but a
+    // `routine` one the paging rule skips, in its own issue so the real ones
+    // keep their "new" and "regressed" transitions.
     const unanswered =
-      lastError !== undefined && failure.httpStatus === undefined;
+      opts.mode === "guest" &&
+      lastError !== undefined &&
+      failure.httpStatus === undefined;
     const localServerUnreachable =
       unanswered &&
-      opts.mode === "guest" &&
       !HOSTED_MODE &&
       typeof window !== "undefined" &&
       isLoopbackOAuthUrl(window.location.origin);
@@ -141,6 +143,7 @@ async function fetchTokenWithRetry(
                 page_class: "routine",
                 guest_refresh_failure: "local_server_unreachable",
               },
+              fingerprint: [opts.source, "local_server_unreachable"],
             }
           : {}),
         extra: {
@@ -160,11 +163,14 @@ async function fetchTokenWithRetry(
   return pauseQueriesBeforeAuthClear();
 }
 
-// The class of a throw that carried no status: `TypeError` for a fetch that
-// never connected, `AbortError` for a cancelled one. Never the message, which
-// can quote the URL or an upstream body.
+// The class of what `fetch` threw. `requestGuestSession` wraps a rejected
+// fetch in its own error with the original as `cause`, so the wrapper's name
+// says nothing; the cause's does. Never the message, which can quote the URL
+// or an upstream body.
 function thrownName(error: unknown): string {
-  return error instanceof Error ? error.name : typeof error;
+  const { cause } = (error ?? {}) as { cause?: unknown };
+  const thrown = cause === undefined ? error : cause;
+  return thrown instanceof Error ? thrown.name : typeof thrown;
 }
 
 // What a failed guest-session request knows about its failure: the HTTP status

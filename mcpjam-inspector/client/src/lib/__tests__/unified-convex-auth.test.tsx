@@ -439,10 +439,18 @@ describe("useUnifiedConvexAuth", () => {
       );
     });
 
-    // INSPECTOR-CLIENT-2RP: a self-hosted tab whose own inspector process is
-    // gone. The fetch to 127.0.0.1 throws with no status at all, which is not
-    // an authority outage and must not page like one, but still has to be
-    // visible and say what the browser saw.
+    // What `requestGuestSession` throws when `fetch` itself rejected: its own
+    // wrapper, no status, the browser's error as `cause`.
+    function unansweredFetch(thrown: Error): Error {
+      return Object.assign(new Error(thrown.message, { cause: thrown }), {
+        name: "GuestSessionRequestError",
+      });
+    }
+
+    // A self-hosted tab whose own inspector process is gone. The fetch to
+    // 127.0.0.1 throws with no status at all, which is not an authority
+    // outage and must not page like one, but still has to be visible and say
+    // what the browser saw.
     it("tags a refresh whose fetch never reached the local inspector as routine", async () => {
       mockState.getCachedGuestSession.mockReturnValue(null);
       mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
@@ -450,7 +458,9 @@ describe("useUnifiedConvexAuth", () => {
       const result = await mountGuest();
       mockState.getOrCreateGuestSessionOrThrow.mockReset();
       mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(
-        new TypeError("NetworkError when attempting to fetch resource."),
+        unansweredFetch(
+          new TypeError("NetworkError when attempting to fetch resource."),
+        ),
       );
 
       let pending: Promise<string | null>;
@@ -471,6 +481,7 @@ describe("useUnifiedConvexAuth", () => {
             page_class: "routine",
             guest_refresh_failure: "local_server_unreachable",
           },
+          fingerprint: ["guest_token_refresh", "local_server_unreachable"],
           extra: { attempts: 4, errorName: "TypeError" },
         },
       );
@@ -486,7 +497,7 @@ describe("useUnifiedConvexAuth", () => {
       const result = await mountGuest();
       mockState.getOrCreateGuestSessionOrThrow.mockReset();
       mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(
-        new TypeError("Failed to fetch"),
+        unansweredFetch(new TypeError("Failed to fetch")),
       );
 
       let pending: Promise<string | null>;
