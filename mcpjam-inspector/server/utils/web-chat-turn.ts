@@ -1070,7 +1070,7 @@ export async function streamWebChatTurn(
   );
   const effectiveEnhancedSystemPrompt = [
     enhancedSystemPrompt,
-    widgetModelContextSystemPrompt,
+    persist.harness ? "" : widgetModelContextSystemPrompt,
     historyPresentation ? TOOL_OUTPUT_TRUST_NOTE : "",
   ]
     .filter((section) => section.trim().length > 0)
@@ -1713,6 +1713,8 @@ export async function streamWebChatTurn(
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
     ...(persist.agentLoop ? { agentLoop: persist.agentLoop } : {}),
+    harnessTurnContext: widgetModelContextSystemPrompt,
+    harnessUnavailableAppTools: Boolean(prepare.appTools?.length || prepare.pageTools?.length || prepare.uiTools?.length),
     // Preserve the resolved selection for hosted steps and harness leases.
     ...(forwardableSelection(prepare.routingSelection)
       ? { modelSelection: forwardableSelection(prepare.routingSelection), modelSelectionOrigin: prepare.routingSelectionOrigin }
