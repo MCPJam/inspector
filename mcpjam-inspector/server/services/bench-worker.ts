@@ -90,16 +90,14 @@ import {
   type BenchmarkProbeEvidence,
 } from "./bench-probe-child.js";
 import type { ConformanceSuiteKind, OAuthConformanceConfig } from "@mcpjam/sdk";
-import { getServiceCredential } from "./service-credential.js";
+import {
+  postServiceRoute,
+  requireServiceRouteEnv,
+} from "./internal-backend.js";
+import { startClaimLoop, type ClaimLoop } from "./workers/claim-loop.js";
+import { abortableSleep } from "../utils/run-supervisor/backoff.js";
 
 const BENCH_SERVICE_BASE = "/internal/v1/bench";
-
-const POLL_INTERVAL_MS = 15_000;
-const POLL_JITTER_MS = 5_000;
-/** Backoff after claim/transport errors so a broken backend isn't hammered. */
-const ERROR_BACKOFF_MS = 60_000;
-/** Per-request cap on service-route calls so a stalled Convex can't wedge the loop. */
-const SERVICE_ROUTE_TIMEOUT_MS = 15_000;
 
 /**
  * Heartbeat cadence, from the product spec. The backend treats a claim as
@@ -441,60 +439,6 @@ export function isBenchWorkerEnabled(): boolean {
 }
 
 /**
- * The vetted backend origin, or a throw naming the misconfiguration.
- *
- * ── WHY THE SCHEME IS CHECKED HERE AND NOT LEFT TO `fetch` ────────────────
- *
- * Every call below carries `x-inspector-service-token`, the credential that
- * authenticates this process AS the Inspector — it can claim jobs, heartbeat
- * them and abort them. Sending it to an `http:` host puts it on the wire in
- * cleartext for anyone on the path. Loopback is exempt because local dev
- * legitimately runs Convex over http on 127.0.0.1.
- *
- * `http:` is exempted ONLY for loopback: `ftp://localhost` is a
- * misconfiguration, and letting it reach `fetch` reports it as an unreachable
- * upstream instead of the config error it is.
- *
- * This is the same policy `callBackend` applies in `routes/web/bench.ts`.
- * Restated rather than imported: that helper is an HTTP-route collaborator —
- * it throws `WebRouteError`, collapses 404 into a feature-disabled verdict and
- * never surfaces the raw status — and this worker branches on the raw status
- * of every route it calls. Sharing the transport would mean weakening one of
- * the two; sharing the POLICY is what actually matters, so it is written out
- * with the same exemptions and locked by its own test.
- */
-function benchServiceConfig(): { convexUrl: string; serviceToken: string } {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = getServiceCredential();
-  if (!convexUrl || !serviceToken) {
-    throw new Error(
-      "Bench worker requires CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN",
-    );
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(convexUrl);
-  } catch {
-    throw new Error("Bench worker: CONVEX_HTTP_URL is not a valid URL");
-  }
-  const isLoopback =
-    parsed.hostname === "localhost" ||
-    parsed.hostname === "127.0.0.1" ||
-    parsed.hostname === "::1" ||
-    parsed.hostname === "[::1]";
-  if (
-    parsed.protocol !== "https:" &&
-    !(parsed.protocol === "http:" && isLoopback)
-  ) {
-    throw new Error(
-      "Bench worker: refusing to send the inspector service token to a " +
-        `non-HTTPS CONVEX_HTTP_URL (${parsed.protocol}//${parsed.hostname})`,
-    );
-  }
-  return { convexUrl: convexUrl.replace(/\/$/, ""), serviceToken };
-}
-
-/**
  * EVERY `/internal/v1/bench/*` path this worker calls, spelled once.
  *
  * The worker family the backend's `registerBenchmarkJobRoutes` publishes, and
@@ -524,8 +468,6 @@ export const BENCH_SERVICE_ROUTES = {
   executionComplete: `${BENCH_SERVICE_BASE}/runs/execution-complete`,
 } as const;
 
-type ServiceRouteResponse = { status: number; body: any };
-
 /**
  * One POST at a `/internal/v1/bench/*` worker route.
  *
@@ -542,58 +484,18 @@ type ServiceRouteResponse = { status: number; body: any };
  * `/jobs/claim` is the one route with no grant to send: it is the route that
  * MINTS the grant.
  */
-async function postServiceRoute(
+function postBenchRoute(
   path: string,
   body: Record<string, unknown>,
   options?: { grant?: string },
-): Promise<ServiceRouteResponse> {
-  const env = benchServiceConfig();
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    SERVICE_ROUTE_TIMEOUT_MS,
+) {
+  return postServiceRoute(
+    path,
+    body,
+    options?.grant
+      ? { headers: { [BENCHMARK_GRANT_HEADER]: options.grant } }
+      : undefined,
   );
-  // The deadline stays armed through the BODY read: a response that stalls
-  // mid-body would otherwise hold a slot for as long as the socket stays open.
-  try {
-    const response = await fetch(`${env.convexUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-inspector-service-token": env.serviceToken,
-        ...(options?.grant ? { [BENCHMARK_GRANT_HEADER]: options.grant } : {}),
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-      // The scheme check above vets the CONFIGURED host and nothing else.
-      // `fetch` follows redirects by default and replays request headers to
-      // wherever it lands, so a 3xx from a compromised or merely misconfigured
-      // deployment would hand the service token AND the execution grant to
-      // another origin — over http, even. Refuse to follow; the credentials
-      // stay confined to the host we vetted.
-      redirect: "manual",
-    });
-    if (response.status >= 300 && response.status < 400) {
-      throw new Error(
-        `bench route ${path} redirected (${response.status}); refusing to forward the service token`,
-      );
-    }
-    let parsed: any = null;
-    try {
-      parsed = await response.json();
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw new Error(
-          `bench route ${path} timed out after ${SERVICE_ROUTE_TIMEOUT_MS}ms while reading the response body`,
-          { cause: error },
-        );
-      }
-      // Otherwise tolerated; the status carries the signal.
-    }
-    return { status: response.status, body: parsed };
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 /**
@@ -752,7 +654,7 @@ export function decodeClaimedJob(body: any): ClaimedBenchmarkJob | null {
 async function claimNext(
   claimedBy: string,
 ): Promise<ClaimedBenchmarkJob | null | "disabled"> {
-  const { status, body } = await postServiceRoute(BENCH_SERVICE_ROUTES.claim, {
+  const { status, body } = await postBenchRoute(BENCH_SERVICE_ROUTES.claim, {
     claimedBy,
   });
   if (isFeatureDisabled(status, body)) return "disabled";
@@ -778,7 +680,7 @@ async function sendHeartbeat(
   job: ClaimedBenchmarkJob,
   claimedBy: string,
 ): Promise<BenchmarkHeartbeat> {
-  const { status, body } = await postServiceRoute(
+  const { status, body } = await postBenchRoute(
     BENCH_SERVICE_ROUTES.heartbeat,
     {
       benchmarkRunId: job.benchmarkRunId,
@@ -825,7 +727,7 @@ async function attachEvalEvidence(args: {
   cellId: string;
   testSuiteRunId: string;
 }): Promise<void> {
-  const { status, body } = await postServiceRoute(
+  const { status, body } = await postBenchRoute(
     BENCH_SERVICE_ROUTES.evidenceAttach,
     {
       // Compared against the grant's claims rather than trusted: a worker
@@ -858,7 +760,7 @@ async function attachConformanceEvidence(args: {
   evidenceKey: string;
   conformanceRunId: string;
 }): Promise<void> {
-  const { status, body } = await postServiceRoute(
+  const { status, body } = await postBenchRoute(
     BENCH_SERVICE_ROUTES.evidenceAttach,
     {
       benchmarkRunId: args.job.benchmarkRunId,
@@ -896,7 +798,7 @@ async function attachProbeEvidence(args: {
   evidenceKey: string;
   evidence: BenchmarkProbeEvidence;
 }): Promise<void> {
-  const { status, body } = await postServiceRoute(
+  const { status, body } = await postBenchRoute(
     BENCH_SERVICE_ROUTES.evidenceProbe,
     {
       benchmarkRunId: args.job.benchmarkRunId,
@@ -941,7 +843,7 @@ async function recordArtifacts(args: {
   }>;
 }): Promise<void> {
   if (args.artifacts.length === 0) return;
-  const { status, body } = await postServiceRoute(
+  const { status, body } = await postBenchRoute(
     BENCH_SERVICE_ROUTES.artifacts,
     {
       benchmarkRunId: args.job.benchmarkRunId,
@@ -978,7 +880,7 @@ async function reportExecutionComplete(args: {
    */
   cleanup?: ArtifactCleanupReport;
 }): Promise<void> {
-  const { status, body } = await postServiceRoute(
+  const { status, body } = await postBenchRoute(
     BENCH_SERVICE_ROUTES.executionComplete,
     {
       benchmarkRunId: args.job.benchmarkRunId,
@@ -1009,7 +911,7 @@ async function finalizeBenchmarkRun(args: {
   job: ClaimedBenchmarkJob;
   claimedBy: string;
 }): Promise<void> {
-  const { status, body } = await postServiceRoute(
+  const { status, body } = await postBenchRoute(
     `${BENCH_SERVICE_BASE}/runs/finalize`,
     {
       jobId: args.job.jobId,
@@ -1037,7 +939,7 @@ async function triggerFlowAnalyzer(args: {
   job: ClaimedBenchmarkJob;
   claimedBy: string;
 }): Promise<void> {
-  const { status, body } = await postServiceRoute(
+  const { status, body } = await postBenchRoute(
     `${BENCH_SERVICE_BASE}/runs/analyze`,
     {
       jobId: args.job.jobId,
@@ -1062,7 +964,7 @@ async function completeBenchmarkJob(args: {
   job: ClaimedBenchmarkJob;
   claimedBy: string;
 }): Promise<void> {
-  const { status, body } = await postServiceRoute(
+  const { status, body } = await postBenchRoute(
     `${BENCH_SERVICE_BASE}/jobs/complete`,
     {
       jobId: args.job.jobId,
@@ -1090,7 +992,7 @@ async function abortJob(args: {
   reason: string;
   retryable: boolean;
 }): Promise<void> {
-  const { status, body } = await postServiceRoute(
+  const { status, body } = await postBenchRoute(
     BENCH_SERVICE_ROUTES.abort,
     {
       benchmarkRunId: args.job.benchmarkRunId,
@@ -2148,7 +2050,7 @@ export async function executeClaimedJob(
             attempt: attempt + 1,
             error: error instanceof Error ? error.message : String(error),
           });
-          await sleep(ATTACH_RETRY_DELAYS_MS[attempt]);
+          await abortableSleep(ATTACH_RETRY_DELAYS_MS[attempt]);
           assertLeaseHeld();
         }
       }
@@ -2480,57 +2382,20 @@ export async function executeClaimedJob(
   }
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  // Checked BEFORE the listener goes on: an `abort` that already fired never
-  // fires again, so a listener added afterwards waits out the whole delay —
-  // which may be the 60s backoff, long past the caller's shutdown deadline.
-  if (signal?.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(done, ms);
-    function done() {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }
-    function onAbort() {
-      clearTimeout(timer);
-      done();
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-export interface BenchWorkerHandle {
-  /** Aborts polling and resolves once the loop (incl. an in-flight job) settles. */
-  stop: () => Promise<void>;
-}
+export type BenchWorkerHandle = ClaimLoop;
 
 /**
  * Start the polling loop. ONE job in flight per replica; the fleet-wide cap
  * lives in the claim mutation, because Railway may run several replicas and
  * this loop knows nothing about its siblings.
  */
-export function startBenchWorker(options?: {
-  claimedBy?: string;
-  /** Test seams: override the claim/execute pair. */
-  claim?: typeof claimNext;
-  execute?: (claimed: ClaimedBenchmarkJob, claimedBy: string) => Promise<void>;
-}): BenchWorkerHandle {
-  const abort = new AbortController();
-  const claimedBy =
-    options?.claimedBy ??
-    `inspector-bench-${process.env.RAILWAY_REPLICA_ID ?? process.pid}`;
-  const claim = options?.claim ?? claimNext;
-  const execute =
-    options?.execute ??
-    ((claimed: ClaimedBenchmarkJob, by: string) =>
-      executeClaimedJob(claimed, by));
-
+export function startBenchWorker(): BenchWorkerHandle {
   // Checked BEFORE the loop, not on the first claim: an unset or unsafe
   // CONVEX_HTTP_URL is a deployment mistake, and a worker that starts anyway
   // spends every poll cycle throwing the same configuration error into the
   // backoff path where nobody reads it.
   try {
-    benchServiceConfig();
+    requireServiceRouteEnv();
   } catch (error) {
     logger.warn("[bench] worker enabled but not startable", {
       error: error instanceof Error ? error.message : String(error),
@@ -2549,40 +2414,15 @@ export function startBenchWorker(options?: {
     return { stop: async () => {} };
   }
 
-  logger.info("[bench] worker started", { claimedBy });
-
-  const loop = (async () => {
-    while (!abort.signal.aborted) {
-      let waitMs =
-        POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
-      try {
-        const claimed = await claim(claimedBy);
-        if (claimed === "disabled") {
-          // Feature off backend-side: poll slowly so flipping the env flag
-          // doesn't need an Inspector restart.
-          waitMs = ERROR_BACKOFF_MS;
-        } else if (claimed) {
-          await execute(claimed, claimedBy);
-          // Drain mode: another run may be queued behind this one.
-          waitMs = 1_000;
-        }
-      } catch (error) {
-        logger.warn("[bench] poll failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        waitMs = ERROR_BACKOFF_MS;
-      }
-      await sleep(waitMs, abort.signal);
-    }
-    logger.info("[bench] worker stopped");
-  })();
-
-  return {
-    stop: async () => {
-      abort.abort();
-      // Bounded by the caller's shutdown force-exit timer; a job that outlasts
-      // it is recovered by the backend's stale-lease sweep.
-      await loop;
+  return startClaimLoop({
+    claimedByPrefix: "inspector-bench-",
+    claim: claimNext,
+    execute: executeClaimedJob,
+    log: {
+      started: (claimedBy) =>
+        logger.info("[bench] worker started", { claimedBy }),
+      pollFailed: (error) => logger.warn("[bench] poll failed", { error }),
+      stopped: () => logger.info("[bench] worker stopped"),
     },
-  };
+  });
 }

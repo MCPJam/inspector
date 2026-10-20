@@ -66,13 +66,10 @@ import {
   GITHUB_CHECKS_SERVICE_BASE as SERVICE_BASE,
 } from "./github-checks/check-plan.js";
 import { postServiceRoute, serviceRouteEnv } from "./internal-backend.js";
+import { startClaimLoop, type ClaimLoop } from "./workers/claim-loop.js";
 import { executePersistedConformanceRun } from "./conformance-run-executor.js";
 import { createConformanceFetch } from "../routes/shared/conformance.js";
 
-const POLL_INTERVAL_MS = 15_000;
-const POLL_JITTER_MS = 5_000;
-/** Backoff after claim/transport errors so a broken backend isn't hammered. */
-const ERROR_BACKOFF_MS = 60_000;
 /**
  * Heartbeat cadence. The backend fails a claim whose heartbeat is >5 minutes
  * stale, so 60s leaves room for ~5 consecutive misses before a healthy worker
@@ -168,10 +165,6 @@ export type PlanlessCheckReport = {
 
 export function isGithubChecksWorkerEnabled(): boolean {
   return process.env.GITHUB_CHECKS_WORKER_ENABLED === "1";
-}
-
-function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
-  return serviceRouteEnv();
 }
 
 export class CredentialPolicyBlockedError extends Error {
@@ -2233,54 +2226,15 @@ function rawOf(detailsMarkdown: string): string {
   return fenced ? fenced[2] : detailsMarkdown;
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  // Checked BEFORE the listener goes on, because an `abort` that already fired
-  // never fires again: a listener added afterwards waits out the whole delay. The
-  // loop can reach here post-abort whenever `claim()` or `execute()` settles after
-  // `stop()`, and the delay may be the 60s backoff — long past the caller's
-  // shutdown deadline, which then force-exits an otherwise idle worker.
-  if (signal?.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(done, ms);
-    function done() {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }
-    function onAbort() {
-      clearTimeout(timer);
-      done();
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-export interface GithubChecksWorkerHandle {
-  /** Aborts polling and resolves once the loop (incl. an in-flight check) settles. */
-  stop: () => Promise<void>;
-}
+export type GithubChecksWorkerHandle = ClaimLoop;
 
 /**
  * Start the polling loop. One check in flight per replica; the FLEET-wide cap is
  * enforced backend-side in the claim mutation, because Railway may run several
  * replicas and this loop knows nothing about its siblings.
  */
-export function startGithubChecksWorker(options?: {
-  claimedBy?: string;
-  /** Test seams: override the claim/execute pair. */
-  claim?: typeof claimNext;
-  execute?: (claimed: ClaimedGithubCheck, claimedBy: string) => Promise<void>;
-}): GithubChecksWorkerHandle {
-  const abort = new AbortController();
-  const claimedBy =
-    options?.claimedBy ??
-    `inspector-gh-${process.env.RAILWAY_REPLICA_ID ?? process.pid}`;
-  const claim = options?.claim ?? claimNext;
-  const execute =
-    options?.execute ??
-    ((claimed: ClaimedGithubCheck, by: string) =>
-      executeClaimedCheck(claimed, by));
-
-  if (!requiredEnv()) {
+export function startGithubChecksWorker(): GithubChecksWorkerHandle {
+  if (!serviceRouteEnv()) {
     logger.warn(
       "[github-checks] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
     );
@@ -2311,38 +2265,16 @@ export function startGithubChecksWorker(options?: {
     return { stop: async () => {} };
   }
 
-  logger.info("[github-checks] worker started", { claimedBy });
-
-  const loop = (async () => {
-    while (!abort.signal.aborted) {
-      let waitMs =
-        POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
-      try {
-        const claimed = await claim(claimedBy);
-        if (claimed === "disabled") {
-          waitMs = ERROR_BACKOFF_MS;
-        } else if (claimed) {
-          await execute(claimed, claimedBy);
-          // Drain mode: another PR's check may be queued behind this one.
-          waitMs = 1_000;
-        }
-      } catch (error) {
-        logger.warn("[github-checks] poll failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        waitMs = ERROR_BACKOFF_MS;
-      }
-      await sleep(waitMs, abort.signal);
-    }
-    logger.info("[github-checks] worker stopped");
-  })();
-
-  return {
-    stop: async () => {
-      abort.abort();
-      // Bounded by the caller's shutdown force-exit timer; a check that outlasts
-      // it is recovered by the backend's heartbeat sweep.
-      await loop;
+  return startClaimLoop({
+    claimedByPrefix: "inspector-gh-",
+    claim: claimNext,
+    execute: executeClaimedCheck,
+    log: {
+      started: (claimedBy) =>
+        logger.info("[github-checks] worker started", { claimedBy }),
+      pollFailed: (error) =>
+        logger.warn("[github-checks] poll failed", { error }),
+      stopped: () => logger.info("[github-checks] worker stopped"),
     },
-  };
+  });
 }

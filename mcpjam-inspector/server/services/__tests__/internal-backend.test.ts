@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SERVICE_ROUTE_TIMEOUT_MS,
   postServiceRoute,
+  requireServiceRouteEnv,
   serviceRouteEnv,
 } from "../internal-backend";
 
@@ -214,5 +215,29 @@ describe("serviceRouteEnv", () => {
       convexUrl: "https://convex.test",
       serviceToken: "svc-token",
     });
+  });
+});
+
+describe("requireServiceRouteEnv", () => {
+  it("returns the origin without a trailing slash and the token", () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.test/";
+    expect(requireServiceRouteEnv()).toEqual({
+      origin: "https://convex.test",
+      serviceToken: "svc-token",
+    });
+  });
+
+  it("refuses a value that is not a URL", () => {
+    process.env.CONVEX_HTTP_URL = "convex.test";
+    expect(() => requireServiceRouteEnv()).toThrow(
+      "CONVEX_HTTP_URL is not a valid URL",
+    );
+  });
+
+  it("refuses a non-http scheme even on loopback", () => {
+    process.env.CONVEX_HTTP_URL = "ftp://localhost";
+    expect(() => requireServiceRouteEnv()).toThrow(
+      "non-HTTPS CONVEX_HTTP_URL (ftp://localhost)",
+    );
   });
 });
