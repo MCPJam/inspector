@@ -16,7 +16,7 @@ export function resolveAgentLoop(input: { agentLoop?: unknown; harness?: unknown
   if (!isHarness(id)) throw new Error('This client has an unsupported agent runtime. Choose a supported client.');
   return {
     loop: 'harness', harnessId: id,
-    mcpClient: input.agentLoop !== undefined || input.hasAccountRouting === true || (input.defaultMcpClient ?? (HARNESS_MCP_DELIVERY[id] === 'host-executed' ? 'mcpjam' : 'harness')) === 'mcpjam' ? 'mcpjam' : 'harness',
+    mcpClient: input.agentLoop !== undefined || input.hasAccountRouting === true || (input.defaultMcpClient ?? (HARNESS_MCP_DELIVERY[id])) === 'mcpjam' ? 'mcpjam' : 'harness',
   };
 }
 

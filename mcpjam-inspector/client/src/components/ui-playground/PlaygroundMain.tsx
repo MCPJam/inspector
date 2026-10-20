@@ -1400,6 +1400,7 @@ export function PlaygroundMain({
         admitted: extensionsAccess?.enabled === true,
         extensionsEnabled: pluginExtensionsEnabled,
         harness: previewedHost?.config?.harness,
+        agentLoop: previewedHost?.config?.agentLoop,
         hostId: previewedHostId,
         actorId: currentUserForSender?._id,
       })

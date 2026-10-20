@@ -1517,7 +1517,7 @@ export async function runHarnessTurn(
       // the inspector; native sandbox MCP clients cannot own that dispatch.
       const accountGroups = evalIterationId ? {} : getManagerConnections(mcpClientManager) ?? {};
       const nativeMcpDelivery =
-        resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : harnessAdapter.id, defaultMcpClient: harnessAdapter.mcpDelivery === "native" ? "harness" : "mcpjam", hasAccountRouting: hasAccountRouting(accountGroups) }).mcpClient === "harness";
+        resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : harnessAdapter.id, defaultMcpClient: harnessAdapter.mcpDelivery === "harness" ? "harness" : "mcpjam", hasAccountRouting: hasAccountRouting(accountGroups) }).mcpClient === "harness";
       // Fail closed: with MCP servers selected but no plane strategy, a NATIVE
       // adapter would silently get zero MCP tools (the exact failure we hit).
       // Host-executed delivery needs no proxy at all — its tools run in THIS
@@ -2585,7 +2585,7 @@ export async function runHarnessTurn(
       // cannot be silently dropped at construction" a compile-time fact instead
       // of a convention.
       let harnessRuntime =
-        harnessAdapter.mcpDelivery === "native" &&
+        harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
           ? harnessAdapter.createHarness({
               modelId,
@@ -2753,7 +2753,7 @@ export async function runHarnessTurn(
           // write — its servers already went out as `tools` above — and the
           // adapter union forbids it from carrying `deliverMcpServers` at all.
           if (
-            harnessAdapter.mcpDelivery === "native" &&
+            harnessAdapter.mcpDelivery === "harness" &&
             harnessAdapter.mcpNativeDelivery === "sandbox-files"
           ) {
             // The "advertises MCP but has no delivery strategy" throw that used
