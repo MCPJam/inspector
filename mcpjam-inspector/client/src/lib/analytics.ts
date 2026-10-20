@@ -1,4 +1,5 @@
 import posthog, { type PostHog } from "posthog-js";
+import { currentTelemetryActor, currentTelemetryCaptureContext } from "./telemetry-context";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import { standardEventProps } from "./PosthogUtils";
 
@@ -131,6 +132,13 @@ export interface PersonProfileProperties {
 export function retryPersonProfile(
   client: Pick<PostHog, "capture">,
   properties: PersonProfileProperties,
+  actor: string | null = currentTelemetryActor(),
 ): void {
-  client.capture("$set", {}, { $set: properties });
+  const context = currentTelemetryCaptureContext();
+  if (!actor || currentTelemetryActor() !== actor || context.policy.content !== "full") return;
+  client.capture("$set", {}, {
+    $set: context.policy.identity === "full"
+      ? properties
+      : { deployment: properties.deployment },
+  });
 }
