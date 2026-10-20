@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import type {
+  ReadResourceRequest,
+  ReadResourceResult,
+} from "@modelcontextprotocol/sdk/types.js";
 import {
   parsePluginModelContext,
   type PluginContextSnapshot,
@@ -409,6 +413,11 @@ export interface McpAppBrowserHarnessOptions {
     name: string,
     args: Record<string, unknown>,
   ) => Promise<unknown>;
+  /** Read through the authenticated connection that produced the widget. */
+  readResource?: (
+    serverId: string,
+    params: ReadResourceRequest["params"],
+  ) => Promise<ReadResourceResult>;
   /**
    * Resolve the SEP-1865 `_meta.ui.visibility` for a tool at dispatch time, so
    * the runner can route model-visible calls into model context and keep
@@ -918,6 +927,30 @@ export class McpAppBrowserHarness {
             ...(visibility ? { visibility } : {}),
           });
           return { error };
+        } finally {
+          this.pendingRpcCount -= 1;
+        }
+      },
+    );
+
+    await this.page.exposeBinding(
+      "__mcpjamHostReadResource",
+      async (
+        _source,
+        payload: { widgetId: string; params: ReadResourceRequest["params"] },
+      ) => {
+        const widget = this.mounted.get(payload.widgetId);
+        if (!widget || this.closing)
+          throw new Error("Resource read owner is closed");
+        const capabilities =
+          this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
+        if (!capabilities.serverResources)
+          throw new Error("Resource reads disabled by client profile");
+        const readResource = this.opts.readResource;
+        if (!readResource) throw new Error("Resource read service unavailable");
+        this.pendingRpcCount += 1;
+        try {
+          return await readResource(widget.serverId, payload.params);
         } finally {
           this.pendingRpcCount -= 1;
         }

@@ -1,3 +1,4 @@
+import { resolveBrowserHostCapabilities } from "../utils/browser-host-capabilities";
 import { projectWorkspaceTranscript, workspacePresentationHostConfig } from "../../shared/unattended-workspace";
 import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
 import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities, localHarnessIdOf } from "../utils/harness/local/run-resources.js";
@@ -2888,6 +2889,10 @@ const runHostedIteration = async (
     model: params.test.model,
     mcpClientManager: params.mcpClientManager,
     injectOpenAiCompat: params.injectOpenAiCompat,
+    hostCapabilities: resolveBrowserHostCapabilities(
+      params.suiteHostConfig,
+      params.test.hostConfigOverride,
+    ),
     ...(pinnedRenderTimeoutMs
       ? { renderTimeoutMs: pinnedRenderTimeoutMs }
       : {}),
@@ -5209,6 +5214,10 @@ const runLocalIteration = async ({
     ...(caseNeedsModel ? { model: test.model } : {}),
     mcpClientManager,
     injectOpenAiCompat,
+    hostCapabilities: resolveBrowserHostCapabilities(
+      suiteHostConfig,
+      test.hostConfigOverride,
+    ),
     ...(pinnedRenderTimeoutMs
       ? { renderTimeoutMs: pinnedRenderTimeoutMs }
       : {}),

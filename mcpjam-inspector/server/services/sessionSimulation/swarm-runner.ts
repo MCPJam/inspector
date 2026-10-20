@@ -1,6 +1,7 @@
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { readTasksPolicy } from "@mcpjam/sdk";
+import { resolveBrowserHostCapabilities } from "../../utils/browser-host-capabilities.js";
 import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
@@ -1538,6 +1539,7 @@ async function runJourneyFanOut(
             chatSessionId,
             maxTurns,
             runtime: {
+              hostCapabilities: resolveBrowserHostCapabilities(target),
               modelDefinition,
               ...(modelSelection ? { modelSelection } : {}),
               systemPrompt: target.systemPrompt,

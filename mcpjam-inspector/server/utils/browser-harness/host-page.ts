@@ -1,3 +1,7 @@
+import type {
+  ReadResourceRequest,
+  ReadResourceResult,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { HarnessPresentation } from "../../../shared/unattended-workspace";
 import { mountHarnessWorkspace } from "./host-workspace";
 /**
@@ -89,6 +93,10 @@ declare global {
       widgetId: string;
       text: string;
     }) => Promise<void>;
+    __mcpjamHostReadResource?: (payload: {
+      widgetId: string;
+      params: ReadResourceRequest["params"];
+    }) => Promise<ReadResourceResult>;
     __mcpjamHostContext?: (payload: {
       widgetId: string;
       params: unknown;
@@ -222,6 +230,11 @@ async function renderWidget(
         if (opts.toolOutput !== undefined) {
           void b.sendToolResult(opts.toolOutput as never).catch(() => {});
         }
+      },
+      onReadResourceV2: async (params) => {
+        const readResource = window.__mcpjamHostReadResource;
+        if (!readResource) throw new Error("Resource read binding unavailable");
+        return readResource({ widgetId: opts.widgetId, params });
       },
       onCallTool: async (name, args) => {
         const rpc = window.__mcpjamHostRpc;
