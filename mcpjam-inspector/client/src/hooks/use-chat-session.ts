@@ -12,6 +12,14 @@ import { buildMentionContextMessages } from "@/shared/user-context-message";
 import type { PluginMentionSelection } from "@/shared/plugin-mentions";
 import { createPrivateFormAnswer } from "@/lib/apis/private-form-answer";
 import { sameChatAuthSession } from "@/lib/chat-auth-session";
+import {
+  claimMissingCallCancellation,
+  CHAT_AUTH_RECOVERY_MESSAGE,
+  clearChatAuthRecoveryFailure,
+  recordChatAuthRecoveryFailure,
+  traceChatAuthRecovery,
+  useChatAuthRecoveryFailures,
+} from "@/lib/chat-auth-recovery";
 import { hydrateTurnRequestPayloads } from "@/components/evals/turn-trace-spans";
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
@@ -215,9 +223,28 @@ import {
   claimCancelledChatScopeStepUp,
   claimPendingChatScopeStepUp,
   clearPendingChatScopeStepUp,
+  isPendingChatAuthRequired,
+  preparePendingChatAuthRequired,
+  listPendingChatScopeStepUps,
+  pendingRecoveryContext,
+  subscribePendingChatScopeStepUps,
+  pendingChatScopeStepUpRevision,
+  type PendingChatScopeStepUp,
+  markPendingChatScopeStepUpCancelled,
   readPendingChatScopeStepUp,
   savePendingChatScopeStepUp,
 } from "@/lib/scope-step-up-pending";
+import {
+  isAuthChallengeNoticeDataPart,
+  isAuthRequiredDataPart,
+  type AuthRequiredEvent,
+} from "@/shared/auth-challenge";
+import {
+  clearChatAuthChallengeCard,
+  presentChatAuthRequired,
+  useAuthChallengeNoticeStore,
+} from "@/lib/auth-challenge-lifecycle";
+import { parseToolResultAuthChallenge } from "@mcpjam/sdk/browser";
 import {
   getTraceSpansDurationMs,
   mergeLiveChatTraceUsage,
@@ -475,6 +502,10 @@ export interface UseChatSessionOptions {
     | ((chatSessionId: string) =>
         | import("@/shared/plugin-workspace").PluginWorkspaceDescriptor
         | undefined);
+  prepareAuthRecovery?: (
+    continuationId: string,
+  ) => import("@/lib/scope-step-up-pending").PendingWriteResult;
+  authRecoveryPaused?: boolean;
   /** Server names to connect to */
   selectedServers: string[];
   /**
@@ -1367,6 +1398,23 @@ function hasChatToolCall(
   );
 }
 
+function hasChatToolResult(
+  chatMessages: UIMessage[],
+  toolCallId: string,
+): boolean {
+  return chatMessages.some((message) =>
+    message.parts?.some((part) => {
+      const tool = part as { toolCallId?: string; state?: string };
+      return (
+        tool.toolCallId === toolCallId &&
+        ["output-available", "output-error", "output-denied"].includes(
+          tool.state ?? "",
+        )
+      );
+    }),
+  );
+}
+
 /**
  * AI SDK's generic completed-tool predicate also matches MCP tools that the
  * server already executed inside the same response. Auto-sending those starts
@@ -1405,7 +1453,12 @@ export function shouldAutoSendCompletedClientToolCalls(
 export function isSuccessfulRpcResponse(message: unknown): boolean {
   if (!message || typeof message !== "object") return false;
   const m = message as Record<string, unknown>;
-  return "result" in m && !("error" in m);
+  if (!("result" in m) || "error" in m) return false;
+  // A result carrying a sign-in challenge (`isError` with
+  // `_meta["mcp/www_authenticate"]`) is a refusal, not a success: resetting
+  // the budget on it would let a server that alternates challenge and refusal
+  // loop the user through sign-in.
+  return parseToolResultAuthChallenge(m.result) === undefined;
 }
 
 // SEP-2350: the JSON-RPC `id` correlating a request with its response. Only
@@ -2423,6 +2476,7 @@ export function useChatSession(
   const guestMode = sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
+  const lastResolvedMemberIdRef = useRef<string | undefined>(undefined);
   const lastResolvedAuthHeadersRef = useRef<Record<string, string> | undefined>(
     undefined,
   );
@@ -2527,15 +2581,151 @@ export function useChatSession(
     [],
   );
 
+  // Mid-session sign-in: show the Connect card for a `data-auth-required`
+  // part, saving a resumable call's marker as `awaiting_click` first.
+  const presentedSignInCardsRef = useRef(new Set<string>());
+  const pendingRecoveryRevision = useSyncExternalStore(
+    subscribePendingChatScopeStepUps,
+    pendingChatScopeStepUpRevision,
+    pendingChatScopeStepUpRevision,
+  );
+  const recoveryFailures = useChatAuthRecoveryFailures();
+  const finishedRecoveryRef = useRef(new Set<string>());
+  const completedRecoveryRef = useRef(
+    new Map<string, { pending: PendingChatScopeStepUp; cancelled: boolean }>(),
+  );
+  const attemptedFailureCancellationRef = useRef(new Set<string>());
+  const presentChatAuthRequiredEvent = useCallback(
+    (event: AuthRequiredEvent) => {
+      traceChatAuthRecovery("card", {
+        continuationId: event.continuationId,
+        toolCallId: event.toolCallId,
+        chatSessionId: chatSessionIdRef.current,
+        projectId: hostedProjectId,
+        serverId: event.serverId,
+        serverName: event.serverName,
+      });
+      const server = resolveScopeStepUpServer(appState, {
+        serverId: event.serverId,
+        serverName: event.serverName,
+        projectId: hostedProjectId,
+      });
+      if (!server) {
+
+        recordChatAuthRecoveryFailure("server_missing", {
+          continuationId: event.continuationId,
+          toolCallId: event.toolCallId,
+          chatSessionId: chatSessionIdRef.current,
+          projectId: hostedProjectId,
+          serverName: event.serverName,
+          serverId: event.serverId,
+        });
+        return;
+      }
+      presentedSignInCardsRef.current.add(event.toolCallId);
+      const sessionId = chatSessionIdRef.current;
+      const resumable =
+        event.action === "prompt" &&
+        typeof event.continuationId === "string" &&
+        Boolean(sessionId);
+
+      if (
+        resumable &&
+        sessionId &&
+        !readPendingChatScopeStepUp({ continuationId: event.continuationId })
+      ) {
+        savePendingChatScopeStepUp({
+          event: event as AuthRequiredEvent & { continuationId: string },
+          serverName: server.name,
+          chatSessionId: sessionId,
+          projectId: hostedProjectId,
+          phase: "awaiting_click",
+        });
+      }
+      if (event.action === "prompt" && !resumable) {
+        recordChatAuthRecoveryFailure("missing_continuation", {
+          toolCallId: event.toolCallId,
+          chatSessionId: sessionId,
+          projectId: hostedProjectId,
+          serverName: server.name,
+        });
+      }
+      void presentChatAuthRequired({
+        server,
+        projectId: hostedProjectId,
+        chatSessionId: sessionId,
+        event: resumable ? event : { ...event, continuationId: undefined },
+        ...(resumable && event.continuationId
+          ? {
+              continuationId: event.continuationId,
+              onConnect: () => {
+                const comparison = options.prepareAuthRecovery?.(
+                  event.continuationId!,
+                );
+                if (comparison && !comparison.ok) {
+                  if (comparison.reason === "loading") return comparison;
+                  recordChatAuthRecoveryFailure("save_failed", {
+                    continuationId: event.continuationId,
+                    toolCallId: event.toolCallId,
+                    chatSessionId: sessionId,
+                    projectId: hostedProjectId,
+                    storageOutcome: "comparison_save_failed",
+                  });
+                  return comparison;
+                }
+                const prepared = preparePendingChatAuthRequired({
+                  event: event as AuthRequiredEvent & {
+                    continuationId: string;
+                  },
+                  serverName: server.name,
+                  chatSessionId: sessionId,
+                  projectId: hostedProjectId,
+                });
+                return prepared;
+              },
+            }
+          : {}),
+      }).then((presentation) => {
+        if (presentation.kind !== "notice") return;
+        useAuthChallengeNoticeStore.getState().add({
+          version: 1,
+          kind: "auth_challenge_notice",
+          serverId: event.serverId,
+          ...(event.serverName ? { serverName: event.serverName } : {}),
+          toolCallId: event.toolCallId,
+          operation: event.operation,
+          source: event.source,
+          action: event.action,
+          reason:
+            presentation.reason === "permanent"
+              ? "repeat-after-sign-in"
+              : presentation.reason === "blocked"
+                ? "auth-method-blocked"
+                : "honored",
+          effectiveAuth: event.effectiveAuth,
+          explanation: presentation.message,
+        });
+      });
+    },
+    [appState, hostedProjectId, options.prepareAuthRecovery],
+  );
+
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
       if (noteTurnNoticePart(part, chatSessionIdRef.current)) return;
-      if (part && typeof part === "object" && "type" in part && part.type === "data-platform-paid-fallback") {
+      if (
+        part &&
+        typeof part === "object" &&
+        "type" in part &&
+        part.type === "data-platform-paid-fallback"
+      ) {
         const session = chatSessionIdRef.current ?? "new";
         if (!paidFallbackNotices.current.has(session)) {
           paidFallbackNotices.current.add(session);
-          toast.info("MCPJam's shared free allowance is unavailable; this chat is using your credits.");
+          toast.info(
+            "MCPJam's shared free allowance is unavailable; this chat is using your credits.",
+          );
           track("platform_paid_fallback_notice", { chatSessionId: session });
         }
         return;
@@ -2562,7 +2752,11 @@ export function useChatSession(
       if (!isTraceEventDataPart(part)) {
         if (isScopeStepUpFinishedDataPart(part)) {
           const event = part.data;
-          const pending = readPendingChatScopeStepUp();
+          finishedRecoveryRef.current.add(event.continuationId);
+          const pending = readPendingChatScopeStepUp({
+            continuationId: event.continuationId,
+          });
+
           if (pending?.event.continuationId === event.continuationId) {
             if (
               event.outcome === "completed" ||
@@ -2573,10 +2767,30 @@ export function useChatSession(
                 serverName: pending.event.serverName,
                 projectId: hostedProjectId,
               });
-              resetScopeStepUp(server, event.operation);
+              resetScopeStepUp(server, event.operation, {
+                projectId: pending.projectId ?? "local",
+                serverId: pending.serverName,
+                surface: "chat",
+                callId: pending.event.continuationId,
+                chatSessionId: pending.chatSessionId,
+              });
             }
-            clearPendingChatScopeStepUp(event.continuationId);
+            clearChatAuthChallengeCard(pending.event.toolCallId);
+            traceChatAuthRecovery(
+              "server_finished",
+              pendingRecoveryContext(pending),
+            );
           }
+        } else if (isAuthRequiredDataPart(part)) {
+          // A mid-session sign-in. Showing the card has no side effects; the
+          // marker is saved now (`awaiting_click`) so a send without clicking,
+          // or a reload, can still settle the suspended call. Scenario and
+          // share-link turns resolve no server and stay inert, as for step-up.
+          presentChatAuthRequiredEvent(part.data);
+        } else if (isAuthChallengeNoticeDataPart(part)) {
+          // Display-only: explains why the emulated host did not prompt.
+          // Nothing starts a sign-in from it.
+          useAuthChallengeNoticeStore.getState().add(part.data);
         } else if (isScopeStepUpDataPart(part)) {
           const event = part.data;
           const server = resolveScopeStepUpServer(appState, {
@@ -2591,11 +2805,16 @@ export function useChatSession(
             );
             return;
           }
-          savePendingChatScopeStepUp({
+          const saved = savePendingChatScopeStepUp({
             event,
             serverName: server.name,
             chatSessionId: sessionId,
+            projectId: hostedProjectId,
           });
+          if (!saved.ok) {
+            toast.error(CHAT_AUTH_RECOVERY_MESSAGE);
+            return;
+          }
           driveChatScopeStepUp(
             server,
             {
@@ -2603,6 +2822,10 @@ export function useChatSession(
               resourceMetadataUrl: event.resourceMetadataUrl,
             },
             event.operation,
+            {
+              continuationId: event.continuationId,
+              connectionId: event.connectionId,
+            },
           );
         } else if (isHostedElicitationDataPart(part)) {
           const event = part.data;
@@ -2866,6 +3089,7 @@ export function useChatSession(
       hostedPresentationHostId,
       appState,
       handleMrtrInputRequired,
+      presentChatAuthRequiredEvent,
     ],
   );
 
@@ -4129,6 +4353,7 @@ export function useChatSession(
   // prevents the generic tool-output rule from recursively submitting the
   // same one-shot continuation descriptor.
   const scopeStepUpResumeInFlightRef = useRef(false);
+  const [signInReplayTick, setSignInReplayTick] = useState(0);
 
   // useChat hook
   const {
@@ -4419,36 +4644,121 @@ export function useChatSession(
   }, [sdkAddToolApprovalResponse, addToolOutput, reasoningEffortHarness, isHostedTransport, hostedEnsureServerIds]);
 
   useEffect(() => {
+    if (
+      (status !== "ready" && status !== "error") ||
+      scopeStepUpResumeInFlightRef.current
+    )
+      return;
+    for (const [id, result] of completedRecoveryRef.current) {
+      completedRecoveryRef.current.delete(id);
+      if (result.pending.chatSessionId !== chatSessionIdRef.current) continue;
+      if (
+        finishedRecoveryRef.current.has(id) ||
+        hasChatToolResult(messages, result.pending.event.toolCallId)
+      ) {
+        if (!result.cancelled)
+          clearChatAuthRecoveryFailure(result.pending.event.toolCallId);
+        clearPendingChatScopeStepUp(id);
+      } else {
+        recordChatAuthRecoveryFailure(
+          result.cancelled ? "cancel_failed" : "resume_incomplete",
+          pendingRecoveryContext(result.pending),
+        );
+        if (result.cancelled) clearPendingChatScopeStepUp(id);
+        else
+          markPendingChatScopeStepUpCancelled(
+            result.pending.serverName,
+            CHAT_AUTH_RECOVERY_MESSAGE,
+            id,
+          );
+      }
+    }
+  }, [messages, status, signInReplayTick]);
+
+  useEffect(() => {
     const sessionId = chatSessionIdRef.current;
-    if (!sessionId) return;
-    const pending = readPendingChatScopeStepUp();
+    if (
+      !sessionId ||
+      options.authRecoveryPaused ||
+      scopeStepUpResumeInFlightRef.current
+    )
+      return;
+    const pending = listPendingChatScopeStepUps({
+      chatSessionId: sessionId,
+      projectId: hostedProjectId,
+      phases: ["ready", "cancelled"],
+    })[0];
     if (
       !pending ||
       (pending.phase !== "ready" && pending.phase !== "cancelled") ||
       pending.chatSessionId !== sessionId ||
       !hasChatToolCall(messagesRef.current, pending.event.toolCallId) ||
-      status !== "ready"
+      (status !== "ready" && status !== "error")
     ) {
       return;
     }
     if (pending.phase === "ready") {
+      if (pending.event.expiresAt <= Date.now()) {
+        recordChatAuthRecoveryFailure("expired", {
+          ...pendingRecoveryContext(pending),
+          recoveryResult: "resume_refused",
+        });
+        markPendingChatScopeStepUpCancelled(
+          pending.serverName,
+          CHAT_AUTH_RECOVERY_MESSAGE,
+          pending.event.continuationId,
+        );
+        return;
+      }
       const server = resolveScopeStepUpServer(appState, {
         serverId: pending.event.serverId,
         serverName: pending.event.serverName,
         projectId: hostedProjectId,
       });
       if (!server || server.connectionStatus !== "connected") {
-        return;
+        const timeout = window.setTimeout(() => {
+          recordChatAuthRecoveryFailure("server_missing", {
+            ...pendingRecoveryContext(pending),
+            recoveryResult: "connection_not_ready",
+          });
+          markPendingChatScopeStepUpCancelled(
+            pending.serverName,
+            CHAT_AUTH_RECOVERY_MESSAGE,
+            pending.event.continuationId,
+          );
+        }, 30_000);
+        return () => window.clearTimeout(timeout);
       }
     }
+    // Local connections rebuild after a redirect. Do not consume the one
+    // resume attempt while its original server is still reconnecting.
+    if (
+      pending.phase === "ready" &&
+      !HOSTED_MODE &&
+      appState &&
+      appState.servers[pending.serverName]?.connectionStatus !== "connected"
+    ) return;
+    // Set before the storage notification can schedule another render.
+    scopeStepUpResumeInFlightRef.current = true;
     const claimed =
       pending.phase === "ready"
-        ? claimPendingChatScopeStepUp(sessionId)
-        : claimCancelledChatScopeStepUp(sessionId);
-    if (!claimed) return;
+        ? claimPendingChatScopeStepUp(sessionId, pending.event.continuationId)
+        : claimCancelledChatScopeStepUp(
+            sessionId,
+            pending.event.continuationId,
+          );
+    if (!claimed) {
+      scopeStepUpResumeInFlightRef.current = false;
+      return;
+    }
     const wasCancelled = pending.phase === "cancelled";
 
     scopeStepUpResumeInFlightRef.current = true;
+    traceChatAuthRecovery(
+      wasCancelled ? "cancel" : "resume",
+      pendingRecoveryContext(claimed),
+    );
+
     void baseSendMessage(undefined, {
       body: {
         ...(wasCancelled
@@ -4467,10 +4777,26 @@ export function useChatSession(
       },
     })
       .then(() => {
-        clearPendingChatScopeStepUp(claimed.event.continuationId);
+
+        completedRecoveryRef.current.set(claimed.event.continuationId, {
+          pending: claimed,
+          cancelled: wasCancelled,
+        });
       })
       .catch(() => {
-        clearPendingChatScopeStepUp(claimed.event.continuationId);
+
+        recordChatAuthRecoveryFailure(
+          wasCancelled ? "cancel_failed" : "resume_failed",
+          pendingRecoveryContext(claimed),
+        );
+        if (wasCancelled)
+          clearPendingChatScopeStepUp(claimed.event.continuationId);
+        else
+          markPendingChatScopeStepUpCancelled(
+            claimed.serverName,
+            CHAT_AUTH_RECOVERY_MESSAGE,
+            claimed.event.continuationId,
+          );
         toast.error(
           wasCancelled
             ? "Authorization was cancelled, but the suspended tool call could not be updated."
@@ -4479,8 +4805,155 @@ export function useChatSession(
       })
       .finally(() => {
         scopeStepUpResumeInFlightRef.current = false;
+        setSignInReplayTick((tick) => tick + 1);
       });
-  }, [appState, baseSendMessage, hostedProjectId, messages, status]);
+  }, [
+    appState,
+    baseSendMessage,
+    hostedProjectId,
+    messages,
+    status,
+    signInReplayTick,
+    pendingRecoveryRevision,
+    options.authRecoveryPaused,
+  ]);
+
+  // Back/reload must restore waiting cards, and expiry must not depend on a callback.
+  useEffect(() => {
+    const check = () => {
+      const sessionId = chatSessionIdRef.current;
+      for (const pending of listPendingChatScopeStepUps({
+        chatSessionId: sessionId,
+        projectId: hostedProjectId,
+        phases: ["awaiting_click", "awaiting_oauth", "ready"],
+      })) {
+        if (!hasChatToolCall(messagesRef.current, pending.event.toolCallId))
+          continue;
+        if (pending.event.expiresAt <= Date.now()) {
+          clearChatAuthChallengeCard(pending.event.toolCallId);
+          recordChatAuthRecoveryFailure(
+            "expired",
+            {
+              ...pendingRecoveryContext(pending),
+              recoveryResult: "waiting_expired",
+            },
+            { report: false },
+          );
+          markPendingChatScopeStepUpCancelled(
+            pending.serverName,
+            CHAT_AUTH_RECOVERY_MESSAGE,
+            pending.event.continuationId,
+          );
+        } else if (
+          pending.phase !== "ready" &&
+          isPendingChatAuthRequired(pending) &&
+          !presentedSignInCardsRef.current.has(pending.event.toolCallId)
+        ) {
+          presentChatAuthRequiredEvent(pending.event);
+        }
+      }
+    };
+    check();
+    const timer = window.setInterval(check, 1000);
+    window.addEventListener("pageshow", check);
+    window.addEventListener("focus", check);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("pageshow", check);
+      window.removeEventListener("focus", check);
+    };
+  }, [
+    messages,
+    presentChatAuthRequiredEvent,
+    pendingRecoveryRevision,
+    hostedProjectId,
+  ]);
+
+  // A redirect/reload interrupted a claimed request: never replay it a second time.
+  useEffect(() => {
+    if (status !== "ready" || scopeStepUpResumeInFlightRef.current) return;
+    for (const pending of listPendingChatScopeStepUps({
+      chatSessionId: chatSessionIdRef.current,
+      projectId: hostedProjectId,
+      phases: ["resuming", "cancelling"],
+    })) {
+      if (completedRecoveryRef.current.has(pending.event.continuationId))
+        continue;
+      if (
+        finishedRecoveryRef.current.has(pending.event.continuationId) ||
+        hasChatToolResult(messages, pending.event.toolCallId)
+      )
+        clearPendingChatScopeStepUp(pending.event.continuationId);
+      else if (hasChatToolCall(messages, pending.event.toolCallId)) {
+        if (
+          pending.phase === "resuming" &&
+          pending.resumeAttempted === undefined
+        ) {
+          // Older builds used resuming for both retry and cancellation. It is
+          // unsafe to guess which request already ran before the reload.
+          recordChatAuthRecoveryFailure("resume_interrupted", {
+            ...pendingRecoveryContext(pending),
+            recoveryResult: "ambiguous_legacy_attempt",
+          });
+          clearPendingChatScopeStepUp(pending.event.continuationId);
+        } else if (pending.phase === "cancelling" || pending.cancelAttempted) {
+          recordChatAuthRecoveryFailure(
+            "cancel_failed",
+            pendingRecoveryContext(pending),
+          );
+          clearPendingChatScopeStepUp(pending.event.continuationId);
+        } else {
+          recordChatAuthRecoveryFailure(
+            "resume_interrupted",
+            pendingRecoveryContext(pending),
+          );
+          markPendingChatScopeStepUpCancelled(
+            pending.serverName,
+            CHAT_AUTH_RECOVERY_MESSAGE,
+            pending.event.continuationId,
+          );
+        }
+      }
+    }
+  }, [messages, status, pendingRecoveryRevision, hostedProjectId]);
+
+  // The separate click record can identify a lost entry. Cancel only that call;
+  // a local error remains visible even if the server cannot settle it.
+  useEffect(() => {
+    if (status !== "ready" || scopeStepUpResumeInFlightRef.current) return;
+    const failure = recoveryFailures.find(
+      (item) =>
+        item.chatSessionId === chatSessionIdRef.current &&
+        item.continuationId &&
+        item.toolCallId &&
+        item.reason === "missing_pending" &&
+        item.recoveryResult !== "rebuilding_from_card" &&
+        !attemptedFailureCancellationRef.current.has(item.continuationId) &&
+        hasChatToolCall(messages, item.toolCallId) &&
+        !hasChatToolResult(messages, item.toolCallId) &&
+        !readPendingChatScopeStepUp({ continuationId: item.continuationId }),
+    );
+    if (!failure?.continuationId || !failure.toolCallId) return;
+    attemptedFailureCancellationRef.current.add(failure.continuationId);
+    if (!claimMissingCallCancellation(failure.continuationId)) return;
+    scopeStepUpResumeInFlightRef.current = true;
+    void baseSendMessage(undefined, {
+      body: {
+        scopeStepUpCancel: {
+          continuationId: failure.continuationId,
+          toolCallId: failure.toolCallId,
+        },
+      },
+    })
+      .catch(() => {
+        recordChatAuthRecoveryFailure("cancel_failed", failure);
+      })
+      .finally(() => {
+        clearPendingChatScopeStepUp(failure.continuationId!);
+        scopeStepUpResumeInFlightRef.current = false;
+        setSignInReplayTick((tick) => tick + 1);
+      });
+  }, [recoveryFailures, messages, status, baseSendMessage, signInReplayTick]);
 
   /**
    * Resume a suspended hosted MRTR operation (§12.5) by re-driving a chat turn
@@ -5115,11 +5588,38 @@ export function useChatSession(
           const extra = {
             metadata: timestampedMetadata,
           } as { metadata: unknown };
+          // A message sent while a sign-in card is unanswered (or its
+          // redirect never came back) cancels that suspended call in the same
+          // request, so the model sees it was not run instead of the turn
+          // failing on an unresolved tool call.
+          const pendingSignIn = listPendingChatScopeStepUps({
+            chatSessionId: sessionAtSend,
+            projectId: hostedProjectId,
+            phases: ["awaiting_click", "awaiting_oauth"],
+          })[0];
+          const cancelSignIn =
+            pendingSignIn &&
+            isPendingChatAuthRequired(pendingSignIn) &&
+            pendingSignIn.chatSessionId === sessionAtSend &&
+            (pendingSignIn.phase === "awaiting_click" ||
+              pendingSignIn.phase === "awaiting_oauth")
+              ? {
+                  continuationId: pendingSignIn.event.continuationId,
+                  toolCallId: pendingSignIn.event.toolCallId,
+                }
+              : undefined;
+          if (cancelSignIn) {
+            clearPendingChatScopeStepUp(cancelSignIn.continuationId);
+            clearChatAuthChallengeCard(cancelSignIn.toolCallId);
+          }
+          const requestOptions = cancelSignIn
+            ? { body: { scopeStepUpCancel: cancelSignIn } }
+            : undefined;
           appMessageTurnRef.current = pluginMessage !== undefined;
           if (pluginMessage) {
             baseSendMessage(
               { parts: pluginMessageParts(pluginMessage.params), ...extra },
-              { body: { pluginMessage } },
+              { body: { ...requestOptions?.body, pluginMessage } },
             );
           } else if (pluginMentions?.length || extraParts?.length) {
             baseSendMessage({
@@ -5132,12 +5632,12 @@ export function useChatSession(
                 ...(files ?? []),
               ],
               ...extra,
-            });
+            }, requestOptions);
           } else if (files && files.length > 0) {
             // AI SDK accepts FileUIPart[] with data URLs
-            baseSendMessage({ text, files, ...extra });
+            baseSendMessage({ text, files, ...extra }, requestOptions);
           } else {
-            baseSendMessage({ text, ...extra });
+            baseSendMessage({ text, ...extra }, requestOptions);
           }
         } catch (error) {
           pendingWidgetModelContextRef.current = undefined;
@@ -5851,9 +6351,16 @@ export function useChatSession(
           targetKey: hostedTargetKeyValue,
         };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
+        const resolvedMemberId =
+          resolvedAuthHeaders && authIsMemberRef.current
+            ? workOsUser?.id
+            : undefined;
+        // Token rotation updates transport headers, but must not discard the
+        // same member's transcript or detach its pending authorization call.
         const authHeadersChanged =
           hasResolvedBefore &&
-          !sameChatAuthSession(previousAuthHeaders, resolvedAuthHeaders);
+          (!sameChatAuthSession(previousAuthHeaders, resolvedAuthHeaders) ||
+            lastResolvedMemberIdRef.current !== resolvedMemberId);
         const hostedScopeChanged =
           hasResolvedBefore &&
           !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);
@@ -5886,6 +6393,7 @@ export function useChatSession(
         }
 
         hasResolvedAuthHeadersRef.current = true;
+        lastResolvedMemberIdRef.current = resolvedMemberId;
         lastResolvedAuthHeadersRef.current = resolvedAuthHeaders;
         lastResolvedHostedScopeRef.current = currentHostedScope;
         setIsSessionBootstrapComplete(true);
@@ -6015,7 +6523,7 @@ export function useChatSession(
     fetchToolsMetadata();
   }, [
     selectedServersSignature,
-    selectedModel,
+    // The selection key tracks identity; rebuilt catalog rows must not refetch.
     tokenCountSelectionKey,
     hostedScenarioId,
     apiContextRevision,
