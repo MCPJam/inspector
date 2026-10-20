@@ -1,3 +1,4 @@
+import { startLocalHarnessMcpPlane, type LocalHarnessMcpPlaneArgs } from "./mcp-plane.js";
 import { readLocalHarnessAuthorization } from "./authorization.js";
 /**
  * Everything a turn needs to run on the user's own machine, behind ONE call.
@@ -118,6 +119,7 @@ export interface LocalHarnessExecutionTarget {
 
 export interface PreparedLocalHarnessTurn {
   plan: LocalHarnessLaunchPlan;
+  bindMcpPlane: (args: LocalHarnessMcpPlaneArgs) => Promise<Awaited<ReturnType<typeof startLocalHarnessMcpPlane>>>;
   /** The AI SDK sandbox provider the turn assembles its harness over. */
   sandbox: ReturnType<typeof createSupervisedLocalHarnessProvider>;
   /** What the child gets: a gateway URL and a per-session capability. */
@@ -638,6 +640,7 @@ async function prepareWithReservedRuntime(outer: {
 
     // Built before the teardown that has to drop it, so the drop can prove the
     // entry under this id is still the one this turn registered.
+    let mcpPlane: Awaited<ReturnType<typeof startLocalHarnessMcpPlane>> | undefined;
     let leaseBearer = args.bearer;
     const sessionRecord: LocalHarnessSessionRecord = {
       userId: args.target.actingUserId,
@@ -646,7 +649,13 @@ async function prepareWithReservedRuntime(outer: {
       runtimeId: plan.runtime.runtimeId,
       workspaceGrantId: plan.target.workspaceGrantId,
       brokerRunId: broker.runId,
-      gateway: started,
+      gateway: {
+        ...started,
+        revoke: () => { started.revoke(); mcpPlane?.hold(); },
+        close: async () => {
+          try { await started.close(); } finally { await mcpPlane?.close(); }
+        },
+      },
       stop: async () => await supervisor.stopSession(args.sessionId),
       revokeLease: () => revokeLease(currentRunId, leaseBearer),
       releaseRuntime: outer.releaseRuntimeUse,
@@ -659,8 +668,8 @@ async function prepareWithReservedRuntime(outer: {
     let treeStopped = false;
     const teardownOnce = onceAsync(async () => {
       try {
-        started.revoke();
-        await started.close();
+        sessionRecord.gateway?.revoke();
+        await sessionRecord.gateway?.close();
       } finally {
         await revokeLease(currentRunId, leaseBearer);
         // Stop the supervised tree, THEN give up the reservation. This is the
@@ -732,6 +741,11 @@ async function prepareWithReservedRuntime(outer: {
     };
     const prepared: PreparedLocalHarnessTurn = {
       plan,
+      bindMcpPlane: async (next) => {
+        if (mcpPlane) mcpPlane.rebind(next);
+        else mcpPlane = await startLocalHarnessMcpPlane(next);
+        return mcpPlane;
+      },
       sandbox,
       auth: localChildAuth(harnessId, started),
       sandboxWorkDir: "project",
@@ -776,6 +790,7 @@ async function prepareWithReservedRuntime(outer: {
             // lease is not kept live across a human wait: a fresh one is
             // minted, after re-checking authorization, when a decision lands.
             started.hold();
+            mcpPlane?.hold();
             void revokeLease(currentRunId, leaseBearer);
           },
         }),
@@ -824,18 +839,18 @@ async function adoptParkedLocalTurn(
   args: PrepareLocalHarnessTurnArgs,
   harnessId: SupportedLocalHarnessId,
 ): Promise<LocalHarnessTurnPreparation> {
-  const continuation = args.approvalContinuation!;
   const claim = claimParkedLocalSession<LiveLocalRuntime>({
     sessionId: args.sessionId,
-    generation: continuation.generation,
+    generation: args.approvalContinuation!.generation,
     userId: args.target.actingUserId,
     projectId: args.projectId,
-    approvalIds: continuation.approvalIds,
+    approvalIds: args.approvalContinuation!.approvalIds,
   });
   if (!claim.ok) {
     return { ok: false, status: `approval-${claim.reason}`, message: claim.message };
   }
   const live = claim.parked.resources;
+  live.prepared.sandbox.forbidNewProcesses();
   const fail = async (
     reason: ParkInvalidationReason,
     status: string,
@@ -982,7 +997,7 @@ async function adoptParkedLocalTurn(
   }
   logger.info("[local-harness] parked session re-adopted for an approval", {
     sessionId: args.sessionId,
-    approvals: continuation.approvalIds.length,
+    approvals: args.approvalContinuation!.approvalIds.length,
   });
   return {
     ok: true,

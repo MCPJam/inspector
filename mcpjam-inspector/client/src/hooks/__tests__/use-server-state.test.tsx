@@ -1,5 +1,6 @@
 import { serverCheckQueue } from "@/lib/server-check-queue";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
+import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { flushSync } from "react-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
@@ -361,6 +362,37 @@ beforeEach(() => {
     success: true,
     initInfo: null,
   });
+});
+
+it("uses hydrated servers when a child requests readiness in its first effect", async () => {
+  const outcome = vi.fn();
+  const hydrated = createAppState();
+  hydrated.projects.default.servers["demo-server"].connectionStatus = "connected";
+  hydrated.servers["demo-server"].connectionStatus = "connected";
+  const empty = { ...hydrated, projects: { default: { ...hydrated.projects.default, servers: {} } }, servers: {} };
+  function Child({ ready, ensure }: { ready: boolean; ensure: ReturnType<typeof useServerState>["ensureServersReady"] }) {
+    useEffect(() => {
+      if (ready) void ensure(["demo-server"]).then(outcome);
+    }, [ready, ensure]);
+    return null;
+  }
+  function Parent({ ready }: { ready: boolean }) {
+    const appState = ready ? hydrated : empty;
+    const state = useServerState({
+      appState, dispatch: vi.fn(), isLoading: false, isAuthenticated: false,
+      hasSignedInUser: false, currentUserId: null, oauthProjectIds: new Set<string>(),
+      isAuthLoading: false, isLoadingProjects: false, useLocalFallback: true,
+      effectiveProjects: appState.projects, effectiveActiveProjectId: "default",
+      logger: createTestLogger(),
+    });
+    return <Child ready={ready} ensure={state.ensureServersReady} />;
+  }
+  const view = render(<Parent ready={false} />);
+  view.rerender(<Parent ready />);
+  await waitFor(() => expect(outcome).toHaveBeenCalledWith({
+    readyServerNames: ["demo-server"], missingServerNames: [],
+    failedServerNames: [], reauthServerNames: [],
+  }));
 });
 
 describe("ensureHostedServerIdsForNames (hosted harness preflight)", () => {

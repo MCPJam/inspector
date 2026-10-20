@@ -22,18 +22,7 @@ import {
   USED_SERVER_REQUESTS,
 } from "../bridge/app-server-protocol.js";
 
-const SCHEMA_DIR = join(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "..",
-  "..",
-  "..",
-  ".spike-codex-appserver",
-  "schema",
-  PINNED_CODEX_VERSION,
-);
+const SCHEMA_DIR = join(__dirname, "..", "__fixtures__", "schema", PINNED_CODEX_VERSION);
 
 function methodsIn(file: string): Set<string> {
   const schema = JSON.parse(readFileSync(join(SCHEMA_DIR, file), "utf8")) as {
@@ -53,7 +42,7 @@ describe("codex protocol dependency", () => {
     // not having them.
     expect(
       existsSync(join(SCHEMA_DIR, "ClientRequest.json")),
-      `expected the pinned schema at ${SCHEMA_DIR}. Regenerate with .spike-codex-appserver/schema/regen.sh`,
+      `expected the pinned schema at ${SCHEMA_DIR}. Regenerate with codex app-server generate-json-schema`,
     ).toBe(true);
   });
 

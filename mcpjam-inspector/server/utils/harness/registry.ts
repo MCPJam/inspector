@@ -1,3 +1,4 @@
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 /**
  * Harness runtime registry — the ONLY place that knows an adapter is "Claude
  * Code" or "Codex" specifically. `runHarnessTurn` and the session-state
@@ -318,12 +319,10 @@ type HarnessRuntimeAdapterBase = {
   /**
    * Does a PENDING approval live in the runtime PROCESS rather than on disk?
    *
-   * Claude Code's conversation is on disk, so a local turn paused on an
-   * approval can be torn down and re-driven. Codex app-server's pending
-   * approval is an open JSON-RPC request inside one live process (and, for a
-   * host tool, an open relay call), so a local pause must PARK that process
-   * (`local/approval-park.ts`) and the decision must be delivered to it —
-   * never replayed into a new one.
+   * Claude Code's canUseTool and Codex app-server approvals wait inside the
+   * live bridge. Local pauses must park that process and deliver the decision
+   * to it; restarting from the conversation on disk would rerun the prompt
+   * rather than answer the pending call.
    */
   liveApprovalRuntime?: boolean;
   /**
@@ -585,7 +584,7 @@ export type HarnessExternalAccountBrokerBinding = {
 /** NATIVE delivery, `sandbox-files` mechanism: MCPJam writes runtime config
  *  into the box before the process starts. */
 type NativeSandboxFilesArm = {
-  mcpDelivery: "native";
+  mcpDelivery: "harness";
   mcpNativeDelivery: "sandbox-files";
   /** Write the host's MCP servers into a fresh sandbox session, before the
    *  runtime process starts. */
@@ -597,7 +596,7 @@ type NativeSandboxFilesArm = {
  *  the servers are a CONSTRUCTOR setting the adapter forwards into its session
  *  handshake (Claude Code's start message or Cursor's ACP `session/new`). */
 type NativeSessionConfigArm = {
-  mcpDelivery: "native";
+  mcpDelivery: "harness";
   mcpNativeDelivery: "session-config";
   /** Never present: nothing is written into the box for this mechanism. */
   deliverMcpServers?: never;
@@ -612,7 +611,7 @@ type NativeSessionConfigArm = {
 /** HOST-EXECUTED delivery: the servers reach the model as host-executed tools
  *  MCPJam runs in-process, never as runtime config in the sandbox. */
 type HostExecutedArm = {
-  mcpDelivery: "host-executed";
+  mcpDelivery: "mcpjam";
   mcpNativeDelivery?: never;
   deliverMcpServers?: never;
   createHarness(args: HarnessCreateArgs): HarnessAgentAdapter;
@@ -804,9 +803,9 @@ const CLAUDE_CODE_MODEL_FAMILIES = ["haiku", "sonnet", "opus"] as const;
  * Pinning the OTHER families' aliases (`ANTHROPIC_DEFAULT_<FAMILY>_MODEL`) to
  * the turn's canonical id sends those calls to the chosen model — the one
  * the lease admits exactly and the user is billed for. The chosen family's
- * own alias is left alone, so the main model keeps its existing path (the
- * bridge's Gateway model overrides). An id outside the three families pins
- * all three.
+ * own alias uses the bridge's Gateway model overrides. Haiku also pins its
+ * native alias and small-fast model so the requested version reaches those
+ * overrides. An id outside the three families pins all three.
  */
 function claudeCodeModelPins(modelId: string): Record<string, string> {
   const native = toClaudeCodeModel(modelId);
@@ -815,6 +814,11 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
       native === candidate || native?.startsWith(`claude-${candidate}-`),
   );
   const pins: Record<string, string> = {};
+  if (family === "haiku") {
+    const selectedHaiku = modelId.replace(/^anthropic\//, "").replace(/\./g, "-");
+    pins.ANTHROPIC_DEFAULT_HAIKU_MODEL = selectedHaiku;
+    pins.ANTHROPIC_SMALL_FAST_MODEL = selectedHaiku;
+  }
   for (const candidate of CLAUDE_CODE_MODEL_FAMILIES) {
     if (candidate === family) continue;
     pins[`ANTHROPIC_DEFAULT_${candidate.toUpperCase()}_MODEL`] = modelId;
@@ -824,7 +828,7 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
 
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
-  displayName: "Claude Code",
+  displayName: HARNESS_DESCRIPTORS["claude-code"].displayName,
   // Nothing verified yet: an effort on this harness is refused, not dropped.
   // `createHarness` below already maps an effort (`effort` option + adaptive
   // thinking), but it stays inert (the SDK row is empty) until the live check
@@ -833,7 +837,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   requiresComputer: true,
   // MCPJam brokers the model credential: Convex mints a lease, E2B injects it
   // outside the VM, and the model proxy meters the spend.
-  modelAccess: "broker",
+  modelAccess: HARNESS_DESCRIPTORS["claude-code"].modelAccess,
   defaultPermissionMode: "allow-all",
   // WS3: the CLI pauses on a tool-approval-request for side-effecting tools;
   // the turn suspends and resumes with the user's decision (see
@@ -877,6 +881,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY["claude-code"],
   // …through the SDK session configuration, without writing into the workspace.
   mcpNativeDelivery: "session-config",
+  liveApprovalRuntime: true,
   supportsSkills: true,
   skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
   // Mirrors `writeClaudeCodeSkills` in `@ai-sdk/harness-claude-code`.
@@ -984,12 +989,12 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // exec transport forks (with a visible "runtime-changed" reset) instead of
   // resuming onto a different protocol.
   transport: "app-server",
-  displayName: "Codex",
+  displayName: HARNESS_DESCRIPTORS["codex"].displayName,
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["codex"],
   requiresComputer: true,
   // Brokered, same as Claude Code — an OpenAI-protocol lease instead of an
   // Anthropic one — or on the organization's own OpenAI key.
-  modelAccess: "broker",
+  modelAccess: HARNESS_DESCRIPTORS["codex"].modelAccess,
   // Hosted: `never` + `danger-full-access`, the disposable box being the
   // boundary. Locally the bridge refuses `allow-all` without an explicit
   // workspace-write sandbox policy, so it never becomes full access there.
@@ -1075,7 +1080,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // chat panel) keeps that name, and the two are different products with
   // different surfaces. Every preflight/refusal message a user reads comes from
   // here, so the distinction has to be in the name itself.
-  displayName: "Cursor CLI",
+  displayName: HARNESS_DESCRIPTORS["cursor"].displayName,
   // Nothing verified yet: an effort on this harness is refused, not dropped.
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["cursor"],
   requiresComputer: true,
@@ -1085,7 +1090,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // lands on that Cursor account. There is no seam for MCPJam to mint a lease
   // at, so the turn skips the broker start entirely and `buildBrokerDummyAuth`
   // throws if anything asks it for one.
-  modelAccess: "external-account",
+  modelAccess: HARNESS_DESCRIPTORS["cursor"].modelAccess,
   // The name the CLI itself reads — `@ai-sdk/harness-cursor` declares exactly
   // this as its `credentialEnv`. Delivered as a PROJECT SECRET: one key per
   // environment, set once by an admin under Project Settings → Secrets.

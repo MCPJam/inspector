@@ -154,9 +154,7 @@ function factSource(entries: PluginFileEntry[]): PluginFileSource {
 
 describe("parsePluginBundleFromFiles", () => {
   it("parses a minimal bundle and reports a content-defined bundle hash", async () => {
-    const parsed = await parsePluginBundleFromFiles(
-      bundleFiles(MCP_SERVERS),
-    );
+    const parsed = await parsePluginBundleFromFiles(bundleFiles(MCP_SERVERS));
     expect(parsed.manifest.name).toBe("demo-plugin");
     expect(parsed.bundleHash).toMatch(/^[0-9a-f]{64}$/);
     expect(parsed.mcpServers.map((server) => server.key).sort()).toEqual([
@@ -230,6 +228,33 @@ describe("folder / ZIP bundle hash parity", () => {
     const first = await buildPluginZip(files);
     const second = await buildPluginZip([...files].reverse());
     expect(Buffer.from(second).equals(Buffer.from(first))).toBe(true);
+  });
+
+  it("a ZIP's executable bits reach the parse as they do on the backend", async () => {
+    const { default: JSZip } = await import("jszip");
+    const zip = new JSZip();
+    const withServer = [...files, textFile("bin/server", "#!/bin/sh\n")];
+    for (const file of withServer) {
+      zip.file(file.path, file.bytes, {
+        unixPermissions: file.path === "bin/server" ? 0o100755 : 0o100644,
+      });
+    }
+    const parsed = await parsePluginBundleFromZip(
+      await zip.generateAsync({ type: "uint8array", platform: "UNIX" }),
+    );
+    expect(parsed.executableFiles).toEqual(["bin/server"]);
+    // The same files reported with the same modes by any other source.
+    const reference = await parsePluginBundle({
+      list: async () =>
+        withServer.map((file) => ({
+          path: file.path,
+          size: file.bytes.byteLength,
+          mode: file.path === "bin/server" ? 0o755 : 0o644,
+        })),
+      readBytes: async (path) =>
+        withServer.find((file) => file.path === path)!.bytes,
+    });
+    expect(parsed.executionDigest).toBe(reference.executionDigest);
   });
 
   it("uploads built by buildPluginZip contain file records only", async () => {

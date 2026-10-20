@@ -1,7 +1,28 @@
+import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { legacyPluginFormWire } from "../../services/plugin-host/owned-legacy.js";
 import type { ModelToolExecutor } from "../../utils/model-tool-executor.js";
 
 const MODERN = "2026-07-28";
+
+/** OpenAI plugin Forms and standard MCP elicitation are separate declarations.
+ * Only a saved, admitted plugin workspace can supply this additional gate. */
+export function pluginModelMrtrEnabled(input: {
+  emulated: boolean;
+  workspace: boolean;
+  forms: boolean | undefined;
+  serviceCredential: boolean;
+  elicitationHandshake: boolean;
+  mrtrHandshake: boolean;
+}): boolean {
+  return (
+    input.emulated &&
+    input.workspace &&
+    input.forms === true &&
+    input.serviceCredential &&
+    input.elicitationHandshake &&
+    input.mrtrHandshake
+  );
+}
 
 /**
  * Which OpenAI plugin path a Playground chat turn installs on its manager.
@@ -26,6 +47,7 @@ const MODERN = "2026-07-28";
  */
 export function chatPluginFormPlan(input: {
   harness: string | undefined;
+  agentLoop?: string;
   serverIds: readonly string[];
   pinFor: (serverId: string) => string | undefined;
   mrtrEnabled: boolean;
@@ -35,7 +57,7 @@ export function chatPluginFormPlan(input: {
   modernServerIds: string[];
   legacyServerIds: string[];
 } {
-  const admitted = !input.harness || input.harness === "codex";
+  const admitted = usesMcpjamClient(input);
   if (!admitted)
     return { admitted, modernServerIds: [], legacyServerIds: [] };
   const modernServerIds =
@@ -60,24 +82,37 @@ export function chatPluginFormPlan(input: {
 /**
  * The turn's plugin executor. A server in the modern plan whose connection
  * is on the 2026-07-28 era (by pin, or negotiated by an Auto client) goes to
- * the MRTR adapter; every other call goes to the legacy form executor when
- * one is installed, or runs as is.
+ * the MRTR adapter. A modern server without that consumer runs normally and
+ * must never enter the legacy form executor. Legacy calls use their installed
+ * form executor, or run normally when none is installed.
  */
 export function chatPluginToolExecutor(input: {
   modern?: { serverIds: readonly string[]; execute: ModelToolExecutor };
   legacy?: ModelToolExecutor;
   pinFor: (serverId: string) => string | undefined;
   negotiatedVersion: (serverId: string) => string | undefined;
+  onFailure?: (
+    execution: Parameters<ModelToolExecutor>[0],
+    error: unknown,
+  ) => void;
 }): ModelToolExecutor | undefined {
   const { modern, legacy } = input;
-  if (!modern) return legacy;
-  return (execution, run) => {
+  if (!modern && !legacy) return undefined;
+  return async (execution, run) => {
     const id = execution.serverKey;
-    if (
-      modern.serverIds.includes(id) &&
-      (input.pinFor(id) === MODERN || input.negotiatedVersion(id) === MODERN)
-    )
-      return modern.execute(execution, run);
-    return legacy ? legacy(execution, run) : run();
+    try {
+      if (input.pinFor(id) === MODERN || input.negotiatedVersion(id) === MODERN)
+        return await (modern?.serverIds.includes(id)
+          ? modern.execute(execution, run)
+          : run());
+      return await (legacy ? legacy(execution, run) : run());
+    } catch (error) {
+      try {
+        input.onFailure?.(execution, error);
+      } catch {
+        /* Evidence only. */
+      }
+      throw error;
+    }
   };
 }

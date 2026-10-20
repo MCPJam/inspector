@@ -323,6 +323,25 @@ describe("usePostHogIdentify", () => {
     expect(mockState.posthog.updateFlags).not.toHaveBeenCalled();
   });
 
+  it("keeps shared flags during promotion when privacy defers identify", () => {
+    mockState.actorKey = "guest_abc";
+    const { rerender } = renderHook(identify);
+    vi.clearAllMocks();
+
+    mockState.auth.user = { id: "user_123", email: "member@example.test" };
+    mockState.actorKey = "user_123";
+    mockState.content = "strict";
+    rerender();
+
+    expect(mockState.posthog.identify).not.toHaveBeenCalled();
+    expect(mockState.posthog.updateFlags).not.toHaveBeenCalled();
+    expect(mockState.posthog.reset).not.toHaveBeenCalled();
+    expect(mockState.refreshServerFeatureFlagsForActor).toHaveBeenCalledWith(
+      mockState.posthog,
+      expect.objectContaining({ actorKey: "user_123", isAuthedActor: true }),
+    );
+  });
+
   it("aliases a guest into an authed user without calling reset on guest→authed promotion", () => {
     mockState.auth.user = null;
     mockState.convexAuth.isAuthenticated = false;
@@ -350,9 +369,13 @@ describe("usePostHogIdentify", () => {
     rerender();
 
     expect(mockState.posthog.reset).not.toHaveBeenCalled();
-    // Without a reset, the guest's server-evaluated flags would survive a
-    // failed refresh for the new actor — they are cleared explicitly instead.
-    expect(mockState.posthog.updateFlags).toHaveBeenCalledWith({});
+    // The server refresh replaces the evaluation; an empty intermediate
+    // evaluation would also clear flags in other tabs sharing this identity.
+    expect(mockState.posthog.updateFlags).not.toHaveBeenCalled();
+    expect(mockState.refreshServerFeatureFlagsForActor).toHaveBeenCalledWith(
+      mockState.posthog,
+      expect.objectContaining({ actorKey: "user_123", isAuthedActor: true }),
+    );
     expect(mockState.posthog.identify).toHaveBeenCalledWith("user_123", {
       deployment: "self_hosted",
       email: "user@example.com",

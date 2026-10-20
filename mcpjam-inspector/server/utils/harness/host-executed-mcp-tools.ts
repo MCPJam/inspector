@@ -4,7 +4,7 @@ import { getManagerConnections } from "../mcp-connections.js";
 /**
  * Project a host's selected MCP servers into HOST-EXECUTED AI SDK tools, for a
  * harness whose runtime cannot make an MCP tool model-callable itself
- * (`mcpDelivery: "host-executed"` — Codex today).
+ * (`mcpDelivery: "mcpjam"` — Codex today).
  *
  * ## Why this exists
  *

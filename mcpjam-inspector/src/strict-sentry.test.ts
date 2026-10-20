@@ -5,10 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { electronBuildSurface } from "../shared/sentry-config";
 import { dropUpdaterInstallSpawnRejection } from "./crash-reporting";
-const { init, send } = vi.hoisted(() => ({ init: vi.fn(), send: vi.fn(async () => ({})) }));
-vi.mock("@sentry/electron/main", () => ({ init, IPCMode: { Both: 3 }, makeElectronTransport: () => ({ send, flush: async () => true }) }));
-import { initDesktopSentry } from "./strict-sentry";
-afterEach(() => { vi.unstubAllEnvs(); init.mockClear(); send.mockClear(); });
+const { init, send, captureMessage, flush } = vi.hoisted(() => ({
+  init: vi.fn(),
+  send: vi.fn(async () => ({})),
+  captureMessage: vi.fn(),
+  flush: vi.fn(async () => true),
+}));
+vi.mock("@sentry/electron/main", () => ({ init, captureMessage, flush, IPCMode: { Both: 3 }, makeElectronTransport: () => ({ send, flush: async () => true }) }));
+import { initDesktopSentry, reportDesktopStartupFailure } from "./strict-sentry";
+afterEach(() => { vi.unstubAllEnvs(); init.mockClear(); send.mockClear(); captureMessage.mockClear(); flush.mockClear(); });
 describe("desktop diagnostic boundary", () => {
   it("preserves the packaged environment and build-owned debug metadata", async () => {
     const root = mkdtempSync(join(tmpdir(), "desktop-sentry-"));
@@ -93,6 +98,35 @@ describe("desktop diagnostic boundary", () => {
     expect(JSON.stringify(send.mock.calls)).not.toContain("PRIVATE_SENTINEL");
     expect(options.attachScreenshot).toBe(false);
     expect(options.tracesSampleRate).toBe(0);
+  });
+  it("pages with the startup failure's details and flushes before the dialog", async () => {
+    await reportDesktopStartupFailure({ code: "port_taken", port: 6275 });
+    expect(captureMessage).toHaveBeenCalledWith(
+      "Desktop app could not start after an automatic restart",
+      {
+        level: "error",
+        tags: { surface: "desktop", page_class: "incident" },
+        extra: { code: "port_taken", port: 6275 },
+      },
+    );
+    expect(flush).toHaveBeenCalledWith(2000);
+  });
+  it("keeps the page's message, alert tags, code and port through the boundary", async () => {
+    initDesktopSentry({ release: "3.16.0", packaged: true, root: "/trusted" });
+    const transport = init.mock.calls[0][0].transport({});
+    await transport.send([{}, [[{ type: "event" }, {
+      message: "Desktop app could not start after an automatic restart",
+      level: "error",
+      tags: { surface: "desktop", page_class: "incident" },
+      extra: { code: "port_taken", port: 6275, path: "PRIVATE_SENTINEL" },
+    }]]]);
+    const serialized = JSON.stringify(send.mock.calls);
+    expect(serialized).toContain('"message":"Desktop app could not start after an automatic restart"');
+    expect(serialized).toContain('"surface":"desktop"');
+    expect(serialized).toContain('"page_class":"incident"');
+    expect(serialized).toContain('"code":"port_taken"');
+    expect(serialized).toContain('"port":6275');
+    expect(serialized).not.toContain("PRIVATE_SENTINEL");
   });
   it.each(["1", "true"])("honors late DO_NOT_TRACK=%s for all families", async (value) => {
     initDesktopSentry({ release: "3.16.0", packaged: true, root: "/trusted" });

@@ -37,7 +37,7 @@ describe("resolveHostTools — builtInToolIds", () => {
       ctx
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
-    expect(typeof tools![WEB_SEARCH_TOOL_NAME].execute).toBe("function");
+    expect(tools![WEB_SEARCH_TOOL_NAME]).toMatchObject({ execute: expect.any(Function), _toolOrigin: "builtin" });
   });
 
   it("skips unknown ids instead of throwing", () => {
@@ -98,7 +98,7 @@ describe("resolveHostTools — computer-backed bash", () => {
     );
     expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
     const bash = tools![BASH_TOOL_NAME] as { needsApproval?: boolean };
-    expect(typeof tools![BASH_TOOL_NAME].execute).toBe("function");
+    expect(tools![BASH_TOOL_NAME]).toMatchObject({ execute: expect.any(Function), _toolOrigin: "builtin" });
     // The host's approval policy reaches the tool.
     expect(bash.needsApproval).toBe(true);
   });

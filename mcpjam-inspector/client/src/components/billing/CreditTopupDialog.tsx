@@ -21,6 +21,7 @@ import {
 } from "@/hooks/useCreditTopup";
 import { track } from "@/lib/analytics";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 
 interface CreditTopupDialogProps {
   open: boolean;
@@ -260,6 +261,7 @@ export function CreditTopupDialog({
             </Button>
           )}
         </DialogFooter>
+        {!quotePreset.requiresUpgrade && <LegalConsentNotice />}
       </DialogContent>
     </Dialog>
   );

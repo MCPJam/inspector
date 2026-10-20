@@ -28,6 +28,7 @@ import type {
   PlatformScenarioDetail,
   PlatformGoal,
   PlatformGoalArchived,
+  PlatformGoalJudgeWrite,
   PlatformGoalRun,
   PlatformGoalRunCanceled,
   PlatformGoalRunLaunched,
@@ -4134,6 +4135,8 @@ export class PlatformApiClient {
       environmentIds?: string[];
       serverAttachmentId?: string;
       hostIds?: string[];
+      /** Omitted: the managed defaults. */
+      judge?: PlatformGoalJudgeWrite;
     },
     options?: RequestOptions
   ): Promise<PlatformGoal> {
@@ -4166,6 +4169,8 @@ export class PlatformApiClient {
       iterations?: number;
       maxTurns?: number;
       setupWrites?: boolean;
+      /** Fields named are changed; `null` clears the judge to the defaults. */
+      judge?: PlatformGoalJudgeWrite | null;
     },
     options?: RequestOptions
   ): Promise<PlatformGoal> {

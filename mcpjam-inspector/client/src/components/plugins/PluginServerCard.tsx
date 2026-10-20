@@ -55,6 +55,7 @@ export function PluginServerCard({
   status,
   canManage,
   onOpenSettings,
+  signIn,
 }: {
   plugin: PluginSummary;
   /** Omitted for the plugin's own card (a plugin with no server to show). */
@@ -63,6 +64,8 @@ export function PluginServerCard({
   /** Project admin: lifecycle actions are refused for anyone else. */
   canManage: boolean;
   onOpenSettings: (serverId: string | null) => void;
+  /** Present while this member has to sign in before chats can use it. */
+  signIn?: { pending: boolean; onSignIn: () => void };
 }) {
   const management = usePluginManagementActions();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -163,6 +166,22 @@ export function PluginServerCard({
                   )}
                   <span>{status.label}</span>
                 </span>
+                {signIn ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    disabled={signIn.pending}
+                    onClick={signIn.onSignIn}
+                    data-testid="plugin-server-sign-in"
+                  >
+                    {signIn.pending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      "Sign in"
+                    )}
+                  </Button>
+                ) : null}
                 <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
                   <DropdownMenuTrigger asChild>
                     <Button

@@ -422,19 +422,23 @@ const describeBurstRetry = (retryAfterMs: number | undefined): string => {
   return `Too many Ask MCPJam turns in a row. Try again in ${seconds}s.`;
 };
 
-/**
- * One plain sentence for an Ask MCPJam refusal, or `null` when the error is
- * something else.
- *
- * The agent is free, so none of these is a wallet the reader can top up, and
- * the raw body they arrive as reads as a crash. The two sentences say the only
- * two things worth saying: come back after the reset, or this is ours and it is
- * temporary.
- */
+export function isGuestInputTooLargeMessage(
+  message: string | null | undefined,
+): boolean {
+  if (!message) return false;
+  const codes = new Set<string>();
+  collectCodes(message, codes);
+  return codes.has("guest_input_too_large");
+}
+
+/** Plain copy for an Ask MCPJam refusal, not its transport envelope. */
 export function describeAgentRefusalMessage(
   message: string | null | undefined,
 ): string | null {
   if (!message) return null;
+  if (isGuestInputTooLargeMessage(message)) {
+    return "This conversation is too large to send. Shorten your message, start a new chat, or disconnect servers and try again.";
+  }
   const codes = new Set<string>();
   collectCodes(message, codes);
   if (codes.has(AGENT_STEP_LIMIT_CODE)) {

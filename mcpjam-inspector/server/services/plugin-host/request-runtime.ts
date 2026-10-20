@@ -1,3 +1,4 @@
+import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import type { ElicitResult } from "@modelcontextprotocol/client";
 import { pluginLocalFormFilesOptInSchema } from "../../../shared/plugin-form-services.js";
 import { pluginFormFileGrants } from "./form-file-grants.js";
@@ -333,6 +334,7 @@ export function createPluginRequestRuntime(
       throw denied();
     assertPluginWorkspaceRuntime({
       harness: config.harness,
+      agentLoop: config.agentLoop,
       hostPolicy: { hostStyle: config.hostStyle },
     });
     const hostRevision = pluginHostBindingDigest(config);
@@ -356,7 +358,7 @@ export function createPluginRequestRuntime(
     mrtrWire = version === "2026-07-28";
     const capabilities = createPluginCapabilityRegistry({
       profile: {
-        runtime: config.harness === "codex" ? "codex" : "chatgpt-emulated",
+        runtime: (config.agentLoop && usesMcpjamClient(config) || config.harness === "codex") ? "codex" : "chatgpt-emulated",
         transport: version === "2026-07-28" ? "mrtr" : "legacy",
         // The client's own per-extension toggles are the only source of
         // extension support, enforced here too, not only in the browser.
@@ -871,7 +873,7 @@ export function createPluginRequestRuntime(
         pluginMessageEnabled(config) && extensions.capabilities.messages,
       extensions,
       runtime:
-        config.harness === "codex" ? ("codex" as const) : ("chatgpt" as const),
+        (config.agentLoop && usesMcpjamClient(config) || config.harness === "codex") ? ("codex" as const) : ("chatgpt" as const),
       transport:
         negotiatedVersion === "2026-07-28"
           ? ("mrtr" as const)

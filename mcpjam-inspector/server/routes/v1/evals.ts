@@ -61,45 +61,18 @@ import {
 } from "./eval-compare-projection.js";
 import { ConvexHttpClient } from "convex/browser";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
-import {
-  selectionConfigKey,
-  type ModelSelection,
-  type RequestedModelSelection,
-} from "@mcpjam/sdk";
+import { type RequestedModelSelection } from "@mcpjam/sdk";
 import {
   ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE,
   computedModelId,
   modelSelectionSchema,
   requestedModelSelectionSchema,
+  requestedSelectionIfMatches,
+  sameRequestedSelection,
   selectionModelMismatch,
   selectionOriginField,
 } from "./model-selection-schema.js";
 
-/**
- * The selection, only if it is for `modelId` (verbatim, after a trim). Same
- * rule as the SDK's `selectionIfMatches`, widened to a STORED legacy
- * selection, which a store-once row may hold.
- */
-function requestedSelectionIfMatches(
-  selection: RequestedModelSelection | undefined,
-  modelId: string | undefined,
-): RequestedModelSelection | undefined {
-  if (selection === undefined || modelId === undefined) return undefined;
-  return selection.modelId === modelId.trim() ? selection : undefined;
-}
-
-/** Two selections say the same thing (by value, not object identity). */
-function sameRequestedSelection(
-  a: RequestedModelSelection,
-  b: RequestedModelSelection,
-): boolean {
-  if (a.source === "legacy" || b.source === "legacy")
-    return a.source === b.source && a.modelId === b.modelId;
-  return (
-    selectionConfigKey(a as ModelSelection) ===
-    selectionConfigKey(b as ModelSelection)
-  );
-}
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
 import { upstreamRetryAfter } from "../../services/swarm-agent.js";

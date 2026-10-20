@@ -3466,6 +3466,7 @@ function parseViewportPolicy(value) {
 var authHeaderLike = () => /\b(authorization["']?\s*:\s*)["']?[^\n\r"'`]+/gi;
 var tokenLike = () => /\bBearer\s+[A-Za-z0-9._~\-+/=]+\b/gi;
 var skKeyLike = () => /\bsk-(?:[A-Za-z0-9]+-)*[A-Za-z0-9]{16,}\b/g;
+var providerTokenLike = () => /(?<![A-Za-z0-9])(?:ghs_[A-Za-z0-9_.-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_.-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|A[KS]IA[0-9A-Z]{16}(?![A-Za-z0-9])|hf_[A-Za-z0-9]{30,}|gsk_[A-Za-z0-9]{20,}|xai-[A-Za-z0-9]{20,}|ya29\.[A-Za-z0-9_-]{20,})/g;
 var jwtLike = () => /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
 var secretParamLike = () => /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|authorization|secret|password|passwd|pwd|token|auth|key|sig|signature)\s*[=:]\s*["']?)[^&\s"'`]+/gi;
 var urlBasicAuthLike = () => /(\/\/[^\s/:@]+:)[^\s@/]+@/g;
@@ -3483,7 +3484,7 @@ function redactSecretShapes(text, replacement = "[redacted]") {
 var SECRET_PLACEHOLDER = /\{\{secret:([A-Z_][A-Z0-9_]*)\}\}/g;
 function redactSegment(text, replacement) {
   if (!text) return text;
-  return text.replace(authHeaderLike(), `$1${replacement}`).replace(tokenLike(), `Bearer ${replacement}`).replace(jwtLike(), replacement).replace(urlBasicAuthLike(), `$1${replacement}@`).replace(skKeyLike(), replacement).replace(secretParamLike(), `$1${replacement}`);
+  return text.replace(authHeaderLike(), `$1${replacement}`).replace(tokenLike(), `Bearer ${replacement}`).replace(jwtLike(), replacement).replace(urlBasicAuthLike(), `$1${replacement}@`).replace(skKeyLike(), replacement).replace(providerTokenLike(), replacement).replace(secretParamLike(), `$1${replacement}`);
 }
 
 // server/services/browserd/daemon/shape-redaction.ts

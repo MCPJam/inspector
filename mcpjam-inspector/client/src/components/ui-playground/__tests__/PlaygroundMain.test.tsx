@@ -237,6 +237,8 @@ const mockHiddenEnvironment = vi.hoisted(() => ({
   calls: [] as any[],
   state: {
     plugins: [] as any[],
+    hasRunnablePlugins: false,
+    venue: "hosted" as const,
     pluginServers: [] as any[],
     wanted: false,
     environmentId: null as string | null,
@@ -967,6 +969,7 @@ describe("PlaygroundMain", () => {
       mockHiddenEnvironment.state = {
         ...nothing,
         plugins: [bitsRow],
+        hasRunnablePlugins: true,
         pluginServers: [bitsServer],
         wanted: true,
         environmentId,
@@ -997,6 +1000,7 @@ describe("PlaygroundMain", () => {
       expect(hosted.hiddenEnvironment).toEqual({
         environmentId: "env_hidden",
         pluginServerIds: ["srv_bits"],
+        venue: "hosted",
         recover,
       });
       // Not an explicit environment: the chat hook decides per turn whether

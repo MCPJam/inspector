@@ -1070,3 +1070,20 @@ describe("captureAndPersistWidgetSnapshotsForSession — upload scope", () => {
     });
   });
 });
+
+
+it("forwards frozen agent-loop tool policies through the swarm drain", async () => {
+  createBrowserSessionContextMock.mockReturnValue(buildFakeBrowserContext({ computerUse: false }));
+  const adapter = baseAdapter();
+  const tasks = { mode: "await" as const };
+  const result = await runSyntheticHostSession({
+    ...adapter,
+    runtime: { ...adapter.runtime, agentLoop: "codex", respectToolVisibility: false,
+      modelVisibleMcpToolResults: { directContent: { text: true } }, tasks },
+  } as never);
+  expect(result).toEqual({ outcome: "succeeded" });
+  expect(runAssistantTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+    agentLoop: "codex", respectToolVisibility: false,
+    modelVisibleMcpToolResults: { directContent: { text: true } }, tasks,
+  }));
+});

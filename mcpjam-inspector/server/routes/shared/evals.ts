@@ -2624,9 +2624,8 @@ export async function prepareEvalRun(
         : await resolveEnvironmentForLaunch(convexClient, {
             serverSource: EVAL_LAUNCH_SERVER_SOURCE,
             runtimeVenue: requestedVenue,
-            ...(environmentLocalHarness
-              ? { runnerCapabilities: localHarnessCapabilities([environmentLocalHarness]) }
-              : {}),
+            ...(environmentLocalHarness ? { runnerCapabilities: localHarnessCapabilities([environmentLocalHarness]) } : {}),
+            ...(provenance.source === "github_check" ? { serversReplaced: true } : {}),
             projectId,
             environmentId,
           }).catch((error) => {
@@ -3215,7 +3214,7 @@ export async function prepareEvalRun(
       // The shared pin → skill-channel conversion (environment quick runs use
       // the same one): unreachable supporting files fail HERE, before the
       // model runs, and an empty pin set stays empty on both channels.
-      const pinServerNames = environmentLaunch
+      const pinServerNames = environmentLaunch && !githubCheckEnvironmentLaunch
         ? environmentServerNames(environmentLaunch)
         : serverNames;
       const built = await buildPinnedSkillSource({

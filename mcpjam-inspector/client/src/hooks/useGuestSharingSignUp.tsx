@@ -12,6 +12,7 @@ import {
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { track } from "@/lib/analytics";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 
 /** Only the structured backend gate is actionable as signup. */
 function isGuestSharingSignInRequired(error: unknown): boolean {
@@ -64,6 +65,7 @@ function GuestSharingSignUpDialog({ onClose }: { onClose: () => void }) {
           </Button>
           <Button onClick={() => authenticate(true)}>Sign up to share</Button>
         </DialogFooter>
+        <LegalConsentNotice />
       </DialogContent>
     </Dialog>
   );

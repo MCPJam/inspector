@@ -1,3 +1,4 @@
+import { HARNESS_DESCRIPTORS } from "./harness-descriptors";
 /**
  * Which models a harness runtime can run, keyed by the runtime's VERSION.
  *
@@ -31,7 +32,7 @@ export type HarnessModelSupportStatus = "supported" | "unsupported" | "unknown";
 /** One evidence row, exactly as it appears in the JSON table. */
 export type HarnessModelSupportRow = {
   harness: string;
-  /** `"*"` (any version, including an unknown one), `"<=A.B.x"` or `">A.B.x"`. */
+  /** `"*"` (any version, including an unknown one), `"<=A.B.x"`, `">A.B.x"` or `"A.B.x"`. */
   versionRange: string;
   /** Regular expression tested against the normalized canonical model id. */
   familyPattern: string;
@@ -78,13 +79,9 @@ export const HARNESS_MODEL_SUPPORT_ROWS: readonly HarnessModelSupportRow[] =
  * the same change that bumps an adapter.
  */
 export const HARNESS_PINNED_VERSIONS = {
-  "claude-code": "2.1.245",
-  codex: "0.149.1",
-  // The Cursor CLI build the hosted bootstrap installs (and the computer
-  // template bakes), by the version string Cursor's own installer stamps in.
-  // `server/utils/harness/cursor-bootstrap.ts` pins the download to exactly
-  // this build with a checksum per platform; bump both together.
-  cursor: "2026.10.01-e373342",
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].runtimeVersion,
+  "codex": HARNESS_DESCRIPTORS["codex"].runtimeVersion,
+  "cursor": HARNESS_DESCRIPTORS["cursor"].runtimeVersion,
 } as const satisfies Record<Harness, string | null>;
 
 /** The pinned runtime version for a harness id, or undefined when the harness
@@ -117,9 +114,9 @@ export type HarnessOrgUpstream = {
 };
 
 export const HARNESS_ORG_UPSTREAM = {
-  "claude-code": { provider: "anthropic", profile: "anthropic-native" },
-  codex: { provider: "openai", profile: "openai-native" },
-  cursor: null,
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].orgUpstream,
+  "codex": HARNESS_DESCRIPTORS["codex"].orgUpstream,
+  "cursor": HARNESS_DESCRIPTORS["cursor"].orgUpstream,
 } as const satisfies Record<Harness, HarnessOrgUpstream | null>;
 
 /** The org upstream `harnessId` runs on, or null when it takes no org key. */
@@ -172,15 +169,15 @@ export function harnessOrgProviderUnsupportedReason(
   const name = harnessDisplayName(harnessId);
   const upstream = harnessOrgUpstream(harnessId);
   if (!upstream) {
-    return `the ${name} harness does not run on an organization's provider key`;
+    return `The ${name} client does not support organization provider keys. Choose another client.`;
   }
   const vendor = ORG_PROVIDER_LABELS[upstream.provider];
   if (policy === null) {
-    return `the ${name} harness requires a supported model and an eligible ${vendor} connection`;
+    return `The ${name} client needs a supported model and an eligible ${vendor} connection. Choose another model or contact your organization admin.`;
   }
   return policy.requireOrgKeys
-    ? `the ${name} harness runs only on your organization's ${vendor} key`
-    : `the ${name} harness runs MCPJam-provided models or your organization's ${vendor} key`;
+    ? `The ${name} client requires your organization's ${vendor} key. Choose an organization model or contact your organization admin.`
+    : `The ${name} client needs an MCPJam model or your organization's ${vendor} key. Choose a supported model.`;
 }
 
 /**
@@ -203,9 +200,9 @@ export function harnessNoRunnableModelReason(
 
 /** Human-facing runtime names (same values as the registry's `displayName`). */
 const HARNESS_DISPLAY_NAMES: Record<string, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  cursor: "Cursor CLI",
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].displayName,
+  codex: HARNESS_DESCRIPTORS.codex.displayName,
+  cursor: HARNESS_DESCRIPTORS.cursor.displayName,
 };
 
 /** The runtime's human-facing name ("Claude Code"), or the id itself. */
@@ -236,19 +233,19 @@ function compareMajorMinor(
 }
 
 type ParsedRange =
-  { kind: "any" } | { kind: "lte" | "gt"; bound: [number, number] };
+  { kind: "any" } | { kind: "lte" | "gt" | "eq"; bound: [number, number] };
 
 function parseVersionRange(range: string): ParsedRange | undefined {
   if (range === "*") return { kind: "any" };
-  const match = range.match(/^(<=|>)(\d+)\.(\d+)\.x$/);
+  const match = range.match(/^(<=|>)?(\d+)\.(\d+)\.x$/);
   if (!match) return undefined;
   return {
-    kind: match[1] === "<=" ? "lte" : "gt",
+    kind: match[1] === "<=" ? "lte" : match[1] === ">" ? "gt" : "eq",
     bound: [Number(match[2]), Number(match[3])],
   };
 }
 
-/** Is `range` well-formed (`"*"`, `"<=A.B.x"` or `">A.B.x"`)? */
+/** Is `range` well-formed (`"*"`, `"<=A.B.x"`, `">A.B.x"` or `"A.B.x"`)? */
 export function isValidHarnessVersionRange(range: string): boolean {
   return parseVersionRange(range) !== undefined;
 }
@@ -268,7 +265,7 @@ export function harnessVersionInRange(
   const parsed = parseHarnessVersion(version);
   if (!parsed) return false;
   const cmp = compareMajorMinor(parsed, parsedRange.bound);
-  return parsedRange.kind === "lte" ? cmp <= 0 : cmp > 0;
+  return parsedRange.kind === "lte" ? cmp <= 0 : parsedRange.kind === "gt" ? cmp > 0 : cmp === 0;
 }
 
 // ── Model ids ────────────────────────────────────────────────────────────────
@@ -313,18 +310,15 @@ function notVerifiedReason(
   const version =
     typeof runtimeVersion === "string" && runtimeVersion.trim()
       ? runtimeVersion.trim()
-      : "(unknown version)";
-  return `not verified for ${harnessId} ${version}`;
+      : "unknown version";
+  return `This model has not been verified for the ${harnessDisplayName(harnessId)} client (${version}). Choose a verified model or another client.`;
 }
 
 /** The refusal copy for an `unsupported` verdict — the same sentence the
  *  harness pre-flight has always used for a model the runtime can't run. */
 export function harnessModelUnsupportedReason(harnessId: string): string {
   const name = harnessDisplayName(harnessId);
-  return (
-    `the ${name} harness can't run this host's model — pick a ` +
-    `${name}-compatible model to run the real runtime`
-  );
+  return `This model isn’t supported by ${name}. Choose a supported model or switch clients.`;
 }
 
 /**

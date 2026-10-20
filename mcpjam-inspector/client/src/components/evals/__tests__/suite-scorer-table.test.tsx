@@ -350,7 +350,7 @@ describe("SuiteScorerTable", () => {
     expect(within(row).queryByRole("group", { name: "Judge role" })).toBeNull();
   });
 
-  it("disables the judge's Required segment with the panel's copy", () => {
+  it("hides the judge's role switch when the deployment has no judge gating", () => {
     renderTable({
       capabilities: {
         suiteId: "s",
@@ -376,13 +376,11 @@ describe("SuiteScorerTable", () => {
       },
     });
     fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
-    const required = screen
-      .getAllByRole("button", { name: "Required" })
-      .find((button) => button.closest('[aria-label="Judge role"]'));
-    expect(required).toBeDisabled();
-    expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
-      "Not available on this deployment",
-    );
+    // Required can never be picked here, so no switch is offered at all.
+    expect(screen.queryByRole("group", { name: "Judge role" })).toBeNull();
+    expect(screen.queryByTestId("judge-gate-disabled-reason")).toBeNull();
+    // The threshold stays editable.
+    expect(screen.getByRole("spinbutton", { name: "Judge threshold" })).toBeTruthy();
   });
 
   it("lists library categories that have kinds", async () => {

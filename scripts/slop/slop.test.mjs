@@ -188,16 +188,29 @@ describe("ui strings", () => {
           "if (a > b && c < d) return null;",
           "const re = /\"['\"]/g;",
           'function f(x: Foo<string>) { return g("Keep this label"); }',
+          "function runAttempt<T>(attempt: Attempt<T>): Promise<void> {",
           '{count > 0 ? <Empty label="No results yet" /> : "Loading your servers"}',
           '<span>{"—"}</span>',
           '<Button onClick={() => save()}>Save changes</Button>',
+          "{a ? (",
+          "  <p>One two</p>",
+          ") : hint ? (",
+          "  <p>Three four</p>",
+          ") : null}",
           "element: <Boundary />,",
           "children: [",
           "  // a comment — about the route",
           '  { path: "*" },',
         ].join("\n")
       ),
-      ["Keep this label", "No results yet", "Loading your servers", "Save changes"]
+      [
+        "Keep this label",
+        "No results yet",
+        "Loading your servers",
+        "Save changes",
+        "One two",
+        "Three four",
+      ]
     );
   });
 
@@ -579,8 +592,13 @@ describe("deletion bot check", async () => {
 });
 
 describe("agent hooks", async () => {
-  const { checkNewPath, checkEdit, editFragments, FILE_BUDGET } =
-    await import("./hook.mjs");
+  const {
+    checkNewPath,
+    checkEdit,
+    editFragments,
+    FILE_BUDGET,
+    GROWTH_ALLOWANCE,
+  } = await import("./hook.mjs");
   const HOOK = join(dirname(fileURLToPath(import.meta.url)), "hook.mjs");
 
   it("refuses scratch notes, spike folders and new root files", () => {
@@ -617,14 +635,27 @@ describe("agent hooks", async () => {
   });
 
   it("flags a file growing past the budget", () => {
-    const big = "x\n".repeat(FILE_BUDGET + 10);
+    const under = "x\n".repeat(FILE_BUDGET - 1);
     const problem = checkEdit("sdk/src/a.ts", {
       before: "",
-      after: "x\n",
-      fileBefore: big,
-      fileAfter: `${big}x\n`,
+      after: "x\n".repeat(5),
+      fileBefore: under,
+      fileAfter: `${under}${"x\n".repeat(5)}`,
     });
     assert.match(problem, /line budget/);
+  });
+
+  it("lets a file already over the budget grow by the allowance only", () => {
+    const big = "x\n".repeat(FILE_BUDGET + 10);
+    const grow = (lines) =>
+      checkEdit("sdk/src/a.ts", {
+        before: "",
+        after: "x\n".repeat(lines),
+        fileBefore: big,
+        fileAfter: `${big}${"x\n".repeat(lines)}`,
+      });
+    assert.equal(grow(GROWTH_ALLOWANCE), null);
+    assert.match(grow(GROWTH_ALLOWANCE + 1), /line budget/);
   });
 
   it("ignores tests", () => {
@@ -711,7 +742,7 @@ describe("hook paths", async () => {
 
 describe("repo hygiene", async () => {
   const { checkChange, parseNameStatus } = await import("./repo-hygiene.mjs");
-  const { FILE_BUDGET } = await import("./hook.mjs");
+  const { FILE_BUDGET, GROWTH_ALLOWANCE } = await import("./hook.mjs");
   const sizes = (map) => (path) => map[path] ?? 0;
 
   it("parses NUL-delimited name-status output", () => {
@@ -738,12 +769,15 @@ describe("repo hygiene", async () => {
     assert.equal(failures.length, 4);
   });
 
-  it("only warns when an already-large file grows", () => {
-    const { failures, warnings } = checkChange(
-      [{ status: "M", path: "sdk/src/huge.ts" }],
-      sizes({ "sdk/src/huge.ts": 2000 }),
-      sizes({ "sdk/src/huge.ts": 2050 }),
-    );
+  it("only warns when an already-large file grows past the allowance", () => {
+    const grow = (lines) =>
+      checkChange(
+        [{ status: "M", path: "sdk/src/huge.ts" }],
+        sizes({ "sdk/src/huge.ts": 2000 }),
+        sizes({ "sdk/src/huge.ts": 2000 + lines }),
+      );
+    assert.deepEqual(grow(GROWTH_ALLOWANCE), { failures: [], warnings: [] });
+    const { failures, warnings } = grow(GROWTH_ALLOWANCE + 1);
     assert.equal(failures.length, 0);
     assert.equal(warnings.length, 1);
   });
@@ -801,25 +835,27 @@ describe("pr-size verdict", async () => {
     assert.equal(countPatchLines(patch), 3);
   });
 
-  it("counts source files a -diff attribute marks as binary", () => {
+  /** The report for a repo whose last commit holds `files` on top of `base`. */
+  function measure(base, files) {
     const repo = mkdtempSync(join(tmpdir(), "slop-size-"));
     try {
       const git = (...args) =>
         execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+      const write = (contents) => {
+        for (const [path, text] of Object.entries(contents)) {
+          mkdirSync(dirname(join(repo, path)), { recursive: true });
+          writeFileSync(join(repo, path), text);
+        }
+        git("add", ".");
+      };
       git("init", "-q");
       git("config", "user.email", "test@example.com");
       git("config", "user.name", "test");
-      writeFileSync(join(repo, ".gitattributes"), "*.ts -diff\n");
-      git("add", ".");
+      write(base);
       git("commit", "-qm", "base");
-      mkdirSync(join(repo, "sdk/src"), { recursive: true });
-      writeFileSync(
-        join(repo, "sdk/src/a.ts"),
-        "export const a = 1;\n".repeat(5),
-      );
-      git("add", ".");
-      git("commit", "-qm", "add");
-      const out = execFileSync(
+      write(files);
+      git("commit", "-qm", "change");
+      return execFileSync(
         "node",
         [
           join(dirname(fileURLToPath(import.meta.url)), "pr-size.mjs"),
@@ -832,10 +868,30 @@ describe("pr-size verdict", async () => {
           env: { ...process.env, GITHUB_STEP_SUMMARY: "" },
         },
       );
-      assert.match(out, /\*\*5\*\* changed lines/);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  }
+
+  it("counts source files a -diff attribute marks as binary", () => {
+    const out = measure(
+      { ".gitattributes": "*.ts -diff\n" },
+      { "sdk/src/a.ts": "export const a = 1;\n".repeat(5) },
+    );
+    assert.match(out, /\*\*5\*\* changed lines/);
+  });
+
+  it("counts a moved line once", () => {
+    const block = Array.from(
+      { length: 30 },
+      (_, i) => `export const value${i} = "moved line ${i}";\n`,
+    ).join("");
+    const out = measure(
+      { "sdk/src/a.ts": block },
+      { "sdk/src/a.ts": "export const kept = 1;\n", "sdk/src/b.ts": block },
+    );
+    // a.ts: +1 -30, b.ts: +30; the 30 removed lines reappear in b.ts.
+    assert.match(out, /\*\*31\*\* changed lines .*30 moved lines counted once/);
   });
 
   it("keeps a label with a comma in its name whole", () => {

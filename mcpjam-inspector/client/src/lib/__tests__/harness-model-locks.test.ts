@@ -34,7 +34,7 @@ describe("harness model locks", () => {
         { harnessId: "codex" },
         "eval",
       ),
-    ).toMatch(/Codex harness can't run this host's model/);
+    ).toMatch(/not.*verified/);
     expect(
       harnessChoiceRefusalReason(
         { modelId: "openai/gpt-5.5" },
@@ -70,7 +70,7 @@ describe("harness model locks", () => {
     expect(locked[0]!.disabled).toBeFalsy();
     expect(locked[1]).toMatchObject({
       disabled: true,
-      disabledReason: expect.stringContaining("Codex harness"),
+      disabledReason: expect.stringMatching(/codex/i),
     });
     expect(locked[2]!.disabledReason).toBe("Out of credits");
   });
@@ -97,6 +97,7 @@ describe("harnessPickerModels", () => {
     expect(ids(harnessPickerModels(CATALOG, { harnessId: "codex" }))).toEqual([
       "openai/gpt-5-mini",
       "openai/gpt-5-nano",
+      "openai/gpt-5.6-luna",
     ]);
   });
 
@@ -104,7 +105,7 @@ describe("harnessPickerModels", () => {
     const models = harnessPickerModels(CATALOG, { harnessId: "claude-code" });
     expect(ids(models)).toEqual(["anthropic/claude-haiku-4.5", "anthropic/claude-fable-5"]);
     expect(models[0]!.warningReason).toBeUndefined();
-    expect(models[1]!.warningReason).toMatch(/not verified/);
+    expect(models[1]!.warningReason).toMatch(/not been verified/);
   });
 
   it("leaves an emulated client's list alone", () => {
@@ -217,6 +218,7 @@ describe("organization-key rows on a harness", () => {
     ).toEqual([
       "hosted:openai:openai/gpt-5-mini",
       "hosted:openai:openai/gpt-5-nano",
+      "hosted:openai:openai/gpt-5.6-luna",
       "org:orgprov_openai:gpt-5-mini",
     ]);
   });
@@ -230,7 +232,7 @@ describe("organization-key rows on a harness", () => {
     ]) {
       expect(
         harnessRowRefusalReason(row, { harnessId: "claude-code" }, "chat"),
-      ).toMatch(/MCPJam-provided models or your organization's Anthropic key/);
+      ).toMatch(/MCPJam model or your organization's Anthropic key/);
     }
     expect(
       harnessRowRefusalReason(
@@ -339,7 +341,7 @@ describe("a harness under the organization's key policy", () => {
         POLICY,
       ),
     ).toBe(
-      "the Claude Code harness runs only on your organization's Anthropic key",
+      "The Claude Code client requires your organization's Anthropic key. Choose an organization model or contact your organization admin.",
     );
     const locked = applyHarnessModelLocks(
       [hosted, ORG_ANTHROPIC],
@@ -356,7 +358,7 @@ describe("a harness under the organization's key policy", () => {
         "eval",
         POLICY,
       ).get(modelRowKey(ORG_OPENAI)),
-    ).toMatch(/runs only on your organization's Anthropic key/);
+    ).toMatch(/requires your organization's Anthropic key/);
   });
 
   it("keeps a saved model the policy no longer allows, so the trigger can warn", () => {
@@ -423,7 +425,7 @@ describe("harnessChoiceRefusalReason (a saved choice, no row)", () => {
         { harnessId: "claude-code" },
         "eval",
       ),
-    ).toMatch(/MCPJam-provided models/);
+    ).toMatch(/MCPJam model/);
   });
 
   it("a hosted or legacy choice keeps the evidence rule", () => {
@@ -433,7 +435,7 @@ describe("harnessChoiceRefusalReason (a saved choice, no row)", () => {
         { harnessId: "codex" },
         "eval",
       ),
-    ).toMatch(/Codex harness can't run/);
+    ).toMatch(/not.*verified/);
     expect(
       harnessChoiceRefusalReason(
         { modelId: "openai/gpt-5.6-luna" },
@@ -442,4 +444,12 @@ describe("harnessChoiceRefusalReason (a saved choice, no row)", () => {
       ),
     ).toBeUndefined();
   });
+});
+
+
+it("keeps the measured old-runtime refusal while warning on the newer unverified model", () => {
+  expect(harnessChoiceRefusalReason({ modelId: "openai/gpt-5.6-luna" },
+    { harnessId: "codex", runtimeVersion: "0.149.1" }, "eval")).toMatch(/not.*supported|isn’t supported|can't run/);
+  const rows = harnessPickerModels(CATALOG, { harnessId: "codex" });
+  expect(rows.find((row) => row.id === "openai/gpt-5.6-luna")?.warningReason).toMatch(/not.*verified/);
 });

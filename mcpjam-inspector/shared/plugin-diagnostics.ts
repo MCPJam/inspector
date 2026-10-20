@@ -118,7 +118,7 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "This App was opened with different settings before. Close it and open it again.",
   // Tool calls
   INVOCATION_OUTCOME_UNKNOWN:
-    "The tool call reached the server but its result was lost, so MCPJam won't retry it automatically (it may have run). Check the server before trying again.",
+    "MCPJam couldn't confirm the tool call's outcome. It may have run, so it won't be retried automatically. Check the server before trying again.",
   INVOCATION_DENIED: "The tool call isn't allowed for this App.",
   INVOCATION_ID_REUSED:
     "The App reused a request ID for a different tool call.",

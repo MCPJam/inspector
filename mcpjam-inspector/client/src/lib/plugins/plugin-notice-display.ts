@@ -2,6 +2,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { toast } from "@/lib/toast";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import type { ActivePluginSkipReason } from "@/lib/plugins/active-plugins-types";
+import type { PluginServerSignInRequest } from "./plugin-sign-in";
 
 /**
  * What a Playground chat says about the project's installed plugins it did not
@@ -22,6 +23,10 @@ export interface PluginNoticePlugin {
   reason: ActivePluginSkipReason;
   /** For a `placement` skip: where the component would have run. */
   placement?: "local" | "computer";
+  /** The plugin ran, but without a server whose `reason` this is. */
+  partial?: boolean;
+  /** The server to sign in to, when signing in is the fix. */
+  signIn?: PluginServerSignInRequest;
 }
 
 /**
@@ -83,7 +88,17 @@ function placementCopy(plugin: PluginNoticePlugin): string {
     : "it runs on this computer and isn't started automatically";
 }
 
+const PARTIAL_COPY: Record<string, string> = {
+  needs_auth: "sign in to that server to use it",
+  needs_setup: "finish that server's setup to use it",
+  unreachable: "that server isn't available right now. Try again later",
+};
+
 function describeSkip(plugin: PluginNoticePlugin): string {
+  if (plugin.partial) {
+    const action = PARTIAL_COPY[plugin.reason] ?? "it isn't available yet";
+    return `${noticeLabel(plugin)} ran without one of its servers: ${action}.`;
+  }
   const reason =
     plugin.reason === "placement"
       ? placementCopy(plugin)
@@ -91,19 +106,26 @@ function describeSkip(plugin: PluginNoticePlugin): string {
   return `${noticeLabel(plugin)} was skipped: ${reason}.`;
 }
 
+/** The plugins a skipped notice names: up to two, or the first of more. */
+function namedPlugins(
+  plugins: readonly PluginNoticePlugin[],
+): readonly PluginNoticePlugin[] {
+  return plugins.length <= 2 ? plugins : plugins.slice(0, 1);
+}
+
 /** The plain line a notice reads as. */
 export function describePluginNotice(data: PluginNoticeData): string {
   if (data.kind === "unavailable") return PLUGINS_UNAVAILABLE_MESSAGE;
   if (data.kind === "off") return OFF_COPY[data.reason];
-  const [first, second, ...rest] = data.plugins;
-  if (!first) return PLUGINS_UNAVAILABLE_MESSAGE;
-  if (!second) return describeSkip(first);
-  if (rest.length === 0)
-    return `${describeSkip(first)} ${describeSkip(second)}`;
-  return `${describeSkip(first)} ${data.plugins.length - 1} more plugins were skipped; see Logs for details.`;
+  const named = namedPlugins(data.plugins);
+  if (named.length === 0) return PLUGINS_UNAVAILABLE_MESSAGE;
+  const text = named.map(describeSkip).join(" ");
+  return named.length === data.plugins.length
+    ? text
+    : `${text} ${data.plugins.length - 1} more plugins were skipped; see Logs for details.`;
 }
 
-/** Chat id + what the notice says (sorted `pluginId:reason` pairs for skips). */
+/** Chat, skip reason and the permissions its Sign in action will request. */
 export function pluginNoticeKey(
   chatSessionId: string,
   data: PluginNoticeData,
@@ -111,7 +133,10 @@ export function pluginNoticeKey(
   const signature =
     data.kind === "skipped"
       ? data.plugins
-          .map((plugin) => `${plugin.pluginId}:${plugin.reason}`)
+          .map(
+            (plugin) =>
+              `${plugin.pluginId}:${plugin.reason}${plugin.partial ? ":partial" : ""}${plugin.signIn?.scopeChallenge ? `:${JSON.stringify(plugin.signIn)}` : ""}`,
+          )
           .sort()
           .join(",")
       : data.kind === "off"
@@ -124,6 +149,36 @@ function logMethod(data: PluginNoticeData): string {
   if (data.kind === "skipped") return "plugins/skipped";
   if (data.kind === "off") return "plugins/off";
   return "plugins/unavailable";
+}
+
+type PluginSignIn = (binding: PluginServerSignInRequest) => void;
+let signInHandler: PluginSignIn | null = null;
+
+/**
+ * The Playground's Sign in for a plugin's server (`usePluginServerSignIn`),
+ * offered on a notice that names a server to sign in to. Returns the
+ * unregister, which leaves a newer registration in place.
+ */
+export function registerPluginNoticeSignIn(handler: PluginSignIn): () => void {
+  signInHandler = handler;
+  return () => {
+    if (signInHandler === handler) signInHandler = null;
+  };
+}
+
+/**
+ * One button signs in to one server, so it is offered only when exactly one
+ * plugin in the notice needs a sign-in and the text names that plugin.
+ */
+function signInAction(data: PluginNoticeData) {
+  const handler = signInHandler;
+  if (!handler || data.kind !== "skipped") return undefined;
+  const needing = data.plugins.filter((plugin) => plugin.signIn);
+  const [plugin] = needing;
+  const binding = plugin?.signIn;
+  if (needing.length !== 1 || !binding) return undefined;
+  if (!namedPlugins(data.plugins).includes(plugin)) return undefined;
+  return { action: { label: "Sign in", onClick: () => handler(binding) } };
 }
 
 // Page-lifetime, so a remounted Playground does not repeat a notice the chat
@@ -154,10 +209,12 @@ export function showPluginNotice(
   shownNotices.add(key);
 
   const message = describePluginNotice(data);
-  toast.info(message);
+  const withSignIn = signInAction(data);
+  if (withSignIn) toast.info(message, withSignIn);
+  else toast.info(message);
   try {
     useTrafficLogStore.getState().addMcpServerLog({
-      id: `plugins:notice:${key}`,
+      id: `plugins:notice:${crypto.randomUUID()}`,
       serverId: "plugins",
       serverName: "Plugins",
       direction: "RECEIVE",
@@ -173,6 +230,7 @@ export function showPluginNotice(
                 pluginId: plugin.pluginId,
                 name: noticeLabel(plugin),
                 reason: plugin.reason,
+                ...(plugin.partial ? { partial: true } : {}),
               })),
             }
           : {}),

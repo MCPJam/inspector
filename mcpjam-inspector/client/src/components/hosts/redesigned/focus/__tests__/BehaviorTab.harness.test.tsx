@@ -48,7 +48,10 @@ vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
 function renderBehaviorTab(
   partial?: Parameters<typeof emptyHostConfigInputV2>[0],
 ) {
-  const draft = emptyHostConfigInputV2(partial);
+  const draft = {
+    ...emptyHostConfigInputV2(partial),
+    systemPromptDefault: partial?.systemPromptDefault,
+  };
   return render(
     <BehaviorTab draft={draft} onDraftChange={vi.fn()} attention={[]} />,
   );
@@ -64,7 +67,7 @@ function sliderRoot(container: HTMLElement): Element {
 }
 
 describe("BehaviorTab harness gray-out", () => {
-  it("disables temperature for a claude-code harness host but not model/system prompt", () => {
+  it("disables temperature for a claude-code harness while keeping its model editable", () => {
     const { container } = renderBehaviorTab({ harness: "claude-code" });
 
     // Permanently not enforced for the harness → disabled with an honest note.
@@ -73,15 +76,12 @@ describe("BehaviorTab harness gray-out", () => {
       screen.getByText(/runs its own loop and ignores temperature/i),
     ).toBeInTheDocument();
 
-    // Model + system prompt DO cross into the harness, so they stay editable
-    // (no blanket isHarnessHost disable). Claude Code's model credentials are
+    // Claude Code's model credentials are
     // brokered by MCPJam, so the selection is what the runtime launches with.
     expect(screen.getByTestId("model-selector")).not.toHaveAttribute(
       "data-disabled",
     );
-    expect(
-      screen.getByPlaceholderText(/helpful assistant/i),
-    ).not.toHaveAttribute("readonly");
+    expect(screen.getByDisplayValue("No system prompt applied")).toBeDisabled();
   });
 
   it("leaves approval EDITABLE for claude-code now that its proxy phase landed", () => {
@@ -297,4 +297,43 @@ describe("the model list a harness host offers", () => {
       "hosted:anthropic/claude-haiku-4.5,orgprov_o:gpt-5-mini",
     );
   });
+});
+
+describe("saved system prompt status", () => {
+  it.each([
+    [
+      "Official text",
+      {
+        source: {
+          publisher: "OpenAI",
+          catalogEntryId: "entry",
+          revision: "2026-10-01",
+          sourceUrl: "https://platform.claude.com",
+        },
+      },
+      "Default system prompt applied",
+    ],
+    ["Custom text", undefined, "Custom system prompt applied"],
+    ["", {}, "No system prompt applied"],
+    ["", undefined, "No system prompt applied"],
+  ] as const)(
+    "conceals text and renders saved state",
+    (text, metadata, status) => {
+      renderBehaviorTab({ systemPrompt: text, systemPromptDefault: metadata });
+      expect(screen.getByDisplayValue(status)).toBeDisabled();
+      expect(screen.getByDisplayValue(status)).toHaveClass(
+        "resize-none",
+        "italic",
+      );
+      expect(screen.getByText("Not editable")).toBeInTheDocument();
+      if (metadata && "source" in metadata) {
+        expect(
+          screen.getByText("Source: OpenAI · 2026-10-01"),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      }
+      if (text)
+        expect(screen.queryByDisplayValue(text)).not.toBeInTheDocument();
+    },
+  );
 });

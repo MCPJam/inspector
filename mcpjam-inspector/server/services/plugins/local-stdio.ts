@@ -33,6 +33,10 @@ import {
 } from "./plugin-root.js";
 import { ensurePluginDataDir } from "./plugin-data.js";
 import {
+  checkPluginLaunch,
+  type PluginLaunchGuardFailure,
+} from "./launch-guards.js";
+import {
   containsPluginPlaceholder,
   type PluginFileSource,
 } from "@mcpjam/sdk/plugin-bundle";
@@ -175,7 +179,8 @@ export type PluginStdioPreparationFailure =
       reason: "plugin_data_unavailable";
       origin: PluginServerOrigin;
       message: string;
-    };
+    }
+  | (PluginLaunchGuardFailure & { origin: PluginServerOrigin });
 
 export type PluginStdioPreparation =
   | {
@@ -368,6 +373,12 @@ export async function preparePluginStdioLaunch(args: {
     args.remotePlacement?.pluginRoot ?? root,
     { dataDir }
   );
+  const refused = await checkPluginLaunch(
+    launch,
+    { root: args.remotePlacement?.pluginRoot ?? root, dataDir },
+    { remote: !!args.remotePlacement, declaredCommand: args.spec.command },
+  );
+  if (refused) return { ok: false, ...refused, origin };
 
   // Unique per call, not just per server: a reconnect acquires the new lease
   // BEFORE releasing the old one, and two holders sharing an id would make
@@ -410,11 +421,13 @@ export function retainPluginLease(serverName: string, release: () => void): void
 }
 
 /**
- * Resolve a local stdio server whose config still carries root placeholders
- * into a spawnable one, or throw the actionable reason it cannot run.
+ * Resolve a plugin's local stdio component into a spawnable config, or throw
+ * the actionable reason it cannot run. A component is one the backend says is
+ * (`pluginComponent`) or, from a backend that does not say, one whose config
+ * still carries a root placeholder.
  *
- * Returns `null` for the overwhelmingly common case: an ordinary stdio server
- * with no placeholders, which must take exactly the historical path.
+ * Returns `null` for the overwhelmingly common case: an ordinary stdio server,
+ * which must take exactly the historical path.
  */
 export async function materializePluginStdioForConnect(args: {
   /** Built only for a component that actually carries placeholders. */
@@ -437,6 +450,8 @@ export async function materializePluginStdioForConnect(args: {
    * and the caller releases at its own teardown.
    */
   onLease?: (release: () => void) => void;
+  /** The authorize result marked the row as a plugin's component. */
+  pluginComponent?: boolean;
   spec: PluginStdioLaunchSpec;
   cache?: PluginBundleCache;
   /** Test seam for the `${PLUGIN_DATA}` root. */
@@ -450,7 +465,7 @@ export async function materializePluginStdioForConnect(args: {
   pluginRoot: string;
   origin: PluginServerOrigin;
 } | null> {
-  if (!needsPluginRoot(args.spec)) return null;
+  if (!args.pluginComponent && !needsPluginRoot(args.spec)) return null;
 
   const prepared = await preparePluginStdioLaunch({
     client: args.createClient(),
@@ -559,6 +574,35 @@ function pluginStdioFailureToRouteError(
           pluginId: failure.origin.pluginId,
           details: failure.message,
         }
+      );
+    case "working_directory_outside_plugin":
+    case "working_directory_missing":
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        failure.reason === "working_directory_missing"
+          ? `Plugin "${failure.origin.name}" runs its server in a folder its files don't include, so it will not be launched. Re-import the plugin.`
+          : `Plugin "${failure.origin.name}" runs its server outside its own files and data folder, so it will not be launched. Ask its author to fix its working directory.`,
+        {
+          reason: failure.reason,
+          serverName,
+          pluginId: failure.origin.pluginId,
+        },
+      );
+    case "runtime_not_found":
+    case "command_not_executable":
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        failure.reason === "runtime_not_found"
+          ? `Plugin "${failure.origin.name}" runs its server with "${failure.command}", which isn't installed on this computer. Install it, then reconnect.`
+          : `Plugin "${failure.origin.name}" runs "${failure.command}" from its files, but that file is missing or isn't executable. Re-import the plugin, or ask its author to ship that file as an executable.`,
+        {
+          reason: failure.reason,
+          serverName,
+          pluginId: failure.origin.pluginId,
+          command: failure.command,
+        },
       );
   }
 }

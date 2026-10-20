@@ -144,7 +144,7 @@ We're grateful you're considering it. Read the [contributing guide](CONTRIBUTING
 
 # 🌍 Community & links
 
-[Website](https://www.mcpjam.com/) · [Blog](https://www.mcpjam.com/blog) · [Pricing](https://www.mcpjam.com/pricing) · [Docs](https://docs.mcpjam.com/) · [Discord](https://discord.gg/JEnDtz8X6z) · [𝕏 (Twitter)](https://x.com/mcpjams) · [LinkedIn](https://www.linkedin.com/company/mcpjam)
+[Website](https://www.mcpjam.com/) · [Blog](https://www.mcpjam.com/blog) · [Pricing](https://www.mcpjam.com/pricing) · [Docs](https://docs.mcpjam.com/) · [Discord](https://discord.gg/JEnDtz8X6z) · [𝕏 (Twitter)](https://x.com/mcpjams) · [LinkedIn](https://www.linkedin.com/company/mcpjam) · [YouTube](https://www.youtube.com/@MCPJam) · [Instagram](https://www.instagram.com/mcpjam.official) · [TikTok](https://www.tiktok.com/@mcpjam.official)
 
 # 📄 License
 

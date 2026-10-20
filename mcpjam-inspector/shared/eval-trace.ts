@@ -24,6 +24,7 @@ export type EvalTraceSpan = {
   status?: EvalTraceSpanStatus;
   toolCallId?: string;
   toolName?: string;
+  toolOrigin?: "mcp" | "native" | "builtin" | "unknown";
   serverId?: string;
   connectionId?: string;
   modelId?: string;
@@ -573,6 +574,7 @@ export const evalTraceSpanZ = z.object({
   status: z.enum(["ok", "error"]).optional(),
   toolCallId: z.string().optional(),
   toolName: z.string().optional(),
+  toolOrigin: z.enum(["mcp", "native", "builtin", "unknown"]).optional(),
   serverId: z.string().optional(),
   connectionId: z.string().optional(),
   modelId: z.string().optional(),

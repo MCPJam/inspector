@@ -22,6 +22,10 @@ export const ORG_POLICY_ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // `credential_missing` on the org route: the saved org connection is gone,
   // disabled, or has no key. Only an admin's configuration change fixes it.
   "org/credential_missing": "user_config",
+  // `model_not_allowed` on the org route: the org's provider connection serves
+  // only the models it lists (OpenRouter's selected models, Azure's
+  // deployments), and this one is not listed. Only an admin's change fixes it.
+  "org/model_not_allowed": "user_config",
   // The org's provider throttled or failed. The refusal does not settle
   // whose fault that was (the org's account limits, the provider's outage),
   // so it never pages and never blames the key.
@@ -138,6 +142,19 @@ export function orgPolicyCatalogEntries(
         "Organization admins can add or reconnect the provider under Organization → AI providers.",
       ],
       "organization-provider-missing",
+    ),
+    "org/model_not_allowed": entry(
+      "org/model_not_allowed",
+      "Organization model not allowed",
+      "The organization provider this model runs on only allows certain models, and this model is not one of them.",
+      [
+        "The organization's OpenRouter provider has a list of selected models that leaves this model out, or its Azure OpenAI provider has no deployment for it.",
+      ],
+      [
+        "Choose a model the organization provider allows.",
+        "Organization admins can change the provider's models under Organization → AI providers.",
+      ],
+      "organization-model-not-allowed",
     ),
     "org/provider_unavailable": entry(
       "org/provider_unavailable",

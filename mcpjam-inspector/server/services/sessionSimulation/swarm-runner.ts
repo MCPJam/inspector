@@ -1,3 +1,7 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
+import { resolveToolTaskSeam } from "../../utils/task-seam.js";
+import { readTasksPolicy } from "@mcpjam/sdk";
+import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
 import {
@@ -665,7 +669,7 @@ function describeSandboxConsumer(
   const parts: string[] = [];
   if (wantsBash) parts.push("the shell");
   if (wantsBrowser) parts.push("the browser");
-  if (target.harness) parts.push(`the ${target.harness} harness`);
+  if ((target.agentLoop ?? target.harness)) parts.push(`the ${(target.agentLoop ?? target.harness)} harness`);
   const label =
     parts.length === 0
       ? "the disposable computer"
@@ -888,8 +892,8 @@ async function runJourneyFanOut(
     // admission block and the per-attempt binding check can see it — and
     // outside the fail-closed guard below, which is only for things that can
     // throw.
-    const localHarness = runsLocally(opts, target.harness);
-    const harnessNeedsBox = target.harness !== undefined && !localHarness;
+    const localHarness = runsLocally(opts, (target.agentLoop ?? target.harness));
+    const harnessNeedsBox = (target.agentLoop ?? target.harness) !== undefined && !localHarness;
     // Assigned inside the try, once the model is RESOLVED — see the harness
     // admission block below.
     let harnessTargetBlockedReason: string | undefined;
@@ -944,7 +948,7 @@ async function runJourneyFanOut(
         return;
       }
       bearer = await getBearer();
-      if (localHarness) assertLocalHarnessCapabilities({ builtInToolIds: target.builtInToolIds, browserToolPolicy: target.browserToolPolicy, computerEnvironmentId: target.computerEnvironment ? "configured" : undefined, harnessId: target.harness });
+      if (localHarness) assertLocalHarnessCapabilities({ builtInToolIds: target.builtInToolIds, browserToolPolicy: target.browserToolPolicy, computerEnvironmentId: target.computerEnvironment ? "configured" : undefined, harnessId: (target.agentLoop ?? target.harness) });
 
       // Resolve the pinned target's modelId to a ModelDefinition once per target
       // (catalog hits pass through; BYOK shapes get a derived provider). NEVER
@@ -990,6 +994,7 @@ async function runJourneyFanOut(
       // reach for a generic handler, and never be more permissive than the
       // rule it failed to evaluate.
       try {
+        const dispatch = resolveAgentLoop(target);
         // The target asked for a harness but its configuration can never yield a
         // box — no computer attached, or the environment pins no usable image. That
         // is knowable before the first attempt, so say it once, precisely.
@@ -1025,10 +1030,10 @@ async function runJourneyFanOut(
         // preflight later must apply here too, and the only way to guarantee that
         // is to call the same function.
         const harnessAvailability =
-          target.harness === undefined
+          (target.agentLoop ?? target.harness) === undefined
             ? undefined
             : checkHarnessRuntimeAvailable({
-                harnessId: target.harness,
+                harnessId: dispatch.harnessId!,
                 localExecution: localHarness,
                 requireToolApproval: target.requireToolApproval,
                 // PLUGIN servers count. A target whose MCP servers come solely
@@ -1089,32 +1094,26 @@ async function runJourneyFanOut(
                 // harness's own vendor runs on the organization's key.
                 ...(modelSelection ? { selection: modelSelection } : {}),
               });
+        const harnessName = harnessDisplayName((target.agentLoop ?? target.harness) ?? "");
         harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined
           : !targetWantsHarnessBox(target)
-            ? "This target runs the " +
-              target.harness +
-              " harness but has no computer attached, so there is nothing to run " +
-              "it on. Attach a computer to this host."
-            : harnessAvailability && !harnessAvailability.ok
-              ? "This target runs the " +
-                target.harness +
-                " harness, which isn't available: " +
-                harnessAvailability.reason +
-                "."
-              : harnessTargetIntent?.kind === "skip"
-                ? "This target runs the " +
-                  target.harness +
-                  " harness, which needs a disposable sandbox per session. " +
-                  // Only an UNAVAILABLE pin lands here, and only on a run
-                  // created before the backend began refusing such a target at
-                  // launch: a harness target that pinned nothing boots the
-                  // default template instead (`sandboxIntentFor`). The reason
-                  // names the broken pin, and the target is refused before any
-                  // box is booted for it.
-                  (harnessTargetIntent.reason ??
-                    "The computer image this target pinned is unavailable, so one cannot be created.")
-                : undefined;
+          ? `The ${harnessName} client needs a computer. Attach a computer to this client to continue.`
+          : harnessAvailability && !harnessAvailability.ok
+          ? harnessAvailability.reason
+          : harnessTargetIntent?.kind === "skip"
+          ? `The ${harnessName} client needs a cloud computer. ` +
+            // Only an UNAVAILABLE pin lands here, and only on a run
+            // created before the backend began refusing such a target at
+            // launch: a harness target that pinned nothing boots the
+            // default template instead (`sandboxIntentFor`). The reason
+            // names the broken pin, and the target is refused before any
+            // box is booted for it.
+            `${(harnessTargetIntent.reason ?? "The computer image this target pinned is unavailable")
+              .trim()
+              .replace(/\.$/, "")}. ` +
+            "Choose an available computer image for this environment, then run the swarm again."
+          : undefined;
       } catch (err) {
         // Fail CLOSED and name what happened. We do not know WHICH rule threw,
         // so the message stays honest about that rather than guessing.
@@ -1179,7 +1178,7 @@ async function runJourneyFanOut(
 
         // Queue before claiming an attempt or starting its deadline. Release
         // after each session so other runs share the machine fairly.
-        const releaseLocalSlot = runsLocally(opts, target.harness)
+        const releaseLocalSlot = runsLocally(opts, (target.agentLoop ?? target.harness))
           ? await acquireLocalHarnessSlot(attemptSignal)
           : undefined;
         try {
@@ -1518,7 +1517,7 @@ async function runJourneyFanOut(
             (attemptSandbox
               ? undefined
               : "This session could not get a disposable sandbox for its " +
-                `${target.harness} harness. A swarm harness never falls back ` +
+                `${(target.agentLoop ?? target.harness)} harness. A swarm harness never falls back ` +
                 "to the launcher's shared project computer, so this session " +
                   "cannot run."));
 
@@ -1532,7 +1531,7 @@ async function runJourneyFanOut(
           const runSession = async () => {
             // Prepared for THIS target's harness — a Codex target gets a Codex
             // runtime and grant, never the Claude Code one.
-            const localResources = localHarness ? await prepareLocalHarnessRun({ bearer: bearer!, projectId, trustedActor: opts.localHarnessActor, harnessId: localHarnessIdOf(target.harness) ?? "claude-code" }) : undefined;
+            const localResources = localHarness ? await prepareLocalHarnessRun({ bearer: bearer!, projectId, trustedActor: opts.localHarnessActor, harnessId: localHarnessIdOf((target.agentLoop ?? target.harness)) ?? "claude-code" }) : undefined;
             try { return await runSyntheticHostSession({
             runId,
             projectId,
@@ -1566,6 +1565,8 @@ async function runJourneyFanOut(
               mcpToolResultImageRendering: target.mcpToolResultImageRendering,
               computer: target.computer,
               harness: target.harness,
+              agentLoop: target.agentLoop,
+              tasks: resolveToolTaskSeam({ tasksPolicy: readTasksPolicy(target), surface: "eval", scope: projectId }),
               ...(localResources ? { harnessExecutionTarget: { ...localResources.target, targetId, sessionIdx } } : {}),
               // The trusted binding to THIS attempt's disposable box. It reaches
               // `resolveHostTools` on `ctx`, never on the host config, so nothing
@@ -1577,7 +1578,7 @@ async function runJourneyFanOut(
               // handler options rather than through `resolveHostTools`, because
               // `runHarnessTurn` does not use the tool resolver at all. Only
               // for a harness target: the emulated engine has no use for it.
-              ...(target.harness && attemptSandbox
+              ...((target.agentLoop ?? target.harness) && attemptSandbox
                 ? { harnessSandboxBinding: attemptSandbox.harnessBinding }
                 : {}),
               // F4: refuse the harness turn rather than let it reserve the

@@ -180,6 +180,18 @@ describe("origin — credential ownership override", () => {
       /(check|update|verify) (your|the) (api )?key/i
     );
   });
+
+  it.each(["provider/model_retired", "org/model_not_allowed"])(
+    "leaves %s with the user, whose model choice was refused",
+    (slug) => {
+      // The backend refused the requested model before any provider work.
+      // Choosing another model is the fix, so neither pages.
+      const normalized = describeAsSlug(slug);
+
+      expect(normalized.slug).toBe(slug);
+      expect(originOf(normalized)).toBe("user_config");
+    }
+  );
 });
 
 describe("originOf — reading across versions", () => {

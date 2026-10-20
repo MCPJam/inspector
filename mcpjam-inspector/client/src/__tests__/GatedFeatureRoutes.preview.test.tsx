@@ -231,6 +231,7 @@ describe("gated feature routes — hosted", () => {
       expect(
         screen.queryByTestId(`gated-feature-${feature}`),
       ).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("Loading");
       expect(tabMock).not.toHaveBeenCalled();
     });
 

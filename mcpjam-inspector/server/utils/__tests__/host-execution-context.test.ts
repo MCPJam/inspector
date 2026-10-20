@@ -60,13 +60,12 @@ describe("resolveExecutionContext — harness (host-only, server-authoritative)"
     expect(result.harness).toBeUndefined();
   });
 
-  it("ignores an unknown harness value (closed read)", () => {
-    const result = resolveExecutionContext({
+  it("refuses an unknown harness value without changing engines", () => {
+    expect(() => resolveExecutionContext({
       hostConfig: { harness: "totally-not-a-harness" },
       overrides: {},
       precedence: "host-wins",
-    });
-    expect(result.harness).toBeUndefined();
+    })).toThrow("unsupported agent runtime");
   });
 
   it("reads the codex harness (membership via the SDK source of truth)", () => {

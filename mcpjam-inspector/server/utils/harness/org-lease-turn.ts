@@ -20,6 +20,10 @@ import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk";
  * A hosted turn's answers are the hosted defaults. Either kind reads the
  * proxy's recorded refusal back when it fails after a model call.
  */
+import {
+  desanitizeFromConvexTransport,
+  sanitizeForConvexTransport,
+} from "@/shared/convex-sanitize";
 import { harnessOrgUpstream } from "@/shared/harness-model-support";
 import { getCanonicalModelId } from "@/shared/types";
 import type {
@@ -134,7 +138,13 @@ export class OrgLeaseTurn {
 
   /** The claimed state as the adapter wrote it; its stamp is kept here. */
   claimed<S extends { resumeState: unknown }>(state: S | null): S | null {
-    const claim = stateForTurn(state, Boolean(this.selection));
+    const claim = stateForTurn(
+      state && {
+        ...state,
+        resumeState: desanitizeFromConvexTransport(state.resumeState),
+      },
+      Boolean(this.selection),
+    );
     this.stampedRevision = claim.credentialRevision;
     return claim.state;
   }
@@ -267,9 +277,18 @@ export class OrgLeaseTurn {
     return upstream ? { upstream } : {};
   }
 
-  /** The resume state a turn commits, stamped with its lease's revision. */
+  /**
+   * The resume state a turn commits, stamped with its lease's revision.
+   *
+   * Escaped for storage: a paused turn's state carries the turn's tool
+   * definitions, and MCP tool schemas use `$schema`, `$ref` and `$defs`, field
+   * names Convex refuses. Unescaped, the commit fails and the approval is lost.
+   * `claimed` reverses it.
+   */
   commitState(resumeState: unknown): unknown {
-    return resumeStateToCommit(resumeState, this.upstream);
+    return sanitizeForConvexTransport(
+      resumeStateToCommit(resumeState, this.upstream),
+    );
   }
 
   /**

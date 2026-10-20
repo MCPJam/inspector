@@ -46,6 +46,8 @@ const agentConstruction = vi.hoisted(() => ({
 }));
 
 /** The adapter's `toNativeModel` answer (Cursor-style adapters map none). */
+const adapterDelivery = vi.hoisted(() => ({ value: "mcpjam" }));
+
 const toNativeModel = vi.hoisted(() =>
   vi.fn((_modelId: string): string | undefined => "gpt-5")
 );
@@ -56,7 +58,7 @@ vi.mock("@ai-sdk/harness/agent", () => ({
       agentConstruction.last = options;
     }
     createSession = vi.fn(async () => { harnessState.create(); return harnessState.session; });
-    stream = vi.fn(async () => { harnessState.stream(); return ({
+    stream = vi.fn(async (args: Record<string, unknown>) => { harnessState.stream(args); return ({
       fullStream: (async function* () {
         for (const part of harnessState.streamParts) {
           yield part;
@@ -76,8 +78,8 @@ vi.mock("../registry.js", () => ({
       baseUrl: "https://broker.example",
     },
   })),
-  getHarnessAdapter: vi.fn(() => ({
-    id: "codex",
+  getHarnessAdapter: vi.fn((id = "codex") => ({
+    id,
     displayName: "Codex",
     defaultPermissionMode: "allow-all",
     approvalPermissionMode: "allow-reads",
@@ -85,7 +87,7 @@ vi.mock("../registry.js", () => ({
     ...adapterCapabilities.value,
     // The delivery mode under test: no `.mcp.json`, the servers ride as
     // host-executed tools MCPJam builds itself.
-    mcpDelivery: "host-executed",
+    mcpDelivery: adapterDelivery.value,
     supportsModel: vi.fn(() => true),
     toNativeModel,
     createHarness: vi.fn(() => ({ harnessId: "codex" })),
@@ -195,8 +197,16 @@ function forwardedToolOptions() {
 }
 
 describe("runHarnessTurn forwards host tool-construction options", () => {
+  it("uses the MCPJam projection for Claude on its normally native adapter", async () => {
+    adapterDelivery.value = "native";
+    const policy = { directContent: { image: true } };
+    await runHarnessTurn(baseOptions({ harness: "claude-code", agentLoop: "claude-code", modelVisibleMcpToolResults: policy }) as never, "none");
+    expect(forwardedToolOptions()).toMatchObject({ modelVisibleMcpToolResults: policy });
+  });
+
   beforeEach(() => {
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    adapterDelivery.value = "mcpjam";
     projectSpy.mockClear();
     harnessState.continuations = [];
     harnessState.create.mockClear();
@@ -509,6 +519,7 @@ describe("the hosted command sandbox under Tool Approval", () => {
 
   beforeEach(() => {
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    adapterDelivery.value = "mcpjam";
     vi.mocked(getHarnessAdapter).mockClear();
   });
   afterEach(() => {
@@ -556,4 +567,15 @@ describe("the hosted command sandbox under Tool Approval", () => {
     );
     expect(createHarnessArgs()).not.toHaveProperty("sandboxPolicy");
   });
+});
+
+
+it.each(["claude-code", "codex"] as const)("delivers %s App context per turn without changing instructions", async (harness) => {
+  const options = baseOptions({ harness, agentLoop: harness, sourceType: "direct", selectedServers: [], systemPrompt: "stable instructions" });
+  await runHarnessTurn({ ...options, harnessTurnContext: "widget state one" } as never, "none");
+  const firstInstructions = agentConstruction.last?.instructions;
+  expect(JSON.stringify(harnessState.stream.mock.calls.at(-1))).toContain("widget state one");
+  await runHarnessTurn({ ...options, harnessTurnContext: "widget state two", harnessUnavailableAppTools: true } as never, "none");
+  expect(agentConstruction.last?.instructions).toEqual(firstInstructions);
+  expect(JSON.stringify(harnessState.stream.mock.calls.at(-1))).toContain("widget state two");
 });

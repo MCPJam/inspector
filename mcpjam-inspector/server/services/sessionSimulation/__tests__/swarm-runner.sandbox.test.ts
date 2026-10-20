@@ -1071,6 +1071,9 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     // The message names the ACTUAL configuration problem, not "swarms don't
     // support harnesses".
     expect(String(terminals[0]!.errorMessage)).toMatch(/computer image/i);
+    expect(String(terminals[0]!.errorMessage)).toMatch(
+      /execute in\. Choose an available computer image for this environment, then run the swarm again\.$/
+    );
   });
 
   it("FAILS CLOSED, without provisioning, when the target has no computer attached", async () => {
@@ -1080,7 +1083,7 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /no computer attached/i
+      /needs a computer.*Attach a computer/i
     );
   });
 
@@ -1190,7 +1193,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /enterprise-managed/i
+      /authorization policy/i
     );
   });
 
@@ -1227,7 +1230,7 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
 
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /unattended run/i
+      /cannot wait for tool approval in evals or swarms/i
     );
   });
 
@@ -1323,7 +1326,7 @@ describe("swarm runner — a bad target cannot take the run down with it", () =>
     // INVALID is treated exactly like ON — never more permissive than a policy
     // that parses.
     expect(String(byHost.get("host-1")!.errorMessage)).toMatch(
-      /enterprise-managed/i
+      /authorization policy/i
     );
     // ...while its sibling runs to completion.
     expect(byHost.get("host-2")).toMatchObject({ status: "succeeded" });
@@ -1386,7 +1389,7 @@ describe("swarm runner — a bad target cannot take the run down with it", () =>
       // the read could throw.
       expect(t.status).toBe("failed");
       expect(t.errorCode).toBe("session_failed");
-      expect(String(t.errorMessage)).toMatch(/enterprise-managed/i);
+      expect(String(t.errorMessage)).toMatch(/authorization policy/i);
     }
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
   });
@@ -1572,4 +1575,16 @@ describe("swarm attempt box — the attempt's signal", () => {
       expect.objectContaining({ sandboxRowId: "row_1" }),
     );
   });
+});
+
+
+it("runs an agent-loop target with its MCPJam client selection", async () => {
+  personaDrivesOneTurn();
+  await startJourneyRun(baseOpts({ agentLoop: "claude-code", computer: { kind: "personal" } }));
+  expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+  expect(turnOptions()).toMatchObject({ agentLoop: "claude-code" });
+  expect(turnOptions().harness).toBe("claude-code");
+  expect(terminalReports()).toEqual(expect.arrayContaining([
+    expect.objectContaining({ status: "succeeded" }),
+  ]));
 });

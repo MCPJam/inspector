@@ -626,6 +626,74 @@ describe("web chat-v2 — environment execution target", () => {
     expect(JSON.stringify(persistArgs)).not.toContain("body-server-9");
   });
 
+  describe("a server it could not authorize", () => {
+    /** The batch answers as before, except `serverId` now needs a sign-in. */
+    function needsSignIn(serverId: string) {
+      const answer = global.fetch;
+      global.fetch = vi.fn(async (input, init) => {
+        const response = await answer(input, init);
+        if (!String(input).endsWith("/web/authorize-batch")) return response;
+        const batch = await response.json();
+        batch.results[serverId].serverConfig.useOAuth = true;
+        return Response.json(batch);
+      }) as typeof fetch;
+    }
+
+    const environmentTurn = () => {
+      const { app, token } = createWebTestApp();
+      return postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          ...BASE_BODY,
+          executionTarget: { kind: "environment", environmentId: "env_1" },
+        },
+        token
+      );
+    };
+
+    it("runs the turn without a plugin's server and tells the browser why", async () => {
+      needsSignIn("env-server-2");
+      const written: unknown[] = [];
+      handleMCPJamFreeChatModelMock.mockImplementationOnce(
+        async (options: any) => {
+          options.onStreamWriterReady?.({
+            write: (chunk: unknown) => written.push(chunk),
+          });
+          options.onStreamComplete?.();
+          return new Response("ok", { status: 200 });
+        }
+      );
+
+      const response = await environmentTurn();
+
+      expect(response.status).toBe(200);
+      expect(prepareChatV2Mock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          selectedServers: ["env-server-1", "env-server-2"],
+          isolatedServers: ["env-server-2"],
+        })
+      );
+      expect(written).toContainEqual({
+        type: "data-plugin-server-unavailable",
+        data: {
+          servers: [{ serverId: "env-server-2", reason: "needs_auth" }],
+          chatSessionId: "chat-session-1",
+        },
+        transient: true,
+      });
+    });
+
+    it("still fails the turn for a server the environment itself selected", async () => {
+      needsSignIn("env-server-1");
+
+      const response = await environmentTurn();
+
+      expect(response.status).toBe(401);
+      expect(prepareChatV2Mock).not.toHaveBeenCalled();
+    });
+  });
+
   it("injects blueprint context into the turn prompt but persists the RAW prompt in resumeConfig", async () => {
     const RUNTIME_CONTEXT = {
       imageName: "staging-box",

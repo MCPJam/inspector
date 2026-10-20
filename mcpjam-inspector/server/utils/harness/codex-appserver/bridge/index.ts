@@ -45,6 +45,7 @@ import type {
 } from "./app-server-protocol.js";
 import { createApprovalController } from "./approval-controller.js";
 import { foreignMcpServerOverrides } from "./mcp-isolation.js";
+import { setupWindowsSandbox } from "./windows-sandbox-setup.js";
 import { buildHostToolCatalog } from "./host-tool-catalog.js";
 import { prepareCodexHome, untrustedProjectPathsFor } from "./codex-home.js";
 import { startHostToolRelay, type HostToolRelay } from "./host-tool-relay.js";
@@ -199,14 +200,15 @@ export function toCodexPermissions(
  */
 function withThreadConfig(
   start: StartMessage,
+  effectiveConfig?: unknown,
 ): { config?: Record<string, unknown> } {
-  const config = threadConfig(start);
+  const config = threadConfig(start, effectiveConfig);
   return Object.keys(config).length > 0 ? { config } : {};
 }
 
-function threadConfig(start: StartMessage): Record<string, unknown> {
+function threadConfig(start: StartMessage, effectiveConfig?: unknown): Record<string, unknown> {
   const config: Record<string, unknown> = { ...(start.codexConfig ?? {}) };
-  const foreign = foreignMcpServerOverrides({ keep: RELAY_MCP_SERVER_NAME });
+  const foreign = foreignMcpServerOverrides({ keep: RELAY_MCP_SERVER_NAME, effectiveConfig });
   if (Object.keys(foreign).length > 0) {
     const existing =
       config.mcp_servers && typeof config.mcp_servers === "object"
@@ -392,6 +394,16 @@ async function main(): Promise<void> {
       },
     });
     client.notify("initialized", {});
+    if (process.platform === "win32") {
+      try {
+        await setupWindowsSandbox(spawned, args.workdir);
+      } catch (error) {
+        // A later turn must not reuse a process whose sandbox never initialized.
+        await spawned.kill();
+        if (client === spawned) client = undefined;
+        throw error;
+      }
+    }
   };
 
   await runBridge<StartMessage>({
@@ -459,7 +471,9 @@ async function main(): Promise<void> {
         ...(start.instructions
           ? { developerInstructions: start.instructions }
           : {}),
-        ...withThreadConfig(start),
+        ...withThreadConfig(start, process.platform === "win32"
+          ? await runtime.request("config/read", { cwd: args.workdir, includeLayers: true })
+          : undefined),
         serviceName: "mcpjam-inspector",
       };
 

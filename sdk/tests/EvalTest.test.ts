@@ -926,6 +926,7 @@ describe("EvalTest", () => {
       const test = new EvalTest({
         id: "c_case_31",
         name: "multi-turn-timeout",
+        billableSteps: 2,
         test: async (agent) => {
           const first = await agent.run("First");
           const second = await agent.run("Second");
@@ -1079,6 +1080,7 @@ describe("EvalTest", () => {
       const test = new EvalTest({
         id: "c_case_35",
         name: "multi-turn-latency",
+        billableSteps: 2,
         test: async (agent) => {
           await agent.run("First");
           await agent.run("Second");
@@ -1135,6 +1137,7 @@ describe("EvalTest", () => {
       const test = new EvalTest({
         id: "c_case_37",
         name: "multi-turn-tokens",
+        billableSteps: 2,
         test: async (agent) => {
           await agent.run("First");
           await agent.run("Second");

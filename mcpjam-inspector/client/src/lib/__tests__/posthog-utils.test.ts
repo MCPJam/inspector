@@ -258,7 +258,7 @@ describe("PosthogUtils", () => {
       expect(isCredentialBearingPath("/servers")).toBe(false);
     });
 
-    it("keeps the full profile's masking: inputs and every annotated secret surface", async () => {
+    it("masks every input and every text node in the full profile", async () => {
       vi.resetModules();
       const { SESSION_RECORDING_OPTIONS } = await import("../PosthogUtils");
 
@@ -266,28 +266,15 @@ describe("PosthogUtils", () => {
       expect(SESSION_RECORDING_OPTIONS.maskInputOptions).toEqual({
         password: true,
       });
-      // Every text node goes through `maskTextFn`, which masks text under
-      // the repo's existing `data-ph-no-capture` convention (annotate a
-      // secret surface once, get both autocapture opt-out and replay
-      // masking) and scrubs credential URLs out of the rest.
       expect(SESSION_RECORDING_OPTIONS.maskTextSelector).toBe("*");
-      const surface = document.createElement("div");
-      surface.setAttribute("data-ph-no-capture", "");
-      const inside = document.createElement("span");
-      surface.appendChild(inside);
-      expect(SESSION_RECORDING_OPTIONS.maskTextFn("sk-secret", inside)).toBe(
-        "*********",
-      );
-      const plain = document.createElement("span");
-      expect(SESSION_RECORDING_OPTIONS.maskTextFn("Hello there", plain)).toBe(
-        "Hello there",
+      expect(SESSION_RECORDING_OPTIONS.maskTextFn("Hello there")).toBe(
+        "***** *****",
       );
       expect(
         SESSION_RECORDING_OPTIONS.maskTextFn(
           "Share https://app.mcpjam.com/results/tok_123",
-          plain,
         ),
-      ).toBe("Share https://app.mcpjam.com/results/[redacted]");
+      ).not.toMatch(/[^*\s]/);
     });
 
     it("does not read HOSTED_MODE at module import time", async () => {

@@ -15,6 +15,11 @@
  * Pure data. Safe from the browser entry.
  */
 
+import {
+  AGENT_LEGACY_MANIFEST_PATH,
+  CLAUDE_MANIFEST_PATH,
+  CODEX_MANIFEST_PATH,
+} from "../plugin-bundle/layout.js";
 import { openaiPolicySource } from "./manifest.js";
 
 /**
@@ -43,8 +48,8 @@ export const OPENAI_ARCHIVE_LIMITS = {
  * has not been told the truth about their package.
  */
 export const OPENAI_MANIFEST_LOCATIONS = {
-  canonical: ".codex-plugin/plugin.json",
-  accepted: [".agent-plugin/plugin.json", ".claude-plugin/plugin.json"],
+  canonical: CODEX_MANIFEST_PATH,
+  accepted: [AGENT_LEGACY_MANIFEST_PATH, CLAUDE_MANIFEST_PATH],
 } as const;
 
 /** Where a skill's own metadata lives, relative to its skill directory. */

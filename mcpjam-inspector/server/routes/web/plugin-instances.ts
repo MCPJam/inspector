@@ -1,3 +1,4 @@
+import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { pluginModelAppRoutes } from "./plugin-model-apps.js";
 import { preparePluginMessageTurn } from "../../services/plugin-host/message.js";
 import {
@@ -46,7 +47,10 @@ import {
   PluginDeepLinkError,
 } from "../../../shared/plugin-deep-link.js";
 import settingsRoutes from "./plugin-settings.js";
-import { readServerOnboarding } from "../../services/plugin-host/onboarding.js";
+import {
+  onboardingRequestSchema,
+  readOnboarding,
+} from "../../services/plugin-host/onboarding.js";
 import { pluginContextRoutes } from "./plugin-context.js";
 import { PluginModelContextError } from "../../../shared/plugin-model-context.js";
 
@@ -516,16 +520,9 @@ instances.post("/discover", (c) =>
 
 instances.post("/onboarding", (c) =>
   route(c, async () => {
-    const body = serverSchema
-      .extend({ content: z.boolean() })
-      .parse(await c.req.json());
+    const body = onboardingRequestSchema.parse(await c.req.json());
     const { admission, bearer, actor } = await admitted(c, body);
-    const result = await readServerOnboarding({
-      ...body,
-      actorId: actor.actorId,
-      bearer,
-      signal: c.req.raw.signal,
-    });
+    const result = await readOnboarding(body, actor, bearer, c.req.raw.signal);
     await admission.revalidate({ signal: c.req.raw.signal });
     return c.json(result);
   }),
@@ -1519,6 +1516,7 @@ instances.post("/deep-link/resolve", (c) =>
     if (!config) throw denied();
     assertPluginWorkspaceRuntime({
       harness: config.harness,
+      agentLoop: config.agentLoop,
       hostPolicy: { hostStyle: config.hostStyle },
     });
     assertPluginExtensionEnabled(pluginHostExtensions(config), "deepLinks");
@@ -1537,7 +1535,7 @@ instances.post("/deep-link/resolve", (c) =>
         })
       : new Map();
     const { link, servers } = resolvePluginDeepLinkTarget(body.url, {
-      runtime: config.harness === "codex" ? "codex" : "chatgpt",
+      runtime: (config.agentLoop && usesMcpjamClient(config) || config.harness === "codex") ? "codex" : "chatgpt",
       candidates: identities.map((candidate) => ({
         ...candidate,
         ...(candidate.serverIdentity.kind === "plugin" &&

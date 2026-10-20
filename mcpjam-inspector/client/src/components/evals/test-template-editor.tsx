@@ -5657,7 +5657,6 @@ export function TestTemplateEditor({
                           workspacePersistedIteration,
                           suiteRuns,
                         )}
-                        enableJudgeReview
                         trialChainSlot={trialChainSlotFor(
                           workspacePersistedIteration,
                         )}
@@ -5891,11 +5890,6 @@ export function TestTemplateEditor({
                         serverNames={effectiveSuiteServers}
                         layoutMode="full"
                         judgeCase={replayJudgeCase}
-                        // A trial from a real suite run: labellable. The
-                        // backend refuses a quick-run trial anyway
-                        // (`JUDGE_REVIEW_NO_RUN`), and the panel renders that
-                        // refusal rather than pretending.
-                        enableJudgeReview
                         trialChainSlot={trialChainSlotFor(replayIteration)}
                       />
                     </div>
@@ -6003,7 +5997,6 @@ export function TestTemplateEditor({
                           serverNames={effectiveSuiteServers}
                           layoutMode="full"
                           judgeCase={latestTracedJudgeCase}
-                          enableJudgeReview
                           trialChainSlot={trialChainSlotFor(
                             latestTracedIteration,
                           )}

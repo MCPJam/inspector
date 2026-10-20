@@ -64,6 +64,7 @@ export type EvalWidgetSnapshotInput = {
 };
 
 export type EvalResultInput = {
+  billingPaymentId?: string;
   caseTitle: string;
   query?: string;
   passed: boolean;

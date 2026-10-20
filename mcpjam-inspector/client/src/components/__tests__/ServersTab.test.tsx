@@ -187,6 +187,14 @@ vi.mock("@/lib/billing-gates", async (importOriginal) => {
   };
 });
 
+vi.mock("@/hooks/usePluginServerSignIn", () => ({
+  usePluginServerSignIn: () => ({
+    available: false,
+    pendingKey: null,
+    signIn: vi.fn(),
+  }),
+}));
+
 // Soft reads (`useSoftQuery`, e.g. the active-plugins read) go through
 // `useQueries`; `withUseQueries` answers them from the same `mockUseQuery`.
 vi.mock("convex/react", async () =>

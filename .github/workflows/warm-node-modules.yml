@@ -11,7 +11,7 @@ name: Warm node_modules caches
 # entry), the container image, NODE_VERSION and `runs-on`. A cache lives with
 # the runner that saved it: Blacksmith routes actions/cache to its own store,
 # so the bare key is warmed twice, once there for lint.yml and once on GitHub
-# for the Meticulous and slop-deletion workflows.
+# for the slop-deletion workflow.
 # .github/scripts/warm-node-modules.test.mjs checks that in Build and Test.
 #
 # On a hit, `lookup-only` skips the download, so a job ends after checkout.
@@ -110,7 +110,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
   bare-github:
-    name: GitHub runner (Meticulous, slop deletion)
+    name: GitHub runner (slop deletion)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

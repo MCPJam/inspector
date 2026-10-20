@@ -18,6 +18,9 @@ import {
 } from "@/lib/evals/eval-generation-config";
 import type { EvalSuiteEnvironmentTarget } from "../evals/types";
 import { EnvironmentTargetPicker } from "../evals/environment-target-picker";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { GuestSignInButton } from "@/components/auth/GuestSignInMessage";
+import { JamIllustration } from "@/components/billing/JamIllustration";
 
 export function GenerateCasesDialog({
   suiteId,
@@ -34,6 +37,7 @@ export function GenerateCasesDialog({
   onClose: () => void;
   onGenerate: (config: GenerateCasesConfig) => void;
 }) {
+  const member = useIsMemberActor();
   const [initial] = useState(() => loadGenerateConfig(suiteId));
   const [environmentId, setEnvironmentId] = useState<string | undefined>(() =>
     environmentChoices?.some(
@@ -49,6 +53,49 @@ export function GenerateCasesDialog({
   const [coverage, setCoverage] = useState<"read-only" | "read-write">(
     initial.toolCoverage ?? "read-only",
   );
+  if (member !== true) {
+    return (
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          {member === false && <JamIllustration />}
+          <DialogHeader>
+            <DialogTitle>Generate test cases</DialogTitle>
+            {member === undefined ? (
+              <DialogDescription role="status">
+                Loading account…
+              </DialogDescription>
+            ) : (
+              <DialogDescription>
+                Sign in to generate test cases. You can still add test cases
+                manually.
+              </DialogDescription>
+            )}
+          </DialogHeader>
+          <DialogFooter className="sm:flex-row-reverse">
+            {member === false && (
+              <GuestSignInButton
+                location="eval_case_generation"
+                className="flex-1"
+              />
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              className={member === false ? "flex-1" : undefined}
+              onClick={onClose}
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
   return (
     <Dialog
       open

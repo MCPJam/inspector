@@ -380,7 +380,7 @@ function LivePartSwitch({
 
     const approvalId = toolPart.approval?.id;
     const approvalProps =
-      interactive && approvalId
+      interactive && approvalId && onToolApprovalResponse
         ? {
             approvalId,
             onApprove: (id: string) =>

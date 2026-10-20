@@ -39,6 +39,7 @@ import {
 } from "../../utils/computers/control-plane-client.js";
 import type { ExecutionScope } from "../../utils/execution-scope.js";
 import { DEFAULT_PLUGIN_BUNDLE_LIMITS } from "@mcpjam/sdk/plugin-bundle";
+import { ENTRY_SUFFIX, extractedFileMode } from "./bundle-cache.js";
 import { createDirectoryPluginFileSource } from "./bundle-file-sources.js";
 import {
   getPluginBundleCache,
@@ -179,9 +180,11 @@ function boxShimPath(shimVersion: string): string {
 }
 
 /** Written only after every file landed; its presence is what makes the push
- *  skippable. A partially-copied bundle therefore never looks complete. */
+ *  skippable. A partially-copied bundle therefore never looks complete. It is
+ *  versioned like the cache's entries: a box filled before files kept their
+ *  executable bit gets the bundle again. */
 function boxBundleMarker(bundleRoot: string): string {
-  return `${bundleRoot}/.mcpjam-bundle-complete`;
+  return `${bundleRoot}/.mcpjam-bundle-complete${ENTRY_SUFFIX}`;
 }
 
 /** Single-quoted for `sh`, which has no escape inside single quotes. */
@@ -446,12 +449,16 @@ export async function ensurePluginStdioRuntime(args: {
     let port: number;
     let stopShim: () => Promise<void>;
     try {
-      await pushBundleIntoBox({
-        handle,
-        localRoot: prepared.pluginRoot,
-        boxRoot: placement.pluginRoot,
-        bundleHash,
-      });
+      await pushBundleOnce(
+        `${args.box.sandboxId}:${placement.pluginRoot}`,
+        () =>
+          pushBundleIntoBox({
+            handle,
+            localRoot: prepared.pluginRoot,
+            boxRoot: placement.pluginRoot,
+            bundleHash,
+          }),
+      );
       await pushShimIntoBox(handle);
       // The spec REQUIRES this directory to exist before launch. `run` reports a
       // non-zero exit rather than throwing, so an unchecked call would hand the
@@ -626,6 +633,28 @@ function sessionMatchesBox(
 }
 
 /**
+ * Bundle pushes this process has in flight, by vendor sandbox and in-box
+ * directory. The servers of one plugin connect together and share that
+ * directory, so a second push waits for the first instead of rewriting files
+ * a server the first one started may already be running.
+ */
+const pushesInFlight = new Map<string, Promise<void>>();
+
+function pushBundleOnce(key: string, push: () => Promise<void>): Promise<void> {
+  const running = pushesInFlight.get(key);
+  if (running !== undefined) return running;
+  const started = push().finally(() => pushesInFlight.delete(key));
+  pushesInFlight.set(key, started);
+  return started;
+}
+
+/**
+ * Paths per in-box `chmod`. One command for every executable of a large bundle
+ * could outgrow the length a shell accepts for a single argument.
+ */
+const CHMOD_BATCH = 100;
+
+/**
  * Copy the verified bundle into the box, skipping the copy when the marker
  * proves this exact hash already landed. Reads from the local cache entry the
  * SDK parser just verified — never from the download — so what reaches the box
@@ -643,17 +672,36 @@ async function pushBundleIntoBox(args: {
 
   const source = createDirectoryPluginFileSource(args.localRoot);
   const files: Array<{ path: string; bytes: Uint8Array }> = [];
+  const executables: string[] = [];
   for (const entry of await source.list()) {
     if (entry.kind === "directory") continue;
+    const path = `${args.boxRoot}/${entry.path}`;
+    // A bundle file at the marker's path would mark the box before the bits
+    // below are set, so a failed push would look complete.
+    if (path === marker) continue;
     files.push({
-      path: `${args.boxRoot}/${entry.path}`,
+      path,
       bytes: await source.readBytes(
         entry.path,
         DEFAULT_PLUGIN_BUNDLE_LIMITS.maxFileBytes
       ),
     });
+    if (extractedFileMode(entry.mode) === 0o755) executables.push(path);
   }
   await args.handle.writeFiles(files);
+  // The box receives plain files; executables get their bit as the local
+  // entry has it, so `./bin/server` runs there too.
+  for (let start = 0; start < executables.length; start += CHMOD_BATCH) {
+    const batch = executables.slice(start, start + CHMOD_BATCH);
+    const marked = await args.handle.run(
+      `chmod 755 ${batch.map(shellQuote).join(" ")}`,
+    );
+    if (marked.exitCode !== 0) {
+      throw new Error(
+        `Could not mark the bundle's executables in the box: ${marked.stderr.trim()}`
+      );
+    }
+  }
   // Last, and only on success: the marker is a claim that every file above is
   // present, so writing it earlier would make a failed push look complete.
   await args.handle.writeFiles([

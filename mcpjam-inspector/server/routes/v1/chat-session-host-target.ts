@@ -426,9 +426,9 @@ export function assertHarnessDispatchable(args: {
   throw new WebRouteError(
     422,
     ErrorCode.FEATURE_NOT_SUPPORTED,
-    `This host runs the ${
+    `The ${
       getHarnessAdapter(args.engine.harness).displayName
-    } harness, but the turn resolved to a locally-hosted model runtime the harness cannot authenticate against. The turn was refused rather than run on the emulated engine and reported as the harness.`,
+    } client cannot use a locally hosted model. Choose an MCPJam model or a supported organization connection.`,
     { reason: "HARNESS_UNAVAILABLE", harness: args.engine.harness },
   );
 }

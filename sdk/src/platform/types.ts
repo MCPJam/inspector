@@ -14,6 +14,11 @@ import type {
   SwarmReport,
 } from "../contract/index.js";
 import type { CaseJudgeSettings } from "../contract/judge-settings.js";
+import type { PlatformGoalJudge } from "./goal-judge.js";
+export type {
+  PlatformGoalJudge,
+  PlatformGoalJudgeWrite,
+} from "./goal-judge.js";
 import type {
   JudgeRubric,
   JudgeEvidenceManifest,
@@ -4111,6 +4116,8 @@ export interface PlatformGoal {
   iterations: number | null;
   maxTurns: number | null;
   setupWrites?: boolean;
+  /** The goal-completion judge. Absent on older API deployments. */
+  judge?: PlatformGoalJudge;
   createdAt: number;
   updatedAt: number;
 }

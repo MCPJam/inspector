@@ -13,7 +13,7 @@ vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 import { track } from "@/lib/analytics";
 import { readAppSignInReturnPath } from "@/lib/app-signin-return-path";
-import { GuestSignInMessage } from "../GuestSignInMessage";
+import { GuestSignInButton, GuestSignInMessage } from "../GuestSignInMessage";
 
 describe("GuestSignInMessage", () => {
   beforeEach(() => {
@@ -49,6 +49,21 @@ describe("GuestSignInMessage", () => {
       "login_button_clicked",
       expect.objectContaining({ location: "guest_signin_message" })
     );
+  });
+
+  it("supports a standalone modal action with analytics and the exact return path", () => {
+    const path =
+      "/p/k5700000000000000000000000a/evaluate/suite/s1?view=cases#case";
+    window.history.replaceState({}, "", path);
+    render(<GuestSignInButton location="eval_case_generation" />);
+
+    screen.getByRole("button", { name: "Sign in" }).click();
+
+    expect(signInMock).toHaveBeenCalledOnce();
+    expect(readAppSignInReturnPath()).toBe(path);
+    expect(track).toHaveBeenCalledWith("login_button_clicked", {
+      location: "eval_case_generation",
+    });
   });
 
   it("remembers the whole current URL before handing off to WorkOS", () => {

@@ -1,3 +1,4 @@
+import { mergeHarnessApprovalSegments, mergeTranscriptApprovals, readTranscriptApproval } from "./transcript-tool-approvals";
 import { parsePluginModelContext } from "@/shared/plugin-model-context";
 import { readPluginMessageHistoryTitle } from "@/shared/plugin-message-history";
 import { PLUGIN_MESSAGE_TEXT_PART } from "@/shared/plugin-message";
@@ -218,7 +219,7 @@ export function mergeTranscriptToolResults(transcript: unknown[]): unknown[] {
 
   const out: unknown[] = [];
 
-  for (const raw of transcript) {
+  for (const raw of mergeTranscriptApprovals(transcript)) {
     const msg = raw as TranscriptMessage;
     if (!msg || typeof msg !== "object") continue;
 
@@ -356,12 +357,16 @@ function convertParts(
         toolCallId: getStableToolCallId(part, messageIndex, partIndex),
         toolName: part.toolName ?? "unknown",
         input: part.args ?? part.input ?? {},
+        ...(typeof part.providerExecuted === "boolean"
+          ? { providerExecuted: part.providerExecuted }
+          : {}),
         ...(isResolved
           ? {
               state: "output-available" as const,
               output: readHydratedToolOutput(part),
             }
           : { state: "input-available" as const }),
+        ...readTranscriptApproval(part, isResolved),
         ...(providerMetadata ? { callProviderMetadata: providerMetadata } : {}),
       } as any);
     } else if (partType === "tool-result") {
@@ -386,7 +391,7 @@ function convertParts(
 export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
   if (!Array.isArray(transcript)) return [];
 
-  const mergedTranscript = mergeTranscriptToolResults(transcript);
+  const mergedTranscript = mergeHarnessApprovalSegments(mergeTranscriptToolResults(transcript));
   const messages: UIMessage[] = [];
   for (const [index, raw] of mergedTranscript.entries()) {
     const msg = raw as TranscriptMessage;

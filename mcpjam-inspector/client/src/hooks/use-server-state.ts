@@ -80,10 +80,12 @@ import {
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
+  onlyStoresCredential,
   readHostedOAuthPendingMarker,
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
+import { markOnboardingSignInCompleted } from "@/lib/plugin-onboarding-intent";
 import {
   markPendingChatScopeStepUpCancelled,
   markPendingChatScopeStepUpReady,
@@ -1284,9 +1286,9 @@ export function useServerState({
 
   const latestEffectiveServersRef = useRef(effectiveServers);
 
-  useEffect(() => {
-    latestEffectiveServersRef.current = effectiveServers;
-  }, [effectiveServers]);
+  // Child effects can request readiness before this hook's passive effects.
+  // Publish the rendered snapshot now so that first attempt sees its servers.
+  latestEffectiveServersRef.current = effectiveServers;
 
   const isClientConfigSyncPending = useProjectClientConfigSyncPending(
     effectiveActiveProjectId,
@@ -3069,22 +3071,21 @@ export function useServerState({
           });
         localStorage.removeItem("mcp-oauth-return-hash");
         if (hostedCallbackContext) {
-          // The pending marker is written for local-mode project flows too —
-          // clear it whenever a marker-backed callback settles, not only on
-          // the hosted completion path.
+          // Local-mode project flows write the marker too; clear it here.
           clearHostedOAuthPendingState();
         }
         if (result.success) {
           localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         }
 
-        if (!result.success && hostedCallbackContext?.connectionIntent) {
+        if (!result.success && onlyStoresCredential(hostedCallbackContext)) {
           if (!suppressErrorToast) {
             toast.error(result.error ?? "Could not connect the account");
           }
           return;
         }
-        if (result.success && hostedCallbackContext?.connectionIntent) {
+        if (result.success && onlyStoresCredential(hostedCallbackContext)) {
+          markOnboardingSignInCompleted(hostedCallbackContext?.pluginSignIn);
           if (!HOSTED_MODE && result.serverName) {
             const existing =
               appStateServersRef.current[result.serverName] ??
@@ -3093,9 +3094,7 @@ export function useServerState({
               await guardedReconnectServer(result.serverName, existing.config);
           }
           notifyOAuthConnectionsChanged();
-          if (!suppressSuccessToast) {
-            toast.success("Account connected");
-          }
+          if (!suppressSuccessToast) toast.success("Account connected");
           return;
         }
         if (result.success && result.serverConfig && result.serverName) {

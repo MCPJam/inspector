@@ -24,7 +24,6 @@ import { classifyError } from "../../utils/error-classify.js";
 // inside a Hono handler that has `c: Context`
 getRequestLogger(c, "routes.web.tools").event("mcp.tool.execution.failed", {
   toolName: body.toolName,
-  serverId: body.serverId,
   errorCode: classifyError(error),
 });
 ```
@@ -33,6 +32,15 @@ The request context (`projectId`, `orgId`, `projectRole`, etc.) is automatically
 picked up from `c.var.requestLogContext`, which is populated by:
 1. `requestLogContextMiddleware` at request start (sets `requestId`, `route`, `method`)
 2. `authorizeServer` / `createAuthorizedManager` after Convex auth succeeds (sets project + user fields)
+3. the API-key, Slack and Discord credential checks in `server/middleware/` (set `orgId`)
+
+`orgId`, `projectId` and `serverId` are `LogConvexId`s. Rows copy them from
+this context alone, never from an event payload or a `logger.warn/info/error`
+context, so `serverId: body.serverId` in a payload logs nothing. Brand one with
+`logConvexId()` from `log-convex-id.ts` only when a Convex authorization
+response or a verified credential's stored binding produced it; a value from a
+request body, path or header is not one, whatever its shape. Other IDs,
+`sessionId` among them, are not logged.
 
 ---
 

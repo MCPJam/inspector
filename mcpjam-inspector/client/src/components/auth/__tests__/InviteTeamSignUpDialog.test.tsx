@@ -15,6 +15,7 @@ vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 import { track } from "@/lib/analytics";
 import { readAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
+import { expectLegalConsentLinks } from "@/test/legal-consent";
 import { InviteTeamSignUpDialog } from "../InviteTeamSignUpDialog";
 
 describe("InviteTeamSignUpDialog", () => {
@@ -24,6 +25,11 @@ describe("InviteTeamSignUpDialog", () => {
     vi.mocked(track).mockReset();
     sessionStorage.clear();
     window.history.replaceState({}, "", "/servers");
+  });
+
+  it("links the Terms of Use and Privacy Policy", () => {
+    render(<InviteTeamSignUpDialog isOpen onClose={vi.fn()} />);
+    expectLegalConsentLinks();
   });
 
   it("tracks one impression per opening, not per render", () => {

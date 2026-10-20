@@ -76,10 +76,6 @@ describe("at `full`, on a normal page", () => {
     const mark = harness.mark();
     await harness.showShareLinks(ALL_SHARE_LINKS);
     await harness.click();
-    // A credential plugin frame drops its entire batch. First require a
-    // separate safe console + DOM batch to leave through authenticated fetch.
-    console.info("[egress] safe console control");
-    await harness.idle(SENTRY_MIN_SEGMENT_MS);
     harness.posthog.capture("egress_custom_event", {
       opened: EGRESS_CORPUS["tester-link"],
       requested: RELATIVE_URL_EGRESS.encodedKey,
@@ -97,7 +93,7 @@ describe("at `full`, on a normal page", () => {
     harness.Sentry.captureException(
       new Error(`failed GET ${RELATIVE_URL_EGRESS.encodedKey}`),
     );
-    // Console capture is on at `full` (the remote config turns it on).
+    // The remote config turns console capture on; `full` pins it off.
     console.info("[egress] copied", EGRESS_CORPUS["tester-link"]);
     await harness.idle(SENTRY_MIN_SEGMENT_MS);
     await harness.flush();
@@ -110,27 +106,21 @@ describe("at `full`, on a normal page", () => {
       sentryItems: ["event"],
       sentryFullSnapshot: true,
     });
-    // The share links were recorded — scrubbed, not dropped: proof that the
-    // full profile records the page.
-    expect(recordedText(posthogReplayEvents(scan.decoded))).toContain(
-      "https://app.mcpjam.com/results/[redacted]",
-    );
+    // The page was recorded, with its words masked.
+    const text = recordedText(posthogReplayEvents(scan.decoded));
+    expect(text).toContain("***** *****");
+    expect(text).not.toContain("Share link");
+    expect(text).not.toContain("app.mcpjam.com/results");
     // Unpacked: both profiles turn posthog-js's per-event gzip off, so
     // the final relay can inspect stylesheet text rrweb masks nowhere. A
     // packed DOM event would drop its whole batch.
     expect(compressedReplayEventCount(scan.decoded)).toBe(0);
-    // Safe console frames survive; the unsafe credential frame is dropped.
-    expectArrived(scan, "share links at full", {
-      posthogPlugins: ["rrweb/console@1"],
-    });
     const consoleEvents = posthogReplayEvents(scan.decoded).filter(
       (event) =>
         event.type === RRWEB.Plugin &&
         JSON.stringify(event.data).includes("rrweb/console@1"),
     );
-    expect(JSON.stringify(consoleEvents)).toContain(
-      "[egress] safe console control",
-    );
+    expect(consoleEvents).toEqual([]);
   }, 60_000);
 });
 

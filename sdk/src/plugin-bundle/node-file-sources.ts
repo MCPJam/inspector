@@ -34,6 +34,11 @@ import JSZip from "jszip";
 import type { PluginFileEntry, PluginFileSource } from "./types.js";
 import type { OpenAIArchiveObservations } from "../openai-readiness/package/reader.js";
 
+/** File-type bits of a POSIX mode word, and the regular and directory types. */
+const S_IFMT = 0o170000;
+const S_IFREG = 0o100000;
+const S_IFDIR = 0o040000;
+
 /**
  * Scratch directories a materializer writes beside the bundle it is extracting.
  *
@@ -78,6 +83,7 @@ async function listDirectory(
       path,
       size: stats.size,
       kind: stats.nlink > 1 ? "hardlink" : "file",
+      mode: stats.mode & 0o777,
     });
   }
 }
@@ -150,9 +156,24 @@ export async function createZipPluginFileSource(
     async list() {
       const out: PluginFileEntry[] = [];
       zip.forEach((path, entry) => {
-        // JSZip has no symlink concept; the parser's path/limit rules still
-        // apply, and the extracted copy is re-listed from disk (where links
-        // WOULD be visible) before it is accepted.
+        // JSZip extracts a link as a file holding its target, so the mode word
+        // (present only when the archive was made on a POSIX system) is what
+        // identifies one. Any populated type other than a regular file or a
+        // directory is surfaced as a link, which the parser rejects, as the
+        // browser and backend ZIP readers do; some writers leave the type 0.
+        // The type is read before `entry.dir`, which JSZip also sets for any
+        // name ending in `/`, so a link named that way is still a link. The
+        // extracted copy is also re-listed from disk before it is accepted.
+        const mode = entry.unixPermissions;
+        const type = typeof mode === "number" ? mode & S_IFMT : 0;
+        if (type !== 0 && type !== S_IFREG && type !== S_IFDIR) {
+          out.push({
+            path: path.replace(/\/+$/, ""),
+            size: 0,
+            kind: "symlink",
+          });
+          return;
+        }
         out.push({
           path: entry.dir ? path.replace(/\/+$/, "") : path,
           // A directory has no content, so 0 is a fact. For a FILE, an absent
@@ -162,6 +183,7 @@ export async function createZipPluginFileSource(
           // it". `readBytes` is what actually bounds the read.
           size: entry.dir ? 0 : (declaredUncompressedSize(entry) ?? 0),
           kind: entry.dir ? "directory" : "file",
+          ...(typeof mode === "number" ? { mode: mode & 0o777 } : {}),
         });
       });
       return out;

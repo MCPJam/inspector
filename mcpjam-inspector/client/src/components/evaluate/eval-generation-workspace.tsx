@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import {
@@ -16,8 +16,49 @@ import {
 import { EvalGeneratedDrafts } from "./eval-generated-drafts";
 import { describeMCPJamLimitMessage } from "@/lib/mcpjam-limit";
 import { isUnretryableGenerationScope } from "@/shared/eval-generation-errors";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 
-export function EvalGenerationWorkspace({
+export function EvalGenerationWorkspace(
+  props: Omit<
+    Parameters<typeof MemberEvalGenerationWorkspace>[0],
+    "started" | "startError" | "onStartError"
+  >,
+) {
+  const member = useIsMemberActor();
+  // Auth changes must not restart generation or hide startup failures.
+  const started = useRef(false);
+  const [startError, setStartError] = useState<string>();
+  if (member === true)
+    return (
+      <MemberEvalGenerationWorkspace
+        {...props}
+        started={started}
+        startError={startError}
+        onStartError={setStartError}
+      />
+    );
+  return (
+    <section className="flex min-h-0 flex-1 flex-col gap-4">
+      {member === undefined ? (
+        <p role="status">Loading account…</p>
+      ) : (
+        <GuestSignInMessage
+          compact
+          message="Sign in to generate test cases."
+          location="eval_case_generation"
+        />
+      )}
+      {props.onDone && (
+        <Button type="button" variant="outline" onClick={props.onDone}>
+          Back to suite
+        </Button>
+      )}
+    </section>
+  );
+}
+
+function MemberEvalGenerationWorkspace({
   projectId,
   suiteId,
   suiteName,
@@ -26,6 +67,9 @@ export function EvalGenerationWorkspace({
   environmentId,
   onChangeSettings,
   onDone,
+  started,
+  startError,
+  onStartError,
 }: {
   projectId: string;
   suiteId: string;
@@ -38,18 +82,19 @@ export function EvalGenerationWorkspace({
   onChangeSettings?: () => void;
   /** Back to the suite, once there is nothing left to do here. */
   onDone?: () => void;
+  started: RefObject<boolean>;
+  startError?: string;
+  onStartError: (error: string | undefined) => void;
 }) {
   const generation = useEvalGeneration(
     (s) => s.suites[evalSuiteKey({ projectId, suiteId })],
   );
-  const started = useRef(false);
   const initialIds = useRef(
     new Set(generation?.drafts.map((draft) => draft.id)),
   );
   const [visibleIds, setVisibleIds] = useState(
     () => new Set(initialIds.current),
   );
-  const [startError, setStartError] = useState<string>();
   const [expectedCount] = useState(() => {
     const selected = config ?? loadGenerateConfig(suiteId);
     // Show placeholders for the lower bound; the final count is model-selected.
@@ -59,7 +104,7 @@ export function EvalGenerationWorkspace({
   const start = () => {
     initialIds.current = new Set(generation?.drafts.map((draft) => draft.id));
     setVisibleIds(new Set(initialIds.current));
-    setStartError(undefined);
+    onStartError(undefined);
     try {
       startEvalGeneration(
         {
@@ -75,7 +120,7 @@ export function EvalGenerationWorkspace({
         environmentId,
       );
     } catch (error) {
-      setStartError(error instanceof Error ? error.message : String(error));
+      onStartError(error instanceof Error ? error.message : String(error));
     }
   };
   useEffect(() => {

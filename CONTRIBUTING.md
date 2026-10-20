@@ -200,7 +200,9 @@ that adds it: `expectTelemetryFields(sample, ["statusCode"])` from
 through the real log-row or server-analytics builder and fails with each
 missing field's drop reason (for example, "no field rule: declare it in
 server/utils/log-events.ts"). `explainTelemetry(sample)` returns the same
-`{ forwarded, dropped }` for a look before you write the assertion.
+`{ forwarded, dropped }` for a look before you write the assertion. An org,
+project or server ID arrives only from the server's request context, never
+from a payload; see `mcpjam-inspector/server/utils/LOGGING.md`.
 
 **Reload semantics**, which differ by process:
 

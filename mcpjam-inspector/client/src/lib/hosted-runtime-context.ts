@@ -2,6 +2,7 @@ import type {
   EnvironmentOverrides,
   HostedExecutionTarget,
 } from "@/shared/execution-target";
+import type { HiddenEnvironmentVenue } from "@/lib/plugins/hidden-environment";
 
 export type HostedAccessErrorDetail = {
   status: number;
@@ -60,6 +61,12 @@ export type HostedHiddenEnvironment = {
   environmentId: string | null;
   /** The servers its plugins add; kept on in every turn's override. */
   pluginServerIds: string[];
+  /**
+   * Where its plugins run. `local` was composed for this chat's client running
+   * on this machine, so the turn keeps the environment rather than going out as
+   * that client's own turn without the plugins.
+   */
+  venue?: HiddenEnvironmentVenue;
   /**
    * Re-read the plugins and recompose, once, after a refusal that says a
    * pinned plugin changed (`ENV_PLUGIN_UNAVAILABLE`,

@@ -148,6 +148,12 @@ export const memberFixture: AppFixture = {
       },
     },
     "/api/web/tools/list": { tools: [weatherTool] },
+    "/api/web/tools/list-multi": {
+      results: { [server._id]: { tools: [weatherTool] } },
+    },
+    "/api/web/prompts/list-multi": {
+      results: { [server._id]: { prompts: [] } },
+    },
     "/api/web/tools/execute": {
       status: "completed",
       result: {

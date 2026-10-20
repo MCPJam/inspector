@@ -40,7 +40,7 @@ telemetry exit, at every level, and never recorded at all. See
 | -------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
 | `off`    | Nothing. No recorder runs.                                         | Unchanged on an `off` surface; masked when the backend answered `off` |
 | `masked` | Layout and interaction only (see [Masked profile](#masked-profile)) | Element text and attributes masked; names scrubbed from URLs |
-| `full`   | The page, with inputs and annotated secrets masked                 | Unchanged                                            |
+| `full`   | Layout and interaction, masked as at `masked`; network requests keep their path minus credentials | Unchanged                                            |
 
 ## Who gets which level
 
@@ -467,9 +467,10 @@ monitor reports platform and version so those rows are told apart.
 
 ## Masking a secret
 
-At `full`, `maskAllInputs: true` covers every `<input>`. It cannot help with
-secrets rendered as **text**: OAuth access/refresh tokens in the flow diagram,
-the one-time API-key reveal, the SDK quickstart snippet.
+PostHog replay masks every text node and input at every level. Secrets
+rendered as **text** still need an annotation for autocapture and Sentry
+Replay: OAuth access/refresh tokens in the flow diagram, the one-time API-key
+reveal, the SDK quickstart snippet.
 
 There is **one** annotation for those, and it does double duty:
 
@@ -485,12 +486,11 @@ There is **one** annotation for those, and it does double duty:
 - `data-ph-no-capture` / `.ph-no-capture`: PostHog autocapture skips the
   element's text.
 - `.rr-block`: rrweb blocks the node in the recording.
-- `maskTextSelector: "[data-ph-no-capture]"`: the same attribute masks the text
-  in a `full` replay.
+- `[data-ph-no-capture]`: Sentry Replay blocks the element (`SENTRY_REPLAY_OPTIONS.block`).
 
 Annotate once, get all three. **Do not** introduce a second attribute for this.
 `SECRET_SURFACE_ATTRIBUTE` in `session-privacy.ts` is the single source of
-truth, and the selector is asserted in `posthog-utils.test.ts`.
+truth.
 
 Truncation is not masking: a truncated token prefix is still credential
 material. That is why `OAuthFlowProgress`'s token rows carry `sensitive: true`

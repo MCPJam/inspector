@@ -182,22 +182,20 @@ export async function resolveLocalHarnessAvailability(
   if (hosted) {
     return unavailable(
       "hosted",
-      "a hosted Inspector never runs a harness on its own machine",
+      "Local execution is unavailable in the web app. Open the desktop app or choose cloud execution.",
     );
   }
   if (!enabled) {
     return unavailable(
       "server-disabled",
-      "local harness execution is disabled on this server " +
-        "(MCPJAM_LOCAL_HARNESS_ENABLED)",
+      `${query.target.harnessId === "codex" ? "Codex" : "Claude Code"} can’t run on this computer. Ask your MCPJam administrator to enable local execution.`,
     );
   }
   if (!isActorEligibleForLocalHarness(query.actor, query.scope)) {
     return unavailable(
       "actor-not-eligible",
-      "local execution requires an attended, signed-in member running their " +
-        "own turn. Guests, shared scenario sessions, and swarm-scoped runs " +
-        "run hosted.",
+      "Local execution requires a signed-in member in their own chat. " +
+        "Sign in and start your own chat, or choose cloud execution.",
     );
   }
   // A target names the machine it was consented on. Without this check the

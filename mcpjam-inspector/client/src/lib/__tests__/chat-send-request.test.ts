@@ -130,7 +130,7 @@ describe("prepareLocalHarnessSendRequest", () => {
 
   it("refuses the turn when the local target cannot be resolved", () => {
     expect(() => prepareLocalHarnessSendRequest(sendOptions(), null)).toThrow(
-      "Local execution is not authorized for this turn",
+      "Local execution is not authorized. Set up this client on your machine and try again.",
     );
   });
 

@@ -35,7 +35,16 @@
  */
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import { mkdir, mkdtemp, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import {
   DEFAULT_PLUGIN_BUNDLE_LIMITS,
   parsePluginBundle,
@@ -86,6 +95,18 @@ export interface MaterializedPluginBundle {
 
 const TEMP_PREFIX = ".mcpjam-tmp-";
 
+/**
+ * Names the entry layout. An entry extracted before files kept their
+ * executable bit hashes the same as a fresh one, so the layout is in the
+ * name: an older entry is never reused, and garbage collection removes it.
+ */
+export const ENTRY_SUFFIX = ".x1";
+
+/** Ordinary permissions only: special bits (setuid, sticky) never land. */
+export function extractedFileMode(mode: number | undefined): number {
+  return ((mode ?? 0) & 0o111) !== 0 ? 0o755 : 0o644;
+}
+
 /** `~/.mcpjam/plugins` — the plan's cache root. */
 export function defaultPluginCacheRoot(): string {
   return join(homedir(), ".mcpjam", "plugins");
@@ -124,7 +145,7 @@ export class PluginBundleCache {
       this.rootDir,
       safeSegment(identity.projectId, "project id"),
       safeSegment(identity.pluginVersionId, "plugin version id"),
-      safeSegment(identity.bundleHash, "bundle hash")
+      safeSegment(identity.bundleHash, "bundle hash") + ENTRY_SUFFIX
     );
   }
 
@@ -277,7 +298,10 @@ export class PluginBundleCache {
           }
           // An entry a session is running from stays, even when the pin moved
           // on: deleting it would pull the files out from under a live process.
-          if (leased.has(entryDir) || keep.has(name)) continue;
+          const hash = name.endsWith(ENTRY_SUFFIX)
+            ? name.slice(0, -ENTRY_SUFFIX.length)
+            : undefined;
+          if (leased.has(entryDir) || (hash && keep.has(hash))) continue;
           await rm(entryDir, { recursive: true, force: true });
           removed.push(entryDir);
         }
@@ -301,7 +325,8 @@ async function parseOrThrow(
 }
 
 /**
- * Write every file the source lists into `target`. Paths were already
+ * Write every file the source lists into `target`, executables as 0755 and
+ * everything else as at most 0644. Paths were already
  * validated by the parse that preceded this call (the SDK rejects absolute
  * paths, `..`, and link entries before any content is read); the containment
  * assertion here is a belt-and-braces check on the one operation that would be
@@ -329,7 +354,31 @@ async function extractInto(
       DEFAULT_PLUGIN_BUNDLE_LIMITS.maxFileBytes
     );
     await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, bytes);
+    const mode = extractedFileMode(entry.mode);
+    await writeFile(destination, bytes, { mode });
+    // The umask may have narrowed an executable's create, and its bit is what
+    // runs. Other files keep what the umask allows.
+    if (mode === 0o755) await keepExecutableBit(destination, entry.path);
+  }
+}
+
+/** What a filesystem that stores no modes (FAT, some network mounts) says. */
+const MODES_UNSUPPORTED = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP"]);
+
+async function keepExecutableBit(destination: string, path: string) {
+  try {
+    await chmod(destination, 0o755);
+  } catch (error) {
+    const code =
+      error instanceof Error && "code" in error ? error.code : undefined;
+    if (typeof code !== "string" || !MODES_UNSUPPORTED.has(code)) throw error;
+    // Such a filesystem can't keep the bit, and the file is written either
+    // way: a server launched through `node` or `python` still runs, and one
+    // that runs the file itself fails at launch, as before bits were kept.
+    logger.warn("[plugin-cache] this filesystem can't keep an executable bit", {
+      path,
+      code,
+    });
   }
 }
 

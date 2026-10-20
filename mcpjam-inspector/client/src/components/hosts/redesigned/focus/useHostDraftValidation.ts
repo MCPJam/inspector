@@ -81,15 +81,6 @@ export function collectHostAttentionIssues(
           },
     );
   }
-  if (draft.systemPrompt.trim() === "") {
-    issues.push({
-      level: "warning",
-      tab: "behavior",
-      field: "systemPrompt",
-      message: "Empty system prompt",
-    });
-  }
-
   // Apps tab: hostContext must be JSON-shaped (the editor enforces this,
   // but defend the validation surface for non-editor mutators too). Test
   // presence — not truthiness — so falsy non-object payloads (0, false,

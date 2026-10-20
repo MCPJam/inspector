@@ -81,7 +81,7 @@ export function toClaudeCodeNativeModel(
 }
 
 /** Map a host model id to a Codex-native OpenAI model. ALLOWLIST, not a blanket
- *  `openai/` strip: only the gpt-5 family (what Codex CLI runs) passes through;
+ *  `openai/` strip: only GPT-5 and individually admitted GPT-6 model names pass through;
  *  anything else ⇒ undefined so Codex uses its own pinned default rather than
  *  being forced onto a model it can't run. Whether a mapped model is actually
  *  RUN is the evidence table's call ({@link modelSupportFor}), so a line the
@@ -90,7 +90,7 @@ export function toClaudeCodeNativeModel(
 export function toCodexModel(modelId: string): string | undefined {
   if (!modelId.toLowerCase().startsWith("openai/")) return undefined;
   const slug = modelId.slice("openai/".length);
-  if (!/^gpt-5/i.test(slug)) return undefined;
+  if (!/^(?:gpt-5|gpt-6-luna(?:$|-)|gpt-6\.1-sol(?:$|-))/i.test(slug)) return undefined;
   return slug;
 }
 

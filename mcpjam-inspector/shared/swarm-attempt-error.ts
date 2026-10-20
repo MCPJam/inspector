@@ -55,6 +55,14 @@ const URL_PATTERN = /https?:\/\/\S+/g;
 const ENGINE_DETAIL_SUFFIX =
   /\((?:([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?:, HTTP (\d{3}))?|HTTP (\d{3}))\)$/;
 
+/**
+ * The AI SDK's `NoSuchToolError` text, as it arrives inside an empty-step
+ * failure: the model called a tool name the host never offered. The raw form
+ * buries this behind "Backend step returned no content" and a truncated list
+ * of every available tool.
+ */
+const UNAVAILABLE_TOOL_CALL = /Model tried to call unavailable tool '([^']+)'/;
+
 export const SPEND_REFUSAL_REASONS = [
   "holds_committed",
   "wallet_locked",
@@ -452,6 +460,27 @@ export function humanizeSwarmAttemptError(
     };
   }
   if (!input) return { message: "The session failed for an unknown reason." };
+
+  const unavailableTool = UNAVAILABLE_TOOL_CALL.exec(input)?.[1];
+  if (unavailableTool !== undefined) {
+    // The runner stores `info.code` when it has no reason of its own, so keep
+    // the engine's "(provider_empty_response)" suffix code rather than drop it.
+    const suffix = ENGINE_DETAIL_SUFFIX.exec(input);
+    const code = errorCode ?? suffix?.[1];
+    const envelope = AGENT_ERROR_ENVELOPE.exec(input);
+    const status =
+      envelope?.[1] ?? envelope?.[2] ?? suffix?.[2] ?? suffix?.[3];
+    const toolName = scrub(unavailableTool) || "a tool";
+    return {
+      message:
+        `The model called \`${toolName}\`, but your server has no tool by that name.`.slice(
+          0,
+          MAX_ATTEMPT_ERROR_CHARS,
+        ),
+      ...(code ? { code } : {}),
+      ...(status ? { httpStatus: Number(status) } : {}),
+    };
+  }
 
   let body = input;
   let httpStatus: number | undefined;

@@ -16,7 +16,7 @@ Every browser session runs at one of three privacy levels. The level decides wha
 | -------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `off`    | None. No recorder runs.                                                                                                          | Usage events, scrubbed as described below. On the hosted service, also masked as at `masked`. |
 | `masked` | PostHog replay only: layout and interaction, with every text node and input masked, media and links blocked, and no console logs or network headers or bodies. Sentry Replay does not run at `masked`. | Element text and attributes masked. Names in URLs are replaced, ids and route words stay. |
-| `full`   | The page, with every input and every surface that shows a secret (tokens, API keys) masked.                                     | Usage events, scrubbed as described below                                          |
+| `full`   | PostHog replay: layout and interaction, with every text node and input masked, media and links blocked, and no console logs or network headers or bodies. Sentry Replay, with the same masking. | Usage events, scrubbed as described below                                          |
 
 | Session                                                                                          | Level    |
 | ------------------------------------------------------------------------------------------------ | -------- |
@@ -24,8 +24,8 @@ Every browser session runs at one of three privacy levels. The level decides wha
 | Any build made with `VITE_DISABLE_POSTHOG_LOCAL=true`                                            | `off`    |
 | Hosted, a share link to a published study                                                        | `off`    |
 | An organization with session replay off is in view, or the person belongs to one                | `off`    |
-| Desktop app                                                                                      | `masked` |
-| Hosted, anything the backend cannot verify as non-private (a private organization in view, membership of one, a visitor with no session) | `masked` |
+| Desktop app                                                                                      | `off`    |
+| Hosted, anything the backend cannot verify as non-private (a private organization in view, membership of one, a visitor with no session) | `off`    |
 | Hosted, a context the backend verifies as non-private                                            | `full`   |
 
 The MCPJam backend decides the level for the organizations and projects in view, and the analytics proxy checks it again for every event it forwards. The level fails closed: nothing is recorded until the backend has answered, and a navigation records nothing until the new page's answer arrives and the page has loaded.

@@ -64,6 +64,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
         projectId,
         name: label,
         input: { ...seed, serverIds: [] },
+        applyDefaultSystemPrompt: true,
       });
       toast.success(`Created ${label} client.`);
       navigate(buildHostsPath(hostId));

@@ -249,6 +249,34 @@ describe.each([
     expect(executor).not.toHaveBeenCalled();
   });
 
+  it("sends a bearer token longer than the general header cap", async () => {
+    executor.mockResolvedValueOnce(
+      upstream({ "content-type": "application/json" }, {}),
+    );
+    const authorization = `Bearer ${"a".repeat(12 * 1024)}`;
+    const { status } = await expectJson(
+      await proxy({
+        method: "POST",
+        headers: { Authorization: authorization },
+      }),
+    );
+    expect(status).toBe(200);
+    expect(executor.mock.calls[0][0].headers).toEqual({
+      Authorization: authorization,
+    });
+  });
+
+  it("refuses an oversized header value", async () => {
+    for (const headers of [
+      { "X-Custom": "a".repeat(8 * 1024 + 1) },
+      { Authorization: `Bearer ${"a".repeat(32 * 1024)}` },
+    ]) {
+      const { status } = await expectJson(await proxy({ headers }));
+      expect(status).toBe(400);
+    }
+    expect(executor).not.toHaveBeenCalled();
+  });
+
   it("serves a guest session", async () => {
     executor.mockResolvedValueOnce(
       upstream({ "content-type": "application/json" }, { ok: true }),

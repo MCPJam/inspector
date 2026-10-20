@@ -116,8 +116,9 @@ export interface SessionPrivacyInputs {
  *   answers `off`: no replay for an organization with session replay off, on
  *   any surface.
  * - Hosted otherwise: the backend's answer. Only a verified non-private
- *   context gets `full`; visitors with no session, and pages with nothing in
- *   view, are `masked`.
+ *   context gets `full`; the backend answers `off` for visitors with no
+ *   session, pages with nothing in view and private organizations. `masked`
+ *   applies only if the backend answers it.
  */
 export function resolveSessionPrivacy(
   inputs: SessionPrivacyInputs,
