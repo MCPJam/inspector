@@ -48,7 +48,7 @@
  * to enforce — but it is the same shape of deviation documented at the top of
  * `sessionToolRegistrar.ts`, and worth reading alongside it.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import { z } from "zod";
@@ -77,8 +77,9 @@ export const SKILLS_EXTENSION_CAPABILITY = {
 } as const;
 
 /**
- * How long a client may cache a `skills/list` result (SEP-2549), and the scope
- * that cache entry is valid for.
+ * How long a client may cache a `skills/list` or `skills/get` result
+ * (SEP-2549), and the scope that cache entry is valid for. The stable spec
+ * requires both fields on both results.
  *
  * The catalog is baked into the bundle at build time, so it cannot change
  * without a deploy — an hour is an honest statement about this server rather
@@ -165,7 +166,13 @@ export function registerSkillsSurface(server: McpServer): void {
   server.server.setRequestHandler(
     "skills/get",
     { params: getParamsSchema, result: looseResult },
-    async (params) => ({ skill: entryFor(params.uri) })
+    // The SDK fills `ttlMs` / `cacheScope` only on the base protocol's
+    // cacheable methods, so an extension method has to carry its own.
+    async (params) => ({
+      skill: entryFor(params.uri),
+      ttlMs: SKILLS_LIST_TTL_MS,
+      cacheScope: SKILLS_LIST_CACHE_SCOPE,
+    })
   );
 
   for (const [uri, text] of Object.entries(SKILLS_BUNDLE_CONTENTS)) {

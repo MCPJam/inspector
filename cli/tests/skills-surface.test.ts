@@ -9,7 +9,7 @@
  *
  * Every skill and every file is checked, not a sample.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import assert from "node:assert/strict";
@@ -32,6 +32,7 @@ import {
   SKILLS_EXTENSION_CAPABILITY,
   SKILLS_EXTENSION_ID,
   SKILLS_LIST_CACHE_SCOPE,
+  SKILLS_LIST_TTL_MS,
   mimeTypeFor,
   registerSkillsSurface,
 } from "../src/lib/skills-surface.js";
@@ -104,16 +105,27 @@ test("issues NO freshness licence, because `npx @latest` can change the bytes", 
   // The worker's hour-long ttlMs is safe because its catalog changes only on
   // deploy. Here the stdio command is the natural cache key and it does NOT
   // change across a release, so a cached manifest could be paired with newer
-  // bytes and refuse our own skill as `digest_mismatch`.
+  // bytes and refuse our own skill as `digest_mismatch`. The spec requires
+  // the field, and SEP-2549 defines 0 as "immediately stale".
+  assert.equal(SKILLS_LIST_TTL_MS, 0);
   const { handlers } = capture();
   const listed = await handlers.get("skills/list")!({});
-  assert.equal(
-    listed.ttlMs,
-    undefined,
-    "ttlMs must be absent for the CLI venue"
-  );
+  assert.equal(listed.ttlMs, 0, "ttlMs must be 0 for the CLI venue");
   assert.equal(listed.cacheScope, "public");
   assert.equal(listed.skills.length, 2);
+});
+
+test("skills/get carries the same cache attributes as the listing", async () => {
+  // Required on both results by the stable spec. The SDK only fills them on
+  // base-protocol methods, so a missing field here would reach the wire.
+  const { handlers } = capture();
+  const listed = await handlers.get("skills/list")!({});
+  for (const entry of listed.skills) {
+    const got = await handlers.get("skills/get")!({ uri: entry.uri });
+    assert.deepEqual(got.skill, entry);
+    assert.equal(got.ttlMs, 0);
+    assert.equal(got.cacheScope, "public");
+  }
 });
 
 test("every manifest entry carries a digest and a byte size", () => {

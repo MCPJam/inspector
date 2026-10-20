@@ -16,7 +16,7 @@
  * is right for entry 0 and wrong for entry 9 is exactly the bug this catches,
  * and sampling would make the suite pass for the wrong reason.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import { describe, expect, it } from "vitest";
@@ -205,6 +205,16 @@ describe("skills/get", () => {
       // approval.
       expect(result.skill).toEqual(skill);
     }
+  });
+
+  it("carries the SEP-2549 cache attributes the spec requires", async () => {
+    // The SDK fills `ttlMs` / `cacheScope` only on base-protocol methods, so
+    // the handler has to send them itself. Required since the 2026-09-08
+    // ext-skills decision.
+    const listed = await listSkills();
+    const { result } = await call("skills/get", { uri: listed.skills[0].uri });
+    expect(result.ttlMs).toBe(SKILLS_LIST_TTL_MS);
+    expect(result.cacheScope).toBe(SKILLS_LIST_CACHE_SCOPE);
   });
 
   it("answers -32602 for a URI it does not serve", async () => {
