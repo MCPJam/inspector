@@ -40,14 +40,14 @@ describe("trialChainDisplay", () => {
     ).toBe("settled");
   });
 
-  it("loads while the run has not finished, since only finished runs are read", () => {
+  it("waits — a note over the rows, never a forever-skeleton — while the run has not finished", () => {
     expect(
       trialChainDisplay({
         ...base,
         readRun: { status: "running" },
         chains: { status: "disabled", walkExhausted: false },
       }),
-    ).toBe("loading");
+    ).toBe("waiting");
   });
 
   it("reports a failed read as an error, not as an absent chain", () => {
@@ -66,13 +66,13 @@ describe("trialChainDisplay", () => {
     expect(trialChainDisplay(base)).toBe("settled");
   });
 
-  it("says nothing about a trial whose run is not the one being read", () => {
+  it("reports a trial whose run is not the one being read as not loaded", () => {
     expect(
       trialChainDisplay({
         ...base,
         readRunId: "run_2",
         chains: { status: "loading", walkExhausted: false },
       }),
-    ).toBe("settled");
+    ).toBe("notLoaded");
   });
 });

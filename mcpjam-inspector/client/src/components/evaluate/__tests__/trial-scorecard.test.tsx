@@ -117,23 +117,43 @@ describe("TrialScorecard", () => {
     );
     expect(screen.queryByText("No observation recorded.")).toBeNull();
   });
-  it("says a failed chain read failed, with a retry, instead of 'Not measured'", () => {
+  it.each([
+    ["error", "Couldn't load this iteration's stage results."],
+    ["notLoaded", "Stage results weren't loaded for this iteration."],
+    ["waiting", "Stage results appear when the run finishes."],
+  ] as const)(
+    "puts a %s note above the rows instead of hiding the trial's scores",
+    (chainDisplay, copy) => {
+      renderCard({ chain: null, chainDisplay });
+      expect(
+        screen.getByTestId("trial-scorecard-chain-unavailable"),
+      ).toHaveTextContent(copy);
+      // The rows still come from the iteration, so they stay.
+      expect(screen.getAllByTestId("trial-scorecard-row").length).toBeGreaterThan(
+        0,
+      );
+    },
+  );
+  it("offers Retry only for a failed read", () => {
     const retry = vi.fn();
-    renderCard({ chain: null, chainDisplay: "error", onRetryChain: retry });
-    expect(
-      screen.getByTestId("trial-scorecard-chain-unavailable"),
-    ).toHaveTextContent("Couldn't load this iteration's stage results.");
-    expect(screen.queryByText("No observation recorded.")).toBeNull();
+    const { rerender } = renderCard({
+      chain: null,
+      chainDisplay: "error",
+      onRetryChain: retry,
+    });
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retry).toHaveBeenCalledTimes(1);
-  });
-  it("says a chain past the page cap was not loaded, instead of 'Not measured'", () => {
-    renderCard({ chain: null, chainDisplay: "notLoaded" });
-    expect(
-      screen.getByTestId("trial-scorecard-chain-unavailable"),
-    ).toHaveAttribute("data-reason", "notLoaded");
+    rerender(
+      <TrialScorecard
+        authored={authored}
+        iteration={iteration()}
+        steps={steps}
+        chain={null}
+        chainDisplay="notLoaded"
+        onRetryChain={retry}
+      />,
+    );
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    expect(screen.queryByText("No observation recorded.")).toBeNull();
   });
   it("still shows the no-chain fallback once loading is over", () => {
     renderCard({ chain: null });

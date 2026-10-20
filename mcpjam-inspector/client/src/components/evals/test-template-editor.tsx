@@ -1360,7 +1360,10 @@ export function TestTemplateEditor({
   const chainRunId = replayIteration?.suiteRunId ?? tracedRunId ?? null;
   const chainOnlyRun = useSelectedRun(
     suiteId ?? "",
-    chainRunId !== detailRunId ? chainRunId : null,
+    chainRunId !== detailRunId &&
+      !listedSuiteRuns.some((run) => run._id === chainRunId)
+      ? chainRunId
+      : null,
   );
   const detailRunSelection = useSelectedRun(suiteId ?? "", detailRunId);
   const detailRun = detailRunSelection.run;

@@ -485,27 +485,26 @@ export function TrialScorecard({
   if (chainDisplay === "loading") {
     return <ScorecardSkeleton message="Loading this iteration's report…" />;
   }
-  if (chainDisplay === "error" || chainDisplay === "notLoaded") {
-    return (
+  // Only the stage results are missing; the rows below still come from the
+  // iteration, so they stay, and the note says why the stages read empty.
+  const chainNotice =
+    chainDisplay === "error" ||
+    chainDisplay === "notLoaded" ||
+    chainDisplay === "waiting" ? (
       <div
-        className="flex flex-wrap items-center gap-2 p-4 text-sm text-muted-foreground"
+        className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
         role="status"
         data-testid="trial-scorecard-chain-unavailable"
         data-reason={chainDisplay}
       >
-        <span>
-          {chainDisplay === "error"
-            ? "Couldn't load this iteration's stage results."
-            : "This run has too many iterations to load stage results for this one."}
-        </span>
+        <span>{CHAIN_NOTICE_COPY[chainDisplay]}</span>
         {chainDisplay === "error" && onRetryChain ? (
           <Button type="button" variant="outline" size="sm" onClick={onRetryChain}>
             Retry
           </Button>
         ) : null}
       </div>
-    );
-  }
+    ) : null;
 
   function renderSection(section: (typeof sections)[number]) {
     const sentence = stageSentence(section.stage, section.rows);
@@ -570,6 +569,7 @@ export function TrialScorecard({
 
   return (
     <div className="flex flex-col gap-6 p-4" data-testid="trial-scorecard">
+      {chainNotice}
       <section className="space-y-6" aria-label="User value chain">
         {railed ? (
           <div className="grid gap-6 sm:grid-cols-[170px_minmax(0,1fr)]">
@@ -605,6 +605,14 @@ export function TrialScorecard({
     </div>
   );
 }
+
+const CHAIN_NOTICE_COPY = {
+  error: "Couldn't load this iteration's stage results.",
+  // Covers both causes `trialChainDisplay` folds in (page cap, another run),
+  // so it names neither.
+  notLoaded: "Stage results weren't loaded for this iteration.",
+  waiting: "Stage results appear when the run finishes.",
+} as const;
 
 /** The shape the report settles into: a rail, and one stage beside it. */
 function ScorecardSkeleton({ message }: { message: string }) {
