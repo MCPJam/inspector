@@ -46,7 +46,7 @@ const agentConstruction = vi.hoisted(() => ({
 }));
 
 /** The adapter's `toNativeModel` answer (Cursor-style adapters map none). */
-const adapterDelivery = vi.hoisted(() => ({ value: "host-executed" }));
+const adapterDelivery = vi.hoisted(() => ({ value: "mcpjam" }));
 
 const toNativeModel = vi.hoisted(() =>
   vi.fn((_modelId: string): string | undefined => "gpt-5")
@@ -206,7 +206,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
 
   beforeEach(() => {
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
-    adapterDelivery.value = "host-executed";
+    adapterDelivery.value = "mcpjam";
     projectSpy.mockClear();
     harnessState.continuations = [];
     harnessState.create.mockClear();
@@ -519,7 +519,7 @@ describe("the hosted command sandbox under Tool Approval", () => {
 
   beforeEach(() => {
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
-    adapterDelivery.value = "host-executed";
+    adapterDelivery.value = "mcpjam";
     vi.mocked(getHarnessAdapter).mockClear();
   });
   afterEach(() => {

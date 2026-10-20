@@ -1552,7 +1552,8 @@ chatV2.post("/", async (c) => {
       pluginPins?.mcpProtocolVersionsByServerId?.[id] ?? pluginPins?.initializePins?.mcpProtocolVersion;
     const pluginFormPlan = pluginPins
       ? chatPluginFormPlan({
-          harness: resolvedExecution.harness,
+          harness: resolvedExecution.agentLoop ? undefined : resolvedExecution.harness,
+          agentLoop: resolvedExecution.agentLoop,
           serverIds: effectiveServerIds,
           pinFor: pluginPinFor,
           mrtrEnabled,
@@ -1563,7 +1564,7 @@ chatV2.post("/", async (c) => {
     // connection negotiated.
     let pluginNegotiatedVersion: (serverId: string) => string | undefined = () => undefined;
     if (pluginWorkspace && hostRuntimeConfig && pluginFormPlan?.admitted) {
-      assertPluginWorkspaceRuntime({ harness: resolvedExecution.harness, hostPolicy: { hostStyle: hostRuntimeConfig.hostStyle as string | undefined } });
+      assertPluginWorkspaceRuntime({ harness: resolvedExecution.agentLoop ? undefined : resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop, hostPolicy: { hostStyle: hostRuntimeConfig.hostStyle as string | undefined } });
       modelPluginBearer = await getConvexBearerForRequest(c);
       modelPluginSubject = toolApprovalSubjectFromAuthHeader(c.req.header("authorization"));
       if (modelPluginSubject === "anonymous") throw new Error("Plugin model identity unavailable");

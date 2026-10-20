@@ -83,7 +83,7 @@ vi.mock("../registry.js", () => ({
     skillsBaseDir: "/home/user/.claude/skills",
     skillsWriteOptions: { trailingNewline: true },
     prepareSkills: (skills: any[]) => ({ delivered: skills, payload: skills }),
-    mcpDelivery: "native",
+    mcpDelivery: "harness",
     mcpNativeDelivery: "session-config",
     supportsModel: vi.fn(() => true),
     liveApprovalRuntime: harnessState.liveApprovalRuntime,
@@ -818,7 +818,7 @@ describe("runHarnessTurn local continuity", () => {
       harnessState.adapterOverrides = {
         id: "codex",
         displayName: "Codex",
-        mcpDelivery: "host-executed",
+        mcpDelivery: "mcpjam",
         mcpNativeDelivery: undefined,
         acceptsSandboxPolicy: true,
       };
