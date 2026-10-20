@@ -17,6 +17,7 @@ const { mockRouteContext } = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("../lazy-route-tabs", () => import("@/test/mocks/eager-route-tabs"));
 vi.mock("../hooks/useEvaluateEnabled", () => ({
   EVALUATE_FEATURE_FLAG: "evaluate-enabled",
   useEvaluateEnabledState: () => flagState,

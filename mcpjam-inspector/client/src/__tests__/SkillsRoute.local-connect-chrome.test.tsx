@@ -15,6 +15,7 @@ const { hostedMode, skillsFlag, memberActor, mockRouteContext, mockNavigate } =
     mockNavigate: vi.fn(),
   }));
 
+vi.mock("../lazy-route-tabs", () => import("@/test/mocks/eager-route-tabs"));
 vi.mock("../hooks/use-is-member-actor", () => ({
   useIsMemberActor: () => memberActor.value,
 }));

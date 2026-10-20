@@ -20,6 +20,7 @@ const { mockUserTestingTab, mockRouteContext } = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("../lazy-route-tabs", () => import("@/test/mocks/eager-route-tabs"));
 vi.mock("react-router", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-router")>();
   return {
