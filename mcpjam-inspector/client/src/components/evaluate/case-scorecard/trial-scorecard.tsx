@@ -1,5 +1,6 @@
 import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { Button } from "@mcpjam/design-system/button";
 /**
  * The trial, as the same scorers the left pane authored.
  *
@@ -73,6 +74,7 @@ import {
   judgeDecidedStage,
 } from "../stage-trial-model";
 import { TrialScorecardRow } from "./trial-scorecard-row";
+import type { TrialChainDisplay } from "./trial-chain-state";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
 import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
@@ -202,6 +204,8 @@ export function TrialScorecard({
   scoresSection,
   judgeHidden: judgeHiddenRequested = false,
   isRunning = false,
+  chainDisplay = "settled",
+  onRetryChain,
   syncedStepId,
   onSyncStep,
 }: {
@@ -229,6 +233,14 @@ export function TrialScorecard({
    */
   judgeHidden?: boolean;
   isRunning?: boolean;
+  /**
+   * Whether a missing stage chain is still about the read (see
+   * `trialChainDisplay`). Without it the card would render its no-chain
+   * fallback, which reads as "nothing was measured".
+   */
+  chainDisplay?: TrialChainDisplay;
+  /** Re-reads the chain after a failed read. */
+  onRetryChain?: () => void;
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
 }) {
@@ -437,35 +449,32 @@ export function TrialScorecard({
     (!iteration && !!liveStepStatusById?.size);
   if (inProgress) {
     return (
-      <div
-        className="space-y-4 p-4"
-        role="status"
-        aria-live="polite"
-        aria-busy="true"
-        data-testid="trial-scorecard-loading"
-      >
-        <p className="text-sm text-muted-foreground">
-          Run in progress. The report will appear when it finishes.
-        </p>
-        {/* The shape it will settle into: a rail, and one stage beside it. */}
-        <div
-          className="grid gap-6 sm:grid-cols-[170px_minmax(0,1fr)]"
-          aria-hidden="true"
-        >
-          <div className="space-y-1">
-            {Array.from({ length: USER_VALUE_STAGES.length }, (_, index) => (
-              <Skeleton key={index} className="h-9 w-full" />
-            ))}
-          </div>
-          <div className="space-y-3">
-            <Skeleton className="h-6 w-40" />
-            <Skeleton className="h-4 w-72" />
-            <Skeleton className="h-40 w-full" />
-          </div>
-        </div>
-      </div>
+      <ScorecardSkeleton message="Run in progress. The report will appear when it finishes." />
     );
   }
+  if (chainDisplay === "loading") {
+    return <ScorecardSkeleton message="Loading this iteration's report…" />;
+  }
+  // Only the stage results are missing; the rows below still come from the
+  // iteration, so they stay, and the note says why the stages read empty.
+  const chainNotice =
+    chainDisplay === "error" ||
+    chainDisplay === "notLoaded" ||
+    chainDisplay === "waiting" ? (
+      <div
+        className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+        role="status"
+        data-testid="trial-scorecard-chain-unavailable"
+        data-reason={chainDisplay}
+      >
+        <span>{CHAIN_NOTICE_COPY[chainDisplay]}</span>
+        {chainDisplay === "error" && onRetryChain ? (
+          <Button type="button" variant="outline" size="sm" onClick={onRetryChain}>
+            Retry
+          </Button>
+        ) : null}
+      </div>
+    ) : null;
 
   function renderSection(section: (typeof sections)[number]) {
     const sentence = stageSentence(section.stage, section.rows);
@@ -518,6 +527,7 @@ export function TrialScorecard({
 
   return (
     <div className="flex flex-col gap-6 p-4" data-testid="trial-scorecard">
+      {chainNotice}
       <section className="space-y-6" aria-label="User value chain">
         {railed ? (
           <div className="grid gap-6 sm:grid-cols-[170px_minmax(0,1fr)]">
@@ -550,6 +560,45 @@ export function TrialScorecard({
           <div className="border-t border-border/50">{scoresSection}</div>
         </details>
       ) : null}
+    </div>
+  );
+}
+
+const CHAIN_NOTICE_COPY = {
+  error: "Couldn't load this iteration's stage results. Select Retry to try again.",
+  // Covers both causes `trialChainDisplay` folds in (page cap, another run),
+  // so it names neither.
+  notLoaded:
+    "Stage results weren't loaded for this iteration. Each check below still shows its result.",
+  waiting: "Stage results appear when the run finishes.",
+} as const;
+
+/** The shape the report settles into: a rail, and one stage beside it. */
+function ScorecardSkeleton({ message }: { message: string }) {
+  return (
+    <div
+      className="space-y-4 p-4"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      data-testid="trial-scorecard-loading"
+    >
+      <p className="text-sm text-muted-foreground">{message}</p>
+      <div
+        className="grid gap-6 sm:grid-cols-[170px_minmax(0,1fr)]"
+        aria-hidden="true"
+      >
+        <div className="space-y-1">
+          {Array.from({ length: USER_VALUE_STAGES.length }, (_, index) => (
+            <Skeleton key={index} className="h-9 w-full" />
+          ))}
+        </div>
+        <div className="space-y-3">
+          <Skeleton className="h-6 w-40" />
+          <Skeleton className="h-4 w-72" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      </div>
     </div>
   );
 }
