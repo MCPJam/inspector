@@ -423,6 +423,30 @@ describe("the organization AI-key policy's refusals", () => {
     ).not.toBe("org/credential_missing");
   });
 
+  it("reads provider_not_configured on /stream/org as the org's missing credential", () => {
+    const onOrg = { endpointPath: "/stream/org" };
+    for (const normalized of [
+      describeBackendStreamFailure(422, "x", "provider_not_configured", onOrg),
+      describeStreamErrorChunkFailure(
+        422,
+        "x",
+        "provider_not_configured",
+        onOrg,
+      ),
+    ]) {
+      expect(normalized.slug).toBe("org/credential_missing");
+      expect(originOf(normalized)).toBe("user_config");
+    }
+    expect(isAiPolicyRecognizedDenialCode("provider_not_configured")).toBe(
+      true,
+    );
+    expect(
+      describeBackendStreamFailure(422, "x", "provider_not_configured", {
+        endpointPath: "/stream",
+      }).slug,
+    ).not.toBe("org/credential_missing");
+  });
+
   it("recognizes every refusal but the policy-read failure as an expected denial", () => {
     for (const [code] of CASES) {
       expect(isAiPolicyRecognizedDenialCode(code)).toBe(
