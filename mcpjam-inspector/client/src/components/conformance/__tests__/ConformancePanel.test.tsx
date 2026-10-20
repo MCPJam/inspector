@@ -149,6 +149,14 @@ function clickRow(title: string) {
   fireEvent.click(button!);
 }
 
+/**
+ * Collapsed content stays mounted so it can slide shut, marked `inert`
+ * instead; "hidden" means inside an inert subtree, not absent.
+ */
+function isCollapsed(element: HTMLElement) {
+  return element.closest("[inert]") !== null;
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -453,11 +461,12 @@ describe("ConformanceTab", () => {
 
     // The row shows the canonical title; the explanation stays hidden until
     // the row itself is opened.
-    expect(screen.queryByText("Server responds to ping requests.")).toBeNull();
+    const explanation = screen.getByText("Server responds to ping requests.");
+    expect(isCollapsed(explanation)).toBe(true);
 
     await user.click(screen.getByRole("button", { name: /^Ping/ }));
 
-    expect(screen.getByText("Server responds to ping requests.")).toBeDefined();
+    expect(isCollapsed(explanation)).toBe(false);
   });
 
   it("narrows the protocol catalog to the pinned version's era", async () => {
@@ -608,10 +617,11 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getByText("Run available checks"));
     await screen.findByText("Protocol summary");
 
-    expect(screen.queryByText("Protocol detail body")).toBeNull();
+    const body = screen.getByText("Protocol detail body");
+    expect(isCollapsed(body)).toBe(true);
     clickRow("Ping");
 
-    expect(screen.queryByText("Protocol detail body")).not.toBeNull();
+    expect(isCollapsed(body)).toBe(false);
     expect(screen.queryByText(/Round Trip Ms:/)).not.toBeNull();
     expect(screen.queryByText(/"tools"/)).not.toBeNull();
     expect(screen.queryByText(/"resources"/)).not.toBeNull();
@@ -648,9 +658,10 @@ describe("ConformanceTab", () => {
     expect(
       screen.queryByText("Missing optional output template"),
     ).not.toBeNull();
+    // Once in the row's summary line, once in the opened error banner.
     expect(
-      screen.queryByText("Required tool metadata is missing"),
-    ).not.toBeNull();
+      screen.getAllByText("Required tool metadata is missing"),
+    ).toHaveLength(2);
   });
 
   it("allows skipped protocol rows to expand", async () => {
@@ -731,8 +742,8 @@ describe("ConformanceTab", () => {
       ),
     ).not.toBeNull();
     expect(
-      screen.queryByText("Server accepted the mismatched redirect URI."),
-    ).not.toBeNull();
+      screen.getAllByText("Server accepted the mismatched redirect URI."),
+    ).toHaveLength(2);
   });
 
   it("renders warnings on a passed OAuth step without an error banner", async () => {
