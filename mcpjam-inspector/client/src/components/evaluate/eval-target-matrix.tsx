@@ -423,8 +423,12 @@ function EvalModelPicker({
   testId: string;
   defaultModelId?: string;
 }) {
-  const { availableModels, requireOrgKeys, onManageOrgProviders } =
-    useAvailableModels({ projectId });
+  const {
+    availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
+    onAddProvider,
+  } = useAvailableModels({ projectId });
   return (
     <EvalModelChoices
       {...{
@@ -438,6 +442,7 @@ function EvalModelPicker({
         harness,
         requireOrgKeys,
         onManageOrgProviders,
+        onAddProvider,
       }}
     />
   );
@@ -455,6 +460,7 @@ export function EvalModelChoices({
   effortEditable = true,
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
 }: {
   /**
    * Offer each model's reasoning efforts in the model menus. Off where the
@@ -472,6 +478,8 @@ export function EvalModelChoices({
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
+  /** The same, under any key policy, for a model search with no match. */
+  onAddProvider?: () => void;
   inModal?: boolean;
   value: ModelSelection;
   onChange: (value: ModelSelection) => void;
@@ -654,6 +662,7 @@ export function EvalModelChoices({
               disabled={disabled}
               requireOrgKeys={requireOrgKeys}
               onManageOrgProviders={onManageOrgProviders}
+              onAddProvider={onAddProvider}
               analyticsLocation="eval_suite"
               workload="evalTarget"
               onModelChange={(next) => changeChoice(key, inherited, next)}
@@ -750,6 +759,7 @@ export function EvalModelChoices({
         disabled={disabled}
         requireOrgKeys={requireOrgKeys}
         onManageOrgProviders={onManageOrgProviders}
+        onAddProvider={onAddProvider}
         analyticsLocation="eval_suite"
         workload="evalTarget"
         onModelChange={(model) =>
