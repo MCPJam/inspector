@@ -238,7 +238,7 @@ describe("TrialScorecard", () => {
     expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
   });
 
-  it("lists supporting stage evidence on the judge row and stays quiet when there is none", async () => {
+  it("does not list the case's own checks as the judge's evidence", () => {
     const chain = {
       status: "verified",
       stages: [
@@ -251,28 +251,11 @@ describe("TrialScorecard", () => {
         },
       ],
     } as never;
-    const { rerender } = renderCard({ chain });
-    expect(screen.getByTestId("trial-scorecard-evidence")).toHaveTextContent(
-      "All three diagram labels were visible.",
-    );
-    rerender(
-      <TrialScorecard
-        authored={authored}
-        iteration={iteration()}
-        steps={steps}
-        chain={
-          {
-            status: "verified",
-            stages: [{ stage: "userValue", state: "passed" }],
-          } as never
-        }
-      />,
-    );
+    renderCard({ chain });
     expect(screen.queryByTestId("trial-scorecard-evidence")).toBeNull();
+    expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
     expect(
-      screen.queryByText(
-        "This run recorded a pass without supporting evidence.",
-      ),
+      screen.queryByText("All three diagram labels were visible."),
     ).toBeNull();
   });
 

@@ -391,39 +391,6 @@ export function TrialScorecard({
     return reason ? { text: reason, source: "chain" } : null;
   };
 
-  const userValueStage = chainRows.get("userValue");
-  const userValuePassRows = groups
-    .flatMap((group) => group.rows)
-    .filter(
-      (row) =>
-        row.stage === "userValue" &&
-        row.provenance !== "rubricCheck" &&
-        // The judge's own reason is its row's ACTUAL; listing it again as
-        // its evidence would say the same sentence twice.
-        row.provenance !== "judge" &&
-        row.result.state === "passed",
-    );
-  const userValueEvidence = [
-    ...new Set(
-      [
-        ...(userValueStage?.state === "passed"
-          ? userValueStage.evidence?.predicateReasons ?? []
-          : []),
-        ...userValuePassRows.flatMap((row) => [
-          ...("reason" in row.result && row.result.reason
-            ? [row.result.reason]
-            : []),
-          ...(row.evidence?.scoreEvidence ?? []),
-        ]),
-      ]
-        .map((text) => text.trim())
-        .filter(Boolean),
-    ),
-  ];
-  const showUserValueEvidence =
-    !judgeHidden &&
-    (userValueStage?.state === "passed" || userValuePassRows.length > 0);
-
   // One section per stage that has rows or a chain row, in chain order. A
   // stage the chain reports but nothing on the card covers (Selection or User
   // value with nothing graded, a stage the chain calls not applicable) still
@@ -540,13 +507,6 @@ export function TrialScorecard({
             layout="report"
             row={row}
             body={row.provenance === "judge" ? judgeSlot : undefined}
-            passEvidence={
-              row.provenance === "judge" &&
-              section.stage === "userValue" &&
-              showUserValueEvidence
-                ? userValueEvidence
-                : undefined
-            }
             hideJudgeResult={judgeHidden}
             syncedStepId={syncedStepId}
             onSyncStep={onSyncStep}
