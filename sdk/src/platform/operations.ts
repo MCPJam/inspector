@@ -1,3 +1,5 @@
+import { withToolResultAuthChallengeFindings } from "./tool-auth-compatibility.js";
+export { toolResultAuthChallengeFindings } from "./tool-auth-compatibility.js";
 import {
   environmentNamesFor,
   resolveSuiteHostTargets,
@@ -77,6 +79,7 @@ import {
   type RunTargetPlan,
 } from "./suite-run-plans.js";
 import {
+  bundledHostCompatCatalog,
   evaluateMarketHosts,
   scanWidgetUsage,
   type CompatFinding,
@@ -1842,6 +1845,12 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       tools: rawTools.map((tool) => ({
         name: String(tool.name),
         _meta: tool._meta as Record<string, unknown> | undefined,
+        // KEPT, not dropped: the per-tool auth declaration is what tells a
+        // host whether to act on a tool-result sign-in challenge. `_meta`
+        // (and any `_meta.securitySchemes` in it) rides along above.
+        ...(tool.securitySchemes !== undefined
+          ? { securitySchemes: tool.securitySchemes }
+          : {}),
       })),
     };
 
@@ -1873,7 +1882,13 @@ export const checkHostCompatibilityOperation: PlatformOperation<
         appOnly: requirements.appOnlyWidgets.length,
       },
       unknownDimensions: requirements.unknownDimensions,
-      hosts: reports.map((report) => ({
+      hosts: withToolResultAuthChallengeFindings(
+        reports,
+        toolsData.tools,
+        // The same catalog `evaluateMarketHosts` graded against: the bundled
+        // one, since no live catalog is passed above.
+        bundledHostCompatCatalog()
+      ).map((report) => ({
         hostId: report.hostId,
         hostLabel: report.hostLabel,
         verdict: report.verdict,
