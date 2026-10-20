@@ -40,6 +40,13 @@ on:
         required: false
         default: ""
         type: string
+      # Both dispatch as a token's owner or a bot, so the Slack post would
+      # name them rather than the person who asked for the release.
+      requested_by:
+        description: "Set by Soundcheck or release-trigger.yml: who started this release"
+        required: false
+        default: ""
+        type: string
 
 # One release at a time. A second dispatch waits, then finds its versions
 # already on npm.
@@ -1115,6 +1122,7 @@ jobs:
           BACKEND: ${{ inputs.deploy_backend_prod }}
           WEBAPP: ${{ inputs.deploy_webapp }}
           DESKTOP: ${{ needs.preflight.outputs.build_inspector_artifacts }}
+          REQUESTED_BY: ${{ inputs.requested_by }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
@@ -1133,6 +1141,7 @@ jobs:
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
           who="by $GITHUB_TRIGGERING_ACTOR"
           case "$GITHUB_TRIGGERING_ACTOR" in *"[bot]") who="automatically" ;; esac
+          if [ -n "${REQUESTED_BY:-}" ]; then who="by $REQUESTED_BY"; fi
           # Not `releases/latest`: `finalize` may already have published this
           # release, so skip its own tag and take the newest published Inspector
           # release (`v*`, not a `local-harness-pack-*` one) by date. 30 reaches
