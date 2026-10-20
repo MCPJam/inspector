@@ -1,21 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
-import { EmptyState } from "@/components/ui/empty-state";
-import {
-  Loader2,
-  ChevronDown,
-  ChevronRight,
-  AlertTriangle,
-  FlaskConical,
-} from "lucide-react";
+import { Loader2, AlertTriangle } from "lucide-react";
 import type { ServerWithName } from "@/hooks/use-app-state";
 // Import from the browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls
 // Node-only transitive deps (MCP client SDK uses `node:stream`, etc.) which
@@ -26,7 +12,6 @@ import {
   CONFORMANCE_CHECK_METADATA,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
-  MCP_PROTOCOL_VERSIONS,
   MCP_TASKS_CHECK_IDS,
   PROTOCOL_CHECK_CATALOG,
   PROTOCOL_VERSION_ERAS,
@@ -34,7 +19,12 @@ import {
   type ConformanceScore,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
-import { ScoreHeadline } from "./ScoreHeadline";
+import {
+  OverallScoreCard,
+  SUITE_COPY,
+  SuiteRow,
+  VerdictBadge,
+} from "./conformance-ui";
 import {
   CatalogRow,
   CheckRow,
@@ -42,6 +32,16 @@ import {
   pendingIdSet,
   type CatalogEntry,
 } from "./ConformanceCheckRows";
+import {
+  ConformanceHeader,
+  ConformancePreRun,
+  ConformanceServerPicker,
+  ConformanceTabPanel,
+  ProtocolVersionSelect,
+  RUN_LABEL,
+  type ConformanceView,
+} from "./ConformancePageChrome";
+import { toast } from "@/lib/toast";
 import {
   useConformanceRun,
   type ProtocolVersionPin,
@@ -97,8 +97,31 @@ const OAUTH_CATALOG: CatalogEntry[] = (
   description: CONFORMANCE_CHECK_METADATA[id].summary,
 }));
 
+function SuiteBadge({ state }: { state: SuiteState }) {
+  if (state.status === "running") {
+    return <VerdictBadge label="RUNNING" tone="neutral" spinning />;
+  }
+  if (state.status === "unavailable") {
+    return <VerdictBadge label="NOT APPLICABLE" tone="neutral" />;
+  }
+  if (state.status === "error") {
+    return <VerdictBadge label="ERROR" tone="danger" />;
+  }
+  if (state.status === "done") {
+    if (state.verdict === "failed") {
+      return <VerdictBadge label="FAILED" tone="danger" />;
+    }
+    if (state.verdict === "incomplete") {
+      return <VerdictBadge label="INCOMPLETE" tone="warning" />;
+    }
+    return <VerdictBadge label="PASSED" tone="success" />;
+  }
+  return null;
+}
+
 function SuiteSection({
   title,
+  description,
   state,
   catalog,
   catalogNote,
@@ -107,122 +130,102 @@ function SuiteSection({
   children,
 }: {
   title: string;
+  /** What the suite covers; replaced by the reason when it cannot run. */
+  description: string;
   state: SuiteState;
   /** What this suite runs, shown until a real result replaces it. */
   catalog: CatalogEntry[];
   catalogNote?: string;
   hasResult: boolean;
-  /** This suite's score chip, rendered beside the verdict badge. */
+  /** This suite's score, shown at the row's right edge. */
   score?: ConformanceScore;
   children?: React.ReactNode;
 }) {
-  // `null` follows the suite: one that is running or finished opens itself, an
-  // idle one stays shut. Clicking pins an explicit choice until the next run
-  // remounts. Tracking `running` — not just `hasResult` — matters most for
-  // OAuth, whose section would otherwise snap shut the moment the browser
-  // callback lands and the run moves from "waiting for auth" to polling.
+  // `null` follows the suite: a finished suite that did not pass opens itself
+  // so the failures are visible; a passing or running one stays shut. OAuth
+  // waiting on the browser opens too, so its prompt is not hidden. Clicking
+  // pins an explicit choice until the next run remounts.
   const [override, setOverride] = useState<boolean | null>(null);
   const running = state.status === "running";
   const collapsible = state.status !== "unavailable";
-  const expanded = collapsible && (override ?? (hasResult || running));
-
-  const badge = (() => {
-    if (state.status === "running") {
-      return (
-        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-          <Loader2 className="h-3 w-3 animate-spin" /> Running
-        </span>
-      );
-    }
-    if (state.status === "unavailable") {
-      return (
-        <span className="text-[10px] text-muted-foreground">Unavailable</span>
-      );
-    }
-    if (state.status === "error") {
-      return <span className="text-[10px] text-red-400">Error</span>;
-    }
-    if (state.status === "done") {
-      if (state.verdict === "failed") {
-        return <span className="text-[10px] text-red-400">Failed</span>;
-      }
-      if (state.verdict === "incomplete") {
-        return <span className="text-[10px] text-amber-500">Incomplete</span>;
-      }
-      return <span className="text-[10px] text-green-500">Passed</span>;
-    }
-    return null;
-  })();
+  const waitingForAuth = Boolean(
+    (state as { waitingForAuth?: boolean }).waitingForAuth,
+  );
+  const autoOpen =
+    waitingForAuth ||
+    state.status === "error" ||
+    (state.status === "done" && state.verdict !== "passed");
+  const expanded = collapsible && (override ?? autoOpen);
 
   return (
-    <div className="rounded-md border border-border/50 overflow-hidden">
-      <button
-        type="button"
-        className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-muted/30 text-left transition-colors enabled:hover:bg-muted/50 disabled:cursor-default"
-        onClick={() => setOverride(!expanded)}
-        disabled={!collapsible}
-        aria-expanded={collapsible ? expanded : undefined}
-      >
-        <span className="flex items-center gap-1.5 min-w-0">
-          {collapsible &&
-            (expanded ? (
-              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-            ))}
-          <span className="text-sm font-medium truncate">{title}</span>
-        </span>
-        <span className="flex items-center gap-2">
-          {score && score.score !== null && (
-            <span className="text-[10px] font-semibold tabular-nums text-foreground">
-              {score.score}/100
-            </span>
-          )}
-          {badge}
-        </span>
-      </button>
-      <div className="px-2 py-1">
-        {state.status === "unavailable" && state.unavailableReason && (
-          <div className="flex items-center gap-1.5 px-1 py-2 text-xs text-muted-foreground">
-            <AlertTriangle className="h-3 w-3 flex-shrink-0" />
-            {state.unavailableReason}
+    <SuiteRow
+      title={title}
+      subtitle={
+        state.status === "unavailable" && state.unavailableReason
+          ? state.unavailableReason
+          : description
+      }
+      badge={<SuiteBadge state={state} />}
+      score={
+        score && score.score !== null
+          ? {
+              score: score.score,
+              passed: score.passed,
+              applicable: score.applicable,
+            }
+          : null
+      }
+      expanded={expanded}
+      collapsible={collapsible}
+      onToggle={() => setOverride(!expanded)}
+      notice={
+        state.status === "error" && state.error ? (
+          <div className="px-4 pb-3 pl-11 text-[13px] text-red-600 dark:text-red-400">
+            {state.error}
           </div>
-        )}
-        {state.status === "error" && state.error && (
-          <div className="px-1 py-2 text-xs text-red-400">{state.error}</div>
-        )}
-        {expanded &&
-          (hasResult ? (
-            children
-          ) : running ? (
-            // Mid-run with nothing to show yet: the catalog would read as
-            // "not run yet", which is exactly wrong while the run is live.
-            <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Running {catalog.length} checks...
-            </div>
-          ) : (
-            <div>
-              <div className="px-1 py-1 text-[10px] text-muted-foreground">
-                {catalog.length} checks in this suite — not run yet.
-                {catalogNote ? ` ${catalogNote}` : ""}
-              </div>
-              {catalog.map((entry) => (
-                <CatalogRow key={entry.id} entry={entry} />
-              ))}
-            </div>
+        ) : null
+      }
+    >
+      {hasResult ? (
+        children
+      ) : running ? (
+        // Mid-run with nothing to show yet: the catalog would read as
+        // "not run yet", which is exactly wrong while the run is live.
+        <div className="flex items-center gap-2 py-3 pl-7 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Running {catalog.length} checks...
+        </div>
+      ) : (
+        <div className="pl-7">
+          <div className="py-1 text-[11px] text-muted-foreground">
+            {catalog.length} checks in this suite — not run yet.
+            {catalogNote ? ` ${catalogNote}` : ""}
+          </div>
+          {catalog.map((entry) => (
+            <CatalogRow key={entry.id} entry={entry} />
           ))}
-      </div>
-    </div>
+        </div>
+      )}
+    </SuiteRow>
   );
 }
 
 function ConformanceContent({
   server,
   persist,
+  view,
+  onViewChange,
+  showHistory,
+  history,
+  serverPicker,
 }: {
   server: ServerWithName;
   persist?: ConformancePersistConfig;
+  view: ConformanceView;
+  onViewChange: (view: ConformanceView) => void;
+  showHistory: boolean;
+  history?: ReactNode;
+  serverPicker: ReactNode;
 }) {
   // Run state, per-suite scores and the pooled headline all live in the shared
   // hook — score.mcpjam.com runs the same four suites and must pool them the
@@ -253,8 +256,50 @@ function ConformanceContent({
   const protocolPendingIds = pendingIdSet(protocol.result);
   const tasksPendingIds = pendingIdSet(tasks.result);
 
+  // The page opens on the "run your first check" state and only swaps to the
+  // suites once a run has begun. Keyed by server, so a server switch resets it.
+  const [started, setStarted] = useState(false);
+  const handleRun = () => {
+    setStarted(true);
+    runAll();
+  };
+  const hasStarted =
+    started ||
+    isRunning ||
+    [protocol, apps, tasks, oauth].some(
+      (suite) => suite.status === "done" || suite.status === "error",
+    );
+
+  // DELIBERATELY OUTSIDE `runAll` AND THE POOLED SCORE. A hosted readiness
+  // run takes minutes, so joining the shared `isRunning` would hold the Run
+  // button and the protocol-version select hostage for its duration — and
+  // readiness produces lanes and coverage rather than passed/failed checks,
+  // so there is no number to pool. Each section owns its own run control and
+  // recovers a run still in flight when it mounts, so it shows before the
+  // suites have run, too.
+  const readiness = (
+    <div className="space-y-4">
+      <DirectoryReadinessSection publisher="claude" server={server} />
+      <DirectoryReadinessSection publisher="openai" server={server} />
+      <DirectoryReadinessSection publisher="muse" server={server} />
+    </div>
+  );
+
+  const runButton = (
+    <Button size="sm" onClick={handleRun} disabled={isRunning}>
+      {isRunning ? (
+        <>
+          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          Running...
+        </>
+      ) : (
+        RUN_LABEL
+      )}
+    </Button>
+  );
+
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {persist ? (
         <PersistConformanceRun
           persist={persist}
@@ -262,195 +307,174 @@ function ConformanceContent({
           snapshot={snapshot}
         />
       ) : null}
-      <div className="space-y-1 border-b border-border/50 pb-4">
-        <h2 className="text-lg font-semibold">Conformance</h2>
-        <p className="text-sm text-muted-foreground">
-          Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.{" "}
-          Directory readiness grades it against Anthropic's, OpenAI's and Meta's
-          (Muse) published rules.
-        </p>
-      </div>
+      <ConformanceHeader
+        view={view}
+        onViewChange={onViewChange}
+        showHistory={showHistory}
+      >
+        {serverPicker}
+        <ProtocolVersionSelect
+          value={versionPin}
+          onChange={setVersionPin}
+          disabled={isRunning}
+        />
+        {runButton}
+      </ConformanceHeader>
 
-      {pooledScore && pooledScore.score !== null && (
-        <div className="mt-4">
-          <ScoreHeadline score={pooledScore} oauthNotScored={oauthNotScored} />
-        </div>
-      )}
+      <ConformanceTabPanel view={view}>
+        {view === "history" ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+            {history}
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">
+            {!hasStarted ? (
+              <ConformancePreRun runButton={runButton} />
+            ) : (
+              <div>
+                <OverallScoreCard
+                  score={pooledScore}
+                  serverName={server.name}
+                  version={
+                    pooledScore?.protocolVersion ??
+                    (versionPin === "auto" ? "Auto" : versionPin)
+                  }
+                  isRunning={isRunning}
+                  oauthNotScored={oauthNotScored}
+                />
 
-      <div className="mt-4 flex items-center justify-between gap-2">
-        <Button size="sm" onClick={runAll} disabled={isRunning}>
-          {isRunning ? (
-            <>
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              Running...
-            </>
-          ) : (
-            "Run available checks"
-          )}
-        </Button>
-        <div className="flex items-center gap-2">
-          <label
-            htmlFor="conformance-protocol-version"
-            className="text-xs text-muted-foreground"
-          >
-            Protocol version
-          </label>
-          <Select
-            value={versionPin}
-            onValueChange={(value) =>
-              setVersionPin(value as ProtocolVersionPin)
-            }
-            disabled={isRunning}
-          >
-            <SelectTrigger
-              id="conformance-protocol-version"
-              className="h-8 w-[170px] text-xs"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="auto">Auto (negotiated)</SelectItem>
-              {MCP_PROTOCOL_VERSIONS.map((version) => (
-                <SelectItem key={version} value={version}>
-                  {version}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+                <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card">
+                  <SuiteSection
+                    key={`${runVersion}-protocol`}
+                    title={SUITE_COPY.protocol.title}
+                    description={SUITE_COPY.protocol.description}
+                    state={protocol}
+                    score={protocolScore}
+                    catalog={protocolChecks}
+                    catalogNote={
+                      versionPin === "auto"
+                        ? "The negotiated version decides which era's checks run."
+                        : undefined
+                    }
+                    hasResult={Boolean(protocol.result)}
+                  >
+                    {protocol.result ? (
+                      <div>
+                        {(protocol.result.readiness ?? []).length > 0 && (
+                          <div className="my-2 space-y-1 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+                            {(protocol.result.readiness ?? []).map(
+                              (warning) => (
+                                <div
+                                  key={warning.id}
+                                  className="flex items-start gap-1.5 text-[11px]"
+                                >
+                                  <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500" />
+                                  <span className="min-w-0">
+                                    <span className="font-medium">
+                                      {warning.title}
+                                    </span>{" "}
+                                    <span className="text-muted-foreground">
+                                      ({warning.specStrength})
+                                    </span>{" "}
+                                    — {warning.message}
+                                  </span>
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        )}
+                        {protocol.result.checks.map((check) => (
+                          <CheckRow
+                            key={`${runVersion}-${check.id}`}
+                            check={check}
+                            pending={protocolPendingIds.has(check.id)}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </SuiteSection>
 
-      <div className="mt-4 space-y-4 overflow-y-auto pr-1">
-        <SuiteSection
-          key={`${runVersion}-protocol`}
-          title="Protocol"
-          state={protocol}
-          score={protocolScore}
-          catalog={protocolChecks}
-          catalogNote={
-            versionPin === "auto"
-              ? "The negotiated version decides which era's checks run."
-              : undefined
-          }
-          hasResult={Boolean(protocol.result)}
-        >
-          {protocol.result ? (
-            <div>
-              <div className="px-1 py-1 text-[10px] text-muted-foreground">
-                {protocol.result.summary}
-              </div>
-              {(protocol.result.readiness ?? []).length > 0 && (
-                <div className="mx-1 my-1 space-y-1 rounded-sm border border-amber-500/50 px-2 py-1.5">
-                  {(protocol.result.readiness ?? []).map((warning) => (
-                    <div
-                      key={warning.id}
-                      className="flex items-start gap-1.5 text-[11px]"
-                    >
-                      <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500" />
-                      <span className="min-w-0">
-                        <span className="font-medium">{warning.title}</span>{" "}
-                        <span className="text-muted-foreground">
-                          ({warning.specStrength})
-                        </span>{" "}
-                        — {warning.message}
-                      </span>
-                    </div>
-                  ))}
+                  <SuiteSection
+                    key={`${runVersion}-apps`}
+                    title={SUITE_COPY.apps.title}
+                    description={SUITE_COPY.apps.description}
+                    state={apps}
+                    score={appsScore}
+                    catalog={APPS_CATALOG}
+                    hasResult={Boolean(apps.result)}
+                  >
+                    {apps.result ? (
+                      <div>
+                        {apps.result.checks.map((check) => (
+                          <CheckRow
+                            key={`${runVersion}-${check.id}`}
+                            check={check}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </SuiteSection>
+
+                  <SuiteSection
+                    key={`${runVersion}-tasks`}
+                    title={SUITE_COPY.tasks.title}
+                    description={SUITE_COPY.tasks.description}
+                    state={tasks}
+                    score={tasksScore}
+                    catalog={TASKS_CATALOG}
+                    hasResult={Boolean(tasks.result)}
+                  >
+                    {tasks.result ? (
+                      <div>
+                        {tasks.result.checks.map((check) => (
+                          <CheckRow
+                            key={`${runVersion}-${check.id}`}
+                            check={check}
+                            pending={tasksPendingIds.has(check.id)}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </SuiteSection>
+
+                  <SuiteSection
+                    key={`${runVersion}-oauth`}
+                    title={SUITE_COPY.oauth.title}
+                    description={SUITE_COPY.oauth.description}
+                    state={oauth}
+                    score={oauthScore}
+                    catalog={OAUTH_CATALOG}
+                    catalogNote="The authorization flow steps are recorded as the run proceeds."
+                    hasResult={
+                      Boolean(oauth.result) || Boolean(oauth.waitingForAuth)
+                    }
+                  >
+                    {oauth.waitingForAuth ? (
+                      <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Waiting for browser authorization...
+                      </div>
+                    ) : oauth.result ? (
+                      <div>
+                        {oauth.result.steps.map((step) => (
+                          <OAuthStepRow
+                            key={`${runVersion}-${step.step}`}
+                            step={step}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </SuiteSection>
                 </div>
-              )}
-              {protocol.result.checks.map((check) => (
-                <CheckRow
-                  key={`${runVersion}-${check.id}`}
-                  check={check}
-                  pending={protocolPendingIds.has(check.id)}
-                />
-              ))}
-            </div>
-          ) : null}
-        </SuiteSection>
-
-        <SuiteSection
-          key={`${runVersion}-apps`}
-          title="Apps"
-          state={apps}
-          score={appsScore}
-          catalog={APPS_CATALOG}
-          hasResult={Boolean(apps.result)}
-        >
-          {apps.result ? (
-            <div>
-              <div className="px-1 py-1 text-[10px] text-muted-foreground">
-                {apps.result.summary}
               </div>
-              {apps.result.checks.map((check) => (
-                <CheckRow key={`${runVersion}-${check.id}`} check={check} />
-              ))}
-            </div>
-          ) : null}
-        </SuiteSection>
+            )}
 
-        <SuiteSection
-          key={`${runVersion}-tasks`}
-          title="Tasks"
-          state={tasks}
-          score={tasksScore}
-          catalog={TASKS_CATALOG}
-          hasResult={Boolean(tasks.result)}
-        >
-          {tasks.result ? (
-            <div>
-              <div className="px-1 py-1 text-[10px] text-muted-foreground">
-                {tasks.result.summary} (wire: {tasks.result.discovery.wire})
-              </div>
-              {tasks.result.checks.map((check) => (
-                <CheckRow
-                  key={`${runVersion}-${check.id}`}
-                  check={check}
-                  pending={tasksPendingIds.has(check.id)}
-                />
-              ))}
-            </div>
-          ) : null}
-        </SuiteSection>
-
-        <SuiteSection
-          key={`${runVersion}-oauth`}
-          title="OAuth"
-          state={oauth}
-          score={oauthScore}
-          catalog={OAUTH_CATALOG}
-          catalogNote="The authorization flow steps are recorded as the run proceeds."
-          hasResult={Boolean(oauth.result) || Boolean(oauth.waitingForAuth)}
-        >
-          {oauth.waitingForAuth ? (
-            <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Waiting for browser authorization...
-            </div>
-          ) : oauth.result ? (
-            <div>
-              <div className="px-1 py-1 text-[10px] text-muted-foreground">
-                {oauth.result.summary}
-              </div>
-              {oauth.result.steps.map((step) => (
-                <OAuthStepRow key={`${runVersion}-${step.step}`} step={step} />
-              ))}
-            </div>
-          ) : null}
-        </SuiteSection>
-
-        {/*
-          DELIBERATELY OUTSIDE `runAll` AND THE POOLED SCORE. A hosted
-          readiness run takes minutes, so joining the shared `isRunning` would
-          hold the Run button and the protocol-version select hostage for its
-          duration — and readiness produces lanes and coverage rather than
-          passed/failed checks, so there is no number to pool. Each section
-          owns its own run control.
-        */}
-        <DirectoryReadinessSection publisher="claude" server={server} />
-        <DirectoryReadinessSection publisher="openai" server={server} />
-        <DirectoryReadinessSection publisher="muse" server={server} />
-      </div>
+            {/* The same slot before and after the first run, so starting it
+                keeps the sections mounted and their selections intact. */}
+            <div className="mt-6">{readiness}</div>
+          </div>
+        )}
+      </ConformanceTabPanel>
     </div>
   );
 }
@@ -458,29 +482,91 @@ function ConformanceContent({
 export function ConformanceTab({
   server,
   persist,
+  servers,
+  onSelectServer,
+  history,
 }: {
   server?: ServerWithName | null;
   persist?: ConformancePersistConfig;
+  /** Servers offered in the page's picker. Omit to hide the picker. */
+  servers?: ServerWithName[];
+  onSelectServer?: (name: string) => void;
+  /** The History tab's content. Omit to hide the tab. */
+  history?: ReactNode;
 }) {
+  // A run's detail page links back with `?view=history`.
+  const [view, setView] = useState<ConformanceView>(() =>
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("view") === "history"
+      ? "history"
+      : "overview",
+  );
+  const showHistory = history !== undefined;
+  // `?view=history` can outlive the History tab, e.g. a run link opened where
+  // no history is passed. With the tabs hidden there would be no way back.
+  const activeView: ConformanceView = showHistory ? view : "overview";
+  const serverPicker =
+    servers && onSelectServer ? (
+      <ConformanceServerPicker
+        servers={servers}
+        selectedName={server?.name ?? null}
+        onSelect={onSelectServer}
+      />
+    ) : null;
+
   // In hosted mode `selectedMCPConfig` can arrive as a stub with falsy name
   // and/or missing config while the project is still hydrating — treat any
   // non-connected shape as "no server selected" so the panel never runs
   // against `undefined` (which would surface as "Hosted server not found
   // for 'undefined'" when Apps conformance calls the hosted resolver).
   if (!server || !server.name || server.name === "none" || !server.config) {
+    // Same pre-run page as with a server; running just asks for one first.
+    const noServerRunButton = (
+      <Button
+        size="sm"
+        onClick={() =>
+          toast.info("Connect an MCP server to run conformance checks.")
+        }
+      >
+        {RUN_LABEL}
+      </Button>
+    );
     return (
-      <EmptyState
-        icon={FlaskConical}
-        title="No server selected"
-        description="Select a connected server above to run conformance checks."
-        className="h-full"
-      />
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <ConformanceHeader
+          view={activeView}
+          onViewChange={setView}
+          showHistory={showHistory}
+        >
+          {serverPicker}
+          <ProtocolVersionSelect value="auto" disabled />
+          {noServerRunButton}
+        </ConformanceHeader>
+        <ConformanceTabPanel view={activeView}>
+          {activeView === "history" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+              {history}
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">
+              <ConformancePreRun runButton={noServerRunButton} />
+            </div>
+          )}
+        </ConformanceTabPanel>
+      </div>
     );
   }
 
   return (
-    <div className="h-full overflow-hidden p-4 lg:p-6">
-      <ConformanceContent key={server.name} server={server} persist={persist} />
-    </div>
+    <ConformanceContent
+      key={server.name}
+      server={server}
+      persist={persist}
+      view={activeView}
+      onViewChange={setView}
+      showHistory={showHistory}
+      history={history}
+      serverPicker={serverPicker}
+    />
   );
 }
