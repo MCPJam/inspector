@@ -478,8 +478,10 @@ export function createInspectorOAuthStateMachine(
     // chaining a prepare → send → receive burst (or the multi-hop CIMD
     // sequence) on a single click. This lets users inspect every request and
     // response individually — the "prepare" stop even shows the pending request
-    // before it is sent. To restore bundled stepping, schedule `fn` on a timer
-    // here again, e.g. `scheduleAutoAdvance: (fn, delayMs) => window.setTimeout(fn, delayMs)`.
+    // before it is sent. The one exception is the code redemption, which
+    // `redeemAuthorizationCode` runs straight through from the callback. A
+    // scheduler here would send its token request a second time, and the code
+    // is single-use, so bundled stepping cannot come back by wiring one in.
     // Profile credentials are authoritative when configured: the stored
     // `mcp-client-*` record can hold a stale DCR-registered client id, and it
     // never holds a secret — without the explicit secret the machine resolves

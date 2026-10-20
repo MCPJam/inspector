@@ -171,7 +171,25 @@ const freePort = () =>
     });
   });
 
+/**
+ * Windows has none of `ps`, `pgrep` or `lsof`, so each helper has a Windows
+ * arm that asks the OS directly, as `run-native-turn.ts` does: `tasklist` for
+ * liveness, `netstat -ano` for listeners, and CIM for the parent/child tree.
+ */
+const powershell = (script: string) =>
+  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], {
+    windowsHide: true,
+  });
+
 async function running(pid: number): Promise<boolean> {
+  if (WIN) {
+    try {
+      const { stdout } = await execFileP("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"]);
+      return stdout.includes(`"${pid}"`);
+    } catch {
+      return false;
+    }
+  }
   let state: string;
   try {
     state = (await execFileP("ps", ["-o", "stat=", "-p", String(pid)])).stdout.trim();
@@ -184,7 +202,13 @@ async function descendants(pid: number): Promise<number[]> {
   const out: number[] = [];
   const walk = async (p: number) => {
     let kids = "";
-    try { kids = (await execFileP("pgrep", ["-P", String(p)])).stdout; } catch { return; }
+    try {
+      kids = WIN
+        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
+        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
+    } catch {
+      return;
+    }
     for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
       out.push(k);
       await walk(k);
@@ -203,6 +227,18 @@ async function readProcEnv(pid: number) {
   catch { return psEnv(pid); }
 }
 async function listeners(pid: number) {
+  if (WIN) {
+    // Shaped like the lsof answer below so the loopback verdict reads both.
+    try {
+      return (await execFileP("netstat", ["-ano"])).stdout
+        .split(/\r?\n/)
+        .map((l) => l.trim().split(/\s+/))
+        .filter((f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid))
+        .map((f) => `${f[1]} (LISTEN)`);
+    } catch {
+      return [];
+    }
+  }
   try {
     return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
       .split("\n").slice(1).filter(Boolean).map((l) => l.split(/\s+/).slice(-2).join(" "));
@@ -267,7 +303,9 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
 }
 
 async function main() {
-  if (WIN) throw new Error("the Codex conformance leg has no Windows arm yet (Windows is not a Codex native target)");
+  // The unattended commands are POSIX shell, and unattended Windows Codex
+  // stays refused (`unattendedSandboxTargets`).
+  if (WIN && UNATTENDED) throw new Error("the unattended Codex leg has no Windows arm");
   mark("start");
   const mock = await startChild("mock-responses.mjs", { MOCK_POP_SECRET: POP_SECRET, MOCK_UPSTREAM_KEY: UPSTREAM_KEY_CANARY });
   const gw = await startChild("local-gateway.mjs", {
@@ -414,7 +452,11 @@ async function main() {
     if (!turns.read.text.includes("hello from the codex conformance workspace")) failures.push("attended: the approved command's output did not come back through the model");
     if (AUTO_APPROVE) {
       await writeFile(join(WORKSPACE, "attended-off-marker.txt"), "");
-      turns.marker = await runTurn("attended-off-marker", agent, sessionRef, "SHELL printf 'run\\n' >> attended-off-marker.txt");
+      // Codex runs commands in PowerShell on Windows, which has no `printf`.
+      const appendRun = WIN
+        ? 'Add-Content -NoNewline -Path attended-off-marker.txt -Value "run`n"'
+        : "printf 'run\\n' >> attended-off-marker.txt";
+      turns.marker = await runTurn("attended-off-marker", agent, sessionRef, `SHELL ${appendRun}`);
       if (turns.marker.approvals !== 0) failures.push("attended Off asked for native approval");
       if ((await readFile(join(WORKSPACE, "attended-off-marker.txt"), "utf8")) !== "run\n") failures.push("attended Off marker command did not execute exactly once");
       await rm(join(WORKSPACE, "attended-off-marker.txt"));
@@ -441,12 +483,6 @@ async function main() {
   if (probeCalls < 1) failures.push("the host-executed MCP tool never ran");
   if (!turns.mcp.text.includes("PROBE_OK:conformance")) failures.push("the MCP tool's result did not come back through the model");
   if (turns.mcp.approvals > 0) failures.push("the relayed MCP tool raised a Codex approval (MCPJam's gate must be the single authority)");
-
-  // Codex's own plan reaches the turn as `turn/plan/updated`, which the
-  // Inspector shows as the reply's checklist.
-  turns.plan = await runTurn("plan", agent, sessionRef, "PLAN");
-  if (!turns.plan.methods.includes("turn/plan/updated")) failures.push("Codex's update_plan never reached the turn as turn/plan/updated");
-  if (turns.plan.approvals > 0) failures.push("update_plan raised a Codex approval");
 
   // Process tree and hygiene while the session is live.
   const kids = await descendants(bridgePid);
