@@ -92,6 +92,7 @@ import { ReplayedScenarioPane } from "./runs/replayed-scenario-pane";
 import { IterationDetails } from "./iteration-details";
 import { TrialChainPanel } from "@/components/evaluate/trial-chain-panel";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
+import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
 import {
   JudgeVerdictPanel,
   resolveIterationJudge,
@@ -4290,6 +4291,24 @@ export function TestTemplateEditor({
       recentIterations.find((it) => it._id === iteration._id) ?? iteration;
     return chainForQuickRunIteration(live);
   })();
+  /**
+   * The run-backed chain is still on its way: the read for this trial's run
+   * is in flight, or the run has not finished, so there is nothing to read
+   * yet. Only then is a missing chain "loading" rather than "absent" — the
+   * scorecard's no-chain fallback says every stage was not measured, which
+   * is a claim about the run, not about the network.
+   */
+  const workspaceTrialChainPending = (() => {
+    const iteration = workspacePersistedIteration;
+    if (!iteration?.suiteRunId || !chainSlotEnabled) return false;
+    if (workspaceTrialChain) return false;
+    if (!projectId || openTrialRun?._id !== iteration.suiteRunId) return false;
+    if (trialChains.status === "loading") return true;
+    return (
+      trialChains.status === "disabled" &&
+      !isTerminalEvalRunStatus(openTrialRun.status)
+    );
+  })();
 
   /** What the LEFT pane is showing, as the scorecard model's input. */
   const workspaceDraftScorecardInput = {
@@ -5688,6 +5707,7 @@ export function TestTemplateEditor({
                                 []
                               }
                               chain={workspaceTrialChain}
+                              chainLoading={workspaceTrialChainPending}
                               judgeCase={resolveIterationJudge(
                                 workspacePersistedIteration,
                                 suiteRuns,

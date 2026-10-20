@@ -110,6 +110,20 @@ describe("TrialScorecard", () => {
     renderCard({ iteration: null, isRunning: true });
     expect(screen.getByTestId("trial-scorecard-loading")).toBeInTheDocument();
   });
+  it("shows a skeleton, not the no-chain fallback, while the chain loads", () => {
+    renderCard({ chain: null, chainLoading: true });
+    expect(screen.getByTestId("trial-scorecard-loading")).toHaveTextContent(
+      "Loading this iteration's report…",
+    );
+    expect(screen.queryByText("No observation recorded.")).toBeNull();
+  });
+  it("still shows the no-chain fallback once loading is over", () => {
+    renderCard({ chain: null });
+    expect(screen.queryByTestId("trial-scorecard-loading")).toBeNull();
+    expect(screen.getAllByTestId("trial-scorecard-row").length).toBeGreaterThan(
+      0,
+    );
+  });
   it("opens on the break, and keeps the other stages one click away", () => {
     const chain = {
       status: "verified",

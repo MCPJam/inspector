@@ -80,6 +80,36 @@ describe("useEvalRunIterationChains", () => {
     expect(fetchChains).not.toHaveBeenCalled();
   });
 
+  it("never reports the previous run's chains on the render that switches runs", async () => {
+    fetchChains.mockResolvedValueOnce(chainPage(["iter_1", "iter_2"]));
+    // The second run's read never resolves: everything after the switch is
+    // the in-flight window.
+    fetchChains.mockReturnValueOnce(new Promise(() => {}));
+    const seen: string[] = [];
+    const { result, rerender } = renderHook(
+      ({ run }) => {
+        const state = useEvalRunIterationChains({
+          projectId: "proj_1",
+          run,
+          enabled: true,
+        });
+        seen.push(`${run._id}:${state.status}:${state.chains.size}`);
+        return state;
+      },
+      { initialProps: { run: terminalRun } },
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    const switchedAt = seen.length;
+    rerender({ run: { ...terminalRun, _id: "run_2" } });
+
+    const afterSwitch = seen.slice(switchedAt);
+    expect(afterSwitch.length).toBeGreaterThan(0);
+    expect(afterSwitch.every((entry) => entry === "run_2:loading:0")).toBe(
+      true,
+    );
+  });
+
   it("issues no request while the run is still going", async () => {
     renderHook(() =>
       useEvalRunIterationChains({

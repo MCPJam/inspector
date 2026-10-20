@@ -202,6 +202,7 @@ export function TrialScorecard({
   scoresSection,
   judgeHidden: judgeHiddenRequested = false,
   isRunning = false,
+  chainLoading = false,
   syncedStepId,
   onSyncStep,
 }: {
@@ -229,6 +230,11 @@ export function TrialScorecard({
    */
   judgeHidden?: boolean;
   isRunning?: boolean;
+  /**
+   * The trial's stage chain is still on its way. Without it the card would
+   * render its no-chain fallback, which reads as "nothing was measured".
+   */
+  chainLoading?: boolean;
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
 }) {
@@ -467,34 +473,11 @@ export function TrialScorecard({
     (!iteration && !!liveStepStatusById?.size);
   if (inProgress) {
     return (
-      <div
-        className="space-y-4 p-4"
-        role="status"
-        aria-live="polite"
-        aria-busy="true"
-        data-testid="trial-scorecard-loading"
-      >
-        <p className="text-sm text-muted-foreground">
-          Run in progress. The report will appear when it finishes.
-        </p>
-        {/* The shape it will settle into: a rail, and one stage beside it. */}
-        <div
-          className="grid gap-6 sm:grid-cols-[170px_minmax(0,1fr)]"
-          aria-hidden="true"
-        >
-          <div className="space-y-1">
-            {Array.from({ length: USER_VALUE_STAGES.length }, (_, index) => (
-              <Skeleton key={index} className="h-9 w-full" />
-            ))}
-          </div>
-          <div className="space-y-3">
-            <Skeleton className="h-6 w-40" />
-            <Skeleton className="h-4 w-72" />
-            <Skeleton className="h-40 w-full" />
-          </div>
-        </div>
-      </div>
+      <ScorecardSkeleton message="Run in progress. The report will appear when it finishes." />
     );
+  }
+  if (chainLoading) {
+    return <ScorecardSkeleton message="Loading this iteration's report…" />;
   }
 
   function renderSection(section: (typeof sections)[number]) {
@@ -592,6 +575,36 @@ export function TrialScorecard({
           <div className="border-t border-border/50">{scoresSection}</div>
         </details>
       ) : null}
+    </div>
+  );
+}
+
+/** The shape the report settles into: a rail, and one stage beside it. */
+function ScorecardSkeleton({ message }: { message: string }) {
+  return (
+    <div
+      className="space-y-4 p-4"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      data-testid="trial-scorecard-loading"
+    >
+      <p className="text-sm text-muted-foreground">{message}</p>
+      <div
+        className="grid gap-6 sm:grid-cols-[170px_minmax(0,1fr)]"
+        aria-hidden="true"
+      >
+        <div className="space-y-1">
+          {Array.from({ length: USER_VALUE_STAGES.length }, (_, index) => (
+            <Skeleton key={index} className="h-9 w-full" />
+          ))}
+        </div>
+        <div className="space-y-3">
+          <Skeleton className="h-6 w-40" />
+          <Skeleton className="h-4 w-72" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      </div>
     </div>
   );
 }

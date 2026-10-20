@@ -68,6 +68,8 @@ const EMPTY: EvalRunIterationChainsState = {
   scannedIterations: 0,
 };
 
+const LOADING: EvalRunIterationChainsState = { ...EMPTY, status: "loading" };
+
 export interface EvalRunIterationChainsTarget {
   projectId: string | null | undefined;
   run:
@@ -98,20 +100,28 @@ export function useEvalRunIterationChains({
   const revision = run ? evalRunDecisionRevision(run) : "";
   const key = active ? `${projectId}:${run?._id}:${revision}` : "";
 
-  const [state, setState] = useState<EvalRunIterationChainsState>(EMPTY);
+  // Stamped with the key it was read for. The effect that starts a read runs
+  // AFTER the render that switched runs, so without the stamp that render
+  // would report the previous run's "ready" and a chain-less map.
+  const [stamped, setStamped] = useState<{
+    key: string;
+    state: EvalRunIterationChainsState;
+  }>({ key: "", state: EMPTY });
   // What the last completed read was for, so a resolved response for a run the
   // reader has already navigated away from is discarded rather than rendered.
   const currentKey = useRef("");
 
   useEffect(() => {
     currentKey.current = key;
+    const setState = (state: EvalRunIterationChainsState) =>
+      setStamped({ key, state });
     if (!active || !projectId || !run) {
       setState(EMPTY);
       return;
     }
 
     const controller = new AbortController();
-    setState({ ...EMPTY, status: "loading" });
+    setState(LOADING);
 
     (async () => {
       const chains = new Map<string, EvalRunDecisionChain>();
@@ -172,7 +182,10 @@ export function useEvalRunIterationChains({
     return () => controller.abort();
   }, [active, key, projectId, run?._id]);
 
-  return useMemo(() => state, [state]);
+  return useMemo(() => {
+    if (!active) return EMPTY;
+    return stamped.key === key ? stamped.state : LOADING;
+  }, [active, key, stamped]);
 }
 
 export { EvalRunIterationsError };
