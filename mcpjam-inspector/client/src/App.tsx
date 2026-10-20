@@ -1669,7 +1669,7 @@ function EvaluateRouteContent() {
 export function ConformanceRoute() {
   const { selectedServerEntry, convexProjectId, isAuthenticated } =
     useAppRouteContext();
-  const { serversByName } = useProjectServers({
+  const { serversByName, serversById } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
@@ -1681,8 +1681,9 @@ export function ConformanceRoute() {
       {convexProjectId ? (
         <div className="shrink-0 overflow-auto border-b border-border/40 px-4 pt-4 lg:px-6">
           <ConformanceHistory
+            key={convexProjectId}
             projectId={convexProjectId}
-            serverId={savedServerId}
+            serverNames={serversById}
           />
         </div>
       ) : null}
@@ -1701,7 +1702,11 @@ export function ConformanceRoute() {
 }
 
 export function ConformanceRunDetailRoute() {
-  const { convexProjectId } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { serversById } = useProjectServers({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
   const params = useParams<{ runId?: string }>();
   const pathname = getRouteFallbackPathname();
   const raw =
@@ -1710,6 +1715,7 @@ export function ConformanceRunDetailRoute() {
     <ConformanceRunDetailPage
       runId={decodeParam(raw) ?? raw}
       projectId={convexProjectId}
+      serverNames={serversById}
     />
   );
 }
