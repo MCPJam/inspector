@@ -193,6 +193,7 @@ describe("hosted eval turn engine options", () => {
 
   it("harness: the selection and the harness-only fields ride along", async () => {
     const harnessFields = {
+      agentLoop: "codex",
       harnessSandboxBinding: { sandboxRowId: "row-1", sandboxId: "sbx-1" },
       harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
       builtInTools: { web_search: { inputSchema: jsonSchema({}) } },
