@@ -4,15 +4,17 @@
  * The spec: a host MUST apply its approval gate to code-execution tool calls
  * issued while acting on an MCP-served skill, and a model-callable resource
  * read reached from skill content is a cross-server confused-deputy vector
- * that MUST be per-call approved. "Acting" is a SKILL.md in context (see
- * `actingServerSkills`), which the gate reads from the messages the AI SDK
- * hands every approval decision, so it holds across requests and within one.
+ * that MUST be per-call approved. "Acting" is a SKILL.md in context, which
+ * the gate reads from the messages the AI SDK hands every approval decision,
+ * so it holds across requests and within one. It keys on the banner's marker
+ * rather than on a parsed banner (`mentionsServerSkill`), so a banner the
+ * parser cannot read still closes the gate.
  *
  * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import type { ModelMessage } from "ai";
-import { actingServerSkills } from "../../shared/server-skill-banner.js";
+import { mentionsServerSkill } from "../../shared/server-skill-banner.js";
 
 /**
  * Tools that must ask while the model is acting on a server-served skill,
@@ -50,7 +52,7 @@ export function applyActingServerSkillGate<T extends Record<string, unknown>>(
             ? Boolean(await original(input, options))
             : Boolean(original);
         if (base) return true;
-        return actingServerSkills(options?.messages).length > 0;
+        return mentionsServerSkill(options?.messages);
       },
     };
   }

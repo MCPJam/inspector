@@ -43,12 +43,35 @@ export interface ServerSkillBannerArgs {
 /**
  * The start of the banner's origin line. Stable on purpose: it is how the
  * host finds the skills it is acting on in a conversation (see
- * {@link actingServerSkills}).
+ * {@link actingServerSkills} and {@link mentionsServerSkill}).
  */
 export const SERVER_SKILL_ORIGIN_MARKER = '> Origin: MCP server "';
 
+/**
+ * Percent-encodes the three characters that could end a banner field early:
+ * the quote that closes the label, the parenthesis that closes the URI, and
+ * the percent sign itself. `skillUri` is server-supplied and the spec lets it
+ * contain either, so without this a URI such as `skill://a)/x/SKILL.md`
+ * would break the origin line's shape and the parser below. Decoded on read.
+ */
+function encodeBannerField(value: string): string {
+  return oneLine(value).replace(
+    /[%")]/g,
+    (character) =>
+      `%${character.charCodeAt(0).toString(16).padStart(2, "0")}`
+  );
+}
+
+function decodeBannerField(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 const ORIGIN_LINE_RE =
-  /^# Skill: (\S+)\n\n> Origin: MCP server "([^"\n]*)" \(([^)\n]*)\)(?:, captured v\d+ on \d{4}-\d{2}-\d{2})?\. Content matched the server-advertised digest(?: set ([0-9a-f]{12}))?/m;
+  /^# Skill: (\S+)\n\n> Origin: MCP server "([^"\n]*)" \(([^)\n]*)\)(?:, captured v\d+ on \d{4}-\d{2}-\d{2})?\. Content matched the server-advertised digest(?: set ([0-9a-f]{12}))?/gm;
 
 export interface ActingServerSkill {
   ref: string;
@@ -58,14 +81,32 @@ export interface ActingServerSkill {
 }
 
 /**
+ * Whether any server-served skill is in the model's context.
+ *
+ * The question the approval gate asks, answered from the marker alone so it
+ * FAILS CLOSED: a banner the parser below cannot read still counts, because
+ * the only thing that put the marker there is a server skill entering
+ * context, and a server must not be able to switch the gate off by shaping
+ * its URI.
+ */
+export function mentionsServerSkill(
+  messages: ReadonlyArray<ModelMessage> | undefined
+): boolean {
+  for (const text of messageTexts(messages ?? [])) {
+    if (text.includes(SERVER_SKILL_ORIGIN_MARKER)) return true;
+  }
+  return false;
+}
+
+/**
  * The server-served skills whose SKILL.md is in the model's context.
  *
  * The spec's acting window runs from the moment a SKILL.md enters context
  * until it leaves, and context here is the conversation: a skill loaded in an
  * earlier request is still being acted on in this one. Every banner in a tool
  * result or a user context message is one such skill, so this scans every
- * text the messages carry. Later banners for the same ref win, so the entry
- * recorded is the most recent load.
+ * text the messages carry and every banner in each text. Later banners for
+ * the same ref win, so the entry recorded is the most recent load.
  */
 export function actingServerSkills(
   messages: ReadonlyArray<ModelMessage> | undefined
@@ -73,14 +114,14 @@ export function actingServerSkills(
   const byRef = new Map<string, ActingServerSkill>();
   for (const text of messageTexts(messages ?? [])) {
     if (!text.includes(SERVER_SKILL_ORIGIN_MARKER)) continue;
-    const match = ORIGIN_LINE_RE.exec(text);
-    if (!match) continue;
-    byRef.set(match[1]!, {
-      ref: match[1]!,
-      serverLabel: match[2]!,
-      skillUri: match[3]!,
-      ...(match[4] ? { digestSet: match[4] } : {}),
-    });
+    for (const match of text.matchAll(ORIGIN_LINE_RE)) {
+      byRef.set(match[1]!, {
+        ref: match[1]!,
+        serverLabel: decodeBannerField(match[2]!),
+        skillUri: decodeBannerField(match[3]!),
+        ...(match[4] ? { digestSet: match[4] } : {}),
+      });
+    }
   }
   return [...byRef.values()];
 }
@@ -121,8 +162,8 @@ function oneLine(value: string): string {
 
 export function buildServerSkillBanner(args: ServerSkillBannerArgs): string {
   const ref = oneLine(args.ref);
-  const serverLabel = oneLine(args.serverLabel);
-  const skillUri = oneLine(args.skillUri);
+  const serverLabel = encodeBannerField(args.serverLabel);
+  const skillUri = encodeBannerField(args.skillUri);
   const origin = args.captured
     ? `MCP server "${serverLabel}" (${skillUri}), captured v${
         args.captured.versionNumber

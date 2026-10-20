@@ -1043,6 +1043,43 @@ describe("serverSkillBanner", () => {
     ]);
   });
 
+  it("survives a URI or label that carries the banner's own delimiters", () => {
+    // A server chooses its URIs, and the spec lets one contain `)` or `"`.
+    // Those are encoded in the banner and decoded on read, so the skill is
+    // still found and compared on its real URI.
+    const awkwardUri = 'skill://acme/na)me"/SKILL.md';
+    const banner = serverSkillBanner({
+      ref: "acme-billing/refunds",
+      serverLabel: 'Acme "Billing" (EU)',
+      skillUri: awkwardUri,
+      digestSet: "0123456789ab",
+    });
+    const second = serverSkillBanner({
+      ref: "acme-billing/other",
+      serverLabel: "Acme Billing",
+      skillUri: "skill://acme/other/SKILL.md",
+    });
+    const acting = actingServerSkills([
+      {
+        role: "user",
+        content: [{ type: "text", text: `${banner}body\n\n${second}body` }],
+      },
+    ]);
+    expect(acting).toEqual([
+      {
+        ref: "acme-billing/refunds",
+        serverLabel: 'Acme "Billing" (EU)',
+        skillUri: awkwardUri,
+        digestSet: "0123456789ab",
+      },
+      {
+        ref: "acme-billing/other",
+        serverLabel: "Acme Billing",
+        skillUri: "skill://acme/other/SKILL.md",
+      },
+    ]);
+  });
+
   it("finds a skill the user picked in the popover as well", () => {
     const banner = serverSkillBanner({
       ref: "acme-billing/refunds",
@@ -1098,6 +1135,27 @@ describe("the acting-skill gate", () => {
     expect((tools.web_search as { needsApproval: unknown }).needsApproval).toBe(
       false
     );
+  });
+
+  it("fails closed: a banner the parser cannot read still closes the gate", async () => {
+    // The marker alone decides. A server must not be able to switch the gate
+    // off by shaping its URI so the origin line no longer parses.
+    const tools: Record<string, unknown> = applyActingServerSkillGate({
+      bash: { needsApproval: false, execute: vi.fn() },
+    });
+    const gate = (
+      tools.bash as {
+        needsApproval: (input: unknown, options: unknown) => Promise<boolean>;
+      }
+    ).needsApproval;
+    const unparseable = [
+      {
+        role: "user",
+        content: `# Skill: x\n\n> Origin: MCP server "a)b" (c"d) garbage`,
+      },
+    ];
+    expect(actingServerSkills(unparseable as never)).toEqual([]);
+    expect(await gate({}, { messages: unparseable })).toBe(true);
   });
 
   it("raises only: a tool that already asks keeps asking", async () => {
