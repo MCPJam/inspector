@@ -183,6 +183,7 @@ export interface RunAssistantTurnOptions {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
+  retrySpendingBusy?: boolean; // MCPJamHandlerOptions.retrySpendingBusy
   heartbeatIntervalMs?: number;
   maxSteps?: number;
 
@@ -615,6 +616,7 @@ function buildHandlerOptions(
       ? { clientIp: opts.authContext.clientIp }
       : {}),
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
+    ...(opts.retrySpendingBusy ? { retrySpendingBusy: true } : {}),
     ...(opts.heartbeatIntervalMs !== undefined
       ? { heartbeatIntervalMs: opts.heartbeatIntervalMs }
       : {}),
