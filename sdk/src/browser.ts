@@ -623,6 +623,38 @@ export {
   type StepUpAuthMode,
   type StepUpAction,
 } from "./oauth/state-machines/shared/challenges.js";
+// Mid-session sign-in ("lazy authentication") challenges: recognition, the
+// per-host policy, and the shared copy. Browser-safe.
+export {
+  AUTH_CHALLENGE_ACTIONS,
+  AUTH_CHALLENGE_LIMITS,
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  TOOL_RESULT_AUTH_CHALLENGE_META_KEY,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+  authChallengeNotifyText,
+  authChallengePolicyFrom,
+  decideAuthChallengeAction,
+  describeAuthChallengeDecision,
+  hasOAuth2Scheme,
+  parseAuthChallengeSignal,
+  parseChallengeHeader,
+  parseToolResultAuthChallenge,
+  resolveToolSecuritySchemes,
+  type AuthChallengeAction,
+  type AuthChallengeDecision,
+  type AuthChallengeDecisionReason,
+  type AuthChallengeEffectiveAuth,
+  type AuthChallengeFacets,
+  type AuthChallengePolicy,
+  type AuthChallengeSignal,
+  type AuthChallengeSource,
+  type ToolResultAuthChallengeTrigger,
+  type ToolSecurityScheme,
+  type ToolSecuritySchemeResolution,
+  type ToolSecuritySchemeSource,
+  type UnauthorizedChallengeTrigger,
+} from "./mcp-client-manager/auth-challenge.js";
 // The unauthenticated probe's acceptance gate. Exported so the debugger UI
 // decides "is this exchange an expected challenge?" from the same rule the flow
 // advances on, rather than re-testing `status === 401` and painting an accepted
