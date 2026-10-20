@@ -101,7 +101,7 @@ export function targetWantsBash(target: PinnedHostExecutionSpec): boolean {
 export function targetWantsHarnessBox(
   target: PinnedHostExecutionSpec
 ): boolean {
-  return target.computer !== undefined && target.harness !== undefined;
+  return target.computer !== undefined && (target.agentLoop ?? target.harness) !== undefined;
 }
 
 /**
