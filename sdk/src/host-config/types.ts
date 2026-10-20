@@ -1022,6 +1022,8 @@ export type HostConfigInputV2 = {
   // form (the key absent), so all emulated hosts dedupe together. The
   // canonicalizer rejects any value other than the known harness ids.
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
   // Optional during the rollout of project-scoped server config: named hosts
   // pass `undefined` (server set lives on `projects.serverIds`); scenario/eval
   // forks still pass real arrays. Normalized to `[]` BEFORE hashing so the
@@ -1120,6 +1122,8 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.harness (validated pass-through). Optional so
   // absent rows hash byte-identically to pre-feature rows.
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
   serverIds: Array<ServerId>;
   optionalServerIds: Array<ServerId>;
   // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or

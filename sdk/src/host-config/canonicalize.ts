@@ -2614,6 +2614,17 @@ export function canonicalizeHostConfigV2(
       ).join(", ")} when set`
     );
   }
+  if (input.agentLoop !== undefined) {
+    if (!isHarness(input.agentLoop)) {
+      throw new Error("hostConfigV2: agentLoop must be a known harness id");
+    }
+    if (input.harness !== undefined) {
+      throw new Error("hostConfigV2: agentLoop and harness cannot both be set");
+    }
+    if (input.computer == null) {
+      throw new Error("hostConfigV2: agentLoop requires a computer attachment");
+    }
+  }
   const serverIds = sortUniqueServerIds(input.serverIds);
   const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);
   const hostContext = requireRecord(input.hostContext, "hostContext");
@@ -2645,6 +2656,7 @@ export function canonicalizeHostConfigV2(
     // Validated pass-through (value checked above). Absent ⇒ emulated;
     // JSON.stringify drops undefined so pre-feature rows hash byte-identically.
     harness: input.harness,
+    ...(input.agentLoop !== undefined ? { agentLoop: input.agentLoop } : {}),
     // Absent/null ⇒ key omitted, hashing byte-identically to pre-feature rows.
     computer: canonicalizeComputer(input.computer),
     // Normalize undefined → [] and dedupe before sort so canonical/hash output
