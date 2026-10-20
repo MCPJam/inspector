@@ -1,3 +1,4 @@
+import { resolveAgentLoop, hasAccountRouting } from './agent-loop-dispatch.js';
 import { harnessToolOrigin, type ToolOrigin } from "@/shared/tool-origin";
 import {
   diskResumeState,
@@ -1515,9 +1516,8 @@ export async function runHarnessTurn(
       // Account selectors and resource conversion must execute together in
       // the inspector; native sandbox MCP clients cannot own that dispatch.
       const accountGroups = evalIterationId ? {} : getManagerConnections(mcpClientManager) ?? {};
-      const hasAccountRouting = Object.entries(accountGroups).some(([serverId, group]) => group.length > 1 || group.some(connection => connection.key !== serverId));
       const nativeMcpDelivery =
-        harnessAdapter.mcpDelivery === "native" && !hasAccountRouting;
+        resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : harnessAdapter.id, defaultMcpClient: harnessAdapter.mcpDelivery === "native" ? "harness" : "mcpjam", hasAccountRouting: hasAccountRouting(accountGroups) }).mcpClient === "harness";
       // Fail closed: with MCP servers selected but no plane strategy, a NATIVE
       // adapter would silently get zero MCP tools (the exact failure we hit).
       // Host-executed delivery needs no proxy at all — its tools run in THIS

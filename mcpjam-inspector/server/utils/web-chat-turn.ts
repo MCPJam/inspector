@@ -1,3 +1,5 @@
+import { assertConversationExecution } from './harness/conversation-execution.js';
+import { assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { preservePluginMessageTitles } from "../../shared/plugin-message-history.js";
 import {
   appendPluginModelContext,
@@ -192,6 +194,7 @@ export function resumableServers(persist: {
  * needs that isn't already in scope from the stream handlers.
  */
 export interface WebChatTurnPersistContext {
+  executionBindingVersion?: 1;
   /** Required to enable persistence; without it, no ingest. */
   chatSessionId: string | undefined;
   projectId: string;
@@ -275,6 +278,7 @@ export interface WebChatTurnPersistContext {
   /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
    *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
   harness?: Harness;
+  agentLoop?: Harness;
   /**
    * The server-resolved LOCAL target when this turn runs on the user's own
    * machine. Forwarded verbatim to the harness turn: dropping it would run a
@@ -448,6 +452,7 @@ export interface WebChatTurnPrepareInputs {
   progressiveToolDiscovery?: { enabled: boolean };
   /** Resolved host harness. Harness runtimes own native tool discovery. */
   harness?: Harness;
+  agentLoop?: Harness;
   /**
    * Resolved task-seam options. The CALLER resolves the mode, because hosted
    * chat and the MCPJam agent both come through here and are different rows in
@@ -1072,6 +1077,15 @@ export async function streamWebChatTurn(
     .join("\n\n");
 
   const hostedChatSessionId = persist.chatSessionId;
+  await assertConversationExecution({
+    mcpClientManager: manager,
+    projectId: persist.projectId, chatSessionId: hostedChatSessionId,
+    origin: persist.scenarioId ? "scenario" : "playground",
+    executionBindingVersion: persist.executionBindingVersion,
+    scenarioId: persist.scenarioId, executionScope: persist.executionScope,
+    harness: persist.harness, agentLoop: persist.agentLoop,
+    authHeader: runtime.authHeader, signal: runtime.abortSignal,
+  });
 
   // MATERIALIZED PROJECT SECRETS for this turn, fetched ONCE here because two
   // very different things need the same list and must not disagree about it:
@@ -1176,6 +1190,7 @@ export async function streamWebChatTurn(
     mcpjamProvided: isMCPJam,
     stepUpResume: !!scopeStepUpResume,
   });
+  assertAgentLoopResume(persist.agentLoop, Boolean(scopeStepUpResume));
   const usesMcpjamFreePath = rail.usesFreePath;
 
   // A harness turn never takes the org-BYOK branch below: that branch runs the
@@ -1185,7 +1200,7 @@ export async function streamWebChatTurn(
   // thing here, with the same sentence, for any caller that reaches this
   // helper without one. (An org-key harness turn's step-up resume is the one
   // exception, above: it is the emulated engine on any path.)
-  if (persist.harness && !usesMcpjamFreePath && !rail.orgStepUpResume) {
+  if (persist.harness && !usesMcpjamFreePath && (persist.agentLoop !== undefined || !rail.orgStepUpResume)) {
     const { refusal } = harnessModelRefusal({
       adapter: getHarnessAdapter(persist.harness),
       model: {
@@ -1697,6 +1712,7 @@ export async function streamWebChatTurn(
       : {}),
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
+    ...(persist.agentLoop ? { agentLoop: persist.agentLoop } : {}),
     // Preserve the resolved selection for hosted steps and harness leases.
     ...(forwardableSelection(prepare.routingSelection)
       ? { modelSelection: forwardableSelection(prepare.routingSelection), modelSelectionOrigin: prepare.routingSelectionOrigin }

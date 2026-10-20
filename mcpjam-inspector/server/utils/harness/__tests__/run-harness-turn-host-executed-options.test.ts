@@ -46,6 +46,8 @@ const agentConstruction = vi.hoisted(() => ({
 }));
 
 /** The adapter's `toNativeModel` answer (Cursor-style adapters map none). */
+const adapterDelivery = vi.hoisted(() => ({ value: "host-executed" }));
+
 const toNativeModel = vi.hoisted(() =>
   vi.fn((_modelId: string): string | undefined => "gpt-5")
 );
@@ -76,8 +78,8 @@ vi.mock("../registry.js", () => ({
       baseUrl: "https://broker.example",
     },
   })),
-  getHarnessAdapter: vi.fn(() => ({
-    id: "codex",
+  getHarnessAdapter: vi.fn((id = "codex") => ({
+    id,
     displayName: "Codex",
     defaultPermissionMode: "allow-all",
     approvalPermissionMode: "allow-reads",
@@ -85,7 +87,7 @@ vi.mock("../registry.js", () => ({
     ...adapterCapabilities.value,
     // The delivery mode under test: no `.mcp.json`, the servers ride as
     // host-executed tools MCPJam builds itself.
-    mcpDelivery: "host-executed",
+    mcpDelivery: adapterDelivery.value,
     supportsModel: vi.fn(() => true),
     toNativeModel,
     createHarness: vi.fn(() => ({ harnessId: "codex" })),
@@ -195,8 +197,16 @@ function forwardedToolOptions() {
 }
 
 describe("runHarnessTurn forwards host tool-construction options", () => {
+  it("uses the MCPJam projection for Claude on its normally native adapter", async () => {
+    adapterDelivery.value = "native";
+    const policy = { directContent: { image: true } };
+    await runHarnessTurn(baseOptions({ harness: "claude-code", agentLoop: "claude-code", modelVisibleMcpToolResults: policy }) as never, "none");
+    expect(forwardedToolOptions()).toMatchObject({ modelVisibleMcpToolResults: policy });
+  });
+
   beforeEach(() => {
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    adapterDelivery.value = "host-executed";
     projectSpy.mockClear();
     harnessState.continuations = [];
     harnessState.create.mockClear();
@@ -509,6 +519,7 @@ describe("the hosted command sandbox under Tool Approval", () => {
 
   beforeEach(() => {
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    adapterDelivery.value = "host-executed";
     vi.mocked(getHarnessAdapter).mockClear();
   });
   afterEach(() => {
