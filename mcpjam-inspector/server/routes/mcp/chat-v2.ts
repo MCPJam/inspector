@@ -1,3 +1,5 @@
+import { assertAgentLoopResume } from '../../utils/harness/agent-loop-dispatch.js';
+import { assertConversationExecution } from '../../utils/harness/conversation-execution.js';
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { ensureLocalHarnessTarget, LOCAL_HARNESS_DISPLAY_NAMES, LocalAutoApproveConsentRequiredError } from "../../utils/harness/local/readiness.js";
 import { modelWorkloadFor } from "../../utils/model-workload.js";
@@ -1344,6 +1346,7 @@ chatV2.post("/", async (c) => {
       mcpjamProvided: isMcpJamProvidedModel,
       stepUpResume: Boolean(scopeStepUpResumeRequest),
     });
+    assertAgentLoopResume(resolvedExecution.agentLoop, Boolean(scopeStepUpResumeRequest));
     const usesMcpjamFreePath = rail.usesFreePath;
     // Guests may use any hosted model — model curation for guests is gone;
     // the backend enforces spend caps (a soft postpaid guard), not an
@@ -2483,6 +2486,15 @@ chatV2.post("/", async (c) => {
       const inboundAbortSignalMcp = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalMcp, "mcp/chat-v2");
 
+      await assertConversationExecution({
+        mcpClientManager,
+        origin: "mcpjam_agent",
+        projectId: body.projectId ?? '', chatSessionId,
+        executionBindingVersion: resolvedExecution.executionBindingVersion,
+        scenarioId: bodyScenarioId, executionScope,
+        harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop,
+        authHeader, signal: inboundAbortSignalMcp,
+      });
       const turnResponse = await handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
@@ -2540,6 +2552,7 @@ chatV2.post("/", async (c) => {
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
+              agentLoop: resolvedExecution.agentLoop,
               // Harness MCP-server tools execute out of process through
               // `.mcp.json`, bypassing `allTools`. runHarnessTurn adds a
               // per-turn correlation header and bridges actionable challenges

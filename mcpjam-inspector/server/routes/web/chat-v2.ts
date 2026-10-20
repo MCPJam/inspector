@@ -2709,7 +2709,7 @@ chatV2.post("/", async (c) => {
           uiMessages: appMessages,
           ...(pluginContext ? { pluginContext } : {}),
           ...(resolvedExecution.harness
-            ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
+            ? { harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
           ...(tasksSeam ? { tasks: tasksSeam } : {}),
           ...(resolvedProgressiveToolDiscovery !== undefined
@@ -2791,6 +2791,7 @@ chatV2.post("/", async (c) => {
           },
         },
         persist: {
+          executionBindingVersion: resolvedExecution.executionBindingVersion,
           executionTarget: toResumeExecutionTarget(executionTarget),
           chatSessionId: body.chatSessionId,
           projectId: hostedBody.projectId,
@@ -2809,7 +2810,7 @@ chatV2.post("/", async (c) => {
           authenticatedUserId,
           originalMessages: messages,
           ...(resolvedExecution.harness
-            ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
+            ? { harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
           // Harness-engine delivery of the environment's resolved skills.
           // Presence (even empty) is what makes it authoritative downstream.
