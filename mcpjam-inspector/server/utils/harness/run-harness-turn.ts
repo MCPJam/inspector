@@ -1,4 +1,5 @@
-import { resolveAgentLoop, hasAccountRouting } from './agent-loop-dispatch.js';
+import { withHarnessTurnContext, unavailableAppToolsSpan } from "./harness-turn-input.js";
+import { resolveAgentLoop, hasAccountRouting } from "./agent-loop-dispatch.js";
 import { harnessToolOrigin, type ToolOrigin } from "@/shared/tool-origin";
 import {
   diskResumeState,
@@ -1026,7 +1027,7 @@ export async function runHarnessTurn(
   let sessionEstablished = false;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
-  const capturedSpans: EvalTraceSpan[] = [];
+  const capturedSpans: EvalTraceSpan[] = options.harnessUnavailableAppTools ? [unavailableAppToolsSpan()] : [];
   // Tool calls the MCP proxy refused on this run's sealed `toolPolicy`. The
   // block happens on whichever replica served the call; it is accounted for
   // HERE — from the proxy's own correlated report, and from the result the
@@ -3318,10 +3319,10 @@ export async function runHarnessTurn(
             } as unknown as Parameters<typeof agent.continueStream>[0])
           : await agent.stream({
               session,
-              messages: withHarnessAttachmentNote(
+              messages: withHarnessTurnContext(withHarnessAttachmentNote(
                 promptAttachments.messages,
                 buildHarnessAttachmentNote(attachmentOutcomes),
-              ),
+              ), options.harnessTurnContext),
               // Hand the harness the combined abort signal so a user cancel OR a
               // lost-lease liveness abort propagates into the in-sandbox run.
               abortSignal: effectiveAbortSignal,

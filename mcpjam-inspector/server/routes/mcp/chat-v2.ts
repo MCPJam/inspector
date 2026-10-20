@@ -2423,7 +2423,7 @@ chatV2.post("/", async (c) => {
     );
     const effectiveEnhancedSystemPrompt = [
       enhancedSystemPrompt,
-      widgetModelContextSystemPrompt,
+      resolvedExecution.harness ? "" : widgetModelContextSystemPrompt,
     ]
       .filter((section) => section.trim().length > 0)
       .join("\n\n");
@@ -2520,6 +2520,8 @@ chatV2.post("/", async (c) => {
         sourceType: chatSessionSourceType,
         requireToolApproval,
         modelVisibleMcpToolResults,
+        harnessTurnContext: widgetModelContextSystemPrompt,
+        harnessUnavailableAppTools: Boolean(validatedAppTools.length || validatedPageTools.length),
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
         // step and the tools it needs exist only from the next.
         ...(pageToolRefresh ? { refreshTools: guardedRefreshTools } : {}),

@@ -166,6 +166,8 @@ export interface RunAssistantTurnOptions {
    */
   harness?: Harness;
   agentLoop?: Harness;
+  harnessTurnContext?: string;
+  harnessUnavailableAppTools?: boolean;
   harnessExecutionTarget?: MCPJamHandlerOptions["harnessExecutionTarget"];
 
   streamSink: RunAssistantTurnStreamSink;
@@ -516,6 +518,8 @@ function buildHandlerOptions(
     // Pass the verified harness selector through to its driver.
     ...(opts.harness ? { harness: opts.harness } : {}),
     ...(opts.agentLoop ? { agentLoop: opts.agentLoop } : {}),
+    harnessTurnContext: opts.harnessTurnContext,
+    harnessUnavailableAppTools: opts.harnessUnavailableAppTools,
     ...(opts.harnessExecutionTarget ? { harnessExecutionTarget: opts.harnessExecutionTarget } : {}),
     // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
     // eval/synthetic harness turn driven through this facade can (a) reach MCP

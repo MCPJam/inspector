@@ -58,7 +58,7 @@ vi.mock("@ai-sdk/harness/agent", () => ({
       agentConstruction.last = options;
     }
     createSession = vi.fn(async () => { harnessState.create(); return harnessState.session; });
-    stream = vi.fn(async () => { harnessState.stream(); return ({
+    stream = vi.fn(async (args: Record<string, unknown>) => { harnessState.stream(args); return ({
       fullStream: (async function* () {
         for (const part of harnessState.streamParts) {
           yield part;
@@ -567,4 +567,15 @@ describe("the hosted command sandbox under Tool Approval", () => {
     );
     expect(createHarnessArgs()).not.toHaveProperty("sandboxPolicy");
   });
+});
+
+
+it.each(["claude-code", "codex"] as const)("delivers %s App context per turn without changing instructions", async (harness) => {
+  const options = baseOptions({ harness, agentLoop: harness, sourceType: "direct", selectedServers: [], systemPrompt: "stable instructions" });
+  await runHarnessTurn({ ...options, harnessTurnContext: "widget state one" } as never, "none");
+  const firstInstructions = agentConstruction.last?.instructions;
+  expect(JSON.stringify(harnessState.stream.mock.calls.at(-1))).toContain("widget state one");
+  await runHarnessTurn({ ...options, harnessTurnContext: "widget state two", harnessUnavailableAppTools: true } as never, "none");
+  expect(agentConstruction.last?.instructions).toEqual(firstInstructions);
+  expect(JSON.stringify(harnessState.stream.mock.calls.at(-1))).toContain("widget state two");
 });
