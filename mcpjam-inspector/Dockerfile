@@ -261,6 +261,8 @@ USER node
 # source changes can reuse the expensive Chromium and system-library install.
 COPY --from=build /usr/src/app/mcpjam-inspector/bin ./bin
 COPY --from=build /usr/src/app/mcpjam-inspector/dist ./dist
+COPY mcpjam-inspector/LICENSE ./LICENSE
+COPY mcpjam-inspector/LICENSE-EE ./LICENSE-EE
 COPY --from=build /usr/src/app/mcpjam-inspector/.env.production ./.env.production
 COPY --from=build /usr/src/app/evaluators/dist /usr/src/app/evaluators/dist
 COPY --from=build /usr/src/app/sdk/dist /usr/src/app/sdk/dist
