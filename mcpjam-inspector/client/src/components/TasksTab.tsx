@@ -1577,7 +1577,7 @@ export function TasksTab({
               onClick={() => setIsSidebarVisible(false)}
               variant="ghost"
               size="sm"
-              className="h-7 w-7 p-0"
+              className="hidden md:inline-flex h-7 w-7 p-0"
               title="Hide sidebar"
             >
               <PanelLeftClose className="h-3.5 w-3.5" />
@@ -1689,8 +1689,8 @@ export function TasksTab({
       {selectedTask ? (
         <>
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-4 md:px-6 border-b border-border bg-background">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
                 <TaskStatusIcon status={selectedTask.status} />
                 <Badge
@@ -1702,7 +1702,7 @@ export function TasksTab({
                   {selectedTask.status}
                 </Badge>
               </div>
-              <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
+              <code className="break-all font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
                 {selectedTask.taskId}
               </code>
               <Badge variant="outline" className="text-xs">
@@ -1936,6 +1936,11 @@ export function TasksTab({
     <>
       <ThreePanelLayout
         id="tasks"
+        mobileNavigation={{
+          selectionKey: selectedTaskId,
+          selectionPanel: "content",
+          onBack: () => setSelectedTaskId(""),
+        }}
         sidebar={sidebarContent}
         content={centerContent}
         sidebarVisible={isSidebarVisible}

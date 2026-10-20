@@ -884,7 +884,7 @@ export function ResourcesTab({
     <div className="h-full flex flex-col border-r border-border bg-background">
       {/* Header with tabs and actions */}
       <div className="border-b border-border flex-shrink-0">
-        <div className="px-2 py-1.5 flex items-center gap-2">
+        <div className="px-2 py-1.5 flex flex-wrap md:flex-nowrap items-center gap-2">
           {/* Tabs */}
           <div className="flex items-center gap-1.5">
             <button
@@ -953,7 +953,7 @@ export function ResourcesTab({
               onClick={() => setIsSidebarVisible(false)}
               variant="ghost"
               size="sm"
-              className="h-7 w-7 p-0"
+              className="hidden md:inline-flex h-7 w-7 p-0"
               title="Hide sidebar"
             >
               <PanelLeftClose className="h-3.5 w-3.5" />
@@ -995,7 +995,7 @@ export function ResourcesTab({
                   className="hover:bg-muted/50 rounded px-1.5 py-0.5 -mx-1.5 transition-colors text-left"
                   title="Click to go back to list"
                 >
-                  <code className="text-xs font-mono font-medium text-foreground truncate block">
+                  <code className="text-xs font-mono font-medium text-foreground break-all md:truncate block">
                     {selectedTemplateData?.name || selectedTemplate}
                   </code>
                 </button>
@@ -1005,7 +1005,7 @@ export function ResourcesTab({
                   </p>
                 )}
                 {/* URI preview */}
-                <p className="text-xs text-muted-foreground font-mono truncate mt-2">
+                <p className="text-xs text-muted-foreground font-mono break-all md:truncate mt-2">
                   {getResolvedUri() || selectedTemplate}
                 </p>
               </div>
@@ -1106,13 +1106,13 @@ export function ResourcesTab({
                         >
                           <div className="flex items-center gap-2">
                             <File className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                            <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
+                            <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border break-all md:truncate">
                               {resource.name}
                             </code>
                             <FileOpenWith reference={serverName ? { serverId: serverName, resourceUri: resource.uri } : null} />
                           </div>
                           {resource.description && (
-                            <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                            <p className="text-xs mt-2 line-clamp-none md:line-clamp-2 leading-relaxed text-muted-foreground">
                               {resource.description}
                             </p>
                           )}
@@ -1171,15 +1171,15 @@ export function ResourcesTab({
                     >
                       <div className="flex items-center gap-2">
                         <FileCode className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
+                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border break-all md:truncate">
                           {template.name}
                         </code>
                       </div>
-                      <p className="text-xs mt-1 line-clamp-1 leading-relaxed text-muted-foreground font-mono">
+                      <p className="text-xs mt-1 break-all md:line-clamp-1 leading-relaxed text-muted-foreground font-mono">
                         {template.uriTemplate}
                       </p>
                       {template.description && (
-                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                        <p className="text-xs mt-2 line-clamp-none md:line-clamp-2 leading-relaxed text-muted-foreground">
                           {template.description}
                         </p>
                       )}
@@ -1331,6 +1331,11 @@ export function ResourcesTab({
     <>
       <ThreePanelLayout
         id="resources"
+        mobileNavigation={{
+          selectionKey: activeTab === "templates" ? selectedTemplate : selectedResource,
+          selectionPanel: activeTab === "templates" ? "sidebar" : "content",
+          onBack: () => setSelectedResource(""),
+        }}
         sidebar={sidebarContent}
         content={
           activeTab === "templates"

@@ -55,7 +55,7 @@ export function SelectedToolHeader({
             className="hover:bg-muted/50 flex min-w-0 flex-1 items-center justify-between gap-1 rounded-md px-1.5 py-0.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             title="Switch tool"
           >
-            <code className="block min-w-0 flex-1 truncate text-xs font-mono font-medium text-foreground">
+            <code className="block min-w-0 flex-1 break-all md:truncate text-xs font-mono font-medium text-foreground">
               {toolName}
             </code>
             <ChevronDown
@@ -101,7 +101,7 @@ export function SelectedToolHeader({
         className="hover:bg-muted/50 min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         title="Show full tool list"
       >
-        <code className="block truncate text-xs font-mono font-medium text-foreground">
+        <code className="block break-all md:truncate text-xs font-mono font-medium text-foreground">
           {toolName}
         </code>
       </button>

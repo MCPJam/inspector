@@ -3,11 +3,14 @@ import { useState, useEffect, useCallback } from "react";
 const STORAGE_KEY = "mcpjam-inspector-jsonrpc-panel-visible";
 const MOBILE_BREAKPOINT = 768;
 
-export function useJsonRpcPanelVisibility() {
+export function useJsonRpcPanelVisibility({
+  useDesktopPreference = false,
+}: { useDesktopPreference?: boolean } = {}) {
   const [isVisible, setIsVisible] = useState(() => {
     if (typeof window === "undefined") return true;
     // Default to closed on narrow viewports (phones)
-    if (window.innerWidth < MOBILE_BREAKPOINT) return false;
+    if (!useDesktopPreference && window.innerWidth < MOBILE_BREAKPOINT)
+      return false;
     const stored = localStorage.getItem(STORAGE_KEY);
     return stored === null ? true : stored === "true";
   });

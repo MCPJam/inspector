@@ -32,6 +32,7 @@ export function CollapsedPanelStrip({
               variant="ghost"
               size="sm"
               onClick={onOpen}
+              aria-label={tooltipText}
               className="h-full px-1 rounded-none cursor-pointer"
             >
               <Icon className="h-4 w-4" />
