@@ -4887,6 +4887,11 @@ export function PlaygroundMain({
       if (!next) return;
       compareSeedSourceRef.current[next.key] = cardKey;
       setCompareSelections(next.selections);
+      // A new effort is a new comparison key; the phone switcher follows
+      // the card rather than falling back to the first one.
+      setMobileCompareLaneId((current) =>
+        current === cardKey ? next.key : current,
+      );
     },
     [compareCards, setCompareSelections],
   );
@@ -6869,7 +6874,7 @@ export function PlaygroundMain({
                 <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
                   {singleCompareLane ? (
                     <div
-                      role="tablist"
+                      role="group"
                       aria-label="Clients"
                       data-testid="playground-compare-lane-switcher"
                       className="mb-3 flex shrink-0 gap-1 overflow-x-auto rounded-lg bg-muted/50 p-1"
@@ -6880,8 +6885,7 @@ export function PlaygroundMain({
                           <button
                             key={lane.id}
                             type="button"
-                            role="tab"
-                            aria-selected={selected}
+                            aria-pressed={selected}
                             onClick={() => setMobileCompareLaneId(lane.id)}
                             className={cn(
                               "min-w-0 flex-1 truncate rounded-md px-3 py-1.5 text-sm font-medium transition-colors",

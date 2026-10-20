@@ -1005,8 +1005,8 @@ describe("PlaygroundMain — multi-host render path", () => {
     render(<PlaygroundMain {...defaultProps} />);
 
     const switcher = screen.getByTestId("playground-compare-lane-switcher");
-    const tabs = within(switcher).getAllByRole("tab", { hidden: true });
-    expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual([
+    const tabs = within(switcher).getAllByRole("button", { hidden: true });
+    expect(tabs.map((tab) => tab.getAttribute("aria-pressed"))).toEqual([
       "true",
       "false",
     ]);
