@@ -99,6 +99,112 @@ describe("credential binding", () => {
   });
 });
 
+describe("hosted step-up redirect", () => {
+  let unregister: (() => void) | undefined;
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    __resetScopeStepUpInFlightForTests();
+    applyToolCallStepUp.mockReset().mockImplementation(
+      async (_server: unknown, _challenge: unknown, options: any) => {
+        // The orchestrator calls this right before navigating.
+        options?.beforeRedirect?.({});
+        return { action: "reauthorize", scopes: [], attempt: 0 };
+      },
+    );
+  });
+
+  afterEach(() => {
+    unregister?.();
+    unregister = undefined;
+  });
+
+  it("writes the hosted marker through the bridge before redirecting", async () => {
+    const prepareRedirect = vi.fn();
+    unregister = registerScopeStepUpHostBridge({ prepareRedirect });
+    saveChatStepUp();
+    driveScopeStepUp(server, { requiredScope: "orders:read" }, undefined, { continuationId: readPendingChatScopeStepUp()!.event.continuationId });
+    await vi.waitFor(() => expect(prepareRedirect).toHaveBeenCalledTimes(1));
+    // A call that used no credential: the classic first-credential flow.
+    expect(prepareRedirect).toHaveBeenCalledWith(server, undefined, readPendingChatScopeStepUp()!.event.continuationId);
+    expect(readPendingChatScopeStepUp()?.credentialBinding).toEqual({
+      kind: "none",
+    });
+  });
+
+  it("does not bind a direct sign-in to another pending chat call", async () => {
+    const prepareRedirect = vi.fn();
+    unregister = registerScopeStepUpHostBridge({ prepareRedirect });
+    saveChatStepUp();
+    driveScopeStepUp(server, { requiredScope: "orders:read" });
+    await vi.waitFor(() => expect(prepareRedirect).toHaveBeenCalledTimes(1));
+    expect(readPendingChatScopeStepUp()?.credentialBinding).toBeUndefined();
+    expect(readPendingChatScopeStepUp()?.flowDigest).toBeUndefined();
+  });
+
+  it("reauthorizes an owned credential in place", async () => {
+    const prepareRedirect = vi.fn();
+    unregister = registerScopeStepUpHostBridge({
+      prepareRedirect,
+      resolveCredentialBinding: async (_server, connectionId) => ({
+        kind: "owned",
+        credentialId: connectionId!,
+      }),
+    });
+    saveChatStepUp("c1");
+    driveScopeStepUp(
+      server,
+      { requiredScope: "orders:read" },
+      { method: "tools/call", operation: "get_my_orders" },
+      { connectionId: "c1" },
+    );
+    await vi.waitFor(() => expect(prepareRedirect).toHaveBeenCalledTimes(1));
+    expect(prepareRedirect).toHaveBeenCalledWith(server, {
+      kind: "replace",
+      credentialId: "c1",
+    });
+  });
+
+  it("never replaces a shared credential", async () => {
+    const prepareRedirect = vi.fn();
+    unregister = registerScopeStepUpHostBridge({
+      prepareRedirect,
+      resolveCredentialBinding: async (_server, connectionId) => ({
+        kind: "shared",
+        credentialId: connectionId!,
+      }),
+    });
+    saveChatStepUp("c1");
+    driveScopeStepUp(
+      server,
+      { requiredScope: "orders:read" },
+      { method: "tools/call", operation: "get_my_orders" },
+      { connectionId: "c1" },
+    );
+    await vi.waitFor(() => expect(prepareRedirect).toHaveBeenCalledTimes(1));
+    expect(prepareRedirect).toHaveBeenCalledWith(server, { kind: "add" });
+  });
+
+  it("treats an ownership lookup failure as not ours", async () => {
+    const prepareRedirect = vi.fn();
+    unregister = registerScopeStepUpHostBridge({
+      prepareRedirect,
+      resolveCredentialBinding: async () => {
+        throw new Error("network");
+      },
+    });
+    saveChatStepUp("c1");
+    driveScopeStepUp(
+      server,
+      { requiredScope: "orders:read" },
+      undefined,
+      { connectionId: "c1" },
+    );
+    await vi.waitFor(() => expect(prepareRedirect).toHaveBeenCalledTimes(1));
+    expect(prepareRedirect).toHaveBeenCalledWith(server, { kind: "add" });
+  });
+});
+
 describe("settling the pending stores on the callback", () => {
   beforeEach(() => sessionStorage.clear());
 
