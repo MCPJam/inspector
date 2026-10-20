@@ -2,11 +2,9 @@ import { test, expect } from "@playwright/test";
 import {
   prepareMobileApp,
   PROJECT_ID,
-  capture,
   checkWidth,
   inside,
   finish,
-  baseline,
 } from "./mobile-layout-fixtures";
 import {
   encodeFrameStreamRecord,
@@ -31,7 +29,7 @@ for (const theme of ["light", "dark"])
       page,
       context,
       baseURL,
-    }, info) => {
+    }) => {
       const mobile = width === 375;
       await page.setViewportSize({ width, height: mobile ? 812 : 900 });
       const origin = new URL(baseURL!).origin;
@@ -140,16 +138,9 @@ for (const theme of ["light", "dark"])
           .getByRole("button", { name: "Open browser", exact: true })
           .click();
         await expect(page.getByText(tool.name, { exact: true })).toBeVisible();
-        await capture(page, `webmcp-list-${width}-${theme}`);
-        if (baseline)
-          await page
-            .getByText(tool.name, { exact: true })
-            .dispatchEvent("click");
-        else await page.getByText(tool.name, { exact: true }).click();
+        await page.getByText(tool.name, { exact: true }).click();
         const topping = page.getByRole("textbox", { name: "Enter topping" });
         await topping.fill("olives");
-        await capture(page, `webmcp-form-${width}-${theme}`);
-        if (baseline) return;
         await inside(
           page,
           page.getByRole("button", { name: "Invoke", exact: true }),
@@ -159,7 +150,6 @@ for (const theme of ["light", "dark"])
         if (mobile)
           await page.getByRole("tab", { name: "Browser", exact: true }).click();
         await expect(page.locator("canvas").first()).toBeVisible();
-        await capture(page, `webmcp-browser-${width}-${theme}`);
         if (mobile) {
           await page
             .getByRole("tab", { name: "Activity", exact: true })
@@ -167,7 +157,6 @@ for (const theme of ["light", "dark"])
           await expect(
             page.getByRole("tabpanel", { name: "Activity", exact: true }),
           ).toBeVisible();
-          await capture(page, `webmcp-activity-${width}-${theme}`);
           await page.getByRole("tab", { name: "Browse", exact: true }).click();
         }
         await expect(topping).toHaveValue("olives");
@@ -177,7 +166,7 @@ for (const theme of ["light", "dark"])
         await expect(page.getByText(tool.name, { exact: true })).toBeVisible();
         await checkWidth(page);
       } finally {
-        await finish(page, failures, errors, info);
+        await finish(failures, errors);
       }
     });
   }

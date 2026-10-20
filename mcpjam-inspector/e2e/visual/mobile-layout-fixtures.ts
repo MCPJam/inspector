@@ -1,8 +1,5 @@
-import type { BrowserContext, Page, TestInfo } from "@playwright/test";
+import type { BrowserContext, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { memberFixture, server } from "./product-data";
 export { PROJECT_ID } from "./app-data";
 
@@ -23,11 +20,11 @@ const task = {
   ttl: 60000,
   pollInterval: 1000,
 };
-export const baseline = process.env.MOBILE_LAYOUT_BASELINE === "1";
 export async function prepareMobileApp(
   context: BrowserContext,
   origin: string,
   theme: string,
+  responses: Record<string, unknown> = {},
 ) {
   const { prepareApp } = await import("./app-network");
   await context.addInitScript(() => {
@@ -129,6 +126,7 @@ export async function prepareMobileApp(
           desired: { resources: [], taskIds: [] },
           observed: { resources: [], taskIds: [] },
         },
+        ...responses,
       },
     },
     origin,
@@ -154,17 +152,6 @@ export async function prepareMobileApp(
   );
   return failures;
 }
-export async function capture(page: Page, name: string) {
-  const dir =
-    process.env.MOBILE_LAYOUT_EVIDENCE_DIR ??
-    path.join(tmpdir(), "mcpjam-mobile-panel-evidence");
-  await mkdir(dir, { recursive: true });
-  await page.screenshot({
-    animations: "disabled",
-    caret: "hide",
-    path: path.join(dir, `${baseline ? "before" : "after"}-${name}.png`),
-  });
-}
 export async function checkWidth(page: Page) {
   expect(
     await page.evaluate(
@@ -185,25 +172,7 @@ export async function inside(
   expect(box!.x + box!.width).toBeLessThanOrEqual(v.width + 1);
   expect(box!.y + box!.height).toBeLessThanOrEqual(v.height + 1);
 }
-export async function finish(
-  _page: Page,
-  failures: string[],
-  errors: string[],
-  testInfo: TestInfo,
-) {
-  await testInfo.attach("fixture-boundaries", {
-    body: JSON.stringify(
-      {
-        failures,
-        consoleErrors: errors,
-        boundaries:
-          "Real UI; synthetic auth/Convex/MCP responses. No production data or external tools.",
-      },
-      null,
-      2,
-    ),
-    contentType: "application/json",
-  });
+export async function finish(failures: string[], errors: string[]) {
   expect(failures).toEqual([]);
   expect(
     errors.filter(

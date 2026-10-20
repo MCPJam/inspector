@@ -1,12 +1,6 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
-import {
-  capture,
-  inside,
-  checkWidth,
-  baseline,
-} from "./mobile-layout-fixtures";
+import { inside, checkWidth } from "./mobile-layout-fixtures";
 import { startFakeOAuthMcpServer } from "../fixtures/fake-oauth-mcp-server";
-
 async function proxy(route: Route) {
   const p = route.request().postDataJSON();
   const headers = new Headers(p.headers ?? {});
@@ -52,7 +46,7 @@ async function step(page: Page) {
 }
 for (const theme of ["light", "dark"])
   for (const width of [375, 1440]) {
-    test(`OAuth layout ${theme} ${width}`, async ({ page, context }, info) => {
+    test(`OAuth layout ${theme} ${width}`, async ({ page, context }) => {
       const mobile = width === 375;
       await page.setViewportSize({ width, height: mobile ? 812 : 900 });
       const fake = await startFakeOAuthMcpServer();
@@ -133,8 +127,6 @@ for (const theme of ["light", "dark"])
           .evaluate((el) => {
             el.parentElement!.style.display = "none";
           });
-        await capture(page, `oauth-idle-${width}-${theme}`);
-        if (baseline) return;
         for (const name of ["Continue", "Reset", "Copy", "Add"])
           await inside(page, page.getByRole("button", { name, exact: true }));
         const url = page
@@ -162,7 +154,6 @@ for (const theme of ["light", "dark"])
             break;
           await step(page);
         }
-        await capture(page, `oauth-advanced-${width}-${theme}`);
         await page.getByRole("button", { name: "Copy", exact: true }).click();
         expect(
           await page.evaluate(() => navigator.clipboard.readText()),
@@ -182,7 +173,6 @@ for (const theme of ["light", "dark"])
           expect(
             await page.locator(".react-flow__viewport").getAttribute("style"),
           ).not.toMatch(/NaN|Infinity/);
-          await capture(page, `oauth-diagram-${width}-${theme}`);
           await page
             .getByRole("tab", { name: "Guide", exact: true })
             .first()
@@ -230,7 +220,6 @@ for (const theme of ["light", "dark"])
           page,
           page.getByRole("button", { name: "Connect Server", exact: true }),
         );
-        await capture(page, `oauth-complete-${width}-${theme}`);
         await page
           .getByRole("button", { name: "Connect Server", exact: true })
           .click();
@@ -285,7 +274,6 @@ for (const theme of ["light", "dark"])
           page,
           page.getByRole("button", { name: "Continue", exact: true }),
         );
-        await capture(page, `oauth-pending-${width}-${theme}`);
         release();
         await requestFinished;
         await expect
@@ -318,7 +306,6 @@ for (const theme of ["light", "dark"])
           page,
           page.getByRole("button", { name: "Reset", exact: true }),
         );
-        await capture(page, `oauth-error-${width}-${theme}`);
         await page.getByRole("button", { name: "Reset", exact: true }).click();
         if (mobile) {
           await page.getByRole("tab", { name: "Diagram", exact: true }).click();
@@ -331,16 +318,6 @@ for (const theme of ["light", "dark"])
         expect(consoleErrors).toEqual([]);
         expect(cloudAuthRequests).toEqual([]);
       } finally {
-        await info.attach("boundaries", {
-          body: JSON.stringify({
-            errors,
-            consoleErrors,
-            cloudAuthRequests,
-            fixture:
-              "Real OAuth UI/SDK; local fake OAuth server, synthetic token import/connect; DEV harness chrome hidden.",
-          }),
-          contentType: "application/json",
-        });
         await fake.close();
       }
     });
