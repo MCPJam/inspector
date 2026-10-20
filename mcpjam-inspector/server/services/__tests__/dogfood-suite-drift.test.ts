@@ -123,6 +123,17 @@ describe("the dogfood eval suites", () => {
         write.name,
       ).toBe(false);
     }
+    // And every read it has: a read shipped later would otherwise fail the
+    // case in a nightly while this test stayed green.
+    const allowed = asserts.flatMap((a) =>
+      a.type === "onlyToolsCalled" ? a.toolNames : [],
+    );
+    expect(
+      platformOperations()
+        .filter((op) => op.readOnly === true)
+        .map((op) => op.name)
+        .filter((name) => !allowed.includes(name)),
+    ).toEqual([]);
   });
 
   it("make 'asks rather than guessing' require a question put to the user", () => {

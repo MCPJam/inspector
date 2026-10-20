@@ -291,8 +291,8 @@ cases:
       # Nothing is named, so any write is a guess about which project or
       # server the user meant. An allowlist rather than a deny list: the
       # platform's read-only tools plus the discovery meta-tools, so a write
-      # added to the server later fails here too. The drift test checks that
-      # every write the platform has is outside it.
+      # added to the server later fails here too. The drift test checks the
+      # list against the platform both ways: every read in, every write out.
       - id: a1
         kind: assert
         assertion:
