@@ -1647,14 +1647,17 @@ describe("hosted connection failure logs", () => {
           "https://mcp.example.test/.well-known/oauth-protected-resource",
       },
     });
-    expect(
-      projectHostedConnectFailureDetails({
-        insufficientScope: {
-          resourceMetadataUrl: "javascript:UNEXPECTED_MARKER_5",
-          errorDescription: "UNEXPECTED_MARKER_6",
-        },
-      }),
-    ).toBeUndefined();
+    // An insufficient_scope with nothing valid left is still a step-up
+    // request (a bare challenge re-authorizes with discovery's scopes), so it
+    // projects to `{}`: the invalid pointer and the description are dropped.
+    const bare = projectHostedConnectFailureDetails({
+      insufficientScope: {
+        resourceMetadataUrl: "javascript:UNEXPECTED_MARKER_5",
+        errorDescription: "UNEXPECTED_MARKER_6",
+      },
+    });
+    expect(bare).toEqual({ insufficientScope: {} });
+    expect(JSON.stringify(bare)).not.toContain("UNEXPECTED_MARKER");
     expect(projectHostedConnectFailureDetails(undefined)).toBeUndefined();
   });
 
