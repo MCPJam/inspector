@@ -14,15 +14,20 @@
  * of a silent registration.
  */
 
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   gradeClaudeIntrusiveObservations,
   probeDynamicRegistration,
   probeRefreshRotation,
+  probeStepUpChallenge,
   resolveClaudeIntrusiveMode,
   type ClaudeIntrusiveMode,
 } from "../../src/claude-readiness/intrusive.js";
+import { gatherClaudeReadinessEvidence } from "../../src/claude-readiness/gather.js";
+import { gradeClaudeReadiness } from "../../src/claude-readiness/runner.js";
 
 const STAMP = { evaluatedAt: "2026-08-19T00:00:00.000Z" };
 const NO_BORROWED = { hasBorrowedAccessToken: false };
@@ -524,5 +529,157 @@ describe("step-up grading", () => {
     ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
     expect(finding.status).toBe("violated");
     expect(finding.remediation).toMatch(/insufficient_scope/);
+  });
+
+  it("does not fail a server when the supplied token already held the scope", () => {
+    // The server was never asked the question: a 2xx means the token was not
+    // missing anything, which is a probe misconfiguration and not a defect.
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      { stepUp: { attempted: true, toolName: "read_private", status: 200 } },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.notEvaluatedReason).toMatch(/lacks the tool's scope/);
+  });
+});
+
+describe("the step-up probe, against a real server", () => {
+  const LOW_SCOPE = "Bearer low-scope-token";
+
+  async function startScopedServer(): Promise<{
+    url: string;
+    calls: Array<{ tool?: string; authorization?: string }>;
+    close: () => Promise<void>;
+  }> {
+    const calls: Array<{ tool?: string; authorization?: string }> = [];
+    const server = http.createServer((req, res) => {
+      let raw = "";
+      req.on("data", (chunk) => (raw += chunk));
+      req.on("end", () => {
+        const body = raw ? JSON.parse(raw) : {};
+        const send = (status: number, payload: unknown, headers = {}) => {
+          res.writeHead(status, { "content-type": "application/json", ...headers });
+          res.end(JSON.stringify(payload));
+        };
+        if (req.method !== "POST") return send(405, {});
+        if (body.method === "notifications/initialized") {
+          res.writeHead(202);
+          res.end();
+          return;
+        }
+        if (body.method === "initialize") {
+          return send(200, {
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "s" } },
+          });
+        }
+        if (body.method === "tools/list") {
+          return send(200, {
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              tools: [
+                { name: "read_private", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+                { name: "wipe_private", inputSchema: { type: "object" }, annotations: { readOnlyHint: false } },
+              ],
+            },
+          });
+        }
+        if (body.method === "tools/call") {
+          calls.push({ tool: body.params?.name, authorization: req.headers.authorization });
+          return send(
+            403,
+            { jsonrpc: "2.0", id: body.id, error: { code: -32001, message: "forbidden" } },
+            { "www-authenticate": 'Bearer error="insufficient_scope", scope="private:read"' },
+          );
+        }
+        return send(200, { jsonrpc: "2.0", id: body.id, result: { resources: [] } });
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
+    return {
+      url,
+      calls,
+      close: () =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections?.();
+          server.close(() => resolve());
+        }),
+    };
+  }
+
+  it("calls the declared read-only tool once with the supplied token and grades the challenge", async () => {
+    const server = await startScopedServer();
+    try {
+      const evidence = await gatherClaudeReadinessEvidence({
+        enteredUrl: server.url,
+        fetchFn: fetch,
+        mcpHeaders: { authorization: LOW_SCOPE },
+        capabilities: ["intrusive-probes"],
+        intrusive: {
+          enabled: true,
+          grantOrigin: "dedicated-test-account",
+          testCredentials: { clientId: "c" },
+          protectedToolName: "read_private",
+          expectedScopes: ["private:read"],
+        },
+      });
+      expect(server.calls).toEqual([
+        { tool: "read_private", authorization: LOW_SCOPE },
+      ]);
+      const result = gradeClaudeReadiness(evidence);
+      const stepUp = result.findings.find(
+        (f) => f.id === "claude.intrusive.step-up-challenge",
+      )!;
+      expect(stepUp.status).toBe("satisfied");
+      expect(stepUp.details).toMatchObject({ scopesOverlapExpectation: true });
+      // The same challenge is what the shape check grades.
+      expect(
+        result.findings.find(
+          (f) => f.id === "claude.auth.insufficient-scope-challenge-shape",
+        )?.status,
+      ).toBe("satisfied");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses a declared tool that is not annotated read-only, calling nothing", async () => {
+    const server = await startScopedServer();
+    try {
+      const observed = await probeStepUpChallenge(
+        armed({
+          enabled: true,
+          grantOrigin: "dedicated-test-account",
+          testCredentials: { clientId: "c" },
+          protectedToolName: "wipe_private",
+          expectedScopes: ["private:write"],
+        }),
+        { enteredUrl: server.url, fetchFn: fetch, mcpHeaders: { authorization: LOW_SCOPE } },
+      );
+      expect(observed.attempted).toBe(false);
+      expect(observed.error).toMatch(/readOnlyHint: true/);
+      expect(server.calls).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses to run without a token to call with", async () => {
+    const observed = await probeStepUpChallenge(
+      armed({
+        enabled: true,
+        grantOrigin: "dedicated-test-account",
+        testCredentials: { clientId: "c" },
+        protectedToolName: "read_private",
+        expectedScopes: ["private:read"],
+      }),
+      { enteredUrl: "http://127.0.0.1:1/mcp", fetchFn: vi.fn() as unknown as typeof fetch, mcpHeaders: {} },
+    );
+    expect(observed.attempted).toBe(false);
+    expect(observed.error).toMatch(/no(ne)? .*supplied/);
   });
 });
