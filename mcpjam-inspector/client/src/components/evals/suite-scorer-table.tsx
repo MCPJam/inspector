@@ -104,6 +104,7 @@ export function SuiteScorerTable({
   availableModels = [],
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
   scenarioMigrationNotice,
   stageFacts,
   capabilities,
@@ -128,6 +129,11 @@ export function SuiteScorerTable({
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
   scenarioMigrationNotice?: React.ReactNode;
   judgeAccessory?: React.ReactNode;
   rubricEditor?: React.ReactNode;
@@ -586,6 +592,7 @@ export function SuiteScorerTable({
               availableModels={availableModels}
               requireOrgKeys={requireOrgKeys}
               onManageOrgProviders={onManageOrgProviders}
+              onAddProvider={onAddProvider}
             />
           </div>
         </section>

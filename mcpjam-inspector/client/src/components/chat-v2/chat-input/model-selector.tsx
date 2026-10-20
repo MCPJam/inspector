@@ -107,7 +107,13 @@ interface ModelSelectorProps {
    * org settings; omitted, the footer is absent rather than disabled.
    */
   onManageOrgProviders?: () => void;
-  /** Opens the org's AI providers from a search with no match, under any key policy; `null` when the picker's own organization offers none. */
+  /**
+   * Opens the org's AI providers from a search with no match, under any key
+   * policy. A picker scoped to its own project passes its project's handoff
+   * from `useAvailableModels`, or `null` when that organization offers this
+   * viewer none. Omitted only by pickers on the active project (chat, the
+   * client builder), which then use the active project's organization.
+   */
   onAddProvider?: (() => void) | null;
   /**
    * The organization requires its own provider keys for AI features: MCPJam
@@ -532,9 +538,7 @@ export function ModelSelector({
     }
   };
 
-  const handleManageOrgProviders = (
-    handoff = onManageOrgProviders ?? onAddProvider,
-  ) => {
+  const leaveTo = (handoff?: (() => void) | null) => {
     track("chat_model_selector_manage_org_models_clicked", {
       location: analyticsLocation,
     });
@@ -543,6 +547,8 @@ export function ModelSelector({
     setIsOpen(false);
     handoff?.();
   };
+  const handleManageOrgProviders = () =>
+    leaveTo(onManageOrgProviders ?? onAddProvider);
 
   const selectedModelsData = allowEmptySelection
     ? (selectedModels ?? [])
@@ -1294,7 +1300,7 @@ export function ModelSelector({
                             query={search}
                             requireOrgKeys={requireOrgKeys}
                             onAdd={onManageOrgProviders ?? onAddProvider}
-                            leaveTo={handleManageOrgProviders}
+                            leaveTo={leaveTo}
                           />
                         ) : (
                           "No matching models."

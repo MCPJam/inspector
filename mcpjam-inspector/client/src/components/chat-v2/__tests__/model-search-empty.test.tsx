@@ -101,6 +101,9 @@ describe("ModelSelector — a search with no match", () => {
     );
     expect(onAddProvider).toHaveBeenCalledTimes(1);
     expect(active.handoff).not.toHaveBeenCalled();
+    expect(
+      screen.queryByPlaceholderText("Search models"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps a picker scoped to another project off the active project's organization", async () => {
@@ -116,6 +119,29 @@ describe("ModelSelector — a search with no match", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Add a provider" }),
+    ).not.toBeInTheDocument();
+    // The fallback isn't even mounted.
+    expect(active.orgId).not.toHaveBeenCalled();
+  });
+
+  it("offers nothing from an active organization the viewer can't manage", async () => {
+    // The viewer isn't an admin there, or the organizations are still loading.
+    active.appState = {
+      activeProjectId: "p1",
+      projects: { p1: { id: "p1", organizationId: "org_1" } },
+    };
+    active.handoff = undefined;
+    await searchFor("mixtral");
+
+    expect(
+      await screen.findByText('No models match "mixtral".'),
+    ).toBeInTheDocument();
+    expect(active.orgId).toHaveBeenCalledWith("org_1");
+    expect(
+      screen.queryByRole("button", { name: "Add a provider" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Ask an organization admin to add one."),
     ).not.toBeInTheDocument();
   });
 
@@ -133,6 +159,9 @@ describe("ModelSelector — a search with no match", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add a provider" }));
     expect(onAddProvider).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByPlaceholderText("Search models"),
+    ).not.toBeInTheDocument();
   });
 
   it("sends a member under the key policy to an admin", async () => {

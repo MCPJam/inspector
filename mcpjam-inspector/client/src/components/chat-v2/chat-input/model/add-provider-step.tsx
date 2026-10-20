@@ -41,12 +41,12 @@ function ActiveOrgAddProvider({
 
 /**
  * A search that matched no model: says why it isn't listed and, when known,
- * what to do. A picker that passes no `onAdd` falls back to the active
- * project's organization, so every picker can offer "Add a provider" without
- * its callers threading a handoff through. `null` comes from a picker scoped
- * to its own project whose organization offers this viewer none, and gets no
- * fallback: another organization's providers can't fill its list. Off the key
- * policy, nothing known about the viewer means no admin pointer either.
+ * what to do. Only a picker on the active project (chat, the client builder)
+ * passes no `onAdd`, and it falls back to the active project's organization.
+ * `null` comes from a picker scoped to its own project whose organization
+ * offers this viewer none, and gets no fallback: another organization's
+ * providers can't fill its list. Off the key policy, nothing known about the
+ * viewer means no admin pointer either.
  */
 export function ModelSearchEmpty({
   query,

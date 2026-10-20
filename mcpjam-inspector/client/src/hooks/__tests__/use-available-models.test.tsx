@@ -140,10 +140,13 @@ vi.mock("@/lib/ollama-utils", () => ({
     mockDetectOllamaToolCapableModels(...args),
 }));
 
-// The viewer may manage the organization's providers (an admin).
+// The viewer may manage the organization's providers (an admin), unless a
+// test says otherwise.
 const manageOrgProviders = vi.hoisted(() => vi.fn());
+const viewer = vi.hoisted(() => ({ isAdmin: true }));
 vi.mock("@/hooks/use-org-models-handoff", () => ({
-  useOrgModelsHandoff: () => manageOrgProviders,
+  useOrgModelsHandoff: () =>
+    viewer.isAdmin ? manageOrgProviders : undefined,
 }));
 
 import { useAvailableModels } from "../use-available-models";
@@ -380,5 +383,17 @@ describe("useAvailableModels", () => {
     expect(result.current.onManageOrgProviders).toBeUndefined();
     // Only a search with no match offers an admin "Add a provider".
     expect(result.current.onAddProvider).toBe(manageOrgProviders);
+  });
+
+  it("says null, not undefined, when the organization offers this viewer no handoff", () => {
+    // A scoped picker passes it on as is, so it never falls back to the
+    // active project's organization.
+    viewer.isAdmin = false;
+    try {
+      const { result } = renderHook(() => useAvailableModels());
+      expect(result.current.onAddProvider).toBeNull();
+    } finally {
+      viewer.isAdmin = true;
+    }
   });
 });

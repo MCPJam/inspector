@@ -64,9 +64,11 @@ export function useAvailableModels(options?: {
   /**
    * Opens the scoped organization's AI providers for a viewer who may manage
    * them, under any key policy: a model search with no match offers "Add a
-   * provider" from it.
+   * provider" from it. `null` when that organization offers this viewer none,
+   * which a picker passes on as is: it must not fall back to the active
+   * project's organization (see `ModelSelector`'s `onAddProvider`).
    */
-  onAddProvider?: () => void;
+  onAddProvider: (() => void) | null;
   /**
    * Whether this deployment stores a saved model selection beside a model id
    * (`getCapabilities.modelSelections` for the scoped project). A picker that
@@ -156,6 +158,6 @@ export function useAvailableModels(options?: {
     ...(requireOrgKeys && manageOrgProviders
       ? { onManageOrgProviders: manageOrgProviders }
       : {}),
-    ...(manageOrgProviders ? { onAddProvider: manageOrgProviders } : {}),
+    onAddProvider: manageOrgProviders ?? null,
   };
 }

@@ -206,6 +206,7 @@ function EvaluateTabContent({
     availableModels,
     requireOrgKeys,
     onManageOrgProviders,
+    onAddProvider,
   } = useEvalTabContext({
     isAuthenticated,
     projectId: projectId ?? null,
@@ -1581,6 +1582,7 @@ function EvaluateTabContent({
           availableModels={availableModels}
           requireOrgKeys={requireOrgKeys}
           onManageOrgProviders={onManageOrgProviders}
+          onAddProvider={onAddProvider}
           route={route}
           userMap={userMap}
           projectId={projectId}

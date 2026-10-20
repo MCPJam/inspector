@@ -442,7 +442,7 @@ function EvalModelPicker({
         harness,
         requireOrgKeys,
         onManageOrgProviders,
-        onAddProvider: onAddProvider ?? null,
+        onAddProvider,
       }}
     />
   );
@@ -479,7 +479,7 @@ export function EvalModelChoices({
    */
   onManageOrgProviders?: () => void;
   /** The same, under any key policy, for a model search with no match; `null` when none is offered. */
-  onAddProvider?: (() => void) | null;
+  onAddProvider: (() => void) | null;
   inModal?: boolean;
   value: ModelSelection;
   onChange: (value: ModelSelection) => void;

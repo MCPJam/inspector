@@ -538,7 +538,7 @@ export function ModelsPill({
       workload={workload}
       requireOrgKeys={requireOrgKeys}
       onManageOrgProviders={onManageOrgProviders}
-      onAddProvider={onAddProvider ?? null}
+      onAddProvider={onAddProvider}
       currentModel={selectedModels[0] ?? NO_EXPLICIT_MODEL}
       availableModels={availableModels}
       onModelChange={addModel}

@@ -566,7 +566,7 @@ function AuthoringDraftSettings({
         availableModels={availableModels}
         requireOrgKeys={requireOrgKeys}
         onManageOrgProviders={onManageOrgProviders}
-        onAddProvider={onAddProvider ?? null}
+        onAddProvider={onAddProvider}
         value={{
           includeClientDefaults: false,
           // A draft persisted by an older build, or staged from a case that
