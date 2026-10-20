@@ -288,7 +288,10 @@ export async function discoverServerTargetTokenEndpoint(
   throw new WebRouteError(
     404,
     ErrorCode.NOT_FOUND,
-    "Couldn't discover an authorization server. Set the issuer in Configure Server to Test."
+    "Couldn't discover an authorization server. Set the issuer in Configure Server to Test.",
+    // Distinguishes this from a backend 404 on another mint leg; read by
+    // `xaaMintCapturePolicy`.
+    { authorizationServer: "undiscovered" }
   );
 }
 
@@ -925,7 +928,15 @@ export async function mintXaaAccessToken(args: {
       `XAA token exchange (jwt-bearer grant) was rejected by the authorization server at ${
         target.tokenEndpoint
       } (HTTP ${proxyResult.status})${detail ? ` — ${detail}` : ""}`,
-      { status: proxyResult.status }
+      // The verdict rides in `details` as well as the message: Sentry scrubs
+      // the message, and a triager still needs to tell `invalid_client` from
+      // `invalid_grant`. `authorizationServer` marks this as the AS's own
+      // answer, which no other mint leg produces (see `xaaMintCapturePolicy`).
+      {
+        status: proxyResult.status,
+        authorizationServer: "rejected",
+        ...(oauthError ? { oauthError } : {}),
+      }
     );
   }
 
