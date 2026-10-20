@@ -78,7 +78,12 @@ test("uses a valid public cache scope for the static catalog", () => {
  */
 function capture() {
   const handlers = new Map<string, (params: any) => Promise<any>>();
-  const resources: { uri: string; mimeType?: string }[] = [];
+  const resources: {
+    name: string;
+    uri: string;
+    mimeType?: string;
+    description?: string;
+  }[] = [];
   const stub = {
     server: {
       setRequestHandler: (
@@ -90,11 +95,16 @@ function capture() {
       },
     },
     registerResource: (
-      _name: string,
+      name: string,
       uri: string,
-      config: { mimeType?: string }
+      config: { mimeType?: string; description?: string }
     ) => {
-      resources.push({ uri, mimeType: config.mimeType });
+      resources.push({
+        name,
+        uri,
+        mimeType: config.mimeType,
+        description: config.description,
+      });
     },
   };
   registerSkillsSurface(stub as never);
@@ -125,6 +135,27 @@ test("skills/get carries the same cache attributes as the listing", async () => 
     assert.deepEqual(got.skill, entry);
     assert.equal(got.ttlMs, 0);
     assert.equal(got.cacheScope, "public");
+  }
+});
+
+test("names and describes each SKILL.md resource from its frontmatter", () => {
+  // The spec's SHOULD for skill resources: `name` from the frontmatter name,
+  // `description` from the frontmatter description. Supporting files are
+  // named by their path within the skill.
+  const { resources } = capture();
+  for (const entry of SKILLS_BUNDLE_ENTRIES) {
+    const skillMd = resources.find((resource) => resource.uri === entry.uri);
+    assert.ok(skillMd, `${entry.uri} must be registered`);
+    assert.equal(skillMd.name, entry.frontmatter.name);
+    assert.equal(skillMd.description, entry.frontmatter.description);
+    assert.equal(skillMd.mimeType, "text/markdown");
+    const root = entry.uri.slice(0, -"/SKILL.md".length);
+    for (const file of enumeratedResources(entry)!) {
+      if (file.uri === entry.uri) continue;
+      const row = resources.find((resource) => resource.uri === file.uri);
+      assert.ok(row, `${file.uri} must be registered`);
+      assert.equal(row.name, file.uri.slice(root.length + 1));
+    }
   }
 });
 

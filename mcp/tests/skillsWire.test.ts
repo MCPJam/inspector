@@ -194,6 +194,30 @@ describe("skills/list", () => {
   });
 });
 
+describe("resources/list", () => {
+  it("names and describes each SKILL.md row from its frontmatter", async () => {
+    // The spec's SHOULD for skill resources: `name` from the frontmatter
+    // name, `description` from the frontmatter description. Supporting files
+    // are named by their path within the skill.
+    const listed = await listSkills();
+    const { result } = await call("resources/list");
+    const rows: Array<{ uri: string; name: string; description?: string }> =
+      result.resources;
+    for (const skill of listed.skills) {
+      const row = rows.find((candidate) => candidate.uri === skill.uri);
+      expect(row, `${skill.uri} must be listed`).toBeDefined();
+      expect(row!.name).toBe(skill.frontmatter.name);
+      expect(row!.description).toBe(skill.frontmatter.description);
+      const root = skill.uri.slice(0, -"/SKILL.md".length);
+      for (const file of enumeratedResources(skill)!) {
+        if (file.uri === skill.uri) continue;
+        const fileRow = rows.find((candidate) => candidate.uri === file.uri);
+        expect(fileRow?.name).toBe(file.uri.slice(root.length + 1));
+      }
+    }
+  });
+});
+
 describe("skills/get", () => {
   it("answers with an entry identical to the listing's", async () => {
     const listed = await listSkills();

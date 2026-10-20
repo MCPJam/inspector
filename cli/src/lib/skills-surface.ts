@@ -101,6 +101,37 @@ function entryFor(uri: string): SkillsBundleEntry {
   return entry;
 }
 
+/**
+ * Resource metadata for one manifest file.
+ *
+ * The spec says a SKILL.md resource's `name` and `description` SHOULD come
+ * from its frontmatter. A supporting file is named by its path within the
+ * skill, as the spec's directory-listing examples name them.
+ */
+export function resourceMetadataFor(uri: string): {
+  name: string;
+  description: string;
+} {
+  const entry = SKILLS_BUNDLE_ENTRIES.find((skill) =>
+    skill.resources.some((resource) => resource.uri === uri)
+  );
+  if (!entry) {
+    return { name: uri, description: "Agent Skill file served over MCP." };
+  }
+  const skillName = String(entry.frontmatter.name);
+  if (uri === entry.uri) {
+    return {
+      name: skillName,
+      description: String(entry.frontmatter.description),
+    };
+  }
+  const root = entry.uri.slice(0, -"/SKILL.md".length);
+  return {
+    name: uri.slice(root.length + 1),
+    description: `Supporting file of the "${skillName}" skill, served over MCP.`,
+  };
+}
+
 /** Registers `skills/list`, `skills/get`, and one resource per manifest file. */
 export function registerSkillsSurface(server: McpServer): void {
   server.server.setRequestHandler(
@@ -137,13 +168,11 @@ export function registerSkillsSurface(server: McpServer): void {
 
   for (const [uri, text] of Object.entries(SKILLS_BUNDLE_CONTENTS)) {
     const mimeType = mimeTypeFor(uri);
+    const { name, description } = resourceMetadataFor(uri);
     server.registerResource(
+      name,
       uri,
-      uri,
-      {
-        mimeType,
-        description: "Agent Skill file served over MCP (SEP-2640).",
-      },
+      { mimeType, description },
       // The SAME `mimeType` on the content, not only the registration — a
       // reader takes the type from `contents[0]`, and MCPJam's own loader
       // names it in the refusal for a non-text read.
