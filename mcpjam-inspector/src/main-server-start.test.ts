@@ -211,3 +211,16 @@ it("does not start a server in an instance that lost the single-instance lock", 
   expect(h.createHonoApp).not.toHaveBeenCalled();
   expect(h.windows).toHaveLength(0);
 });
+
+it("still reopens the window from the dock after launch", async () => {
+  const app = await launch();
+  await bootstrapped();
+  h.windows.length = 0;
+  app.emit("window-all-closed");
+
+  app.emit("activate");
+
+  await vi.waitFor(() => expect(h.windows).toHaveLength(1));
+  expect(h.createHonoApp).toHaveBeenCalledTimes(2);
+  expect(app.relaunch).not.toHaveBeenCalled();
+});
