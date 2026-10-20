@@ -1086,6 +1086,10 @@ describe("hosted doctor answer projection", () => {
       "1 listed entry rejected as malformed: UNEXPECTED_MARKER_42",
       "1 listed entry rejected as malformed.",
     ],
+    [
+      "2 of 5 sampled skills failed verification: skill://UNEXPECTED_MARKER_48/a (y); 1 listed entry rejected as malformed: UNEXPECTED_MARKER_49.",
+      "2 of 5 sampled skills failed verification. 1 listed entry rejected as malformed.",
+    ],
   ])(
     "reports the skills check's findings by their counts only",
     async (detail, counts) => {
@@ -1120,6 +1124,11 @@ describe("hosted doctor answer projection", () => {
     [
       `${CONFORMANCE}; 2 of 5 sampled skills failed verification: skill://UNEXPECTED_MARKER_43/a (UNEXPECTED_MARKER_44).`,
       `${CONFORMANCE}. 2 of 5 sampled skills failed verification. Hosted diagnostics omit upstream error text; run the doctor locally for the full message.`,
+    ],
+    // Both finding categories keep their counts.
+    [
+      `${CONFORMANCE}; 2 of 5 sampled skills failed verification: skill://UNEXPECTED_MARKER_46/a (x); 1 listed entry rejected as malformed: UNEXPECTED_MARKER_47.`,
+      `${CONFORMANCE}. 2 of 5 sampled skills failed verification. 1 listed entry rejected as malformed. Hosted diagnostics omit upstream error text; run the doctor locally for the full message.`,
     ],
   ])(
     "passes the skills check's conformance clauses through",

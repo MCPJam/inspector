@@ -283,19 +283,41 @@ const OAUTH_CHALLENGE_SUMMARY =
  * The skills check's own findings. The skill URIs and reasons after the colon
  * come from the listing, so a hosted response keeps only the counts.
  */
-const SKILLS_FINDINGS =
-  /^(\d{1,6}) (of \d{1,6} sampled skills failed verification|listed (?:entry|entries) rejected as malformed): /;
+const SKILLS_FINDING =
+  /(\d{1,6}) (of \d{1,6} sampled skills failed verification|listed (?:entry|entries) rejected as malformed): /g;
+
+/**
+ * The counts of the skills findings in `text`, in order, each category once.
+ *
+ * The SDK joins its findings with `; ` and each carries server text after
+ * the colon, so a count is read wherever its fixed phrase appears and the
+ * text after it is dropped. A category is kept once: the SDK emits each at
+ * most once, so a repeat can only have come from the server text of an
+ * earlier finding. `undefined` when `text` does not begin with a finding.
+ */
+function skillsFindingCounts(text: string): string[] | undefined {
+  const counts: string[] = [];
+  const seen = new Set<string>();
+  for (const match of text.matchAll(SKILLS_FINDING)) {
+    if (counts.length === 0 && match.index !== 0) return undefined;
+    if (seen.has(match[2]!)) continue;
+    seen.add(match[2]!);
+    counts.push(`${match[1]} ${match[2]}.`);
+  }
+  return counts.length > 0 ? counts : undefined;
+}
 
 /**
  * The skills check's spec-conformance findings. Every clause is a fixed
  * phrase the SDK composes with no server text in it, so the whole sentence
  * passes through. The SDK puts it before the findings above, and when both
- * are present the findings are reduced to their counts as usual.
+ * are present the findings are reduced to their counts as usual. Built from
+ * constant strings only; the alternation has no nested quantifier.
  */
 const SKILLS_CONFORMANCE_CLAUSE =
   "(?:the extension is declared without the `resources` capability it depends on|`skills/(?:list|get)` omitted required (?:`ttlMs` and `cacheScope`|`ttlMs`|`cacheScope`)|listed skills omitted required `size` on their files)";
 const SKILLS_CONFORMANCE = new RegExp(
-  `^(not conformant to the stable Skills extension spec: ${SKILLS_CONFORMANCE_CLAUSE}(?:; ${SKILLS_CONFORMANCE_CLAUSE})*)(?:\\.|; (\\d{1,6}) (of \\d{1,6} sampled skills failed verification|listed (?:entry|entries) rejected as malformed): .*)$`,
+  `^(not conformant to the stable Skills extension spec: ${SKILLS_CONFORMANCE_CLAUSE}(?:; ${SKILLS_CONFORMANCE_CLAUSE})*)(\\.|; .*)$`,
   "s",
 );
 
@@ -330,15 +352,17 @@ const DOCTOR_TEXT_TEMPLATES: readonly TextTemplate[] = [
   (text) => (OAUTH_GUARD_REFUSAL.test(text) ? text : undefined),
   (text) => (/^Request timed out after \d+ms$/.test(text) ? text : undefined),
   (text) => {
-    const match = SKILLS_FINDINGS.exec(text);
-    return match ? `${match[1]} ${match[2]}. ${OMITTED_TEXT_NOTE}` : undefined;
+    const counts = skillsFindingCounts(text);
+    return counts ? `${counts.join(" ")} ${OMITTED_TEXT_NOTE}` : undefined;
   },
   (text) => {
     const match = SKILLS_CONFORMANCE.exec(text);
     if (!match) return undefined;
-    return match[2] === undefined
-      ? `${match[1]}.`
-      : `${match[1]}. ${match[2]} ${match[3]}. ${OMITTED_TEXT_NOTE}`;
+    if (match[2] === ".") return `${match[1]}.`;
+    const counts = skillsFindingCounts(match[2]!.slice(2));
+    return counts
+      ? `${match[1]}. ${counts.join(" ")} ${OMITTED_TEXT_NOTE}`
+      : undefined;
   },
   (text) => {
     const match = /^HTTP probe failed: (.*)$/s.exec(text);

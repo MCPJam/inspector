@@ -415,6 +415,83 @@ describe("the skills check", () => {
     );
   });
 
+  it("collects the cache fields omitted across the sample, and checks size on skills/get too", async () => {
+    // One sampled result omits `ttlMs`, another `cacheScope`; both are named
+    // once. The listing carries every size, but one `skills/get` entry does
+    // not, which the listing-only check would have missed.
+    const markdownFor = (name: string) =>
+      `---\nname: ${name}\ndescription: Skill ${name}.\n---\n# ${name}\n`;
+    const entries = await Promise.all(
+      ["one", "two"].map(async (name) => {
+        const uri = `skill://demo/${name}/SKILL.md`;
+        const markdown = markdownFor(name);
+        return {
+          uri,
+          frontmatter: { name, description: `Skill ${name}.` },
+          resources: [
+            {
+              uri,
+              digest: `sha256:${await sha256(markdown)}`,
+              size: new TextEncoder().encode(markdown).byteLength,
+            },
+          ],
+        };
+      })
+    );
+    const byUri = new Map(entries.map((entry) => [entry.uri, entry]));
+    const manager = createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: true,
+        advertised: true,
+        directoryRead: false,
+        active: true,
+      }),
+      listServerSkills: jest
+        .fn()
+        .mockResolvedValue({ skills: entries, ...CACHEABLE }),
+      getServerSkillResult: jest
+        .fn()
+        .mockImplementation(async (_serverId: string, uri: string) => {
+          const entry = byUri.get(uri)!;
+          return uri.includes("/one/")
+            ? { skill: entry, cacheScope: "public" }
+            : {
+                skill: {
+                  ...entry,
+                  resources: entry.resources.map(({ uri, digest }) => ({
+                    uri,
+                    digest,
+                  })),
+                },
+                ttlMs: 60_000,
+              };
+        }),
+      readResource: jest
+        .fn()
+        .mockImplementation(
+          async (_serverId: string, params: { uri: string }) => ({
+            contents: [
+              {
+                uri: params.uri,
+                text: markdownFor(params.uri.split("/").at(-2) as string),
+                mimeType: "text/markdown",
+              },
+            ],
+          })
+        ),
+    });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("error");
+    expect(result.checks.skills.detail).toContain(
+      "`skills/get` omitted required `ttlMs` and `cacheScope`"
+    );
+    expect(result.checks.skills.detail).toContain(
+      "listed skills omitted required `size` on their files"
+    );
+  });
+
   it("names a file entry that omits its size", async () => {
     // The verifier reports an unchecked size rather than refusing, so without
     // this the skill loads and the author never learns the manifest is short.

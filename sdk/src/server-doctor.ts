@@ -353,19 +353,21 @@ async function collectSkills(
         `\`skills/list\` omitted required ${listMissing.join(" and ")}`
       );
     }
-    if (
-      listing.skills.some((skill) =>
-        skill.resources.some((resource) => resource.size === undefined)
-      )
-    ) {
-      // `verifySize` reports an unchecked size rather than refusing, so a
-      // server that predates the field still loads; this is where it hears
-      // about it.
-      conformance.push("listed skills omitted required `size` on their files");
-    }
+    // `verifySize` reports an unchecked size rather than refusing, so a
+    // server that predates the field still loads; this is where it hears
+    // about it. Checked on the listing AND on every sampled `skills/get`
+    // entry, since the spec requires it on both.
+    const lacksSize = (skill: {
+      resources: ReadonlyArray<{ size?: number }>;
+    }): boolean => skill.resources.some((resource) => resource.size === undefined);
+    let sizeMissing = listing.skills.some(lacksSize);
 
     const failures: string[] = [];
-    let getReported = false;
+    // Collected across the sample and reported once, without URIs: the
+    // omission is a property of the server's handler, not of one skill, and
+    // the hosted doctor passes this sentence through only because it carries
+    // no server text. One result may omit `ttlMs` and another `cacheScope`.
+    const getMissing = new Set<string>();
     for (const skill of sample) {
       try {
         // No `entry` passed, so this is the `skills/get` path and the result
@@ -374,16 +376,10 @@ async function collectSkills(
           serverId,
           uri: skill.skillUri,
         });
-        const getMissing = missingCacheAttributes(verified);
-        if (getMissing.length > 0 && !getReported) {
-          // Once, and without the URI: the omission is a property of the
-          // server's handler, not of one skill, and the hosted doctor passes
-          // this sentence through only because it carries no server text.
-          getReported = true;
-          conformance.push(
-            `\`skills/get\` omitted required ${getMissing.join(" and ")}`
-          );
+        for (const field of missingCacheAttributes(verified)) {
+          getMissing.add(field);
         }
+        if (lacksSize(verified)) sizeMissing = true;
       } catch (error) {
         if (isServerSkillRefusalError(error)) {
           failures.push(`${skill.skillUri} (${error.refusal.kind})`);
@@ -391,6 +387,17 @@ async function collectSkills(
           throw error;
         }
       }
+    }
+
+    if (getMissing.size > 0) {
+      conformance.push(
+        `\`skills/get\` omitted required ${["`ttlMs`", "`cacheScope`"]
+          .filter((field) => getMissing.has(field))
+          .join(" and ")}`
+      );
+    }
+    if (sizeMissing) {
+      conformance.push("listed skills omitted required `size` on their files");
     }
 
     const unloadable = listing.skills.filter((skill) => skill.unloadable).length;
