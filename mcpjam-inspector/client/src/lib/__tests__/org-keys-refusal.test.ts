@@ -9,7 +9,7 @@ import {
   orgKeysRefusalCodeOf,
   orgKeysRefusalSentence,
   ORG_KEYS_REFUSAL_CODES,
-  runRefusalCodeInText,
+  runRefusal,
   VISITOR_ANALYSIS_UNAVAILABLE,
 } from "../org-keys-refusal";
 
@@ -65,36 +65,87 @@ describe("org-keys refusal helpers", () => {
   });
 
   it("reads a run's provider_not_configured as credential_missing: the same missing org provider", () => {
-    // `/stream/org`'s 422 envelope, and the org resolver's prefixed message.
+    const notOn = "The provider isn't turned on for your organization.";
+    // The code the run recorded: `infraError.code`, then `/stream/org`'s envelope.
     expect(
-      runRefusalCodeInText(
-        "The provider isn't turned on for your organization.",
-        JSON.stringify({ ok: false, code: "provider_not_configured" }),
+      runRefusal(
+        { error: notOn, infraErrorCode: "provider_not_configured" },
+        false,
       ),
-    ).toBe("credential_missing");
+    ).toEqual({
+      code: "credential_missing",
+      stated: "provider_not_configured",
+    });
     expect(
-      runRefusalCodeInText(
-        "provider_not_configured: anthropic is not enabled for this project/workspace organization",
+      runRefusal(
+        {
+          error: notOn,
+          errorDetails: JSON.stringify({
+            ok: false,
+            code: "provider_not_configured",
+          }),
+        },
+        false,
       ),
-    ).toBe("credential_missing");
-    expect(runRefusalCodeInText("org_keys_required: no")).toBe(
-      "org_keys_required",
-    );
-    expect(runRefusalCodeInText("Some other failure", undefined)).toBe(
-      undefined,
-    );
-    // The typed code a run row carries (`infraError.code`).
-    expect(runRefusalCodeInText(undefined, "provider_not_configured")).toBe(
-      "credential_missing",
-    );
-    // Prose that names the code is not a refusal.
+    ).toEqual({
+      code: "credential_missing",
+      stated: "provider_not_configured",
+    });
+    // The runner's own refused-selection row.
     expect(
-      runRefusalCodeInText(
-        "The tool said provider_not_configured, then retried and worked.",
+      runRefusal(
+        { error: "Model selection refused — org_keys_required: no org model." },
+        false,
       ),
-    ).toBe(undefined);
+    ).toEqual({ code: "org_keys_required", stated: "org_keys_required" });
+    expect(runRefusal({ error: "Some other failure" }, true)).toBe(undefined);
     // Chat reads codes directly and keeps showing the backend's sentence.
     expect(orgKeysRefusalCodeOf("provider_not_configured")).toBe(undefined);
+    expect(
+      orgKeysRefusalSentence(
+        JSON.stringify({
+          ok: false,
+          code: "provider_not_configured",
+          error: notOn,
+        }),
+      ),
+    ).toBe(undefined);
+  });
+
+  it("reads a run failure's own text only when told to", () => {
+    // The org resolver's lead, or an MCP server's error that reads the same.
+    for (const error of [
+      "provider_not_configured: anthropic is not enabled for this project/workspace organization",
+      "credential_missing: set GITHUB_TOKEN",
+    ]) {
+      expect(runRefusal({ error }, false)).toBe(undefined);
+      expect(runRefusal({ error }, true)?.code).toBe("credential_missing");
+    }
+    // Prose that names a code is not a stated one.
+    expect(
+      runRefusal(
+        {
+          error:
+            "The tool said provider_not_configured, then retried and worked.",
+        },
+        true,
+      ),
+    ).toBe(undefined);
+  });
+
+  it("reads a stated code before a policy code the text merely names", () => {
+    expect(
+      runRefusal(
+        {
+          error: "provider_not_configured: anthropic is not enabled",
+          errorDetails: "Checked the org_keys_required policy first.",
+        },
+        true,
+      ),
+    ).toEqual({
+      code: "credential_missing",
+      stated: "provider_not_configured",
+    });
   });
 
   it("reads the code an Error carries even when its message is generic", () => {

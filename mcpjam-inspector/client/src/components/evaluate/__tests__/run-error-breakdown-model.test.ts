@@ -203,6 +203,48 @@ describe("organization AI provider refusals", () => {
     ).toBe("orgProviders");
   });
 
+  it("never reads a refusal out of an error's text without a chain behind it", () => {
+    // Older rows, quarantined rows or a schema mismatch carry no verified
+    // chain; the text may be the MCP server's own.
+    for (const error of [
+      "credential_missing: set GITHUB_TOKEN",
+      "provider_not_configured: GITHUB_TOKEN is not set",
+    ]) {
+      expect(classifyIterationError(iteration("a", { error }), null)).not.toBe(
+        "orgProviders",
+      );
+    }
+  });
+
+  it("keeps a recorded error that isn't the iteration's own off its infra error code", () => {
+    const groups = buildRunErrorBreakdown({
+      iterations: [
+        iteration("a", {
+          status: "failed",
+          error: notTurnedOn,
+          infraError: {
+            class: "configuration",
+            layer: "model",
+            retryable: false,
+            code: "provider_not_configured",
+          },
+          metadata: {
+            evalErrors: [
+              { message: "The judge timed out.", reason: "providerError" },
+            ],
+          },
+        } as Partial<EvalIteration>),
+      ],
+      chains: new Map([["a", providerErrorChain]]),
+    })?.groups;
+    expect(
+      groups?.find((group) => group.cause === "orgProviders")?.errors,
+    ).toEqual([{ message: notTurnedOn, count: 1 }]);
+    expect(groups?.find((group) => group.cause === "platform")?.errors).toEqual(
+      [{ message: "The judge timed out.", count: 1 }],
+    );
+  });
+
   it("leaves a tool error that looks like a refusal with the MCP server", () => {
     expect(
       classifyIterationError(

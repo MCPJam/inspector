@@ -130,7 +130,7 @@ describe("describeEvalIterationError — organization AI-key refusals", () => {
     ).toMatchObject({
       slug: "eval/ai_refused",
       title: "Unavailable: add an organization provider",
-      rawCode: "credential_missing",
+      rawCode: "provider_not_configured",
       nextSteps: ["Ask an organization admin to add or reconnect a provider."],
     });
   });
@@ -151,7 +151,27 @@ describe("describeEvalIterationError — organization AI-key refusals", () => {
           code: "provider_not_configured",
         },
       }),
-    ).toMatchObject({ slug: "eval/ai_refused", rawCode: "credential_missing" });
+    ).toMatchObject({
+      slug: "eval/ai_refused",
+      rawCode: "provider_not_configured",
+    });
+  });
+
+  it("never reads a completed iteration's own text as a refusal", () => {
+    // A failed assertion's text can be the MCP server's: only a code MCPJam
+    // recorded (the infra error, the diagnostics envelope) counts there.
+    for (const error of [
+      "credential_missing: set GITHUB_TOKEN",
+      "provider_not_configured: GITHUB_TOKEN is not set",
+    ]) {
+      expect(
+        describeEvalIterationError({
+          status: "completed",
+          result: "failed",
+          error,
+        })?.slug,
+      ).toBe(describeError(error).slug);
+    }
   });
 
   it("describes an ordinary failed result as it did before", () => {

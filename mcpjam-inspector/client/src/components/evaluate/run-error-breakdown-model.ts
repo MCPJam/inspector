@@ -16,10 +16,7 @@ import {
   stepsToPromptTurns,
 } from "@/shared/steps";
 import type { EvalIteration } from "../evals/types";
-import {
-  describeOrgKeysRefusal,
-  runRefusalCodeInText,
-} from "@/lib/org-keys-refusal";
+import { describeOrgKeysRefusal, runRefusal } from "@/lib/org-keys-refusal";
 import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
 
 /** Recorded error categories. */
@@ -167,20 +164,24 @@ function classifyReason(
   // reconnecting one in Organization → AI providers lifts it. The code may
   // sit only in the iteration's diagnostics or its infra error, and a
   // recorded error whose text equals the iteration's own is treated as that
-  // same failure, so it reads them too. A failure the chain pins on the MCP
-  // server stays the server's, whatever its text looks like.
+  // same failure, so it reads them too. The error's own text counts only when
+  // the chain puts the stop on the model's provider or on setup, and a
+  // failure the chain pins on the MCP server stays the server's.
   const ownFailure = error === iteration.error;
   const refusal =
     reasonCause === "serverUnreachable" || reasonCause === "serverError"
       ? undefined
-      : runRefusalCodeInText(
-          error,
-          ownFailure ? iteration.errorDetails : undefined,
-          ownFailure ? iteration.infraError?.code : undefined,
+      : runRefusal(
+          {
+            error,
+            errorDetails: ownFailure ? iteration.errorDetails : undefined,
+            infraErrorCode: ownFailure ? iteration.infraError?.code : undefined,
+          },
+          reason === "providerError" || reason === "setupAborted",
         );
   if (
     refusal &&
-    describeOrgKeysRefusal(refusal).remediation === "add_org_provider"
+    describeOrgKeysRefusal(refusal.code).remediation === "add_org_provider"
   )
     return "orgProviders";
 
