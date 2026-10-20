@@ -35,7 +35,9 @@ const STEP_ORDER_FOR_TEST = [
   "request_without_token",
   "generate_pkce_parameters",
   "authorization_request",
+  "received_authorization_code",
   "token_request",
+  "received_access_token",
   "complete",
 ];
 
@@ -540,7 +542,7 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
   }
 
   async function signInAndReturn() {
-    renderTab();
+    const view = renderTab();
     await act(async () => {
       machineCtl.updateState?.({
         currentStep: "authorization_request",
@@ -560,6 +562,7 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
         }),
       );
     });
+    return view;
   }
 
   it("redeems the code without waiting for Continue, with Continue held off meanwhile", async () => {
@@ -584,6 +587,16 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
     await waitFor(() =>
       expect(latestLoggerActions().continuePending).toBe(false),
     );
+  });
+
+  it("doesn't spend the code once the tab unmounts before the timer fires", async () => {
+    const exchange = scriptRedemption({ currentStep: "received_access_token" });
+    const view = await signInAndReturn();
+    view.unmount();
+
+    await act(() => new Promise((resolve) => setTimeout(resolve, 700)));
+
+    expect(exchange.startedFrom).toEqual([]);
   });
 
   it("stops at a rejected code instead of sending it again", async () => {

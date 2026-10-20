@@ -1,15 +1,15 @@
-import type {
-  OAuthFlowState,
-  OAuthFlowStep,
-  OAuthStateMachine,
+import {
+  getStepIndex,
+  type OAuthFlowState,
+  type OAuthFlowStep,
+  type OAuthStateMachine,
 } from "@mcpjam/sdk/browser";
 
-// The steps between the authorization callback and the tokens.
-const CODE_REDEMPTION_STEPS = new Set<OAuthFlowStep>([
-  "authorization_request",
-  "received_authorization_code",
-  "token_request",
-]);
+// The steps from the authorization callback through the token request, read
+// off the SDK's step order so a step the machines add in between is included.
+const isRedemptionStep = (step: OAuthFlowStep) =>
+  getStepIndex(step) >= getStepIndex("authorization_request") &&
+  getStepIndex(step) <= getStepIndex("token_request");
 
 /**
  * Run the OAuth debugger from the authorization callback through the token
@@ -31,7 +31,7 @@ export async function redeemAuthorizationCode(
 ): Promise<void> {
   if (!machine || flowState.current.isInitiatingAuth) return;
   let step = flowState.current.currentStep;
-  while (CODE_REDEMPTION_STEPS.has(step)) {
+  while (isRedemptionStep(step)) {
     await machine.proceedToNextStep();
     const next = flowState.current.currentStep;
     if (next === step) return;

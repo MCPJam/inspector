@@ -862,9 +862,7 @@ export const OAuthFlowTab = ({
 
       processedCodeRef.current = code;
 
-      if (exchangeTimeoutRef.current) {
-        clearTimeout(exchangeTimeoutRef.current);
-      }
+      clearTimeout(exchangeTimeoutRef.current ?? undefined);
 
       updateOAuthFlowState({
         authorizationCode: code,
@@ -982,6 +980,8 @@ export const OAuthFlowTab = ({
       handleElectronOAuthCallback as EventListener,
     );
     return () => {
+      // A redemption scheduled for this flow must not run once it's gone.
+      clearTimeout(exchangeTimeoutRef.current ?? undefined);
       window.removeEventListener("message", handleMessage);
       window.removeEventListener(
         "electron-oauth-callback",
