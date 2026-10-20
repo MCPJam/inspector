@@ -1,7 +1,6 @@
-import {
-  serverCheckQueue,
-  isServerCheckQueueError,
-} from "@/lib/server-check-queue";
+import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
+import { cancelPendingChatScopeStepUpForCallback, isStaleChatAuthCallback } from "@/lib/scope-step-up-pending";
+import { serverCheckQueue, isServerCheckQueueError } from "@/lib/server-check-queue";
 import { startDesktopOperation } from "@/lib/desktop-diagnostics";
 import { checkProjectOAuthAccess } from "@/lib/oauth/project-oauth-access";
 import { buildElectronMcpCallbackUrl } from "@/lib/electron-mcp-callback";
@@ -85,15 +84,15 @@ import {
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
+import { cancelPendingDirectScopeStepUpReplay } from "@/lib/scope-step-up-replay";
+import { registerScopeStepUpHostBridge } from "@/lib/scope-step-up";
 import { markOnboardingSignInCompleted } from "@/lib/plugin-onboarding-intent";
 import {
-  markPendingChatScopeStepUpCancelled,
-  markPendingChatScopeStepUpReady,
-} from "@/lib/scope-step-up-pending";
-import {
-  cancelPendingDirectScopeStepUpReplay,
-  markPendingDirectScopeStepUpReplayReady,
-} from "@/lib/scope-step-up-replay";
+  noteSignInCallbackFailed,
+  registerAuthChallengeHostProfile,
+  settleSignInCallback,
+} from "@/lib/auth-challenge-lifecycle";
+import { connectionIntentForBinding } from "@/lib/scope-step-up-credential";
 import { HOSTED_MODE } from "@/lib/config";
 import { connectOutcomeTracker } from "@/lib/connect-outcome-telemetry";
 import {
@@ -1121,6 +1120,7 @@ export function useServerState({
   const prepareHostedProjectOAuthRedirect = useCallback(
     (params: {
       serverId?: string | null;
+      chatAuthContinuationId?: string;
       connectionIntent?: ConnectionIntent;
       serverName: string;
       serverUrl?: string | null;
@@ -1136,23 +1136,34 @@ export function useServerState({
         return false;
       }
 
-      const stepUp = readPendingChatScopeStepUp();
-      const connectionIntent =
-        params.connectionIntent ??
-        (stepUp?.event.connectionId &&
+      const stepUp = params.chatAuthContinuationId ? readPendingChatScopeStepUp({ continuationId: params.chatAuthContinuationId }) : undefined;
+      const stepUpForThisServer =
+        stepUp &&
         (stepUp.event.serverId === params.serverId ||
           stepUp.event.serverName === params.serverName)
-          ? {
-              kind: "replace" as const,
-              credentialId: stepUp.event.connectionId,
-            }
-          : undefined);
+          ? stepUp
+          : undefined;
+      // A pending step-up decides how its sign-in attaches its credential
+      // (see `scope-step-up-credential`): reauthorize the user's own
+      // credential in place, but never replace a shared or another user's
+      // one. A marker without a recorded binding keeps the older default.
+      const connectionIntent =
+        params.connectionIntent ??
+        (stepUpForThisServer?.credentialBinding
+          ? connectionIntentForBinding(stepUpForThisServer.credentialBinding)
+          : stepUpForThisServer?.event.connectionId
+            ? {
+                kind: "replace" as const,
+                credentialId: stepUpForThisServer.event.connectionId,
+              }
+            : undefined);
       const returnPath = captureCurrentReturnPath();
       const organizationId =
         effectiveProjects[effectiveActiveProjectId]?.organizationId ?? null;
       clearHostedOAuthPendingState();
       writeHostedOAuthPendingMarker({
         surface: "project",
+        ...(params.chatAuthContinuationId ? { chatAuthContinuationId: params.chatAuthContinuationId } : {}),
         initiatingUserId: currentUserId,
         ...(connectionIntent ? { connectionIntent } : {}),
         organizationId,
@@ -1176,6 +1187,79 @@ export function useServerState({
       isAuthenticated,
       currentUserId,
     ],
+  );
+
+  // The step-up lifecycle is module-level code; it reaches the project state
+  // a hosted redirect needs through this bridge (see `scope-step-up`).
+  useEffect(
+    () =>
+      registerScopeStepUpHostBridge({
+        resolveCredentialBinding: async (server, connectionId) => {
+          if (!connectionId) return { kind: "none" };
+          // Local credentials live on this machine and belong to its user.
+          if (!HOSTED_MODE) return { kind: "owned", credentialId: connectionId };
+          const projectId = effectiveActiveProjectIdRef.current;
+          const serverId = activeProjectServersFlatRef.current?.find(
+            (remote) => remote.name === server.name
+          )?._id;
+          if (!projectId || !serverId) {
+            return { kind: "shared", credentialId: connectionId };
+          }
+          // Only a credential listed as the user's own (not the project's
+          // shared one) is reauthorized in place.
+          const rows = await listOAuthConnections(projectId, serverId);
+          return !rows.shared &&
+            rows.connections.some(
+              (connection) => connection.connectionId === connectionId
+            )
+            ? { kind: "owned", credentialId: connectionId }
+            : { kind: "shared", credentialId: connectionId };
+        },
+        hasExistingGrant: async (server) => {
+          // Local grants are the browser's own tokens, read directly.
+          if (!HOSTED_MODE) return false;
+          const projectId = effectiveActiveProjectIdRef.current;
+          const serverId = activeProjectServersFlatRef.current?.find(
+            (remote) => remote.name === server.name
+          )?._id;
+          if (!projectId || !serverId) return false;
+          const rows = await listOAuthConnections(projectId, serverId);
+          return rows.shared || rows.connections.length > 0;
+        },
+        prepareRedirect: (server, connectionIntent, continuationId) => {
+          if (!HOSTED_MODE) return;
+          const pending = continuationId ? readPendingChatScopeStepUp({ continuationId }) : undefined;
+          if (continuationId && (!pending || (pending.projectId && pending.projectId !== effectiveActiveProjectIdRef.current))) {
+            throw new Error("The chat project changed before sign-in. Please return to the chat and try again.");
+          }
+          const serverUrl = (server.config as { url?: unknown })?.url;
+          const prepared = prepareHostedProjectOAuthRedirect({
+            chatAuthContinuationId: continuationId,
+            serverId: activeProjectServersFlatRef.current?.find(
+              (remote) => remote.name === server.name
+            )?._id,
+            serverName: server.name,
+            serverUrl:
+              typeof serverUrl === "string"
+                ? serverUrl
+                : serverUrl instanceof URL
+                  ? serverUrl.toString()
+                  : undefined,
+            ...(connectionIntent ? { connectionIntent } : {}),
+          });
+          if (continuationId && !prepared) throw new Error("The chat sign-in could not be saved. Please try again.");
+        },
+      }),
+    [prepareHostedProjectOAuthRedirect]
+  );
+
+  // Mid-session sign-in decides per call, from the host the user is
+  // emulating right now (the same active host chat reads).
+  const activeMcpProfileRef = useRef(activeMcpProfile);
+  activeMcpProfileRef.current = activeMcpProfile;
+  useEffect(
+    () => registerAuthChallengeHostProfile(() => activeMcpProfileRef.current),
+    []
   );
 
   const activeProject = useMemo(() => {
@@ -3029,7 +3113,33 @@ export function useServerState({
         }
       };
       try {
+        if (hostedCallbackContext?.chatAuthContinuationId && isStaleChatAuthCallback(hostedCallbackContext.chatAuthContinuationId, await authorizationFlowDigest(state))) {
+          finishDiagnostic(true);
+          logger.info("Ignored stale chat OAuth callback");
+          if (
+            pendingServerName &&
+            localStorage.getItem(
+              `mcp-oauth-issued-state-${pendingServerName}`,
+            ) === state
+          ) {
+            const message =
+              "This sign-in is no longer waiting. Return to the call and try again.";
+            failPendingOAuthConnection(message);
+            if (!suppressErrorToast) toast.error(message);
+          }
+          return;
+        }
         assertProjectAccess();
+        const callbackServer = pendingServerName
+          ? effectiveServers[pendingServerName]
+          : undefined;
+        if (pendingServerName && callbackServer)
+          dispatch({
+            type: "CONNECT_REQUEST",
+            name: pendingServerName,
+            config: callbackServer.config,
+            select: true,
+          });
         const result = isHostedProjectCallback
           ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
               callbackState: state,
@@ -3092,6 +3202,19 @@ export function useServerState({
               latestEffectiveServersRef.current[result.serverName];
             if (existing)
               await guardedReconnectServer(result.serverName, existing.config);
+          }
+          // A step-up or sign-in that was waiting on this connection settles
+          // here too. This branch used to return first, so a saved call never
+          // resumed after a hosted connection-intent callback.
+          const settledServerName =
+            result.serverName ?? hostedCallbackContext?.serverName;
+          if (settledServerName) {
+            const notRetried = await settleSignInCallback(settledServerName, {
+              state,
+              credentialId: result.credentialId,
+              continuationId: hostedCallbackContext?.chatAuthContinuationId,
+            });
+            if (notRetried) toast.info(notRetried);
           }
           notifyOAuthConnectionsChanged();
           if (!suppressSuccessToast) toast.success("Account connected");
@@ -3242,8 +3365,12 @@ export function useServerState({
                 oauthTrace: result.oauthTrace,
               });
               logger.info("OAuth connection successful", { serverName });
-              markPendingChatScopeStepUpReady(serverName);
-              markPendingDirectScopeStepUpReplayReady(serverName);
+              const notRetried = await settleSignInCallback(serverName, {
+                state,
+                credentialId: result.credentialId,
+                continuationId: hostedCallbackContext?.chatAuthContinuationId,
+              });
+              if (notRetried) toast.info(notRetried);
               if (!suppressSuccessToast) {
                 toast.success(
                   `OAuth connection successful! Connected to ${serverName}.`,
@@ -3257,12 +3384,11 @@ export function useServerState({
                   }),
               );
             } else {
-              markPendingChatScopeStepUpCancelled(
-                serverName,
-                connectionResult.error ||
-                  "The server could not reconnect after authorization.",
-              );
+              cancelPendingChatScopeStepUpForCallback(serverName,
+                connectionResult.error || "The server could not reconnect after authorization.",
+                await authorizationFlowDigest(state), hostedCallbackContext?.chatAuthContinuationId);
               cancelPendingDirectScopeStepUpReplay(serverName);
+              noteSignInCallbackFailed(serverName);
               dispatch({
                 type: "CONNECT_FAILURE",
                 name: serverName,
@@ -3285,11 +3411,11 @@ export function useServerState({
             }
           } catch (connectionError) {
             if (isCancelled()) return;
-            markPendingChatScopeStepUpCancelled(
-              serverName,
+            cancelPendingChatScopeStepUpForCallback(serverName,
               "The server could not reconnect after authorization.",
-            );
+              await authorizationFlowDigest(state), hostedCallbackContext?.chatAuthContinuationId);
             cancelPendingDirectScopeStepUpReplay(serverName);
+            noteSignInCallbackFailed(serverName);
             const errorMessage =
               connectionError instanceof Error
                 ? connectionError.message
@@ -3340,8 +3466,9 @@ export function useServerState({
           failPendingOAuthConnection(errorMessage, oauthTrace) ??
           pendingServerName;
         if (failedServerName) {
-          markPendingChatScopeStepUpCancelled(failedServerName, errorMessage);
+          cancelPendingChatScopeStepUpForCallback(failedServerName, errorMessage, await authorizationFlowDigest(state), hostedCallbackContext?.chatAuthContinuationId);
           cancelPendingDirectScopeStepUpReplay(failedServerName);
+          noteSignInCallbackFailed(failedServerName);
           logger.warn("Marked pending OAuth connection as failed", {
             serverName: failedServerName,
             error: errorMessage,
@@ -3440,20 +3567,7 @@ export function useServerState({
         hostedOAuthCallbackContext?.serverName ??
         localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
 
-      // A `?code=` in the URL is NOT proof the callback is ours. This effect
-      // runs on every route, so any other OAuth-shaped return lands here too —
-      // notably the GitHub App bind at `/settings/integrations/github/callback`,
-      // which this handler used to claim, fail, toast "No pending OAuth flow
-      // found", and then navigate away from, stripping GitHub's `code`/`state`
-      // out of the URL before the route that owned them could read them.
-      //
-      // The guard is DERIVED, not a path denylist: both completion paths read
-      // exactly this pending marker and throw "No pending OAuth flow found"
-      // when it is absent (`mcp-oauth.ts` — `handleOAuthCallback` and
-      // `completeHostedOAuthCallback`). So with no marker there is no MCP flow
-      // to complete and claiming the callback could only ever have failed. A
-      // path list would have to grow by hand for every future OAuth route and
-      // would silently break the one nobody remembered to add.
+      // Only claim callbacks belonging to a pending MCP flow.
       //
       // Deliberate consequence: a genuinely orphaned MCP callback (marker lost
       // to a cleared localStorage or another tab) no longer raises a toast. It
@@ -3465,21 +3579,6 @@ export function useServerState({
       }
 
       oauthCallbackHandledRef.current.add(attempt);
-
-      // Dispatch "connecting" immediately so SYNC_AGENT_STATUS (which fires
-      // concurrently) cannot set the server back to "disconnected" while the
-      // token exchange is still in flight.
-      if (earlyPendingName) {
-        const earlyServer = effectiveServers[earlyPendingName];
-        if (earlyServer) {
-          dispatch({
-            type: "CONNECT_REQUEST",
-            name: earlyPendingName,
-            config: earlyServer.config,
-            select: true,
-          });
-        }
-      }
 
       // Captured before completion: handleOAuthCallbackComplete clears the
       // return-hash key as part of its cleanup.
@@ -3551,32 +3650,41 @@ export function useServerState({
         : error;
       const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
 
-      if (hostedOAuthCallbackContext?.suppressErrorToast !== true) {
-        toast.error(`OAuth authorization failed: ${errorMessage}`);
-      }
-      const failedServerName = failPendingOAuthConnection(errorMessage);
-      markPendingChatScopeStepUpCancelled(
-        failedServerName ?? undefined,
-        errorMessage,
-      );
-      cancelPendingDirectScopeStepUpReplay(failedServerName ?? undefined);
-      logger.warn("OAuth authorization failed before callback completion", {
-        serverName: failedServerName,
-        error,
-        errorDescription,
-      });
       oauthCallbackHandledRef.current.add(attempt);
-      // Denied/failed authorizations return the user to where they started
-      // too: same org restore + router-aware navigation as the success path.
-      const markerOrganizationId = hostedOAuthCallbackContext?.organizationId;
-      if (markerOrganizationId) {
-        restoreActiveOrganizationId?.(markerOrganizationId);
-      }
-      const returnTarget = hostedOAuthCallbackContext?.returnPath
-        ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
-        : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
-      consumeOAuthCallbackParams(callbackAttempt);
-      navigateApp(returnTarget, { replace: true });
+      void authorizationFlowDigest(state).then(digest => {
+        if (isStaleChatAuthCallback(hostedOAuthCallbackContext?.chatAuthContinuationId, digest)) {
+          consumeOAuthCallbackParams(callbackAttempt);
+          navigateApp(resolveHostedOAuthReturnPath(hostedOAuthCallbackContext!), { replace: true });
+          return;
+        }
+        if (hostedOAuthCallbackContext?.suppressErrorToast !== true) {
+          toast.error(`OAuth authorization failed: ${errorMessage}`);
+        }
+        const failedServerName = failPendingOAuthConnection(errorMessage);
+        cancelPendingChatScopeStepUpForCallback(
+          failedServerName ?? undefined, errorMessage, digest, hostedOAuthCallbackContext?.chatAuthContinuationId);
+        cancelPendingDirectScopeStepUpReplay(failedServerName ?? undefined);
+        if (failedServerName) noteSignInCallbackFailed(failedServerName);
+        logger.warn("OAuth authorization failed before callback completion", {
+          serverName: failedServerName,
+          error,
+          errorDescription,
+        });
+        // Denied/failed authorizations return the user to where they started
+        // too: same org restore + router-aware navigation as the success path.
+        const markerOrganizationId = hostedOAuthCallbackContext?.organizationId;
+        if (markerOrganizationId) {
+          restoreActiveOrganizationId?.(markerOrganizationId);
+        }
+        const returnTarget = hostedOAuthCallbackContext?.returnPath
+          ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
+          : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
+        consumeOAuthCallbackParams(callbackAttempt);
+        navigateApp(returnTarget, { replace: true });
+      }).catch((error: unknown) => {
+        logger.warn("Could not settle the failed sign-in callback", { error });
+        toast.error("Could not finish sign-in. Please try again.");
+      });
     }
   }, [
     recoverProjectOAuth,

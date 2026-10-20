@@ -1,3 +1,8 @@
+import {
+  CHAT_AUTH_RECOVERY_MESSAGE,
+  recordChatAuthRecoveryFailure,
+  traceChatAuthRecovery,
+} from "@/lib/chat-auth-recovery";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CallToolResult,
@@ -56,8 +61,18 @@ import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
+  PendingDirectReplayConflictError,
   type DirectScopeStepUpReplayDescriptor,
+  type PendingDirectScopeStepUpReplay,
 } from "@/lib/scope-step-up-replay";
+import {
+  clearAuthChallengeCards,
+  presentAuthChallenge,
+} from "@/lib/auth-challenge-lifecycle";
+import {
+  AuthChallengeCards,
+  authChallengeConnectMessage,
+} from "./auth-challenge/AuthChallengeCard";
 import type { ServerWithName } from "@/state/app-types";
 import type { MCPServerConfig, TaskMode } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
@@ -146,7 +161,7 @@ export type DialogElicitation = {
 };
 
 function normalizeElicitationContent(
-  parameters?: Record<string, unknown>
+  parameters?: Record<string, unknown>,
 ): ElicitResult["content"] | undefined {
   if (!parameters) return undefined;
   const content: ElicitResult["content"] = {};
@@ -199,6 +214,8 @@ export function ToolsTab({
 }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const [tools, setTools] = useState<ToolMap>({});
+  const formSelectionRef = useRef("");
+  const restoringInputsRef = useRef<{ toolName: string; parameters: Record<string, unknown> } | null>(null);
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<CallToolResult | null>(null);
@@ -212,11 +229,17 @@ export function ToolsTab({
     import("@mcpjam/sdk/browser").NormalizedError | null
   >(null);
   const [responseDurationMs, setResponseDurationMs] = useState<number | null>(
-    null
+    null,
   );
   const [activeElicitation, setActiveElicitation] =
     useState<ActiveElicitation | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
+  /**
+   * Why a sign-in challenge did not become a Connect card (the host passes it
+   * through, the server's auth method cannot sign in, "Not now", a repeat
+   * after sign-in), or what a Connect click led to. Text only.
+   */
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
   const [highlightedRequestId, setHighlightedRequestId] = useState<
@@ -235,8 +258,9 @@ export function ToolsTab({
   const extensionTaskDefaultAppliedRef = useRef<string | undefined>(undefined);
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
-  const [taskCapabilities, setTaskCapabilities] =
-    useState<TasksSupport | null>(null);
+  const [taskCapabilities, setTaskCapabilities] = useState<TasksSupport | null>(
+    null,
+  );
   // TTL for task execution (milliseconds, 0 = no expiration)
   const [taskTtl, setTaskTtl] = useState<number>(0);
   // Infinite scroll state
@@ -269,9 +293,7 @@ export function ToolsTab({
   // Check if the selected tool requires task execution
   // Per MCP Tasks spec: execution.taskSupport can be "required", "optional", or "forbidden"
   const selectedToolTaskSupport = useMemo(():
-    | "required"
-    | "optional"
-    | "forbidden" => {
+    "required" | "optional" | "forbidden" => {
     if (!selectedTool || !tools[selectedTool]) return "forbidden";
     const tool = tools[selectedTool];
     const execution = (tool as any).execution;
@@ -333,10 +355,12 @@ export function ToolsTab({
     invalidateRequests = true,
     stopLoading = true,
     clearTaskCapabilities = true,
+    clearSelection = true,
   }: {
     invalidateRequests?: boolean;
     stopLoading?: boolean;
     clearTaskCapabilities?: boolean;
+    clearSelection?: boolean;
   } = {}) => {
     if (invalidateRequests) {
       toolFetchVersionRef.current += 1;
@@ -344,18 +368,24 @@ export function ToolsTab({
     }
     if (stopLoading) {
       setFetchingTools(false);
-      setLoadingExecuteTool(false);
-      setElicitationLoading(false);
+      if (clearSelection) {
+        setLoadingExecuteTool(false);
+        setElicitationLoading(false);
+      }
     }
     setTools({});
-    setSelectedTool("");
-    setFormFields([]);
-    setResult(null);
-    setStructuredContentValid(undefined);
-    setError("");
-    setNormalizedError(null);
-    setResponseDurationMs(null);
-    setActiveElicitation(null);
+    if (clearSelection) {
+      formSelectionRef.current = "";
+      restoringInputsRef.current = null;
+      setSelectedTool("");
+      setFormFields([]);
+      setResult(null);
+      setStructuredContentValid(undefined);
+      setError("");
+      setNormalizedError(null);
+      setResponseDurationMs(null);
+      setActiveElicitation(null);
+    }
     if (clearTaskCapabilities) {
       setTaskCapabilities(null);
     }
@@ -366,14 +396,21 @@ export function ToolsTab({
     setServedFromCache(undefined);
   };
 
+  const selectionIdentity = `${window.location.pathname.split("/").slice(0, 3).join("/")}:${serverName}:${serverKey}`;
+  const selectionIdentityRef = useRef(selectionIdentity);
+  selectionIdentityRef.current = selectionIdentity;
+  const loadedIdentityRef = useRef(selectionIdentity);
   useEffect(() => {
+    const switched = loadedIdentityRef.current !== selectionIdentity;
+    loadedIdentityRef.current = selectionIdentity;
+    if (switched) resetLoadedToolState();
     if (!serverConfig || !serverName || !isServerConnected) {
-      resetLoadedToolState();
+      resetLoadedToolState({ clearSelection: switched });
       return;
     }
     void fetchTools(true);
     void fetchTaskCapabilities();
-  }, [serverConfig, serverName, isServerConnected]);
+  }, [serverConfig, serverName, isServerConnected, selectionIdentity]);
 
   // Rollout gate (PostHog): only lint when the flag is on. Off ⇒ the snapshot
   // stays null ⇒ the query below is skipped and no badges render.
@@ -398,7 +435,7 @@ export function ToolsTab({
 
   const toolQualityResult = useQuery(
     "toolPrechecks:get" as any,
-    toolQualitySnapshot ? ({ snapshot: toolQualitySnapshot } as any) : "skip"
+    toolQualitySnapshot ? ({ snapshot: toolQualitySnapshot } as any) : "skip",
   ) as ToolQualityQueryResult | undefined;
 
   const toolQualityByName = useMemo(() => {
@@ -491,8 +528,16 @@ export function ToolsTab({
 
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
-      setFormFields(
-        generateFormFieldsFromSchema(tools[selectedTool].inputSchema)
+      const sameTool = formSelectionRef.current === selectedTool;
+      const restoring = restoringInputsRef.current;
+      const restoredParameters = restoring?.toolName === selectedTool ? restoring.parameters : undefined;
+      restoringInputsRef.current = null;
+      formSelectionRef.current = selectedTool;
+      setFormFields((current) =>
+        applyParamsToFields(
+          generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
+          restoredParameters ?? (sameTool ? buildParametersFromFields(current) : {}),
+        ),
       );
     }
   }, [selectedTool, tools]);
@@ -518,18 +563,21 @@ export function ToolsTab({
       return;
     }
     if (!isServerConnected) {
-      resetLoadedToolState();
+      resetLoadedToolState({ clearSelection: false });
       return;
     }
 
-    setError("");
-    setNormalizedError(null);
+    if (!selectedTool) {
+      setError("");
+      setNormalizedError(null);
+    }
     setFetchingTools(true);
     if (reset) {
       resetLoadedToolState({
         invalidateRequests: false,
         stopLoading: false,
         clearTaskCapabilities: false,
+        clearSelection: false,
       });
     }
     const fetchVersion = ++toolFetchVersionRef.current;
@@ -544,7 +592,7 @@ export function ToolsTab({
       if (fetchVersion !== toolFetchVersionRef.current) return;
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
-        toolArray.map((tool: Tool) => [tool.name, tool])
+        toolArray.map((tool: Tool) => [tool.name, tool]),
       );
       setTools((prev) => (reset ? dictionary : { ...prev, ...dictionary }));
       // The response body is untyped, so a non-string `nextCursor` is not a
@@ -574,7 +622,7 @@ export function ToolsTab({
       setNormalizedError(
         err instanceof WebApiError && isNormalizedError(err.normalized)
           ? err.normalized
-          : null
+          : null,
       );
     } finally {
       if (fetchVersion === toolFetchVersionRef.current) {
@@ -586,16 +634,16 @@ export function ToolsTab({
   const updateFieldValue = (fieldName: string, value: unknown) => {
     setFormFields((prev) =>
       prev.map((field) =>
-        field.name === fieldName ? { ...field, value } : field
-      )
+        field.name === fieldName ? { ...field, value } : field,
+      ),
     );
   };
 
   const updateFieldIsSet = (fieldName: string, isSet: boolean) => {
     setFormFields((prev) =>
       prev.map((field) =>
-        field.name === fieldName ? { ...field, isSet } : field
-      )
+        field.name === fieldName ? { ...field, isSet } : field,
+      ),
     );
   };
 
@@ -607,7 +655,7 @@ export function ToolsTab({
     buildParametersFromFields(formFields, (msg, ctx) => logger.warn(msg, ctx));
 
   const getToolMeta = (
-    toolName: string | null
+    toolName: string | null,
   ): Record<string, any> | undefined => {
     return toolName ? tools[toolName]?._meta : undefined;
   };
@@ -616,11 +664,53 @@ export function ToolsTab({
   // legitimate scope step-up starts fresh rather than inheriting a stale count
   // that would prematurely throw. Called from BOTH success paths — an immediate
   // `completed` result and a task-augmented `task_created`.
-  const resetStepUpOnSuccess = (toolName: string) =>
-    resetScopeStepUp(server, {
-      method: "tools/call",
-      operation: toolName,
+  // It also forgets this operation's mid-session sign-in attempt.
+  const resetStepUpOnSuccess = (
+    toolName: string,
+    replay?: DirectScopeStepUpReplayDescriptor,
+  ) =>
+    resetScopeStepUp(
+      server,
+      {
+        method: "tools/call",
+        operation: toolName,
+      },
+      replay?.authAttempt,
+    );
+
+  const isReadOnlyTool = (toolName: string) =>
+    (tools[toolName]?.annotations as { readOnlyHint?: unknown } | undefined)
+      ?.readOnlyHint === true;
+
+  // A mid-session sign-in challenge on this call: a Connect card, or a notice
+  // saying why there is none. Presenting has no side effects; only the card's
+  // Connect click signs in.
+  const presentToolAuthChallenge = (
+    response: ToolExecutionResponse,
+    toolName: string,
+    replayDescriptor: DirectScopeStepUpReplayDescriptor | undefined,
+  ) => {
+    const signal =
+      "authChallenge" in response ? response.authChallenge : undefined;
+    if (!signal || signal.source === "http_403_insufficient_scope")
+      return false;
+    void presentAuthChallenge({
+      server,
+      signal,
+      surface: "tools",
+      operation: { method: "tools/call", operation: toolName },
+      readOnly: isReadOnlyTool(toolName),
+      ...("toolSecuritySchemes" in response && response.toolSecuritySchemes
+        ? { schemes: response.toolSecuritySchemes }
+        : {}),
+      ...(replayDescriptor?.kind === "tool"
+        ? { replay: replayDescriptor }
+        : {}),
+    }).then((presentation) => {
+      if (presentation.kind === "notice") setAuthNotice(presentation.message);
     });
+    return true;
+  };
 
   // `scopeAtCall` is the auth/org scope captured when the ORIGINATING
   // execution started, threaded as a plain parameter: `executeTool` passes
@@ -633,6 +723,7 @@ export function ToolsTab({
     toolName: string,
     scopeAtCall: string | undefined,
     replayDescriptor?: DirectScopeStepUpReplayDescriptor,
+    options?: { pendingReplay?: PendingDirectScopeStepUpReplay },
   ) => {
     const durationMs =
       "durationMs" in response && typeof response.durationMs === "number"
@@ -645,12 +736,19 @@ export function ToolsTab({
       const callResult = response.result;
       setResult(callResult);
 
-      resetStepUpOnSuccess(toolName);
+      // A result carrying a sign-in challenge is a refusal, not a success:
+      // resetting the budget on it would let a server that alternates
+      // challenge and refusal loop the user through sign-in.
+      if (!presentToolAuthChallenge(response, toolName, replayDescriptor)) {
+        resetStepUpOnSuccess(toolName, replayDescriptor);
+        if (serverName)
+          clearAuthChallengeCards(serverName, replayDescriptor?.authAttempt);
+      }
 
       const rawResult = callResult as unknown as Record<string, unknown>;
       const currentTool = tools[toolName];
       setStructuredContentValid(
-        validateToolOutput(rawResult, currentTool?.outputSchema)
+        validateToolOutput(rawResult, currentTool?.outputSchema),
       );
 
       logger.info("Tool execution completed", {
@@ -681,7 +779,7 @@ export function ToolsTab({
       // A task-augmented tool that succeeds lands here, not in the `completed`
       // branch — reset the step-up counter on this success path too so a stale
       // count doesn't prematurely throw a later legitimate step-up.
-      resetStepUpOnSuccess(toolName);
+      resetStepUpOnSuccess(toolName, replayDescriptor);
 
       // Track the task locally so it appears in the Tasks tab, under the
       // scope captured when the originating call started (`scopeAtCall`).
@@ -725,7 +823,7 @@ export function ToolsTab({
       // actual message and yields a generic "Unknown error" ErrorCard.
       const maybeNormalized = (response as { normalized?: unknown }).normalized;
       setNormalizedError(
-        isNormalizedError(maybeNormalized) ? maybeNormalized : null
+        isNormalizedError(maybeNormalized) ? maybeNormalized : null,
       );
 
       // SEP-2350 runtime scope step-up: the tool call failed with a
@@ -738,38 +836,84 @@ export function ToolsTab({
       const challenge = parseInsufficientScopeChallenge(
         (response as { insufficientScope?: unknown }).insufficientScope,
       );
+      // Each permitted redirect owns a new generation of the same call.
+      let savedReplay: PendingDirectScopeStepUpReplay | undefined;
       if (
         replayDescriptor?.kind === "tool" &&
         isActionableStepUpChallenge(challenge)
       ) {
-        savePendingDirectScopeStepUpReplay({
-          operation: {
-            resourceUrl: String(
-              (server?.config as any)?.url ?? serverName ?? "",
-            ),
-            method: "tools/call",
-            operation: toolName,
-          },
-          descriptor: replayDescriptor,
-        });
+        try {
+          savedReplay = savePendingDirectScopeStepUpReplay({
+            previous: options?.pendingReplay,
+            operation: {
+              resourceUrl: String(
+                (server?.config as any)?.url ?? serverName ?? "",
+              ),
+              method: "tools/call",
+              operation: toolName,
+            },
+            descriptor: replayDescriptor,
+          });
+          traceChatAuthRecovery("direct_saved", {
+            toolCallId: savedReplay.callId, projectId: savedReplay.projectId,
+            serverName, phase: savedReplay.phase, storageOutcome: "verified",
+          });
+        } catch (error) {
+          if (error instanceof PendingDirectReplayConflictError) {
+            setError(error.message);
+            setNormalizedError(null);
+            return;
+          }
+          setError("MCPJam couldn’t save this call for sign-in. Please try again.");
+          setNormalizedError(null);
+          recordChatAuthRecoveryFailure("save_failed", {
+            toolCallId: options?.pendingReplay?.callId ?? replayDescriptor.authAttempt?.callId,
+            serverName, storageOutcome: "failed",
+          });
+          return;
+        }
       }
-      driveScopeStepUpFromChallenge(
-        server,
-        challenge,
-        { method: "tools/call", operation: toolName },
-      );
+      const viewIdentity = selectionIdentity;
+      driveScopeStepUpFromChallenge(server, challenge, {
+        method: "tools/call", operation: toolName,
+      }, {
+        directReplay: savedReplay,
+        onFailure: (reason) => {
+          if (reason === "failed") recordChatAuthRecoveryFailure("resume_failed", {
+            toolCallId: savedReplay?.callId, projectId: savedReplay?.projectId,
+            serverName, phase: savedReplay?.phase, recoveryResult: "redirect_failed",
+          });
+          if (selectionIdentityRef.current !== viewIdentity) return;
+          setError(CHAT_AUTH_RECOVERY_MESSAGE);
+          setNormalizedError(null);
+        },
+      });
+
+      // A 401 sign-in challenge (a 403 above is a step-up instead).
+      presentToolAuthChallenge(response, toolName, replayDescriptor);
     }
   };
 
-  useEffect(() => {
-    if (!serverName || !isServerConnected) return;
-    const pending = claimPendingDirectScopeStepUpReplay({
-      serverName,
-      surface: "tools",
-    });
-    if (!pending || pending.descriptor.kind !== "tool") return;
-    const descriptor = pending.descriptor;
+  const restoreReplaySelection = (
+    descriptor: Extract<DirectScopeStepUpReplayDescriptor, { kind: "tool" }>,
+  ) => {
+    restoringInputsRef.current = {
+      toolName: descriptor.toolName,
+      parameters: descriptor.parameters,
+    };
+    setLastToolName(descriptor.toolName);
     setSelectedTool(descriptor.toolName);
+  };
+
+  const replayToolCall = (pending: PendingDirectScopeStepUpReplay) => {
+    if (pending.descriptor.kind !== "tool") return;
+    const descriptor = pending.descriptor;
+    traceChatAuthRecovery("direct_resume", {
+      toolCallId: pending.callId, projectId: pending.projectId,
+      serverName: descriptor.serverName, phase: "replaying",
+    });
+    const replayIdentity = selectionIdentity;
+    restoreReplaySelection(descriptor);
     setLoadingExecuteTool(true);
     setError("");
     void executeToolApi(
@@ -780,13 +924,18 @@ export function ToolsTab({
       descriptor.allowTaskResult,
     )
       .then((response) => {
+        if (selectionIdentityRef.current !== replayIdentity) return;
+        // Carry the claimed generation so a further redirect can replace it safely.
         handleExecutionResponse(
           response,
           descriptor.toolName,
           getTrackedTaskScope(),
+          descriptor,
+          { pendingReplay: pending },
         );
       })
       .catch((error) => {
+        if (selectionIdentityRef.current !== replayIdentity) return;
         setError(
           `Authorization finished, but the tool could not be replayed safely: ${
             error instanceof Error ? error.message : String(error)
@@ -794,9 +943,24 @@ export function ToolsTab({
         );
       })
       .finally(() => {
-        setLoadingExecuteTool(false);
-        clearPendingDirectScopeStepUpReplay();
+        if (selectionIdentityRef.current === replayIdentity)
+          setLoadingExecuteTool(false);
+        clearPendingDirectScopeStepUpReplay(pending);
+        traceChatAuthRecovery("direct_cleanup", {
+          toolCallId: pending.callId, projectId: pending.projectId,
+          serverName: descriptor.serverName, recoveryResult: "generation_finished",
+        });
       });
+  };
+
+  useEffect(() => {
+    if (!serverName || !isServerConnected) return;
+    const pending = claimPendingDirectScopeStepUpReplay({
+      serverName,
+      surface: "tools",
+    });
+    if (!pending) return;
+    replayToolCall(pending);
   }, [isServerConnected, serverName]);
 
   const executeTool = async () => {
@@ -813,7 +977,7 @@ export function ToolsTab({
     // ParametersPanel's own Enter handler both funnel into this function.
     if (taskRequiredButTasksOff) {
       setError(
-        "This tool requires task execution, and tasks are disabled by the host configuration."
+        "This tool requires task execution, and tasks are disabled by the host configuration.",
       );
       setNormalizedError(null);
       return;
@@ -835,6 +999,7 @@ export function ToolsTab({
     setLoadingExecuteTool(true);
     setError("");
     setNormalizedError(null);
+    setAuthNotice(null);
     setResult(null);
     setStructuredContentValid(undefined);
     setResponseDurationMs(null);
@@ -870,7 +1035,7 @@ export function ToolsTab({
         selectedTool,
         params,
         taskOptions,
-        allowTaskResult
+        allowTaskResult,
       );
       handleExecutionResponse(response, selectedTool, scopeAtCall, {
         kind: "tool",
@@ -931,7 +1096,7 @@ export function ToolsTab({
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
-    parameters?: Record<string, unknown>
+    parameters?: Record<string, unknown>,
   ) => {
     if (!activeElicitation) {
       logger.warn("Cannot handle elicitation response: no active request");
@@ -948,7 +1113,7 @@ export function ToolsTab({
       const response = await respondToElicitationApi(
         activeElicitation.executionId,
         activeElicitation.requestId,
-        payload
+        payload,
       );
       // The resume reads the scope from ITS OWN execution's record, not from
       // any shared state a later execution could have overwritten.
@@ -1018,8 +1183,7 @@ export function ToolsTab({
         requestId: activeElicitation.requestId,
         message: activeElicitation.request.message,
         schema: (activeElicitation.request as any).requestedSchema as
-          | Record<string, unknown>
-          | undefined,
+          Record<string, unknown> | undefined,
         timestamp: activeElicitation.timestamp,
         // This surface's `/execute` bridge answers a legacy server→client
         // `elicitation/create`; modern `input_required` input is collected by
@@ -1087,7 +1251,9 @@ export function ToolsTab({
       onSearchQueryChange={setSearchQuery}
       onRefresh={handleToolRefresh}
       servedFromCache={servedFromCache}
-      onSelectTool={setSelectedTool}
+      onSelectTool={(name) => {
+          setSelectedTool(name);
+      }}
       savedRequests={filteredSavedRequests}
       highlightedRequestId={highlightedRequestId}
       onLoadRequest={handleLoadRequest}
@@ -1108,15 +1274,13 @@ export function ToolsTab({
       onSave={handleSaveCurrent}
       executeAsTask={
         serverSupportsTaskToolCalls &&
-        (tasksWire === "extension" ||
-          selectedToolTaskSupport !== "forbidden")
+        (tasksWire === "extension" || selectedToolTaskSupport !== "forbidden")
           ? executeAsTask
           : undefined
       }
       onExecuteAsTaskChange={
         serverSupportsTaskToolCalls &&
-        (tasksWire === "extension" ||
-          selectedToolTaskSupport !== "forbidden")
+        (tasksWire === "extension" || selectedToolTaskSupport !== "forbidden")
           ? setExecuteAsTask
           : undefined
       }
@@ -1137,17 +1301,44 @@ export function ToolsTab({
     />
   );
 
+  const authChallengeContent =
+    authNotice || server ? (
+      <div className="space-y-2 px-4 pt-4 empty:hidden">
+        <AuthChallengeCards
+          surface="tools"
+          server={server}
+          onResult={(connectResult) => {
+            const message = authChallengeConnectMessage(connectResult);
+            if (message) setAuthNotice(message);
+          }}
+        />
+        {authNotice ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="auth-challenge-notice"
+          >
+            {authNotice}
+          </p>
+        ) : null}
+      </div>
+    ) : null;
+
   const centerContent = selectedTool ? (
-    <ResultsPanel
-      error={error}
-      normalizedError={normalizedError}
-      result={result}
-      structuredContentValid={structuredContentValid}
-      toolMeta={getToolMeta(lastToolName)}
-      responseDurationMs={responseDurationMs}
-      serverName={serverName}
-      mcpToolResultImageRendering={mcpToolResultImageRendering}
-    />
+    <div className="flex h-full flex-col">
+      {authChallengeContent}
+      <div className="min-h-0 flex-1">
+        <ResultsPanel
+          error={error}
+          normalizedError={normalizedError}
+          result={result}
+          structuredContentValid={structuredContentValid}
+          toolMeta={getToolMeta(lastToolName)}
+          responseDurationMs={responseDurationMs}
+          serverName={serverName}
+          mcpToolResultImageRendering={mcpToolResultImageRendering}
+        />
+      </div>
+    </div>
   ) : (
     <div className="h-full flex items-center justify-center">
       <div className="text-center">
