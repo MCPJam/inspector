@@ -207,6 +207,7 @@ export {
   normalizeCatalogText,
   probeServerSkillMissing,
   readVerifiedServerSkillFile,
+  forgetVerifiedServerSkillReads,
   serverSkillsActive,
 } from "./server-skills.js";
 export type {

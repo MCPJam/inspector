@@ -15,12 +15,15 @@
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  MAX_SERVER_SKILL_PROMPT_BYTES,
+  applyActingServerSkillGate,
   manifestApprovalHash,
   resolveProviderSlugs,
   serverSkillBanner,
   slugifyServerLabel,
   withServerSkills,
 } from "../server-skill-tools.js";
+import { actingServerSkills } from "../../../shared/server-skill-banner.js";
 import {
   assignServerSlugs,
   assignSkillRefs,
@@ -887,13 +890,9 @@ describe("withServerSkills — file reads", () => {
     expect(read).toContain("print('refund')");
   });
 
-  it("refuses to inject a verified skill that is too large for a turn", async () => {
-    // The verification cap had to rise to the SEP's 16 MiB per-skill budget so
-    // a conforming skill can be verified at all. That is a DIFFERENT limit from
-    // how many bytes belong in a prompt: without a separate cap, a 16 MiB
-    // SKILL.md would be digest-verified and then pasted wholesale into a chat
-    // turn. Refused, not truncated — a clipped skill is instructions that end
-    // mid-sentence, and the model cannot tell that from a skill that said less.
+  it("loads a verified skill of 200 KiB, within the spec's per-skill budget", async () => {
+    // A host MUST support a skill up to 16 MiB, and support means loading it.
+    // This used to be refused at 128 KiB as "too large for a turn".
     const manager = await makeManager({ hugeBody: true });
     const wrapped = withServerSkills(baseTools(), {
       manager,
@@ -908,11 +907,54 @@ describe("withServerSkills — file reads", () => {
         {}
       )
     );
-    expect(out).toContain("too_large_for_prompt");
-    // The refusal states both numbers in bytes, and does NOT carry the body.
-    expect(out).toContain("204828");
-    expect(out).toContain("131072");
-    expect(out).not.toContain("xxxxxxxxxx");
+    expect(out).not.toContain("too_large_for_prompt");
+    expect(out).toContain("xxxxxxxxxx");
+    expect(MAX_SERVER_SKILL_PROMPT_BYTES).toBe(16 * 1024 * 1024);
+  });
+
+  it("resolves a relative reference against the skill root, as a path would", async () => {
+    const manager = await makeManager();
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    }).tools;
+    for (const path of [
+      "./scripts/run.py",
+      "scripts/../scripts/run.py",
+      "scripts//run.py",
+    ]) {
+      const read = String(
+        await (wrapped.readSkillFile as { execute: Function }).execute(
+          { name: "acme-billing/refunds", path },
+          {}
+        )
+      );
+      expect(read, path).toContain("print('refund')");
+    }
+    // A reference that climbs above the root is not resolved; it is refused
+    // as unlisted, which is the fail-closed answer.
+    const escaped = String(
+      await (wrapped.readSkillFile as { execute: Function }).execute(
+        { name: "acme-billing/refunds", path: "../../etc/passwd" },
+        {}
+      )
+    );
+    expect(escaped).toContain("unlisted_resource");
+  });
+
+  it("tags a supporting file with its origin", async () => {
+    const manager = await makeManager();
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    }).tools;
+    const read = String(
+      await (wrapped.readSkillFile as { execute: Function }).execute(
+        { name: "acme-billing/refunds", path: FILE_URI },
+        {}
+      )
+    );
+    expect(read).toContain('> Origin: MCP server "Acme Billing"');
   });
 
   it("refuses an UNLISTED file even when the server would serve it", async () => {
@@ -967,5 +1009,218 @@ describe("serverSkillBanner", () => {
       captured: { versionNumber: 3, capturedAt: Date.UTC(2026, 7, 3) },
     });
     expect(banner).toContain("captured v3 on 2026-08-03");
+  });
+
+  it("records the digest set a live load was made under, and reads it back", () => {
+    const banner = serverSkillBanner({
+      ref: "acme-billing/refunds",
+      serverLabel: "Acme Billing",
+      skillUri: SKILL_URI,
+      digestSet: "0123456789ab",
+    });
+    expect(banner).toContain("digest set 0123456789ab");
+    const acting = actingServerSkills([
+      { role: "user", content: "hello" },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c1",
+            toolName: "loadSkill",
+            output: { type: "text", value: `${banner}${BODY}` },
+          },
+        ],
+      },
+    ]);
+    expect(acting).toEqual([
+      {
+        ref: "acme-billing/refunds",
+        serverLabel: "Acme Billing",
+        skillUri: SKILL_URI,
+        digestSet: "0123456789ab",
+      },
+    ]);
+  });
+
+  it("finds a skill the user picked in the popover as well", () => {
+    const banner = serverSkillBanner({
+      ref: "acme-billing/refunds",
+      serverLabel: "Acme Billing",
+      skillUri: SKILL_URI,
+    });
+    const acting = actingServerSkills([
+      { role: "user", content: [{ type: "text", text: `context\n${banner}` }] },
+    ]);
+    expect(acting.map((skill) => skill.ref)).toEqual(["acme-billing/refunds"]);
+    expect(actingServerSkills([{ role: "user", content: "no skill" }])).toEqual(
+      []
+    );
+  });
+});
+
+describe("the acting-skill gate", () => {
+  const banner = serverSkillBanner({
+    ref: "acme-billing/refunds",
+    serverLabel: "Acme Billing",
+    skillUri: SKILL_URI,
+  });
+  const acting = [
+    {
+      role: "tool" as const,
+      content: [
+        {
+          type: "tool-result" as const,
+          toolCallId: "c1",
+          toolName: "loadSkill",
+          output: { type: "text" as const, value: `${banner}${BODY}` },
+        },
+      ],
+    },
+  ];
+
+  it("raises the shell and the resource read to ask while a server skill is loaded", async () => {
+    const tools: Record<string, unknown> = applyActingServerSkillGate({
+      bash: { needsApproval: false, execute: vi.fn() },
+      read_server_resource: { needsApproval: false, execute: vi.fn() },
+      web_search: { needsApproval: false, execute: vi.fn() },
+    });
+    const ask = (name: string, messages: unknown) =>
+      (
+        tools[name] as {
+          needsApproval: (input: unknown, options: unknown) => Promise<boolean>;
+        }
+      ).needsApproval({}, { messages });
+    expect(await ask("bash", acting)).toBe(true);
+    expect(await ask("read_server_resource", acting)).toBe(true);
+    expect(await ask("bash", [])).toBe(false);
+    // Only the named tools are gated.
+    expect((tools.web_search as { needsApproval: unknown }).needsApproval).toBe(
+      false
+    );
+  });
+
+  it("raises only: a tool that already asks keeps asking", async () => {
+    const tools: Record<string, unknown> = applyActingServerSkillGate({
+      bash: { needsApproval: true, execute: vi.fn() },
+    });
+    const gate = (
+      tools.bash as {
+        needsApproval: (input: unknown, options: unknown) => Promise<boolean>;
+      }
+    ).needsApproval;
+    expect(await gate({}, { messages: [] })).toBe(true);
+  });
+});
+
+describe("withServerSkills — the held entry across requests", () => {
+  it("refuses a file read when the server changed the manifest since the load", async () => {
+    const manager = await makeManager();
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    }).tools;
+    const loaded = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { name: "acme-billing/refunds" },
+        {}
+      )
+    );
+    expect(loaded).toMatch(/digest set [0-9a-f]{12}/);
+    const history = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c1",
+            toolName: "loadSkill",
+            output: { type: "text", value: loaded },
+          },
+        ],
+      },
+    ];
+    // Same manifest: the current entry is the held entry, so the read runs.
+    const read = String(
+      await (wrapped.readSkillFile as { execute: Function }).execute(
+        { name: "acme-billing/refunds", path: FILE_URI },
+        { messages: history }
+      )
+    );
+    expect(read).toContain("print('refund')");
+
+    // A later request drains a changed manifest: the banner in context names
+    // the entry the skill was loaded under, and that is the one that holds.
+    const changed = await makeManager();
+    (
+      changed as unknown as {
+        listServerSkills: { mockImplementation: (fn: () => unknown) => void };
+      }
+    ).listServerSkills.mockImplementation(async () => ({
+      skills: [
+        {
+          uri: SKILL_URI,
+          frontmatter: { name: "refunds", description: "Handle refunds." },
+          resources: [
+            { uri: SKILL_URI, digest: `sha256:${await sha256(MARKDOWN)}` },
+            { uri: FILE_URI, digest: `sha256:${await sha256(FILE_TEXT)}` },
+            {
+              uri: "skill://acme/refunds/scripts/new.py",
+              digest: `sha256:${"0".repeat(64)}`,
+            },
+          ],
+        },
+      ],
+    }));
+    const later = withServerSkills(baseTools(), {
+      manager: changed,
+      servers: SERVERS,
+    }).tools;
+    const refused = String(
+      await (later.readSkillFile as { execute: Function }).execute(
+        { name: "acme-billing/refunds", path: FILE_URI },
+        { messages: history }
+      )
+    );
+    expect(refused).toContain("manifest_changed");
+    expect(changed.calls).not.toContain(`resources/read:${FILE_URI}`);
+    const listed = String(
+      await (later.listSkillFiles as { execute: Function }).execute(
+        { name: "acme-billing/refunds" },
+        { messages: history }
+      )
+    );
+    expect(listed).toContain("manifest_changed");
+  });
+});
+
+describe("withServerSkills — a URI two servers both serve", () => {
+  const TWO = [
+    { serverId: "srv1", serverLabel: "Acme Billing" },
+    { serverId: "srv2", serverLabel: "Acme Support" },
+  ];
+
+  it("refuses without a hint and resolves with one", async () => {
+    // The double lists the same entry for every server, so both claim it.
+    const manager = await makeManager();
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: TWO,
+    }).tools;
+    const bare = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { uri: SKILL_URI },
+        {}
+      )
+    );
+    expect(bare).toContain("Pass `server`");
+    const hinted = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { uri: SKILL_URI, server: "acme-support" },
+        {}
+      )
+    );
+    expect(hinted).toContain('> Origin: MCP server "Acme Support"');
+    expect(hinted).toContain(BODY);
   });
 });

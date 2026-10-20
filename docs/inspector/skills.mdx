@@ -323,6 +323,14 @@ A server skill can appear in the catalog but be refused for loading. MCPJam keep
 
 A skill that is unloadable for a limit reason (`too_many_resources` or `too_large`) is a real skill whose manifest exceeds what any conforming host is required to handle — it is not a server bug. The skill remains visible in the catalog with its advertised manifest so you can inspect what was declared.
 
-### Prompt injection cap
+### Size limit
 
-Verification uses the spec's per-skill budget (16 MiB). A separate, lower cap of **128 KiB** applies to how much skill content MCPJam will place in a single model turn. A skill that verifies correctly but exceeds this cap is refused rather than truncated — a clipped skill ends mid-sentence, and the model cannot distinguish that from a skill that simply said less.
+Verification and loading both use the spec's per-skill budget of 16 MiB, which the spec requires a host to support. A skill past that budget is refused rather than truncated — a clipped skill ends mid-sentence, and the model cannot distinguish that from a skill that simply said less.
+
+### While a server skill is loaded
+
+Once a server-provided skill's `SKILL.md` is in the conversation, MCPJam treats the model as acting on that skill until the conversation no longer contains it. During that time, running a shell command (`bash`) and reading a resource from a saved server (`read_server_resource`) always ask for approval, whatever the Tool Approval setting says, because the spec requires the approval gate on code execution and on cross-server reads driven by skill content.
+
+The origin banner on a loaded skill records the digest set of the manifest it was loaded under. If the server changes the skill's files afterwards, `listSkillFiles` and `readSkillFile` refuse with `manifest_changed` until the skill is loaded again, so a file the server added later is never read as part of the skill the user saw.
+
+A captured server skill, used by environment turns, is tagged with the same banner naming the capture, and its stored content is re-checked against the digest stored with the capture before it enters the conversation.

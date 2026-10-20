@@ -143,6 +143,12 @@ export interface RuntimeServerSkill extends RuntimeSkillBase {
   versionId: string;
   versionNumber: number;
   capturedAt: number;
+  /**
+   * SHA-256 of the captured SKILL.md body, as stored. The load path re-checks
+   * the bytes it is about to place in context against it; absent under
+   * deploy skew, in which case the content is served unverified and says so.
+   */
+  contentSha256?: string;
 }
 
 export type RuntimeCapabilityProblem =
@@ -369,19 +375,28 @@ export function resolveEffectiveCapabilities(
   }
 
   for (const skill of spec.serverSkills ?? []) {
-    if (usedRefs.has(skill.ref)) {
+    // A server skill whose ref collides with another origin's is DISAMBIGUATED,
+    // not dropped: the spec says a host must not silently discard or prefer
+    // one of two same-named skills. The suffix is the short form of the
+    // version hash, which is content-addressed and already on the row, so the
+    // ref is stable for as long as the capture is. It is still reported as a
+    // problem so the collision is visible.
+    let ref = skill.ref;
+    if (usedRefs.has(ref)) {
+      const suffixed = `${skill.ref}~${skill.versionHash.slice(0, 8)}`;
       problems.push({
         code: "skill_ref_collision",
-        message: `Two skills resolved to the reference "${skill.ref}"; only the first is loadable.`,
+        message: `Two skills resolved to the reference "${skill.ref}"; the one from MCP server "${skill.serverLabel}" is loadable as "${suffixed}".`,
         ref: skill.ref,
         skillId: skill.serverSkillId,
       });
-      continue;
+      if (usedRefs.has(suffixed)) continue;
+      ref = suffixed;
     }
-    usedRefs.add(skill.ref);
+    usedRefs.add(ref);
     serverSkills.push({
       skillId: skill.serverSkillId,
-      ref: skill.ref,
+      ref,
       name: skill.name,
       description: skill.description,
       content: skill.content,
@@ -393,6 +408,9 @@ export function resolveEffectiveCapabilities(
       versionId: skill.versionId,
       versionNumber: skill.versionNumber,
       capturedAt: skill.capturedAt,
+      ...(typeof skill.contentSha256 === "string"
+        ? { contentSha256: skill.contentSha256 }
+        : {}),
     });
   }
 

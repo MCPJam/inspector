@@ -61,19 +61,26 @@ import {
   skillMetadataBudgetChars,
 } from "./computers/skill-metadata-budget.js";
 import type { MCPClientManager, SkillEntry } from "@mcpjam/sdk";
-import {
-  sha256HexOfText,
-  canonicalSkillJson,
-  enumeratedResources,
-} from "@mcpjam/sdk";
+import { MAX_SKILL_TOTAL_BYTES, enumeratedResources } from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 import { buildServerSkillBanner } from "../../shared/server-skill-banner.js";
 import {
   SERVER_SKILL_REF_RE,
   assignServerSlugs,
   assignSkillRefs,
+  manifestDigestSetHash,
   slugifyServerLabel,
 } from "../../shared/server-skill-refs.js";
+import {
+  heldEntryConflict,
+  messagesOf,
+  resolveSkillRelativeReference,
+} from "./server-skill-held-entry.js";
+
+export {
+  ACTING_SERVER_SKILL_GATED_TOOLS,
+  applyActingServerSkillGate,
+} from "./server-skill-acting-gate.js";
 
 export { slugifyServerLabel };
 import {
@@ -126,15 +133,15 @@ export function resolveProviderSlugs(
  *
  * Covers every manifest URI AND digest, sorted, so adding a file, removing
  * one, or changing one file's bytes all produce a different approval. This is
- * the SEP's "bind approval to the digest set" rule made concrete.
+ * the SEP's "bind approval to the digest set" rule made concrete. The same
+ * hash goes into the origin banner, where it is the HELD ENTRY a later file
+ * read is checked against; the shared implementation is what lets the
+ * playground popover write the same banner.
  */
 export async function manifestApprovalHash(
   resources: ReadonlyArray<{ uri: string; digest: string }>
 ): Promise<string> {
-  const sorted = [...resources]
-    .map((resource) => ({ uri: resource.uri, digest: resource.digest }))
-    .sort((a, b) => (a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0));
-  return (await sha256HexOfText(canonicalSkillJson(sorted))).slice(0, 12);
+  return manifestDigestSetHash(resources);
 }
 
 /**
@@ -149,22 +156,15 @@ export const serverSkillBanner = buildServerSkillBanner;
 /**
  * The cap on skill content this wrapper will put into a MODEL TURN.
  *
- * Distinct from the verification cap in `server-skills.ts`, and deliberately
- * so. That one had to rise to the SEP's 16 MiB per-skill budget, because a host
- * MUST be able to verify a conforming skill of that size. This one governs
- * something else entirely: how many bytes are pasted into a prompt.
- *
- * Without it, raising the verification cap silently raised the prompt cap with
- * it — a server serving a 16 MiB SKILL.md would have had it digest-verified and
- * then injected wholesale into a chat turn (roughly four million tokens). 128
- * KiB is the limit that applied before the re-sync, so this restores the
- * previous prompt-facing behaviour rather than inventing a new one.
- *
- * REFUSED, never truncated. A silently clipped skill is a skill whose
- * instructions end mid-sentence, and the model cannot tell that from a skill
- * that simply said less.
+ * The spec's per-skill budget. A host MUST support a skill up to 16 MiB, and
+ * "support" means loading it, not only verifying it: this cap used to sit at
+ * 128 KiB, which refused conforming skills a host is required to accept. A
+ * skill past the budget is still refused rather than truncated, because a
+ * clipped skill is instructions that end mid-sentence and the model cannot
+ * tell that from a skill that simply said less. What a model's context can
+ * hold is the provider's limit to report, not this wrapper's to guess.
  */
-export const MAX_SERVER_SKILL_PROMPT_BYTES = 128 * 1024;
+export const MAX_SERVER_SKILL_PROMPT_BYTES = MAX_SKILL_TOTAL_BYTES;
 
 /**
  * Returns the text, or a refusal naming both numbers when it is too large for
@@ -206,10 +206,12 @@ function refusalText(error: unknown): string {
 interface CatalogState {
   /** ref → entry. Populated lazily on first discovery. */
   byRef: Map<string, CatalogEntry>;
-  /** skillUri → entry, for direct-URI loads of LISTED skills. */
-  byUri: Map<string, CatalogEntry>;
-  /** URIs claimed by more than one provider — refused, never guessed. */
-  ambiguousUris: Set<string>;
+  /**
+   * skillUri → every provider's entry for it, for direct-URI loads of LISTED
+   * skills. Two connected servers may legally advertise the same URI; a URI
+   * with more than one claimant resolves only with a `server` hint.
+   */
+  byUri: Map<string, CatalogEntry[]>;
   /**
    * The single in-flight (or settled) drain for this turn.
    *
@@ -275,7 +277,6 @@ export function withServerSkills<T extends Record<string, unknown>>(
   const state: CatalogState = {
     byRef: new Map(),
     byUri: new Map(),
-    ambiguousUris: new Set(),
   };
 
   /**
@@ -302,9 +303,9 @@ export function withServerSkills<T extends Record<string, unknown>>(
     // Arrival order is unobservable, so this loses no determinism:
     //   - refs are `<slug>/<name>`, and slugs are assigned up front over every
     //     candidate, so a ref never depends on who answered first;
-    //   - for a URI two providers both claim, the SECOND claimant marks it
-    //     ambiguous and `classify` refuses on `ambiguousUris` BEFORE reading
-    //     `byUri` — so which entry sits in that slot is never read.
+    //   - for a URI two providers both claim, every claimant is kept and
+    //     `classify` resolves among them by the `server` hint or refuses, so
+    //     the order they landed in is never read.
     await Promise.all(
       providers.map(async (provider) => {
         let listing;
@@ -336,15 +337,13 @@ export function withServerSkills<T extends Record<string, unknown>>(
             serverLabel: provider.serverLabel,
           };
           state.byRef.set(ref, entry);
-          // Two connected servers may legally advertise the same URI. Last-write
-          // -wins would silently pick one, so the second claimant marks the URI
-          // AMBIGUOUS and the direct-URI path refuses it with the qualified
-          // options — the same posture `resolveRef` takes for a bare name.
-          if (state.byUri.has(skill.skillUri)) {
-            state.ambiguousUris.add(skill.skillUri);
-          } else {
-            state.byUri.set(skill.skillUri, entry);
-          }
+          // Two connected servers may legally advertise the same URI. Every
+          // claimant is kept; the direct-URI path picks by `server` hint and
+          // otherwise refuses with the qualified options, the same posture
+          // `resolveRef` takes for a bare name.
+          const claimants = state.byUri.get(skill.skillUri) ?? [];
+          claimants.push(entry);
+          state.byUri.set(skill.skillUri, claimants);
         }
         for (const rejection of listing.rejected) {
           logger.warn("[server-skills] listing entry rejected", {
@@ -551,28 +550,44 @@ export function withServerSkills<T extends Record<string, unknown>>(
    * anything else — which goes to the base source untouched. A bare name never
    * resolves here.
    */
+  const providerMatchesHint = (
+    provider: ServerSkillProvider,
+    serverHint: string
+  ): boolean =>
+    provider.serverSlug === serverHint ||
+    provider.serverId === serverHint ||
+    provider.serverLabel === serverHint;
+
   async function classify(
     identifier: string,
     serverHint?: string
   ): Promise<Target> {
     if (looksLikeUri(identifier)) {
       await ensureCatalog();
-      if (state.ambiguousUris.has(identifier)) {
-        // Two providers claim it; refuse rather than pick.
+      const claimants = state.byUri.get(identifier) ?? [];
+      // The `server` hint is consulted BEFORE refusing an ambiguous URI, so a
+      // skill two servers both serve is still loadable by URI when the model
+      // says which one it means. The error text that asks for the hint would
+      // otherwise be asking for something the resolver never read.
+      const listed = serverHint
+        ? claimants.filter((entry) => {
+            const provider = providerById.get(entry.serverId);
+            return provider !== undefined && providerMatchesHint(provider, serverHint);
+          })
+        : claimants;
+      if (listed.length === 1) return { kind: "server-ref", entry: listed[0]! };
+      if (listed.length > 1) {
+        // Two providers claim it and no hint singles one out; refuse rather
+        // than pick.
         return { kind: "base" };
       }
-      const listed = state.byUri.get(identifier);
-      if (listed) return { kind: "server-ref", entry: listed };
       // An UNLISTED URI. This is the whole reason `skills/get` exists: a skill
       // URI can arrive from server instructions, another skill's body, or the
       // user. Resolve it against a named provider, or refuse when ambiguous
       // rather than picking one.
       const candidates = serverHint
-        ? providers.filter(
-            (provider) =>
-              provider.serverSlug === serverHint ||
-              provider.serverId === serverHint ||
-              provider.serverLabel === serverHint
+        ? providers.filter((provider) =>
+            providerMatchesHint(provider, serverHint)
           )
         : providers;
       if (candidates.length === 1) {
@@ -625,10 +640,8 @@ export function withServerSkills<T extends Record<string, unknown>>(
   const fileApprovalKey = (input: ReadSkillFileInput): string =>
     JSON.stringify([input.name, input.path]);
 
-  function resourceUriFor(entry: CatalogEntry, path: string): string {
-    const root = entry.skillUri.replace(/SKILL\.md$/i, "");
-    return looksLikeUri(path) ? path : `${root}${path}`;
-  }
+  const resourceUriFor = (entry: CatalogEntry, path: string): string =>
+    resolveSkillRelativeReference(entry.skillUri, path);
 
   async function rememberApprovedFileManifest(
     input: ReadSkillFileInput
@@ -819,6 +832,7 @@ export function withServerSkills<T extends Record<string, unknown>>(
               ref: target.entry.ref,
               serverLabel: target.entry.serverLabel,
               skillUri: target.entry.skillUri,
+              digestSet: await manifestApprovalHash(loaded.resources),
             }) + budgeted.text
           );
         }
@@ -842,6 +856,7 @@ export function withServerSkills<T extends Record<string, unknown>>(
               ref: `${provider?.serverSlug ?? target.serverId}/${loaded.name}`,
               serverLabel: provider?.serverLabel ?? target.serverId,
               skillUri: loaded.skillUri,
+              digestSet: await manifestApprovalHash(loaded.resources),
             }) + budgeted.text
           );
         } catch (error) {
@@ -880,6 +895,10 @@ export function withServerSkills<T extends Record<string, unknown>>(
         return callBase("listSkillFiles", input, options);
       }
       const { entry } = target;
+      // The listing is the held entry's, never a newer one's: a file the
+      // server added since the load is not a file of the loaded skill.
+      const conflict = await heldEntryConflict(entry, messagesOf(options));
+      if (conflict) return conflict;
       const files = entry.resources.filter(
         (resource) => resource.uri !== entry.skillUri
       );
@@ -913,6 +932,10 @@ export function withServerSkills<T extends Record<string, unknown>>(
           return callBase("readSkillFile", input, options);
         }
         const { entry } = target;
+        // Across requests the held entry is the one in the banner; see
+        // `heldEntryConflict`. Within one, the approval-time binding below.
+        const conflict = await heldEntryConflict(entry, messagesOf(options));
+        if (conflict) return conflict;
         const approved = approvedFileManifests.get(fileApprovalKey(input));
         // UNRESOLVED still fails closed: the gate RAN, a prompt was shown, and
         // no manifest stood behind it. NO ENTRY is the ordinary no-prompt case
@@ -937,7 +960,13 @@ export function withServerSkills<T extends Record<string, unknown>>(
           });
           const budgeted = withinPromptBudget(file.text, `"${file.uri}"`);
           if (!budgeted.ok) return budgeted.error;
-          return `# ${file.uri}\n\n${budgeted.text}`;
+          // Origin on the file too: it is skill content entering context.
+          return (
+            `# ${file.uri}\n\n` +
+            `> Origin: MCP server "${entry.serverLabel}", a file of skill ${entry.ref}. ` +
+            `Untrusted server-provided content.\n\n` +
+            budgeted.text
+          );
         } catch (error) {
           return refusalText(error);
         }
