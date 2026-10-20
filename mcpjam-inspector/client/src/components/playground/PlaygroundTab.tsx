@@ -10,6 +10,9 @@ import {
 import LoadingScreen from "@/components/LoadingScreen";
 import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
 import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Button } from "@mcpjam/design-system/button";
+import { X } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
@@ -251,7 +254,15 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // Rail collapse state — local to the workspace; not persisted per view.
   // Defaults match the previous flag-on behavior (left rail showing tools,
   // right rail collapsed).
-  const [isLeftRailVisible, setIsLeftRailVisible] = useState(true);
+  // On a phone the rails would squeeze the chat to a sliver, so they start
+  // closed and open OVER the chat instead of beside it.
+  const isMobile = useIsMobile();
+  const [isLeftRailVisible, setIsLeftRailVisible] = useState(!isMobile);
+  // Narrowing a window into the phone layout must not drop the open rail
+  // over the chat it was sitting beside.
+  useEffect(() => {
+    if (isMobile) setIsLeftRailVisible(false);
+  }, [isMobile]);
   const [isRightRailVisible, setIsRightRailVisible] = useState(false);
 
   // The browser panel's own layout, which is a STORE rather than state here
@@ -385,7 +396,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     observer.observe(panelGroupElement);
     return () => observer.disconnect();
   }, [panelGroupElement]);
-  const railOverlay = narrow && isRightRailVisible && railAppActive;
+  const railOverlay =
+    narrow && isRightRailVisible && (railAppActive || isMobile);
   const collapseRightRail = useCallback(() => {
     setIsRightRailVisible(false);
     rightPanelRef.current?.collapse?.();
@@ -471,7 +483,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
         />
         <div ref={setPanelGroupElement} className="relative flex min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
-          {isLeftRailVisible ? (
+          {isLeftRailVisible && !isMobile ? (
             <>
               <ResizablePanel
                 ref={leftPanelRef}
@@ -640,6 +652,27 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
             />
           )}
         </ResizablePanelGroup>
+        {isMobile && isLeftRailVisible ? (
+          <div
+            data-testid="playground-left-rail-overlay"
+            className="absolute inset-0 z-40 flex min-h-0 flex-col bg-background"
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Close panel"
+              className="absolute top-1.5 right-2 z-10 size-8"
+              onClick={() => setIsLeftRailVisible(false)}
+            >
+              <X className="size-4" />
+            </Button>
+            <PlaygroundLeftRail
+              previewedHostId={previewedHostId}
+              projectId={props.sharedProjectId ?? props.activeProjectId ?? null}
+            />
+          </div>
+        ) : null}
         </div>
         </ExtensionWorkspaceProvider>
       </HostStyledShell>

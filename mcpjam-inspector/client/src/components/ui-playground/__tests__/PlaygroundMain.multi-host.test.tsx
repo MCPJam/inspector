@@ -19,7 +19,14 @@
  * drive the test fixtures.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useHostContextStore } from "@/stores/client-context-store";
@@ -166,6 +173,11 @@ vi.mock("@/lib/PosthogUtils", () => ({
 // from `hosts:getLocalBrowserSettings` (see the convex mock below). A guest
 // never reaches that query, so guest rows drive the host config's
 // `localBrowserEnabled` instead.
+const mobileFixture = vi.hoisted(() => ({ isMobile: false }));
+vi.mock("@/hooks/use-mobile", () => ({
+  useIsMobile: () => mobileFixture.isMobile,
+}));
+
 const browserFixture = vi.hoisted(() => ({
   guest: false,
   granted: false,
@@ -381,6 +393,7 @@ vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
     return (
       <div
         data-testid="multi-host-card"
+        className={props.className}
         data-compare-id={props.compareId}
         data-compare-kind={props.compareKind}
         data-host-style={props.hostStyle}
@@ -658,6 +671,7 @@ describe("PlaygroundMain — multi-host render path", () => {
   };
 
   beforeEach(() => {
+    mobileFixture.isMobile = false;
     previewedHostFixture.resolve = false;
     browserFixture.guest = false;
     browserFixture.granted = false;
@@ -973,6 +987,61 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(cards[0].getAttribute("data-host-style")).toBe("chatgpt");
     expect(cards[1].getAttribute("data-host-style")).toBe("claude");
     expect(cards[0].getAttribute("data-compare-kind")).toBe("host");
+  });
+
+  it("shows one client at a time on a phone, with a switcher between them", () => {
+    mobileFixture.isMobile = true;
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const switcher = screen.getByTestId("playground-compare-lane-switcher");
+    const tabs = within(switcher).getAllByRole("tab", { hidden: true });
+    expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual([
+      "true",
+      "false",
+    ]);
+    // Both cards stay mounted: each owns its own stream and transcript.
+    const card = (id: string) =>
+      screen
+        .getAllByTestId("multi-host-card")
+        .find((node) => node.getAttribute("data-compare-id") === id)!;
+    expect(card("h-A").className).not.toContain("hidden");
+    expect(card("h-B").className).toContain("hidden");
+
+    fireEvent.click(tabs[1]);
+
+    expect(card("h-A").className).toContain("hidden");
+    expect(card("h-B").className).not.toContain("hidden");
+  });
+
+  it("keeps every client side by side on a wider screen", () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(screen.queryByTestId("playground-compare-lane-switcher")).toBeNull();
+    for (const node of screen.getAllByTestId("multi-host-card")) {
+      expect(node.className ?? "").not.toContain("hidden");
+    }
   });
 
   // ── Local execution is per-LANE ────────────────────────────────────────

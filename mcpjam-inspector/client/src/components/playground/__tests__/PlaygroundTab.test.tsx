@@ -89,9 +89,23 @@ vi.mock("@/components/ui/resizable", () => ({
   ResizableHandle: () => null,
 }));
 vi.mock("@/components/ui/collapsed-panel-strip", () => ({
-  CollapsedPanelStrip: ({ side }: { side: string }) => (
-    <div data-testid={`collapsed-${side}-rail`} />
+  CollapsedPanelStrip: ({
+    side,
+    onOpen,
+  }: {
+    side: string;
+    onOpen: () => void;
+  }) => (
+    <button
+      type="button"
+      data-testid={`collapsed-${side}-rail`}
+      onClick={onOpen}
+    />
   ),
+}));
+const mobileFixture = vi.hoisted(() => ({ isMobile: false }));
+vi.mock("@/hooks/use-mobile", () => ({
+  useIsMobile: () => mobileFixture.isMobile,
 }));
 // The rail's own tab strip: each tab's close, and Collapse panel.
 vi.mock("@/components/playground/PlaygroundRightRail", async () => {
@@ -157,7 +171,7 @@ vi.mock("../PlaygroundPreviewedClientSync", () => ({
   PlaygroundPreviewedClientSync: () => null,
 }));
 vi.mock("../PlaygroundLeftRail", () => ({
-  PlaygroundLeftRail: () => null,
+  PlaygroundLeftRail: () => <div data-testid="playground-left-rail" />,
 }));
 
 import { PlaygroundTab } from "../PlaygroundTab";
@@ -179,6 +193,37 @@ describe("PlaygroundTab loading branch", () => {
     mockPlaygroundCenter.mockClear();
     mockLoadingState.current = { kind: "skeleton" };
     mockUseAutoConnectProjectServers.mockClear();
+    mobileFixture.isMobile = false;
+  });
+
+  it("on a phone, opens the Sessions and Tools rail over the chat, closed at first", () => {
+    mobileFixture.isMobile = true;
+    mockLoadingState.current = { kind: "ready" };
+
+    render(<PlaygroundTab {...baseProps} />);
+
+    // Beside the chat it would squeeze it to a sliver, so it starts closed.
+    expect(screen.queryByTestId("playground-left-rail")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("collapsed-left-rail"));
+
+    expect(screen.getByTestId("playground-left-rail-overlay")).toContainElement(
+      screen.getByTestId("playground-left-rail"),
+    );
+    expect(screen.getByTestId("playground-center")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close panel" }));
+
+    expect(screen.queryByTestId("playground-left-rail")).toBeNull();
+  });
+
+  it("keeps the Sessions and Tools rail beside the chat on a wider screen", () => {
+    mockLoadingState.current = { kind: "ready" };
+
+    render(<PlaygroundTab {...baseProps} />);
+
+    expect(screen.getByTestId("playground-left-rail")).toBeInTheDocument();
+    expect(screen.queryByTestId("playground-left-rail-overlay")).toBeNull();
   });
 
   it("suspends route-level auto-connect while onboarding is open", () => {
@@ -305,6 +350,7 @@ describe("PlaygroundTab — leaving a model App's fullscreen in the side panel",
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    mobileFixture.isMobile = false;
   });
 
   /** The Playground's width (the chat/side-panel group is measured). */
@@ -341,6 +387,23 @@ describe("PlaygroundTab — leaving a model App's fullscreen in the side panel",
   const overlay = () => document.querySelector("[data-right-rail-overlay]");
   const railCollapsed = () => screen.queryByTestId("collapsed-right-rail");
   const composer = () => screen.getByRole("textbox", { name: "Composer" });
+
+  it("on a phone: the side panel covers the chat even without an App", () => {
+    mobileFixture.isMobile = true;
+    renderAt(375);
+
+    fireEvent.click(screen.getByTestId("collapsed-right-rail"));
+
+    expect(overlay()).not.toBeNull();
+  });
+
+  it("narrow desktop window: the side panel without an App stays beside the chat", () => {
+    renderAt(531);
+
+    fireEvent.click(screen.getByTestId("collapsed-right-rail"));
+
+    expect(overlay()).toBeNull();
+  });
 
   it("narrow: the rail covers the chat while fullscreen; Exit full screen gives the chat and composer back", () => {
     renderAt(531);

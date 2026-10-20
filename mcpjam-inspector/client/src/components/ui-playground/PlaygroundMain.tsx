@@ -140,6 +140,7 @@ import type { UIMessage } from "ai";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
@@ -2517,6 +2518,26 @@ export function PlaygroundMain({
     temperature,
     requireToolApproval,
   ]);
+
+  // On a phone the compare columns stack into slivers too thin to read, so
+  // one client shows at a time behind a switcher. The others stay mounted
+  // (hidden): each card owns its own stream and transcript.
+  const isMobile = useIsMobile();
+  const compareLanes = isMultiHostMode
+    ? multiHostColumns.map((column) => ({
+        id: column.compareId,
+        label: column.compareLabel,
+      }))
+    : modelCompareCards.map((entry) => ({ id: entry.key, label: entry.label }));
+  const [mobileCompareLaneId, setMobileCompareLaneId] = useState<
+    string | null
+  >(null);
+  const singleCompareLane = isMobile && compareLanes.length > 1;
+  const activeCompareLaneId =
+    compareLanes.find((lane) => lane.id === mobileCompareLaneId)?.id ??
+    compareLanes[0]?.id;
+  const compareLaneHidden = (laneId: string) =>
+    singleCompareLane && laneId !== activeCompareLaneId ? "hidden" : undefined;
 
   // What each column's host actually attaches, resolved by the SAME hook the
   // single pane uses (`effectiveBuiltInToolIds` above). The grid used to
@@ -6846,6 +6867,35 @@ export function PlaygroundMain({
                 aria-hidden={!effectiveHasMessages}
               >
                 <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
+                  {singleCompareLane ? (
+                    <div
+                      role="tablist"
+                      aria-label="Clients"
+                      data-testid="playground-compare-lane-switcher"
+                      className="mb-3 flex shrink-0 gap-1 overflow-x-auto rounded-lg bg-muted/50 p-1"
+                    >
+                      {compareLanes.map((lane) => {
+                        const selected = lane.id === activeCompareLaneId;
+                        return (
+                          <button
+                            key={lane.id}
+                            type="button"
+                            role="tab"
+                            aria-selected={selected}
+                            onClick={() => setMobileCompareLaneId(lane.id)}
+                            className={cn(
+                              "min-w-0 flex-1 truncate rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                              selected
+                                ? "bg-background text-foreground shadow-sm"
+                                : "text-muted-foreground hover:text-foreground",
+                            )}
+                          >
+                            {lane.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   {isMultiHostMode ? (
                     // Phase 4 multi-host compare grid. Project-scoped
                     // server config means `selectedServers`,
@@ -6872,6 +6922,7 @@ export function PlaygroundMain({
                     >
                       {multiHostColumns.map((column, columnIndex) => (
                         <MultiModelPlaygroundCard
+                          className={compareLaneHidden(column.compareId)}
                           extensionBinding={compareLaneBinding(
                             column.compareId,
                             {
@@ -6992,6 +7043,7 @@ export function PlaygroundMain({
                         const { model, card } = entry;
                         return (
                           <MultiModelPlaygroundCard
+                            className={compareLaneHidden(compareId)}
                             extensionBinding={compareLaneBinding(
                               previewedHostId,
                               previewedHost?.config
