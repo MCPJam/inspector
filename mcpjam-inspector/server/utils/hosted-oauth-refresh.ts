@@ -1,6 +1,11 @@
 import { withLocalCheckSignal } from "./local-server-check-queue.js";
 import { createHash } from "node:crypto";
-import { describeError, type UnauthorizedRefreshHandler } from "@mcpjam/sdk";
+import {
+  describeError,
+  extractAuthChallenge,
+  type UnauthorizedRefreshHandler,
+} from "@mcpjam/sdk";
+import { stampAuthChallenge } from "./connection-effective-auth.js";
 import type { OAuthTokens } from "@modelcontextprotocol/client";
 import {
   ErrorCode,
@@ -304,7 +309,8 @@ export async function forceRefreshHostedOAuthAccessToken(
         serverName: options?.serverName ?? null,
       });
     }
-    const isReconnectRequired = code === "refresh_token_invalid";
+    const isReconnectRequired =
+      code === "refresh_token_invalid" || code === "refresh_token_unavailable";
     // The backend's 503: the credential is fine, the authorization server
     // never answered usably. Its `detail` is what that server actually
     // returned ({url, status, body}) — forwarded so the client can name the
@@ -317,7 +323,8 @@ export async function forceRefreshHostedOAuthAccessToken(
       isReconnectRequired
         ? {
             oauthRequired: true,
-            refreshTokenInvalid: true,
+            refreshTokenInvalid: code === "refresh_token_invalid",
+            refreshTokenUnavailable: code === "refresh_token_unavailable",
             serverId,
             serverName: options?.serverName ?? null,
             // The authorization server's own RFC 6749 reply ({error,
@@ -326,15 +333,15 @@ export async function forceRefreshHostedOAuthAccessToken(
             declined: body?.declined ?? null,
           }
         : isAuthServerUnreachable
-        ? {
-            authorizationServerUnreachable: true,
-            serverId,
-            serverName: options?.serverName ?? null,
-            failure: body?.detail ?? null,
-            // Set instead of `failure` when nothing answered at all.
-            transport: body?.transport ?? null,
-          }
-        : undefined
+          ? {
+              authorizationServerUnreachable: true,
+              serverId,
+              serverName: options?.serverName ?? null,
+              failure: body?.detail ?? null,
+              // Set instead of `failure` when nothing answered at all.
+              transport: body?.transport ?? null,
+            }
+          : undefined,
     );
   }
 
@@ -699,9 +706,7 @@ export type HostedOAuthUnauthorizedHandlerArgs = {
 
 /**
  * Build the `onUnauthorized` callback used by the SDK's 401-retry path. The
- * handler closes over the routing context (bearer/project/server identity and
- * scope) so the SDK only has to invoke `({serverId, error}) => Promise<{accessToken}>`
- * without knowing how refresh actually happens.
+ * handler keeps routing context outside the SDK.
  */
 export function buildHostedOAuthUnauthorizedHandler(
   args: HostedOAuthUnauthorizedHandlerArgs
@@ -709,7 +714,21 @@ export function buildHostedOAuthUnauthorizedHandler(
   const refresh = args.allowPrivateAuthorizationServerFallback
     ? refreshHostedOAuthAccessTokenWithLocalFallback
     : forceRefreshHostedOAuthAccessToken;
-  return async () => {
+  return async (context) => {
+    const unauthorized: unknown = context?.error;
+    // The 401 that prompted this refresh may have been a sign-in challenge
+    // for one protected operation. Keep it so the caller can offer sign-in
+    // instead of a generic refresh error.
+    const challenge = extractAuthChallenge(unauthorized);
+    const withChallenge = (failure: WebRouteError): WebRouteError => {
+      if (challenge) {
+        failure.details = {
+          ...(failure.details ?? {}),
+          authChallenge: stampAuthChallenge(challenge, "oauth"),
+        };
+      }
+      return failure;
+    };
     try {
       return {
         accessToken: await refresh(
@@ -727,16 +746,26 @@ export function buildHostedOAuthUnauthorizedHandler(
         ),
       };
     } catch (error) {
+      if (
+        error instanceof WebRouteError &&
+        error.details?.refreshTokenUnavailable === true &&
+        challenge?.source === "http_401" &&
+        unauthorized
+      ) {
+        throw unauthorized;
+      }
       if (error instanceof WebRouteError) {
-        throw error.withSetupFailureSource("oauth_refresh");
+        throw withChallenge(error).withSetupFailureSource("oauth_refresh");
       }
       const normalized = describeError(error);
-      const failure = new WebRouteError(
-        502,
-        ErrorCode.SERVER_UNREACHABLE,
-        normalized.rawMessage || "OAuth token refresh failed.",
-        undefined,
-        normalized,
+      const failure = withChallenge(
+        new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          normalized.rawMessage || "OAuth token refresh failed.",
+          undefined,
+          normalized,
+        ),
       ).withSetupFailureSource("oauth_refresh");
       failure.cause = error;
       throw failure;

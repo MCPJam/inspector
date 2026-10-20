@@ -56,7 +56,7 @@ export function emitSandboxNotices(
         type: SANDBOX_NOTICE_DATA_PART_TYPE,
         data: { reason },
         transient: true,
-      } as unknown as UIMessageChunk);
+      } satisfies UIMessageChunk);
       // Re-checked AFTER the write: this is the call that may have discovered
       // the stream was gone, and the chunk that discovered it did not land.
       if (closed()) break;
@@ -90,7 +90,7 @@ export function emitHistoryNotice(
         ...(chatSessionId ? { chatSessionId } : {}),
       },
       transient: true,
-    } as unknown as UIMessageChunk);
+    } satisfies UIMessageChunk);
   } catch (error) {
     logger.warn("[chat] history notice stream write failed", { error });
   }
