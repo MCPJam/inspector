@@ -1,6 +1,7 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { ArrowUpRight, FileText, Globe, Lock, ShieldCheck } from "lucide-react";
 import { GitHubStarButton } from "../ui/github-star-button";
+import { AnalyticsConsentSetting } from "../legal/AnalyticsConsent";
 
 const links = [
   {
@@ -60,6 +61,8 @@ export function AboutSettings() {
         <dt className="font-medium text-accent-foreground">Version</dt>
         <dd className="text-foreground">v{__APP_VERSION__}</dd>
       </dl>
+
+      <AnalyticsConsentSetting />
 
       <nav
         aria-label="MCPJam resources"
