@@ -107,8 +107,8 @@ interface ModelSelectorProps {
    * org settings; omitted, the footer is absent rather than disabled.
    */
   onManageOrgProviders?: () => void;
-  /** Opens the org's AI providers from a search with no match, under any key policy. */
-  onAddProvider?: () => void;
+  /** Opens the org's AI providers from a search with no match, under any key policy; `null` when the picker's own organization offers none. */
+  onAddProvider?: (() => void) | null;
   /**
    * The organization requires its own provider keys for AI features: MCPJam
    * models are not offered, so the "Free models" / "Your providers" split is

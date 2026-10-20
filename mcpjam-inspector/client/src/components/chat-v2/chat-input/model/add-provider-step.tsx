@@ -43,8 +43,10 @@ function ActiveOrgAddProvider({
  * A search that matched no model: says why it isn't listed and, when known,
  * what to do. A picker that passes no `onAdd` falls back to the active
  * project's organization, so every picker can offer "Add a provider" without
- * its callers threading a handoff through. Off the key policy, nothing known
- * about the viewer means no admin pointer either.
+ * its callers threading a handoff through. `null` comes from a picker scoped
+ * to its own project whose organization offers this viewer none, and gets no
+ * fallback: another organization's providers can't fill its list. Off the key
+ * policy, nothing known about the viewer means no admin pointer either.
  */
 export function ModelSearchEmpty({
   query,
@@ -54,7 +56,7 @@ export function ModelSearchEmpty({
 }: {
   query: string;
   requireOrgKeys?: boolean;
-  onAdd?: () => void;
+  onAdd?: (() => void) | null;
   /** Closes the picker, then runs the handoff. */
   leaveTo: (handoff?: () => void) => void;
 }) {
@@ -69,13 +71,13 @@ export function ModelSearchEmpty({
       <p className="text-[11px] text-muted-foreground">
         {requireOrgKeys
           ? "Only models from your organization's providers are listed."
-          : "Only models MCPJam runs and models from your organization's providers are listed."}
+          : "Only models MCPJam runs and models from your providers are listed."}
       </p>
       {onAdd ? (
         <AddProviderStep onAdd={() => leaveTo(onAdd)} />
       ) : requireOrgKeys ? (
         <AddProviderStep />
-      ) : organizationId ? (
+      ) : onAdd === undefined && organizationId ? (
         <ActiveOrgAddProvider
           organizationId={organizationId}
           leaveTo={leaveTo}

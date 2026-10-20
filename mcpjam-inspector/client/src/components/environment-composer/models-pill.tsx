@@ -122,6 +122,7 @@ export function ModelsPill({
     modelSelectionsSupported,
     requireOrgKeys,
     onManageOrgProviders,
+    onAddProvider,
   } = useAvailableModels({ projectId });
   // Per ROW, not per id: the hosted row and an org-connection row of one id
   // run on different keys, and a harness may run one and refuse the other.
@@ -537,6 +538,7 @@ export function ModelsPill({
       workload={workload}
       requireOrgKeys={requireOrgKeys}
       onManageOrgProviders={onManageOrgProviders}
+      onAddProvider={onAddProvider ?? null}
       currentModel={selectedModels[0] ?? NO_EXPLICIT_MODEL}
       availableModels={availableModels}
       onModelChange={addModel}

@@ -103,6 +103,22 @@ describe("ModelSelector — a search with no match", () => {
     expect(active.handoff).not.toHaveBeenCalled();
   });
 
+  it("keeps a picker scoped to another project off the active project's organization", async () => {
+    active.appState = {
+      activeProjectId: "p1",
+      projects: { p1: { id: "p1", organizationId: "org_1" } },
+    };
+    active.handoff = vi.fn();
+    await searchFor("mixtral", { onAddProvider: null });
+
+    expect(
+      await screen.findByText('No models match "mixtral".'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add a provider" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("says why the model isn't listed and offers to add its provider", async () => {
     const onAddProvider = vi.fn();
     const user = await searchFor("mixtral", { onAddProvider });
@@ -112,7 +128,7 @@ describe("ModelSelector — a search with no match", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Only models MCPJam runs and models from your organization's providers are listed.",
+        "Only models MCPJam runs and models from your providers are listed.",
       ),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add a provider" }));
