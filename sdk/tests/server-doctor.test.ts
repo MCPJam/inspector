@@ -117,7 +117,19 @@ describe("the skills check", () => {
       .join("");
   }
 
-  async function skillsManager(options: { tamper?: boolean } = {}) {
+  /** The attributes the stable spec requires on every list and get result. */
+  const CACHEABLE = { ttlMs: 60_000, cacheScope: "public" };
+
+  async function skillsManager(
+    options: {
+      tamper?: boolean;
+      /** Answer `skills/list` and `skills/get` without `ttlMs` / `cacheScope`. */
+      omitCacheAttributes?: boolean;
+      /** Declare the extension without the `resources` capability. */
+      omitResourcesCapability?: boolean;
+    } = {}
+  ) {
+    const cacheable = options.omitCacheAttributes ? {} : CACHEABLE;
     const entry = {
       uri: SKILL_URI,
       frontmatter: { name: "good", description: "A verifiable skill." },
@@ -138,9 +150,21 @@ describe("the skills check", () => {
         directoryRead: false,
         active: true,
       }),
-      listServerSkills: jest.fn().mockResolvedValue({ skills: [entry] }),
+      ...(options.omitResourcesCapability
+        ? {
+            getServerCapabilities: jest.fn().mockReturnValue({
+              tools: {},
+              extensions: { "io.modelcontextprotocol/skills": {} },
+            }),
+          }
+        : {}),
+      listServerSkills: jest
+        .fn()
+        .mockResolvedValue({ skills: [entry], ...cacheable }),
       getServerSkill: jest.fn().mockResolvedValue(entry),
-      getServerSkillResult: jest.fn().mockResolvedValue({ skill: entry }),
+      getServerSkillResult: jest
+        .fn()
+        .mockResolvedValue({ skill: entry, ...cacheable }),
       readResource: jest.fn().mockResolvedValue({
         contents: [
           { uri: SKILL_URI, text: MARKDOWN, mimeType: "text/markdown" },
@@ -180,7 +204,9 @@ describe("the skills check", () => {
         directoryRead: false,
         active: true,
       }),
-      listServerSkills: jest.fn().mockResolvedValue({ skills: entries }),
+      listServerSkills: jest
+        .fn()
+        .mockResolvedValue({ skills: entries, ...CACHEABLE }),
       getServerSkill: jest
         .fn()
         .mockImplementation(async (_serverId: string, uri: string) =>
@@ -190,6 +216,7 @@ describe("the skills check", () => {
         .fn()
         .mockImplementation(async (_serverId: string, uri: string) => ({
           skill: byUri.get(uri),
+          ...CACHEABLE,
         })),
       readResource: jest
         .fn()
@@ -320,9 +347,11 @@ describe("the skills check", () => {
       }),
       listServerSkills: jest
         .fn()
-        .mockResolvedValue({ skills: [good, escaping] }),
+        .mockResolvedValue({ skills: [good, escaping], ...CACHEABLE }),
       getServerSkill: jest.fn().mockResolvedValue(good),
-      getServerSkillResult: jest.fn().mockResolvedValue({ skill: good }),
+      getServerSkillResult: jest
+        .fn()
+        .mockResolvedValue({ skill: good, ...CACHEABLE }),
       readResource: jest.fn().mockResolvedValue({
         contents: [
           { uri: SKILL_URI, text: MARKDOWN, mimeType: "text/markdown" },
@@ -348,6 +377,47 @@ describe("the skills check", () => {
 
     expect(result.checks.skills.status).toBe("error");
     expect(result.checks.skills.detail).toContain("digest_mismatch");
+  });
+
+  it("names the cache attributes a server omits, on both methods", async () => {
+    // The SDK loads such a server anyway, so this is the only place an author
+    // learns their `skills/list` and `skills/get` are not conformant.
+    const manager = await skillsManager({ omitCacheAttributes: true });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("error");
+    expect(result.checks.skills.detail).toContain("not conformant");
+    expect(result.checks.skills.detail).toContain(
+      "`skills/list` omitted required `ttlMs` and `cacheScope`"
+    );
+    expect(result.checks.skills.detail).toContain(
+      "`skills/get` omitted required `ttlMs` and `cacheScope`"
+    );
+    // The skill itself still verified; the catalog is reported in full.
+    expect(result.skills).toHaveLength(1);
+  });
+
+  it("reports an extension declared without the resources capability", async () => {
+    // Skill files are read with `resources/read`, so the spec requires the
+    // `resources` capability alongside the extension.
+    const manager = await skillsManager({ omitResourcesCapability: true });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("error");
+    expect(result.checks.skills.detail).toContain(
+      "without the `resources` capability"
+    );
+  });
+
+  it("stays ok for a server that sends everything the spec requires", async () => {
+    const manager = await skillsManager();
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("ok");
+    expect(result.checks.skills.detail).not.toContain("not conformant");
   });
 });
 

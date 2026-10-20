@@ -299,6 +299,12 @@ and checking each against its manifest:
 It reports `skipped` when the extension is not active on the connection, which
 is the normal state for a server that serves no skills.
 
+It also reports `error` for requirements of the stable spec that MCPJam
+otherwise tolerates: a `skills/list` or `skills/get` result without `ttlMs`
+and `cacheScope`, or an extension declaration without the `resources`
+capability. The Playground still loads such a server, so the doctor is where
+the omission is named.
+
 ### Unloadable skills
 
 A server skill can appear in the catalog but be refused for loading. MCPJam keeps the skill visible in the catalog — marked `unverifiable` — so the model stops retrying it and you can see what the server advertised. MCPJam declines to inject unverifiable content into a model turn. The reason is always shown:

@@ -286,6 +286,19 @@ const OAUTH_CHALLENGE_SUMMARY =
 const SKILLS_FINDINGS =
   /^(\d{1,6}) (of \d{1,6} sampled skills failed verification|listed (?:entry|entries) rejected as malformed): /;
 
+/**
+ * The skills check's spec-conformance findings. Every clause is a fixed
+ * phrase the SDK composes with no server text in it, so the whole sentence
+ * passes through. The SDK puts it before the findings above, and when both
+ * are present the findings are reduced to their counts as usual.
+ */
+const SKILLS_CONFORMANCE_CLAUSE =
+  "(?:the extension is declared without the `resources` capability it depends on|`skills/(?:list|get)` omitted required (?:`ttlMs` and `cacheScope`|`ttlMs`|`cacheScope`))";
+const SKILLS_CONFORMANCE = new RegExp(
+  `^(not conformant to the stable Skills extension spec: ${SKILLS_CONFORMANCE_CLAUSE}(?:; ${SKILLS_CONFORMANCE_CLAUSE})*)(?:\\.|; (\\d{1,6}) (of \\d{1,6} sampled skills failed verification|listed (?:entry|entries) rejected as malformed): .*)$`,
+  "s",
+);
+
 type TextTemplate = (text: string) => string | undefined;
 
 const PROBE_STATUS_SENTENCE =
@@ -319,6 +332,13 @@ const DOCTOR_TEXT_TEMPLATES: readonly TextTemplate[] = [
   (text) => {
     const match = SKILLS_FINDINGS.exec(text);
     return match ? `${match[1]} ${match[2]}. ${OMITTED_TEXT_NOTE}` : undefined;
+  },
+  (text) => {
+    const match = SKILLS_CONFORMANCE.exec(text);
+    if (!match) return undefined;
+    return match[2] === undefined
+      ? `${match[1]}.`
+      : `${match[1]}. ${match[2]} ${match[3]}. ${OMITTED_TEXT_NOTE}`;
   },
   (text) => {
     const match = /^HTTP probe failed: (.*)$/s.exec(text);

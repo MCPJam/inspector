@@ -1110,6 +1110,62 @@ describe("hosted doctor answer projection", () => {
     },
   );
 
+  const CONFORMANCE =
+    "not conformant to the stable Skills extension spec: the extension is declared without the `resources` capability it depends on; `skills/list` omitted required `ttlMs` and `cacheScope`; `skills/get` omitted required `cacheScope`";
+
+  it.each([
+    // Conformance clauses are fixed phrases with no server text, so they pass.
+    [`${CONFORMANCE}.`, `${CONFORMANCE}.`],
+    // Findings after them still reduce to their counts.
+    [
+      `${CONFORMANCE}; 2 of 5 sampled skills failed verification: skill://UNEXPECTED_MARKER_43/a (UNEXPECTED_MARKER_44).`,
+      `${CONFORMANCE}. 2 of 5 sampled skills failed verification. Hosted diagnostics omit upstream error text; run the doctor locally for the full message.`,
+    ],
+  ])(
+    "passes the skills check's conformance clauses through",
+    async (detail, expected) => {
+      const redact = await hostedRedactor();
+      const result = doctorResult({
+        attempts: [
+          answeredAttempt(
+            "https://mcp.example.test/mcp",
+            { status: 200, statusText: "OK", headers: {} },
+            8,
+          ),
+        ],
+        checks: { skills: { status: "error", detail } },
+      });
+
+      const redacted = redact(result) as any;
+
+      expect(redacted.checks.skills.detail).toBe(expected);
+      expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+    },
+  );
+
+  it("drops a conformance sentence that carries anything but the fixed clauses", async () => {
+    const redact = await hostedRedactor();
+    const result = doctorResult({
+      attempts: [
+        answeredAttempt(
+          "https://mcp.example.test/mcp",
+          { status: 200, statusText: "OK", headers: {} },
+          8,
+        ),
+      ],
+      checks: {
+        skills: {
+          status: "error",
+          detail: `not conformant to the stable Skills extension spec: UNEXPECTED_MARKER_45.`,
+        },
+      },
+    });
+
+    const redacted = redact(result) as any;
+
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
+
   it("projects each MCP list item field by field", async () => {
     const redact = await hostedRedactor();
     const unloadableMessage =

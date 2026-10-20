@@ -274,6 +274,27 @@ function inactiveSkillsDetail(
 }
 
 /**
+ * The cache attributes a result omitted, by name.
+ *
+ * The stable spec requires `ttlMs` and `cacheScope` on every `skills/list`
+ * and `skills/get` result. The SDK parses both leniently so a server built
+ * against the draft still loads; the doctor is where the omission is named.
+ */
+function missingCacheAttributes(result: {
+  ttlMs?: number;
+  cacheScope?: string;
+}): string[] {
+  const missing: string[] = [];
+  if (result.ttlMs === undefined) missing.push("`ttlMs`");
+  if (result.cacheScope === undefined) missing.push("`cacheScope`");
+  return missing;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
  * Skills over MCP (SEP-2640), verified rather than counted.
  *
  * Three outcomes, deliberately distinct:
@@ -288,6 +309,12 @@ function inactiveSkillsDetail(
  * A skill the server itself marks unloadable (`dynamic`, no manifest, over the
  * SEP's per-skill limits) is reported but is NOT an error: the server is
  * telling the truth about what it serves.
+ *
+ * Spec requirements the SDK accepts leniently are also `error` here: a
+ * missing `ttlMs` / `cacheScope` on `skills/list` or `skills/get`, and an
+ * extension declaration without the `resources` capability it depends on.
+ * The host loads such a server anyway, and this check is the one place the
+ * author is told their server is not conformant.
  */
 async function collectSkills(
   manager: MCPClientManager,
@@ -311,13 +338,42 @@ async function collectSkills(
       .filter((skill) => !skill.unloadable)
       .slice(0, DOCTOR_SKILL_VERIFY_SAMPLE);
 
+    const conformance: string[] = [];
+    const capabilities = manager.getServerCapabilities(serverId) as
+      | { resources?: unknown }
+      | undefined;
+    if (!isRecord(capabilities?.resources)) {
+      conformance.push(
+        "the extension is declared without the `resources` capability it depends on"
+      );
+    }
+    const listMissing = missingCacheAttributes(listing);
+    if (listMissing.length > 0) {
+      conformance.push(
+        `\`skills/list\` omitted required ${listMissing.join(" and ")}`
+      );
+    }
+
     const failures: string[] = [];
+    let getReported = false;
     for (const skill of sample) {
       try {
-        await getVerifiedServerSkill(manager, {
+        // No `entry` passed, so this is the `skills/get` path and the result
+        // carries that method's cache attributes.
+        const verified = await getVerifiedServerSkill(manager, {
           serverId,
           uri: skill.skillUri,
         });
+        const getMissing = missingCacheAttributes(verified);
+        if (getMissing.length > 0 && !getReported) {
+          // Once, and without the URI: the omission is a property of the
+          // server's handler, not of one skill, and the hosted doctor passes
+          // this sentence through only because it carries no server text.
+          getReported = true;
+          conformance.push(
+            `\`skills/get\` omitted required ${getMissing.join(" and ")}`
+          );
+        }
       } catch (error) {
         if (isServerSkillRefusalError(error)) {
           failures.push(`${skill.skillUri} (${error.refusal.kind})`);
@@ -356,6 +412,14 @@ async function collectSkills(
     // to verify would tell an author their skills serving is fine while a
     // conforming host is dropping entries on the floor.
     const problems: string[] = [];
+    // Conformance first. Its clauses are fixed phrases with no server text,
+    // which is what lets the hosted doctor's redaction pass them through
+    // while reducing the server-text findings after them to counts.
+    if (conformance.length > 0) {
+      problems.push(
+        `not conformant to the stable Skills extension spec: ${conformance.join("; ")}`
+      );
+    }
     if (failures.length > 0) {
       problems.push(
         `${failures.length} of ${sample.length} sampled skills failed verification: ${failures.join(", ")}`

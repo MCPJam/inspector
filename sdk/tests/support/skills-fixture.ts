@@ -346,10 +346,10 @@ export async function startSkillsFixture(
       resultType: "complete",
       skills: page,
       ...(hasMore ? { nextCursor: String(nextStart) } : {}),
-      ...(options.listTtlMs !== undefined ? { ttlMs: options.listTtlMs } : {}),
-      ...(options.listCacheScope !== undefined
-        ? { cacheScope: options.listCacheScope }
-        : {}),
+      // Required by the stable spec, so a conforming fixture always sends
+      // them; the options only override the values.
+      ttlMs: options.listTtlMs ?? LIST_RESULT_TTL_MS,
+      cacheScope: options.listCacheScope ?? LIST_RESULT_CACHE_SCOPE,
     };
   }
 
