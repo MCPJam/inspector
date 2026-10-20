@@ -1,3 +1,4 @@
+import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -699,6 +700,19 @@ export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
  */
 const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
 
+/**
+ * Backend refusal code (convex `stream/routes.ts`): MCPJam retired the model
+ * the request names. Arrives as HTTP 400.
+ */
+const MODEL_RETIRED_CODE = "model_retired";
+
+/**
+ * Backend refusal code (convex `stream/orgRoutes.ts`): the organization's own
+ * provider connection does not serve this model (OpenRouter's selected models,
+ * Azure's deployments). Arrives as HTTP 400.
+ */
+const ORG_MODEL_NOT_ALLOWED_CODE = "model_not_allowed";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -749,6 +763,15 @@ export function describeBackendStreamFailure(
   if (code === FREE_TIER_MODEL_RESTRICTED_CODE) {
     return describeAsSlug("provider/mcpjam_limit", detail);
   }
+
+  // A 400 that refuses the user's own model choice: the model is retired, or
+  // the organization's provider does not allow it. Read by status alone it is
+  // `internal/unknown`, which the internal hop promotes to an MCPJam page. Both
+  // slugs are `user_config`, so neither pages.
+  if (code === MODEL_RETIRED_CODE)
+    return describeAsSlug("provider/model_retired", detail);
+  if (code === ORG_MODEL_NOT_ALLOWED_CODE)
+    return describeAsSlug("org/model_not_allowed", detail);
 
   if (status !== undefined && status >= 500) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
@@ -1132,6 +1155,9 @@ export interface MCPJamHandlerOptions {
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
    *  When "claude-code", handleMCPJamFreeChatModel routes to runHarnessTurn. */
   harness?: Harness;
+  agentLoop?: Harness;
+  harnessTurnContext?: string;
+  harnessUnavailableAppTools?: boolean;
   /** Which MCP-proxy plane the harness uses to route its MCP through MCPJam —
    *  set by the CALLER ROUTE (local `/api/mcp/*` vs hosted `/api/web/*`), not a
    *  global env. Absent ⇒ harness runs without proxied MCP. See
@@ -5840,7 +5866,10 @@ export async function handleMCPJamFreeChatModel(
   // validated HarnessId (readHarness → isHarness) or undefined, so a truthiness
   // check is the right gate — runHarnessTurn re-resolves the adapter defensively.
   // Both satisfy the same ChatEngineLoopResult contract (streamSink "ui" → Response).
-  const useHarness = Boolean(options.harness && !options.scopeStepUpResume);
+  const dispatch = resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : options.harness });
+  options = { ...options, harness: dispatch.harnessId };
+  assertAgentLoopResume(options.agentLoop, Boolean(options.scopeStepUpResume));
+  const useHarness = Boolean((options.agentLoop ?? options.harness) && !options.scopeStepUpResume);
   const result = await (useHarness
     ? runHarnessTurn(options, "ui")
     : runChatEngineLoop(options, "ui"));

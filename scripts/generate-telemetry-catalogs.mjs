@@ -52,6 +52,7 @@ export const SKIP_DIRS = new Set([
 const CODE_LISTS = [
   "V1_ERROR_CODES", "AI_EXECUTION_REFUSAL_CODES", "AI_REUSED_REFUSAL_CODES",
   "PLATFORM_V1_ERROR_CODES", "ROUTINE_CODES", "ORG_POLICY_ROUTINE_CODES",
+  "DESKTOP_STARTUP_FAILURE_CODES",
 ];
 const LOG_METHODS = ["error", "warn", "info", "debug"];
 export const SOURCE = /\.[cm]?tsx?$/;
@@ -166,6 +167,9 @@ function catalogFacts(source, file) {
       const types = ts.isUnionTypeNode(node.type) ? node.type.types : [node.type];
       const values = types.map(literal).filter((value) => value !== undefined);
       if (values.length) facts.fields.push([key, { values }]);
+      // Copied from server request context only; see `LogConvexId`.
+      else if (types.some((type) => ts.isTypeReferenceNode(type) && type.typeName.getText(source) === "LogConvexId"))
+        facts.fields.push([key, { kind: "convexId" }]);
       else if (types.some((type) => type.kind === ts.SyntaxKind.BooleanKeyword)) facts.fields.push([key, { kind: "boolean" }]);
       else if (types.some((type) => type.kind === ts.SyntaxKind.NumberKeyword)) facts.fields.push([key, { kind: "number" }]);
     }

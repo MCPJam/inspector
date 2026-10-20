@@ -1,12 +1,17 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "9.3.1",
+  "version": "10.0.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
+    "./platform-auth": {
+      "types": "./dist/platform-auth.d.ts",
+      "import": "./dist/platform-auth.js",
+      "default": "./dist/platform-auth.js"
+    },
     "./internal/telemetry": {
       "types": "./dist/internal/telemetry.d.ts",
       "import": "./dist/internal/telemetry.js",
@@ -199,7 +204,7 @@
     "@ai-sdk/openai": "4.0.91",
     "@ai-sdk/xai": "5.0.20",
     "@cfworker/json-schema": "^4.1.1",
-    "@mcpjam/evaluators": "^0.5.0",
+    "@mcpjam/evaluators": "^0.5.1",
     "@modelcontextprotocol/client": "2.2.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@noble/hashes": "^2.4.0",

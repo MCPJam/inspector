@@ -24,12 +24,12 @@ describe("harnessControlState — tool visibility is DERIVED from delivery mode"
       expect(
         state.enforced,
         `respectToolVisibility for ${harness} (delivery=${HARNESS_MCP_DELIVERY[harness]})`,
-      ).toBe(HARNESS_MCP_DELIVERY[harness] === "host-executed");
+      ).toBe(HARNESS_MCP_DELIVERY[harness] === "mcpjam");
     }
     // Guard the guard: if this ever stops covering both arms, the loop above
     // could pass vacuously while proving nothing about the derivation.
     const modes = new Set(HARNESSES.map((h) => HARNESS_MCP_DELIVERY[h]));
-    expect(modes).toEqual(new Set(["native", "host-executed"]));
+    expect(modes).toEqual(new Set(["harness", "mcpjam"]));
   });
 
   it("Codex enforces it — MCPJam builds those tools itself", () => {
