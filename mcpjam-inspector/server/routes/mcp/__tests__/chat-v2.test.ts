@@ -2363,7 +2363,7 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
-    it("advertises built-in tools for MCPJam guest requests after resolving guest auth", async () => {
+    it("withholds web_search from MCPJam guest requests (the backend refuses guest searches)", async () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
@@ -2406,7 +2406,7 @@ describe("POST /api/mcp/chat-v2", () => {
         const streamBody = JSON.parse(
           String((init as RequestInit).body ?? "{}"),
         );
-        expect(streamBody.tools).toEqual(
+        expect(streamBody.tools ?? []).not.toEqual(
           expect.arrayContaining([
             expect.objectContaining({ name: "web_search" }),
           ]),
