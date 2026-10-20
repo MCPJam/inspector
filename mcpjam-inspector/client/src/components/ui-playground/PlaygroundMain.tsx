@@ -33,6 +33,7 @@ import { cancelComposerForms } from "@/components/elicitation/composer-form-stor
 import { shouldUseOwnedExtensionModelRoute } from "@/components/host-workspace/model-route";
 import {
   pluginExtensionsForHost,
+  pluginExtensionProfileForHost,
   type PluginExtensionsHostConfig,
 } from "@/lib/client-config-v2-plugin-extensions";
 import { usePluginExtensionsAccess } from "@/hooks/usePluginExtensionsAccess";
@@ -1173,7 +1174,7 @@ export function PlaygroundMain({
     projectId: convexProjectId,
     eligible: !environmentsEnabled,
     hostId: previewedHostId,
-    harnessId: previewedHost?.config?.harness,
+    harnessId: (previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness),
     hostResolved: !previewedHostConfigUnresolved,
   });
 
@@ -1229,7 +1230,7 @@ export function PlaygroundMain({
     computersEnabled: computersEnabled === true,
     isAuthenticated: isConvexAuthenticated,
     hostHasComputer: !!previewedHost?.config?.computer,
-    hostHasHarness: !!previewedHost?.config?.harness,
+    hostHasHarness: !!(previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness),
     engine: playgroundComputerEngine.engine,
   });
 
@@ -1252,9 +1253,10 @@ export function PlaygroundMain({
       pluginExtensionsForHost({
         hostStyle,
         harness: previewedHost?.config?.harness,
+        agentLoop: previewedHost?.config?.agentLoop,
         mcpProfile: previewedHost?.config?.mcpProfile,
       }),
-    [hostStyle, previewedHost?.config?.harness, previewedHost?.config?.mcpProfile],
+    [hostStyle, previewedHost?.config?.agentLoop, previewedHost?.config?.harness, previewedHost?.config?.mcpProfile],
   );
   const pluginExtensionsEnabled = pluginExtensions.enabled;
   // Who owns extension state for this client. Null turns every extension off.
@@ -1387,7 +1389,7 @@ export function PlaygroundMain({
     selectedServers,
     reasoningEffortEnabled: true,
     // A harness turn offers only what its adapter verified (none today).
-    reasoningEffortHarness: previewedHost?.config?.harness,
+    reasoningEffortHarness: (previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness),
     // Opt-in from the Tools panel's Page tools section. Off unless the user
     // ticked it for the page they currently have open in the WebMCP tab.
     usePageTools: webmcpPageToolsEnabled,
@@ -1400,6 +1402,7 @@ export function PlaygroundMain({
         admitted: extensionsAccess?.enabled === true,
         extensionsEnabled: pluginExtensionsEnabled,
         harness: previewedHost?.config?.harness,
+        agentLoop: previewedHost?.config?.agentLoop,
         hostId: previewedHostId,
         actorId: currentUserForSender?._id,
       })
@@ -1858,9 +1861,7 @@ export function PlaygroundMain({
         },
         servers: compareExtensionServers,
         capabilities: resolved.capabilities,
-        profile: (hostConfig?.harness === "codex" ? "codex" : "chatgpt") as
-          | "codex"
-          | "chatgpt",
+        profile: pluginExtensionProfileForHost(hostConfig),
       };
     },
     [
@@ -1932,8 +1933,7 @@ export function PlaygroundMain({
           // The client's per-extension toggles (C1). One switched off removes
           // only that capability; running Apps keep running.
           capabilities: pluginExtensions.capabilities,
-          profile:
-            previewedHost?.config?.harness === "codex" ? "codex" : "chatgpt",
+          profile: pluginExtensionProfileForHost(previewedHost?.config),
           // A save re-checks open Apps; it never reloads them by itself.
           hostRevision: previewedHost?.config?.id,
         }
@@ -1949,8 +1949,7 @@ export function PlaygroundMain({
       sendMessage: dispatchPluginMessage,
       runOnboarding: (...args) => runPluginOnboardingRef.current(...args),
       capabilities: pluginExtensions.capabilities,
-      launchProfile:
-        previewedHost?.config?.harness === "codex" ? "codex" : "chatgpt",
+      launchProfile: pluginExtensionProfileForHost(previewedHost?.config),
       hostRevision: previewedHost?.config?.id,
     },
   );
@@ -2113,7 +2112,7 @@ export function PlaygroundMain({
       v1ModelIds: selectedModelIds,
       ready: isSelectedModelResolved !== false,
     });
-  const compareEffortHarness = previewedHost?.config?.harness;
+  const compareEffortHarness = (previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness);
   const compareCards = useMemo<CompareCard[] | null>(() => {
     if (!compareSelections) return null;
     const cards = resolveCompareCards(
@@ -2552,7 +2551,7 @@ export function PlaygroundMain({
   const localHarnessExecutionByColumn = useMemo(() => {
     const byColumn = new Map<string, typeof localHarnessExecutionOption>();
     for (const column of multiHostColumns) {
-      const columnHarness = column.hostConfig?.harness ?? null;
+      const columnHarness = (column.hostConfig?.agentLoop ?? column.hostConfig?.harness) ?? null;
       const columnInScope =
         isLocalHarnessScope({
           // This column's own host, not the previewed one.
@@ -6581,7 +6580,7 @@ export function PlaygroundMain({
           once — each owning its own would race one approval. */}
       <LocalHarnessAutoApproveDialog
         open={localAutoApprove.open}
-        name={previewedHost?.config?.harness === "codex" ? "Codex" : "Claude Code"}
+        name={(previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness) === "codex" ? "Codex" : "Claude Code"}
         onCancel={localAutoApprove.cancel}
         onApprove={localAutoApprove.approve}
       />
@@ -6878,6 +6877,7 @@ export function PlaygroundMain({
                             {
                               hostStyle: column.hostConfig.hostStyle,
                               harness: column.hostConfig.harness,
+                              agentLoop: column.hostConfig.agentLoop,
                               mcpProfile: column.hostConfig.mcpProfile,
                             },
                           )}
@@ -6998,6 +6998,7 @@ export function PlaygroundMain({
                                 ? {
                                     hostStyle,
                                     harness: previewedHost.config.harness,
+                                    agentLoop: previewedHost.config.agentLoop,
                                     mcpProfile:
                                       previewedHost.config.mcpProfile,
                                   }

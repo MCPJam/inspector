@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from './harness/agent-loop-dispatch.js';
 /**
  * Assistant turn engine (Stage 1 of horizontally-safe synthetic scenario
  * sessions — see plan v3 §A "engine extraction").
@@ -164,6 +165,9 @@ export interface RunAssistantTurnOptions {
    * resolved host config's `harness` field.
    */
   harness?: Harness;
+  agentLoop?: Harness;
+  harnessTurnContext?: string;
+  harnessUnavailableAppTools?: boolean;
   harnessExecutionTarget?: MCPJamHandlerOptions["harnessExecutionTarget"];
 
   streamSink: RunAssistantTurnStreamSink;
@@ -513,6 +517,9 @@ function buildHandlerOptions(
       : {}),
     // Pass the verified harness selector through to its driver.
     ...(opts.harness ? { harness: opts.harness } : {}),
+    ...(opts.agentLoop ? { agentLoop: opts.agentLoop } : {}),
+    harnessTurnContext: opts.harnessTurnContext,
+    harnessUnavailableAppTools: opts.harnessUnavailableAppTools,
     ...(opts.harnessExecutionTarget ? { harnessExecutionTarget: opts.harnessExecutionTarget } : {}),
     // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
     // eval/synthetic harness turn driven through this facade can (a) reach MCP
@@ -649,6 +656,8 @@ function buildHandlerOptions(
 export async function runAssistantTurn(
   opts: RunAssistantTurnOptions,
 ): Promise<RunAssistantTurnResult> {
+  const dispatch = resolveAgentLoop({ agentLoop: opts.agentLoop, harness: opts.agentLoop ? undefined : opts.harness });
+  opts = { ...opts, harness: dispatch.harnessId };
   let capturedMessages: ModelMessage[] | undefined;
   let capturedTrace: PersistedTurnTrace | undefined;
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
