@@ -546,6 +546,9 @@ function getCredentialRedactionVariants(args: {
   return [...variants].sort((a, b) => b.length - a.length);
 }
 
+/** RFC 6749 §5.2: `error` is `%x20-21 / %x23-5B / %x5D-7E`; real codes are short. */
+const OAUTH_ERROR_CODE = /^[\x20-\x21\x23-\x5B\x5D-\x7E]{1,64}$/;
+
 function redactCredentialsFromText(
   value: string | undefined,
   variants: readonly string[]
@@ -894,8 +897,14 @@ export async function mintXaaAccessToken(args: {
     // Surface the authorization server's actual rejection (RFC 6749 error /
     // error_description, or a raw string body) so the failure is debuggable
     // instead of a generic "rejected".
+    // Only an RFC 6749 §5.2 code counts as the AS's `error`; it becomes a
+    // Sentry tag, so anything outside that charset or length is dropped here.
     const oauthErrorRaw =
-      body && typeof body.error === "string" ? body.error : undefined;
+      body &&
+      typeof body.error === "string" &&
+      OAUTH_ERROR_CODE.test(body.error)
+        ? body.error
+        : undefined;
     const oauthDescRaw =
       body && typeof body.error_description === "string"
         ? body.error_description

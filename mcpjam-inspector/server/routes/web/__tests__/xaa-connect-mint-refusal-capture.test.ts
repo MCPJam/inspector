@@ -49,8 +49,23 @@ vi.mock("../../../services/xaa-mint.js", async (importOriginal) => {
   };
 });
 
+import { rebuildSentryEvent } from "@mcpjam/sdk/internal/telemetry";
 import { createAuthorizedManager, callerContextFromHono } from "../auth.js";
 import { ErrorCode, WebRouteError } from "../errors.js";
+
+// What Sentry receives: the SDK's strict boundary rebuilds every event from
+// allowlists, so the options handed to `captureException` are only half the
+// story. Only `level` and `tags` matter here.
+function throughSentryBoundary(options: unknown): {
+  level?: string;
+  tags?: Record<string, string>;
+} {
+  const { level, tags } = (options ?? {}) as {
+    level?: string;
+    tags?: Record<string, string>;
+  };
+  return rebuildSentryEvent({ level, tags });
+}
 
 const baseContext: RequestLogContext = {
   event: "http.request.completed",
@@ -140,10 +155,12 @@ describe("createAuthorizedManager — Sentry capture of XAA mint failures", () =
     vi.unstubAllGlobals();
   });
 
-  // INSPECTOR-HONO-23/33: the customer's authorization server refused the
-  // jwt-bearer grant. Sentry still hears about it, but tagged `routine` so the
-  // generic new-issue rule does not page, and with the AS status and RFC 6749
-  // code as tags, because Sentry scrubs the message they used to live in.
+  // The customer's authorization server refused the jwt-bearer grant. Sentry
+  // still hears about it, but tagged `routine` so the generic new-issue rule
+  // does not page, and with the AS status and RFC 6749 code as tags, because
+  // Sentry scrubs the message they used to live in. The assertion runs the
+  // captured options through the server's Sentry boundary, which rebuilds
+  // tags from an allowlist: a tag that boundary drops never reaches Sentry.
   it("captures an authorization-server rejection as a routine warning with the AS verdict in tags", async () => {
     mintXaaAccessTokenMock.mockRejectedValue(
       new WebRouteError(
@@ -166,18 +183,21 @@ describe("createAuthorizedManager — Sentry capture of XAA mint failures", () =
     expect(captured).toBeInstanceOf(WebRouteError);
     expect(options).toMatchObject({
       level: "warning",
+      tags: { capture_policy: "always" },
+    });
+    expect(throughSentryBoundary(options)).toMatchObject({
+      level: "warning",
       tags: {
         page_class: "routine",
         xaa_failure: "authorization_rejected",
         xaa_as_status: "400",
         xaa_as_error: "invalid_grant",
-        capture_policy: "always",
       },
     });
   });
 
-  // INSPECTOR-HONO-W: no authorization server could be discovered for the
-  // configured issuer. Same treatment.
+  // No authorization server could be discovered for the configured issuer.
+  // Same treatment.
   it("captures a failed authorization-server discovery as a routine warning", async () => {
     mintXaaAccessTokenMock.mockRejectedValue(
       new WebRouteError(
@@ -191,7 +211,9 @@ describe("createAuthorizedManager — Sentry capture of XAA mint failures", () =
     await connectExpectingFailure();
 
     expect(captureExceptionMock).toHaveBeenCalledTimes(1);
-    expect(captureExceptionMock.mock.calls[0]![1]).toMatchObject({
+    expect(
+      throughSentryBoundary(captureExceptionMock.mock.calls[0]![1]),
+    ).toMatchObject({
       level: "warning",
       tags: {
         page_class: "routine",

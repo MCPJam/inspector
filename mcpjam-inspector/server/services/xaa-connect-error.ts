@@ -57,7 +57,7 @@ function xaaMintRefusal(error: unknown): XaaMintRefusal | null {
  * their issuer setting) caused: still captured, so the issue exists and can be
  * searched, but as a `routine` warning the generic new-issue paging rule
  * skips, with the AS status and RFC 6749 error code as tags because Sentry
- * scrubs the message they used to live in (INSPECTOR-HONO-23/33/W).
+ * scrubs the message they used to live in.
  *
  * Every other mint failure returns `undefined`: the remaining legs (secret
  * reveal, ID-JAG signing, CIMD) are MCPJam's own, and keep the default policy.
