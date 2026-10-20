@@ -610,7 +610,8 @@ const CHAIN_NOTICE_COPY = {
   error: "Couldn't load this iteration's stage results.",
   // Covers both causes `trialChainDisplay` folds in (page cap, another run),
   // so it names neither.
-  notLoaded: "Stage results weren't loaded for this iteration.",
+  notLoaded:
+    "Stage results weren't loaded for this iteration. Each check below still shows its result.",
   waiting: "Stage results appear when the run finishes.",
 } as const;
 

@@ -119,7 +119,10 @@ describe("TrialScorecard", () => {
   });
   it.each([
     ["error", "Couldn't load this iteration's stage results."],
-    ["notLoaded", "Stage results weren't loaded for this iteration."],
+    [
+      "notLoaded",
+      "Stage results weren't loaded for this iteration. Each check below still shows its result.",
+    ],
     ["waiting", "Stage results appear when the run finishes."],
   ] as const)(
     "puts a %s note above the rows instead of hiding the trial's scores",
