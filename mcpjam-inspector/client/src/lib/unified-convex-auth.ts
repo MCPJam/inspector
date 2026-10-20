@@ -6,7 +6,9 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useAuth as useWorkOSAuth } from "@workos-inc/authkit-react";
+import { isLoopbackOAuthUrl } from "@mcpjam/sdk/browser";
 import { isLoginRequiredError } from "@/lib/auth/login-required-error";
+import { HOSTED_MODE } from "@/lib/config";
 import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
 import { reportCaught } from "@/lib/error-reporting";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
@@ -114,14 +116,37 @@ async function fetchTokenWithRetry(
   // Upstream error messages can contain credentials. Keep only allowlisted
   // status/reason fields and a fixed message; reporting cannot block recovery.
   try {
+    const failure = guestFailureExtra(lastError);
+    // A throw with no status never got an answer. On a self-hosted install
+    // the guest request goes to this tab's own loopback server, so that is
+    // the local inspector process being gone (npx killed, laptop asleep),
+    // not the guest authority failing: still a Sentry event, but a `routine`
+    // one the paging rule skips (INSPECTOR-CLIENT-2RP).
+    const unanswered =
+      lastError !== undefined && failure.httpStatus === undefined;
+    const localServerUnreachable =
+      unanswered &&
+      opts.mode === "guest" &&
+      !HOSTED_MODE &&
+      typeof window !== "undefined" &&
+      isLoopbackOAuthUrl(window.location.origin);
     reportCaught(
       new Error(`${opts.source} ${lastError ? "failed" : "returned no token"}`),
       {
         source: opts.source,
         level: "warning",
+        ...(localServerUnreachable
+          ? {
+              tags: {
+                page_class: "routine",
+                guest_refresh_failure: "local_server_unreachable",
+              },
+            }
+          : {}),
         extra: {
           attempts: AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS.length + 1,
-          ...guestFailureExtra(lastError),
+          ...failure,
+          ...(unanswered ? { errorName: thrownName(lastError) } : {}),
         },
       },
     );
@@ -133,6 +158,13 @@ async function fetchTokenWithRetry(
   // whose "Try again" cannot work while Convex sits in `noAuth`.
   useSessionRefreshStore.getState().notifyFailure("transient");
   return pauseQueriesBeforeAuthClear();
+}
+
+// The class of a throw that carried no status: `TypeError` for a fetch that
+// never connected, `AbortError` for a cancelled one. Never the message, which
+// can quote the URL or an upstream body.
+function thrownName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 // What a failed guest-session request knows about its failure: the HTTP status
