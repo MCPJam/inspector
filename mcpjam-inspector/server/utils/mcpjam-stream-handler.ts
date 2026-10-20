@@ -107,6 +107,7 @@ import {
   scrubChatGPTAppsToolResultsForBackend,
 } from "./chat-helpers";
 import { normalizeModelMessagesForConvex } from "./normalize-model-messages-for-convex";
+import { hostedMessagesWithoutEmptyText } from "./empty-text-blocks";
 import {
   serializeToolsForConvex,
   type ToolDefinition,
@@ -698,6 +699,19 @@ export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
  */
 const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
 
+/**
+ * Backend refusal code (convex `stream/routes.ts`): MCPJam retired the model
+ * the request names. Arrives as HTTP 400.
+ */
+const MODEL_RETIRED_CODE = "model_retired";
+
+/**
+ * Backend refusal code (convex `stream/orgRoutes.ts`): the organization's own
+ * provider connection does not serve this model (OpenRouter's selected models,
+ * Azure's deployments). Arrives as HTTP 400.
+ */
+const ORG_MODEL_NOT_ALLOWED_CODE = "model_not_allowed";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -748,6 +762,15 @@ export function describeBackendStreamFailure(
   if (code === FREE_TIER_MODEL_RESTRICTED_CODE) {
     return describeAsSlug("provider/mcpjam_limit", detail);
   }
+
+  // A 400 that refuses the user's own model choice: the model is retired, or
+  // the organization's provider does not allow it. Read by status alone it is
+  // `internal/unknown`, which the internal hop promotes to an MCPJam page. Both
+  // slugs are `user_config`, so neither pages.
+  if (code === MODEL_RETIRED_CODE)
+    return describeAsSlug("provider/model_retired", detail);
+  if (code === ORG_MODEL_NOT_ALLOWED_CODE)
+    return describeAsSlug("org/model_not_allowed", detail);
 
   if (status !== undefined && status >= 500) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
@@ -1896,11 +1919,8 @@ function normalizePreservedReasoning(messages: ModelMessage[]): ModelMessage[] {
  * Scrub messages for sending to the backend LLM.
  * Removes UI-specific metadata that shouldn't be sent to the model.
  *
- * `preserveReasoningFromIndex` is the index of the first message in the
- * *current* user turn (post the latest user message). Messages at or after
- * that index keep their reasoning parts so a thinking model can see its
- * own scratchpad between tool steps. Messages before that index still get
- * reasoning pruned to match prior behavior.
+ * `preserveReasoningFromIndex` starts the current user turn. Reasoning from
+ * that index survives tool steps; reasoning from earlier turns is pruned.
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
@@ -3681,15 +3701,17 @@ async function processOneStep(ctx: StepContext): Promise<{
   const llmStartAbs = stepStartAbs;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
 
-  // Scrub messages before sending to backend. Preserve reasoning on
-  // assistant messages added during the current turn so thinking models can
-  // see their own scratchpad across tool steps.
-  const backendMessages = scrubMessagesForBackend(
-    messageHistory,
-    tools,
-    mcpClientManager,
-    selectedServers,
-    traceTurn.promptMessageStartIndex,
+  // Keep current-turn reasoning while cleaning only the outgoing provider copy.
+  const backendMessages = hostedMessagesWithoutEmptyText(
+    scrubMessagesForBackend(
+      messageHistory,
+      tools,
+      mcpClientManager,
+      selectedServers,
+      traceTurn.promptMessageStartIndex,
+    ),
+    modelId,
+    provider,
   );
   const scrubbedMessages = historyPresentation
     ? presentHistoryForModel(backendMessages, tools, historyPresentation)

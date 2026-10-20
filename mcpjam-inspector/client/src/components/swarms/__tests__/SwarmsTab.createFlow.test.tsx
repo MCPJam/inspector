@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getFunctionName } from "convex/server";
 import type { Predicate } from "@/shared/eval-matching";
+import type { ModelDefinition } from "@/shared/types";
 import { SWARM_DESCRIPTION_MAX_CHARS } from "@/shared/swarm-description";
 import { SwarmGenerateError } from "@/lib/swarm-api";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -19,8 +20,12 @@ vi.mock("@/hooks/use-host-harness-targets", () => ({
   useHostHarnessTargets: () => ({}),
   useHostHarnessLoader: () => async () => null,
 }));
+/** What the judge picker on Confirm can offer; empty unless a case says so. */
+const { availableModelsRef } = vi.hoisted(() => ({
+  availableModelsRef: { current: [] as ModelDefinition[] },
+}));
 vi.mock("@/hooks/use-available-models", () => ({
-  useAvailableModels: () => ({ availableModels: [] }),
+  useAvailableModels: () => ({ availableModels: availableModelsRef.current }),
 }));
 
 /** Swarms and environments have separate flags; test both combinations. */
@@ -328,6 +333,19 @@ const updateJourneyMock = vi.fn();
 const updatePersonaMock = vi.fn();
 
 import { SwarmsTab } from "../SwarmsTab";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+
+/**
+ * The create flow under the provider the app mounts it under: Confirm's judge
+ * picker shows the chosen model's provider logo, which reads the theme.
+ */
+function createFlowTab() {
+  return (
+    <PreferencesStoreProvider themeMode="light" themePreset="default">
+      <SwarmsTab projectId="proj-1" isAuthenticated createFlow />
+    </PreferencesStoreProvider>
+  );
+}
 // Real class (the `swarm-api` mock spreads the original), so the `instanceof`
 // branch the 402 handling turns on is the one under test.
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
@@ -356,7 +374,7 @@ function textFile(content: string, name: string): File {
 
 function openDescribe() {
   // `/swarms/new` is what opens the flow — mount it the way the router does.
-  render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+  render(createFlowTab());
 }
 
 function submitLaunchEnabled() {
@@ -383,6 +401,7 @@ beforeEach(() => {
     modelSource: "host",
   });
   environmentsFlagRef.current = true;
+  availableModelsRef.current = [];
   // The flow now mirrors its resumable state into sessionStorage, so a leftover
   // draft would otherwise resume the previous case's slate.
   sessionStorage.clear();
@@ -1291,6 +1310,40 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(toast.info).not.toHaveBeenCalledWith("New swarm draft discarded");
   });
 
+  it("a judge model picked on Confirm is born onto the swarm and every created goal", async () => {
+    availableModelsRef.current = [
+      {
+        id: "anthropic/claude-haiku-4.5",
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+        hosted: true,
+      },
+    ];
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Judge model" }));
+    await user.click(screen.getByRole("option", { name: /Claude Haiku 4\.5/ }));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    const judgeConfig = {
+      goalCompletion: expect.objectContaining({
+        judgeModel: "anthropic/claude-haiku-4.5",
+      }),
+    };
+    expect(createSwarmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ judgeConfig }),
+    );
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    for (const [args] of createJourneyMock.mock.calls) {
+      expect(args).toMatchObject({ judgeConfig });
+    }
+  });
+
   it("removing a persona on Confirm drops its journeys from the launch", async () => {
     openDescribe();
     fillDescribe();
@@ -1623,6 +1676,70 @@ describe("SwarmsTab — New swarm create flow", () => {
       expect("hostIds" in call[0]).toBe(false);
     }
     await screen.findByTestId("new-swarm-running-step");
+  });
+
+  it("layers a judge picked on Confirm onto a reused goal's own judge settings", async () => {
+    availableModelsRef.current = [
+      {
+        id: "anthropic/claude-haiku-4.5",
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+        hosted: true,
+      },
+    ];
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-existing",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        judgeConfig: {
+          goalCompletion: {
+            enabled: false,
+            threshold: 0.9,
+            judgeModel: "openai/gpt-4o",
+            judgeSelection: { source: "legacy", modelId: "openai/gpt-4o" },
+            judgeSelectionOrigin: "backfill",
+          },
+        },
+      },
+    ];
+    openDescribe();
+    fillDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled(),
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Judge model" }));
+    await user.click(screen.getByRole("option", { name: /Claude Haiku 4\.5/ }));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(updateJourneyMock).toHaveBeenCalled());
+    const reusedPatch = updateJourneyMock.mock.calls
+      .map((call) => call[0])
+      .find((arg) => arg.journeyRefId === "j-existing");
+    // Grading stays off at the goal's own threshold; only the model moved,
+    // and the old model's selection and marker went with it.
+    expect(reusedPatch.judgeConfig).toEqual({
+      goalCompletion: expect.objectContaining({
+        enabled: false,
+        threshold: 0.9,
+        judgeModel: "anthropic/claude-haiku-4.5",
+      }),
+    });
+    expect(reusedPatch.judgeConfig.goalCompletion.judgeSelection).not.toEqual({
+      source: "legacy",
+      modelId: "openai/gpt-4o",
+    });
+    expect(reusedPatch.judgeConfig.goalCompletion).not.toHaveProperty(
+      "judgeSelectionOrigin",
+    );
   });
 
   it("runs reused journeys on a newly selected multi-env fan-out without rewriting them", async () => {
@@ -2173,7 +2290,7 @@ describe("SwarmsTab create flow — survives a remount", () => {
   /** Unmount and mount the same route again, as a route-level gate would. */
   function remount() {
     cleanup();
-    render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+    render(createFlowTab());
   }
 
   it("keeps a description-only edit, and keeps its draft, across repeated remounts", async () => {
@@ -3069,239 +3186,85 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
   });
 });
 
-/**
- * Where a REUSED goal will actually run, said out loud before launch.
- *
- * A persona carries no environment; its goals do. Adding an existing persona
- * brings those goals, and the Describe step's pre-filled environment then wins
- * over the one they were authored against. That override is deliberate and
- * stays — what these tests pin is that Confirm now SAYS so, which is the part
- * that let 15 goals written for one server run against a different one and
- * still read as a clean wave.
- */
-describe("SwarmsTab — Confirm discloses where reused goals run", () => {
+describe("SwarmsTab — Confirm keeps reused personas in their cards", () => {
   function setEnvironments(rows: Array<Record<string, unknown>>) {
     environmentsRef.current = rows as typeof environmentsRef.current;
     environments = environmentsRef.current;
   }
 
-  function reuseAna(journeys: Array<Record<string, unknown>>) {
+  it.each([
+    ["the selected environment", { environmentIds: ["env-1"] }, false],
+    ["another environment", { environmentIds: ["env-2"] }, true],
+    ["a legacy client", { hostIds: ["host-2"] }, true],
+  ])(
+    "does not repeat persona summaries for goals from %s",
+    async (_label, origin, showsWarning) => {
+      existingPersonas = [
+        { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+      ];
+      personaJourneys = [
+        { _id: "j-1", name: "Reconcile payouts", goal: "Reconcile", ...origin },
+      ];
+      openDescribe();
+      pickExistingPersona(/include ana/i);
+      fireEvent.click(screen.getByTestId("new-swarm-continue"));
+      const personas = await screen.findByTestId("new-swarm-reused-personas");
+      await waitFor(() => expect(personas).toHaveTextContent("1 goal"));
+
+      expect(
+        within(personas).getByTestId("new-swarm-persona-compact"),
+      ).toHaveTextContent("Ana");
+      expect(
+        screen.queryByTestId("new-swarm-confirm-env-moves"),
+      ).not.toBeInTheDocument();
+      if (showsWarning) {
+        const warning = await screen.findByTestId(
+          "new-swarm-confirm-env-move-warning",
+        );
+        expect(warning).toHaveAttribute("role", "alert");
+        expect(warning).toHaveTextContent(
+          "Some existing goals were written for a different setup and will run against the one selected for this swarm.",
+        );
+        expect(warning).not.toHaveTextContent("Ana");
+      } else {
+        expect(
+          screen.queryByTestId("new-swarm-confirm-env-move-warning"),
+        ).not.toBeInTheDocument();
+      }
+      expect(screen.queryByText(/authored against/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/Different server group/),
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(within(personas).getByTestId("new-swarm-persona-compact"));
+      const detail = await screen.findByTestId("new-swarm-persona-detail");
+      expect(within(detail).getByLabelText("Goal")).toHaveValue("Reconcile");
+    },
+  );
+
+  it("shows one warning for multiple personas with moved goals", async () => {
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+      { _id: "p-2", personaId: "p2", name: "Ben", role: "Dev", notes: "" },
     ];
-    personaJourneys = journeys;
+    personaJourneys = [
+      { _id: "j-1", goal: "Reconcile", environmentIds: ["env-2"] },
+    ];
     openDescribe();
     pickExistingPersona(/include ana/i);
+    pickExistingPersona(/include ben/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
-    return screen.findByTestId("new-swarm-reused-personas");
-  }
 
-  it("flags no move when reused goals already run on the selection", async () => {
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-1"],
-      },
-    ]);
-
-    // Nothing moves — the stored fan-out already IS the seeded selection.
-    expect(
-      screen.queryByTestId("new-swarm-confirm-env-moves"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("says which goals are being moved, and what they were written for", async () => {
-    // Stored on Amazon; the auto-seed picks Prod-like, so the launch re-stamps.
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-2"],
-      },
-      {
-        _id: "j-2",
-        name: "Chase refunds",
-        goal: "Chase",
-        environmentIds: ["env-2"],
-      },
-    ]);
-
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    expect(moves).toHaveTextContent("Ana");
-    expect(moves).toHaveTextContent("2 goals were authored against Amazon");
-    expect(moves).toHaveTextContent("will run here instead");
-  });
-
-  it("stays silent for a LEGACY goal that never had an environment", async () => {
-    // The launch still overrides this one — it has nothing else to run
-    // against — but there is no authored environment to move it off.
-    await reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
-
-    expect(
-      screen.queryByTestId("new-swarm-confirm-env-moves"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("cautions when the move crosses server groups", async () => {
-    // Same client on both rows, so the server-group caution is the only one
-    // that can fire and the assertion cannot pass by accident.
-    setEnvironments([
-      {
-        environmentId: "env-1",
-        projectId: "proj-1",
-        name: "Prod-like",
-        hostId: "host-1",
-        revision: 1,
-        serverAttachmentId: "att-excalidraw",
-      },
-      {
-        environmentId: "env-2",
-        projectId: "proj-1",
-        name: "Amazon",
-        hostId: "host-1",
-        revision: 1,
-        serverAttachmentId: "att-terac",
-      },
-    ]);
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-2"],
-      },
-    ]);
-
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    expect(moves).toHaveTextContent("Different server group.");
-    expect(moves).toHaveTextContent(
-      "These goals were written for another server",
+    const personas = await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() =>
+      expect(within(personas).getAllByText(/1 goal/)).toHaveLength(2),
     );
-  });
-
-  it("cautions when the move crosses CLIENTS", async () => {
-    // The shape this takes on every project without the environments flag: the
-    // composer seeds the first client and the goals were set up on another.
-    setEnvironments([
-      {
-        environmentId: "env-1",
-        projectId: "proj-1",
-        name: "Prod-like",
-        hostId: "host-1",
-        revision: 1,
-        serverAttachmentId: "att-shared",
-      },
-      {
-        environmentId: "env-2",
-        projectId: "proj-1",
-        name: "Amazon",
-        hostId: "host-2",
-        revision: 1,
-        serverAttachmentId: "att-shared",
-      },
-    ]);
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-2"],
-      },
-    ]);
-
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    expect(moves).toHaveTextContent("Different client.");
-    expect(moves).not.toHaveTextContent("server group");
-  });
-
-  it("names the client a LEGACY goal was set up against", async () => {
-    // No environmentIds at all, but `hostIds` says where it ran. Treating that
-    // as unknowable hid a real move on the most common kind of stored goal.
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        hostIds: ["host-2"],
-      },
-    ]);
-
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    expect(moves).toHaveTextContent("Cursor");
-    expect(moves).toHaveTextContent("Different client and server group.");
-  });
-
-  it("does not caution when the move keeps the same server group", async () => {
-    setEnvironments([
-      {
-        environmentId: "env-1",
-        projectId: "proj-1",
-        name: "Prod-like",
-        hostId: "host-1",
-        revision: 1,
-        serverAttachmentId: "att-shared",
-      },
-      {
-        environmentId: "env-2",
-        projectId: "proj-1",
-        name: "Amazon",
-        hostId: "host-2",
-        revision: 1,
-        serverAttachmentId: "att-shared",
-      },
-    ]);
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-2"],
-      },
-    ]);
-
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    // The move is still disclosed; only the caution is withheld.
-    expect(moves).toHaveTextContent("authored against Amazon");
-    expect(moves).not.toHaveTextContent("Different server group");
-  });
-
-  it("tells two same-named environments apart, and keeps the suffix on Confirm", async () => {
-    // The real project has two live environments both called MCPJam. Without a
-    // suffix the Describe picker is a coin flip AND the move notice reads
-    // "authored against MCPJam — moved to MCPJam", which explains nothing.
-    setEnvironments([
-      {
-        environmentId: "env-1",
-        projectId: "proj-1",
-        name: "MCPJam",
-        hostId: "host-1",
-        revision: 1,
-        serverAttachmentId: "att-excalidraw",
-      },
-      {
-        environmentId: "env-2",
-        projectId: "proj-1",
-        name: "MCPJam",
-        hostId: "host-2",
-        revision: 1,
-        serverAttachmentId: "att-terac",
-      },
-    ]);
-    await reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["env-2"],
-      },
-    ]);
-
     expect(
-      await screen.findByTestId("new-swarm-confirm-env-moves"),
-    ).toHaveTextContent("authored against MCPJam #2");
+      screen.getAllByTestId("new-swarm-confirm-env-move-warning"),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
   });
 
   it("re-seeds the target once hosts and environments land", async () => {
@@ -3310,9 +3273,7 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
     // blank for the rest of the flow and the launch had no target.
     hostsRef.current = [];
     setEnvironments([]);
-    const view = render(
-      <SwarmsTab projectId="proj-1" isAuthenticated createFlow />,
-    );
+    const view = render(createFlowTab());
     expect(
       screen.getByTestId("new-swarm-environments-picker"),
     ).toHaveTextContent("pick env");
@@ -3329,7 +3290,7 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
     ]);
     // Both queries land. In the app that re-renders the flow on its own; here
     // the rerender is what delivers the same thing.
-    view.rerender(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+    view.rerender(createFlowTab());
 
     await waitFor(() =>
       expect(
@@ -3361,7 +3322,7 @@ describe("SwarmsTab: Confirm with the environments flag off", () => {
     pickExistingPersona(/include ana/i);
   }
 
-  it("says which reused goals are moving to a different client", async () => {
+  it("keeps reused personas in their cards without a repeated summary", async () => {
     reuseAna([
       {
         _id: "j-1",
@@ -3386,10 +3347,18 @@ describe("SwarmsTab: Confirm with the environments flag off", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
 
-    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
-    expect(moves).toHaveTextContent("Ana");
-    expect(moves).toHaveTextContent("Cursor");
-    expect(moves).toHaveTextContent("Different client.");
+    expect(
+      await screen.findByTestId("new-swarm-confirm-env-move-warning"),
+    ).toHaveTextContent("Some existing goals were written for a different setup");
+    const personas = screen.getByTestId("new-swarm-reused-personas");
+    await waitFor(() => expect(personas).toHaveTextContent("1 goal"));
+    expect(
+      within(personas).getByTestId("new-swarm-persona-compact"),
+    ).toHaveTextContent("Ana");
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/authored against/)).not.toBeInTheDocument();
   });
 
   it("quotes the fan-out it will actually launch", async () => {
@@ -3431,7 +3400,11 @@ describe("SwarmsTab: Confirm with the environments flag off", () => {
     reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
-    await screen.findByTestId("new-swarm-reused-personas");
+    const personas = await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() => expect(personas).toHaveTextContent("1 goal"));
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-move-warning"),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -3496,7 +3469,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     await openReusedConfirm();
 
     expect(await screen.findByTestId("new-swarm-funding-split")).toHaveTextContent(
-      "1 sponsored conversation · 1 uses org credits",
+      "1 sponsored · 1 uses org credits",
     );
     // Why some use credits: the allowance ran short.
     expect(
@@ -3533,7 +3506,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     await openReusedConfirm();
 
     expect(await screen.findByTestId("new-swarm-funding-split")).toHaveTextContent(
-      "0 sponsored conversations · 2 use org credits",
+      "2 conversations use org credits",
     );
     expect(
       screen.getByTestId("new-swarm-funding-explanation"),
@@ -3596,7 +3569,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /changed while you were reviewing[\s\S]*nothing was launched/i,
+      /1 conversation will now use org credits[\s\S]*press continue to launch/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
     expect(
@@ -3605,7 +3578,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     // The new split is on screen, and launching again goes ahead with it.
     await waitFor(() =>
       expect(screen.getByTestId("new-swarm-funding-split")).toHaveTextContent(
-        "0 sponsored conversations · 1 uses org credits",
+        "1 conversation uses org credits",
       ),
     );
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
@@ -3623,7 +3596,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /couldn't confirm the 1 sponsored conversation[\s\S]*nothing was launched/i,
+      /couldn't confirm the sponsored conversations[\s\S]*nothing has launched/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
@@ -3642,15 +3615,15 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /couldn't confirm the 1 sponsored conversation[\s\S]*nothing was launched/i,
+      /couldn't confirm the sponsored conversations[\s\S]*nothing has launched/i,
     );
     expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 
-  it("reveals the split of brand-new goals once they exist, before any run starts", async () => {
-    // New goals have no id until launch, so the split cannot be shown on
-    // Confirm. Once created, the split is read, and if any conversation would
-    // be sponsored the person sees it and launches again.
+  it("launches brand-new sponsored goals in one click", async () => {
+    // New goals have no id until launch, so no split is on screen for them.
+    // Once created, the split is read and each run launches with its
+    // sponsored count: no second Continue.
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
@@ -3664,23 +3637,28 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
-      /can use sponsored conversations: 2 sponsored conversations · 0 use org credits/i,
-    );
-    expect(launchJourneyRunMock).not.toHaveBeenCalled();
-    // The goals were created, exactly once, and stay created.
-    expect(createJourneyMock).toHaveBeenCalledTimes(2);
-    await waitFor(() =>
-      expect(screen.getByTestId("new-swarm-funding-split")).toHaveTextContent(
-        "2 sponsored conversations · 0 use org credits",
-      ),
-    );
-
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
     expect(launchArgs().map((a) => a.expectedSponsored)).toEqual([1, 1]);
     await screen.findByTestId("new-swarm-running-step");
+    expect(
+      screen.queryByTestId("new-swarm-funding-notice"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("launches in one click when more conversations are sponsored than were shown", async () => {
+    fundingPreviewMock.mockResolvedValueOnce(supported([previewRun(0, 1)]));
+    await openReusedConfirm();
+    await screen.findByTestId("new-swarm-funding-split");
+
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    expect(launchArgs()[0].expectedSponsored).toBe(1);
+    expect(
+      screen.queryByTestId("new-swarm-funding-notice"),
+    ).not.toBeInTheDocument();
   });
 
   it("launches new goals straight away when none of their conversations would be sponsored", async () => {
@@ -3696,6 +3674,113 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
     expect(launchArgs().map((a) => a.expectedSponsored)).toEqual([0, 0]);
+  });
+
+  async function openMixedConfirm() {
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      { _id: "j-1", name: "Saved goal", goal: "Existing goal text" },
+    ];
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-confirm-add-existing"));
+    fireEvent.click(screen.getByRole("button", { name: /^add ana$/i }));
+    await screen.findByTestId("new-swarm-funding-split");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+    expect(screen.getByTestId("new-swarm-funding-pending")).toHaveTextContent(
+      "Doesn't include your 2 new goals yet.",
+    );
+  }
+
+  it.each([1, 2])(
+    "launches a mixed swarm in one click when the displayed goals keep or gain sponsorship (%i)",
+    async (actualSponsored) => {
+      fundingPreviewMock.mockImplementation(async (_projectId, runs) =>
+        supported(
+          runs.length === 1
+            ? [previewRun(1, 1)]
+            : [
+                previewRun(actualSponsored, 2 - actualSponsored),
+                previewRun(1, 0),
+                previewRun(1, 0),
+              ],
+        ),
+      );
+      await openMixedConfirm();
+
+      fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+      await screen.findByTestId("new-swarm-running-step");
+      expect(launchJourneyRunMock).toHaveBeenCalledTimes(3);
+      expect(launchArgs().map((args) => args.expectedSponsored)).toEqual([
+        actualSponsored,
+        1,
+        1,
+      ]);
+      expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("does not let new goals' sponsorship mask a loss for the displayed goals", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    await openMixedConfirm();
+
+    // The launch overall has MORE sponsored conversations than the display,
+    // but the existing goal would move onto credits. Compare only shown ids.
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(0, 1), previewRun(1, 0), previewRun(1, 0)]),
+    );
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /1 conversation from existing goals will now use org credits/i,
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-funding-split")).toHaveTextContent(
+        "2 sponsored · 1 uses org credits",
+      ),
+    );
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(launchArgs().map((args) => args.expectedSponsored)).toEqual([0, 1, 1]);
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not launch a mixed swarm unchecked when the displayed sponsorship cannot be verified", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    await openMixedConfirm();
+
+    fundingPreviewMock.mockRejectedValue(new Error("network down"));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /couldn't confirm the sponsored conversations/i,
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+  });
+
+  it("an unverified mixed launch still says a goal could not be created", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    createJourneyMock.mockReset();
+    createJourneyMock
+      .mockRejectedValueOnce(new Error("Goal service unavailable"))
+      .mockResolvedValueOnce({ _id: "journey-2" });
+    await openMixedConfirm();
+
+    fundingPreviewMock.mockRejectedValue(new Error("network down"));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /couldn't confirm the sponsored conversations/i,
+    );
+    await waitFor(() => expect(alertText()).toMatch(/Goal service unavailable/));
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 
   it("on a 409 for the first run: launches nothing more, keeps the goals, refreshes the split and explains", async () => {
@@ -3752,16 +3837,25 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
   }
+  /**
+   * Gets brand-new goals created and then stops on Confirm: the first run is
+   * refused (409), so the goals exist and nothing launched.
+   */
+  async function refuseFirstLaunchOfNewGoals() {
+    launchJourneyRunMock.mockRejectedValueOnce(funding409(1, 0, 1));
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+  }
   const alertText = () =>
     screen
       .queryAllByRole("alert")
       .map((node) => node.textContent ?? "")
       .join(" ");
 
-  // The review stop returns before the launch's own summary, so a goal that
-  // failed to create used to vanish from the screen: it was simply missing from
-  // the launch, with no message.
-  it("a split-review stop still says a goal could not be created", async () => {
+  // A goal that failed to create must not vanish from the screen when the
+  // rest of a sponsored launch goes ahead.
+  it("a sponsored one-click launch still says a goal could not be created", async () => {
     fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
     createJourneyMock.mockReset();
     createJourneyMock
@@ -3771,13 +3865,13 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    expect(
-      await screen.findByTestId("new-swarm-funding-notice"),
-    ).toHaveTextContent(/can use sponsored conversations/i);
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    expect(launchArgs()[0].expectedSponsored).toBe(1);
     await waitFor(() =>
-      expect(alertText()).toMatch(/Goal service unavailable/),
+      expect(
+        [alertText(), ...vi.mocked(toast.warning).mock.calls.map((c) => String(c[0]))].join(" "),
+      ).toMatch(/Goal service unavailable/),
     );
-    expect(launchJourneyRunMock).not.toHaveBeenCalled();
   });
 
   // Run N's expected count assumes every earlier run launched. When one failed
@@ -3833,15 +3927,13 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
   // editable. Lowering or raising a persona's iterations (the natural reaction
   // to "review the split") changed the estimate on screen but neither the split
   // that was previewed nor what launched, because both read the frozen targets.
-  it("applies iterations changed after the review stop to the preview and to the launch", async () => {
+  it("applies iterations changed after a launch stop to the preview and to the launch", async () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await screen.findByTestId("new-swarm-funding-notice");
+    await refuseFirstLaunchOfNewGoals();
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
-    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -3862,10 +3954,12 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(3));
     // The goals were created once and stay created.
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
-    expect(launchArgs().map((a) => a.sessionsPerTarget)).toEqual([
+    expect(launchArgs()
+      .slice(1)
+      .map((a) => a.sessionsPerTarget)).toEqual([
       2,
       undefined,
     ]);
@@ -3875,14 +3969,12 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await screen.findByTestId("new-swarm-funding-notice");
+    await refuseFirstLaunchOfNewGoals();
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(3));
     for (const args of launchArgs()) {
       expect(args).not.toHaveProperty("sessionsPerTarget");
     }
@@ -3897,6 +3989,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
+    launchJourneyRunMock.mockRejectedValueOnce(funding409(1, 0, 1));
     await openNewGoalsConfirm();
     // Before any goal exists the set is editable.
     expect(
@@ -3934,7 +4027,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     // What launched is what was shown: both goals, none created twice.
-    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(3));
     expect(createJourneyMock).toHaveBeenCalledTimes(2);
   });
 
@@ -3942,9 +4035,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await screen.findByTestId("new-swarm-funding-notice");
+    await refuseFirstLaunchOfNewGoals();
 
     fireEvent.click(
       screen.getByRole("button", { name: /^view persona refund chaser/i }),
@@ -3967,21 +4058,19 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
   // The failure was said on the stop, then cleared by the next click: the launch
   // that followed ran only what was created and ended in a plain success toast,
   // so a goal that never existed vanished without a word.
-  it("still says a goal could not be created when the launch goes ahead after the review stop", async () => {
+  it("still says a goal could not be created when the launch goes ahead after a launch stop", async () => {
     fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
     createJourneyMock.mockReset();
     createJourneyMock
       .mockRejectedValueOnce(new Error("Goal service unavailable"))
       .mockResolvedValueOnce({ _id: "journey-2" });
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await screen.findByTestId("new-swarm-funding-notice");
+    await refuseFirstLaunchOfNewGoals();
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await screen.findByTestId("new-swarm-running-step");
-    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(2);
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalledWith(
       expect.stringMatching(/Launched 1 run\.[\s\S]*Goal service unavailable/i),
@@ -4069,11 +4158,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    expect(
-      await screen.findByTestId("new-swarm-funding-notice"),
-    ).toBeInTheDocument();
+    await refuseFirstLaunchOfNewGoals();
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -4094,9 +4179,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     fundingPreviewMock.mockResolvedValue(
       supported([previewRun(1, 0), previewRun(1, 0)]),
     );
-    await openNewGoalsConfirm();
-    fireEvent.click(screen.getByTestId("new-swarm-launch"));
-    await screen.findByTestId("new-swarm-funding-notice");
+    await refuseFirstLaunchOfNewGoals();
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
 
     let release!: () => void;
@@ -4114,7 +4197,7 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
     );
 
     await waitFor(() => expect(submitLaunchEnabled()).toBe(false));
-    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
 
     release();
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));

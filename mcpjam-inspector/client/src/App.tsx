@@ -27,11 +27,11 @@ import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
-import { autoOAuthEscalation } from "@/lib/oauth/auto-oauth-escalation";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
+import { UnavailableOrganizationDialog } from "./components/organization/UnavailableOrganizationDialog";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import {
@@ -386,7 +386,6 @@ import {
   buildOrganizationSwitchTarget,
   buildProjectSettingsTarget,
   buildProjectSwitchTarget,
-  getInvalidOrganizationRouteNavigationTarget,
   isDebugOAuthCallbackPath,
   navigationTargetToPath,
   navigateApp,
@@ -1293,6 +1292,7 @@ function useTemplateVerifyDeepLink({
           projectId,
           name: template.label,
           input: { ...seed, serverIds: [] },
+          applyDefaultSystemPrompt: true,
         });
         navigate(buildHostVerifyLandingPath(hostId, requestedFocusTab), {
           replace: true,
@@ -1850,7 +1850,7 @@ function ScenariosRouteContent() {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
-    return null;
+    return <LoadingScreen />;
   }
 
   if (gate) {
@@ -1991,7 +1991,7 @@ function SwarmsRouteContent() {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
-    return null;
+    return <LoadingScreen />;
   }
 
   // Guests stop here. `null` means the viewer is a signed-in member.
@@ -3495,6 +3495,7 @@ export default function App() {
     handleConnect,
     handleDisconnect,
     handleRuntimeDisconnect,
+    clearAutoOAuthEscalation,
     handleReconnect,
     reconnectServerWithResult,
     reconnectServerForClientSwitch,
@@ -4061,17 +4062,12 @@ export default function App() {
       // exists. Start a fresh first-run attempt so the settings selected in the
       // inline authentication editor are applied before retrying. Reconnecting
       // the saved row directly would silently discard those edits.
-      autoOAuthEscalation.markFailed({
-        projectId: convexProjectId,
-        serverId: hostedServerIdsByName[serverName],
-        serverName,
-      });
+      clearAutoOAuthEscalation(serverName);
       openFirstRunServerConnection(draft);
     },
     [
-      convexProjectId,
+      clearAutoOAuthEscalation,
       firstRunConnectionState,
-      hostedServerIdsByName,
       openFirstRunServerConnection,
     ],
   );
@@ -4142,7 +4138,11 @@ export default function App() {
       suppressSuccessToast: true,
     })
       .then((result) => {
-        if (result.status === "connected") return;
+        // "superseded": a newer connect owns the outcome and will publish the
+        // terminal runtime row, so this is not a failure.
+        if (result.status === "connected" || result.status === "superseded") {
+          return;
+        }
         if (firstRunConnectionAttemptRef.current !== attemptId) return;
         firstRunOAuthReconnectServerRef.current = null;
         setFirstRunConnectionState({
@@ -4264,11 +4264,7 @@ export default function App() {
 
     if (server.connectionStatus === "failed") {
       if (server.lastError === OAUTH_AUTHORIZATION_CANCELLED_MESSAGE) {
-        autoOAuthEscalation.markFailed({
-          projectId: convexProjectId,
-          serverId: hostedServerIdsByName[firstRunConnectionState.serverName],
-          serverName: firstRunConnectionState.serverName,
-        });
+        clearAutoOAuthEscalation(firstRunConnectionState.serverName);
         firstRunOAuthReturnServerRef.current = null;
         firstRunAuthorizationRetryServerRef.current = null;
         firstRunOAuthReconnectServerRef.current = null;
@@ -4318,10 +4314,9 @@ export default function App() {
     }
   }, [
     appState.servers,
+    clearAutoOAuthEscalation,
     clearPendingDashboardOAuth,
-    convexProjectId,
     firstRunConnectionState,
-    hostedServerIdsByName,
     pendingDashboardOAuth,
   ]);
 
@@ -5705,51 +5700,10 @@ export default function App() {
     [setSelectedMCPConfigs],
   );
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      return;
-    }
-
-    // A pending delete holds the route only while the org is still listed, so
-    // Back to an org that is already gone still redirects.
-    if (
-      routeOrganizationId &&
-      ((deletingOrganizationIds.includes(routeOrganizationId) &&
-        sortedOrganizations.some((org) => org._id === routeOrganizationId)) ||
-        optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
-    ) {
-      return;
-    }
-
-    const navigationTarget = getInvalidOrganizationRouteNavigationTarget({
-      routeTab: activeTab,
-      routeOrganizationId,
-      isLoadingOrganizations,
-      hasRouteOrganization,
-    });
-    if (!navigationTarget) {
-      return;
-    }
-
+  const handleUnavailableOrganizationContinue = useCallback(() => {
     setActiveOrganizationId(undefined);
-    if (navigationTarget === routePaths.servers) {
-      navigateToServers({ replace: true });
-    } else {
-      navigateToTarget(navigationTarget, { replace: true });
-    }
-  }, [
-    activeTab,
-    deletingOrganizationIds,
-    hasRouteOrganization,
-    isAuthenticated,
-    isLoadingOrganizations,
-    navigateToServers,
-    navigateToTarget,
-    optimisticallyDeletedOrganizationIds,
-    routeOrganizationId,
-    setActiveOrganizationId,
-    sortedOrganizations,
-  ]);
+    navigateToServers({ replace: true });
+  }, [navigateToServers, setActiveOrganizationId]);
 
   const handleOrganizationDeleted = useCallback(
     (deletedOrganizationId: string) => {
@@ -6736,6 +6690,32 @@ export default function App() {
             <Toaster />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <UnavailableOrganizationDialog
+              isAuthenticated={isAuthenticated}
+              routeTab={activeTab}
+              routeOrganizationId={routeOrganizationId}
+              isLoadingOrganizations={isLoadingOrganizations}
+              hasRouteOrganization={hasRouteOrganization}
+              isDeletionPending={
+                !!routeOrganizationId &&
+                ((deletingOrganizationIds.includes(routeOrganizationId) &&
+                  sortedOrganizations.some(
+                    (org) => org._id === routeOrganizationId,
+                  )) ||
+                  optimisticallyDeletedOrganizationIds.includes(
+                    routeOrganizationId,
+                  ))
+              }
+              isDeleted={
+                !!routeOrganizationId &&
+                deletingOrganizationIds.includes(routeOrganizationId)
+              }
+              isSeatPending={sortedOrganizations.some(
+                (org) => org._id === routeOrganizationId && org.seatPending,
+              )}
+              accountEmail={currentUser?.email || workOsUser?.email}
+              onContinue={handleUnavailableOrganizationContinue}
+            />
             <SessionRefreshBanner />
             <GuestSessionRefusedBanner />
             <div

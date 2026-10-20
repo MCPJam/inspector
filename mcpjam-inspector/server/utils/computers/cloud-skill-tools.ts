@@ -14,7 +14,7 @@
  * (the harness adapters already mirror that). When the tools are wired is
  * decided by `shouldEnableCloudSkillTools` (see `web/chat-v2.ts`).
  */
-import { tool } from "ai";
+import { skillTool as tool } from "../skill-tool.js";
 import { z } from "zod";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { runsHarness } from "../harness/harness-availability.js";

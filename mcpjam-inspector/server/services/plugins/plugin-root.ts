@@ -87,37 +87,31 @@ export function substitutePluginPlaceholders(
  * Resolve a plugin stdio component against its materialized bundle and its
  * writable data directory.
  *
- * The injected `PLUGIN_ROOT`/`PLUGIN_DATA` aliases are applied FIRST; the
- * component's own env entries are substituted over them. (The SDK parser
- * rejects bundles whose env declares the reserved `PLUGIN_ROOT`/`PLUGIN_DATA`
- * keys, so the spec's env can never shadow the injected aliases.)
+ * The component's env entries are substituted first and the client-owned
+ * `PLUGIN_ROOT`/`PLUGIN_DATA` are applied LAST, so a row that declares either
+ * (the parser refuses such bundles, but rows can outlive a parser) never
+ * shadows them. A component that names no working directory runs in the
+ * plugin root, as the Agent Plugins spec requires.
  */
 export function resolvePluginStdioLaunch(
   spec: PluginStdioLaunchSpec,
   root: string,
   options?: { dataDir?: string }
-): Required<Pick<PluginStdioLaunchSpec, "command" | "args" | "env">> & {
-  workingDirectory?: string;
-} {
+): Required<PluginStdioLaunchSpec> {
   const roots = { root, dataDir: options?.dataDir };
-  const env: Record<string, string> = {
-    ...pluginRootEnv(root),
-    ...(roots.dataDir !== undefined ? { PLUGIN_DATA: roots.dataDir } : {}),
-  };
+  const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(spec.env)) {
     env[key] = substitutePluginPlaceholders(value, roots);
   }
+  Object.assign(env, pluginRootEnv(root));
+  if (roots.dataDir !== undefined) env.PLUGIN_DATA = roots.dataDir;
   return {
     command: substitutePluginPlaceholders(spec.command, roots),
     args: spec.args.map((arg) => substitutePluginPlaceholders(arg, roots)),
     env,
-    ...(spec.workingDirectory !== undefined
-      ? {
-          workingDirectory: substitutePluginPlaceholders(
-            spec.workingDirectory,
-            roots
-          ),
-        }
-      : {}),
+    workingDirectory:
+      spec.workingDirectory !== undefined
+        ? substitutePluginPlaceholders(spec.workingDirectory, roots)
+        : root,
   };
 }

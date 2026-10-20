@@ -103,6 +103,11 @@ import {
   type MultiModelCardSummary,
 } from "@/components/chat-v2/model-compare-card-header";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  CASE_SAVE_FAILURE_MESSAGE,
+  refuseCaseSave,
+  refuseInvalidCaseSave,
+} from "./case-save-feedback";
 import type { ModelDefinition } from "@/shared/types";
 import {
   allModelsOutOfCredits,
@@ -2200,11 +2205,7 @@ export function TestTemplateEditor({
   const runTest = useCallback(
     async (launch?: {
       suite: EvalSuite;
-      options: {
-        iterationOverride: number;
-        ephemeralEnvironment?: boolean;
-        throwOnFailure?: boolean;
-      };
+      options: CaseRunLaunchOptions & { iterationOverride: number };
     }) => {
       const caseId = currentTestCase?._id;
       if (!onRunCase || !caseId || isDraft) return;
@@ -2217,15 +2218,13 @@ export function TestTemplateEditor({
         throw new Error(evalRunsDisabledReason);
       setRunTestPending(true);
       try {
-        if (hasUnsavedChanges) {
-          // A refused save (an unset tool question, an invalid step list) must
-          // not launch: the run executes the PERSISTED case, so it would grade
-          // a version of the case the author is not looking at.
+        // A submitted setup sheet saved its draft before closing. A direct run
+        // saves here: a refused save (an unset tool question, an invalid step
+        // list) must not launch, because the run executes the PERSISTED case
+        // and would grade a version of the case the author is not looking at.
+        if (hasUnsavedChanges && !launch) {
           const saved = await handleSaveRef.current?.();
-          if (!saved) {
-            if (launch) throw new Error("Save the test case before running.");
-            return;
-          }
+          if (!saved) return;
         }
         await onRunCase(caseId, {
           iterationOverride,
@@ -2817,11 +2816,12 @@ export function TestTemplateEditor({
    * saved case, so a refused save silently ran something the author was not
    * looking at.
    */
-  const handleSave = async (): Promise<boolean> => {
-    if (hasInvalidFieldDraft) {
-      toast.error("Complete the highlighted fields before saving.");
-      return false;
-    }
+  const handleSave = async (quiet = false): Promise<boolean> => {
+    if (hasInvalidFieldDraft)
+      return refuseCaseSave(
+        "Complete the highlighted fields before saving.",
+        quiet,
+      );
     if (readOnly) return false;
     if (isDraft) {
       await handleCreateFromDraft();
@@ -2831,16 +2831,15 @@ export function TestTemplateEditor({
 
     if (simpleToolsBlock) {
       setSimpleValidationAttempted(true);
-      toast.error(simpleToolsBlock);
-      return false;
+      return refuseInvalidCaseSave(simpleToolsBlock, quiet);
     }
 
     if (!validateSteps(editForm.steps)) {
-      toast.error(
+      return refuseInvalidCaseSave(
         getStepsBlockReason(editForm.steps) ??
           "Fix the test configuration before saving.",
+        quiet,
       );
-      return false;
     }
 
     try {
@@ -2866,11 +2865,14 @@ export function TestTemplateEditor({
         has_match_options: savePayload.matchOptions != null,
         has_predicates: savePayload.predicates != null,
       });
-      toast.success("Changes saved");
+      if (!quiet) toast.success("Changes saved");
       return true;
     } catch (error) {
       console.error("Failed to save:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to save changes"));
+      refuseCaseSave(
+        getBillingErrorMessage(error, CASE_SAVE_FAILURE_MESSAGE),
+        quiet,
+      );
       throw error;
     }
   };
@@ -4702,6 +4704,9 @@ export function TestTemplateEditor({
                       onStart={(launchSuite, options) =>
                         runTest({ suite: launchSuite, options })
                       }
+                      saveBeforeRun={
+                        hasUnsavedChanges ? () => handleSave(true) : undefined
+                      }
                     />
                   )
                 ) : useWorkspace ? (
@@ -5405,6 +5410,11 @@ export function TestTemplateEditor({
                 }
                 history={(evidence) => (
                   <CaseRunTimeline
+                    scope={{
+                      projectId: projectId ?? suite?.projectId ?? "",
+                      suiteId,
+                      caseId: selectedTestCaseId,
+                    }}
                     openIterationId={
                       openCompareFromRoute
                         ? null

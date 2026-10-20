@@ -1,8 +1,11 @@
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
-import type { PluginOnboardingSpec } from "@/shared/plugin-onboarding";
-import { createThreadAppApi } from "@/components/host-workspace/thread-app-api";
+import {
+  createPluginOnboardingRun,
+  createPluginOnboardingSend,
+  type SendPluginOnboarding,
+} from "./playground-onboarding";
 import { useComposerMentions } from "@/components/host-workspace/use-composer-mentions";
 import { usePluginIconsById } from "@/components/host-workspace/plugin-icon-directory";
 import { useProjectPlugins } from "@/hooks/usePluginImportApi";
@@ -10,10 +13,7 @@ import { usePlaygroundHiddenEnvironment } from "@/hooks/use-playground-hidden-en
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { ActivePluginServer } from "@/hooks/useActivePlugins";
 import { buildExtensionServers } from "./playground-plugins";
-import {
-  isRunnablePlugin,
-  skippedPluginsForNotice,
-} from "@/lib/plugins/hidden-environment";
+import { skippedPluginsForNotice } from "@/lib/plugins/hidden-environment";
 import {
   showPluginNotice,
   type PluginNoticeData,
@@ -159,7 +159,7 @@ import {
   MultiModelStarterPromptsBlock,
   MultiModelStartersEmptyLayout,
 } from "@/components/chat-v2/multi-model-starters-empty";
-import { ErrorBox } from "@/components/chat-v2/error";
+import { TopupGatedErrorBox as ErrorBox } from "@/components/billing/TopupGatedErrorBox";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import {
   DETACH_FORK_FAILED_MESSAGE,
@@ -213,23 +213,19 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import {
+  OrgAiRefusalHandoffProvider,
+  orgAiRefusalHandoff,
+} from "@/contexts/org-ai-refusal-context";
+import {
   useHost,
   useHostList,
-  useHostMutations,
   type HostListItem,
   type HostDetail,
 } from "@/hooks/useClients";
-import {
-  cloneHostTemplateInput,
-  emptyHostConfigInputV2,
-  gateMcpToolResultImageRenderingByModelVisibility,
-  DEFAULT_SEEDED_HOST_MODEL_ID,
-} from "@/lib/client-config-v2";
-import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
+import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
-import { useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
+import { localHarnessSetupBlocksSend, useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
 import {
   LocalHarnessTrustDialog,
   LocalHarnessAutoApproveDialog,
@@ -275,22 +271,13 @@ import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-tool-slots";
 import { clientDisplayName } from "@/lib/client-display-name";
-import {
-  loadSelectedHostIds,
-  replaceLeadHostId,
-  saveSelectedHostIds,
-} from "@/lib/selected-host-storage";
-import {
-  loadPreviewedHostId,
-  savePreviewedHostId,
-} from "@/lib/previewed-client-storage";
+import { replaceLeadHostId } from "@/lib/selected-host-storage";
+import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
+import { useMissingLeadFallback } from "./use-missing-lead-fallback";
+import { playgroundClientInitNotice } from "./playground-client-init-notice";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
-import {
-  shouldQueryProjectId,
-  useCanManageProjectClients,
-  useProjectMembers,
-} from "@/hooks/useProjects";
+import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
@@ -379,23 +366,6 @@ import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/availab
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
-
-// Backoff for retrying a failed seed. Deleting the per-project "seeded"
-// marker only PERMITS a retry — nothing in the seed effect's dependency list
-// changes when a create rejects, so without an explicit nudge the effect
-// never runs again and the guest sits on an empty playground for the rest of
-// the session. Bounded: a backend that's down stays down, and three spaced
-// attempts is the difference between "recovers from a blip" and "hammers a
-// struggling server".
-const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
-
-// PUR-11: the 3 catalog templates a first-run guest's Playground compare
-// lineup is seeded from, lead first. See the "Seed backstop" effect below.
-// Keep every id here flag-free: guests never match a rollout gate, and the
-// seed refuses a partial lineup (falling back to one blank host), so a gated
-// template like "claude-code" would both leak the gated client to everyone
-// and have no working way to be filtered out.
-const PLAYGROUND_SEED_TEMPLATE_IDS = ["claude", "chatgpt", "cursor"] as const;
 
 const NO_PLUGIN_SERVERS: ActivePluginServer[] = [];
 
@@ -996,6 +966,10 @@ export function PlaygroundMain({
     organizationId: projectOrganizationId,
   });
   const manageOrgProviders = useOrgModelsHandoff(projectOrganizationId);
+  const refusalHandoff = useMemo(
+    () => orgAiRefusalHandoff({ onManageOrgProviders: manageOrgProviders }),
+    [manageOrgProviders],
+  );
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -1489,6 +1463,7 @@ export function PlaygroundMain({
                   hiddenEnvironment: {
                     environmentId: hiddenEnvironment.environmentId,
                     pluginServerIds: hiddenEnvironment.pluginServerIds,
+                    venue: hiddenEnvironment.venue,
                     recover: hiddenEnvironment.recover,
                   },
                 }
@@ -1917,15 +1892,7 @@ export function PlaygroundMain({
   const runPluginOnboardingRef = useRef<RunPluginOnboarding>(async () => {
     throw new Error("Onboarding is unavailable");
   });
-  const sendPluginOnboardingRef = useRef<
-    (
-      spec: PluginOnboardingSpec,
-      serverId: string,
-      threadId: string,
-      ownerKey: string,
-      sourceSignal?: AbortSignal,
-    ) => Promise<void>
-  >(async () => {
+  const sendPluginOnboardingRef = useRef<SendPluginOnboarding>(async () => {
     throw new Error("Onboarding is unavailable");
   });
   // In the Playground, extension state lives in ExtensionWorkspaceProvider
@@ -2315,26 +2282,9 @@ export function PlaygroundMain({
         loadingHistorySessionId !== null));
   const restoringAdhocRef = useRef(restoringAdhoc);
   restoringAdhocRef.current = restoringAdhoc;
-  const { createHost: createPlaygroundHost, deleteHost: deletePlaygroundHost } =
-    useHostMutations();
-  // Creating clients is project-admin only (`hosts.ts` `requireAdminAccess`);
-  // a member or guest in an empty project gets no seed instead of refused
-  // creates (and their 1s/4s/10s retries).
-  const { canManage: canSeedHosts, isLoading: seedRoleLoading } =
-    useCanManageProjectClients({
-      isAuthenticated: isConvexAuthenticated,
-      projectId: multiHostProjectId,
-    });
-  const seedCatalogState = useHostCatalog();
-  const seedThemeMode = usePreferencesStore((s) => s.themeMode);
-  // Mirrors `multiHostProjectId` so the seed effect's async continuation
-  // (below) can detect a navigate-away while its mutations were in flight —
-  // without this, a slow seed could apply project A's freshly-created host
-  // ids/lead to whatever project the user has since switched to. A layout
-  // effect (not a passive one) so the ref is current before any already-
-  // in-flight promise continuation's microtask can observe it — a passive
-  // effect can still be pending when a `.then()` callback runs in the same
-  // tick as the commit that changed `multiHostProjectId`.
+  // Mirrors `multiHostProjectId` so a client-initialization response can tell
+  // whether its project is still open. A layout effect, so the ref is current
+  // before any in-flight response's continuation can observe it.
   const activeMultiHostProjectIdRef = useRef(multiHostProjectId);
   useLayoutEffect(() => {
     activeMultiHostProjectIdRef.current = multiHostProjectId;
@@ -2350,339 +2300,27 @@ export function PlaygroundMain({
     },
     [],
   );
-  // Seed backstop: the global host bar (which normally auto-creates a single
-  // default "MCPJam" host for empty projects) is hidden on the playground, so
-  // this replicates that one-shot seed — but with the immediate client-
-  // comparison value prop (PUR-11): guests land with 3 pre-selected clients
-  // (ChatGPT, Claude, Cursor) instead of one blank host + a toggle they'd
-  // have to find and flip themselves. Guarded by `hostList.length === 0` + a
-  // per-project ref so it fires at most once per empty project and never
-  // blocks a different empty project from getting its own default hosts.
-  const playgroundSeededProjectIdsRef = useRef(new Set<string>());
-  // While the three first-run hosts are being created, a subscription can
-  // surface ChatGPT before Claude. Do not let the generic missing-preview
-  // fallback turn that timing artifact into the selected default; the seed
-  // writes Claude as the lead after all three creates succeed.
-  const playgroundSeedingProjectIdsRef = useRef(new Set<string>());
-  // Retry plumbing for the two failure paths below (single-host create
-  // rejected / 3-host seed rolled back). Both clear the project's "seeded"
-  // marker, which permits a retry but cannot cause one — this tick is what
-  // actually re-runs the effect. Attempts are counted per project so one
-  // project exhausting its budget doesn't spend another's.
-  const seedRetryCountsRef = useRef(new Map<string, number>());
-  const seedRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
-  const [seedRetryTick, setSeedRetryTick] = useState(0);
-  // A seed completion only mutates a ref. This tick lets the missing-preview
-  // fallback run again when a user changed the compare lineup mid-seed and
-  // the seed correctly declined to overwrite that choice.
-  const [seedCompletionTick, setSeedCompletionTick] = useState(0);
-  useEffect(() => {
-    const timers = seedRetryTimersRef.current;
-    return () => {
-      // Unmounting drops the retry: a pending timer would setState on a dead
-      // component, and a remount re-runs the seed effect from scratch anyway.
-      timers.forEach((timer) => clearTimeout(timer));
-      timers.clear();
-    };
-  }, []);
-  const schedulePlaygroundSeedRetry = useCallback((projectId: string) => {
-    const attempt = seedRetryCountsRef.current.get(projectId) ?? 0;
-    const delay = PLAYGROUND_SEED_RETRY_DELAYS_MS[attempt];
-    // Budget exhausted — stop retrying. The guest can still recover with a
-    // reload, which re-fetches the catalog and resets this state entirely.
-    if (delay === undefined) return;
-    seedRetryCountsRef.current.set(projectId, attempt + 1);
-    const timer = setTimeout(() => {
-      seedRetryTimersRef.current.delete(timer);
-      setSeedRetryTick((tick) => tick + 1);
-    }, delay);
-    seedRetryTimersRef.current.add(timer);
-  }, []);
-  useEffect(() => {
-    if (
-      !isConvexAuthenticated ||
-      hostListLoading ||
-      !multiHostProjectId ||
-      seedRoleLoading ||
-      !canSeedHosts ||
-      hostList.length > 0 ||
-      restoringAdhoc ||
-      playgroundSeededProjectIdsRef.current.has(multiHostProjectId) ||
-      seedCatalogState.status === "loading"
-    ) {
-      return;
-    }
-    const seedProjectId = multiHostProjectId;
-    // A degraded catalog is NOT a transient gap worth waiting out:
-    // `useHostCatalog` fetches once per page load and memoizes the result for
-    // the rest of the session, so "fallback"/"error" never upgrade to "live"
-    // without a full reload. The playground hides the global host bar, so this
-    // effect is the only thing between a guest and a project with zero
-    // clients — every resolved status therefore has to produce something:
-    //   - "fallback" (the server served its bundled catalog): that catalog
-    //     carries all 3 seed templates, so the full lineup still lands. Treated
-    //     exactly like "live".
-    //   - "error" (no catalog at all), or a catalog somehow missing a seed
-    //     template: nothing to clone from, so fall back to the pre-PUR-11
-    //     backstop — one blank "MCPJam" host, no compare lineup. Worse than the
-    //     3-client default, far better than an empty playground the guest has
-    //     no way to recover from.
-    const catalog =
-      seedCatalogState.status === "error" ? null : seedCatalogState.catalog;
-    const seeds = catalog
-      ? PLAYGROUND_SEED_TEMPLATE_IDS.map((id) => ({
-          id,
-          host: getCatalogHost(catalog, id),
-          template: getCatalogTemplate(catalog, id),
-        }))
-      : [];
-    // Never seed a partial (e.g. 2-client) lineup: it is neither the intended
-    // default nor the known-good single-host backstop.
-    const canSeedFullLineup =
-      seeds.length > 0 && seeds.every(({ host, template }) => host && template);
-    if (!canSeedFullLineup) {
-      // Same mid-seed snapshot discipline as the 3-host path below — see the
-      // long comment there for why the lead and the lineup are tracked
-      // separately, and why the snapshot (not a bare `length > 0` on the
-      // final value) is what distinguishes a real user choice from a stale
-      // array left behind by deleted hosts.
-      const preFallbackSelectedHostIds = loadSelectedHostIds(seedProjectId);
-      const preFallbackPreviewedHostId = loadPreviewedHostId(seedProjectId);
-      playgroundSeededProjectIdsRef.current.add(seedProjectId);
-      createPlaygroundHost({
-        projectId: seedProjectId,
-        name: "MCPJam",
-        // Pin a cheap default model — see ClientSelectionSync's seed for why a
-        // modelless default host breaks synthetic/swarm runs.
-        input: emptyHostConfigInputV2({
-          modelId: DEFAULT_SEEDED_HOST_MODEL_ID,
-        }),
-      })
-        .then(({ hostId }) => {
-          if (
-            activeMultiHostProjectIdRef.current === seedProjectId &&
-            restoringAdhocRef.current
-          )
-            return;
-          // As in the 3-host path: a lead now pointing at the host THIS
-          // fallback just created is our own "no valid previewed host"
-          // effect auto-picking it once the host list caught up, not a user
-          // choice — it must not veto the lineup write below.
-          const currentPreviewedHostId = loadPreviewedHostId(seedProjectId);
-          const leadIsSeededHost = currentPreviewedHostId === hostId;
-          const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
-          const selectionChangedMidSeed =
-            (!leadIsSeededHost &&
-              currentPreviewedHostId !== preFallbackPreviewedHostId) ||
-            currentSelectedHostIds.length !==
-              preFallbackSelectedHostIds.length ||
-            currentSelectedHostIds.some(
-              (id, index) => id !== preFallbackSelectedHostIds[index],
-            );
-          if (selectionChangedMidSeed) return;
-          // Persisted to the project it belongs to (not just React state) for
-          // the same navigate-away reason as the 3-host path below.
-          savePreviewedHostId(seedProjectId, hostId);
-          // The lineup is overwritten, not left alone, because "no compare"
-          // is not the same as "don't touch": a project reseeded after its
-          // hosts were deleted still has those dead ids in storage, and
-          // `usePersistedHost` PRESERVES the stored column count at read time
-          // (it replaces slot 0 with the lead rather than shrinking), so they
-          // would come back as a 3-column compare lineup wrapped around one
-          // real host — `isComparingHosts` reads `selectedHostIds.length > 1`
-          // and would happily switch on. Writing `[hostId]` collapses it.
-          saveSelectedHostIds(seedProjectId, [hostId]);
-          if (activeMultiHostProjectIdRef.current === seedProjectId) {
-            setPreviewedHostId(hostId);
-            setSelectedHostIds([hostId]);
-          }
-        })
-        .catch(() => {
-          playgroundSeededProjectIdsRef.current.delete(seedProjectId);
-          schedulePlaygroundSeedRetry(seedProjectId);
-        });
-      return;
-    }
-    // Snapshot the persisted lineup as it stood the moment we decided to
-    // seed, so the completion below can tell "nothing touched this since
-    // we started" (safe to apply the seed) from "something changed while
-    // we were creating hosts" (respect whatever's there now instead of
-    // overwriting it) — regardless of whether the snapshot itself was
-    // empty (a genuinely fresh project) or already non-empty (e.g. a
-    // reseed after the project's prior hosts were deleted, leaving a
-    // stale-but-present array — a bare `length > 0` check on the FINAL
-    // value alone can't distinguish that from a real manual selection
-    // made mid-seed, and would wrongly skip applying the new lineup).
-    //
-    // The lead is snapshotted separately from the array because it moves
-    // separately: the global host bar switches the previewed client through
-    // `savePreviewedHostId` alone, without touching the compare lineup, so a
-    // guard that watched only the array would still let the seed overwrite a
-    // client the user picked there mid-seed.
-    const preSeedSelectedHostIds = loadSelectedHostIds(seedProjectId);
-    const preSeedPreviewedHostId = loadPreviewedHostId(seedProjectId);
-    playgroundSeededProjectIdsRef.current.add(seedProjectId);
-    playgroundSeedingProjectIdsRef.current.add(seedProjectId);
-    Promise.allSettled(
-      seeds.map(({ host, template }) =>
-        createPlaygroundHost({
-          projectId: seedProjectId,
-          name: host!.label,
-          input: cloneHostTemplateInput(template, {
-            themeMode: seedThemeMode,
-          }),
-        }),
-      ),
-    )
-      .then(async (results) => {
-        const fulfilled = results.filter(
-          (
-            result,
-          ): result is PromiseFulfilledResult<
-            Awaited<ReturnType<typeof createPlaygroundHost>>
-          > => result.status === "fulfilled",
-        );
-        if (fulfilled.length < results.length) {
-          // Partial failure: a half-seeded project (1-2 hosts, no compare) is
-          // worse than an empty one that can cleanly retry — roll back
-          // whichever calls DID succeed. Only clear the "seeded" marker (and
-          // schedule the retry that actually re-runs this effect) if every
-          // rollback delete succeeded; if one fails, the partial hosts are
-          // stuck either way, and retrying would just hammer the same
-          // struggling backend with the other two creates too.
-          const rollback = await Promise.allSettled(
-            fulfilled.map((result) =>
-              deletePlaygroundHost({ hostId: result.value.hostId }),
-            ),
-          );
-          if (rollback.every((result) => result.status === "fulfilled")) {
-            playgroundSeededProjectIdsRef.current.delete(seedProjectId);
-            schedulePlaygroundSeedRetry(seedProjectId);
-          }
-          return;
-        }
-        const hostIds = fulfilled.map((result) => result.value.hostId);
-        // The user may have already picked something for this project since
-        // the seed started — e.g. manually added/selected a host via "Add
-        // client", or switched the previewed client in the global host bar,
-        // while these mutations were still in flight. The seed is a first-run
-        // default, not an authoritative overwrite: if either the lineup or the
-        // lead has changed since the snapshots above (whether those snapshots
-        // were empty or already stale-non-empty), leave both alone rather than
-        // clobbering a choice the user has already made. Both are checked
-        // because the seed writes both, and the two move independently — the
-        // global host bar moves the lead through `savePreviewedHostId` alone
-        // and never touches the lineup.
-        //
-        // One lead move is NOT a user choice, though: the "no valid previewed
-        // host" fallback effect below auto-picks a lead as soon as the host-
-        // list query catches up to the FIRST of these creates, which routinely
-        // lands while the other two are still in flight. That is our own
-        // write, so a lead now pointing at a host THIS seed just created must
-        // not veto the lineup — vetoing would strand the guest with 3 hosts
-        // and no compare lineup, the exact half-seeded state this backstop
-        // exists to prevent. Whichever seed host holds the lead is kept as
-        // lead (so a user who did pick one of them in the host bar keeps it),
-        // and the full 3-way lineup lands either way.
-        const currentPreviewedHostId = loadPreviewedHostId(seedProjectId);
-        const leadIsSeededHost =
-          currentPreviewedHostId !== null &&
-          hostIds.includes(currentPreviewedHostId);
-        const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
-        const selectionChangedMidSeed =
-          (!leadIsSeededHost &&
-            currentPreviewedHostId !== preSeedPreviewedHostId) ||
-          currentSelectedHostIds.length !== preSeedSelectedHostIds.length ||
-          currentSelectedHostIds.some(
-            (id, index) => id !== preSeedSelectedHostIds[index],
-          );
-        if (selectionChangedMidSeed) return;
-        const leadHostId = leadIsSeededHost
-          ? currentPreviewedHostId
-          : hostIds[0];
-        // Persist directly to `seedProjectId`'s OWN storage — bypassing the
-        // current React state setters, which are scoped to whatever project
-        // is ACTIVE right now — so a seed that resolves after the user has
-        // navigated away still lands correctly for the project it belongs to,
-        // rather than being dropped or misapplied to whatever's open when
-        // this resolves. `usePersistedHost`/`usePreviewedHostId` re-read from
-        // storage whenever their `projectId` changes, so returning to
-        // `seedProjectId` later picks this up. Lead is set explicitly
-        // alongside the array since a bare array write can't promote a lead
-        // when `previewedHostId` is still null (brand-new project).
-        if (
-          activeMultiHostProjectIdRef.current === seedProjectId &&
-          restoringAdhocRef.current
-        )
-          return;
-        savePreviewedHostId(seedProjectId, leadHostId);
-        saveSelectedHostIds(seedProjectId, hostIds);
-        if (activeMultiHostProjectIdRef.current === seedProjectId) {
-          // Still on the seeded project — also reflect it in live React state
-          // so the lead/lineup update immediately instead of waiting for a
-          // remount. Not touching `multiHostEnabled` here: nothing renders
-          // off it anymore (see `isComparingHosts` above `isMultiHostMode`,
-          // and the multi-model mutual-exclusion check below reads
-          // `selectedHostIds.length` directly for the same reason) — setting
-          // it would just get silently reverted by the "!canEnableMultiHost
-          // -> disable" effect before the host-list query catches up anyway.
-          setPreviewedHostId(leadHostId);
-          setSelectedHostIds(hostIds);
-        }
-      })
-      .finally(() => {
-        playgroundSeedingProjectIdsRef.current.delete(seedProjectId);
-        setSeedCompletionTick((tick) => tick + 1);
-      });
-  }, [
-    isConvexAuthenticated,
-    hostListLoading,
-    multiHostProjectId,
-    seedRoleLoading,
-    canSeedHosts,
-    hostList.length,
-    restoringAdhoc,
-    createPlaygroundHost,
-    deletePlaygroundHost,
-    setPreviewedHostId,
-    setSelectedHostIds,
-    seedCatalogState,
-    seedThemeMode,
-    schedulePlaygroundSeedRetry,
-    // Re-runs the effect after a failed attempt cleared the project's marker;
-    // nothing else in this list changes when a create rejects.
-    seedRetryTick,
-  ]);
-  useEffect(() => {
-    if (
-      !isConvexAuthenticated ||
-      hostListLoading ||
-      !multiHostProjectId ||
-      hostList.length === 0
-    ) {
-      return;
-    }
-    if (playgroundSeedingProjectIdsRef.current.has(multiHostProjectId)) {
-      return;
-    }
-    if (restoringAdhoc) return;
-    const previewedHostIsValid =
-      previewedHostId !== null &&
-      hostList.some((host) => host.hostId === previewedHostId);
-    if (previewedHostIsValid) return;
-    const fallbackHostId = resolveFallbackHostId(hostList);
-    if (fallbackHostId) setPreviewedHostId(fallbackHostId);
-  }, [
-    isConvexAuthenticated,
-    hostListLoading,
-    multiHostProjectId,
+  const clientInit = usePlaygroundClientInitialization({
+    isAuthenticated: isConvexAuthenticated,
+    projectId: multiHostProjectId,
     hostList,
-    previewedHostId,
-    resolveFallbackHostId,
+    hostListLoading,
     restoringAdhoc,
+    live: {
+      activeProjectIdRef: activeMultiHostProjectIdRef,
+      restoringAdhocRef,
+      setPreviewedHostId,
+      setSelectedHostIds,
+    },
+  });
+  useMissingLeadFallback({
+    enabled: isConvexAuthenticated && !hostListLoading && !restoringAdhoc,
+    projectId: multiHostProjectId,
+    hosts: hostList,
+    previewedHostId,
     setPreviewedHostId,
-    seedCompletionTick,
-  ]);
+    resolveFallbackHostId,
+  });
   // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
   // short-circuits on null id so passing fewer ids is free. See
   // `usePlaygroundHostSlots` for the rules-of-hooks reasoning.
@@ -2707,8 +2345,8 @@ export function PlaygroundMain({
 
   // The "is the user actually comparing right now" signal for render-
   // gating and mutual-exclusion, computed fresh every render from
-  // `selectedHostIds` (reliably persisted — see the seed effect above and
-  // `usePersistedHost`) rather than trusted from the separately-persisted
+  // `selectedHostIds` (reliably persisted — see
+  // `usePlaygroundClientInitialization` and `usePersistedHost`) rather than trusted from the separately-persisted
   // `multiHostEnabled` flag. Removing the "Multiple clients" toggle
   // (PUR-11) means there's no longer any legitimate way to have 2+ hosts
   // checked with comparison intentionally off, so `multiHostEnabled` no
@@ -4833,7 +4471,12 @@ export function PlaygroundMain({
       // authorization already exists (`preferredVenue === "local"`), and setup
       // is what creates it — so on a machine that never set this harness up,
       // returning here made the button do nothing at all.
-      if (!setup && !localHarnessRequested) return true;
+      if (!setup && !localHarnessRequested) {
+        return !localHarnessSetupBlocksSend({
+          inScope: localHarnessInScope,
+          phase: localHarness.phase,
+        });
+      }
       // A ready target sends without a readiness round trip (the turn's own
       // route re-checks it); only Off still confirms consent first.
       if (!setup && localHarness.phase === "ready") {
@@ -4865,7 +4508,7 @@ export function PlaygroundMain({
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
+    }, [localHarnessRequested, localHarnessInScope, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
 
   const extensionOwnerScope = JSON.stringify([
     currentUserForSender?._id,
@@ -5388,7 +5031,7 @@ export function PlaygroundMain({
       // Compare columns each run a plain client turn: say so on the first
       // send of each comparison. Keyed by the chat and by the compare lanes'
       // generation, which a new or cleared chat moves on.
-      if (hiddenEnvironment.plugins.some(isRunnablePlugin)) {
+      if (hiddenEnvironment.hasRunnablePlugins) {
         showPluginNotice(
           `${chatSessionId}:compare:${multiModelSessionGeneration}`,
           { kind: "off", reason: "compare" },
@@ -5401,7 +5044,7 @@ export function PlaygroundMain({
     },
     [
       trackSendMessage,
-      hiddenEnvironment.plugins,
+      hiddenEnvironment.hasRunnablePlugins,
       chatSessionId,
       multiModelSessionGeneration,
     ],
@@ -5716,122 +5359,27 @@ export function PlaygroundMain({
     }
   }, [submitComposer, appMessageDraft.hold]);
 
-  sendPluginOnboardingRef.current = async (
-    spec,
-    serverId,
-    threadId,
-    ownerKey,
-    sourceSignal,
-  ) => {
-    const target = onboardingLiveRef.current;
-    const isCurrent = () => {
-      const live = onboardingLiveRef.current;
-      return (
-        !sourceSignal?.aborted &&
-        live.ownerKey === ownerKey &&
-        live.scope?.threadId === threadId &&
-        live.servers.some((server) => server.serverId === serverId)
-      );
-    };
-    if (
-      !target.scope ||
-      !isCurrent() ||
-      isCompareMode ||
-      sendBlocked ||
-      composerDisabled ||
-      conversationSendBlockedRef.current
-    ) {
-      throw new Error("Onboarding is unavailable");
-    }
-    if (
-      !(await ensureSelectedServerReadyForChat()) ||
-      !isCurrent() ||
-      !(await ensureThreadReadyForSend()) ||
-      !isCurrent() ||
-      !(await ensureLocalHarnessReadyForSend()) ||
-      !isCurrent()
-    ) {
-      throw new Error("Onboarding was cancelled");
-    }
-    const timeout = AbortSignal.timeout(30_000);
-    const signal = sourceSignal
-      ? AbortSignal.any([sourceSignal, timeout])
-      : timeout;
-    // Re-read the same saved source under the destination's current authority.
-    // The source menu's cached bytes are never used to send a new chat turn.
-    const fresh = await createThreadAppApi(target.scope).onboarding(
-      serverId,
-      true,
-      signal,
-    );
-    if (
-      !isCurrent() ||
-      !fresh.spec ||
-      !fresh.available ||
-      fresh.spec.pluginVersionId !== spec.pluginVersionId ||
-      fresh.spec.bundleHash !== spec.bundleHash ||
-      fresh.spec.skill.skillId !== spec.skill.skillId ||
-      fresh.spec.skill.contentHash !== spec.skill.contentHash
-    ) {
-      throw new Error("Onboarding changed. Open its menu again.");
-    }
-    const skillMessages = buildSkillContextMessages([
-      {
-        name: fresh.spec.skill.name,
-        description: fresh.spec.skill.description,
-        content: fresh.spec.skill.content,
-        path: fresh.spec.onboarding.modelRef,
-      },
-    ]) as UIMessage[];
-    setMessages((previous) => [...previous, ...skillMessages]);
-    trackSendMessage({ single_model_send: true });
-    const sent = await sendMessage({
-      text: "Run the attached onboarding skill.",
-      metadata: outgoingSenderMetadata,
-    });
-    if (!sent) throw new Error("Onboarding could not start");
-    onFirstMessageSent?.();
+  const onboardingDeps = {
+    onboardingLiveRef,
+    isCompareMode,
+    sendBlocked,
+    composerDisabled,
+    conversationSendBlockedRef,
+    ensureSelectedServerReadyForChat,
+    ensureThreadReadyForSend,
+    ensureLocalHarnessReadyForSend,
+    setMessages,
+    trackSendMessage,
+    sendMessage,
+    outgoingSenderMetadata,
+    onFirstMessageSent,
+    extensionThreadTransition,
   };
-  runPluginOnboardingRef.current = async (
-    spec,
-    conversation,
-    signal,
-    serverId,
-  ) => {
-    const source = onboardingLiveRef.current;
-    const isSourceCurrent = () =>
-      !signal.aborted &&
-      !!source.scope &&
-      onboardingLiveRef.current.ownerKey === source.ownerKey &&
-      onboardingLiveRef.current.scope?.threadId === source.scope.threadId;
-    try {
-      if (
-        !source.scope ||
-        !isSourceCurrent() ||
-        sendBlocked ||
-        isCompareMode ||
-        conversationSendBlockedRef.current
-      )
-        throw new Error("Onboarding is unavailable");
-      const targetThread =
-        conversation === "new"
-          ? await extensionThreadTransition.begin(isSourceCurrent)
-          : source.scope.threadId;
-      if (!targetThread) throw new Error("Onboarding was cancelled");
-      // A successful ordinary new-chat transition ends the source lifetime.
-      // The destination is freshly admitted above; do not reuse its aborted signal.
-      await sendPluginOnboardingRef.current(
-        spec,
-        serverId,
-        targetThread,
-        source.ownerKey,
-        conversation === "current" ? signal : undefined,
-      );
-    } catch (error) {
-      toast.error("Couldn’t run onboarding. Try again.");
-      throw error;
-    }
-  };
+  sendPluginOnboardingRef.current = createPluginOnboardingSend(onboardingDeps);
+  runPluginOnboardingRef.current = createPluginOnboardingRun({
+    ...onboardingDeps,
+    sendPluginOnboardingRef,
+  });
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -6279,16 +5827,22 @@ export function PlaygroundMain({
       {restoredSessionHasBrowser ? " You can take over its browser here." : ""}
     </p>
   ) : null;
+  const clientInitNotice = playgroundClientInitNotice({
+    projectId: multiHostProjectId,
+    ...clientInit,
+  });
   const composerNotice =
     apiSessionNotice ||
     conversationTargetNotice ||
     localHarnessNotice ||
-    localHarnessReadyNotice ? (
+    localHarnessReadyNotice ||
+    clientInitNotice ? (
       <div className="flex flex-col gap-2">
         {apiSessionNotice}
         {conversationTargetNotice}
         {localHarnessNotice}
         {localHarnessReadyNotice}
+        {clientInitNotice}
       </div>
     ) : null;
 
@@ -6699,6 +6253,8 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                               onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
@@ -6771,6 +6327,8 @@ export function PlaygroundMain({
                         {errorMessage && (
                           <div className="w-full">
                             <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                               onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
@@ -6943,6 +6501,8 @@ export function PlaygroundMain({
                 {errorMessage && (
                   <div className="pb-3">
                     <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                       onManageOrgProviders={manageOrgProviders}
                       message={errorMessage.message}
                       errorDetails={errorMessage.details}
@@ -7005,7 +6565,7 @@ export function PlaygroundMain({
   );
 
   // Device frame container - display mode is passed to widgets via Thread
-  return (
+  const surface = (
     // Surface signal for `MCPAppsRenderer` / `chatgpt-app-renderer`: the
     // `cspMode` they compute on first render must already see
     // "playground" before any descendant subscribes. The legacy
@@ -7227,6 +6787,8 @@ export function PlaygroundMain({
                     errorMessage ? (
                       <div className="max-w-4xl mx-auto px-4 pt-4">
                         <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                           onManageOrgProviders={manageOrgProviders}
                           message={errorMessage.message}
                           errorDetails={errorMessage.details}
@@ -7616,6 +7178,8 @@ export function PlaygroundMain({
                             {errorMessage && (
                               <div className="pb-3">
                                 <ErrorBox
+                              canTopUp={isConvexAuthenticated && errorMessage.code === "free_tier_model_restricted"}
+                              organizationId={projectOrganizationId}
                                   onManageOrgProviders={manageOrgProviders}
                                   message={errorMessage.message}
                                   errorDetails={errorMessage.details}
@@ -7745,5 +7309,13 @@ export function PlaygroundMain({
           it outlives its turn — answering it re-drives the chat turn. */}
       <HostedMrtrHost />
     </WidgetSurfaceProvider>
+  );
+
+  // Parts of the thread that show a policy refusal (the web search tool
+  // card) read who is reading it, and the fix, from here.
+  return (
+    <OrgAiRefusalHandoffProvider value={refusalHandoff}>
+      {surface}
+    </OrgAiRefusalHandoffProvider>
   );
 }

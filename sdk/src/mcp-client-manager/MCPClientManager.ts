@@ -3039,6 +3039,7 @@ export class MCPClientManager {
           // message-regex guessing.
           throw new Error(
             connectionErrorMessage(
+              serverId,
               url,
               [error],
               `Failed to connect to MCP server "${serverId}" using Streamable HTTP, and this server's declared transport rules out the SSE fallback. Streamable HTTP error: ${formatError(
@@ -3160,6 +3161,7 @@ export class MCPClientManager {
       throw attachStreamableCause(
         new Error(
           connectionErrorMessage(
+            serverId,
             url,
             [streamableError, error],
             `Failed to connect to MCP server "${serverId}" using HTTP transports.${streamableMessage} SSE error: ${sseErrorMessage}.`

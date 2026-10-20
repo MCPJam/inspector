@@ -8,12 +8,18 @@ const state = vi.hoisted(() => ({
   activePluginsVenues: [] as Array<string | undefined>,
   activeLoading: false,
   activeFailed: false,
+  hostedMode: false,
+  clientRunsHere: false,
   pluginsEnabled: true,
   isMember: true as boolean | undefined,
   secrets: undefined as unknown,
   secretsProjectIds: [] as Array<string | null | undefined>,
   ensure: vi.fn(),
   query: vi.fn(),
+  signInAvailable: false,
+  signIn: vi.fn(),
+  signInProjectIds: [] as Array<string | null>,
+  toastInfo: vi.fn(),
 }));
 
 vi.mock("@/hooks/useActivePlugins", async (importOriginal) => {
@@ -38,10 +44,20 @@ vi.mock("@/hooks/useActivePlugins", async (importOriginal) => {
         activeServers: actual.activePluginServers(plugins),
         isLoading: !!projectId && state.activeLoading,
         failed: !!projectId && state.activeFailed,
+        answered: !!answered,
       };
     },
   };
 });
+vi.mock("@/lib/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/config")>()),
+  get HOSTED_MODE() {
+    return state.hostedMode;
+  },
+}));
+vi.mock("@/hooks/useLocalHarnessTarget", () => ({
+  useLocalHarnessRunsHere: () => state.clientRunsHere,
+}));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useEnsureAdhocEnvironment: () => state.ensure,
 }));
@@ -60,11 +76,33 @@ vi.mock("@/hooks/useProjectSecrets", () => ({
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query: state.query }),
 }));
+vi.mock("@/hooks/usePluginServerSignIn", () => ({
+  usePluginServerSignIn: (projectId: string | null) => {
+    state.signInProjectIds.push(projectId);
+    return {
+      available: state.signInAvailable && !!projectId,
+      pendingKey: null,
+      signIn: state.signIn,
+    };
+  },
+}));
+vi.mock("@/lib/toast", () => ({ toast: { info: state.toastInfo } }));
 
 import {
   HIDDEN_ENVIRONMENT_WAIT_MS,
   usePlaygroundHiddenEnvironment,
 } from "../use-playground-hidden-environment";
+import {
+  resetShownPluginNotices,
+  showPluginNotice,
+} from "@/lib/plugins/plugin-notice-display";
+import { usePluginServerNoticeStore } from "@/stores/plugin-server-notice-store";
+import {
+  hasOnboardingAfterSignIn,
+  markOnboardingSignInCompleted,
+  requestOnboardingAfterSignIn,
+  usePluginOnboardingIntentStore,
+} from "@/lib/plugin-onboarding-intent";
 
 const PROJECT_ID = "j57abcdefghijklmnopqrstuvwxyz012";
 
@@ -118,6 +156,148 @@ function render(
   );
 }
 
+describe("a Set up kept across a sign-in", () => {
+  const binding = { pluginVersionId: "ver_bits", componentKey: "server:api" };
+  const bits = (unavailable?: "needs_auth") =>
+    plugin("bits", {
+      servers: [
+        {
+          serverId: "srv_bits",
+          name: "bits-server",
+          componentKey: "server:api",
+          placement: "remote",
+          ...(unavailable ? { unavailable } : {}),
+        },
+      ],
+    });
+  const outside = { ...PROPS_FOR_PENDING, eligible: false };
+  beforeEach(() => {
+    sessionStorage.clear();
+    usePluginOnboardingIntentStore.getState().clear();
+    state.isMember = true;
+    state.activeLoading = false;
+    state.activeFailed = false;
+    state.activePluginsProjectIds = [];
+    state.ensure.mockReset();
+    state.ensure.mockResolvedValue({
+      environment: { environmentId: "env_1" },
+      created: true,
+    });
+    requestOnboardingAfterSignIn(
+      {
+        projectId: PROJECT_ID,
+        serverIds: ["srv_bits"],
+        pluginId: "plg_bits",
+        pluginName: "Bits",
+        conversation: "new",
+      },
+      binding,
+    );
+  });
+
+  it("is made by the first read that answers with its server signed in, even outside a hidden chat", () => {
+    markOnboardingSignInCompleted(binding);
+    state.activeLoading = true;
+    state.plugins = [bits()];
+    const { rerender } = render(outside);
+    expect(state.activePluginsProjectIds).toContain(PROJECT_ID);
+    expect(usePluginOnboardingIntentStore.getState().intent).toBeNull();
+
+    state.activeLoading = false;
+    rerender(outside);
+    expect(usePluginOnboardingIntentStore.getState().intent).toMatchObject({
+      pluginId: "plg_bits",
+      conversation: "new",
+    });
+    // Settled, so that chat stops reading plugins for it.
+    expect(state.activePluginsProjectIds.at(-1)).toBeNull();
+  });
+
+  it("is dropped by that read when the sign-in did not finish, so a later one starts nothing", () => {
+    state.plugins = [bits("needs_auth")];
+    const { rerender } = render();
+    expect(hasOnboardingAfterSignIn(PROJECT_ID)).toBe(false);
+
+    state.plugins = [bits()];
+    rerender(PROPS_FOR_PENDING);
+    expect(usePluginOnboardingIntentStore.getState().intent).toBeNull();
+  });
+
+  it("reads no plugins for a chat outside the hidden environment otherwise", () => {
+    sessionStorage.clear();
+    render(outside);
+    expect(state.activePluginsProjectIds.every((id) => id === null)).toBe(true);
+  });
+});
+
+describe("the chat notice's Sign in", () => {
+  beforeEach(() => {
+    state.plugins = [];
+    state.isMember = true;
+    state.activeLoading = false;
+    state.activeFailed = false;
+    state.signInAvailable = true;
+    state.signIn.mockReset();
+    state.signInProjectIds = [];
+    state.toastInfo.mockReset();
+    state.ensure.mockReset();
+    state.ensure.mockResolvedValue({
+      environment: { environmentId: "env_1" },
+      created: true,
+    });
+    resetShownPluginNotices();
+  });
+
+  it("is on a notice a remount replays, and leaves with the Playground", () => {
+    state.plugins = [
+      plugin("bits", {
+        servers: [
+          {
+            serverId: "srv_bits",
+            name: "bits-server",
+            componentKey: "server:api",
+            placement: "remote",
+            unavailable: "needs_auth",
+          },
+        ],
+      }),
+    ];
+    // Reported while the Playground was away.
+    usePluginServerNoticeStore
+      .getState()
+      .report("chat-away", [{ serverId: "srv_bits", reason: "needs_auth" }]);
+    const { unmount } = render();
+    const action = state.toastInfo.mock.calls.at(-1)?.[1]?.action;
+    expect(action?.label).toBe("Sign in");
+    action.onClick();
+    expect(state.signIn).toHaveBeenCalledWith({
+      pluginVersionId: "ver_bits",
+      componentKey: "server:api",
+    });
+    unmount();
+    showPluginNotice("chat-after", {
+      kind: "skipped",
+      plugins: [
+        {
+          pluginId: "plg_bits",
+          name: "bits",
+          displayName: "BITS",
+          reason: "needs_auth",
+          partial: true,
+          signIn: { pluginVersionId: "ver_bits", componentKey: "server:api" },
+        },
+      ],
+    });
+    expect(state.toastInfo.mock.calls.at(-1)).toHaveLength(1);
+  });
+
+  it("is not offered to someone who is not a member", () => {
+    state.isMember = false;
+    render();
+    expect(state.signInProjectIds.every((id) => id === null)).toBe(true);
+  });
+});
+
 describe("usePlaygroundHiddenEnvironment", () => {
   beforeEach(() => {
     state.plugins = [];
@@ -125,6 +305,8 @@ describe("usePlaygroundHiddenEnvironment", () => {
     state.activePluginsVenues = [];
     state.activeLoading = false;
     state.activeFailed = false;
+    state.hostedMode = false;
+    state.clientRunsHere = false;
     state.pluginsEnabled = true;
     state.isMember = true;
     state.secrets = undefined;
@@ -286,11 +468,142 @@ describe("usePlaygroundHiddenEnvironment", () => {
     expect(state.secretsProjectIds.every((id) => id === null)).toBe(true);
   });
 
-  describe("only remote components, in every build", () => {
+  describe("the venue", () => {
+    const localPlugin = () =>
+      plugin("local", {
+        servers: [
+          {
+            serverId: "srv_local",
+            name: "local-server",
+            componentKey: "server",
+            placement: "local",
+          },
+        ],
+      });
+
     it("reads the plugins for the hosted venue even where this build is local", () => {
       state.plugins = [plugin("bits")];
       render();
       expect(state.activePluginsVenues.at(-1)).toBe("hosted");
+    });
+
+    it("runs a local component for a client the member runs here", async () => {
+      state.clientRunsHere = true;
+      state.plugins = [localPlugin(), plugin("bits")];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(state.activePluginsVenues.at(-1)).toBe("local");
+      expect(result.current.venue).toBe("local");
+      expect(state.ensure.mock.calls[0][0].pluginVersionIds).toEqual([
+        "ver_local",
+        "ver_bits",
+      ]);
+      expect(result.current.pluginServerIds).toEqual(["srv_local", "srv_bits"]);
+    });
+
+    it("keeps a plugin whose local server waits on setup, running its remote one", async () => {
+      state.clientRunsHere = true;
+      state.plugins = [
+        plugin("waiting", {
+          servers: [
+            {
+              serverId: "srv_w",
+              name: "w",
+              componentKey: "w",
+              placement: "local",
+              unavailable: "needs_setup",
+            },
+            {
+              serverId: "srv_wr",
+              name: "wr",
+              componentKey: "wr",
+              placement: "remote",
+            },
+          ],
+        }),
+        plugin("bits"),
+      ];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(result.current.venue).toBe("local");
+      expect(state.ensure.mock.calls[0][0].pluginVersionIds).toEqual([
+        "ver_waiting",
+        "ver_bits",
+      ]);
+      expect(result.current.pluginServerIds).toEqual(["srv_wr", "srv_bits"]);
+    });
+
+    it("stays hosted for that client when no plugin needs this machine", async () => {
+      state.clientRunsHere = true;
+      state.plugins = [plugin("bits")];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(result.current.venue).toBe("hosted");
+    });
+
+    it("never runs here from the hosted app", async () => {
+      state.hostedMode = true;
+      state.clientRunsHere = true;
+      state.plugins = [localPlugin(), plugin("bits")];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(state.activePluginsVenues.at(-1)).toBe("hosted");
+      expect(result.current.venue).toBe("hosted");
+      expect(state.ensure.mock.calls[0][0].pluginVersionIds).toEqual([
+        "ver_bits",
+      ]);
+    });
+
+    it("recovers for the venue it composed for", async () => {
+      state.clientRunsHere = true;
+      state.plugins = [localPlugin()];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      state.query.mockResolvedValue({
+        enabled: true,
+        plugins: [localPlugin()],
+      });
+
+      await act(async () => {
+        await result.current.recover();
+      });
+
+      expect(state.query).toHaveBeenCalledWith(
+        "plugins:resolveActivePlugins",
+        expect.objectContaining({ runtimeVenue: "local" }),
+      );
+      expect(state.ensure.mock.calls[1][0].pluginVersionIds).toEqual([
+        "ver_local",
+      ]);
+    });
+
+    it("recovers a hosted composition into a plugin that now runs here", async () => {
+      state.clientRunsHere = true;
+      state.plugins = [plugin("bits")];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(result.current.venue).toBe("hosted");
+      // Only a read for this client admits the new version's local component.
+      state.query.mockImplementation(
+        async (_name: string, args: { runtimeVenue?: string }) => ({
+          enabled: true,
+          plugins:
+            args.runtimeVenue === "local"
+              ? [plugin("bits"), localPlugin()]
+              : [plugin("bits")],
+        }),
+      );
+
+      let recovery: unknown;
+      await act(async () => {
+        recovery = await result.current.recover();
+      });
+
+      expect(recovery).toMatchObject({ ok: true, environmentId: "env_2" });
+      expect(state.ensure.mock.calls[1][0].pluginVersionIds).toEqual([
+        "ver_bits",
+        "ver_local",
+      ]);
     });
 
     it("pins a remote plugin and skips a local one, which the chat names", async () => {
@@ -415,6 +728,51 @@ describe("usePlaygroundHiddenEnvironment", () => {
     });
   });
 
+  describe("a server joining or leaving under the same composition", () => {
+    const twoServers = (unavailable?: "needs_auth") =>
+      plugin("bits", {
+        servers: [
+          {
+            serverId: "srv_bits",
+            name: "bits-server",
+            componentKey: "server",
+            placement: "remote",
+          },
+          {
+            serverId: "srv_crm",
+            name: "crm-server",
+            componentKey: "crm",
+            placement: "remote",
+            ...(unavailable ? { unavailable } : {}),
+          },
+        ],
+      });
+
+    it("names a server once the member signs in, without recomposing", async () => {
+      state.plugins = [twoServers("needs_auth")];
+      const { result, rerender } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(result.current.pluginServerIds).toEqual(["srv_bits"]);
+
+      state.plugins = [twoServers()];
+      rerender(PROPS_FOR_PENDING);
+      expect(result.current.pluginServerIds).toEqual(["srv_bits", "srv_crm"]);
+      expect(result.current.environmentId).toBe("env_1");
+      expect(state.ensure).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops naming a server the member can no longer use", async () => {
+      state.plugins = [twoServers()];
+      const { result, rerender } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+
+      state.plugins = [twoServers("needs_auth")];
+      rerender(PROPS_FOR_PENDING);
+      expect(result.current.pluginServerIds).toEqual(["srv_bits"]);
+      expect(state.ensure).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("recover", () => {
     it("re-reads the plugins and recomposes", async () => {
       state.plugins = [plugin("bits")];
@@ -434,6 +792,7 @@ describe("usePlaygroundHiddenEnvironment", () => {
         projectId: PROJECT_ID,
         content: false,
         runtimeVenue: "hosted",
+        componentAdmission: true,
       });
       expect(recovery).toEqual({
         ok: true,
@@ -447,6 +806,38 @@ describe("usePlaygroundHiddenEnvironment", () => {
       expect(result.current.environmentId).toBe("env_2");
       expect(result.current.pluginServerIds).toEqual(["srv_cad"]);
     });
+
+    it.each([
+      [
+        "development",
+        "ArgumentValidationError: Object contains extra field `componentAdmission` that is not in the validator.",
+      ],
+      [
+        "production",
+        "[CONVEX Q(plugins:resolveActivePlugins)] [Request ID: 6f2c3a9b1d4e5f60] Server Error\n  Called by client",
+      ],
+    ])(
+      "asks a backend from before component admission the old way (%s)",
+      async (_deployment, message) => {
+        state.plugins = [plugin("bits")];
+        const { result } = render();
+        await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+        state.query
+          .mockRejectedValueOnce(new Error(message))
+          .mockResolvedValueOnce({ enabled: true, plugins: [plugin("cad")] });
+
+        let recovery: unknown;
+        await act(async () => {
+          recovery = await result.current.recover();
+        });
+
+        expect(state.query).toHaveBeenLastCalledWith(
+          "plugins:resolveActivePlugins",
+          { projectId: PROJECT_ID, content: false, runtimeVenue: "hosted" },
+        );
+        expect(recovery).toMatchObject({ ok: true, environmentId: "env_2" });
+      },
+    );
 
     it("turns the chat back into a client turn when nothing is runnable", async () => {
       state.plugins = [plugin("bits")];

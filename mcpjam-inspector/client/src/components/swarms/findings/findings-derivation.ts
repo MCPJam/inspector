@@ -225,6 +225,7 @@ function stageStateOf(row: SwarmJourneyFinding): StageState {
 function personaAccount(
   rows: readonly SwarmJourneyFinding[],
   goals: readonly GoalFindingsModel[],
+  disposition: SwarmFindingDisposition,
 ): Pick<
   PersonaFindingsModel,
   "issue" | "account" | "accountSessionId" | "cited" | "signal"
@@ -287,9 +288,14 @@ function personaAccount(
     // paragraph with a border above it.
     issue:
       account ??
-      lead?.outcomePhrase ??
+      (lead?.outcomePhrase?.trim() || undefined) ??
       leadGoal?.diagnosis.detail ??
-      goals[0]?.diagnosis.detail ??
+      goals.find(
+        (goal) =>
+          representativeGoalRow(
+            rows.filter((row) => row.goal.runId === goal.runId),
+          )?.disposition === disposition,
+      )?.diagnosis.detail ??
       "No session evidence available.",
     ...(account ? { account } : {}),
     ...(account && supporting?.sessionIds[0]
@@ -329,6 +335,11 @@ export function deriveSwarmFindingsModelFromWire({
       const rows = personaRows.filter((row) => row.goal.runId === runId);
       const run = runs.find((candidate) => candidate.runId === runId);
       const lead = representativeGoalRow(rows);
+      const reports = rows.filter((row) => row.basis === "sessionReport");
+      const report =
+        representativeGoalRow(
+          reports.filter((row) => row.reportExcerpt?.actual?.trim()),
+        ) ?? representativeGoalRow(reports);
       const emptyStage = (): GoalStageModel => ({
         state: "none",
         evidence: [],
@@ -384,11 +395,16 @@ export function deriveSwarmFindingsModelFromWire({
           // sessions were refused before they started (#5188). Same sentence
           // the legacy derivation uses.
           detail:
-            lead?.mechanismPhrase ??
-            lead?.reportExcerpt?.actual ??
+            (lead?.mechanismPhrase?.trim() || undefined) ??
+            (lead?.reportExcerpt?.actual?.trim() || undefined) ??
+            (report?.reportExcerpt?.actual?.trim() || undefined) ??
             (disposition === "notRun"
               ? "No session launched for this goal, so nothing about the server was tested."
-              : "No session evidence available."),
+              : !report && lead?.verdictSeen === "passed"
+                ? "The grader recorded this goal as met. No session report is available."
+                : !report && lead?.verdictSeen === "failed"
+                  ? "The grader recorded this goal as missed. No session report is available."
+                  : "No session evidence available."),
         },
         defaultStage: diagnosisStage ?? "value",
       };
@@ -405,7 +421,7 @@ export function deriveSwarmFindingsModelFromWire({
         label: SWARM_FINDING_DISPOSITION_LABELS[persona.disposition],
         tone: toneOfDisposition(persona.disposition),
       },
-      ...personaAccount(personaRows, goals),
+      ...personaAccount(personaRows, goals, persona.disposition),
       goals,
     };
   });

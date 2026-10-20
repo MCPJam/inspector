@@ -2,9 +2,14 @@ import { z } from "zod";
 
 const id = z.string().min(1).max(256);
 export type PluginOnboardingConversation = "current" | "new";
-/** A user-selected immutable version, never browser-supplied skill content. */
+/**
+ * A user-selected immutable version, never browser-supplied skill content.
+ * `attemptId` names one try: the Playground's Logs show it, and the server's
+ * trace of that turn carries the same id, so a retry never stands in for it.
+ */
 export const pluginOnboardingIntentSchema = z.strictObject({
   pluginVersionId: id,
+  attemptId: z.string().uuid(),
 });
 export type PluginOnboardingIntent = z.infer<
   typeof pluginOnboardingIntentSchema

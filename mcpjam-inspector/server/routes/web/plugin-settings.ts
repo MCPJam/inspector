@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
+import { PLUGIN_APP_UI_MAX_BYTES } from "../../../shared/plugin-app-ui-limits.js";
 import { pluginResourceUri } from "../../services/plugin-host/bindings.js";
 import { widgetResourceContent } from "../../utils/widget-resource-content.js";
 import {
@@ -422,7 +423,7 @@ routes.post("/app/open", (c) =>
       const widgetContent = widgetResourceContent(content, meta);
       if (
         !widgetContent.mimeTypeValid ||
-        Buffer.byteLength(widgetContent.html) > 1024 * 1024
+        Buffer.byteLength(widgetContent.html, "utf8") > PLUGIN_APP_UI_MAX_BYTES
       )
         throw denied();
       const fresh = await runtime.catalog(c.req.raw.signal);

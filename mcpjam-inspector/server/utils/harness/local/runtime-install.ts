@@ -275,8 +275,8 @@ export interface PackManifest {
  * Which pack this Inspector build expects, for a platform.
  *
  * `null` means no pack was built for this platform, which is a refusal the UI
- * shows rather than an error — it is the honest state for, say, Windows before
- * the Job Object work lands.
+ * shows rather than an error. Platform eligibility still requires a matching
+ * published pack and recorded lifecycle conformance.
  */
 export function expectedPackFor(
   harnessId: SupportedLocalHarnessId,

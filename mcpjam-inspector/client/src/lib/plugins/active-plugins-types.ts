@@ -37,6 +37,11 @@ export interface ActivePluginServerRow {
   name: string;
   componentKey: string;
   placement: ActivePluginPlacement;
+  /**
+   * This member can't use the server yet. Read with `componentAdmission`, an
+   * `active` plugin runs without it; its skills and other servers still run.
+   */
+  unavailable?: "needs_auth" | "needs_setup" | (string & {});
 }
 
 export interface ActivePluginSkillRow {
@@ -57,6 +62,7 @@ export interface ActivePluginRow {
   pluginVersionId: string | null;
   name: string;
   displayName: string | null;
+  /** An active plugin can still list a server this member can't use yet. */
   status: "active" | "skipped";
   /** Present when `status === "skipped"`. */
   reason?: ActivePluginSkipReason;

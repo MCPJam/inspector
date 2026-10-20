@@ -146,6 +146,7 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
+import { failedHarnessPersist, requirePersistedHarnessTurn } from "./harness-persistence.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 import { ranTurnSelection } from "../../utils/session-model-selection";
@@ -1473,9 +1474,19 @@ export async function runSyntheticHostSession(
         // derives the lane's journeyRunId/hostId from the top-level swarm
         // attribution above. Undefined for the emulated engine.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
-      });
+      }).catch(failedHarnessPersist(harnessSessionCommit));
       warnIfSimulationPersistNotSaved(turnPersist, "turn", chatSessionId);
+      // Do not retry a rejected turn from the terminal empty-session fallback.
       anyTurnPersisted = true;
+      await requirePersistedHarnessTurn({
+        turnError: failedTurn,
+        outcome: turnPersist,
+        commit: harnessSessionCommit,
+        projectId,
+        journeyRunId: persist.journeyRunId,
+        hostId: persist.hostId,
+        bearer: authHeader,
+      });
 
       // MCP App widget snapshots so the Sessions viewer renders the actual
       // widget instead of a collapsed tool pill. Best-effort — a failure here
