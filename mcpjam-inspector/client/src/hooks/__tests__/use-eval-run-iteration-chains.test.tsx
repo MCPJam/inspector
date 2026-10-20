@@ -6,7 +6,7 @@
  * request at all — that is what keeps every non-Evaluate mount of the views
  * downstream at exactly zero reads.
  */
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchChains = vi.fn();
@@ -108,6 +108,25 @@ describe("useEvalRunIterationChains", () => {
     expect(afterSwitch.every((entry) => entry === "run_2:loading:0")).toBe(
       true,
     );
+  });
+
+  it("reads the same run again on retry after a failed read", async () => {
+    fetchChains.mockRejectedValueOnce(new Error("boom"));
+    fetchChains.mockResolvedValueOnce(chainPage(["iter_1"]));
+    const { result } = renderHook(() =>
+      useEvalRunIterationChains({
+        projectId: "proj_1",
+        run: terminalRun,
+        enabled: true,
+      }),
+    );
+    await waitFor(() => expect(result.current.status).toBe("error"));
+
+    act(() => result.current.retry?.());
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(fetchChains).toHaveBeenCalledTimes(2);
+    expect(result.current.chains.get("iter_1")?.status).toBe("verified");
   });
 
   it("issues no request while the run is still going", async () => {

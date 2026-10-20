@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
@@ -111,10 +111,28 @@ describe("TrialScorecard", () => {
     expect(screen.getByTestId("trial-scorecard-loading")).toBeInTheDocument();
   });
   it("shows a skeleton, not the no-chain fallback, while the chain loads", () => {
-    renderCard({ chain: null, chainLoading: true });
+    renderCard({ chain: null, chainDisplay: "loading" });
     expect(screen.getByTestId("trial-scorecard-loading")).toHaveTextContent(
       "Loading this iteration's report…",
     );
+    expect(screen.queryByText("No observation recorded.")).toBeNull();
+  });
+  it("says a failed chain read failed, with a retry, instead of 'Not measured'", () => {
+    const retry = vi.fn();
+    renderCard({ chain: null, chainDisplay: "error", onRetryChain: retry });
+    expect(
+      screen.getByTestId("trial-scorecard-chain-unavailable"),
+    ).toHaveTextContent("Couldn't load this iteration's stage results.");
+    expect(screen.queryByText("No observation recorded.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+  it("says a chain past the page cap was not loaded, instead of 'Not measured'", () => {
+    renderCard({ chain: null, chainDisplay: "notLoaded" });
+    expect(
+      screen.getByTestId("trial-scorecard-chain-unavailable"),
+    ).toHaveAttribute("data-reason", "notLoaded");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     expect(screen.queryByText("No observation recorded.")).toBeNull();
   });
   it("still shows the no-chain fallback once loading is over", () => {

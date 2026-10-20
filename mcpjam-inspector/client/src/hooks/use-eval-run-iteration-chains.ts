@@ -25,7 +25,7 @@
  * of them missing this issues NO request at all, so every non-Evaluate mount
  * of the views that use it stays at exactly zero.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   EvalRunIterationsError,
   fetchEvalRunIterationChains,
@@ -58,6 +58,8 @@ export interface EvalRunIterationChainsState {
   /** Whether every page the server offered has been read. */
   walkExhausted: boolean;
   scannedIterations: number;
+  /** Read the same run again, after a failed read. */
+  retry?: () => void;
 }
 
 const EMPTY: EvalRunIterationChainsState = {
@@ -98,7 +100,12 @@ export function useEvalRunIterationChains({
   // The revision is part of the identity, so a judge landing after the run
   // terminalized re-reads instead of serving a chain that has since changed.
   const revision = run ? evalRunDecisionRevision(run) : "";
-  const key = active ? `${projectId}:${run?._id}:${revision}` : "";
+  // A retry is a new read of the same run, so it is part of the identity too.
+  const [attempt, setAttempt] = useState(0);
+  const key = active
+    ? `${projectId}:${run?._id}:${revision}:${attempt}`
+    : "";
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   // Stamped with the key it was read for. The effect that starts a read runs
   // AFTER the render that switched runs, so without the stamp that render
@@ -184,8 +191,9 @@ export function useEvalRunIterationChains({
 
   return useMemo(() => {
     if (!active) return EMPTY;
-    return stamped.key === key ? stamped.state : LOADING;
-  }, [active, key, stamped]);
+    const state = stamped.key === key ? stamped.state : LOADING;
+    return { ...state, retry };
+  }, [active, key, stamped, retry]);
 }
 
 export { EvalRunIterationsError };

@@ -1,5 +1,6 @@
 import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { Button } from "@mcpjam/design-system/button";
 /**
  * The trial, as the same scorers the left pane authored.
  *
@@ -73,6 +74,7 @@ import {
   judgeDecidedStage,
 } from "../stage-trial-model";
 import { TrialScorecardRow } from "./trial-scorecard-row";
+import type { TrialChainDisplay } from "./trial-chain-state";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
 import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
@@ -202,7 +204,8 @@ export function TrialScorecard({
   scoresSection,
   judgeHidden: judgeHiddenRequested = false,
   isRunning = false,
-  chainLoading = false,
+  chainDisplay = "settled",
+  onRetryChain,
   syncedStepId,
   onSyncStep,
 }: {
@@ -231,10 +234,13 @@ export function TrialScorecard({
   judgeHidden?: boolean;
   isRunning?: boolean;
   /**
-   * The trial's stage chain is still on its way. Without it the card would
-   * render its no-chain fallback, which reads as "nothing was measured".
+   * Whether a missing stage chain is still about the read (see
+   * `trialChainDisplay`). Without it the card would render its no-chain
+   * fallback, which reads as "nothing was measured".
    */
-  chainLoading?: boolean;
+  chainDisplay?: TrialChainDisplay;
+  /** Re-reads the chain after a failed read. */
+  onRetryChain?: () => void;
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
 }) {
@@ -476,8 +482,29 @@ export function TrialScorecard({
       <ScorecardSkeleton message="Run in progress. The report will appear when it finishes." />
     );
   }
-  if (chainLoading) {
+  if (chainDisplay === "loading") {
     return <ScorecardSkeleton message="Loading this iteration's report…" />;
+  }
+  if (chainDisplay === "error" || chainDisplay === "notLoaded") {
+    return (
+      <div
+        className="flex flex-wrap items-center gap-2 p-4 text-sm text-muted-foreground"
+        role="status"
+        data-testid="trial-scorecard-chain-unavailable"
+        data-reason={chainDisplay}
+      >
+        <span>
+          {chainDisplay === "error"
+            ? "Couldn't load this iteration's stage results."
+            : "This run has too many iterations to load stage results for this one."}
+        </span>
+        {chainDisplay === "error" && onRetryChain ? (
+          <Button type="button" variant="outline" size="sm" onClick={onRetryChain}>
+            Retry
+          </Button>
+        ) : null}
+      </div>
+    );
   }
 
   function renderSection(section: (typeof sections)[number]) {

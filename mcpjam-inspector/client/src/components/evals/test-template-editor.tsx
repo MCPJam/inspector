@@ -93,6 +93,7 @@ import { IterationDetails } from "./iteration-details";
 import { TrialChainPanel } from "@/components/evaluate/trial-chain-panel";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
+import { trialChainDisplay } from "@/components/evaluate/case-scorecard/trial-chain-state";
 import {
   JudgeVerdictPanel,
   resolveIterationJudge,
@@ -1353,7 +1354,20 @@ export function TestTemplateEditor({
       !!iteration && !!(iteration.blob || iteration.chatSessionId),
   )?.suiteRunId;
   const detailRunId = tracedRunId ?? recentIterations[0]?.suiteRunId ?? null;
-  const detailRun = useSelectedRun(suiteId ?? "", detailRunId).run;
+  // The run whose stage chain the drill-in reads (see `openTrialRun`). It is
+  // the detail run unless a replayed trial without a trace is on screen;
+  // only then does it need a read of its own.
+  const chainRunId = replayIteration?.suiteRunId ?? tracedRunId ?? null;
+  const chainOnlyRun = useSelectedRun(
+    suiteId ?? "",
+    chainRunId !== detailRunId ? chainRunId : null,
+  );
+  const detailRunSelection = useSelectedRun(suiteId ?? "", detailRunId);
+  const detailRun = detailRunSelection.run;
+  const chainRunLoading =
+    chainRunId === detailRunId
+      ? detailRunSelection.isLoading
+      : chainOnlyRun.isLoading;
   const suiteRuns = useMemo(
     () =>
       detailRun
@@ -1623,14 +1637,18 @@ export function TestTemplateEditor({
    * The run is resolved here for the same reason `replayHostId` is: an
    * iteration knows its `suiteRunId` and nothing else about the run, and the
    * chain read needs the run's status and revision to know whether there is
-   * anything to read and when to re-read it. The candidate order mirrors
-   * `latestTracedIteration` below — the replayed trial first, then whichever
-   * traced iteration the drill-in would fall back to.
+   * anything to read and when to re-read it. A replayed trial is the one on
+   * screen even when it has no trace (a timed-out trial), so its own run
+   * wins; otherwise the traced iteration the drill-in falls back to.
    */
   const openTrialRun = useMemo(() => {
-    if (!tracedRunId) return null;
-    return suiteRuns.find((run) => run._id === tracedRunId) ?? null;
-  }, [tracedRunId, suiteRuns]);
+    if (!chainRunId) return null;
+    return (
+      suiteRuns.find((run) => run._id === chainRunId) ??
+      chainOnlyRun.run ??
+      null
+    );
+  }, [chainRunId, suiteRuns, chainOnlyRun.run]);
 
   const chainSlotEnabled = trialChainEnabled || simpleCaseEditorEnabled;
   const trialChains = useEvalRunIterationChains({
@@ -4292,23 +4310,22 @@ export function TestTemplateEditor({
     return chainForQuickRunIteration(live);
   })();
   /**
-   * The run-backed chain is still on its way: the read for this trial's run
-   * is in flight, or the run has not finished, so there is nothing to read
-   * yet. Only then is a missing chain "loading" rather than "absent" — the
-   * scorecard's no-chain fallback says every stage was not measured, which
-   * is a claim about the run, not about the network.
+   * Whether a missing run-backed chain is "absent" or still about the read.
+   * The scorecard's no-chain fallback says every stage was not measured,
+   * which is a claim about the run, not about the network.
    */
-  const workspaceTrialChainPending = (() => {
-    const iteration = workspacePersistedIteration;
-    if (!iteration?.suiteRunId || !chainSlotEnabled) return false;
-    if (workspaceTrialChain) return false;
-    if (!projectId || openTrialRun?._id !== iteration.suiteRunId) return false;
-    if (trialChains.status === "loading") return true;
-    return (
-      trialChains.status === "disabled" &&
-      !isTerminalEvalRunStatus(openTrialRun.status)
-    );
-  })();
+  const workspaceTrialChainDisplay =
+    chainSlotEnabled && projectId
+      ? trialChainDisplay({
+          trialRunId: workspacePersistedIteration?.suiteRunId,
+          hasChain: Boolean(workspaceTrialChain),
+          readRunId: chainRunId,
+          readRun: openTrialRun,
+          readRunLoading: chainRunLoading,
+          isTerminalRunStatus: isTerminalEvalRunStatus,
+          chains: trialChains,
+        })
+      : ("settled" as const);
 
   /** What the LEFT pane is showing, as the scorecard model's input. */
   const workspaceDraftScorecardInput = {
@@ -5707,7 +5724,8 @@ export function TestTemplateEditor({
                                 []
                               }
                               chain={workspaceTrialChain}
-                              chainLoading={workspaceTrialChainPending}
+                              chainDisplay={workspaceTrialChainDisplay}
+                              onRetryChain={trialChains.retry}
                               judgeCase={resolveIterationJudge(
                                 workspacePersistedIteration,
                                 suiteRuns,
