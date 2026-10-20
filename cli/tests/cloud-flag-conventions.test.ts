@@ -30,6 +30,7 @@ const CLOUD_COMMAND_FILES = [
   "organizations.ts",
   "projects.ts",
   "registry.ts",
+  "readiness-lazy-auth.ts",
   "studies.ts",
   "secrets.ts",
   "sessions.ts",

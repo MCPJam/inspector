@@ -35,6 +35,8 @@ import {
   type ClaudeReadinessResult,
   type DirectoryObservationEnvelope,
   type DirectoryObservationReason,
+  type DirectoryFeatureClaim,
+  type DirectoryLazyAuthProbeConfig,
   type DirectoryObservationState,
   type DirectoryObservationStatus,
   type MuseReadinessResult,
@@ -93,6 +95,14 @@ export interface RunReadinessOptions {
   requestObservations?: ObservationRequester;
   /** Per-request budget. The caller owns the run-level deadline. */
   timeoutMs?: number;
+  /**
+   * Arm the lazy-auth probe. The SDK builds the probe's requests from the
+   * target and `fetchFn` alone, so `mcpHeaders` never reach them — the same
+   * header split discovery uses.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
+  /** Features the submitter claims. */
+  claimedFeatures?: DirectoryFeatureClaim[];
   now?: () => Date;
 }
 
@@ -384,6 +394,12 @@ export async function runDirectoryReadiness(
       // stop the request in flight, because the traffic being stopped is aimed
       // at somebody else's server.
       signal: options.signal,
+      ...(options.lazyAuthProbe !== undefined
+        ? { lazyAuthProbe: options.lazyAuthProbe }
+        : {}),
+      ...(options.claimedFeatures !== undefined
+        ? { claimedFeatures: options.claimedFeatures }
+        : {}),
       now: options.now,
     });
     assertNotCancelled(options.signal);
@@ -415,6 +431,12 @@ export async function runDirectoryReadiness(
     mcpHeaders: options.mcpHeaders,
     // Threaded IN, not merely checked between steps — see the OpenAI branch.
     signal: options.signal,
+    ...(options.lazyAuthProbe !== undefined
+      ? { lazyAuthProbe: options.lazyAuthProbe }
+      : {}),
+    ...(options.claimedFeatures !== undefined
+      ? { claimedFeatures: options.claimedFeatures }
+      : {}),
     now: options.now,
   });
   assertNotCancelled(options.signal);
