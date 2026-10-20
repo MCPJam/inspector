@@ -92,14 +92,15 @@ const FD_ERRNOS = ["ENOENT", "EMFILE", "ENFILE", "EACCES", "EPERM"] as const;
 /**
  * Open file descriptors of THIS process, by listing `/dev/fd` (devfs on macOS,
  * a link to `/proc/self/fd` on Linux). When the listing fails the count is
- * `null`, never zero, and the errno says why: ENOENT is a platform with no fd
- * table to read (Windows); EMFILE/ENFILE is the very exhaustion this gauge
- * exists to catch — opendir needs an fd of its own, so the sample taken at
- * the worst moment is the one that cannot list. That one extra fd is also in
- * the count; the ramp is what matters, not the exact figure.
+ * `null`, never zero, and the errno says why: ENOENT means there is no
+ * `/dev/fd` to list (Windows, or a container without it); EMFILE/ENFILE is
+ * the very exhaustion this gauge exists to catch — opendir needs an fd of its
+ * own, so the sample taken at the worst moment is the one that cannot list.
+ * That one extra fd is also in the count; the ramp is what matters, not the
+ * exact figure.
  *
- * A renderer can die of ENFILE, the SYSTEM file table, while holding a dozen
- * fds of its own. This count says whether the main process is the one
+ * A process can die of ENFILE, the SYSTEM file table, while holding a dozen
+ * fds of its own. This count says whether the server process is the one
  * draining that table.
  */
 function openFds(): Pick<ProcessVitals, "openFdCount" | "openFdError"> {

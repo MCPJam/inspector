@@ -233,9 +233,10 @@ describe("process vitals sampler", () => {
 
   // A listing that fails must read as "not measured", never as zero open
   // files, and must not cost the rest of the sample. The errno travels with
-  // it: ENOENT is a platform with no fd table (Windows), while EMFILE/ENFILE
-  // is the very exhaustion this gauge exists to catch — opendir needs an fd
-  // too, so the sample taken at the worst moment is the one that fails.
+  // it: ENOENT means there is no /dev/fd to list (Windows, or a container
+  // without it), while EMFILE/ENFILE is the very exhaustion this gauge exists
+  // to catch — opendir needs an fd too, so the sample taken at the worst
+  // moment is the one that fails.
   it("reports null plus the errno where /dev/fd cannot be listed", async () => {
     const { flushProcessVitals } = await loadVitals([500 * MB]);
     vi.spyOn(fs, "readdirSync").mockImplementation(() => {
