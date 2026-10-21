@@ -384,13 +384,16 @@ export function resolveEffectiveCapabilities(
     let ref = skill.ref;
     if (usedRefs.has(ref)) {
       const suffixed = `${skill.ref}~${skill.versionHash.slice(0, 8)}`;
+      const loadable = !usedRefs.has(suffixed);
       problems.push({
         code: "skill_ref_collision",
-        message: `Two skills resolved to the reference "${skill.ref}"; the one from MCP server "${skill.serverLabel}" is loadable as "${suffixed}".`,
+        message: loadable
+          ? `Two skills resolved to the reference "${skill.ref}"; the one from MCP server "${skill.serverLabel}" is loadable as "${suffixed}".`
+          : `Two skills resolved to the reference "${skill.ref}", and "${suffixed}" is taken as well; the one from MCP server "${skill.serverLabel}" is not loadable in this environment.`,
         ref: skill.ref,
         skillId: skill.serverSkillId,
       });
-      if (usedRefs.has(suffixed)) continue;
+      if (!loadable) continue;
       ref = suffixed;
     }
     usedRefs.add(ref);

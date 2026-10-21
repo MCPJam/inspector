@@ -23,6 +23,7 @@
  */
 
 import type { ModelMessage } from "ai";
+import { parseUserContextText } from "./user-context-message.js";
 
 export interface ServerSkillBannerArgs {
   /** Runtime address: `<serverSlug>/<name>`, `~<uriHash8>` when disambiguated. */
@@ -70,8 +71,9 @@ function decodeBannerField(value: string): string {
   }
 }
 
+/** Anchored at the start of a text: a banner is read only where a load wrote one. */
 const ORIGIN_LINE_RE =
-  /^# Skill: (\S+)\n\n> Origin: MCP server "([^"\n]*)" \(([^)\n]*)\)(?:, captured v\d+ on \d{4}-\d{2}-\d{2})?\. Content matched the server-advertised digest(?: set ([0-9a-f]{12}))?/gm;
+  /^# Skill: (\S+)\n\n> Origin: MCP server "([^"\n]*)" \(([^)\n]*)\)(?:, captured v\d+ on \d{4}-\d{2}-\d{2})?\. Content matched the server-advertised digest(?: set ([0-9a-f]{12}))?/;
 
 export interface ActingServerSkill {
   ref: string;
@@ -103,27 +105,74 @@ export function mentionsServerSkill(
  *
  * The spec's acting window runs from the moment a SKILL.md enters context
  * until it leaves, and context here is the conversation: a skill loaded in an
- * earlier request is still being acted on in this one. Every banner in a tool
- * result or a user context message is one such skill, so this scans every
- * text the messages carry and every banner in each text. Later banners for
- * the same ref win, so the entry recorded is the most recent load.
+ * earlier request is still being acted on in this one. A banner is read only
+ * from the two places a load writes one ({@link loadedSkillTexts}). Later
+ * loads of the same ref win, so the entry recorded is the most recent load.
  */
 export function actingServerSkills(
   messages: ReadonlyArray<ModelMessage> | undefined
 ): ActingServerSkill[] {
   const byRef = new Map<string, ActingServerSkill>();
-  for (const text of messageTexts(messages ?? [])) {
-    if (!text.includes(SERVER_SKILL_ORIGIN_MARKER)) continue;
-    for (const match of text.matchAll(ORIGIN_LINE_RE)) {
-      byRef.set(match[1]!, {
-        ref: match[1]!,
-        serverLabel: decodeBannerField(match[2]!),
-        skillUri: decodeBannerField(match[3]!),
-        ...(match[4] ? { digestSet: match[4] } : {}),
-      });
-    }
+  for (const text of loadedSkillTexts(messages ?? [])) {
+    const match = ORIGIN_LINE_RE.exec(text);
+    if (!match) continue;
+    byRef.set(match[1]!, {
+      ref: match[1]!,
+      serverLabel: decodeBannerField(match[2]!),
+      skillUri: decodeBannerField(match[3]!),
+      ...(match[4] ? { digestSet: match[4] } : {}),
+    });
   }
   return [...byRef.values()];
+}
+
+/**
+ * The texts a banner is read from: the output of a `loadSkill` tool result,
+ * and the body of a "Skill loaded by the user" context block, which is the
+ * same output sent as a user part when the user picks a skill in the
+ * popover. Both start with the banner.
+ *
+ * Nowhere else. The digest set a banner records is the held entry a later
+ * file read is checked against, and a skill can ship a supporting file, or
+ * instruct the model to write text, shaped like a banner for its own ref
+ * with the digest set of a manifest it has not served yet. Read from a
+ * `readSkillFile` result or from assistant text, that banner would move the
+ * held entry to files the user never approved. The gate itself keeps
+ * scanning every text ({@link mentionsServerSkill}), since it only closes.
+ */
+function* loadedSkillTexts(
+  messages: ReadonlyArray<ModelMessage>
+): Generator<string> {
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (message.role === "user") {
+      const texts =
+        typeof content === "string"
+          ? [content]
+          : Array.isArray(content)
+            ? (content as Array<Record<string, unknown>>)
+                .map((part) => part?.text)
+                .filter((text): text is string => typeof text === "string")
+            : [];
+      for (const text of texts) {
+        const block = parseUserContextText(text);
+        if (block?.kind === "skill") yield block.body.replace(/^\n/, "");
+      }
+      continue;
+    }
+    if (message.role !== "tool" || !Array.isArray(content)) continue;
+    for (const part of content as Array<Record<string, unknown>>) {
+      if (part?.type !== "tool-result" || part.toolName !== "loadSkill") {
+        continue;
+      }
+      const output = part.output as { type?: string; value?: unknown } | undefined;
+      if (output?.type === "text" && typeof output.value === "string") {
+        yield output.value;
+      } else if (typeof part.result === "string") {
+        yield part.result;
+      }
+    }
+  }
 }
 
 function* messageTexts(

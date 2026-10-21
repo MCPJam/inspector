@@ -61,7 +61,7 @@ import {
   skillMetadataBudgetChars,
 } from "./computers/skill-metadata-budget.js";
 import type { MCPClientManager, SkillEntry } from "@mcpjam/sdk";
-import { MAX_SKILL_TOTAL_BYTES, enumeratedResources } from "@mcpjam/sdk";
+import { enumeratedResources } from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 import { buildServerSkillBanner } from "../../shared/server-skill-banner.js";
 import {
@@ -154,17 +154,26 @@ export async function manifestApprovalHash(
 export const serverSkillBanner = buildServerSkillBanner;
 
 /**
- * The cap on skill content this wrapper will put into a MODEL TURN.
+ * The cap on skill content this wrapper will put into ONE TOOL RESULT.
  *
- * The spec's per-skill budget. A host MUST support a skill up to 16 MiB, and
- * "support" means loading it, not only verifying it: this cap used to sit at
- * 128 KiB, which refused conforming skills a host is required to accept. A
- * skill past the budget is still refused rather than truncated, because a
- * clipped skill is instructions that end mid-sentence and the model cannot
- * tell that from a skill that simply said less. What a model's context can
- * hold is the provider's limit to report, not this wrapper's to guess.
+ * Distinct from the verification cap in the SDK, which is the spec's 16 MiB
+ * per-skill budget: a host MUST accept a conforming skill of that size, and
+ * MCPJam verifies and lists one. This cap governs something else, how many
+ * bytes one `loadSkill` or `readSkillFile` result places in a model turn.
+ * Without it a server-controlled SKILL.md or supporting file of 16 MiB would
+ * go digest-verified into a single tool result, the provider request and the
+ * chat history, some millions of tokens at once, and nothing else in the
+ * chat pipeline bounds a tool's output.
+ *
+ * 256 KiB is about 64k tokens, within the context of the models the host
+ * serves, and twice the 128 KiB that applied before the re-sync, which
+ * refused skills of ordinary size.
+ *
+ * REFUSED, never truncated. A clipped skill is instructions that end
+ * mid-sentence, and the model cannot tell that from a skill that simply said
+ * less.
  */
-export const MAX_SERVER_SKILL_PROMPT_BYTES = MAX_SKILL_TOTAL_BYTES;
+export const MAX_SERVER_SKILL_PROMPT_BYTES = 256 * 1024;
 
 /**
  * Returns the text, or a refusal naming both numbers when it is too large for
