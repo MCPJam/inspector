@@ -160,6 +160,30 @@ describe("swarm single-host runner — attempt ordering", () => {
     ]);
   });
 
+  it("applies the pinned host style under sparse MCP Apps overrides", async () => {
+    await startJourneyRun(
+      baseOpts({
+        sessionsPerTarget: 1,
+        hosts: [
+          {
+            ...HOST,
+            hostStyle: "chatgpt",
+            mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+          },
+        ],
+      }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    // ChatGPT's preset plus the override, not only the override's own keys.
+    expect(adapter.runtime.hostCapabilities).toMatchObject({
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+    });
+    expect(adapter.runtime.hostCapabilities).not.toHaveProperty("downloadFile");
+  });
+
   it("passes the pinned host runtime + swarm persist attribution into the shared core", async () => {
     await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
