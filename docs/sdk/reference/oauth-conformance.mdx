@@ -52,7 +52,7 @@ console.log(result.steps);    // Step-by-step results with HTTP traces
 | `redirectUrl` | `string` | No | Auto-generated | OAuth redirect URL |
 | `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch for recording/replay |
 | `stepTimeout` | `number` | No | `30000` | Per-step timeout in ms |
-| `oauthConformanceChecks` | `boolean` | No | `false` | Run 6 additional negative checks post-flow |
+| `oauthConformanceChecks` | `boolean` | No | `false` | Run 9 additional checks post-flow: 6 negative checks and 3 server-side obligation checks |
 
 ### OAuthConformanceAuthConfig
 
@@ -134,9 +134,11 @@ const test = new OAuthConformanceTest({
 });
 ```
 
-### Negative conformance checks (`oauthConformanceChecks`)
+### Conformance checks (`oauthConformanceChecks`)
 
-When enabled, six extra checks run after a successful flow:
+When enabled, nine extra checks run after a successful flow — six negative checks that probe client-facing security, and three server-side obligation checks that verify the server meets normative spec requirements.
+
+**Negative checks (client-facing security):**
 
 1. **DCR redirect URI policy** — attempts dynamic client registration with a non-loopback `http://` redirect URI; expects rejection under the MCP authorization profile.
 2. **Invalid client** — sends a token request with an unknown `client_id`; expects rejection.
@@ -144,6 +146,12 @@ When enabled, six extra checks run after a successful flow:
 4. **Invalid token** — sends an authenticated MCP initialize request with an obviously invalid bearer token; expects HTTP 401 from the MCP server.
 5. **Invalid redirect at the token endpoint** — sends a token request with a mismatched `redirect_uri` to look for redirect exact-match enforcement. This step may be `skipped` if the request is rejected for another reason before redirect validation is demonstrated.
 6. **Token format** — validates the token response includes `access_token`, `token_type`, and expiration metadata.
+
+**Server-side obligation checks (spec compliance):**
+
+7. **Unauthenticated request challenge** (`oauth_unauthenticated_challenge`) — sends an unauthenticated MCP request and confirms the server responds with HTTP 401 and a `WWW-Authenticate: Bearer` challenge, never a 5xx. A 2xx result is `skipped` — anonymous `initialize` is spec-legal.
+8. **Resource metadata URL in challenge** (`oauth_resource_metadata_challenge`) — confirms the Bearer challenge includes an absolute `resource_metadata` URL (RFC 9728 §5.1). `skipped` on protocol version `2025-03-26`, which predates RFC 9728.
+9. **Stale session rejection** (`oauth_stale_session_rejection`) — sends an authenticated request with an unknown `Mcp-Session-Id` and confirms the server rejects it with a 4xx (404 preferred), never a 5xx. `skipped` on the stateless `2026-07-28` transport or when no access token is available.
 
 ```typescript
 const test = new OAuthConformanceTest({
@@ -156,7 +164,9 @@ const test = new OAuthConformanceTest({
 const result = await test.run();
 // result.steps will include oauth_dcr_http_redirect_uri, oauth_invalid_client,
 // oauth_invalid_authorize_redirect, oauth_invalid_token,
-// oauth_invalid_redirect, and oauth_token_format
+// oauth_invalid_redirect, oauth_token_format,
+// oauth_unauthenticated_challenge, oauth_resource_metadata_challenge,
+// and oauth_stale_session_rejection
 ```
 
 <Note>
@@ -219,7 +229,8 @@ for (const flow of result.results) {
 | `logs` | `InfoLogEntry[]` | Structured log entries |
 | `http` | `HttpHistoryEntry` | Primary HTTP exchange (if any) |
 | `httpAttempts` | `HttpHistoryEntry[]` | All HTTP traces including retries |
-| `error` | `{ message, details? }` | Error info (if failed) |
+| `error` | `{ message, details? }` | Error info (if failed or skipped) |
+| `warnings` | `string[]` | Non-fatal evidence on a passing step (e.g. a spec-preferred but not mandated behavior was missed). Never present on a failed step. |
 | `teachableMoments` | `string[]` | Educational hints for this step |
 
 ### VerificationResult
