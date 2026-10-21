@@ -86,7 +86,7 @@ function register(
 }
 
 describe("registerHostBridgeHandlers — capability gating (advertise = enforce)", () => {
-  it("installs no capability-gated handlers when all caps are off", async () => {
+  it("refuses resource reads and installs no other gated handlers when all caps are off", async () => {
     const bridge = makeStubBridge();
     register(bridge, { effectiveHostCapabilities: NO_CAPS });
 

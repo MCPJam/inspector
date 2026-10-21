@@ -95,7 +95,9 @@ declare global {
     __mcpjamHostReadResource?: (payload: {
       widgetId: string;
       params: Parameters<ReadResourceHandler>[0];
-    }) => ReturnType<ReadResourceHandler>;
+    }) => Promise<
+      { result: Awaited<ReturnType<ReadResourceHandler>> } | { error: string }
+    >;
     __mcpjamHostContext?: (payload: {
       widgetId: string;
       params: unknown;
@@ -233,7 +235,9 @@ async function renderWidget(
       onReadResourceV2: async (params) => {
         const readResource = window.__mcpjamHostReadResource;
         if (!readResource) throw new Error("Resource read binding unavailable");
-        return readResource({ widgetId: opts.widgetId, params });
+        const out = await readResource({ widgetId: opts.widgetId, params });
+        if ("error" in out) throw new Error(out.error);
+        return out.result;
       },
       onCallTool: async (name, args) => {
         const rpc = window.__mcpjamHostRpc;

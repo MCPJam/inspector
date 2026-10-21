@@ -28,8 +28,8 @@ async function widgetHtml(force = false) {
           } catch (error) { document.querySelector('#status').textContent = String(error); }
         };
         if (${force}) {
-          try { await window.parent.__mcpjamHostReadResource({widgetId:'preview',params:{uri:'box://fixture/document'}}); }
-          catch (error) { document.querySelector('#status').textContent += ' ' + String(error); }
+          try { document.querySelector('#status').textContent += ' ' + JSON.stringify(await window.parent.__mcpjamHostReadResource({widgetId:'preview',params:{uri:'box://fixture/document'}})); }
+          catch (error) { document.querySelector('#status').textContent += ' threw ' + String(error); }
         }
       })();`,
       resolveDir: process.cwd(),
@@ -123,8 +123,23 @@ describe.runIf(await isChromiumInstalled())(
       });
       await open(harness, true);
       await visible(harness, "Disabled");
-      await visible(harness, "This host does not allow resource reads.");
+      await visible(
+        harness,
+        '{"error":"This host does not allow resource reads."}',
+      );
       expect(readResource).not.toHaveBeenCalled();
+    });
+
+    it("gives a widget that calls the binding directly only the error message", async () => {
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+      const harness = new McpAppBrowserHarness({
+        callTool: vi.fn(),
+        readResource: vi.fn().mockRejectedValue(new Error("Resource not found")),
+        hostCapabilities: { serverResources: {} },
+      });
+      await open(harness, true);
+      await visible(harness, '{"error":"Resource not found"}');
+      warn.mockRestore();
     });
 
     it("returns upstream read failures to the widget without a fallback connection", async () => {

@@ -936,31 +936,34 @@ export class McpAppBrowserHarness {
 
     await this.page.exposeBinding(
       "__mcpjamHostReadResource",
+      // Failures come back as `{ error }`, never a thrown Node Error: a widget
+      // can call this binding directly and would otherwise see the stack.
       async (
         _source,
         payload: { widgetId: string; params: ResourceReadParams },
-      ) => {
+      ): Promise<{ result: MCPReadResourceResult } | { error: string }> => {
         const widget = this.mounted.get(payload.widgetId);
         if (!widget || this.closing)
-          throw new Error("Resource read owner is closed");
+          return { error: "Resource read owner is closed" };
         const capabilities =
           this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
         if (!capabilities.serverResources)
-          throw new Error(RESOURCE_READS_DISABLED_MESSAGE);
+          return { error: RESOURCE_READS_DISABLED_MESSAGE };
         const readResource = this.opts.readResource;
-        if (!readResource) throw new Error("Resource read service unavailable");
+        if (!readResource) return { error: "Resource read service unavailable" };
         this.pendingRpcCount += 1;
         try {
-          return await readResource(widget.serverId, payload.params);
-        } catch (error) {
+          return { result: await readResource(widget.serverId, payload.params) };
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err);
           // Unlike tool calls, reads leave no record in the run, and a widget
           // may swallow the rejection.
           logger.warn("MCP App resource read failed", {
             serverId: widget.serverId,
             uri: payload.params.uri,
-            error: error instanceof Error ? error.message : String(error),
+            error,
           });
-          throw error;
+          return { error };
         } finally {
           this.pendingRpcCount -= 1;
         }

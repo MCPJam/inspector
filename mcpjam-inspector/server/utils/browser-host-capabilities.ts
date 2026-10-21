@@ -81,5 +81,13 @@ function parseConfig(input: unknown): z.infer<typeof configSchema> {
   const issues = result.error.issues
     .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
     .join("; ");
-  throw new Error(`Invalid client profile at ${issues}`);
+  throw new InvalidClientProfileError(`Invalid client profile at ${issues}`);
+}
+
+/** A saved profile the resolver cannot read; fails its eval case up front. */
+export class InvalidClientProfileError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidClientProfileError";
+  }
 }

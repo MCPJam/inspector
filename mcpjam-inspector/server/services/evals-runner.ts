@@ -1,4 +1,7 @@
-import { resolveBrowserHostCapabilities } from "../utils/browser-host-capabilities";
+import {
+  InvalidClientProfileError,
+  resolveBrowserHostCapabilities,
+} from "../utils/browser-host-capabilities";
 import { projectWorkspaceTranscript, workspacePresentationHostConfig } from "../../shared/unattended-workspace";
 import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
 import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities, localHarnessIdOf } from "../utils/harness/local/run-resources.js";
@@ -2121,7 +2124,7 @@ async function persistCaseRefusal(args: {
   convexClient: ConvexHttpClient;
   recorder: SuiteRunRecorder | null;
   test: EvalTestCase;
-  refusal: ModelResolutionRefusalError;
+  refusal: ModelResolutionRefusalError | InvalidClientProfileError;
   runStartedAt: number;
 }): Promise<void> {
   if (!args.test.testCaseId) return;
@@ -2133,7 +2136,10 @@ async function persistCaseRefusal(args: {
     (row) =>
       row.status === "pending" && row.testCaseId === args.test.testCaseId,
   );
-  const errorMessage = describeModelRefusalForIteration(args.refusal);
+  const errorMessage =
+    args.refusal instanceof ModelResolutionRefusalError
+      ? describeModelRefusalForIteration(args.refusal)
+      : args.refusal.message;
   await Promise.allSettled(
     pending.map((row) =>
       persistSetupFailedIteration({
@@ -3334,6 +3340,9 @@ const executeTestCase = async (params: {
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
+  // Throws InvalidClientProfileError before any row is claimed, so the suite
+  // run records it on the case's pending rows instead of stranding them.
+  resolveBrowserHostCapabilities(suiteHostConfig, test.hostConfigOverride);
   /**
    * An ENVIRONMENT quick run's committed rows are checked against the attempt
    * count before anything runs: more attempts than committed rows would need a
@@ -4705,14 +4714,15 @@ export const runEvalSuiteWithAiSdk = async ({
         // Count as one failed test
         summary.total += 1;
         summary.failed += 1;
-        // A refused model selection never started an iteration, so without
-        // this its pre-created rows would say nothing about why: the refusal
-        // code and reason go on each of that case's pending rows.
+        // A refused model selection or an unreadable client profile never
+        // started an iteration, so without this its pre-created rows would say
+        // nothing about why: the reason goes on each of that case's pending rows.
         const refusedTest = tests[resultIndex];
         if (
           runId !== null &&
           refusedTest &&
-          result.reason instanceof ModelResolutionRefusalError
+          (result.reason instanceof ModelResolutionRefusalError ||
+            result.reason instanceof InvalidClientProfileError)
         ) {
           try {
             await persistCaseRefusal({
@@ -4725,7 +4735,7 @@ export const runEvalSuiteWithAiSdk = async ({
             });
           } catch (refusalPersistError) {
             logger.warn(
-              "[evals] Failed to record a model refusal on its rows",
+              "[evals] Failed to record a case refusal on its rows",
               {
                 runId,
                 error:
