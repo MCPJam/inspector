@@ -12,19 +12,25 @@ interface CollapsedPanelStripProps {
   tooltipText?: string;
   /** Which side the panel opens from. "right" means the strip is on the right and opens a right panel. */
   side?: "left" | "right";
+  /** Out of reach while something is drawn over the strip. */
+  inert?: boolean;
 }
 
 export function CollapsedPanelStrip({
   onOpen,
   tooltipText = "Show panel",
   side = "right",
+  inert,
 }: CollapsedPanelStripProps) {
   const Icon = side === "right" ? PanelRightOpen : PanelLeftOpen;
   const borderClass = side === "right" ? "border-l" : "border-r";
   const tooltipSide = side === "right" ? "left" : "right";
 
   return (
-    <div className={`flex items-center ${borderClass} border-border`}>
+    <div
+      inert={inert}
+      className={`flex items-center ${borderClass} border-border`}
+    >
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>

@@ -415,6 +415,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // opened it (the chat composer if that is gone). The side panel does the
   // same through `ExtensionRailBridge`.
   const leftDrawerOpen = isMobile && isLeftRailVisible;
+  // Everything the phone's side panel is drawn over, while it is open.
+  const coveredBySidePanel = isMobile && isRightRailVisible;
   const leftDrawerRef = useRef<HTMLDivElement | null>(null);
   const leftDrawerOpener = useRef<HTMLElement | null>(null);
   const wasLeftDrawerOpen = useRef(false);
@@ -581,6 +583,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           ) : (
             <CollapsedPanelStrip
               side="left"
+              inert={coveredBySidePanel}
               onOpen={() => {
                 setIsLeftRailVisible(true);
                 // The panel only remounts on the next paint; expand
@@ -606,8 +609,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
             // rather than unmounted, that 15% was an unusable gap
             // beside a browser that was supposed to fill the space.
             minSize={browserExpanded ? 0 : showBrowser ? 15 : 40}
-            // Covered by the phone's side panel.
-            inert={isMobile && isRightRailVisible}
+            inert={coveredBySidePanel}
             className={cn(
               "min-h-0 min-w-0 overflow-hidden",
               // An expanded browser hides chat rather than
@@ -638,9 +640,12 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                   other side of it to resize against, and a divider
                   that moves a hidden panel is a control that does
                   nothing visible. */}
-              {browserExpanded ? null : <ResizableHandle withHandle />}
+              {browserExpanded ? null : (
+                <ResizableHandle withHandle inert={coveredBySidePanel} />
+              )}
               <ResizablePanel
                 id="playground-browser"
+                inert={coveredBySidePanel}
                 order={3}
                 defaultSize={browserExpanded ? 100 : browserSize}
                 minSize={browserExpanded ? 100 : MIN_BROWSER_PANEL_SIZE}
@@ -668,7 +673,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
               </ResizablePanel>
             </>
           ) : null}
-          {isRightRailVisible ? <ResizableHandle withHandle /> : null}
+          {isRightRailVisible ? (
+            <ResizableHandle withHandle inert={coveredBySidePanel} />
+          ) : null}
           <ResizablePanel
             ref={rightPanelRef}
             id="playground-right"

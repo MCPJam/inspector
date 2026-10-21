@@ -103,14 +103,17 @@ vi.mock("@/components/ui/collapsed-panel-strip", () => ({
   CollapsedPanelStrip: ({
     side,
     onOpen,
+    inert,
   }: {
     side: string;
     onOpen: () => void;
+    inert?: boolean;
   }) => (
     <button
       type="button"
       data-testid={`collapsed-${side}-rail`}
       onClick={onOpen}
+      inert={inert}
     />
   ),
 }));
@@ -461,6 +464,8 @@ describe("PlaygroundTab — leaving a model App's fullscreen in the side panel",
     const rail = overlay()!;
     expect(rail).not.toHaveAttribute("inert");
     expect(chatInert()).toBe(true);
+    // The drawer's edge strip sits under the panel too.
+    expect(screen.getByTestId("collapsed-left-rail")).toHaveAttribute("inert");
 
     within(rail as HTMLElement)
       .getByRole("button", { name: "Collapse panel" })
@@ -470,6 +475,9 @@ describe("PlaygroundTab — leaving a model App's fullscreen in the side panel",
     expect(overlay()).toBeNull();
     expect(rail).toHaveAttribute("inert");
     expect(chatInert()).toBe(false);
+    expect(screen.getByTestId("collapsed-left-rail")).not.toHaveAttribute(
+      "inert",
+    );
     expect(composer()).toHaveFocus();
   });
 
