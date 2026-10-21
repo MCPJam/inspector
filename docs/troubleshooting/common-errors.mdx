@@ -34,7 +34,9 @@ Most "failed to connect" / `fetch failed` / `ECONNREFUSED` / `MCP error -32000: 
 
 2. **Right port, right path?**
 
-   `ECONNREFUSED 127.0.0.1:5555` means **nothing is listening on that port** — typo, wrong port, or the server is bound to `127.0.0.1` only while you're calling it via a different hostname (or vice versa). `SSE error: Non-200 status code (404)` means the port is correct but the path is wrong: most MCP servers mount under `/mcp` or `/sse`, not `/`.
+   **"Couldn't reach the server at `<endpoint>`: connection refused (ECONNREFUSED). Check that it's running and that the host and port are correct."** — nothing is listening on that port. Common causes: typo in the port number, the server hasn't started yet, or the server is bound to `127.0.0.1` while you're calling it via a different hostname (or vice versa).
+
+   **"Server returned HTTP 404 at `<endpoint>`. Check the MCP endpoint and server logs."** — the port is reachable but the path is wrong. Most MCP servers mount under `/mcp` or `/sse`, not `/`.
 
 3. **Right transport selected?**
 
