@@ -57,7 +57,7 @@ function heading(option: FindingOption): string {
     case "fix":
       return `Make a change to the MCP server${server}. The analysis checked the cause in the recorded evidence; the change itself has not been tested.`;
     case "experiment":
-      return `Try an experiment on the MCP server${server}. The cause is not proven: this change tests a hypothesis, and the rerun decides whether to keep it.`;
+      return `Try an experiment on the MCP server${server}. Rerun it to decide whether to keep the change.`;
     default:
       return "Investigate a problem recorded in an eval run before changing the MCP server.";
   }
