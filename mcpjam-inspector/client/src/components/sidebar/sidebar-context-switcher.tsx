@@ -33,7 +33,7 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
-import { LearnMoreHoverCard } from "@/components/learn-more/LearnMoreHoverCard";
+import { SidebarItemHoverCard } from "./sidebar-item-hover-card";
 import { cn, getInitials } from "@/lib/utils";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
@@ -228,14 +228,17 @@ export function SidebarContextSwitcher({
     </button>
   ) : null;
 
+  const contextName = activeOrg
+    ? `${activeOrg.name} / ${projectName}`
+    : projectName;
+
   const triggerButton = (
     <SidebarMenuButton
       size="lg"
-      title={activeOrg ? `${activeOrg.name} / ${projectName}` : projectName}
       aria-label={
         activeOrg
-          ? `Switch context: ${activeOrg.name} / ${projectName}`
-          : `Switch project: ${projectName}`
+          ? `Switch context: ${contextName}`
+          : `Switch project: ${contextName}`
       }
       className="h-10 p-1.5 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
     >
@@ -494,21 +497,18 @@ export function SidebarContextSwitcher({
       <SidebarMenu>
         <SidebarMenuItem>
           <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-            {onLearnMoreExpand ? (
-              <LearnMoreHoverCard
-                tabId="projects"
-                onExpand={onLearnMoreExpand}
-                // Both open to the right of this same trigger, so the preview
-                // card would otherwise animate over the open menu.
-                suppressed={menuOpen}
-              >
-                <DropdownMenuTrigger asChild>
-                  {triggerButton}
-                </DropdownMenuTrigger>
-              </LearnMoreHoverCard>
-            ) : (
+            {/* Never labelVisible: the name truncates in the expanded rail,
+                and this card is the only place it shows in full. */}
+            <SidebarItemHoverCard
+              title={contextName}
+              tabId="projects"
+              onExpand={onLearnMoreExpand}
+              // Both open to the right of this same trigger, so the card
+              // would otherwise animate over the open menu.
+              suppressed={menuOpen}
+            >
               <DropdownMenuTrigger asChild>{triggerButton}</DropdownMenuTrigger>
-            )}
+            </SidebarItemHoverCard>
             <DropdownMenuContent
               className="w-[300px] rounded-xl p-0 shadow-md bg-sidebar"
               side={isMobile ? "bottom" : "right"}

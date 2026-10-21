@@ -113,18 +113,27 @@ vi.mock("@mcpjam/design-system/tooltip", () => ({
   ),
 }));
 
-vi.mock("@/components/learn-more/LearnMoreHoverCard", () => ({
-  LearnMoreHoverCard: ({
+vi.mock("../sidebar-item-hover-card", () => ({
+  SidebarItemHoverCard: ({
+    title,
     tabId,
+    onExpand,
+    labelVisible,
     children,
     suppressed,
   }: {
-    tabId: string;
+    title: string;
+    tabId?: string;
+    onExpand?: unknown;
+    labelVisible?: boolean;
     children: ReactNode;
     suppressed?: boolean;
   }) => (
     <div
-      data-testid={`learn-more-${tabId}`}
+      data-testid={`hover-card-${tabId}`}
+      data-title={title}
+      data-has-expand={String(!!onExpand)}
+      data-label-visible={String(!!labelVisible)}
       data-suppressed={String(!!suppressed)}
     >
       {children}
@@ -989,10 +998,31 @@ describe("SidebarContextSwitcher", () => {
         onLearnMoreExpand={vi.fn()}
       />,
     );
-    expect(screen.getByTestId("learn-more-projects")).toBeInTheDocument();
-    expect(screen.getByTestId("learn-more-projects")).toHaveTextContent(
-      "Inspector",
+    const card = screen.getByTestId("hover-card-projects");
+    expect(card).toHaveTextContent("Inspector");
+    expect(card).toHaveAttribute("data-has-expand", "true");
+  });
+
+  it("names the full context in the card instead of a native tooltip, flag on or off", () => {
+    // The name truncates in the rail; the card is the one place it shows in
+    // full, so it is there even without learn-more content.
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+      />,
     );
+    const card = screen.getByTestId("hover-card-projects");
+    expect(card).toHaveAttribute("data-title", "Acme / Inspector");
+    expect(card).toHaveAttribute("data-has-expand", "false");
+    expect(card).toHaveAttribute("data-label-visible", "false");
+    expect(
+      screen.getByRole("button", { name: /^Switch context:/ }),
+    ).not.toHaveAttribute("title");
   });
 
   it("suppresses the learn more hover card while the menu is open", () => {
@@ -1008,12 +1038,12 @@ describe("SidebarContextSwitcher", () => {
       />,
     );
     // Both open to the right of the same trigger, so they'd otherwise overlap.
-    expect(screen.getByTestId("learn-more-projects")).toHaveAttribute(
+    expect(screen.getByTestId("hover-card-projects")).toHaveAttribute(
       "data-suppressed",
       "false",
     );
     openMainDropdown();
-    expect(screen.getByTestId("learn-more-projects")).toHaveAttribute(
+    expect(screen.getByTestId("hover-card-projects")).toHaveAttribute(
       "data-suppressed",
       "true",
     );

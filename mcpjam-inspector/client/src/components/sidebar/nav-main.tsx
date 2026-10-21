@@ -8,15 +8,9 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
-import { learnMoreContent } from "@/lib/learn-more-content";
-import { LearnMoreHoverCard } from "@/components/learn-more/LearnMoreHoverCard";
+import { SidebarItemHoverCard } from "./sidebar-item-hover-card";
 
 interface NavMainItem {
   title: string;
@@ -43,7 +37,9 @@ interface NavMainProps {
 }
 
 export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) {
-  const { open: sidebarOpen } = useSidebar();
+  const { open: sidebarOpen, isMobile } = useSidebar();
+  // The mobile sheet always shows labels, whatever the desktop rail does.
+  const labelVisible = sidebarOpen || !!isMobile;
 
   const handleClick = (url: string) => {
     if (onItemClick) {
@@ -83,36 +79,8 @@ export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) 
         : "cursor-pointer"
     );
 
-  const shouldShowHoverCard = (item: NavMainItem): boolean => {
-    if (!learnMore) return false;
-    const tabId = item.url.replace(/^[#/]+/, "");
-    const entry = learnMoreContent[tabId];
-    return !!entry?.previewVideoUrl;
-  };
-
-  const wrapWithHoverCard = (item: NavMainItem, child: React.ReactNode) => {
-    if (!shouldShowHoverCard(item) || !learnMore) return child;
-    const tabId = item.url.replace(/^[#/]+/, "");
-    return (
-      <LearnMoreHoverCard
-        tabId={tabId}
-        onExpand={learnMore.onExpand}
-        triggerTooltip={!sidebarOpen ? item.title : undefined}
-        triggerTooltipDelayMs={!sidebarOpen ? 1000 : undefined}
-        disabledMessage={item.disabled ? item.disabledTooltip : undefined}
-      >
-        {child}
-      </LearnMoreHoverCard>
-    );
-  };
-
   const renderButton = (item: NavMainItem) => (
     <SidebarMenuButton
-      tooltip={
-        !item.disabled && (!shouldShowHoverCard(item) || sidebarOpen)
-          ? item.title
-          : undefined
-      }
       isActive={!item.disabled && isItemActive(item)}
       onClick={item.disabled ? undefined : () => handleClick(item.url)}
       aria-disabled={item.disabled || undefined}
@@ -164,38 +132,26 @@ export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) 
         <SidebarMenu className="gap-0.5">
           {items.map((item) => {
             const button = renderButton(item);
-
-            if (item.disabled) {
-              if (shouldShowHoverCard(item)) {
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    {wrapWithHoverCard(
-                      item,
-                      <div className="w-full cursor-not-allowed">{button}</div>
-                    )}
-                  </SidebarMenuItem>
-                );
-              }
-
-              return (
-                <SidebarMenuItem key={item.title}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="w-full cursor-not-allowed">{button}</div>
-                    </TooltipTrigger>
-                    {item.disabledTooltip && (
-                      <TooltipContent side="right" align="center">
-                        {item.disabledTooltip}
-                      </TooltipContent>
-                    )}
-                  </Tooltip>
-                </SidebarMenuItem>
-              );
-            }
-
             return (
               <SidebarMenuItem key={item.title}>
-                {wrapWithHoverCard(item, button)}
+                <SidebarItemHoverCard
+                  title={item.title}
+                  badge={item.badge}
+                  tabId={item.url.replace(/^[#/]+/, "")}
+                  onExpand={learnMore?.onExpand}
+                  disabledMessage={
+                    item.disabled ? item.disabledTooltip : undefined
+                  }
+                  labelVisible={labelVisible}
+                >
+                  {item.disabled ? (
+                    // An aria-disabled button gets no pointer events, so the
+                    // wrapper is what the hover card listens on.
+                    <div className="w-full cursor-not-allowed">{button}</div>
+                  ) : (
+                    button
+                  )}
+                </SidebarItemHoverCard>
               </SidebarMenuItem>
             );
           })}
