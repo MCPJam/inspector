@@ -25,8 +25,18 @@ export function OAuthFlowLayout({
 }) {
   const isMobile = useIsMobile();
   const diagramTab = useRef<HTMLButtonElement>(null);
+  /** Last view focus moved to, so a resize never re-fires it. */
+  const focusedView = useRef<string | null>(null);
   useEffect(() => {
-    if (isMobile && view === "diagram") diagramTab.current?.focus();
+    // Same rule as ThreePanelLayout: focus follows a view change, not a mount
+    // and not a desktop/mobile resize. `isMobile` is a dependency because the
+    // body reads it, which would otherwise make every breakpoint crossing
+    // steal the cursor while the diagram view happens to be open.
+    const firstRun = focusedView.current === null;
+    const unchanged = focusedView.current === view;
+    focusedView.current = view;
+    if (firstRun || unchanged || !isMobile) return;
+    if (view === "diagram") diagramTab.current?.focus();
   }, [isMobile, view]);
   const style = (pane: string): CSSProperties | undefined =>
     isMobile

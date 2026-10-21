@@ -104,6 +104,8 @@ export function ThreePanelLayout({
   const rightRef = useRef<React.ComponentRef<typeof ResizablePanel>>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  /** Last pane+selection focus moved to, so a resize never re-fires it. */
+  const focusedSelection = useRef<string | null>(null);
   const selectionKey = mobileNavigation?.selectionKey ?? "";
   const selectionPanel = mobileNavigation?.selectionPanel ?? "sidebar";
 
@@ -114,7 +116,16 @@ export function ThreePanelLayout({
   useEffect(() => {
     const pane = selectionKey ? selectionPanel : "sidebar";
     setActivePane(pane);
-    if (!isMobile) return;
+    // Focus follows a navigation the caller made, never a mount or a
+    // breakpoint crossing. `isMobile` is a dependency because the body reads
+    // it, but a resize is not a navigation: without this guard, crossing
+    // 768px mid-typing pulls the cursor out of the form the pane is keeping
+    // mounted, and a phone loading the page focuses Browse unprompted.
+    const selection = `${pane}:${selectionKey}`;
+    const firstRun = focusedSelection.current === null;
+    const unchanged = focusedSelection.current === selection;
+    focusedSelection.current = selection;
+    if (firstRun || unchanged || !isMobile) return;
     const frame = requestAnimationFrame(() => {
       (pane === "sidebar" ? sidebarRef : contentRef).current?.focus();
     });

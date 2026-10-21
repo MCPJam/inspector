@@ -40,7 +40,8 @@ export const DiagramLayout = ({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const measure = () => setHasDimensions(container.clientWidth > 0 && container.clientHeight > 0);
+    const measure = () =>
+      setHasDimensions(container.clientWidth > 0 && container.clientHeight > 0);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(container);
@@ -120,7 +121,15 @@ export const DiagramLayout = ({
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [currentStep, focusedStep, edges, nodes, reactFlowInstance, hasDimensions, isMobile]);
+  }, [
+    currentStep,
+    focusedStep,
+    edges,
+    nodes,
+    reactFlowInstance,
+    hasDimensions,
+    isMobile,
+  ]);
 
   return (
     <div ref={containerRef} className="w-full h-full">

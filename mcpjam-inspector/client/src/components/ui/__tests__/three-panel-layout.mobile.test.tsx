@@ -131,6 +131,47 @@ describe("ThreePanelLayout mobile navigation", () => {
     );
   });
 
+  it("leaves the cursor alone across a breakpoint crossing", async () => {
+    const { rerender } = render(<Workspace />);
+    const input = screen.getByRole("textbox", { name: "Parameters" });
+    input.focus();
+    fireEvent.change(input, { target: { value: "half typed" } });
+    expect(input).toHaveFocus();
+
+    // Rotating a tablet, or dragging a window past 768px, re-runs the pane
+    // effect because `isMobile` is one of its dependencies. That is a resize,
+    // not a navigation: the selection has not changed, so focus must stay in
+    // the field the user is typing into.
+    act(() => {
+      mobile.value = false;
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: 1440,
+      });
+    });
+    rerender(<Workspace />);
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+    expect(input).toHaveFocus();
+
+    act(() => {
+      mobile.value = true;
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: 375,
+      });
+    });
+    rerender(<Workspace />);
+    // The pane effect focuses inside requestAnimationFrame, so the assertion
+    // has to outlive one frame or it races the bug it is guarding.
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+    expect(input).toHaveValue("half typed");
+    expect(input).toHaveFocus();
+  });
+
   it("allows mobile Browse and Logs despite collapsed desktop preferences", () => {
     localStorage.setItem("mcpjam-inspector-jsonrpc-panel-visible", "false");
     const changeSidebar = vi.fn();
