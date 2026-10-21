@@ -99,6 +99,8 @@ The Apps Extension tab contains two independent capability matrices that never c
 - **`widgetDisplayModeRequests`** — tri-state host policy (`accept`, `user-initiated-only`, `decline`) for widget-initiated display-mode requests.
 - **Boolean dimensions** — a flat list of all `app.*` capability flags (e.g. `toolInputPartial`, `toolCancelled`, `serverResources`, `logging`, `toolInfo`, `openLinks`, `serverTools`, `updateModelContext`, `message`). Rows that diverge from the selected host preset are stored as sparse overrides.
 
+**Plugin extensions** — A per-extension toggle list that controls which OpenAI plugin extension features are active for this client. Each toggle is independent; turning one off removes only that capability without affecting running Apps. The toggles include Sidebar Apps, Conversation panels, File viewers, Settings, Display modes, Deep links, Model context, Messages, Mentions, Forms, and Onboarding. The **Display modes** toggle has an additional effect on ChatGPT and Codex clients: when on, Apps in the plugin extensions host follow OpenAI's display-mode rules — a resource that declares both `inline` and `fullscreen` starts fullscreen, a `preferredDisplayMode` picks the starting mode without narrowing the allowed set, and an entrypoint App that declares at initialization it cannot show fullscreen is refused with a Logs entry instead of being forced into it. When the toggle is off, display-mode negotiation works the same as for other MCP Apps.
+
 <Note>
   Widget iframes are only rendered when the effective `clientCapabilities` advertise
   `io.modelcontextprotocol/ui` with a `mimeTypes` array that includes
