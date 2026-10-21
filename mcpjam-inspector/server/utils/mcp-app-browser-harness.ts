@@ -1456,20 +1456,10 @@ export class McpAppBrowserHarness {
         note: "no_rendered_widget",
       };
     }
-    // The SAME per-widget budget `executeAction` enforces, and for the same
-    // reason: a scripted step drives the page and captures a frame, so a
-    // caller that only ever posts semantic steps would otherwise drive a
-    // runaway widget forever — refreshing the session TTL on every call —
-    // while the coordinate path next door is capped at twelve. This became
-    // reachable when the step path was exposed as its own route; before that
-    // only the eval runner drove it, with its own bounded step list.
+    // Scripted and coordinate actions spend the same per-widget step budget.
     const stepBudgetExceeded =
       widget.actionCount >= this.budgets.maxBrowserStepsPerWidget;
-    // The screenshot budget is per-ITERATION and shared across widgets, so a
-    // scripted step can exhaust it even on a widget with steps to spare —
-    // every successful step captures a frame. Checked with the same split
-    // `executeAction` uses: the step cap DISMISSES the widget (terminal, per
-    // its contract), the screenshot cap only refuses further steps on it.
+    // Screenshot exhaustion refuses a step; step exhaustion unmounts the widget.
     const screenshotBudgetExceeded =
       this.screenshotCount >= this.budgets.totalScreenshotsPerIteration;
     if (stepBudgetExceeded) {
@@ -1513,7 +1503,17 @@ export class McpAppBrowserHarness {
           break;
         }
         case "key":
-          await this.page.keyboard.press(step.key);
+          if (step.target) await this.resolveScriptedLocator(step.target).press(step.key, { timeout });
+          else await this.page.keyboard.press(step.key);
+          break;
+        case "select":
+          await this.resolveScriptedLocator(step.target).selectOption(step.values, { timeout });
+          break;
+        case "scrollTo":
+          await this.resolveScriptedLocator(step.target).evaluate((element, position) => {
+            const scroller = element === element.ownerDocument.documentElement || element === element.ownerDocument.scrollingElement ? element.ownerDocument.defaultView! : element;
+            scroller.scrollTo({ left: position.x, top: position.y, behavior: "instant" });
+          }, { x: step.x, y: step.y });
           break;
         case "scroll": {
           const amount = (step.amount ?? 3) * 100;

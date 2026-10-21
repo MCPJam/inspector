@@ -190,7 +190,9 @@ export const interactActionSchema = z.discriminatedUnion("kind", [
       text: z.string().max(MAX_SCRIPTED_STEP_TEXT_CHARS),
     })
     .strict(),
-  z.object({ kind: z.literal("key"), key: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("key"), key: z.string().min(1), target: elementLocatorSchema.optional() }).strict(),
+  z.object({ kind: z.literal("select"), target: elementLocatorSchema, values: z.array(z.string().max(MAX_SCRIPTED_STEP_TEXT_CHARS)) }).strict(),
+  z.object({ kind: z.literal("scrollTo"), target: elementLocatorSchema, x: z.number().finite(), y: z.number().finite() }).strict(),
   z
     .object({
       kind: z.literal("scroll"),

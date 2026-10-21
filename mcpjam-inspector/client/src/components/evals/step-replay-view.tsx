@@ -148,6 +148,10 @@ function stepSummary(step: TestStep, presentation: StepPresentation): string {
 function describeInteract(step: InteractStep): string {
   const a = step.action;
   switch (a.kind) {
+    case "select":
+      return `choose ${a.values.join(", ")} in ${describeTarget(a.target)}`;
+    case "scrollTo":
+      return `scroll ${describeTarget(a.target)} to ${a.x}, ${a.y}`;
     case "click":
       return `click ${describeTarget(a.target)} · ${step.toolName}`;
     case "type":
