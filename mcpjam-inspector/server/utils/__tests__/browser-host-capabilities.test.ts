@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { resolveBrowserHostCapabilities } from "../browser-host-capabilities";
+import { logger } from "../logger";
 
 describe("browser host capabilities", () => {
   it.each(["claude", "chatgpt", "copilot"])(
@@ -63,5 +64,29 @@ describe("browser host capabilities", () => {
     expect(resolveBrowserHostCapabilities({ hostStyle: "unknown" })).toEqual(
       {},
     );
+  });
+  it("warns when the host style is not in the catalog", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    resolveBrowserHostCapabilities({ hostStyle: "claude" });
+    expect(warn).not.toHaveBeenCalled();
+    resolveBrowserHostCapabilities({ hostStyle: "claud" });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("claud"),
+      expect.objectContaining({ hostStyle: "claud" }),
+    );
+    warn.mockRestore();
+  });
+  it("names the invalid field when a saved profile is malformed", () => {
+    expect(() =>
+      resolveBrowserHostCapabilities({
+        hostStyle: "claude",
+        mcpProfile: {
+          apps: { mcpAppsOverrides: { serverResources: "yes" } },
+        },
+      }),
+    ).toThrow(/mcpProfile\.apps\.mcpAppsOverrides\.serverResources/);
+    expect(() =>
+      resolveBrowserHostCapabilities(undefined, { mcpProfile: { apps: null } }),
+    ).toThrow(/mcpProfile\.apps/);
   });
 });

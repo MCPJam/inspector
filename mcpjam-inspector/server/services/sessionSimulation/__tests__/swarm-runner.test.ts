@@ -184,6 +184,24 @@ describe("swarm single-host runner — attempt ordering", () => {
     expect(adapter.runtime.hostCapabilities).not.toHaveProperty("downloadFile");
   });
 
+  it("advertises only the override's own keys while the snapshot has no host style", async () => {
+    // Runs created before the backend pins hostStyle onto swarm targets.
+    await startJourneyRun(
+      baseOpts({
+        sessionsPerTarget: 1,
+        hosts: [
+          {
+            ...HOST,
+            mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+          },
+        ],
+      }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    expect(adapter.runtime.hostCapabilities).toEqual({ serverResources: {} });
+  });
+
   it("passes the pinned host runtime + swarm persist attribution into the shared core", async () => {
     await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 

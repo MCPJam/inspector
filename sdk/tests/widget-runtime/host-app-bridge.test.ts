@@ -181,7 +181,7 @@ describe("owned resource request callback", () => {
       ).rejects.toMatchObject({
         code: -32601,
         message: expect.stringContaining(
-          "Resource reads are disabled by this client profile."
+          "This host does not allow resource reads."
         ),
       });
       expect(read).not.toHaveBeenCalled();

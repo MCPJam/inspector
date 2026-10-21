@@ -4716,7 +4716,7 @@ describe("MCPAppsRenderer host capability enforcement", () => {
       mockBridge.onreadresource({ uri: "x" }, {}),
     ).rejects.toMatchObject({
       code: -32601,
-      message: "Resource reads are disabled by this client profile.",
+      message: "This host does not allow resource reads.",
     });
     expect(mockBridge.onlistresources).toBeNull();
     expect(mockBridge.onlistresourcetemplates).toBeNull();

@@ -57,6 +57,8 @@ import {
 } from "./browser-rendering-setup";
 import { HOSTED_MODE } from "../config";
 import { isBlockedEgressHost } from "./hosted-egress-guard";
+import { logger } from "./logger";
+import { RESOURCE_READS_DISABLED_MESSAGE } from "@mcpjam/sdk/widget-runtime";
 
 export { isChromiumInstalled };
 
@@ -944,12 +946,21 @@ export class McpAppBrowserHarness {
         const capabilities =
           this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
         if (!capabilities.serverResources)
-          throw new Error("Resource reads disabled by client profile");
+          throw new Error(RESOURCE_READS_DISABLED_MESSAGE);
         const readResource = this.opts.readResource;
         if (!readResource) throw new Error("Resource read service unavailable");
         this.pendingRpcCount += 1;
         try {
           return await readResource(widget.serverId, payload.params);
+        } catch (error) {
+          // Unlike tool calls, reads leave no record in the run, and a widget
+          // may swallow the rejection.
+          logger.warn("MCP App resource read failed", {
+            serverId: widget.serverId,
+            uri: payload.params.uri,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
         } finally {
           this.pendingRpcCount -= 1;
         }

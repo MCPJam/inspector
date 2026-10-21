@@ -99,7 +99,7 @@ describe("registerHostBridgeHandlers — capability gating (advertise = enforce)
       bridge.onreadresource!({ uri: "x" } as never, {} as never)
     ).rejects.toMatchObject({
       code: -32601,
-      message: "Resource reads are disabled by this client profile.",
+      message: "This host does not allow resource reads.",
     });
     expect(bridge.onlistresources).toBeUndefined();
     expect(bridge.onlistresourcetemplates).toBeUndefined();

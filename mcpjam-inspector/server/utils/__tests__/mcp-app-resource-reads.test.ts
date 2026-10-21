@@ -4,6 +4,7 @@ import {
   McpAppBrowserHarness,
   isChromiumInstalled,
 } from "../mcp-app-browser-harness";
+import { logger } from "../logger";
 
 const harnesses: McpAppBrowserHarness[] = [];
 afterEach(async () => {
@@ -122,11 +123,12 @@ describe.runIf(await isChromiumInstalled())(
       });
       await open(harness, true);
       await visible(harness, "Disabled");
-      await visible(harness, "Resource reads disabled by client profile");
+      await visible(harness, "This host does not allow resource reads.");
       expect(readResource).not.toHaveBeenCalled();
     });
 
     it("returns upstream read failures to the widget without a fallback connection", async () => {
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
       const readResource = vi
         .fn()
         .mockRejectedValue(new Error("Resource not found"));
@@ -140,6 +142,16 @@ describe.runIf(await isChromiumInstalled())(
       await visible(harness, "Resource not found");
       expect(readResource).toHaveBeenCalledTimes(1);
       expect(readResource.mock.calls[0][0]).toBe("box-origin");
+      // A widget that swallows the rejection still leaves a trace.
+      expect(warn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          serverId: "box-origin",
+          uri: "box://fixture/document",
+          error: "Resource not found",
+        }),
+      );
+      warn.mockRestore();
     });
   },
 );

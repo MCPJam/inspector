@@ -938,7 +938,8 @@ export const RunTestCaseRequestSchema = z.object({
       hostCapabilitiesOverride: z.record(z.string(), z.unknown()).optional(),
       chatUiOverride: z.record(z.string(), z.unknown()).optional(),
       // Same shape the browser capability resolver parses, so a malformed
-      // profile is a 400 here instead of a throw before the iteration starts.
+      // per-case profile is a 400 here. The suite's saved config is checked
+      // only when the run resolves capabilities.
       mcpProfile: browserMcpProfileSchema.optional(),
       connectionDefaults: z
         .object({
