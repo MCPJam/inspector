@@ -65,6 +65,10 @@ import {
   gateMcpToolResultImageRenderingByModelVisibility,
   type HostConfigDtoV2,
 } from "@/lib/client-config-v2";
+import { focusChatComposer } from "@/components/chat-v2/chat-input/composer-focus";
+
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 interface PlaygroundTabProps {
   activeProjectId?: string | null;
@@ -256,12 +260,15 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // closed and open OVER the chat instead of beside it.
   const isMobile = useIsMobile();
   const [isLeftRailVisible, setIsLeftRailVisible] = useState(!isMobile);
-  // Narrowing a window into the phone layout must not drop the open rail
-  // over the chat it was sitting beside.
-  useEffect(() => {
-    if (isMobile) setIsLeftRailVisible(false);
-  }, [isMobile]);
   const [isRightRailVisible, setIsRightRailVisible] = useState(false);
+  // Narrowing a window into the phone layout must not drop either open rail
+  // over the chat it was sitting beside. The side panel only collapses, so
+  // its Apps stay loaded.
+  useEffect(() => {
+    if (!isMobile) return;
+    setIsLeftRailVisible(false);
+    setIsRightRailVisible(false);
+  }, [isMobile]);
   // On a phone only one rail fits over the chat. Whatever opens the side
   // panel (an App or its Settings from the Sessions/Tools rail, the browser,
   // its edge strip) closes the left one, which would otherwise stay on top.
@@ -402,6 +409,53 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   }, [panelGroupElement]);
   const railOverlay =
     narrow && isRightRailVisible && (railAppActive || isMobile);
+
+  // The phone's Sessions/Tools drawer covers the chat like a dialog: focus
+  // moves into it, Escape closes it, and closing hands focus back to what
+  // opened it (the chat composer if that is gone). The side panel does the
+  // same through `ExtensionRailBridge`.
+  const leftDrawerOpen = isMobile && isLeftRailVisible;
+  const leftDrawerRef = useRef<HTMLDivElement | null>(null);
+  const leftDrawerOpener = useRef<HTMLElement | null>(null);
+  const wasLeftDrawerOpen = useRef(false);
+  useEffect(() => {
+    const drawer = leftDrawerRef.current;
+    const opened = !wasLeftDrawerOpen.current && leftDrawerOpen;
+    const closed = wasLeftDrawerOpen.current && !leftDrawerOpen;
+    wasLeftDrawerOpen.current = leftDrawerOpen;
+    const active = document.activeElement;
+    if (opened) {
+      leftDrawerOpener.current =
+        active instanceof HTMLElement && !drawer?.contains(active)
+          ? active
+          : null;
+      drawer?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)?.focus();
+    }
+    // Opening the side panel closes the drawer too; that panel owns focus.
+    if (!closed || isRightRailVisible) return;
+    const focusLost =
+      !active ||
+      active === document.body ||
+      !active.isConnected ||
+      !!drawer?.contains(active);
+    if (!focusLost) return;
+    const opener = leftDrawerOpener.current;
+    leftDrawerOpener.current = null;
+    if (opener?.isConnected) opener.focus();
+    else focusChatComposer(panelGroupElement);
+  }, [leftDrawerOpen, isRightRailVisible, panelGroupElement]);
+  useEffect(() => {
+    if (!leftDrawerOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      // A menu or dialog closing on the same Escape marks it handled.
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing)
+        return;
+      event.preventDefault();
+      setIsLeftRailVisible(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [leftDrawerOpen]);
   const collapseRightRail = useCallback(() => {
     setIsRightRailVisible(false);
     rightPanelRef.current?.collapse?.();
@@ -490,7 +544,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           // Clips the phone rails while they sit off screen.
           className="relative flex min-h-0 flex-1 overflow-hidden"
         >
-        <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
+        <ResizablePanelGroup
+          direction="horizontal"
+          className="min-h-0 flex-1"
+          // Under the open phone drawer, out of reach of Tab and a screen
+          // reader alike.
+          inert={leftDrawerOpen}
+        >
           {isLeftRailVisible && !isMobile ? (
             <>
               <ResizablePanel
@@ -546,6 +606,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
             // rather than unmounted, that 15% was an unusable gap
             // beside a browser that was supposed to fill the space.
             minSize={browserExpanded ? 0 : showBrowser ? 15 : 40}
+            // Covered by the phone's side panel.
+            inert={isMobile && isRightRailVisible}
             className={cn(
               "min-h-0 min-w-0 overflow-hidden",
               // An expanded browser hides chat rather than
@@ -669,6 +731,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
         {isMobile ? (
           // Stays mounted so it can slide out the way it slid in.
           <div
+            ref={leftDrawerRef}
             data-testid="playground-left-rail-overlay"
             data-state={isLeftRailVisible ? "open" : "closed"}
             inert={!isLeftRailVisible}

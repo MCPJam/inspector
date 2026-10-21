@@ -83,11 +83,22 @@ vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
 vi.mock("@/lib/host-compat/use-host-catalog", () => ({
   useHostCatalog: () => ({ catalog: null }),
 }));
-vi.mock("@/components/ui/resizable", () => ({
-  ResizablePanelGroup: ({ children }: { children?: ReactNode }) => children,
-  ResizablePanel: ({ children }: { children?: ReactNode }) => children,
-  ResizableHandle: () => null,
-}));
+// The real panels spread extra props onto their element; `inert` is the one
+// the phone layout relies on.
+vi.mock("@/components/ui/resizable", () => {
+  const Panel = ({
+    children,
+    inert,
+  }: {
+    children?: ReactNode;
+    inert?: boolean;
+  }) => <div inert={inert}>{children}</div>;
+  return {
+    ResizablePanelGroup: Panel,
+    ResizablePanel: Panel,
+    ResizableHandle: () => null,
+  };
+});
 vi.mock("@/components/ui/collapsed-panel-strip", () => ({
   CollapsedPanelStrip: ({
     side,
@@ -383,7 +394,7 @@ describe("PlaygroundTab — leaving a model App's fullscreen in the side panel",
       y: 0,
       toJSON: () => ({}),
     } as DOMRect);
-    render(<PlaygroundTab {...baseProps} />);
+    return render(<PlaygroundTab {...baseProps} />);
   }
   /**
    * A model App goes fullscreen: it becomes the rail's selected tab and the
@@ -404,6 +415,80 @@ describe("PlaygroundTab — leaving a model App's fullscreen in the side panel",
   const overlay = () => document.querySelector("[data-right-rail-overlay]");
   const railCollapsed = () => screen.queryByTestId("collapsed-right-rail");
   const composer = () => screen.getByRole("textbox", { name: "Composer" });
+  const chatInert = () =>
+    screen.getByTestId("playground-center").closest("[inert]") !== null;
+
+  it("on a phone: the drawer takes focus over an unreachable chat, and Escape hands it back", () => {
+    mobileFixture.isMobile = true;
+    renderAt(375);
+    const opener = screen.getByTestId("collapsed-left-rail");
+    opener.focus();
+    fireEvent.click(opener);
+
+    const drawer = screen.getByTestId("playground-left-rail-overlay");
+    expect(
+      within(drawer).getByRole("button", { name: "Collapse panel" }),
+    ).toHaveFocus();
+    expect(chatInert()).toBe(true);
+
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+
+    expect(drawer).toHaveAttribute("data-state", "closed");
+    expect(opener).toHaveFocus();
+    expect(chatInert()).toBe(false);
+  });
+
+  it("on a phone: Collapse panel hands focus back to what opened the drawer", () => {
+    mobileFixture.isMobile = true;
+    renderAt(375);
+    const opener = screen.getByTestId("collapsed-left-rail");
+    opener.focus();
+    fireEvent.click(opener);
+    const drawer = screen.getByTestId("playground-left-rail-overlay");
+
+    fireEvent.click(
+      within(drawer).getByRole("button", { name: "Collapse panel" }),
+    );
+
+    expect(drawer).toHaveAttribute("data-state", "closed");
+    expect(opener).toHaveFocus();
+  });
+
+  it("on a phone: the side panel keeps the chat out of reach, and Escape closes it back to the composer", () => {
+    mobileFixture.isMobile = true;
+    renderAt(375);
+    fireEvent.click(screen.getByTestId("collapsed-right-rail"));
+    const rail = overlay()!;
+    expect(rail).not.toHaveAttribute("inert");
+    expect(chatInert()).toBe(true);
+
+    within(rail as HTMLElement)
+      .getByRole("button", { name: "Collapse panel" })
+      .focus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+
+    expect(overlay()).toBeNull();
+    expect(rail).toHaveAttribute("inert");
+    expect(chatInert()).toBe(false);
+    expect(composer()).toHaveFocus();
+  });
+
+  it("narrowing a window into the phone layout closes both rails", () => {
+    const { rerender } = renderAt(1280);
+    expect(screen.getByTestId("playground-left-rail")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("collapsed-right-rail"));
+    expect(railCollapsed()).toBeNull();
+
+    mobileFixture.isMobile = true;
+    rerender(<PlaygroundTab {...baseProps} />);
+
+    expect(screen.getByTestId("playground-left-rail-overlay")).toHaveAttribute(
+      "data-state",
+      "closed",
+    );
+    expect(railCollapsed()).not.toBeNull();
+    expect(overlay()).toBeNull();
+  });
 
   it("on a phone: opening an App from the left drawer closes the drawer over it", () => {
     mobileFixture.isMobile = true;

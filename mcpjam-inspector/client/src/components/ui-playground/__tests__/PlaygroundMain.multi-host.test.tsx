@@ -1015,13 +1015,13 @@ describe("PlaygroundMain — multi-host render path", () => {
       screen
         .getAllByTestId("multi-host-card")
         .find((node) => node.getAttribute("data-compare-id") === id)!;
-    expect(card("h-A").className).not.toContain("hidden");
-    expect(card("h-B").className).toContain("hidden");
+    expect(card("h-A")).not.toHaveClass("hidden");
+    expect(card("h-B")).toHaveClass("hidden");
 
     fireEvent.click(tabs[1]);
 
-    expect(card("h-A").className).toContain("hidden");
-    expect(card("h-B").className).not.toContain("hidden");
+    expect(card("h-A")).toHaveClass("hidden");
+    expect(card("h-B")).not.toHaveClass("hidden");
   });
 
   it("keeps every client side by side on a wider screen", () => {
