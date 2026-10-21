@@ -193,8 +193,10 @@ export function PlatformLaunchAnnouncement({
   }
 
   // A phone has no room for the card over the app. Not rendering it leaves
-  // the status alone, so the launch still shows on a larger screen.
-  if (status === "dismissed" || isMobile) return null;
+  // the status alone, so the launch still shows on a larger screen. A dialog
+  // the user already opened stays open: it fits a phone, and unmounting it
+  // would leave `open` set, reopening it unasked on the way back.
+  if (status === "dismissed" || (isMobile && !open)) return null;
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>

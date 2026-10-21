@@ -287,6 +287,33 @@ describe("PlatformLaunchAnnouncement", () => {
     );
   });
 
+  it("keeps an open dialog through a resize to a phone, without reopening it later", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<PlatformLaunchAnnouncement />);
+    await user.click(
+      screen.getByRole("button", { name: "Learn more about the new MCPJam" }),
+    );
+
+    mobileFixture.isMobile = true;
+    rerender(<PlatformLaunchAnnouncement />);
+    expect(
+      screen.getByRole("dialog", { name: "Check out our new platform" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Back to work" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Platform launch" }),
+    ).not.toBeInTheDocument();
+
+    mobileFixture.isMobile = false;
+    rerender(<PlatformLaunchAnnouncement />);
+    expect(
+      screen.getByRole("region", { name: "Platform launch" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("does not report an impression for an already dismissed announcement", () => {
     localStorage.setItem("mcpjam:platform-launch-2026-09:status", "dismissed");
     render(<PlatformLaunchAnnouncement />);
