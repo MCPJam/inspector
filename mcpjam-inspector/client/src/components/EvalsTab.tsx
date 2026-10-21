@@ -837,10 +837,11 @@ function EvalsTabContent({
             "Another suite run is already starting — wait for it to launch.",
           );
         }
-        // The SAME quota-gated wrapper the Run button uses. Launch failures
-        // inside it surface as toasts, so this reports "requested".
+        // Use the Run button's quota gate, but return launch refusals to the
+        // agent so it cannot report an iteration count for a refused run.
         await handleRerunWithQuota(entry.suite, {
           iterationOverride: iterations,
+          throwOnFailure: true,
         });
         return {
           status: "run_requested",
