@@ -79,6 +79,9 @@ function UnifiedFindingsBody({
           iterationRows={affectedRowsById(iterations, clientLabel)}
           {...(fallback !== undefined ? { fallback } : {})}
           backendUnavailableNote={state.backendUnavailableNote}
+          problemsView={
+            state.findingsView.kind === "view" ? state.findingsView.view : null
+          }
           context={{ rerunLabel: "this eval suite" }}
           {...(onOpenEvidence ? { onOpenEvidence } : {})}
         />

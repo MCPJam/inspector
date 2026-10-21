@@ -49,7 +49,7 @@ function sanitizeFenced(text: string, max = 600): string {
  * data. So every identifier is flattened to one line, stripped of fence
  * markers and backticks, and bounded before it is interpolated anywhere.
  */
-function sanitizeIdentifier(value: string, max = 120): string {
+export function sanitizeIdentifier(value: string, max = 120): string {
   const flattened = value
     .replace(/<<<[^>]*>>>/g, "")
     .replace(/[`\r\n\t]+/g, " ")
@@ -60,7 +60,7 @@ function sanitizeIdentifier(value: string, max = 120): string {
   return bounded.length > 0 ? bounded : "(unnamed)";
 }
 
-function fence(label: string, body: string): string {
+export function fence(label: string, body: string): string {
   // The label is scaffolding the model reads as ours, so it gets the
   // identifier treatment rather than being trusted.
   return [
@@ -71,7 +71,7 @@ function fence(label: string, body: string): string {
   ].join("\n");
 }
 
-function evidenceLabel(evidence: ActionableFindingEvidence): string {
+export function evidenceLabel(evidence: ActionableFindingEvidence): string {
   const parts = [evidence.kind.replace(/_/g, " ")];
   if (evidence.toolName) {
     parts.push(`tool ${sanitizeIdentifier(evidence.toolName)}`);
@@ -155,7 +155,7 @@ export type FindingPromptContext = {
   rerunLabel: string;
 };
 
-const DEFAULT_CONTEXT: FindingPromptContext = {
+export const DEFAULT_CONTEXT: FindingPromptContext = {
   rerunLabel: "the case that surfaced this",
 };
 

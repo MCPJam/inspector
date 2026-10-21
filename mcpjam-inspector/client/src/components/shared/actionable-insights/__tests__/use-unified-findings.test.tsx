@@ -718,6 +718,38 @@ describe("one Analyze findings action", () => {
     rerender({ envelope: ready });
     expect(borrowed.requestInsight).toHaveBeenCalledTimes(1);
   });
+  it("does not offer analysis over a stale snapshot to an actor who may not enrich", () => {
+    const envelope = structuredClone(ENVELOPE);
+    envelope.unifiedFindings!.snapshot!.enrichment!.status = "stale";
+    envelope.unifiedFindings!.canEnrich = false;
+    const { result } = renderHook(() =>
+      useUnifiedFindings({
+        suiteRunId: "run_1",
+        envelope,
+        generation: generation(),
+      }),
+    );
+    expect(result.current.analyze.available).toBe(false);
+  });
+  it("stops waiting when the build lands but analysis is not allowed", async () => {
+    const borrowed = generation();
+    const { result, rerender } = renderHook(
+      ({ envelope }) =>
+        useUnifiedFindings({
+          suiteRunId: "run_1",
+          envelope,
+          generation: borrowed,
+        }),
+      { initialProps: { envelope: unbuilt() } },
+    );
+    await act(async () => result.current.analyze.onRun());
+    const built = structuredClone(ENVELOPE);
+    built.unifiedFindings!.canEnrich = false;
+    built.unifiedFindings!.job = null;
+    rerender({ envelope: built });
+    expect(borrowed.requestInsight).not.toHaveBeenCalled();
+    expect(result.current.analyze.pending).toBe(false);
+  });
   it("reuses a ready snapshot and coalesces duplicate analysis clicks", () => {
     const borrowed = generation();
     const { result } = renderHook(() =>
