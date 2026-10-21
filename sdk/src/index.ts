@@ -291,6 +291,8 @@ export type {
   ServerDoctorChecks,
   ServerDoctorConnection,
   ServerDoctorResult,
+  ServerDoctorSkillsCheck,
+  ServerDoctorSkillsFindings,
   ConnectedServerDoctorState,
   RunServerDoctorInput,
   ServerDoctorDependencies,

@@ -56,7 +56,10 @@ import {
   verifySkillMarkdown,
   type SkillEntry,
 } from "./mcp-client-manager/index.js";
-import { listAllServerSkills } from "./operations.js";
+import {
+  listAllServerSkills,
+  type SkillListingCacheAttributes,
+} from "./operations.js";
 
 /**
  * Optional sink for the one diagnostic this module emits.
@@ -108,16 +111,13 @@ export interface ServerSkillSummary {
   };
 }
 
-export interface ServerSkillListing {
+export interface ServerSkillListing extends SkillListingCacheAttributes {
   serverId: string;
   skills: ServerSkillSummary[];
   /** URIs the server listed twice — surfaced, never silently resolved. */
   duplicateUris: string[];
   /** Entries that failed the wire guard or identity checks, with reasons. */
   rejected: Array<{ skillUri: string; reason: string }>;
-  /** SEP-2549 caching attributes, when the server sent them. */
-  ttlMs?: number;
-  cacheScope?: string;
 }
 
 export interface VerifiedServerSkill {
@@ -526,10 +526,9 @@ export async function listServerSkillCatalog(
     skills,
     duplicateUris: [...duplicates],
     rejected,
+    omittedCacheAttributes: drained.omittedCacheAttributes,
     ...(drained.ttlMs !== undefined ? { ttlMs: drained.ttlMs } : {}),
-    ...(drained.cacheScope !== undefined
-      ? { cacheScope: drained.cacheScope }
-      : {}),
+    ...(drained.cacheScope !== undefined ? { cacheScope: drained.cacheScope } : {}),
   };
 }
 

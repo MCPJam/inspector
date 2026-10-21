@@ -50,6 +50,8 @@ export type {
   ServerDoctorConnection,
   ServerDoctorError,
   ServerDoctorResult,
+  ServerDoctorSkillsCheck,
+  ServerDoctorSkillsFindings,
 } from "./server-doctor-core.js";
 
 export interface RunServerDoctorInput<TTarget = unknown> {
@@ -347,7 +349,11 @@ async function collectSkills(
         "the extension is declared without the `resources` capability it depends on"
       );
     }
-    const listMissing = missingCacheAttributes(listing);
+    // Per page, since the listing's own `ttlMs` / `cacheScope` come from
+    // whichever page carried them.
+    const listMissing = listing.omittedCacheAttributes.map(
+      (field) => `\`${field}\``
+    );
     if (listMissing.length > 0) {
       conformance.push(
         `\`skills/list\` omitted required ${listMissing.join(" and ")}`
@@ -429,9 +435,10 @@ async function collectSkills(
     // to verify would tell an author their skills serving is fine while a
     // conforming host is dropping entries on the floor.
     const problems: string[] = [];
-    // Conformance first. Its clauses are fixed phrases with no server text,
-    // which is what lets the hosted doctor's redaction pass them through
-    // while reducing the server-text findings after them to counts.
+    // Conformance first. Its clauses are fixed phrases with no server text.
+    // The sentence is for a reader; `findings` below carries the same facts
+    // as data for the hosted doctor, which must not repeat the URIs and
+    // reasons the other two findings name.
     if (conformance.length > 0) {
       problems.push(
         `not conformant to the stable Skills extension spec: ${conformance.join("; ")}`
@@ -452,7 +459,23 @@ async function collectSkills(
     if (problems.length > 0) {
       return {
         skills: listing.skills,
-        check: errorCheck(`${problems.join("; ")}.`),
+        check: {
+          ...errorCheck(`${problems.join("; ")}.`),
+          findings: {
+            conformance,
+            ...(failures.length > 0
+              ? {
+                  verification: {
+                    failed: failures.length,
+                    sampled: sample.length,
+                  },
+                }
+              : {}),
+            ...(listing.rejected.length > 0
+              ? { rejected: listing.rejected.length }
+              : {}),
+          },
+        },
       };
     }
     return { skills: listing.skills, check: okCheck(parts.join(" ")) };

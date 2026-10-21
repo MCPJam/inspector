@@ -368,6 +368,12 @@ describe("the skills check", () => {
     expect(result.checks.skills.status).toBe("error");
     expect(result.checks.skills.detail).toContain("rejected as malformed");
     expect(result.checks.skills.detail).toContain("outside the skill directory");
+    // The same facts as data, with no URI or reason in them, for the hosted
+    // doctor to build its sentence from.
+    expect(result.checks.skills.findings).toEqual({
+      conformance: [],
+      rejected: 1,
+    });
   });
 
   it("reports a digest that does not match its bytes, naming the kind", async () => {
@@ -381,6 +387,10 @@ describe("the skills check", () => {
 
     expect(result.checks.skills.status).toBe("error");
     expect(result.checks.skills.detail).toContain("digest_mismatch");
+    expect(result.checks.skills.findings).toEqual({
+      conformance: [],
+      verification: { failed: 1, sampled: 1 },
+    });
   });
 
   it("names the cache attributes a server omits, on both methods", async () => {
@@ -398,8 +408,36 @@ describe("the skills check", () => {
     expect(result.checks.skills.detail).toContain(
       "`skills/get` omitted required `ttlMs` and `cacheScope`"
     );
+    expect(result.checks.skills.findings).toEqual({
+      conformance: [
+        "`skills/list` omitted required `ttlMs` and `cacheScope`",
+        "`skills/get` omitted required `ttlMs` and `cacheScope`",
+      ],
+    });
     // The skill itself still verified; the catalog is reported in full.
     expect(result.skills).toHaveLength(1);
+  });
+
+  it("checks the cache attributes on every page of the listing", async () => {
+    // The drained listing keeps `ttlMs` / `cacheScope` from whichever page
+    // carried them, so a second page that omits one would otherwise pass.
+    const manager = await skillsManager();
+    const entry = (await manager.getServerSkill()) as Record<string, unknown>;
+    manager.listServerSkills = jest
+      .fn()
+      .mockResolvedValueOnce({
+        skills: [entry],
+        nextCursor: "1",
+        ...CACHEABLE,
+      })
+      .mockResolvedValueOnce({ skills: [], cacheScope: "public" });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("error");
+    expect(result.checks.skills.findings).toEqual({
+      conformance: ["`skills/list` omitted required `ttlMs`"],
+    });
   });
 
   it("reports an extension declared without the resources capability", async () => {
@@ -512,6 +550,7 @@ describe("the skills check", () => {
 
     expect(result.checks.skills.status).toBe("ok");
     expect(result.checks.skills.detail).not.toContain("not conformant");
+    expect(result.checks.skills.findings).toBeUndefined();
   });
 });
 

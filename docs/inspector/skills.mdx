@@ -303,9 +303,12 @@ is the normal state for a server that serves no skills.
 
 It also reports `error` for requirements of the stable spec that MCPJam
 otherwise tolerates: a `skills/list` or `skills/get` result without `ttlMs`
-and `cacheScope`, or an extension declaration without the `resources`
-capability. The Playground still loads such a server, so the doctor is where
-the omission is named.
+and `cacheScope`, a listed file without its `size`, or an extension
+declaration without the `resources` capability. The Playground still loads
+such a server, so the doctor is where the omission is named. As with any
+check in `error`, the doctor's status is `partial` and `mcpjam server doctor`
+exits 1, so a CI step that runs the doctor fails for a server built against
+the draft spec until it sends the required fields.
 
 ### Unloadable skills
 
