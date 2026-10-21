@@ -15,6 +15,7 @@ import {
 import type { FindingPromptContext } from "./finding-prompts";
 import { CopyFindingPrompt } from "./finding-summary";
 import { CopyOptionPrompt } from "./problem-details";
+import { FindingText } from "./finding-text";
 import {
   FindingsAllSheet,
   FindingsCarousel,
@@ -367,10 +368,18 @@ export function UnifiedFindingsPanel({
       {problemsView?.status === "historical_unlinked" ? (
         <div className="mb-5">
           <StateNote testId="unified-findings-historical">
-            This analysis ran before findings were linked to problems, so its
-            explanations are not counted against them. Analyze again to link
-            them.
+            These explanations are not linked to problems.
+            {analyze.available && !visitor
+              ? " Analyze again to link them."
+              : ""}
           </StateNote>
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm">
+            {problemsView.unlinkedExplanations.map((row) => (
+              <li key={row.id}>
+                <FindingText text={row.rootCause ?? row.title} />
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
       {enrichment?.status === "stale" ? (
@@ -440,6 +449,10 @@ export function UnifiedFindingsPanel({
             iterationRows={iterationRows}
             setApi={carousel.setApi}
           />
+          <p className="mt-3 text-xs text-muted-foreground">
+            Recommendations follow{" "}
+            {problemsView?.analysisSkillVersion ?? problemsView?.policyVersion}.
+          </p>
         </div>
       ) : !problems && sorted.length > 0 ? (
         <div data-testid="unified-findings-list">

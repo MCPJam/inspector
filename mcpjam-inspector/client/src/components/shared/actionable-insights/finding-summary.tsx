@@ -70,7 +70,7 @@ export function CopyFindingPrompt({
   );
 }
 
-const SURFACES: Record<string, string> = {
+export const SURFACES: Record<string, string> = {
   description: "Tool description",
   input_schema: "Input schema",
   output_schema: "Output schema",
