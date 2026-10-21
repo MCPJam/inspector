@@ -405,6 +405,24 @@ describe("PlaygroundTab — leaving a model App's fullscreen in the side panel",
   const railCollapsed = () => screen.queryByTestId("collapsed-right-rail");
   const composer = () => screen.getByRole("textbox", { name: "Composer" });
 
+  it("on a phone: opening an App from the left drawer closes the drawer over it", () => {
+    mobileFixture.isMobile = true;
+    renderAt(375);
+    fireEvent.click(screen.getByTestId("collapsed-left-rail"));
+    const leftDrawer = screen.getByTestId("playground-left-rail-overlay");
+    expect(leftDrawer).toHaveAttribute("data-state", "open");
+
+    // An App or its Settings in the drawer's Apps section reveals the rail.
+    const store = mockCenterStore.current!;
+    act(() => {
+      store.setState({ enabled: true });
+      revealRail(store);
+    });
+
+    expect(overlay()).not.toBeNull();
+    expect(leftDrawer).toHaveAttribute("data-state", "closed");
+  });
+
   it("on a phone: the side panel covers the chat even without an App", () => {
     mobileFixture.isMobile = true;
     renderAt(375);

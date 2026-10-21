@@ -2523,12 +2523,17 @@ export function PlaygroundMain({
   // one client shows at a time behind a switcher. The others stay mounted
   // (hidden): each card owns its own stream and transcript.
   const isMobile = useIsMobile();
+  // Prefixed: a host id can equal a model key, and the selection survives
+  // a switch between the two modes.
   const compareLanes = isMultiHostMode
     ? multiHostColumns.map((column) => ({
-        id: column.compareId,
+        id: `host:${column.compareId}`,
         label: column.compareLabel,
       }))
-    : modelCompareCards.map((entry) => ({ id: entry.key, label: entry.label }));
+    : modelCompareCards.map((entry) => ({
+        id: `model:${entry.key}`,
+        label: entry.label,
+      }));
   const [mobileCompareLaneId, setMobileCompareLaneId] = useState<
     string | null
   >(null);
@@ -4890,7 +4895,7 @@ export function PlaygroundMain({
       // A new effort is a new comparison key; the phone switcher follows
       // the card rather than falling back to the first one.
       setMobileCompareLaneId((current) =>
-        current === cardKey ? next.key : current,
+        current === `model:${cardKey}` ? `model:${next.key}` : current,
       );
     },
     [compareCards, setCompareSelections],
@@ -6926,7 +6931,7 @@ export function PlaygroundMain({
                     >
                       {multiHostColumns.map((column, columnIndex) => (
                         <MultiModelPlaygroundCard
-                          className={compareLaneHidden(column.compareId)}
+                          className={compareLaneHidden(`host:${column.compareId}`)}
                           extensionBinding={compareLaneBinding(
                             column.compareId,
                             {
@@ -7047,7 +7052,7 @@ export function PlaygroundMain({
                         const { model, card } = entry;
                         return (
                           <MultiModelPlaygroundCard
-                            className={compareLaneHidden(compareId)}
+                            className={compareLaneHidden(`model:${compareId}`)}
                             extensionBinding={compareLaneBinding(
                               previewedHostId,
                               previewedHost?.config

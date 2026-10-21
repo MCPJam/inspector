@@ -262,6 +262,12 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     if (isMobile) setIsLeftRailVisible(false);
   }, [isMobile]);
   const [isRightRailVisible, setIsRightRailVisible] = useState(false);
+  // On a phone only one rail fits over the chat. Whatever opens the side
+  // panel (an App or its Settings from the Sessions/Tools rail, the browser,
+  // its edge strip) closes the left one, which would otherwise stay on top.
+  useEffect(() => {
+    if (isMobile && isRightRailVisible) setIsLeftRailVisible(false);
+  }, [isMobile, isRightRailVisible]);
 
   // The browser panel's own layout, which is a STORE rather than state here
   // because three unrelated things move it: the agent starting to browse, the
