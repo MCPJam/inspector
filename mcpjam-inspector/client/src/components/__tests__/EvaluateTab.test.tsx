@@ -1151,7 +1151,55 @@ describe("EvaluateTab", () => {
       });
       expect(mocks.handleRerun).toHaveBeenCalledWith(
         expect.objectContaining({ _id: "suite-b" }),
+        { iterationOverride: 5 },
       );
+    });
+
+    it("runEvalSuite launches the count Setup Run would start at, not each case's saved runs", async () => {
+      localStorage.setItem("mcpjam:suite-run-iterations:suite-b", "1");
+      try {
+        render(<EvaluateTab projectId="ws-1" />);
+
+        const response = await dispatch({
+          type: "runEvalSuite",
+          payload: { suite: "Suite suite-b" },
+        });
+
+        expect(response).toMatchObject({
+          status: "success",
+          result: { iterations: 1 },
+        });
+        expect(mocks.handleRerun).toHaveBeenCalledWith(
+          expect.objectContaining({ _id: "suite-b" }),
+          { iterationOverride: 1 },
+        );
+      } finally {
+        localStorage.removeItem("mcpjam:suite-run-iterations:suite-b");
+      }
+    });
+
+    it("runEvalSuite uses the agent's iterations and rejects an out-of-range count", async () => {
+      render(<EvaluateTab projectId="ws-1" />);
+
+      await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Suite suite-b", iterations: 3 },
+      });
+      expect(mocks.handleRerun).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "suite-b" }),
+        { iterationOverride: 3 },
+      );
+
+      mocks.handleRerun.mockClear();
+      const invalid = await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Suite suite-b", iterations: 11 },
+      });
+      expect(invalid).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+      expect(mocks.handleRerun).not.toHaveBeenCalled();
     });
 
     it("runEvalSuite refuses when the eval iteration quota is exhausted — never a bypass", async () => {
