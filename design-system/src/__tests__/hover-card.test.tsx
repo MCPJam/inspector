@@ -118,12 +118,13 @@ describe("HoverCardHeader", () => {
 });
 
 describe("Badge inverse variant", () => {
-  it("swaps the primary pair so it reads on a primary fill", () => {
+  it("uses the popover pair so small text reads on a primary fill", () => {
     render(<Badge variant="inverse">New</Badge>);
 
     const badge = screen.getByText("New");
-    expect(badge).toHaveClass("bg-primary-foreground", "text-primary");
-    expect(badge).not.toHaveClass("bg-primary");
+    // The swapped primary pair is only 3:1, too low for the 10px label.
+    expect(badge).toHaveClass("bg-popover", "text-popover-foreground");
+    expect(badge).not.toHaveClass("bg-primary", "text-primary");
   });
 
   it("leaves the default badge unchanged", () => {

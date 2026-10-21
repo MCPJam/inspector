@@ -17,10 +17,11 @@ const badgeVariants = cva(
           "border-transparent bg-destructive text-destructive-foreground [a&]:hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
           "text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
-        // The primary pair swapped, for a badge sitting on a primary fill
-        // (such as a tooltip pill), where `default` would vanish.
+        // For a badge sitting on a primary fill (such as a tooltip pill),
+        // where `default` would vanish. The popover pair rather than the
+        // primary pair swapped: that one is large-text-only contrast.
         inverse:
-          "border-transparent bg-primary-foreground text-primary",
+          "border-transparent bg-popover text-popover-foreground",
       },
     },
     defaultVariants: {

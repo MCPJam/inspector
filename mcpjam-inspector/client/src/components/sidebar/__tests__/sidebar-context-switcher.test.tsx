@@ -1049,6 +1049,25 @@ describe("SidebarContextSwitcher", () => {
     );
   });
 
+  it("marks the trigger open while the menu is open", () => {
+    // The hover card's trigger stamps its own data-state on the button, so
+    // the open-menu styling needs the menu's state set on it explicitly.
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: /^Switch context:/ });
+    expect(trigger).toHaveAttribute("data-state", "closed");
+    openMainDropdown();
+    expect(trigger).toHaveAttribute("data-state", "open");
+  });
+
   it("single org: the header still opens a one-row list with New organization", () => {
     // The header is openable whatever the membership count. The list is also
     // where "New organization" lives, and a header that only sometimes

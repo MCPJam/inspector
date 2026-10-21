@@ -1,6 +1,12 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
+import {
   SIDEBAR_HOVER_CLOSE_DELAY_MS,
   SIDEBAR_HOVER_OPEN_DELAY_MS,
   SidebarItemHoverCard,
@@ -123,7 +129,7 @@ describe("SidebarItemHoverCard content", () => {
 
     const badge = screen.getByText("New");
     expect(screen.getByText("A title")).toContainElement(badge);
-    expect(badge).toHaveClass("bg-primary-foreground", "text-primary");
+    expect(badge).toHaveClass("bg-popover", "text-popover-foreground");
   });
 
   it("adds the clip section when the entry has a clip and onExpand is set", () => {
@@ -345,5 +351,38 @@ describe("SidebarItemHoverCard pressed inside", () => {
     fireEvent.pointerUp(description);
 
     expect(isOpen("A")).toBe(true);
+  });
+});
+
+describe("SidebarItemHoverCard around a menu trigger", () => {
+  function menu(triggerState?: "open" | "closed") {
+    return (
+      // Non-modal, so the open menu does not aria-hide the trigger.
+      <DropdownMenu open modal={false}>
+        <SidebarItemHoverCard title="Menu title">
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              {...(triggerState ? { "data-state": triggerState } : {})}
+            >
+              Menu
+            </button>
+          </DropdownMenuTrigger>
+        </SidebarItemHoverCard>
+        <DropdownMenuContent>
+          <DropdownMenuItem>Item</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  it("stamps its own closed state over the open menu's", () => {
+    render(menu());
+    expect(row("Menu")).toHaveAttribute("data-state", "closed");
+  });
+
+  it("lets the trigger's own data-state win", () => {
+    render(menu("open"));
+    expect(row("Menu")).toHaveAttribute("data-state", "open");
   });
 });

@@ -240,6 +240,9 @@ export function SidebarContextSwitcher({
           ? `Switch context: ${contextName}`
           : `Switch project: ${contextName}`
       }
+      // Set here, the innermost child: the hover card's trigger also stamps
+      // data-state, with its own (closed) state, over the menu's.
+      data-state={menuOpen ? "open" : "closed"}
       className="h-10 p-1.5 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
     >
       <OrgIconBadge org={activeOrg} size={8} />
