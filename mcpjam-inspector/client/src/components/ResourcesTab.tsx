@@ -440,6 +440,14 @@ export function ResourcesTab({
     };
   }, [nextCursor, loadingMore, loadMoreResources]);
 
+  const clearSelectedResource = () => {
+    resourceReadVersionRef.current += 1;
+    setSelectedResource("");
+    setResourceContent(null);
+    setLoading(false);
+    setError("");
+  };
+
   // Read resource
   const readResource = async (uri: string) => {
     if (!serverName) return;
@@ -574,6 +582,11 @@ export function ResourcesTab({
     });
     if (!pending || pending.descriptor.kind !== "resource") return;
     const descriptor = pending.descriptor;
+    const readVersionRef =
+      descriptor.target === "template"
+        ? templateReadVersionRef
+        : resourceReadVersionRef;
+    const readVersion = ++readVersionRef.current;
     if (descriptor.target === "template") {
       setSelectedTemplate(descriptor.selection ?? descriptor.uri);
       setTemplateLoading(true);
@@ -585,6 +598,7 @@ export function ResourcesTab({
     }
     void readResourceApi(descriptor.serverName, descriptor.uri)
       .then((data) => {
+        if (readVersion !== readVersionRef.current) return;
         if (descriptor.target === "template") {
           setTemplateContent(data?.content ?? null);
         } else {
@@ -596,6 +610,7 @@ export function ResourcesTab({
         });
       })
       .catch((error) => {
+        if (readVersion !== readVersionRef.current) return;
         const message = `Authorization finished, but the resource could not be replayed: ${
           error instanceof Error ? error.message : String(error)
         }`;
@@ -606,8 +621,9 @@ export function ResourcesTab({
         }
       })
       .finally(() => {
-        setLoading(false);
-        setTemplateLoading(false);
+        if (readVersion !== readVersionRef.current) return;
+        if (descriptor.target === "template") setTemplateLoading(false);
+        else setLoading(false);
         clearPendingDirectScopeStepUpReplay();
       });
   }, [isServerConnected, server, serverName]);
@@ -893,9 +909,9 @@ export function ResourcesTab({
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => {
-                  setActiveTab("resources");
-                  if (isMobile) setSelectedResource("");
-                }}
+                setActiveTab("resources");
+                if (isMobile) clearSelectedResource();
+              }}
               className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === "resources"
                   ? "bg-primary/10 text-primary"
@@ -911,7 +927,7 @@ export function ResourcesTab({
               <button
                 onClick={() => {
                   setActiveTab("templates");
-                  if (isMobile) setSelectedResource("");
+                  if (isMobile) clearSelectedResource();
                 }}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   activeTab === "templates"
@@ -1353,7 +1369,7 @@ export function ResourcesTab({
           onBack:
             activeTab === "templates"
               ? undefined
-              : () => setSelectedResource(""),
+              : clearSelectedResource,
         }}
         sidebar={sidebarContent}
         content={
