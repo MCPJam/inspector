@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type {
-  ReadResourceRequest,
-  ReadResourceResult,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { MCPClientManager, MCPReadResourceResult } from "@mcpjam/sdk";
 import {
   parsePluginModelContext,
   type PluginContextSnapshot,
@@ -404,6 +401,8 @@ export interface RenderWidgetInput {
   keepMounted?: boolean;
 }
 
+type ResourceReadParams = Parameters<MCPClientManager["readResource"]>[1];
+
 export interface McpAppBrowserHarnessOptions {
   /** Current host transcript/appearance. Pure data; never an execution callback. */
   getWorkspacePresentation?: () => HarnessPresentation;
@@ -416,8 +415,8 @@ export interface McpAppBrowserHarnessOptions {
   /** Read through the authenticated connection that produced the widget. */
   readResource?: (
     serverId: string,
-    params: ReadResourceRequest["params"],
-  ) => Promise<ReadResourceResult>;
+    params: ResourceReadParams,
+  ) => Promise<MCPReadResourceResult>;
   /**
    * Resolve the SEP-1865 `_meta.ui.visibility` for a tool at dispatch time, so
    * the runner can route model-visible calls into model context and keep
@@ -937,7 +936,7 @@ export class McpAppBrowserHarness {
       "__mcpjamHostReadResource",
       async (
         _source,
-        payload: { widgetId: string; params: ReadResourceRequest["params"] },
+        payload: { widgetId: string; params: ResourceReadParams },
       ) => {
         const widget = this.mounted.get(payload.widgetId);
         if (!widget || this.closing)

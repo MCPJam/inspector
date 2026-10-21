@@ -1,7 +1,3 @@
-import type {
-  ReadResourceRequest,
-  ReadResourceResult,
-} from "@modelcontextprotocol/sdk/types.js";
 import type { HarnessPresentation } from "../../../shared/unattended-workspace";
 import { mountHarnessWorkspace } from "./host-workspace";
 /**
@@ -36,8 +32,11 @@ import {
   createHostAppBridge,
   registerHostBridgeHandlers,
   resolveIframeSandboxPolicy,
+  type HostBridgeCallbacks,
 } from "@/components/chat-v2/thread/mcp-apps/host-app-bridge";
 import { PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
+
+type ReadResourceHandler = NonNullable<HostBridgeCallbacks["onReadResourceV2"]>;
 
 const WIDGET_ROOT_ID = "mcpjam-widget-root";
 
@@ -95,8 +94,8 @@ declare global {
     }) => Promise<void>;
     __mcpjamHostReadResource?: (payload: {
       widgetId: string;
-      params: ReadResourceRequest["params"];
-    }) => Promise<ReadResourceResult>;
+      params: Parameters<ReadResourceHandler>[0];
+    }) => ReturnType<ReadResourceHandler>;
     __mcpjamHostContext?: (payload: {
       widgetId: string;
       params: unknown;
