@@ -7,6 +7,14 @@ import { routePaths } from "../lib/app-navigation";
 // the pre-hydration window; the regression this guards is that the route must
 // NOT redirect during it — only on an explicit `false`. A flagged-in user who
 // opens /webmcp directly would otherwise be bounced before the flag resolves.
+const mode = vi.hoisted(() => ({ hosted: false }));
+vi.mock("../lib/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/config")>()),
+  get HOSTED_MODE() {
+    return mode.hosted;
+  },
+}));
+
 let flagState: boolean | undefined = undefined;
 
 vi.mock("../hooks/useWebmcpInspectorEnabled", () => ({
@@ -70,6 +78,7 @@ import { WebmcpInspectorRoute } from "../App";
 
 afterEach(() => {
   flagState = undefined;
+  mode.hosted = false;
   vi.clearAllMocks();
 });
 
@@ -112,4 +121,35 @@ describe("WebmcpInspectorRoute — flag hydration", () => {
     expect(nav).toHaveAttribute("data-to", routePaths.servers);
     expect(screen.queryByTestId("webmcp-tab")).not.toBeInTheDocument();
   });
+});
+
+describe("hosted WebMCP installation entry", () => {
+  it.each([undefined, false, true])(
+    "shows install CTAs with flag %s without mounting the inspector",
+    (flag) => {
+      mode.hosted = true;
+      flagState = flag;
+      renderRoute(<WebmcpInspectorRoute />);
+      expect(
+        screen.getByRole("heading", { name: "Use WebMCP on your computer" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("npx @mcpjam/inspector@latest"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "Node.js installation guide" }),
+      ).toHaveAttribute(
+        "href",
+        "https://docs.mcpjam.com/installation#terminal",
+      );
+      expect(
+        screen.getByRole("link", { name: "Download the desktop app" }),
+      ).toHaveAttribute(
+        "href",
+        "https://github.com/MCPJam/inspector/releases/latest",
+      );
+      expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("webmcp-tab")).not.toBeInTheDocument();
+    },
+  );
 });
