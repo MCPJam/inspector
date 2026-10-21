@@ -173,8 +173,8 @@ export async function inside(
   expect(box!.y + box!.height).toBeLessThanOrEqual(v.height + 1);
 }
 export async function finish(failures: string[], errors: string[]) {
-  expect(failures).toEqual([]);
-  expect(
+  expect.soft(failures).toEqual([]);
+  expect.soft(
     errors.filter(
       (x) =>
         x !==

@@ -111,7 +111,7 @@ for (const theme of ["light", "dark"])
         }
         await expect(subject).toHaveValue("mobile QA");
         await page
-          .getByRole("button", { name: "Show full tool list", exact: true })
+          .getByRole("button", { name: "Show full prompt list", exact: true })
           .click();
         await expect(page.getByText(promptName, { exact: true })).toBeVisible();
         await checkWidth(page);
