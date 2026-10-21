@@ -50,7 +50,15 @@ import {
   type RequestedModelSelection,
 } from "@mcpjam/sdk";
 import type { HarnessOrgKeyRefusalReason } from "@/shared/harness-proxy-refusal-reasons";
-import { isAiConfigurationRefusalCode } from "@/shared/ai-execution-refusal";
+import {
+  isAiConfigurationRefusalCode,
+  isOrgKeyPolicyRefusalCode,
+} from "@/shared/ai-execution-refusal";
+import {
+  AZURE_PROVIDER_KEY,
+  azureDeploymentMissingReason,
+  azureDeploymentName,
+} from "@/shared/azure-deployment";
 import {
   connectionPolicyEligibility,
   type PolicyEligibility,
@@ -105,6 +113,27 @@ export class ModelResolutionRefusalError extends Error {
     this.code = first?.code ?? "invalid_model";
     this.refusals = refusals;
   }
+}
+
+/** `evidence.missing` of a refused Azure selection that names no deployment. */
+const AZURE_DEPLOYMENT_MISSING = "azure_deployment";
+
+/**
+ * Whether a refusal is the organization's own configuration working as
+ * designed: its AI-key policy, or an Azure model it never named a deployment
+ * for. The organization fixes either in its settings, so it is recorded and
+ * never paged.
+ */
+export function isOrgConfigurationRefusal(
+  error: ModelResolutionRefusalError,
+): boolean {
+  return (
+    isOrgKeyPolicyRefusalCode(error.code) ||
+    (error.refusals.length > 0 &&
+      error.refusals.every(
+        (refusal) => refusal.evidence?.missing === AZURE_DEPLOYMENT_MISSING,
+      ))
+  );
 }
 
 /** Rail the runner executes a resolved selection on. */
@@ -316,6 +345,21 @@ export function resolveLocalModelSelection(
           { ...evidence, providerKey: input.orgProviderKey },
         );
       }
+    }
+    if (
+      input.orgProviderKey === AZURE_PROVIDER_KEY &&
+      !azureDeploymentName(selection)
+    ) {
+      // Every attempt would be refused by the backend: refuse the case once.
+      return refuse(
+        "invalid_model",
+        azureDeploymentMissingReason(selection.modelId),
+        {
+          ...evidence,
+          providerKey: input.orgProviderKey,
+          missing: AZURE_DEPLOYMENT_MISSING,
+        },
+      );
     }
     return {
       ok: true,
