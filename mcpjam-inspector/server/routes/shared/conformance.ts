@@ -229,7 +229,7 @@ export async function runLocalDirectoryReadiness(input: {
     publisher: input.publisher,
     target: input.target,
     submissionMode: input.submissionMode,
-    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    mcpHeaders: Object.keys(headers).length > 0 ? headers : undefined,
     fetchFn: createConformanceFetch("MCP server"),
   });
   return { result };
