@@ -60,6 +60,8 @@ import {
   clearPendingOAuthAttempt,
   initiateOAuth,
   readStoredOAuthConfig,
+  serializePublicConnectionSettings,
+  type StoredOAuthConfig,
   OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/oauth/mcp-oauth";
 import {
@@ -309,7 +311,8 @@ function stripAuthorizationFromHttpConfig(
 
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
- * This persists server URL, scopes, headers, and non-secret client metadata.
+ * This persists server URL and public OAuth metadata. Header values remain in
+ * the encrypted server-secret store; only their presence is recorded here.
  */
 function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (HOSTED_MODE) {
@@ -322,7 +325,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
 
   localStorage.setItem(`mcp-serverUrl-${formData.name}`, formData.url);
 
-  const oauthConfig: Record<string, unknown> = {};
+  const oauthConfig: StoredOAuthConfig = {};
   const existingOAuthConfig = readStoredOAuthConfig(formData.name);
   const protocolMode = formData.oauthProtocolMode ?? "auto";
   const registrationMode =
@@ -341,15 +344,12 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     formData.secretPatch ?? {},
     "headers",
   );
-  const customHeaders = hasExplicitHeaderPatch
-    ? (formData.secretPatch?.headers ?? {})
-    : {
-        ...(existingOAuthConfig.customHeaders ?? {}),
-        ...(formData.headers ?? {}),
-      };
-  if (Object.keys(customHeaders).length > 0) {
-    oauthConfig.customHeaders = customHeaders;
-  }
+  const hasCustomHeaders = hasExplicitHeaderPatch
+    ? Object.keys(formData.secretPatch?.headers ?? {}).some((name) => name.toLowerCase() !== "authorization")
+    : existingOAuthConfig.hasCustomHeaders === true ||
+      Object.keys(existingOAuthConfig.customHeaders ?? {}).length > 0 ||
+      Object.keys(formData.headers ?? {}).some((name) => name.toLowerCase() !== "authorization");
+  oauthConfig.hasCustomHeaders = hasCustomHeaders;
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
   }
@@ -362,7 +362,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
       `mcp-oauth-config-${formData.name}`,
-      JSON.stringify(oauthConfig),
+      serializePublicConnectionSettings(oauthConfig),
     );
   }
 
@@ -2996,9 +2996,7 @@ export function useServerState({
       const finishDiagnostic = startDesktopOperation("oauth_callback");
       const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       const isHostedProjectCallback =
-        HOSTED_MODE &&
-        isAuthenticated &&
-        hostedCallbackContext?.surface === "project";
+        HOSTED_MODE && hostedCallbackContext?.surface === "project";
       const suppressErrorToast =
         hostedCallbackContext?.suppressErrorToast === true;
       const suppressSuccessToast =

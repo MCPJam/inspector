@@ -15,7 +15,11 @@ import {
 import { ServerWithName } from "@/hooks/use-app-state";
 import type { ProjectClientConfig } from "@/lib/client-config";
 import { getEffectiveProjectConnectionDefaults } from "@/lib/client-config";
-import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import {
+  hasOAuthConfig,
+  getStoredTokens,
+  readStoredOAuthConfig,
+} from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
@@ -297,18 +301,13 @@ export function useServerForm(
           server.oauthFlowProfile != null;
         hasOAuth = hasServerOAuth || hasStoredOAuthConfig;
 
-        const storedOAuthConfig = localStorage.getItem(
-          `mcp-oauth-config-${server.name}`,
-        );
         const storedClientInfo = localStorage.getItem(
           `mcp-client-${server.name}`,
         );
         const storedTokens = getStoredTokens(server.name, httpServerUrl);
 
         const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
-        const oauthConfig = storedOAuthConfig
-          ? JSON.parse(storedOAuthConfig)
-          : {};
+        const oauthConfig = readStoredOAuthConfig(server.name);
         const fallbackScopes =
           typeof server.oauthFlowProfile?.scopes === "string"
             ? server.oauthFlowProfile.scopes
