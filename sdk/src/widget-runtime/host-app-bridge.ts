@@ -522,6 +522,15 @@ export function registerHostBridgeHandlers(
       }
       return callbacks.onListResourceTemplates(params);
     };
+  } else {
+    // Unhandled, the read would still get -32601 but as "Method not found",
+    // which reads like a broken host. Keep the code and name the cause.
+    bridge.onreadresource = async () => {
+      throw Object.assign(
+        new Error("Resource reads are disabled by this client profile."),
+        { code: -32601 }
+      );
+    };
   }
 
   // onlistprompts: unconditional — no serverPrompts cap in SEP-1865.

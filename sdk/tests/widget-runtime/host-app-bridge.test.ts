@@ -156,16 +156,39 @@ describe("owned resource request callback", () => {
     expect(legacy).not.toHaveBeenCalled();
   });
 
-  it("keeps the callback unavailable without server resource capability", () => {
+  it("answers reads with a clear error when the client disables server resources", async () => {
     const bridge = createHostAppBridge({
       hostInfo: { name: "test", version: "1" },
       hostCapabilities: {},
     });
+    const read = vi.fn();
     registerHostBridgeHandlers(bridge, {
       effectiveHostCapabilities: {},
-      callbacks: { onReadResourceV2: vi.fn() },
+      callbacks: { onReadResourceV2: read },
     });
-    expect(bridge.onreadresource).toBeUndefined();
+    const app = new App(
+      { name: "app", version: "1" },
+      {},
+      { autoResize: false }
+    );
+    const [hostTransport, guestTransport] =
+      InMemoryTransport.createLinkedPair();
+    await bridge.connect(hostTransport);
+    await app.connect(guestTransport);
+    try {
+      await expect(
+        app.readServerResource({ uri: "host-resource://file" })
+      ).rejects.toMatchObject({
+        code: -32601,
+        message: expect.stringContaining(
+          "Resource reads are disabled by this client profile."
+        ),
+      });
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+      await bridge.close();
+    }
   });
 });
 

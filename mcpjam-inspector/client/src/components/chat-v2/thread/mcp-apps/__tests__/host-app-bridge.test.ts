@@ -86,14 +86,21 @@ function register(
 }
 
 describe("registerHostBridgeHandlers — capability gating (advertise = enforce)", () => {
-  it("installs no capability-gated handlers when all caps are off", () => {
+  it("installs no capability-gated handlers when all caps are off", async () => {
     const bridge = makeStubBridge();
     register(bridge, { effectiveHostCapabilities: NO_CAPS });
 
     expect(bridge.onmessage).toBeUndefined();
     expect(bridge.onopenlink).toBeUndefined();
     expect(bridge.oncalltool).toBeUndefined();
-    expect(bridge.onreadresource).toBeUndefined();
+    // Resource reads are refused explicitly rather than left unhandled, so a
+    // widget can tell a disabled capability from a broken host.
+    await expect(
+      bridge.onreadresource!({ uri: "x" } as never, {} as never)
+    ).rejects.toMatchObject({
+      code: -32601,
+      message: "Resource reads are disabled by this client profile.",
+    });
     expect(bridge.onlistresources).toBeUndefined();
     expect(bridge.onlistresourcetemplates).toBeUndefined();
     expect(bridge.onloggingmessage).toBeUndefined();
