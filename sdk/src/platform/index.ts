@@ -344,6 +344,13 @@ export type {
   PlatformEvalIterationReportUnavailableReason,
   PlatformEvalFindingsAnalysis,
   PlatformUnifiedFindings,
+  PlatformEvalFindingsView,
+  PlatformEvalFindingsViewStatus,
+  PlatformFindingProblem,
+  PlatformFindingOption,
+  PlatformFindingOptionKind,
+  PlatformFindingExplanation,
+  PlatformFindingObservationOutcome,
   PlatformInsightsStatus,
   PlatformSwarmRunInsights,
   PlatformSwarmRunInsightsCanceled,
@@ -1094,3 +1101,4 @@ export type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
 } from "../contract/judge-backtest.js";
+export { PLATFORM_EVAL_FINDINGS_VIEW_VERSION } from "./findings-view-types.js";
