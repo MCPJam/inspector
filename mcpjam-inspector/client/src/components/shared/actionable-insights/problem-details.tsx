@@ -41,13 +41,22 @@ const KIND_BADGE: Record<FindingOption["kind"], string> = {
 const plural = (count: number, word: string) =>
   `${count} ${word}${count === 1 ? "" : "s"}`;
 
+/** Why an analysis that ran left this problem without a checked cause. */
+const OUTCOME_LINE: Record<string, string> = {
+  no_proposal: "Analysis ran and proposed nothing for this problem.",
+  rejected: "Analysis ran; its proposals did not hold up against the evidence.",
+  withheld: "Analysis ran but could not confirm a cause from the evidence.",
+  not_reached: "Analysis ran but did not reach this problem.",
+};
+
 /** What the analysis established about this problem's iterations. */
 export function coverageLine(problem: FindingProblem): string {
   const { observed, explained, unresolved } = problem.coverage;
   const parts = [
     explained > 0
-      ? `Cause checked for ${explained} of ${observed} iterations.`
-      : "Cause not established.",
+      ? `Cause checked for ${explained} of ${plural(observed, "iteration")}.`
+      : ((problem.outcome && OUTCOME_LINE[problem.outcome.state]) ??
+        "Cause not established."),
   ];
   if (unresolved > 0 && unresolved < observed)
     parts.push(
@@ -197,8 +206,12 @@ export function ProblemDetailsContent({
           </p>
           <p className="text-xs text-muted-foreground">
             Applies to {option.iterationIds.length} of{" "}
-            {problem.coverage.observed} affected iterations
+            {plural(problem.coverage.observed, "affected iteration")}
             {target ? ` · ${target}` : ""}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Effort: {option.effort} · Compatibility risk:{" "}
+            {option.compatibilityRisk}
           </p>
           <div>
             <h6 className="mb-1 font-semibold">

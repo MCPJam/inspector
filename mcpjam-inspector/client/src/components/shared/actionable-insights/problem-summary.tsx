@@ -1,7 +1,4 @@
-/**
- * One recorded problem and its recommended next step, from the backend's
- * findings view. Details open in a sheet; see `problem-details.tsx`.
- */
+/** One recorded problem and its recommended next step; copy lives in the panel header. */
 import { useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -23,11 +20,7 @@ import type { FindingEvidenceLocator } from "./finding-evidence";
 import type { AffectedIterationRow } from "./affected-iterations-list";
 import { FindingText } from "./finding-text";
 import { OPTION_KIND_LABEL, optionTargetLabel } from "./problem-prompts";
-import {
-  CopyOptionPrompt,
-  coverageLine,
-  ProblemDetailsContent,
-} from "./problem-details";
+import { coverageLine, ProblemDetailsContent } from "./problem-details";
 
 const KIND_ICON = {
   fix: Wrench,
@@ -38,14 +31,12 @@ const KIND_ICON = {
 export function ProblemSummary({
   problem,
   lead = false,
-  showCopy = !lead,
   context,
   onOpenEvidence,
   iterationRows = {},
 }: {
   problem: FindingProblem;
   lead?: boolean;
-  showCopy?: boolean;
   context?: FindingPromptContext;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
   iterationRows?: Record<string, AffectedIterationRow>;
@@ -128,13 +119,6 @@ export function ProblemSummary({
                 : "See details"}
               <ArrowUpRight className="size-3.5" aria-hidden="true" />
             </button>
-            {showCopy && option ? (
-              <CopyOptionPrompt
-                problem={problem}
-                option={option}
-                context={context}
-              />
-            ) : null}
           </div>
         </section>
       </div>
