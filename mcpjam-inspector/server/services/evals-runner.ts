@@ -151,12 +151,12 @@ import {
 } from "../utils/selection-rail.js";
 import {
   backendModelSelection,
+  isOrgConfigurationRefusal,
   ModelResolutionRefusalError,
   ORG_KEYS_REQUIRED_REASON,
   policyIneligibleRefusal,
   resolveLocalModelSelection,
 } from "../utils/model-resolution-local.js";
-import { isOrgKeyPolicyRefusalCode } from "../../shared/ai-execution-refusal.js";
 import { connectionPolicyEligibility } from "@/shared/org-ai-key-policy";
 import {
   resolveEffectiveModelSettings,
@@ -4683,14 +4683,13 @@ export const runEvalSuiteWithAiSdk = async ({
         ) {
           throw result.reason;
         }
-        // Test failed entirely - log error but continue. A refusal by the
-        // organization's AI-key policy is the org's own configuration working
-        // as designed (choose an org model): recorded, never paged.
+        // Test failed entirely - log error but continue. A refusal the
+        // organization fixes in its own settings is recorded, never paged.
         if (
           result.reason instanceof ModelResolutionRefusalError &&
-          isOrgKeyPolicyRefusalCode(result.reason.code)
+          isOrgConfigurationRefusal(result.reason)
         ) {
-          logger.warn("[evals] Test case refused by the organization AI-key policy:", {
+          logger.warn("[evals] Test case refused by the organization's AI configuration:", {
             code: result.reason.code,
             message: result.reason.message,
           });

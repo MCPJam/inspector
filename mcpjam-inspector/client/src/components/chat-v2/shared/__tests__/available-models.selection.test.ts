@@ -3,6 +3,7 @@ import { isModelSelection, selectionKey } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "@/shared/types";
 import type { OrgVisibleConfig } from "../model-helpers";
 import { buildAvailableModelsFromOrgConfig } from "../model-helpers";
+import { judgeModelOptions } from "../available-models";
 import { HOSTED_MODEL_IDS } from "@/shared/hosted-model-ids.generated";
 import {
   BARE_MODEL_ID_CANONICAL,
@@ -445,11 +446,41 @@ describe("org Azure deployments", () => {
     });
   });
 
-  it("with no deployments configured, the static rows stay and name none", () => {
+  it.each([
+    ["no deployment list", undefined],
+    ["an empty deployment list", []],
+    ["only blank deployment names", ["  "]],
+  ])("with %s, the static rows stay locked, saying where to add one", (_label, modelIds) => {
+    const azure = buildAvailableModelsFromOrgConfig(
+      azureConfig(modelIds),
+      [],
+    ).filter((m) => m.provider === "azure");
+    expect(azure.map((m) => m.id)).toEqual([
+      "azure/gpt-5.1",
+      "azure/gpt-5.1-codex",
+      "azure/gpt-5.1-codex-mini",
+    ]);
+    for (const row of azure) {
+      expect(row).toMatchObject({
+        disabled: true,
+        disabledReason:
+          "This model has no Azure deployment. Add a deployment name in Organization → AI providers.",
+      });
+    }
+  });
+
+  it("the judge picker offers no static row", () => {
+    const { models } = judgeModelOptions(
+      buildAvailableModelsFromOrgConfig(azureConfig(), []),
+      { currentModelId: "", managedDefaultModelId: "" },
+    );
+    expect(models.filter((m) => m.provider === "azure")).toEqual([]);
+  });
+
+  it("with no deployments configured, the static rows name none", () => {
     const azure = buildAvailableModelsFromOrgConfig(azureConfig(), []).filter(
       (m) => m.provider === "azure",
     );
-    expect(azure.map((m) => m.id)).toContain("azure/gpt-5.1");
     const selection = modelSelectionFromDefinition(
       azure.find((m) => m.id === "azure/gpt-5.1")!,
       undefined,
