@@ -28,6 +28,7 @@ import { SwarmHeroCharacters } from "../swarms/swarm-hero-characters";
 import { LaunchFeatureVisual } from "./launch-feature-visual";
 import { LAUNCH_ID, type LaunchEngagement } from "@/shared/launch-engagement";
 import { trackLaunchEngagement } from "@/lib/launch-analytics";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { ProductUpdateEntry } from "../home/productUpdateEntry";
 
 const LAUNCH: ProductUpdateEntry = {
@@ -113,6 +114,7 @@ export function PlatformLaunchAnnouncement({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const openedAt = useRef(0);
   const presentation = "card" as const;
+  const isMobile = useIsMobile();
 
   function engagement(
     action: LaunchEngagement["action"],
@@ -157,7 +159,7 @@ export function PlatformLaunchAnnouncement({
     });
     observer.observe(triggerRef.current);
     return () => observer.disconnect();
-  }, [status, presentation, audience]);
+  }, [status, presentation, audience, isMobile]);
 
   function changeOpen(
     next: boolean,
@@ -190,7 +192,9 @@ export function PlatformLaunchAnnouncement({
     }
   }
 
-  if (status === "dismissed") return null;
+  // A phone has no room for the card over the app. Not rendering it leaves
+  // the status alone, so the launch still shows on a larger screen.
+  if (status === "dismissed" || isMobile) return null;
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>

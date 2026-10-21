@@ -4,9 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformLaunchAnnouncement as Announcement } from "../platform-launch-announcement";
 
-const { engagement } = vi.hoisted(() => ({ engagement: vi.fn() }));
+const { engagement, mobileFixture } = vi.hoisted(() => ({
+  engagement: vi.fn(),
+  mobileFixture: { isMobile: false },
+}));
 vi.mock("@/lib/launch-analytics", () => ({
   trackLaunchEngagement: engagement,
+}));
+vi.mock("@/hooks/use-mobile", () => ({
+  useIsMobile: () => mobileFixture.isMobile,
 }));
 
 const onNavigate = vi.fn();
@@ -16,6 +22,7 @@ function PlatformLaunchAnnouncement(props: { sandboxesEnabled?: boolean }) {
 
 beforeEach(() => {
   localStorage.clear();
+  mobileFixture.isMobile = false;
   onNavigate.mockClear();
   engagement.mockClear();
   vi.stubGlobal(
@@ -256,6 +263,28 @@ describe("PlatformLaunchAnnouncement", () => {
     act(() => notify([{ isIntersecting: true }]));
     act(() => notify([{ isIntersecting: true }]));
     expect(engagement).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays out of the way on a phone without marking the launch seen", () => {
+    mobileFixture.isMobile = true;
+    const { rerender } = render(<PlatformLaunchAnnouncement />);
+    expect(
+      screen.queryByRole("region", { name: "Platform launch" }),
+    ).not.toBeInTheDocument();
+    expect(engagement).not.toHaveBeenCalled();
+    expect(
+      localStorage.getItem("mcpjam:platform-launch-2026-09:status"),
+    ).toBeNull();
+
+    // Widening to a desktop layout brings it back and counts the impression.
+    mobileFixture.isMobile = false;
+    rerender(<PlatformLaunchAnnouncement />);
+    expect(
+      screen.getByRole("region", { name: "Platform launch" }),
+    ).toBeInTheDocument();
+    expect(engagement).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "shown" }),
+    );
   });
 
   it("does not report an impression for an already dismissed announcement", () => {
