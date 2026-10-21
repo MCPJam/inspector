@@ -143,8 +143,75 @@ describe("engine failure telemetry", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     global.fetch = originalFetch;
     delete process.env.CONVEX_HTTP_URL;
+  });
+
+  it.each([true, false])("reports a busy Swarm step without replaying tools (canWait=%s)", async (canWait) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        {
+          type: "tool-input-available",
+          toolCallId: "write-1",
+          toolName: "save_doc",
+          input: { text: "Saved once" },
+        },
+        { type: "finish", finishReason: "tool-calls" },
+      ]))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: "spending_reservation_busy",
+        error: "MCPJam is temporarily busy reserving spending capacity.",
+        retryAfter: 2000,
+        isRetryable: true,
+      }), { status: 503, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(sseResponse([
+        { type: "text-start", id: "reply" },
+        { type: "text-delta", id: "reply", delta: "Saved." },
+        { type: "text-end", id: "reply" },
+        { type: "finish", finishReason: "stop" },
+      ]));
+    global.fetch = fetchMock;
+    vi.mocked(hasUnresolvedToolCalls).mockReturnValueOnce(true);
+    vi.mocked(executeToolCallsFromMessages).mockResolvedValueOnce([{
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "write-1",
+        toolName: "save_doc",
+        output: { type: "json", value: { saved: true } },
+      }],
+    }]);
+    const { reporter, calls } = makeReporter();
+    const onEngineError = vi.fn();
+    const onConversationComplete = vi.fn();
+    const turn = runTurn({
+      sourceType: "swarm",
+      remainingTurnMs: () => (canWait ? 60_000 : 1000),
+      failureReporter: reporter,
+      onEngineError,
+      onConversationComplete,
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await vi.runAllTimersAsync();
+    await turn;
+
+    expect(executeToolCallsFromMessages).toHaveBeenCalledTimes(1);
+    if (canWait) {
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls[2][1].body).toBe(fetchMock.mock.calls[1][1].body);
+      expect(calls).toEqual([]);
+      expect(onEngineError).not.toHaveBeenCalled();
+      expect(errorChunks()).toEqual([]);
+      expect(onConversationComplete).toHaveBeenCalledTimes(1);
+    } else {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      expect(errorChunks()).toHaveLength(1);
+    }
   });
 
   it("reports a backend /stream transport failure once, with the internal hop", async () => {

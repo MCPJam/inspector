@@ -2011,6 +2011,8 @@ chatV2.post("/", async (c) => {
             // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
             // only for a host-funded swarm executionScope.
             isGuest: requestIsGuest,
+            // A scenario visitor keeps web_search, billed to the scenario owner.
+            ...(bodyScenarioId ? { scenarioId: bodyScenarioId } : {}),
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }

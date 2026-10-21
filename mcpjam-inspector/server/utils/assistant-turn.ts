@@ -183,6 +183,7 @@ export interface RunAssistantTurnOptions {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
+  remainingTurnMs?: MCPJamHandlerOptions["remainingTurnMs"];
   heartbeatIntervalMs?: number;
   maxSteps?: number;
 
@@ -615,6 +616,7 @@ function buildHandlerOptions(
       ? { clientIp: opts.authContext.clientIp }
       : {}),
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
+    ...(opts.remainingTurnMs ? { remainingTurnMs: opts.remainingTurnMs } : {}),
     ...(opts.heartbeatIntervalMs !== undefined
       ? { heartbeatIntervalMs: opts.heartbeatIntervalMs }
       : {}),
