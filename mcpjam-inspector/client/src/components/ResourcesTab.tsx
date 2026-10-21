@@ -912,7 +912,8 @@ export function ResourcesTab({
             <button
               onClick={() => {
                 setActiveTab("resources");
-                if (isMobile && activeTab !== "resources") clearSelectedResource();
+                if (isMobile && activeTab !== "resources")
+                  clearSelectedResource();
               }}
               className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === "resources"
@@ -929,7 +930,8 @@ export function ResourcesTab({
               <button
                 onClick={() => {
                   setActiveTab("templates");
-                  if (isMobile && activeTab !== "templates") clearSelectedResource();
+                  if (isMobile && activeTab !== "templates")
+                    clearSelectedResource();
                 }}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   activeTab === "templates"
