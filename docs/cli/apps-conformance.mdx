@@ -230,6 +230,18 @@ project-specific configuration.
 `--transport` is optional; without it, `--url` implies HTTP and `--command`
 implies stdio.
 
+## Conformance score
+
+After each run, the CLI prints a `Score:` line to stderr (suppressed by `--quiet`):
+
+```
+Score: 98/100 — 7/7 applicable checks passed, 2 advisories (−2) [2025-11-25]
+```
+
+The score is 0–100: MUSTs own 95 points, per-check `warnings` strings deduct 1 point each (capped at 5 total). `not-applicable` checks leave the denominator entirely; `could-not-run` checks stay in it. A failed or incomplete run caps at 94. The score also appears in `ConformanceReport.score` (JSON output) and in a `<properties>` block in JUnit XML.
+
+For suite runs, a per-run score line is printed for each run.
+
 ## Outcomes: passed, failed, incomplete
 
 A run reports one of three outcomes, and `passed` is `true` only for the first:
