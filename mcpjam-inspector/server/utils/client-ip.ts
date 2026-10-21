@@ -113,7 +113,19 @@ export function getAttestedClientIp(c: Context): string | null {
 // assigned, so the addresses of one assignment share a bucket. An IPv4-mapped
 // IPv6 address (::ffff:a.b.c.d, dotted or hex) is keyed as the IPv4 address
 // it carries. Anything that is not an IP address comes back as it is.
+// The relay keys every ingest request, so remember each address's key and
+// skip re-parsing it for clients we have already seen.
+const rateLimitKeys = new Map<string, string>();
+
 export function ipRateLimitKey(ip: string): string {
+  const cached = rateLimitKeys.get(ip);
+  if (cached !== undefined) return cached;
+  const key = computeRateLimitKey(ip);
+  rateLimitKeys.set(ip, key);
+  return key;
+}
+
+function computeRateLimitKey(ip: string): string {
   const address = ip.trim();
   if (isIP(address) !== 6) return address;
   const groups = ipv6Groups(address.split("%")[0]);
