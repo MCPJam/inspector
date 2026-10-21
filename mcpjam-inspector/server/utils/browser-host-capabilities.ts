@@ -6,18 +6,20 @@ import {
 } from "@mcpjam/sdk/host-compat";
 import { z } from "zod";
 
+/** The part of a profile this resolver reads; other keys pass through. */
+export const browserMcpProfileSchema = z
+  .object({
+    apps: z
+      .object({ mcpAppsOverrides: mcpAppsCapabilitiesSchema.optional() })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
 const configSchema = z.object({
   hostStyle: z.string().optional(),
   hostCapabilitiesOverride: z.record(z.string(), z.unknown()).optional(),
-  mcpProfile: z
-    .object({
-      apps: z
-        .object({ mcpAppsOverrides: mcpAppsCapabilitiesSchema.optional() })
-        .passthrough()
-        .optional(),
-    })
-    .passthrough()
-    .optional(),
+  mcpProfile: browserMcpProfileSchema.optional(),
 });
 
 /** Resolve saved profile switches before handing capabilities to the browser. */
