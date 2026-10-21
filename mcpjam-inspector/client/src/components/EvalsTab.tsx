@@ -87,6 +87,7 @@ import {
   CI_OWNED_REASON_COPY,
   isCiOwnedSuite,
 } from "@/lib/evals/is-ci-owned-suite";
+import { agentRunIterations } from "./evaluate/suite-run-iterations";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -810,6 +811,13 @@ function EvalsTabContent({
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
         const entry = resolveSuiteEntry(payload.suite, "lifecycle");
+        const iterations = agentRunIterations(entry.suite, payload.iterations);
+        if (iterations === null) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "'iterations' must be a whole number from 1 to 10.",
+          );
+        }
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -831,11 +839,14 @@ function EvalsTabContent({
         }
         // The SAME quota-gated wrapper the Run button uses. Launch failures
         // inside it surface as toasts, so this reports "requested".
-        await handleRerunWithQuota(entry.suite);
+        await handleRerunWithQuota(entry.suite, {
+          iterationOverride: iterations,
+        });
         return {
           status: "run_requested",
           suiteId: entry.suite._id,
           suiteName: suiteDisplayName(entry.suite),
+          iterations,
           note: "Observe progress with ui_snapshot_app.",
         };
       },
