@@ -378,7 +378,6 @@ export function ProblemsCarousel({
               <ProblemSummary
                 problem={problem}
                 lead={index === 0}
-                showCopy={false}
                 context={context}
                 onOpenEvidence={onOpenEvidence}
                 iterationRows={iterationRows}

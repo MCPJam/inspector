@@ -18,6 +18,7 @@ import {
   sanitizeIdentifier,
   type FindingPromptContext,
 } from "./finding-prompts";
+import { SURFACES } from "./finding-summary";
 
 export const OPTION_KIND_LABEL: Record<FindingOption["kind"], string> = {
   fix: "Suggested fix",
@@ -25,18 +26,9 @@ export const OPTION_KIND_LABEL: Record<FindingOption["kind"], string> = {
   investigation: "Investigate next",
 };
 
-const SURFACE_LABEL: Record<string, string> = {
-  description: "tool description",
-  input_schema: "input schema",
-  output_schema: "output schema",
-  handler: "tool handler",
-  server_instructions: "server instructions",
-  capability: "server capability",
-};
-
 /** Where an option points, in words: "tool description · `lookup`". */
 export function optionTargetLabel(option: FindingOption): string | null {
-  const surface = option.surface ? SURFACE_LABEL[option.surface] : undefined;
+  const surface = option.surface && SURFACES[option.surface]?.toLowerCase();
   const tool = option.target?.toolName;
   return [surface, tool].filter(Boolean).join(" · ") || null;
 }
@@ -71,13 +63,8 @@ function heading(option: FindingOption): string {
   }
 }
 
-export function optionPromptLabel(option: FindingOption): string {
-  return option.kind === "fix"
-    ? "Copy fix prompt"
-    : option.kind === "experiment"
-      ? "Copy experiment prompt"
-      : "Copy investigation prompt";
-}
+export const optionPromptLabel = (option: FindingOption) =>
+  `Copy ${option.kind} prompt`;
 
 export function buildOptionPrompt(
   problem: FindingProblem,

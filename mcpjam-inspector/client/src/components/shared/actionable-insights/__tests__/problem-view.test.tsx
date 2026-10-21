@@ -7,7 +7,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { UnifiedFindingsPanel } from "../unified-findings-panel";
-import { ProblemDetailsContent } from "../problem-details";
+import { coverageLine, ProblemDetailsContent } from "../problem-details";
 import { buildOptionPrompt } from "../problem-prompts";
 import type {
   ActionableFinding,
@@ -260,16 +260,48 @@ describe("the observation view", () => {
     expect(screen.queryByTestId("unified-findings-analyze")).toBeNull();
   });
 
-  it("labels analysis written before links instead of counting it", () => {
+  it("keeps analysis written before links visible, unscoped", () => {
     renderPanel({
       problemsView: view({
         status: "historical_unlinked",
-        unlinkedExplanations: [{ id: "m", title: "t", rootCause: null }],
+        unlinkedExplanations: [
+          {
+            id: "m",
+            title: "t",
+            rootCause: "The tool rejected the project name.",
+          },
+        ],
       }),
     });
     expect(screen.getByTestId("unified-findings-historical")).toHaveTextContent(
-      "not counted against them",
+      "These explanations are not linked to problems. Analyze again to link them.",
     );
+    expect(
+      screen.getByText("The tool rejected the project name."),
+    ).toBeVisible();
+  });
+
+  it("does not invite a visitor to analyze an older run", () => {
+    renderPanel({
+      visitor: true,
+      problemsView: view({
+        status: "historical_unlinked",
+        unlinkedExplanations: [
+          { id: "m", title: "Old cause", rootCause: null },
+        ],
+      }),
+    });
+    expect(screen.getByTestId("unified-findings-historical")).toHaveTextContent(
+      /^These explanations are not linked to problems\.$/,
+    );
+    expect(screen.getByText("Old cause")).toBeVisible();
+  });
+
+  it("names the skill version the recommendations follow", () => {
+    renderPanel();
+    expect(
+      screen.getByText("Recommendations follow mcp-improvement@1."),
+    ).toBeVisible();
   });
 });
 
@@ -303,6 +335,9 @@ describe("problem details", () => {
         "Applies to 2 of 3 affected iterations · server capability · lookup_customer",
       ),
     ).toBeVisible();
+    expect(
+      screen.getByText("Effort: large · Compatibility risk: unknown"),
+    ).toBeVisible();
     await user.click(screen.getByTestId("problem-copy-prompt"));
     await waitFor(() =>
       expect(clipboard.text).toContain("Add a tool that resolves"),
@@ -324,6 +359,31 @@ describe("problem details", () => {
       "clipboard is unavailable",
     );
     clipboard.ok = true;
+  });
+});
+
+describe("coverageLine", () => {
+  it("says an analysis ran and found nothing, instead of reading as never analyzed", () => {
+    expect(
+      coverageLine({ ...evaluatorProblem, outcome: { state: "no_proposal" } }),
+    ).toBe("Analysis ran and proposed nothing for this problem.");
+    expect(coverageLine(evaluatorProblem)).toBe("Cause not established.");
+  });
+
+  it("uses the singular for one iteration", () => {
+    expect(
+      coverageLine(
+        problem({
+          coverage: {
+            observed: 1,
+            explained: 1,
+            addressed: 1,
+            unresolved: 0,
+            unresolvedIterationIds: [],
+          },
+        }),
+      ),
+    ).toBe("Cause checked for 1 of 1 iteration.");
   });
 });
 
