@@ -65,7 +65,7 @@ export function CopyFindingPrompt({
       }}
     >
       {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      {copied ? "Copied" : "Copy fix prompt"}
+      {copied ? "Copied" : findingPromptLabel(finding)}
     </Button>
   );
 }

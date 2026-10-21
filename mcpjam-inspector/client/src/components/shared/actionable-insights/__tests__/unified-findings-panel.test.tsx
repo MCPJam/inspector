@@ -382,7 +382,13 @@ describe("walkthrough findings layout", () => {
 
   it("copies an investigation for an unproven fix", async () => {
     renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: "Copy fix prompt" }));
+    // The button names the work the prompt asks for, not a fix.
+    expect(
+      screen.queryByRole("button", { name: "Copy fix prompt" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy investigation prompt" }),
+    );
     await waitFor(() => expect(screen.getByText("Copied")).toBeVisible());
     expect(copied.text).toContain("Investigate a problem");
     expect(screen.getByTestId("finding-copy-prompt")).toHaveAttribute(
