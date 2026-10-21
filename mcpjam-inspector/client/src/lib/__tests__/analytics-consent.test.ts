@@ -51,6 +51,15 @@ describe("analytics consent", () => {
     expect(hasAnalyticsConsent()).toBe(false);
   });
 
+  it("keeps a stored refusal where the server would not ask", () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = false;
+    window.localStorage.setItem("mcpjam-analytics-consent", "denied");
+    expect(hasAnalyticsConsent()).toBe(false);
+    expect(options.opt_out_capturing_by_default).toBe(true);
+    expect(options.opt_out_persistence_by_default).toBe(true);
+    expect(options.disable_conversations).toBe(true);
+  });
+
   it("restores a granted choice after a reset, and nothing else", () => {
     window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
     const undecided = client();

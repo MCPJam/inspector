@@ -48,3 +48,18 @@ it("lets a visitor withdraw consent from Settings", () => {
   expect(posthog.opt_out_capturing).toHaveBeenCalled();
   expect(toggle).not.toBeChecked();
 });
+
+it("lets a visitor who declined elsewhere turn analytics back on", () => {
+  window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = false;
+  window.localStorage.setItem("mcpjam-analytics-consent", "denied");
+  render(<AnalyticsConsentSetting />);
+  const toggle = screen.getByRole("switch", {
+    name: /Analytics and session replay/,
+  });
+  expect(toggle).not.toBeChecked();
+  fireEvent.click(toggle);
+  expect(posthog.opt_in_capturing).toHaveBeenCalledWith({
+    captureEventName: false,
+  });
+  expect(toggle).toBeChecked();
+});

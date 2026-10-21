@@ -42,9 +42,15 @@ export function getAnalyticsConsent(): AnalyticsConsent | null {
   }
 }
 
-/** Whether optional analytics may run for this visitor right now. */
+/**
+ * Whether optional analytics may run for this visitor right now. A stored
+ * refusal holds even where the server would not ask, so a visitor who declined
+ * is not tracked after their location changes.
+ */
 export function hasAnalyticsConsent(): boolean {
-  return !isAnalyticsConsentRequired() || getAnalyticsConsent() === "granted";
+  const consent = getAnalyticsConsent();
+  if (consent !== null) return consent === "granted";
+  return !isAnalyticsConsentRequired();
 }
 
 export function setAnalyticsConsent(

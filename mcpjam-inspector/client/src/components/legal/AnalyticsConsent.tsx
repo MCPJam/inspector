@@ -59,12 +59,16 @@ export function AnalyticsConsentBanner() {
   );
 }
 
-/** Lets a visitor who had to opt in change their answer. */
+/**
+ * Lets a visitor who had to opt in change their answer, including one whose
+ * stored answer still holds after their location stopped requiring it.
+ */
 export function AnalyticsConsentSetting() {
   const posthog = usePostHog();
   const consent = useAnalyticsConsent();
   const id = useId();
-  if (!posthog || !consentApplies()) return null;
+  if (!posthog || isPostHogDisabled) return null;
+  if (!isAnalyticsConsentRequired() && consent === null) return null;
 
   return (
     <div className="flex items-center justify-between gap-4 py-4 text-sm">
