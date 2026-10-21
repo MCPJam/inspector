@@ -65,6 +65,26 @@ describe("browser host capabilities", () => {
       {},
     );
   });
+  it("advertises the same capability objects as chat", () => {
+    expect(resolveBrowserHostCapabilities({ hostStyle: "chatgpt" })?.message).toEqual(
+      { text: {}, image: {}, resourceLink: {}, resource: {} },
+    );
+    expect(resolveBrowserHostCapabilities({ hostStyle: "mistral" })?.message).toEqual(
+      { text: {}, image: {} },
+    );
+    expect(
+      resolveBrowserHostCapabilities({ hostStyle: "cursor" })?.serverTools,
+    ).toEqual({ listChanged: false });
+    expect(resolveBrowserHostCapabilities({ hostStyle: "copilot" })).not.toHaveProperty(
+      "serverResources",
+    );
+    expect(resolveBrowserHostCapabilities({ hostStyle: "slack" })).not.toHaveProperty(
+      "message",
+    );
+    expect(
+      resolveBrowserHostCapabilities({ hostStyle: "claude-code" })?.serverResources,
+    ).toEqual({});
+  });
   it("warns when the host style is not in the catalog", () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     resolveBrowserHostCapabilities({ hostStyle: "claude" });
