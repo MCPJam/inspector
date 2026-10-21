@@ -127,6 +127,21 @@ for (const theme of ["light", "dark"])
           .evaluate((el) => {
             el.parentElement!.style.display = "none";
           });
+        if (!mobile) {
+          const panes = page.locator(
+            '[data-panel] > [data-slot="tabs-content"]',
+          );
+          await expect(panes).toHaveCount(2);
+          expect(
+            await panes.evaluateAll((items) =>
+              items.every(
+                (pane) =>
+                  pane.tabIndex === -1 &&
+                  pane.getAttribute("role") !== "tabpanel",
+              ),
+            ),
+          ).toBe(true);
+        }
         for (const name of ["Continue", "Reset", "Copy", "Add"])
           await inside(page, page.getByRole("button", { name, exact: true }));
         const url = page
@@ -173,6 +188,25 @@ for (const theme of ["light", "dark"])
           expect(
             await page.locator(".react-flow__viewport").getAttribute("style"),
           ).not.toMatch(/NaN|Infinity/);
+          const viewport = page.locator(".react-flow__viewport");
+          // Outlive the centering timer before simulating the user's pan.
+          await page.waitForTimeout(200);
+          const centered = await viewport.getAttribute("style");
+          await page.locator(".react-flow__pane").hover();
+          await page.mouse.wheel(0, 100);
+          await expect
+            .poll(() => viewport.getAttribute("style"))
+            .not.toBe(centered);
+          await page.waitForTimeout(200);
+          const panned = await viewport.getAttribute("style");
+          await page
+            .getByRole("tab", { name: "Guide", exact: true })
+            .first()
+            .click();
+          await page.getByRole("tab", { name: "Diagram", exact: true }).click();
+          // Revealing the same step must not schedule another center.
+          await page.waitForTimeout(200);
+          expect(await viewport.getAttribute("style")).toBe(panned);
           await page
             .getByRole("tab", { name: "Guide", exact: true })
             .first()

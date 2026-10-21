@@ -12,6 +12,8 @@ import {
   ResizablePanelGroup,
 } from "../ui/resizable";
 
+export type OAuthView = "guide" | "diagram";
+
 export function OAuthFlowLayout({
   diagram,
   logger,
@@ -20,13 +22,13 @@ export function OAuthFlowLayout({
 }: {
   diagram: ReactNode;
   logger: ReactNode;
-  view: string;
-  onViewChange: (view: string) => void;
+  view: OAuthView;
+  onViewChange: (view: OAuthView) => void;
 }) {
   const isMobile = useIsMobile();
   const diagramTab = useRef<HTMLButtonElement>(null);
   /** Last view focus moved to, so a resize never re-fires it. */
-  const focusedView = useRef<string | null>(null);
+  const focusedView = useRef<OAuthView | null>(null);
   useEffect(() => {
     // Same rule as ThreePanelLayout: focus follows a view change, not a mount
     // and not a desktop/mobile resize. `isMobile` is a dependency because the
@@ -38,7 +40,7 @@ export function OAuthFlowLayout({
     if (firstRun || unchanged || !isMobile) return;
     if (view === "diagram") diagramTab.current?.focus();
   }, [isMobile, view]);
-  const style = (pane: string): CSSProperties | undefined =>
+  const style = (pane: OAuthView): CSSProperties | undefined =>
     isMobile
       ? {
           flexGrow: 1,
@@ -52,7 +54,9 @@ export function OAuthFlowLayout({
   return (
     <Tabs
       value={view}
-      onValueChange={onViewChange}
+      onValueChange={(value) => {
+        if (value === "guide" || value === "diagram") onViewChange(value);
+      }}
       className="h-full min-h-0 gap-0 overflow-hidden"
     >
       <div className="shrink-0 border-b border-border p-2 md:hidden">
@@ -66,6 +70,8 @@ export function OAuthFlowLayout({
       <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
         <ResizablePanel defaultSize={50} minSize={30} style={style("diagram")}>
           <TabsContent
+            tabIndex={isMobile ? 0 : -1}
+            role={isMobile ? "tabpanel" : undefined}
             forceMount
             value="diagram"
             className="m-0 h-full min-h-0"
@@ -84,7 +90,13 @@ export function OAuthFlowLayout({
           maxSize={50}
           style={style("guide")}
         >
-          <TabsContent forceMount value="guide" className="m-0 h-full min-h-0">
+          <TabsContent
+            tabIndex={isMobile ? 0 : -1}
+            role={isMobile ? "tabpanel" : undefined}
+            forceMount
+            value="guide"
+            className="m-0 h-full min-h-0"
+          >
             {logger}
           </TabsContent>
         </ResizablePanel>

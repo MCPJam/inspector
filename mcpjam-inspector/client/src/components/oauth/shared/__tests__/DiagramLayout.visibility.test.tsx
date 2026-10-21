@@ -96,6 +96,38 @@ describe("diagram visibility", () => {
       viewport.setCenter.mock.calls[0].slice(0, 2).every(Number.isFinite),
     ).toBe(true);
   });
+  it("preserves the viewport on reveal unless a step changed while hidden", () => {
+    const { container, rerender } = render(
+      <DiagramLayout nodes={nodes} edges={edges} currentStep="idle" />,
+    );
+    const pane = container.firstElementChild!;
+    Object.defineProperty(pane, "clientWidth", {
+      value: 375,
+      configurable: true,
+    });
+    Object.defineProperty(pane, "clientHeight", { value: 600 });
+    act(() => viewport.notify());
+    act(() => vi.advanceTimersByTime(200));
+    expect(viewport.setCenter).toHaveBeenCalledOnce();
+    const width = (value: number) => {
+      Object.defineProperty(pane, "clientWidth", { value, configurable: true });
+      act(() => viewport.notify());
+    };
+    width(0);
+    width(375);
+    act(() => vi.advanceTimersByTime(200));
+    expect(viewport.setCenter).toHaveBeenCalledOnce();
+    width(0);
+    rerender(
+      <DiagramLayout nodes={nodes} edges={edges} currentStep="request" />,
+    );
+    act(() => vi.advanceTimersByTime(200));
+    expect(viewport.setCenter).toHaveBeenCalledOnce();
+    width(375);
+    act(() => vi.advanceTimersByTime(200));
+    expect(viewport.setCenter).toHaveBeenCalledTimes(2);
+  });
+
   it("rechecks the DOM when a pane hides before the centering timer runs", () => {
     const { container } = render(
       <DiagramLayout nodes={nodes} edges={edges} currentStep="idle" />,

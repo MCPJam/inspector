@@ -36,6 +36,7 @@ export const DiagramLayout = ({
   const reactFlowInstance = useReactFlow();
   const isMobile = useIsMobile();
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastCentered = useRef<string | null>(null);
   const [hasDimensions, setHasDimensions] = useState(false);
   useEffect(() => {
     const container = containerRef.current;
@@ -54,6 +55,9 @@ export const DiagramLayout = ({
       return;
     }
 
+    // Showing an unchanged diagram must preserve the user's pan and zoom.
+    const focusKey = JSON.stringify([currentStep, focusedStep]);
+    if (lastCentered.current === focusKey) return;
     // Small delay to ensure nodes are rendered
     const timer = setTimeout(() => {
       const container = containerRef.current;
@@ -69,6 +73,7 @@ export const DiagramLayout = ({
           zoom: 0.8,
           duration,
         });
+        lastCentered.current = focusKey;
         return;
       }
 
@@ -116,6 +121,7 @@ export const DiagramLayout = ({
             zoom: 1.2,
             duration,
           });
+          lastCentered.current = focusKey;
         }
       }
     }, 100);

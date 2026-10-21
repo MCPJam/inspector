@@ -55,10 +55,16 @@ for (const theme of ["light", "dark"])
         await expect(
           page.getByText("Fixture document contents", { exact: true }),
         ).toBeVisible();
-        if (mobile)
+        if (mobile) {
+          await page.getByRole("tab", { name: "Browse", exact: true }).click();
+          await page.getByText(resourceName, { exact: true }).click();
+          await expect(
+            page.getByRole("tab", { name: "Results", exact: true }),
+          ).toHaveAttribute("aria-selected", "true");
           await page
             .getByRole("button", { name: "Back to list", exact: true })
             .click();
+        }
         await page.getByRole("button", { name: /^Templates/ }).click();
         await expect(
           page.getByText(templateName, { exact: true }),
@@ -79,8 +85,12 @@ for (const theme of ["light", "dark"])
         await expect(
           page.getByText("Fixture document contents", { exact: true }),
         ).toBeVisible();
-        if (mobile)
+        if (mobile) {
+          await expect(
+            page.getByRole("button", { name: "Back to list", exact: true }),
+          ).toHaveCount(0);
           await page.getByRole("tab", { name: "Browse", exact: true }).click();
+        }
         await expect(param).toHaveValue("report");
         await page
           .getByRole("button", { name: "Clear selection", exact: true })
@@ -88,6 +98,23 @@ for (const theme of ["light", "dark"])
         await expect(
           page.getByText(templateName, { exact: true }),
         ).toBeVisible();
+        if (mobile) {
+          await page.getByRole("button", { name: /^Resources/ }).click();
+          await expect(
+            page.getByRole("tab", { name: "Browse", exact: true }),
+          ).toHaveAttribute("aria-selected", "true");
+          await page.getByText(resourceName, { exact: true }).click();
+          await page.getByRole("tab", { name: "Browse", exact: true }).click();
+          await page.getByRole("button", { name: /^Templates/ }).click();
+          await page.getByRole("button", { name: /^Resources/ }).click();
+          await expect(
+            page.getByRole("tab", { name: "Browse", exact: true }),
+          ).toHaveAttribute("aria-selected", "true");
+          await page.getByText(resourceName, { exact: true }).click();
+          await expect(
+            page.getByRole("tab", { name: "Results", exact: true }),
+          ).toHaveAttribute("aria-selected", "true");
+        }
         await page.goto(`/p/${PROJECT_ID}/prompts`);
         await expect(page.getByText(promptName, { exact: true })).toBeVisible({
           timeout: 20000,
@@ -129,6 +156,13 @@ for (const theme of ["light", "dark"])
         );
         await checkWidth(page);
         if (mobile) {
+          await page.getByRole("tab", { name: "Browse", exact: true }).click();
+          await page
+            .getByText(taskId.substring(0, 12), { exact: true })
+            .click();
+          await expect(
+            page.getByRole("tab", { name: "Results", exact: true }),
+          ).toHaveAttribute("aria-selected", "true");
           await page
             .getByRole("button", { name: "Back to list", exact: true })
             .click();

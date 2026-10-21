@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
 import { SubscriptionStreamsPanel } from "./subscriptions/SubscriptionStreamsPanel";
 import { HostedMrtrHost } from "./elicitation/HostedMrtrHost";
@@ -194,6 +195,9 @@ export function ResourcesTab({
   const [activeTab, setActiveTab] = useState<"resources" | "templates">(
     "resources",
   );
+
+  const isMobile = useIsMobile();
+  const [resourceSelection, setResourceSelection] = useState(0);
 
   // Resources state
   const [resources, setResources] = useState<MCPResource[]>([]);
@@ -888,7 +892,10 @@ export function ResourcesTab({
           {/* Tabs */}
           <div className="flex items-center gap-1.5">
             <button
-              onClick={() => setActiveTab("resources")}
+              onClick={() => {
+                  setActiveTab("resources");
+                  if (isMobile) setSelectedResource("");
+                }}
               className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === "resources"
                   ? "bg-primary/10 text-primary"
@@ -902,7 +909,10 @@ export function ResourcesTab({
             </button>
             {!HOSTED_MODE && (
               <button
-                onClick={() => setActiveTab("templates")}
+                onClick={() => {
+                  setActiveTab("templates");
+                  if (isMobile) setSelectedResource("");
+                }}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   activeTab === "templates"
                     ? "bg-primary/10 text-primary"
@@ -1101,6 +1111,7 @@ export function ResourcesTab({
                           }`}
                           onClick={() => {
                             setSelectedResource(resource.uri);
+                            setResourceSelection((request) => request + 1);
                             readResource(resource.uri);
                           }}
                         >
@@ -1332,9 +1343,17 @@ export function ResourcesTab({
       <ThreePanelLayout
         id="resources"
         mobileNavigation={{
-          selectionKey: activeTab === "templates" ? selectedTemplate : selectedResource,
+          selectionKey:
+            activeTab === "templates"
+              ? selectedTemplate
+              : selectedResource
+                ? `${selectedResource}:${resourceSelection}`
+                : "",
           selectionPanel: activeTab === "templates" ? "sidebar" : "content",
-          onBack: () => setSelectedResource(""),
+          onBack:
+            activeTab === "templates"
+              ? undefined
+              : () => setSelectedResource(""),
         }}
         sidebar={sidebarContent}
         content={

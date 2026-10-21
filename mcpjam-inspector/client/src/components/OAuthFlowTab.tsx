@@ -10,7 +10,7 @@ import { createInspectorOAuthStateMachine } from "@/lib/oauth/debug-state-machin
 import { redeemAuthorizationCode } from "@/lib/oauth/code-redemption";
 import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
-import { OAuthFlowLayout } from "./oauth/OAuthFlowLayout";
+import { OAuthFlowLayout, type OAuthView } from "./oauth/OAuthFlowLayout";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { reportCaught } from "@/lib/error-reporting";
@@ -239,7 +239,7 @@ export const OAuthFlowTab = ({
     EMPTY_OAUTH_FLOW_STATE,
   );
   const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
-  const [oauthView, setOAuthView] = useState("guide");
+  const [oauthView, setOAuthView] = useState<OAuthView>("guide");
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   // Remount key for the auth modal, bumped per regenerated authorization request.
   const [authModalAttempt, setAuthModalAttempt] = useState(0);

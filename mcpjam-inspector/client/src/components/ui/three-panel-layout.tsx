@@ -246,6 +246,8 @@ export function ThreePanelLayout({
           style={panelStyle("sidebar")}
         >
           <TabsContent
+            tabIndex={isMobile ? 0 : -1}
+            role={isMobile ? "tabpanel" : undefined}
             ref={sidebarRef}
             inert={!isMobile && !sidebarVisible}
             aria-hidden={(!isMobile && !sidebarVisible) || undefined}
@@ -278,6 +280,8 @@ export function ThreePanelLayout({
           style={panelStyle("content")}
         >
           <TabsContent
+            tabIndex={isMobile ? 0 : -1}
+            role={isMobile ? "tabpanel" : undefined}
             ref={contentRef}
             value="content"
             forceMount
@@ -311,6 +315,8 @@ export function ThreePanelLayout({
           style={panelStyle("right")}
         >
           <TabsContent
+            tabIndex={isMobile ? 0 : -1}
+            role={isMobile ? "tabpanel" : undefined}
             inert={!isMobile && !isRightVisible}
             aria-hidden={(!isMobile && !isRightVisible) || undefined}
             value="right"
@@ -319,7 +325,7 @@ export function ThreePanelLayout({
           >
             {hasCustomRight ? (
               right
-            ) : (
+            ) : (isMobile || isRightVisible) && (
               <LoggerView
                 serverIds={serverName ? [serverName] : undefined}
                 onClose={

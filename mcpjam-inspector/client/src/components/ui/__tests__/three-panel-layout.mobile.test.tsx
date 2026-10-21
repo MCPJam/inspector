@@ -12,7 +12,9 @@ import { ThreePanelLayout } from "../three-panel-layout";
 const mobile = vi.hoisted(() => ({ value: true }));
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => mobile.value }));
 vi.mock("@/components/logger-view", () => ({
-  LoggerView: () => <div>Request logs</div>,
+  LoggerView: ({ onClose }: { onClose?: () => void }) => (
+    <button onClick={onClose}>Request logs</button>
+  ),
 }));
 vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: ReactNode }) => (
@@ -79,6 +81,30 @@ describe("ThreePanelLayout mobile navigation", () => {
       configurable: true,
       value: 1024,
     });
+  });
+
+  it("keeps desktop pane wrappers out of the tab order and hides a collapsed logger", () => {
+    mobile.value = false;
+    localStorage.setItem("mcpjam-inspector-jsonrpc-panel-visible", "true");
+    const { container } = render(
+      <ThreePanelLayout
+        id="desktop"
+        sidebar={<input aria-label="List filter" />}
+        content={<div>Detail</div>}
+        sidebarVisible
+        onSidebarVisibilityChange={vi.fn()}
+      />,
+    );
+    const panes = container.querySelectorAll('[data-slot="tabs-content"]');
+    expect(panes).toHaveLength(3);
+    panes.forEach((pane) => {
+      expect(pane).toHaveAttribute("tabindex", "-1");
+      expect(pane).not.toHaveAttribute("role", "tabpanel");
+    });
+    expect(screen.getByRole("textbox", { name: "List filter" })).toBeVisible();
+    expect(screen.getByText("Request logs")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Request logs" }));
+    expect(screen.queryByText("Request logs")).toBeNull();
   });
 
   it("keeps edited panes mounted while switching views and resizing", () => {
@@ -151,7 +177,9 @@ describe("ThreePanelLayout mobile navigation", () => {
     });
     rerender(<Workspace />);
     await act(async () => {
-      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => resolve(null)),
+      );
     });
     expect(input).toHaveFocus();
 
@@ -166,7 +194,9 @@ describe("ThreePanelLayout mobile navigation", () => {
     // The pane effect focuses inside requestAnimationFrame, so the assertion
     // has to outlive one frame or it races the bug it is guarding.
     await act(async () => {
-      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => resolve(null)),
+      );
     });
     expect(input).toHaveValue("half typed");
     expect(input).toHaveFocus();

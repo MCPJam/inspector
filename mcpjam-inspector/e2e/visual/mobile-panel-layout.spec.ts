@@ -80,6 +80,21 @@ for (const theme of ["light", "dark"] as const) {
         await city.fill("Oslo");
 
         await checkWidth(page);
+        if (!mobile) {
+          const panes = page.locator(
+            '[data-panel-id^="tools-"] > [data-slot="tabs-content"]',
+          );
+          await expect(panes).toHaveCount(3);
+          expect(
+            await panes.evaluateAll((items) =>
+              items.every(
+                (pane) =>
+                  pane.tabIndex === -1 &&
+                  pane.getAttribute("role") !== "tabpanel",
+              ),
+            ),
+          ).toBe(true);
+        }
         if (mobile)
           await expect(
             page.getByRole("tab", { name: "Browse", exact: true }),

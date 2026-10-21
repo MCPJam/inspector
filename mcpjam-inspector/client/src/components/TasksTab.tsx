@@ -146,6 +146,7 @@ export function TasksTab({
   // can carry it forward instead of re-issuing the call or blanking the list.
   const listedTasksRef = useRef<NormalizedTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
+  const [taskSelection, setTaskSelection] = useState(0);
   const [taskResult, setTaskResult] = useState<unknown>(null);
   const [pendingRequest, setPendingRequest] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
@@ -1646,7 +1647,10 @@ export function TasksTab({
                           ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
                           : "hover:shadow-sm"
                       }`}
-                      onClick={() => setSelectedTaskId(task.taskId)}
+                      onClick={() => {
+                        setSelectedTaskId(task.taskId);
+                        setTaskSelection((request) => request + 1);
+                      }}
                     >
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5">
@@ -1937,7 +1941,7 @@ export function TasksTab({
       <ThreePanelLayout
         id="tasks"
         mobileNavigation={{
-          selectionKey: selectedTaskId,
+          selectionKey: selectedTaskId ? `${selectedTaskId}:${taskSelection}` : "",
           selectionPanel: "content",
           onBack: () => setSelectedTaskId(""),
         }}
