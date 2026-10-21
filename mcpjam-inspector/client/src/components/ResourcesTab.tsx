@@ -582,6 +582,9 @@ export function ResourcesTab({
     });
     if (!pending || pending.descriptor.kind !== "resource") return;
     const descriptor = pending.descriptor;
+    // Consume this intent before awaiting so a stale completion cannot revive it
+    // or clear a newer OAuth intent saved while this request is in flight.
+    clearPendingDirectScopeStepUpReplay();
     const readVersionRef =
       descriptor.target === "template"
         ? templateReadVersionRef
@@ -598,16 +601,16 @@ export function ResourcesTab({
     }
     void readResourceApi(descriptor.serverName, descriptor.uri)
       .then((data) => {
+        resetScopeStepUp(server, {
+          method: "resources/read",
+          operation: descriptor.uri,
+        });
         if (readVersion !== readVersionRef.current) return;
         if (descriptor.target === "template") {
           setTemplateContent(data?.content ?? null);
         } else {
           setResourceContent(data?.content ?? null);
         }
-        resetScopeStepUp(server, {
-          method: "resources/read",
-          operation: descriptor.uri,
-        });
       })
       .catch((error) => {
         if (readVersion !== readVersionRef.current) return;
@@ -624,7 +627,6 @@ export function ResourcesTab({
         if (readVersion !== readVersionRef.current) return;
         if (descriptor.target === "template") setTemplateLoading(false);
         else setLoading(false);
-        clearPendingDirectScopeStepUpReplay();
       });
   }, [isServerConnected, server, serverName]);
 
@@ -910,7 +912,7 @@ export function ResourcesTab({
             <button
               onClick={() => {
                 setActiveTab("resources");
-                if (isMobile) clearSelectedResource();
+                if (isMobile && activeTab !== "resources") clearSelectedResource();
               }}
               className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === "resources"
@@ -927,7 +929,7 @@ export function ResourcesTab({
               <button
                 onClick={() => {
                   setActiveTab("templates");
-                  if (isMobile) clearSelectedResource();
+                  if (isMobile && activeTab !== "templates") clearSelectedResource();
                 }}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   activeTab === "templates"

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   read: vi.fn(),
   claimReplay: vi.fn(),
   clearReplay: vi.fn(),
+  resetStepUp: vi.fn(),
 }));
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => true }));
 vi.mock("@/lib/apis/mcp-resources-api", () => ({
@@ -29,6 +30,10 @@ vi.mock("@/lib/scope-step-up-replay", () => ({
     mocks.claimReplay(...args),
   clearPendingDirectScopeStepUpReplay: () => mocks.clearReplay(),
   savePendingDirectScopeStepUpReplay: vi.fn(),
+}));
+vi.mock("@/lib/scope-step-up", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/scope-step-up")>()),
+  resetScopeStepUp: (...args: unknown[]) => mocks.resetStepUp(...args),
 }));
 vi.mock("../logger-view", () => ({ LoggerView: () => <div /> }));
 vi.mock("../ui/resizable", () => ({
@@ -98,6 +103,15 @@ describe("Resources mobile read cancellation", () => {
             if (outcome === "success") read.resolve(content("STALE RESOURCE"));
             else read.reject(new Error("STALE FAILURE"));
           });
+          if (replay) {
+            expect(mocks.clearReplay).toHaveBeenCalledOnce();
+            if (outcome === "success") {
+              expect(mocks.resetStepUp).toHaveBeenCalledWith(undefined, {
+                method: "resources/read",
+                operation: "file:///alpha.txt",
+              });
+            }
+          }
           fireEvent.click(screen.getByRole("tab", { name: "Results" }));
           expect(screen.queryByText("STALE RESOURCE")).not.toBeInTheDocument();
           expect(screen.queryByText(/STALE FAILURE/)).not.toBeInTheDocument();
@@ -119,6 +133,25 @@ describe("Resources mobile read cancellation", () => {
       if (replay) expect(mocks.clearReplay).toHaveBeenCalledOnce();
     });
   }
+  it("preserves a loaded result when tapping the active Resources pill", async () => {
+    mocks.read.mockResolvedValueOnce(content("CURRENT RESOURCE"));
+    await mount(false);
+    await screen.findByText("CURRENT RESOURCE");
+    fireEvent.click(screen.getByRole("tab", { name: "Browse" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Resources/ }));
+    fireEvent.click(screen.getByRole("tab", { name: "Results" }));
+    expect(screen.getByText("CURRENT RESOURCE")).toBeVisible();
+  });
+  it("consumes the claimed replay before waiting and does not clear a newer intent", async () => {
+    const read = pendingRead();
+    mocks.read.mockReturnValueOnce(read.promise);
+    await mount(true);
+    expect(mocks.clearReplay).toHaveBeenCalledOnce();
+    mocks.clearReplay.mockClear();
+    leave("back");
+    await act(async () => read.resolve(content("STALE RESOURCE")));
+    expect(mocks.clearReplay).not.toHaveBeenCalled();
+  });
   it("does not stop a newer read when a canceled replay settles", async () => {
     const old = pendingRead();
     const current = pendingRead();
