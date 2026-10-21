@@ -18,7 +18,7 @@ import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { ASK_ORG_ADMIN, MANAGE_AI_PROVIDERS } from "@/lib/org-keys-refusal";
 import {
   CHOOSE_ORG_JUDGE_MODEL,
-  orgKeyProblemsOf,
+  orgConfigProblemsOf,
   hostsForPreflight,
   type PreflightHost,
   preflightJudgeOf,
@@ -66,7 +66,8 @@ export type RunPreflight = {
    * dependency that cannot run on its providers (an MCPJam-provided or
    * personal target model, a hosted judge, a judge nobody chose, a harness
    * client's model that is not an organization model on the harness's own
-   * vendor, a Cursor client without a ready org key). The run cannot start;
+   * vendor, a Cursor client without a ready org key). With or without the
+   * policy, an Azure model saved without a deployment. The run cannot start;
    * the backend refuses the same launch.
    * Absent when there are none.
    */
@@ -134,7 +135,7 @@ export function runPreflight(input: {
   if (orgConfig && orgRequiresOwnKeys(orgConfig)) {
     // Under the policy the organization's own connections are the only
     // source; "is the provider enabled" is subsumed by these problems.
-    const problems = orgKeyProblemsOf(orgConfig, input.models, input.judge);
+    const problems = orgConfigProblemsOf(orgConfig, input.models, input.judge);
     return {
       disconnected,
       removed,
@@ -163,6 +164,9 @@ export function runPreflight(input: {
     )
       disabledProviders.add(provider);
   }
+  const problems = orgConfig
+    ? orgConfigProblemsOf(orgConfig, input.models, input.judge)
+    : [];
   return {
     disconnected,
     removed,
@@ -171,6 +175,7 @@ export function runPreflight(input: {
       ? { refusalByEnvironment: input.refusalByEnvironment }
       : {}),
     disabledProviders: [...disabledProviders],
+    ...(problems.length > 0 ? { orgKeyProblems: problems } : {}),
   };
 }
 
@@ -525,8 +530,8 @@ export function useSuiteRunPreflight({
           outOfCreditsReasonForEnvironments: (environmentIds) =>
             creditsReasonFor(modelsForEnvironments(environmentIds)),
           orgKeyProblemsForEnvironments: (environmentIds) =>
-            visibleOrgConfig && orgRequiresOwnKeys(visibleOrgConfig)
-              ? orgKeyProblemsOf(
+            visibleOrgConfig
+              ? orgConfigProblemsOf(
                   visibleOrgConfig,
                   modelsForEnvironments(environmentIds),
                   preflightJudgeOf(suite),
