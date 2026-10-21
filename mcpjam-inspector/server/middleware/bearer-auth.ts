@@ -262,10 +262,11 @@ export async function bearerAuthMiddleware(
       if (isServiceCredentialUnavailableError(error)) {
         return hostedOnlyResponse(c, WORKOS_API_KEY_FEATURE);
       }
-      logger.error("Failed to resolve MCPJam user from WorkOS externalId", {
-        workosUserId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        "Failed to resolve MCPJam user from WorkOS externalId",
+        error,
+        { workosUserId },
+      );
       return c.json(
         { code: ErrorCode.INTERNAL_ERROR, message: "Identity lookup failed" },
         500
@@ -289,9 +290,8 @@ export async function bearerAuthMiddleware(
       try {
         binding = await lookupWorkosKeyBinding(workosKeyId);
       } catch (error) {
-        logger.error("Failed to look up WorkOS API key org binding", {
+        logger.error("Failed to look up WorkOS API key org binding", error, {
           workos_key_id: workosKeyId,
-          error: error instanceof Error ? error.message : String(error),
         });
         return c.json(
           {
