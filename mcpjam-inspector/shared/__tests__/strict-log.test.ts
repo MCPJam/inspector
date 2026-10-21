@@ -7,6 +7,24 @@ import {
 import catalog from "../telemetry-catalog.generated.json";
 
 describe("strict log boundary", () => {
+  it.each(["timeout", "transport_failed", "model_reported_missing"])(
+    "retains the bounded swarm setup reason %s",
+    (setupReason) => {
+      const row = buildLegacyLogRow(
+        "[swarm.runner] target worker failed; finalizing its attempts",
+        { setupReason },
+      );
+      expect(row.setupReason).toBe(setupReason);
+    },
+  );
+  it("omits arbitrary text from the swarm setup reason", () => {
+    const row = buildLegacyLogRow(
+      "[swarm.runner] target worker failed; finalizing its attempts",
+      { setupReason: "PRIVATE_SENTINEL" },
+    );
+    expect(row).not.toHaveProperty("setupReason");
+  });
+
   it.each(["fetch_failed", "invalid_catalog"])(
     "retains a catalog refresh failure with bounded reason %s and warning level",
     (reason) => {
