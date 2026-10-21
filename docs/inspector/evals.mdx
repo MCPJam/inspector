@@ -469,7 +469,9 @@ Changes to the suite execution config apply to future runs only. Existing run sn
 <Note>
   **A host that grants `bash` requires a pinned computer environment.** If the suite's host config includes `bash` (or another computer-backed built-in) but no computer environment is pinned, the run is refused at pre-flight rather than executing with the tool silently absent. Pin a computer environment in suite settings, or remove the computer-backed built-in from the host config.
 
-  This applies to every eval run — harness and emulated alike. A single-case run (the **Run** button on an individual case outside a suite) is always refused for computer-backed built-ins because that surface never provisions a computer; run the case as part of a suite with a pinned environment instead.
+  This applies to every eval run — harness and emulated alike. A single-case run (the **Run** button on an individual case outside a suite) is refused for computer-backed built-ins on an emulated host because that surface provisions no computer for it; run the case as part of a suite with a pinned environment instead.
+
+  A harness host (Claude Code, Codex) on a single-case run boots its own disposable terminal computer for that iteration, so `bash` and other terminal-backed tools are available there. Two things still require a suite run: a **browser tool policy** (which needs a desktop computer, not a terminal) and **case attachments** (which are seeded through the suite run). A single-case harness run that declares either is refused before anything is committed.
 </Note>
 
 ### How suite defaults apply to test cases
