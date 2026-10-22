@@ -613,11 +613,49 @@ describe("EvaluateTab", () => {
       const view = render(<EvaluateTab projectId="ws-1" />);
       await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
       expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+      expect(screen.getByText("Loading suites…")).toBeInTheDocument();
 
       withSuites([]);
       view.rerender(<EvaluateTab projectId="ws-1" />);
 
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+        type: "create",
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("opens the picker once suites arrive, without sending anyone to create one", async () => {
+      withSuites([], true);
+      const view = render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+
+      mocks.useEvalQueries.mockImplementation(
+        ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+          makeQueryState(selectedSuiteId),
+      );
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+
+      expect(
+        screen.getByText("Choose a suite to configure its next run."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Loading suites…")).toBeNull();
+      expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    });
+
+    it("drops a pending action when the route leaves the list", async () => {
+      withSuites([], true);
+      const view = render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+
+      // Back to another page while suites load, then the overview answers.
+      mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+      withSuites([]);
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+
+      // (The overview's own redirect for a suite that no longer exists may
+      // run; Create suite must not.)
+      expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith({
         type: "create",
       });
     });
