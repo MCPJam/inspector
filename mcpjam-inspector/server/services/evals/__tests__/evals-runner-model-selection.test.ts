@@ -580,6 +580,55 @@ describe("eval runner reads saved model selections", () => {
         modelSelection: { nativeModelId: "prod-codex-mini" },
       });
     });
+
+    const AZURE_ORG = {
+      orgModelConfigTarget: { projectId: "project-1" },
+      orgModelConfig: {
+        providers: [{ providerKey: "azure", apiKey: "sk-azure" }],
+      },
+    };
+
+    it("refuses an unlabelled case once, before any /stream/org call", async () => {
+      await expectPolicyRefused(
+        run(
+          {
+            model: AZURE_CATALOG.modelId,
+            provider: "azure",
+            promptTurns: [
+              { id: "turn-1", prompt: "One", expectedToolCalls: [] },
+              { id: "turn-2", prompt: "Two", expectedToolCalls: [] },
+            ],
+          },
+          AZURE_ORG,
+        ),
+        "invalid_model",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a case with a legacy selection once, before any /stream/org call", async () => {
+      await expectPolicyRefused(
+        run(
+          {
+            model: AZURE_CATALOG.modelId,
+            provider: "azure",
+            legacySelection: {
+              source: "legacy",
+              modelId: AZURE_CATALOG.modelId,
+              provider: "azure",
+            },
+          },
+          AZURE_ORG,
+        ),
+        "invalid_model",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("runs an unlabelled deployment name on /stream/org", async () => {
+      await run({ model: "prod-codex-mini", provider: "azure" }, AZURE_ORG);
+      expect(requestTo("/stream/org")).toMatchObject({ providerKey: "azure" });
+    });
   });
 
   describe("the organization requires its own provider keys", () => {

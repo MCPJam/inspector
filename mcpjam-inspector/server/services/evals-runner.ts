@@ -150,6 +150,7 @@ import {
   withSelectionRouting,
 } from "../utils/selection-rail.js";
 import {
+  azureDeploymentRefusal,
   backendModelSelection,
   isOrgConfigurationRefusal,
   ModelResolutionRefusalError,
@@ -3669,6 +3670,16 @@ const executeTestCase = async (params: {
       },
     ]);
   }
+  // Azure runs only a named deployment. A case without a saved org selection
+  // (written as `{ model, provider }`, saved before selections, or a legacy
+  // one) reaches `/stream/org` too, so the rule applies to the id it sends.
+  const azureRefusal =
+    orgByokRuntime?.kind === "cloud"
+      ? azureDeploymentRefusal(orgByokRuntime.providerKey, {
+          modelId: String(modelDefinition.id),
+        })
+      : undefined;
+  if (azureRefusal) throw new ModelResolutionRefusalError([azureRefusal]);
   if (requireOrgKeys) {
     // Only the cloud org route remains: a local runtime, or no org route at
     // all (which would fall through to this machine's keys), is refused. The

@@ -105,6 +105,29 @@ describe("preflight for an Azure OpenAI model with no deployment", () => {
     expect(preflight([model]).orgKeyProblems).toBeUndefined();
   });
 
+  it.each([
+    ["an unlabelled row", { model: "azure/gpt-5.1", provider: "azure" }],
+    [
+      "a legacy row",
+      {
+        model: "azure/gpt-5.1",
+        provider: "azure",
+        selection: { modelId: "azure/gpt-5.1", source: "legacy" },
+      },
+    ],
+  ] satisfies [string, PreflightModel][])(
+    "checks %s the organization's Azure connection runs",
+    (_label, model) => {
+      expect(preflight([model]).orgKeyProblems).toEqual([
+        missing("azure/gpt-5.1"),
+      ]);
+      expect(
+        preflight([{ ...model, model: "prod-gpt51" }]).orgKeyProblems,
+      ).toBeUndefined();
+      expect(preflight([model], { providers: [] }).orgKeyProblems).toBeUndefined();
+    },
+  );
+
   it("checks a judge saved without a deployment", () => {
     const result = preflight([], config, {
       kind: "explicit",
