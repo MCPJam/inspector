@@ -47,7 +47,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.14.0"
+          node-version: "24.22.1"
       - run: node --test scripts/slop/adversarial-review.test.mjs scripts/slop/review-*.test.mjs
 
   pipeline:
@@ -97,7 +97,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.14.0"
+          node-version: "24.22.1"
 
       - name: Pick the phase to act on
         id: gate
