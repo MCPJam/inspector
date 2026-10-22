@@ -545,7 +545,7 @@ async function createAndStartJourneyRun(
       hosts,
       deps.callerContext.workosUserId,
     );
-    await startJourneyRun({
+    const runner = startJourneyRun({
       runId,
       projectId,
       hosts: runHosts,
@@ -692,14 +692,13 @@ async function createAndStartJourneyRun(
           },
         };
       },
-    })
-      .catch((err) => {
-        logger.error("[swarm-runs] startJourneyRun failed", {
-          runId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      })
-      .finally(runnerSettled);
+    }).catch((err) => {
+      logger.error("[swarm-runs] startJourneyRun failed", {
+        runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    void runner.finally(runnerSettled);
   });
 
   return { runId, ...(created.funding ? { funding: created.funding } : {}) };
