@@ -19,25 +19,29 @@
  * A policy read that fails refuses the turn as retryable
  * `ai_key_policy_unavailable`.
  *
- * Within a turn an allowing answer is trusted for `OWN_KEY_POLICY_RECHECK_MS`
- * from when it was READ, not when it arrived: a policy change is enforced on
- * the next provider request after that window expires. A stream already
- * running is not interrupted.
+ * An allowing answer is trusted for `OWN_KEY_POLICY_RECHECK_MS` from when it
+ * was READ, not when it arrived: a policy change is enforced on the next
+ * provider request after that window expires. A stream already running is not
+ * interrupted. The answer is shared by every turn with the same authorization
+ * scope (see `readPolicy`), because the backend's read budget is the user's,
+ * not the turn's.
  */
 import { wrapLanguageModel, type LanguageModel } from "ai";
 import { isLegacySelection, type RequestedModelSelection } from "@mcpjam/sdk";
 import { WebRouteError } from "../routes/web/errors.js";
 import { orgPolicyConfigForClientKeys } from "../services/evals/org-policy-client-keys.js";
 import { asAiRefusalRouteError } from "./ai-refusal-route-error.js";
+import { githubExecutionPolicy } from "../services/github-checks/credential-policy.js";
 import {
   ModelResolutionRefusalError,
   ORG_KEYS_REQUIRED_REASON,
   resolveLocalModelSelection,
   type ModelRefusal,
 } from "./model-resolution-local.js";
-import type {
-  ResolveOrgModelConfigAuth,
-  ResolvedOrgModelConfig,
+import {
+  buildCacheKey,
+  type ResolveOrgModelConfigAuth,
+  type ResolvedOrgModelConfig,
 } from "./org-model-config.js";
 
 export type OwnKeyTurn = {
@@ -58,24 +62,128 @@ export type OwnKeyTurn = {
 export async function ownKeyTurnRefusal(
   turn: OwnKeyTurn,
 ): Promise<WebRouteError | undefined> {
-  if (!turn.projectId) return undefined;
-  let orgConfig: ResolvedOrgModelConfig | undefined;
+  return (await checkOwnKeyTurn(turn)).refusal;
+}
+
+/**
+ * The turn's refusal, or the `performance.now()` its allowing answer was read
+ * at (`undefined` when nothing needed reading).
+ */
+async function checkOwnKeyTurn(
+  turn: OwnKeyTurn,
+): Promise<{ refusal: WebRouteError | undefined; readAt?: number }> {
+  if (!turn.projectId) return { refusal: undefined };
+  let read: PolicyRead;
   try {
-    orgConfig = await orgPolicyConfigForClientKeys(
-      { projectId: turn.projectId },
-      turn.auth,
-    );
+    read = await readPolicy(turn, turn.projectId);
   } catch (error) {
     // The policy could not be read: fail closed with its retryable answer.
-    if (error instanceof WebRouteError) return error;
+    if (error instanceof WebRouteError) return { refusal: error };
     throw error;
   }
-  // Set only while the organization requires its own keys.
-  if (!orgConfig) return undefined;
+  if (!read.orgConfig) return { refusal: undefined, readAt: read.startedAt };
   const refusal = new ModelResolutionRefusalError(
-    ownKeyRefusals(turn, orgConfig),
+    ownKeyRefusals(turn, read.orgConfig),
   );
-  return asAiRefusalRouteError(refusal) ?? undefined;
+  return { refusal: asAiRefusalRouteError(refusal) ?? undefined };
+}
+
+type PolicyRead = {
+  /** Set only while the organization requires its own keys. */
+  orgConfig: ResolvedOrgModelConfig | undefined;
+  /** `performance.now()` when the read STARTED. */
+  startedAt: number;
+};
+
+/**
+ * Allowing answers by authorization scope, as the `performance.now()` their
+ * read started. Only the permission is kept: no provider secret, and no
+ * refusal (a refusal depends on the turn's selection, and a failed or
+ * refusing read must never become a trusted allow). Hits do not renew an
+ * entry, so it lapses `OWN_KEY_POLICY_RECHECK_MS` after its read started.
+ */
+const allowedScopes = new Map<string, number>();
+/** One read in flight per scope: concurrent turns wait on it. */
+const scopeReads = new Map<string, Promise<PolicyRead>>();
+const MAX_ALLOWED_SCOPES = 500;
+
+function policyScope(turn: OwnKeyTurn, projectId: string): string | undefined {
+  const backend = process.env.CONVEX_HTTP_URL;
+  // No backend means nothing to read. A GitHub-scoped execution keeps its
+  // reads unshared, as `resolveOrgModelConfig` keeps them uncached.
+  if (!backend || githubExecutionPolicy()) return undefined;
+  return `${backend}|${buildCacheKey({ projectId }, turn.auth)}`;
+}
+
+async function readPolicyFresh(
+  turn: OwnKeyTurn,
+  projectId: string,
+): Promise<PolicyRead> {
+  const startedAt = performance.now();
+  const orgConfig = await orgPolicyConfigForClientKeys(
+    { projectId },
+    turn.auth,
+  );
+  return { orgConfig, startedAt };
+}
+
+/**
+ * The policy for the turn's scope. Every compare model, parallel chat and new
+ * turn of one user on one project shares the answer and the read, including
+ * the chat route's pre-flight: the backend allows each user 60 reads a minute,
+ * and per-turn windows spent it once enough turns were active.
+ */
+async function readPolicy(
+  turn: OwnKeyTurn,
+  projectId: string,
+): Promise<PolicyRead> {
+  const scope = policyScope(turn, projectId);
+  if (scope === undefined) return readPolicyFresh(turn, projectId);
+
+  const allowedAt = allowedScopes.get(scope);
+  if (allowedAt !== undefined) {
+    // A negative age is another timebase; never trust it as fresh.
+    const age = performance.now() - allowedAt;
+    if (age >= 0 && age < OWN_KEY_POLICY_RECHECK_MS) {
+      return { orgConfig: undefined, startedAt: allowedAt };
+    }
+    allowedScopes.delete(scope);
+  }
+
+  let reading = scopeReads.get(scope);
+  if (!reading) {
+    reading = readPolicyFresh(turn, projectId)
+      .then((read) => {
+        if (!read.orgConfig) rememberAllowed(scope, read.startedAt);
+        return read;
+      })
+      .finally(() => {
+        scopeReads.delete(scope);
+      });
+    scopeReads.set(scope, reading);
+  }
+  return reading;
+}
+
+function rememberAllowed(scope: string, startedAt: number) {
+  const now = performance.now();
+  for (const [key, at] of allowedScopes) {
+    const age = now - at;
+    if (age < 0 || age >= OWN_KEY_POLICY_RECHECK_MS) allowedScopes.delete(key);
+  }
+  // Re-inserted so the Map's order stays oldest first for the bound below.
+  allowedScopes.delete(scope);
+  allowedScopes.set(scope, startedAt);
+  while (allowedScopes.size > MAX_ALLOWED_SCOPES) {
+    const oldest = allowedScopes.keys().next().value;
+    if (oldest === undefined) break;
+    allowedScopes.delete(oldest);
+  }
+}
+
+export function resetOwnKeyPolicyCacheForTests(): void {
+  allowedScopes.clear();
+  scopeReads.clear();
 }
 
 function ownKeyRefusals(
@@ -119,9 +227,9 @@ export const OWN_KEY_POLICY_RECHECK_MS = 15_000;
  * Re-read the policy before a retry or tool-loop provider request once the
  * last allowing answer is `OWN_KEY_POLICY_RECHECK_MS` old.
  *
- * The trusted answer belongs to this wrapped model, which is one turn: each
- * model of a compare turn, and each concurrent turn, keeps its own, while all
- * of them share the user's per-minute budget.
+ * The wrapped model remembers the answer it last trusted; past the window it
+ * asks `readPolicy`, which answers from the scope's shared answer or read
+ * when another turn of the same user and project already has one.
  *
  * `allowedAt` is the `performance.now()` taken just BEFORE the caller's own
  * `ownKeyTurnRefusal` check let the turn run. A check that is already stale
@@ -138,12 +246,6 @@ export function withOwnKeyTurnPolicy(
   // `performance.now()`, not `Date.now()`: a wall-clock step back (NTP, a
   // resumed VM) must not stretch how long an allowing answer is trusted.
   let allowedAt = options.allowedAt;
-  // Parallel requests that find no fresh answer wait on one read, and all of
-  // them date its answer from when that read STARTED: a slow read must not
-  // stretch the window by its own latency.
-  let reading:
-    | Promise<{ refusal: WebRouteError | undefined; startedAt: number }>
-    | undefined;
   return wrapLanguageModel({
     model,
     middleware: {
@@ -155,17 +257,13 @@ export function withOwnKeyTurnPolicy(
         if (age !== undefined && age >= 0 && age < OWN_KEY_POLICY_RECHECK_MS) {
           return params;
         }
-        if (!reading) {
-          const startedAt = performance.now();
-          reading = ownKeyTurnRefusal(turn)
-            .then((refusal) => ({ refusal, startedAt }))
-            .finally(() => {
-              reading = undefined;
-            });
-        }
-        const { refusal, startedAt } = await reading;
+        // Parallel requests share the scope's one read, and all of them date
+        // its answer from when that read STARTED: a slow read must not
+        // stretch the window by its own latency.
+        const checkedAt = performance.now();
+        const { refusal, readAt = checkedAt } = await checkOwnKeyTurn(turn);
         if (refusal) throw refusal;
-        allowedAt = Math.max(allowedAt ?? startedAt, startedAt);
+        allowedAt = Math.max(allowedAt ?? readAt, readAt);
         return params;
       },
     },
