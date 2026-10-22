@@ -74,6 +74,7 @@ const machineCtl = vi.hoisted(() => ({
       ) => void | Promise<void>)
     | null,
   updateState: null as ((u: Partial<OAuthFlowState>) => void) | null,
+  machinesCreated: 0,
 }));
 
 vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
@@ -82,6 +83,7 @@ vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
     getState: () => OAuthFlowState;
   }) => {
     machineCtl.updateState = opts.updateState;
+    machineCtl.machinesCreated += 1;
     return {
       proceedToNextStep: async () => {
         await machineCtl.onAdvance?.(opts.updateState, opts.getState);
@@ -611,6 +613,7 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
     };
     const exchange = scriptRedemption({ currentStep: "received_access_token" });
     const view = await signInAndReturn(withHeader());
+    const machinesBefore = machineCtl.machinesCreated;
     view.rerender(
       <OAuthFlowTab
         serverConfigs={withHeader()}
@@ -620,6 +623,7 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
         onSelectServer={vi.fn()}
       />,
     );
+    expect(machineCtl.machinesCreated).toBeGreaterThan(machinesBefore);
 
     await waitFor(() => expect(exchange.tokenRequestSent()).toBe(true), {
       timeout: 2_000,
