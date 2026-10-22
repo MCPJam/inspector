@@ -96,8 +96,7 @@ proposedActions.post(
       // 503, never 404: "could not ask" is not "does not exist". A clicker told
       // their approval had vanished would go looking for a proposal that is
       // sitting there intact.
-      logger.error("[v1/proposed-actions] could not read the proposal", {
-        error: error instanceof Error ? error.message : String(error),
+      logger.error("[v1/proposed-actions] could not read the proposal", error, {
         is_backend_unavailable: error instanceof SlackBackendUnavailable,
       });
       return v1Error(
@@ -175,9 +174,10 @@ proposedActions.post(
     try {
       disabledOperations = await getOrgAgentPolicyStrict(actor.organizationId);
     } catch (error) {
-      logger.error("[v1/proposed-actions] could not read the org policy", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        "[v1/proposed-actions] could not read the org policy",
+        error,
+      );
       return v1Error(
         c,
         "SERVER_UNREACHABLE",
@@ -203,9 +203,7 @@ proposedActions.post(
     } catch (error) {
       // Fail closed. An unreachable backend must never be read as permission
       // to spend — that is the whole reason the claim exists.
-      logger.error("[v1/proposed-actions] could not claim the proposal", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error("[v1/proposed-actions] could not claim the proposal", error);
       return v1Error(
         c,
         "SERVER_UNREACHABLE",
@@ -246,6 +244,7 @@ proposedActions.post(
     ) {
       logger.error(
         "[v1/proposed-actions] claim diverged from the pre-claim read",
+        undefined,
         { actionId }
       );
       return v1Error(c, "NOT_FOUND", "That approval is no longer available.");
@@ -429,9 +428,8 @@ proposedActions.post(
         status: "failed",
         failureReason: message,
       }).catch(() => {});
-      logger.error("[v1/proposed-actions] approved action failed", {
+      logger.error("[v1/proposed-actions] approved action failed", error, {
         operation: operation.name,
-        error: message,
       });
       if (abortController.signal.aborted) {
         return v1Error(
