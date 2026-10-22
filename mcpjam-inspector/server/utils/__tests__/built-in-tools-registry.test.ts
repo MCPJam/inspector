@@ -152,9 +152,10 @@ describe("resolveHostTools — computer-backed bash", () => {
   });
 
   it("skips bash for an anonymous guest on the personal-project path (backend rejects the reserve)", () => {
+    // A scenario visitor keeps web_search, so the bash gate stays observable.
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
-      { ...ctx, isGuest: true }
+      { ...ctx, isGuest: true, scenarioId: "scenario-1" }
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -183,6 +184,7 @@ describe("resolveHostTools — computer-backed bash", () => {
       {
         ...ctx,
         isGuest: true,
+        scenarioId: "scenario-1",
         executionScope: { kind: "project", projectId: "project-1" },
       }
     );
@@ -422,9 +424,15 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
   });
 
   it("does not advertise any workspace id to guest actors", () => {
+    // A scenario visitor keeps web_search, so the workspace gate stays observable.
     const tools = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
-      { ...ctx, isGuest: true, mcpjamPlatformClient: stubClient }
+      {
+        ...ctx,
+        isGuest: true,
+        scenarioId: "scenario-1",
+        mcpjamPlatformClient: stubClient,
+      }
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });

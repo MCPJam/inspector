@@ -417,6 +417,12 @@ jobs:
       - name: Run OAuth Debugger e2e
         run: npm run test:e2e:oauth-debugger -w @mcpjam/inspector
 
+      - name: Run mobile layout regressions
+        working-directory: mcpjam-inspector
+        env:
+          MOBILE_LAYOUT_RESULTS_DIR: test-results/mobile-layout
+        run: npx playwright test --config playwright.mobile-layout.config.ts
+
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v7

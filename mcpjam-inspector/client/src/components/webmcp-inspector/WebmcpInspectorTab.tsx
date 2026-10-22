@@ -1,3 +1,4 @@
+import { useIsMobile } from "@/hooks/use-mobile";
 import { LocalBrowserConsentGate } from "@/components/browser/LocalBrowserConsentGate";
 import { useLocalBrowserConsent } from "@/hooks/useLocalBrowserConsent";
 import { authFetch } from "@/lib/session-token";
@@ -75,6 +76,7 @@ const FRAME_STALL_MS = 5_000;
  * instead of a silent fall-through to window behaviour.
  */
 export function WebmcpInspectorTab() {
+  const isMobile = useIsMobile();
   const consent = useLocalBrowserConsent();
   const [showBrowserSetup, setShowBrowserSetup] = useState(false);
   const {
@@ -604,6 +606,11 @@ export function WebmcpInspectorTab() {
 
       <ThreePanelLayout
         id="webmcp"
+        mobileNavigation={{
+          selectionKey: selectedToolKey ?? "",
+          contentLabel: "Browser",
+          rightLabel: "Activity",
+        }}
         sidebar={
           <WebmcpToolsSidebar
             url={url}
@@ -652,7 +659,7 @@ export function WebmcpInspectorTab() {
             onExportJson={() => exportAs("json")}
             onExportOtlp={() => exportAs("otlp")}
             onClear={clearActivity}
-            onClose={() => setActivityOpen(false)}
+            onClose={isMobile ? undefined : () => setActivityOpen(false)}
           />
         }
         rightVisible={activityOpen}

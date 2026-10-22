@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
@@ -110,6 +110,61 @@ describe("TrialScorecard", () => {
     renderCard({ iteration: null, isRunning: true });
     expect(screen.getByTestId("trial-scorecard-loading")).toBeInTheDocument();
   });
+  it("shows a skeleton, not the no-chain fallback, while the chain loads", () => {
+    renderCard({ chain: null, chainDisplay: "loading" });
+    expect(screen.getByTestId("trial-scorecard-loading")).toHaveTextContent(
+      "Loading this iteration's report…",
+    );
+    expect(screen.queryByText("No observation recorded.")).toBeNull();
+  });
+  it.each([
+    ["error", "Couldn't load this iteration's stage results. Select Retry to try again."],
+    [
+      "notLoaded",
+      "Stage results weren't loaded for this iteration. Each check below still shows its result.",
+    ],
+    ["waiting", "Stage results appear when the run finishes."],
+  ] as const)(
+    "puts a %s note above the rows instead of hiding the trial's scores",
+    (chainDisplay, copy) => {
+      renderCard({ chain: null, chainDisplay });
+      expect(
+        screen.getByTestId("trial-scorecard-chain-unavailable"),
+      ).toHaveTextContent(copy);
+      // The rows still come from the iteration, so they stay.
+      expect(screen.getAllByTestId("trial-scorecard-row").length).toBeGreaterThan(
+        0,
+      );
+    },
+  );
+  it("offers Retry only for a failed read", () => {
+    const retry = vi.fn();
+    const { rerender } = renderCard({
+      chain: null,
+      chainDisplay: "error",
+      onRetryChain: retry,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+    rerender(
+      <TrialScorecard
+        authored={authored}
+        iteration={iteration()}
+        steps={steps}
+        chain={null}
+        chainDisplay="notLoaded"
+        onRetryChain={retry}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+  it("still shows the no-chain fallback once loading is over", () => {
+    renderCard({ chain: null });
+    expect(screen.queryByTestId("trial-scorecard-loading")).toBeNull();
+    expect(screen.getAllByTestId("trial-scorecard-row").length).toBeGreaterThan(
+      0,
+    );
+  });
   it("opens on the break, and keeps the other stages one click away", () => {
     const chain = {
       status: "verified",
@@ -220,7 +275,7 @@ describe("TrialScorecard", () => {
     expect(screen.queryByTestId("trial-scorecard-summary")).toBeNull();
   });
 
-  it("shows the judge's recorded passing rationale without expanding a row", () => {
+  it("shows the judge's passing rationale once, as its row's ACTUAL", () => {
     renderCard({
       judgeCase: {
         status: "completed",
@@ -230,12 +285,15 @@ describe("TrialScorecard", () => {
           "The rendered diagram contains Begin, Decision, and End with connecting lines.",
       } as never,
     });
-    expect(screen.getByTestId("user-value-pass-evidence")).toHaveTextContent(
-      "The rendered diagram contains Begin, Decision, and End with connecting lines.",
-    );
+    expect(
+      screen.getAllByText(
+        "The rendered diagram contains Begin, Decision, and End with connecting lines.",
+      ),
+    ).toHaveLength(1);
+    expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
   });
 
-  it("shows supporting stage evidence and stays quiet when there is none", async () => {
+  it("does not list the case's own checks as the judge's evidence", () => {
     const chain = {
       status: "verified",
       stages: [
@@ -248,28 +306,11 @@ describe("TrialScorecard", () => {
         },
       ],
     } as never;
-    const { rerender } = renderCard({ chain });
-    expect(screen.getByTestId("user-value-pass-evidence")).toHaveTextContent(
-      "All three diagram labels were visible.",
-    );
-    rerender(
-      <TrialScorecard
-        authored={authored}
-        iteration={iteration()}
-        steps={steps}
-        chain={
-          {
-            status: "verified",
-            stages: [{ stage: "userValue", state: "passed" }],
-          } as never
-        }
-      />,
-    );
+    renderCard({ chain });
+    expect(screen.queryByTestId("trial-scorecard-evidence")).toBeNull();
     expect(screen.queryByTestId("user-value-pass-evidence")).toBeNull();
     expect(
-      screen.queryByText(
-        "This run recorded a pass without supporting evidence.",
-      ),
+      screen.queryByText("All three diagram labels were visible."),
     ).toBeNull();
   });
 

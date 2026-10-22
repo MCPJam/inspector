@@ -395,18 +395,18 @@ export function OAuthFlowLogger({
   }, []);
 
   return (
-    <div className="h-full border-l border-border flex flex-col">
+    <div className="h-full min-w-0 md:border-l border-border flex flex-col">
       <div className="bg-muted/30 border-b border-border px-4 py-3 space-y-3">
         {summary && hasProfile && (
           <>
             {/* Top row: Server URL with Edit, and Reset/Continue on right */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col md:flex-row md:items-center gap-2">
               <button
                 onClick={actions?.onConfigure}
                 disabled={!actions?.onConfigure}
-                className="min-w-0 flex-1 flex items-center gap-2 text-left border border-border hover:border-foreground/30 bg-background rounded-md px-3 py-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
+                className="min-w-0 w-full md:w-auto md:flex-1 flex items-center gap-2 text-left border border-border hover:border-foreground/30 bg-background rounded-md px-3 py-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
               >
-                <p className="text-sm font-medium text-foreground break-all flex-1">
+                <p className="text-sm font-medium text-foreground min-w-0 whitespace-nowrap overflow-x-auto md:whitespace-normal md:break-all flex-1">
                   {summary.serverUrl || summary.description}
                 </p>
                 <span className="flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground shrink-0">
@@ -414,7 +414,7 @@ export function OAuthFlowLogger({
                   Edit
                 </span>
               </button>
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex flex-wrap items-center gap-1 shrink-0">
                 {actions?.onAddServer && (
                   <Button
                     variant="ghost"
@@ -715,7 +715,7 @@ export function OAuthFlowLogger({
                               toggleStep(group.step);
                             }
                           }}
-                          className="w-full px-4 py-3 flex items-start gap-3 hover:bg-muted/30 transition-colors rounded-t-lg cursor-pointer"
+                          className="w-full px-4 py-3 grid grid-cols-[auto_minmax(0,1fr)] md:flex items-start gap-3 hover:bg-muted/30 transition-colors rounded-t-lg cursor-pointer"
                         >
                           {/* Status icon */}
                           <div className="flex-shrink-0 mt-0.5">
@@ -775,7 +775,7 @@ export function OAuthFlowLogger({
                           </div>
 
                           {/* Right side actions */}
-                          <div className="flex items-center gap-2 flex-shrink-0">
+                          <div className="col-span-2 justify-self-end flex flex-wrap md:flex-nowrap items-center gap-2 flex-shrink-0">
                             {/* Show in diagram button */}
                             {onFocusStep && (
                               <Button
