@@ -403,6 +403,12 @@ export const OAuthFlowTab = ({
 
   const processedCodeRef = useRef<string | null>(null);
   const exchangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Unmount only: the callback effect re-runs whenever the machine is rebuilt,
+  // and a scheduled redemption has to survive that.
+  useEffect(
+    () => () => clearTimeout(exchangeTimeoutRef.current ?? undefined),
+    [],
+  );
 
   // Reset OAuth flow state when switching servers
   const prevServerNameRef = useRef(selectedServerName);
@@ -977,8 +983,6 @@ export const OAuthFlowTab = ({
       handleElectronOAuthCallback as EventListener,
     );
     return () => {
-      // A redemption scheduled for this flow must not run once it's gone.
-      clearTimeout(exchangeTimeoutRef.current ?? undefined);
       window.removeEventListener("message", handleMessage);
       window.removeEventListener(
         "electron-oauth-callback",

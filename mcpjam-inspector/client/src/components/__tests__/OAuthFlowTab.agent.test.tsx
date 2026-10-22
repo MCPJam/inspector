@@ -35,9 +35,7 @@ const STEP_ORDER_FOR_TEST = [
   "request_without_token",
   "generate_pkce_parameters",
   "authorization_request",
-  "received_authorization_code",
   "token_request",
-  "received_access_token",
   "complete",
 ];
 
@@ -541,8 +539,10 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
     };
   }
 
-  async function signInAndReturn() {
-    const view = renderTab();
+  async function signInAndReturn(
+    serverConfigs?: Record<string, ServerWithName>,
+  ) {
+    const view = renderTab(serverConfigs && { serverConfigs });
     await act(async () => {
       machineCtl.updateState?.({
         currentStep: "authorization_request",
@@ -597,6 +597,33 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
     await act(() => new Promise((resolve) => setTimeout(resolve, 700)));
 
     expect(exchange.startedFrom).toEqual([]);
+  });
+
+  it("still redeems the code when the machine is rebuilt before the timer fires", async () => {
+    // A server-list refresh hands the tab fresh server objects. With a custom
+    // header that rebuilds the machine and re-runs the callback effect.
+    const withHeader = () => {
+      const server = httpServer("linear");
+      server.oauthFlowProfile!.customHeaders = [
+        { key: "X-Api-Key", value: "k" },
+      ];
+      return { linear: server };
+    };
+    const exchange = scriptRedemption({ currentStep: "received_access_token" });
+    const view = await signInAndReturn(withHeader());
+    view.rerender(
+      <OAuthFlowTab
+        serverConfigs={withHeader()}
+        selectedServerName="linear"
+        hasHeaderServers
+        areServersHydrated
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(exchange.tokenRequestSent()).toBe(true), {
+      timeout: 2_000,
+    });
   });
 
   it("stops at a rejected code instead of sending it again", async () => {

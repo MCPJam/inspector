@@ -1,24 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import type { OAuthFlowState, OAuthFlowStep } from "@mcpjam/sdk/browser";
-import { redeemAuthorizationCode } from "../code-redemption";
-
-// A step the SDK might add between the callback and the token request. The
-// order below stands in for the SDK's own, which bounds the redemption.
-const ADDED_STEP = "verify_authorization_response" as OAuthFlowStep;
-vi.mock("@mcpjam/sdk/browser", () => {
-  const order = [
-    "idle",
-    "authorization_request",
-    "received_authorization_code",
-    "verify_authorization_response",
-    "token_request",
-    "received_access_token",
-  ];
-  return {
-    getStepIndex: (step: string) =>
-      order.includes(step) ? order.indexOf(step) : Number.MAX_SAFE_INTEGER,
-  };
-});
+import { describe, expect, it } from "vitest";
+import { getStepIndex, type OAuthFlowState } from "@mcpjam/sdk/browser";
+import {
+  CODE_REDEMPTION_STEPS,
+  redeemAuthorizationCode,
+} from "../code-redemption";
 
 const NEXT: Record<string, OAuthFlowState["currentStep"]> = {
   authorization_request: "received_authorization_code",
@@ -26,7 +11,7 @@ const NEXT: Record<string, OAuthFlowState["currentStep"]> = {
   token_request: "received_access_token",
 };
 
-function scriptedMachine(initial: Partial<OAuthFlowState>, next = NEXT) {
+function scriptedMachine(initial: Partial<OAuthFlowState>) {
   const flowState = {
     current: { isInitiatingAuth: false, ...initial } as OAuthFlowState,
   };
@@ -37,7 +22,7 @@ function scriptedMachine(initial: Partial<OAuthFlowState>, next = NEXT) {
       startedFrom.push(step);
       flowState.current = {
         ...flowState.current,
-        currentStep: next[step] ?? step,
+        currentStep: NEXT[step] ?? step,
       };
     },
   };
@@ -57,22 +42,14 @@ describe("redeemAuthorizationCode", () => {
     ]);
   });
 
-  it("also runs a step the SDK places between the callback and the token request", async () => {
-    const { machine, flowState, startedFrom } = scriptedMachine(
-      { currentStep: "authorization_request" },
-      {
-        ...NEXT,
-        received_authorization_code: ADDED_STEP,
-        [ADDED_STEP]: "token_request",
-      },
-    );
-    await redeemAuthorizationCode(machine, flowState);
-    expect(startedFrom).toEqual([
-      "authorization_request",
-      "received_authorization_code",
-      ADDED_STEP,
-      "token_request",
-    ]);
+  it("lists every step the SDK orders from the callback through the token request", () => {
+    // Fails when the SDK adds a step in that range. Decide whether the new
+    // step is safe to run without a click before adding it to the list.
+    const first = getStepIndex("authorization_request");
+    const last = getStepIndex("token_request");
+    expect(
+      [...CODE_REDEMPTION_STEPS].map(getStepIndex).sort((a, b) => a - b),
+    ).toEqual(Array.from({ length: last - first + 1 }, (_, i) => first + i));
   });
 
   it("does not start while another step is in flight", async () => {
