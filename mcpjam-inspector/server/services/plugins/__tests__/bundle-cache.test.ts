@@ -1,6 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
+import JSZip from "jszip";
+import { createZipPluginFileSource } from "../bundle-file-sources.js";
 import {
   PluginBundleCache,
   PluginBundleCacheError,
@@ -11,6 +22,12 @@ import {
   fixtureBundleSource,
   makeCacheRoot,
 } from "./fixture-bundle.js";
+
+// The cache's `chmod`, so a test can stand in for a filesystem without modes.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, chmod: vi.fn(actual.chmod) };
+});
 
 const PROJECT_ID = "project-1";
 const PLUGIN_VERSION_ID = "version-1";
@@ -42,7 +59,7 @@ describe("PluginBundleCache", () => {
       source: await fixtureBundleSource(),
     });
 
-    expect(result.root).toBe(join(cacheRoot, PROJECT_ID, PLUGIN_VERSION_ID, bundleHash));
+    expect(result.root).toBe(join(cacheRoot, PROJECT_ID, PLUGIN_VERSION_ID, `${bundleHash}.x1`));
     expect(result.bundleHash).toBe(bundleHash);
     expect(result.parsed.mcpServers).toHaveLength(1);
     await expect(
@@ -54,6 +71,71 @@ describe("PluginBundleCache", () => {
     expect(entries.sort()).toEqual(["data.txt", "mcp.json", "plugin.json", "server"]);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "keeps an executable's bit, writes other files 0644 and never a special bit",
+    async () => {
+      const zip = new JSZip();
+      for (const [path, content] of Object.entries(fixtureBundleFiles())) {
+        zip.file(path, content, {
+          unixPermissions: path === "server/index.js" ? 0o4755 : 0o600,
+        });
+      }
+      const source = await createZipPluginFileSource(
+        await zip.generateAsync({ type: "uint8array", platform: "UNIX" })
+      );
+      const { root } = await cache.materialize(identity(), { source });
+      const mode = async (path: string) =>
+        (await stat(join(root, path))).mode & 0o7777;
+      expect(await mode("server/index.js")).toBe(0o755);
+      expect(await mode("data.txt")).toBe(0o644);
+    }
+  );
+
+  const executableZip = async () => {
+    const zip = new JSZip();
+    for (const [path, content] of Object.entries(fixtureBundleFiles())) {
+      zip.file(path, content, {
+        unixPermissions: path === "server/index.js" ? 0o755 : 0o644,
+      });
+    }
+    return createZipPluginFileSource(
+      await zip.generateAsync({ type: "uint8array", platform: "UNIX" }),
+    );
+  };
+  const refused = (code: string) =>
+    Object.assign(new Error(`${code}: chmod refused`), { code });
+
+  it("materializes on a filesystem that can't keep an executable bit", async () => {
+    vi.mocked(chmod).mockRejectedValueOnce(refused("EPERM"));
+    const { root } = await cache.materialize(identity(), {
+      source: await executableZip(),
+    });
+    await expect(
+      readFile(join(root, "server", "index.js"), "utf8"),
+    ).resolves.toContain("tools/call");
+  });
+
+  it("still fails extraction on any other chmod error", async () => {
+    vi.mocked(chmod).mockRejectedValueOnce(refused("EIO"));
+    await expect(
+      cache.materialize(identity(), { source: await executableZip() }),
+    ).rejects.toThrow("EIO");
+  });
+
+  it("never reuses an entry laid out before executables kept their bit", async () => {
+    const old = join(cacheRoot, PROJECT_ID, PLUGIN_VERSION_ID, bundleHash);
+    for (const [path, content] of Object.entries(fixtureBundleFiles())) {
+      await mkdir(dirname(join(old, path)), { recursive: true });
+      await writeFile(join(old, path), content);
+    }
+    await expect(cache.materialize(identity())).rejects.toMatchObject({
+      code: "not_cached",
+    });
+    expect(
+      (await cache.collectGarbage({ keepBundleHashes: [bundleHash] })).removed
+    ).toContain(old);
+  });
+
   it("serves a cache hit with no source at all", async () => {
     await cache.materialize(identity(), { source: await fixtureBundleSource() });
 
@@ -61,7 +143,7 @@ describe("PluginBundleCache", () => {
     // original folder — a fresh cache object with only backend identity works.
     const reopened = new PluginBundleCache({ rootDir: cacheRoot });
     const result = await reopened.materialize(identity());
-    expect(result.root).toBe(join(cacheRoot, PROJECT_ID, PLUGIN_VERSION_ID, bundleHash));
+    expect(result.root).toBe(join(cacheRoot, PROJECT_ID, PLUGIN_VERSION_ID, `${bundleHash}.x1`));
   });
 
   it("rejects content that does not hash to the pinned bundleHash", async () => {

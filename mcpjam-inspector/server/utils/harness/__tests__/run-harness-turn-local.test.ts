@@ -1,3 +1,5 @@
+const localProjection = vi.hoisted(() => vi.fn(async () => ({ tools: {}, keyToServerId: {} })));
+vi.mock("../host-executed-mcp-tools.js", () => ({ projectSelectedMcpServersAsHostTools: localProjection }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../local/pack-bootstrap.js", () => ({ withLocalRuntimeBootstrap: async (adapter: unknown) => adapter }));
 const parkRegistry = vi.hoisted(() => ({ invalidate: vi.fn(async (_id: string, _reason: string) => {}) }));
@@ -83,7 +85,7 @@ vi.mock("../registry.js", () => ({
     skillsBaseDir: "/home/user/.claude/skills",
     skillsWriteOptions: { trailingNewline: true },
     prepareSkills: (skills: any[]) => ({ delivered: skills, payload: skills }),
-    mcpDelivery: "native",
+    mcpDelivery: "harness",
     mcpNativeDelivery: "session-config",
     supportsModel: vi.fn(() => true),
     liveApprovalRuntime: harnessState.liveApprovalRuntime,
@@ -251,6 +253,16 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
 
 
 describe("runHarnessTurn local continuity", () => {
+  it.each(["claude-code", "codex"] as const)("runs the local %s loop with MCPJam tool delivery", async (agentLoop) => {
+    harnessState.adapterOverrides = { id: agentLoop };
+    const result = await runHarnessTurn(baseOptions({ harness: agentLoop, agentLoop,
+      selectedServers: ["server-1"] }) as never, "none");
+    expect(result).toBeDefined();
+    expect(localProjection).toHaveBeenCalledWith(expect.objectContaining({ selectedServerIds: ["server-1"] }));
+    expect(prepareLocalHarnessTurn).toHaveBeenCalled();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
@@ -420,8 +432,28 @@ describe("runHarnessTurn local continuity", () => {
     }) as any, "none").catch((error: unknown) => onEngineError(error));
     expect(onEngineError).toHaveBeenCalled();
     expect(String(onEngineError.mock.calls[0]![0]?.message ?? onEngineError.mock.calls[0]![0]))
-      .toMatch(/can't pause for tool approval in an unattended run/);
+      .toMatch(/cannot wait for tool approval in evals or swarms/);
     expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
+  });
+
+  it("drains buffered results after an approval without duplicating tool calls", async () => {
+    const call = { type: "tool-call", toolCallId: "parallel-1", toolName: "bash", input: { command: "printf OK" } };
+    harnessState.streamParts = [
+      call,
+      call,
+      { type: "tool-call", toolCallId: "parallel-2", toolName: "bash", input: { command: "printf NEXT" } },
+      { type: "tool-approval-request", approvalId: "approval-2", toolCallId: "parallel-2" },
+      // HarnessAgent publishes buffered outcomes while settling its approval pause.
+      { type: "tool-result", toolCallId: "parallel-1", toolName: "bash", output: "OK" },
+    ];
+    const result = await runHarnessTurn(baseOptions() as any, "ui");
+    const stream = await result.response!.text();
+    expect(stream.match(/"type":"tool-input-available","toolCallId":"parallel-1"/g)).toHaveLength(1);
+    expect(stream).toContain('"type":"tool-output-available","toolCallId":"parallel-1"');
+    const parts = result.messageHistory.flatMap(message => Array.isArray(message.content) ? message.content : []);
+    expect(parts.filter(part => part.type === "tool-call" && part.toolCallId === "parallel-1")).toHaveLength(1);
+    expect(parts).toContainEqual(expect.objectContaining({ type: "tool-result", toolCallId: "parallel-1" }));
+    expect(harnessState.session.suspendTurn).toHaveBeenCalledOnce();
   });
 
   it("closes a denied call in the UI so the decision is not re-sent", async () => {
@@ -656,7 +688,11 @@ describe("runHarnessTurn local continuity", () => {
 
     it("parks the live runtime at an approval pause instead of tearing it down", async () => {
       harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
-      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      const result = await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
+      expect(result.messageHistory).toContainEqual(expect.objectContaining({
+        role: "assistant",
+        content: expect.arrayContaining([{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }]),
+      }));
       expect(commitHarnessSessionState).toHaveBeenCalledWith(expect.objectContaining({ awaitingApproval: true }));
       expect(harnessState.park).toHaveBeenCalledWith({ generation: "gen-1", pendingApprovalIds: ["approval-1"] });
       // The parked record owns cleanup now: no teardown, no discard, and the
@@ -794,7 +830,7 @@ describe("runHarnessTurn local continuity", () => {
       harnessState.adapterOverrides = {
         id: "codex",
         displayName: "Codex",
-        mcpDelivery: "host-executed",
+        mcpDelivery: "mcpjam",
         mcpNativeDelivery: undefined,
         acceptsSandboxPolicy: true,
       };

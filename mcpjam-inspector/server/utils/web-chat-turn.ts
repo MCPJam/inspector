@@ -1,3 +1,5 @@
+import { assertConversationExecution } from './harness/conversation-execution.js';
+import { assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { preservePluginMessageTitles } from "../../shared/plugin-message-history.js";
 import {
   appendPluginModelContext,
@@ -48,11 +50,9 @@ import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
 import { createRequestStreamFailureReporter } from "./stream-failure-reporter.js";
 import type { FailureCapture } from "./agent-failure-capture.js";
-import {
-  SANDBOX_NOTICE_DATA_PART_TYPE,
-  type SandboxNoticeReason,
-} from "@/shared/sandbox-notice";
-import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
+import { type SandboxNoticeReason } from "@/shared/sandbox-notice";
+import { emitHistoryNotice, emitSandboxNotices } from "./turn-notices.js";
+import { emitPluginServersUnavailable } from "./plugin-server-isolation.js";
 import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
@@ -194,6 +194,7 @@ export function resumableServers(persist: {
  * needs that isn't already in scope from the stream handlers.
  */
 export interface WebChatTurnPersistContext {
+  executionBindingVersion?: 1;
   /** Required to enable persistence; without it, no ingest. */
   chatSessionId: string | undefined;
   projectId: string;
@@ -277,6 +278,7 @@ export interface WebChatTurnPersistContext {
   /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
    *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
   harness?: Harness;
+  agentLoop?: Harness;
   /**
    * The server-resolved LOCAL target when this turn runs on the user's own
    * machine. Forwarded verbatim to the harness turn: dropping it would run a
@@ -450,6 +452,7 @@ export interface WebChatTurnPrepareInputs {
   progressiveToolDiscovery?: { enabled: boolean };
   /** Resolved host harness. Harness runtimes own native tool discovery. */
   harness?: Harness;
+  agentLoop?: Harness;
   /**
    * Resolved task-seam options. The CALLER resolves the mode, because hosted
    * chat and the MCPJam agent both come through here and are different rows in
@@ -527,6 +530,8 @@ export interface WebChatTurnPrepareInputs {
    * advertises zero, and never falls back to the project-wide pool.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /** Plugin servers whose failure leaves the turn running without them. */
+  isolatedServers?: import("./plugin-server-isolation.js").IsolatedServers;
 }
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
@@ -626,95 +631,6 @@ export interface WebChatTurnRuntime {
   maxSteps?: number;
   /** Hono context (needed for getSpendClientIp fallback / future hooks). */
   c: Context;
-}
-
-/**
- * A stream writer that can optionally report whether the stream is still open.
- * `isClosed` is implemented by the emulated engine's no-throw `safeWriter`; the
- * other engines pass a writer that throws on a dead controller, which the
- * try/catch handles instead.
- */
-type SandboxNoticeWriter = ElicitationChunkWriter & {
-  isClosed?: () => boolean;
-};
-
-/**
- * Flush the turn's sandbox notices onto the freshly-ready stream writer, then
- * ACK the ones that actually made it out.
- *
- * The ack is what closes the delivery gap: the control plane keeps a notice
- * pending until this point, so a turn that dies before the writer exists
- * re-delivers it rather than losing it. Only notices actually DELIVERED are
- * acked.
- *
- * "Delivered" cannot be inferred from `write()` returning normally. The
- * emulated engine hands us `safeWriter` (mcpjam-stream-handler.ts), which is
- * deliberately no-throw — it swallows controller failures and silently no-ops
- * once the stream is closed, so that a client disconnect cannot bring down the
- * agentic loop. Trusting a clean return there would let us ack (and therefore
- * permanently consume) a notice the browser never received. So the writer is
- * asked directly via {@link SandboxNoticeWriter.isClosed}, and the abort signal
- * is consulted too.
- *
- * Best-effort per notice in both directions: neither a failed write nor a
- * failed ack may take down a turn whose only problem is that we couldn't
- * narrate the machine. Bailing out early costs a duplicate notice next turn,
- * never a lost one.
- */
-function emitSandboxNotices(
-  writer: SandboxNoticeWriter | null | undefined,
-  notices: SandboxNoticeReason[] | undefined,
-  ack?: (delivered: SandboxNoticeReason[]) => void,
-  abortSignal?: AbortSignal,
-): void {
-  if (!writer || !notices?.length) return;
-  const closed = () => writer.isClosed?.() === true || abortSignal?.aborted;
-  const delivered: SandboxNoticeReason[] = [];
-  for (const reason of notices) {
-    if (closed()) break;
-    try {
-      writer.write({
-        type: SANDBOX_NOTICE_DATA_PART_TYPE,
-        data: { reason },
-        transient: true,
-      } as unknown as UIMessageChunk);
-      // Re-checked AFTER the write: this is the call that may have discovered
-      // the stream was gone, and the chunk that discovered it did not land.
-      if (closed()) break;
-      delivered.push(reason);
-    } catch (error) {
-      logger.warn("[chat] sandbox notice stream write failed", {
-        reason,
-        error,
-      });
-    }
-  }
-  if (delivered.length > 0) ack?.(delivered);
-}
-
-/**
- * Tell the browser that earlier assistant replies in this conversation are
- * not in this turn's model context (MJ-009), so the chat can say so.
- * Best-effort: a failed write costs the notice, never the turn.
- */
-function emitHistoryNotice(
-  writer: SandboxNoticeWriter | null | undefined,
-  due: boolean,
-  chatSessionId: string | undefined,
-): void {
-  if (!writer || !due) return;
-  try {
-    writer.write({
-      type: HISTORY_NOTICE_DATA_PART_TYPE,
-      data: {
-        reason: "earlier_replies_not_sent",
-        ...(chatSessionId ? { chatSessionId } : {}),
-      },
-      transient: true,
-    } as unknown as UIMessageChunk);
-  } catch (error) {
-    logger.warn("[chat] history notice stream write failed", { error });
-  }
 }
 
 export interface StreamWebChatTurnArgs {
@@ -883,6 +799,7 @@ export async function streamWebChatTurn(
       mcpClientManager: manager,
       modelToolExecutor: prepare.modelToolExecutor,
       selectedServers: prepare.selectedServerIds,
+      isolatedServers: prepare.isolatedServers?.serverIds,
       modelDefinition: prepare.modelDefinition,
       systemPrompt: prepare.systemPrompt,
       temperature: prepare.temperature,
@@ -953,7 +870,16 @@ export async function streamWebChatTurn(
     progressivePlan,
     discoveryState,
     reservedAgainstPageTools,
+    unavailableServers,
   } = prepared;
+  // What the browser is told about this turn, once, on whichever engine runs.
+  const emitTurnNotices = (writer: ElicitationChunkWriter): void => {
+    emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+    emitPluginServersUnavailable(writer, persist.chatSessionId, {
+      ...prepare.isolatedServers,
+      failed: unavailableServers,
+    });
+  };
 
   // THE SAME COLLISION POLICY, APPLIED TO THE SET THE TURN GROWS INTO.
   //
@@ -1144,13 +1070,22 @@ export async function streamWebChatTurn(
   );
   const effectiveEnhancedSystemPrompt = [
     enhancedSystemPrompt,
-    widgetModelContextSystemPrompt,
+    persist.harness ? "" : widgetModelContextSystemPrompt,
     historyPresentation ? TOOL_OUTPUT_TRUST_NOTE : "",
   ]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
 
   const hostedChatSessionId = persist.chatSessionId;
+  await assertConversationExecution({
+    mcpClientManager: manager,
+    projectId: persist.projectId, chatSessionId: hostedChatSessionId,
+    origin: persist.scenarioId ? "scenario" : "playground",
+    executionBindingVersion: persist.executionBindingVersion,
+    scenarioId: persist.scenarioId, executionScope: persist.executionScope,
+    harness: persist.harness, agentLoop: persist.agentLoop,
+    authHeader: runtime.authHeader, signal: runtime.abortSignal,
+  });
 
   // MATERIALIZED PROJECT SECRETS for this turn, fetched ONCE here because two
   // very different things need the same list and must not disagree about it:
@@ -1255,6 +1190,7 @@ export async function streamWebChatTurn(
     mcpjamProvided: isMCPJam,
     stepUpResume: !!scopeStepUpResume,
   });
+  assertAgentLoopResume(persist.agentLoop, Boolean(scopeStepUpResume));
   const usesMcpjamFreePath = rail.usesFreePath;
 
   // A harness turn never takes the org-BYOK branch below: that branch runs the
@@ -1264,7 +1200,7 @@ export async function streamWebChatTurn(
   // thing here, with the same sentence, for any caller that reaches this
   // helper without one. (An org-key harness turn's step-up resume is the one
   // exception, above: it is the emulated engine on any path.)
-  if (persist.harness && !usesMcpjamFreePath && !rail.orgStepUpResume) {
+  if (persist.harness && !usesMcpjamFreePath && (persist.agentLoop !== undefined || !rail.orgStepUpResume)) {
     const { refusal } = harnessModelRefusal({
       adapter: getHarnessAdapter(persist.harness),
       model: {
@@ -1280,11 +1216,8 @@ export async function streamWebChatTurn(
     throw new WebRouteError(
       503,
       ErrorCode.INTERNAL_ERROR,
-      `This host runs the ${persist.harness} harness, which isn't available: ` +
-        `${
-          refusal?.reason ??
-          "choose a supported model and an eligible connection for this harness"
-        }.`,
+      refusal?.reason ??
+        "This client cannot use this model. Choose a supported model or connection.",
     );
   }
 
@@ -1612,7 +1545,7 @@ export async function streamWebChatTurn(
             runtime.ackSandboxNotices,
             runtime.abortSignal,
           );
-          emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+          emitTurnNotices(writer);
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1673,7 +1606,7 @@ export async function streamWebChatTurn(
           runtime.ackSandboxNotices,
           runtime.abortSignal,
         );
-        emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+        emitTurnNotices(writer);
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1779,6 +1712,9 @@ export async function streamWebChatTurn(
       : {}),
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
+    ...(persist.agentLoop ? { agentLoop: persist.agentLoop } : {}),
+    harnessTurnContext: widgetModelContextSystemPrompt,
+    harnessUnavailableAppTools: Boolean(prepare.appTools?.length || prepare.pageTools?.length || prepare.uiTools?.length),
     // Preserve the resolved selection for hosted steps and harness leases.
     ...(forwardableSelection(prepare.routingSelection)
       ? { modelSelection: forwardableSelection(prepare.routingSelection), modelSelectionOrigin: prepare.routingSelectionOrigin }
@@ -1863,7 +1799,7 @@ export async function streamWebChatTurn(
         runtime.ackSandboxNotices,
         runtime.abortSignal,
       );
-      emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+      emitTurnNotices(writer);
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp

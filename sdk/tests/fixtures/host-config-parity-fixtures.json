@@ -1,5 +1,5 @@
 {
-  "__inputHash": "a047a2dfb76819614b0787d079fe85a85048a61ad487ef2c5e0b1577b2eb354a",
+  "__inputHash": "d263723bff40f40d43d805e4e0dfe40a390680f75426ad9860e4525dc79b6e2e",
   "rows": [
     {
       "label": "base-minimal",
@@ -795,6 +795,72 @@
       },
       "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"sandbox\":{\"csp\":{\"mode\":\"declared\",\"restrictTo\":{\"connectDomains\":[\"api.example.com\"]}},\"permissions\":{\"allow\":{\"camera\":true},\"mode\":\"custom\"}}}}}",
       "sha256": "1f3ea06ff2905d5229c231cea0578a4ffd152ff7d791e13a52169c004082da28"
+    },
+    {
+      "label": "agent-loop-claude-code",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "agentLoop": "claude-code",
+        "computer": {
+          "kind": "personal"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"agentLoop\":\"claude-code\",\"computer\":{\"kind\":\"personal\"},\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
+      "sha256": "f9c14a8f69deeb94f845b865e99f7c212203bcd4b92a3cabff5b6b1dc4ba9f67"
+    },
+    {
+      "label": "agent-loop-codex",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "agentLoop": "codex",
+        "computer": {
+          "kind": "personal"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"agentLoop\":\"codex\",\"computer\":{\"kind\":\"personal\"},\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
+      "sha256": "0e809f02df8627f1d87768ba5892a390f4f8b22e3665aebb2b271428d0b8c164"
+    },
+    {
+      "label": "agent-loop-cursor",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "agentLoop": "cursor",
+        "computer": {
+          "kind": "personal"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"agentLoop\":\"cursor\",\"computer\":{\"kind\":\"personal\"},\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
+      "sha256": "9a4e564faa01726bb213018e6643aa51facc5f8e4cbf15425d17a32c547f3f68"
     }
   ]
 }

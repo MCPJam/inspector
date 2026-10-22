@@ -44,6 +44,7 @@ export {
 } from "./defaults.js";
 export type {
   HostConfigInputV2,
+  SystemPromptDefault,
   CanonicalHostConfigV2,
   CanonicalHostConfigSkillSelection,
   CanonicalHostConfigBrowserToolPolicy,

@@ -106,12 +106,14 @@ import {
 } from "../../utils/server-secrets.js";
 import {
   buildXaaMintArgs,
-  isXaaMintErrorReported,
   mintXaaAccessToken,
   resolveXaaConnectRegistrationMode,
   resolveXaaIssuer,
 } from "../../services/xaa-mint.js";
-import { toXaaConnectFailure } from "../../services/xaa-connect-error.js";
+import {
+  reportXaaMintFailure,
+  toXaaConnectFailure,
+} from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
@@ -1289,6 +1291,7 @@ function resolveEffectiveInitializePinsForServer(
   return Object.keys(resolved).length > 0 ? resolved : undefined;
 }
 
+type Tolerate = boolean | readonly string[] | undefined;
 /**
  * Whether `tolerateServerRefusals` may keep `error` for its server: a
  * `WebRouteError` that answers for that server. An `INTERNAL_ERROR` (a
@@ -1306,7 +1309,8 @@ function resolveEffectiveInitializePinsForServer(
  * while its 4xx (export denied, origin mismatch) is still the backend's
  * answer for that server.
  */
-function isServerRefusal(error: unknown): boolean {
+function isServerRefusal(error: unknown, id: string, tolerate: Tolerate) {
+  if (tolerate !== true && !(tolerate || []).includes(id)) return false;
   if (!(error instanceof WebRouteError)) return false;
   if (error.setupFailureSource === "secret_reveal" && error.status >= 500) {
     return false;
@@ -1499,12 +1503,14 @@ export async function createAuthorizedManager(
      * passes 1 and 1b, out of pass 2). An internal fault still fails the
      * batch: see `isServerRefusal`. The batch-level ordering stands: every
      * remaining server still clears validation before any of them mints or
-     * connects.
+     * connects. A list keeps only those servers' refusals: a chat turn names
+     * its plugins' servers, so a server the member chose still fails it.
      */
-    tolerateServerRefusals?: boolean;
+    tolerateServerRefusals?: boolean | readonly string[];
   },
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
+  const tolerate = options?.tolerateServerRefusals;
   const uniqueServerIds = Array.from(new Set(serverIds));
   if (uniqueServerIds.length === 0) {
     return {
@@ -1851,9 +1857,7 @@ export async function createAuthorizedManager(
         }
       }
     } catch (error) {
-      if (!options?.tolerateServerRefusals || !isServerRefusal(error)) {
-        throw error;
-      }
+      if (!isServerRefusal(error, serverId, tolerate)) throw error;
       refusedServers[serverId] = error;
     }
   }
@@ -1899,7 +1903,7 @@ export async function createAuthorizedManager(
         );
         continue;
       }
-      if (options?.tolerateServerRefusals && isServerRefusal(error)) {
+      if (isServerRefusal(error, recovery.serverId, tolerate)) {
         refusedServers[recovery.serverId] = error;
         continue;
       }
@@ -2205,17 +2209,15 @@ export async function createAuthorizedManager(
           try {
             connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
           } catch (error) {
-            if (!isXaaMintErrorReported(error)) {
-              logger.error("[XAA connect] mint failed", error, {
-                serverId,
-                connectionId: options?.connectionIds?.[serverId],
-                serverName: displayServerName,
-                resource: auth.serverConfig.url,
-              });
-            }
-            // Re-framed AFTER the log above, so the debugger-worded original is
-            // what reaches Sentry/Axiom (as `cause`) while the caller gets the
-            // connect-context sentence.
+            reportXaaMintFailure(error, {
+              serverId,
+              connectionId: options?.connectionIds?.[serverId],
+              serverName: displayServerName,
+              resource: auth.serverConfig.url,
+            });
+            // Re-framed AFTER the report above, so the debugger-worded
+            // original is what reaches Sentry/Axiom (as `cause`) while the
+            // caller gets the connect-context sentence.
             throw toXaaConnectFailure(error, xaaFailureTarget);
           }
           // Bounded re-mint: the SDK invokes this once on a 401 and retries; a
@@ -2344,9 +2346,7 @@ export async function createAuthorizedManager(
           ),
         ] as const;
       } catch (error) {
-        if (!options?.tolerateServerRefusals || !isServerRefusal(error)) {
-          throw error;
-        }
+        if (!isServerRefusal(error, serverId, tolerate)) throw error;
         refusedServers[serverId] = error;
         return undefined;
       }

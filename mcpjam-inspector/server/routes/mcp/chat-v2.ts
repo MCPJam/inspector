@@ -1,3 +1,5 @@
+import { assertAgentLoopResume } from '../../utils/harness/agent-loop-dispatch.js';
+import { assertConversationExecution } from '../../utils/harness/conversation-execution.js';
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { ensureLocalHarnessTarget, LOCAL_HARNESS_DISPLAY_NAMES, LocalAutoApproveConsentRequiredError } from "../../utils/harness/local/readiness.js";
 import { modelWorkloadFor } from "../../utils/model-workload.js";
@@ -1162,7 +1164,7 @@ chatV2.post("/", async (c) => {
       if (hostModelRefusal) {
         return c.json(
           {
-            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+            error: hostModelRefusal,
             code: "FEATURE_NOT_SUPPORTED",
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,
@@ -1344,6 +1346,7 @@ chatV2.post("/", async (c) => {
       mcpjamProvided: isMcpJamProvidedModel,
       stepUpResume: Boolean(scopeStepUpResumeRequest),
     });
+    assertAgentLoopResume(resolvedExecution.agentLoop, Boolean(scopeStepUpResumeRequest));
     const usesMcpjamFreePath = rail.usesFreePath;
     // Guests may use any hosted model — model curation for guests is gone;
     // the backend enforces spend caps (a soft postpaid guard), not an
@@ -1482,7 +1485,7 @@ chatV2.post("/", async (c) => {
     // and authorization; a target minted for one is never valid for another.
     const localHarnessId = localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
     const localHarnessName = LOCAL_HARNESS_DISPLAY_NAMES[localHarnessId];
-    if (asksForLocalNative && !localSelected) return c.json({ error: `Local ${localHarnessName} is unavailable or no longer authorized for this project` }, 409);
+    if (asksForLocalNative && !localSelected) return c.json({ error: `Local ${localHarnessName} is unavailable. Set up this client again for this project.` }, 409);
     const harnessTargetParse = parseHarnessExecutionTarget({
       body: body.harnessTarget?.serverAuthorized === true ? {} : body,
       grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
@@ -1508,7 +1511,7 @@ chatV2.post("/", async (c) => {
       } catch (error) {
         // A local target that cannot be made ready is an actionable local
         // error (setup / Retry), never a silent switch to the cloud.
-        return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready`, ...(error instanceof LocalAutoApproveConsentRequiredError ? { status: error.status } : {}) }, 409);
+        return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready. Complete local setup and try again.`, ...(error instanceof LocalAutoApproveConsentRequiredError ? { status: error.status } : {}) }, 409);
       }
     }
 
@@ -1610,7 +1613,7 @@ chatV2.post("/", async (c) => {
         const status = harnessUnavailableHttpStatus(availability.kind);
         return c.json(
           {
-            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+            error: availability.reason,
             ...(status === 422 ? { code: "FEATURE_NOT_SUPPORTED" } : {}),
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,
@@ -2008,6 +2011,8 @@ chatV2.post("/", async (c) => {
             // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
             // only for a host-funded swarm executionScope.
             isGuest: requestIsGuest,
+            // A scenario visitor keeps web_search, billed to the scenario owner.
+            ...(bodyScenarioId ? { scenarioId: bodyScenarioId } : {}),
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
@@ -2420,7 +2425,7 @@ chatV2.post("/", async (c) => {
     );
     const effectiveEnhancedSystemPrompt = [
       enhancedSystemPrompt,
-      widgetModelContextSystemPrompt,
+      resolvedExecution.harness ? "" : widgetModelContextSystemPrompt,
     ]
       .filter((section) => section.trim().length > 0)
       .join("\n\n");
@@ -2483,6 +2488,15 @@ chatV2.post("/", async (c) => {
       const inboundAbortSignalMcp = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalMcp, "mcp/chat-v2");
 
+      await assertConversationExecution({
+        mcpClientManager,
+        origin: "mcpjam_agent",
+        projectId: body.projectId ?? '', chatSessionId,
+        executionBindingVersion: resolvedExecution.executionBindingVersion,
+        scenarioId: bodyScenarioId, executionScope,
+        harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop,
+        authHeader, signal: inboundAbortSignalMcp,
+      });
       const turnResponse = await handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
@@ -2498,8 +2512,18 @@ chatV2.post("/", async (c) => {
         clientIp: getSpendClientIp(c),
         mcpClientManager,
         selectedServers,
+        // Every turn, not just harness turns: the engine streams the persist
+        // receipt only when it knows the session. Without one the client cannot
+        // advance its version baseline, so the reactive history refresh
+        // rehydrates this thread after every turn — remounting each App iframe
+        // into a blank sandbox. Mirrors web-chat-turn.ts. The harness branch
+        // below also claims its continuity lane from these.
+        ...(chatSessionId ? { chatSessionId } : {}),
+        sourceType: chatSessionSourceType,
         requireToolApproval,
         modelVisibleMcpToolResults,
+        harnessTurnContext: widgetModelContextSystemPrompt,
+        harnessUnavailableAppTools: Boolean(validatedAppTools.length || validatedPageTools.length),
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
         // step and the tools it needs exist only from the next.
         ...(pageToolRefresh ? { refreshTools: guardedRefreshTools } : {}),
@@ -2532,6 +2556,7 @@ chatV2.post("/", async (c) => {
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
+              agentLoop: resolvedExecution.agentLoop,
               // Harness MCP-server tools execute out of process through
               // `.mcp.json`, bypassing `allTools`. runHarnessTurn adds a
               // per-turn correlation header and bridges actionable challenges
@@ -2542,14 +2567,10 @@ chatV2.post("/", async (c) => {
               // adapter-http (the persistent singleton manager).
               harnessMcpProxy: { plane: "local-mcp" as const },
               // Multi-turn continuity: runHarnessTurn claims the harnessSessions
-              // lane from the chat OWNER (chatSessionId + sourceType). The web
-              // route threads these via streamWebChatTurn's persist; this route
-              // calls the handler directly, so without them the continuity gate
-              // is skipped and every harness turn starts a fresh (amnesiac)
-              // Claude Code session. Scoped to the harness branch — the emulated
-              // path persists via onConversationComplete and doesn't read these.
-              ...(chatSessionId ? { chatSessionId } : {}),
-              sourceType: chatSessionSourceType,
+              // lane from the chat OWNER (chatSessionId + sourceType, passed
+              // above for every turn). Without them the continuity gate is
+              // skipped and every harness turn starts a fresh (amnesiac)
+              // Claude Code session.
               ...(bodyScenarioId ? { scenarioId: bodyScenarioId } : {}),
             }
           : {}),
@@ -2829,6 +2850,9 @@ chatV2.post("/", async (c) => {
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         providerKey,
         modelId,
+        // Needed for the persist receipt — see the MCPJam call above.
+        chatSessionId,
+        sourceType: chatSessionSourceType,
         ...(routingSelection?.source === "org"
           ? { modelSelection: { ...routingSelection, source: "org" as const }, modelSelectionOrigin: selected.origin }
           : {}),

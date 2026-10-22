@@ -31,6 +31,7 @@ import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
+import { UnavailableOrganizationDialog } from "./components/organization/UnavailableOrganizationDialog";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import {
@@ -385,7 +386,6 @@ import {
   buildOrganizationSwitchTarget,
   buildProjectSettingsTarget,
   buildProjectSwitchTarget,
-  getInvalidOrganizationRouteNavigationTarget,
   isDebugOAuthCallbackPath,
   navigationTargetToPath,
   navigateApp,
@@ -1292,6 +1292,7 @@ function useTemplateVerifyDeepLink({
           projectId,
           name: template.label,
           input: { ...seed, serverIds: [] },
+          applyDefaultSystemPrompt: true,
         });
         navigate(buildHostVerifyLandingPath(hostId, requestedFocusTab), {
           replace: true,
@@ -1666,41 +1667,53 @@ function EvaluateRouteContent() {
 }
 
 export function ConformanceRoute() {
-  const { selectedServerEntry, convexProjectId, isAuthenticated } =
-    useAppRouteContext();
-  const { serversByName } = useProjectServers({
+  const {
+    appState,
+    selectedServerEntry,
+    setSelectedServer,
+    convexProjectId,
+    isAuthenticated,
+  } = useAppRouteContext();
+  const { serversByName, serversById } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
   const savedServerId = selectedServerEntry?.name
     ? (serversByName.get(selectedServerEntry.name) ?? null)
     : null;
+  // The page picks its server from its own select, not the header tabs.
+  const connectedServers = Object.values<ServerWithName>(
+    appState.servers,
+  ).filter((s) => s.connectionStatus === "connected");
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      {convexProjectId ? (
-        <div className="shrink-0 overflow-auto border-b border-border/40 px-4 pt-4 lg:px-6">
+    <ConformanceTab
+      server={selectedServerEntry ?? null}
+      servers={connectedServers}
+      onSelectServer={setSelectedServer}
+      persist={
+        convexProjectId
+          ? { projectId: convexProjectId, serverId: savedServerId }
+          : undefined
+      }
+      history={
+        convexProjectId ? (
           <ConformanceHistory
+            key={convexProjectId}
             projectId={convexProjectId}
-            serverId={savedServerId}
+            serverNames={serversById}
           />
-        </div>
-      ) : null}
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <ConformanceTab
-          server={selectedServerEntry ?? null}
-          persist={
-            convexProjectId
-              ? { projectId: convexProjectId, serverId: savedServerId }
-              : undefined
-          }
-        />
-      </div>
-    </div>
+        ) : undefined
+      }
+    />
   );
 }
 
 export function ConformanceRunDetailRoute() {
-  const { convexProjectId } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { serversById } = useProjectServers({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
   const params = useParams<{ runId?: string }>();
   const pathname = getRouteFallbackPathname();
   const raw =
@@ -1709,6 +1722,7 @@ export function ConformanceRunDetailRoute() {
     <ConformanceRunDetailPage
       runId={decodeParam(raw) ?? raw}
       projectId={convexProjectId}
+      serverNames={serversById}
     />
   );
 }
@@ -1849,7 +1863,7 @@ function ScenariosRouteContent() {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
-    return null;
+    return <LoadingScreen />;
   }
 
   if (gate) {
@@ -1990,7 +2004,7 @@ function SwarmsRouteContent() {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
-    return null;
+    return <LoadingScreen />;
   }
 
   // Guests stop here. `null` means the viewer is a signed-in member.
@@ -5699,51 +5713,10 @@ export default function App() {
     [setSelectedMCPConfigs],
   );
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      return;
-    }
-
-    // A pending delete holds the route only while the org is still listed, so
-    // Back to an org that is already gone still redirects.
-    if (
-      routeOrganizationId &&
-      ((deletingOrganizationIds.includes(routeOrganizationId) &&
-        sortedOrganizations.some((org) => org._id === routeOrganizationId)) ||
-        optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
-    ) {
-      return;
-    }
-
-    const navigationTarget = getInvalidOrganizationRouteNavigationTarget({
-      routeTab: activeTab,
-      routeOrganizationId,
-      isLoadingOrganizations,
-      hasRouteOrganization,
-    });
-    if (!navigationTarget) {
-      return;
-    }
-
+  const handleUnavailableOrganizationContinue = useCallback(() => {
     setActiveOrganizationId(undefined);
-    if (navigationTarget === routePaths.servers) {
-      navigateToServers({ replace: true });
-    } else {
-      navigateToTarget(navigationTarget, { replace: true });
-    }
-  }, [
-    activeTab,
-    deletingOrganizationIds,
-    hasRouteOrganization,
-    isAuthenticated,
-    isLoadingOrganizations,
-    navigateToServers,
-    navigateToTarget,
-    optimisticallyDeletedOrganizationIds,
-    routeOrganizationId,
-    setActiveOrganizationId,
-    sortedOrganizations,
-  ]);
+    navigateToServers({ replace: true });
+  }, [navigateToServers, setActiveOrganizationId]);
 
   const handleOrganizationDeleted = useCallback(
     (deletedOrganizationId: string) => {
@@ -6246,7 +6219,6 @@ export default function App() {
     activeTab === "resources" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
-    activeTab === "conformance" ||
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
@@ -6730,6 +6702,32 @@ export default function App() {
             <Toaster />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <UnavailableOrganizationDialog
+              isAuthenticated={isAuthenticated}
+              routeTab={activeTab}
+              routeOrganizationId={routeOrganizationId}
+              isLoadingOrganizations={isLoadingOrganizations}
+              hasRouteOrganization={hasRouteOrganization}
+              isDeletionPending={
+                !!routeOrganizationId &&
+                ((deletingOrganizationIds.includes(routeOrganizationId) &&
+                  sortedOrganizations.some(
+                    (org) => org._id === routeOrganizationId,
+                  )) ||
+                  optimisticallyDeletedOrganizationIds.includes(
+                    routeOrganizationId,
+                  ))
+              }
+              isDeleted={
+                !!routeOrganizationId &&
+                deletingOrganizationIds.includes(routeOrganizationId)
+              }
+              isSeatPending={sortedOrganizations.some(
+                (org) => org._id === routeOrganizationId && org.seatPending,
+              )}
+              accountEmail={currentUser?.email || workOsUser?.email}
+              onContinue={handleUnavailableOrganizationContinue}
+            />
             <SessionRefreshBanner />
             <GuestSessionRefusedBanner />
             <div

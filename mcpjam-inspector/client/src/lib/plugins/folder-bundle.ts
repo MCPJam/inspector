@@ -623,6 +623,11 @@ export async function createZipPluginFileSource(
       path: rawName,
       size: kind === "file" ? (declaredUncompressedSize(record) ?? 0) : 0,
       kind,
+      // Permission bits as the SDK's Node ZIP source reports them, so the
+      // preflight's executable files and execution digest match the backend.
+      ...(kind === "file" && typeof record.unixPermissions === "number"
+        ? { mode: record.unixPermissions & 0o777 }
+        : {}),
     });
     if (kind !== "directory") {
       byRawName.set(rawName, record);

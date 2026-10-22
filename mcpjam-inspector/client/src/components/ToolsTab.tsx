@@ -1168,6 +1168,7 @@ export function ToolsTab({
     <>
       <ThreePanelLayout
         id="tools"
+        mobileNavigation={{ selectionKey: selectedTool }}
         sidebar={sidebarContent}
         content={centerContent}
         sidebarVisible={isSidebarVisible}

@@ -48,7 +48,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
 
 # Every Ubuntu job below runs on `vars.RELEASE_RUNNER` when it is set, else
 # `ubuntu-latest`. On the shared runners a release's short jobs (publish,

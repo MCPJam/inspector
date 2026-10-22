@@ -409,7 +409,7 @@ export function Thread({
           tornDownWidgetIds={tornDownWidgetIds}
           displayMode={displayMode}
           onDisplayModeChange={onDisplayModeChange}
-          onToolApprovalResponse={onToolApprovalResponse}
+          onToolApprovalResponse={isLoading ? undefined : onToolApprovalResponse}
           toolRenderOverrides={toolRenderOverrides}
           showInlineEdit={showInlineEdit}
           minimalMode={minimalMode}

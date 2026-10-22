@@ -37,6 +37,7 @@ import {
   reapHarnessBridgesCommand,
 } from "./bridge-reaper.js";
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
+import { closeModelProxyConnections } from "./model-proxy-connections.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
@@ -97,6 +98,12 @@ export interface E2BHarnessSandboxProviderOptions {
    * every process in the box through `/proc` and lands in shell history.
    */
   sessionEnv?: Record<string, string>;
+  /**
+   * The model proxy base URL this turn's lease is installed for. Read on
+   * RESUME, after the turn minted its lease, to close connections that still
+   * carry the previous turn's lease (`model-proxy-connections.ts`).
+   */
+  proxyUrl?: () => string | undefined;
 }
 
 const enc = new TextEncoder();
@@ -297,6 +304,7 @@ export function createE2BHarnessSandboxProvider(
   // has to supply the sandbox connection.
   const connectSession = async (
     connectSignal?: AbortSignal,
+    resuming = false,
   ): Promise<HarnessV1NetworkSandboxSession> => {
     // Reuse the host's existing computer. It must already be awake — the
     // caller wakes it via the control plane (`ensureComputerReady`) before
@@ -353,6 +361,13 @@ export function createE2BHarnessSandboxProvider(
         );
       }
       throw err;
+    }
+    if (resuming) {
+      await closeModelProxyConnections(
+        sandbox,
+        opts.proxyUrl?.(),
+        connectSignal,
+      );
     }
 
     // Housekeeping, so best-effort: a failure here never blocks the spawn.
@@ -688,6 +703,6 @@ export function createE2BHarnessSandboxProvider(
     // otherwise). We ignore the harness `sessionId` — the box is the project's
     // single computer resolved per-turn via the control plane — and reconnect;
     // the Claude Code adapter restores the thread from the workdir.
-    resumeSession: (options) => connectSession(options?.abortSignal),
+    resumeSession: (options) => connectSession(options?.abortSignal, true),
   };
 }
