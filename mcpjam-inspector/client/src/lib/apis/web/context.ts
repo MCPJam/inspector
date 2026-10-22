@@ -192,7 +192,9 @@ let serverRequestKeyCache: {
  * server not mapped, client config still syncing). Equal keys mean the same
  * request, so a caller can refetch when the request would change instead of
  * on every revision: most revisions leave a given server's request exactly as
- * it was (PLB-118). The bearer kind is part of it; the token itself is not.
+ * it was (PLB-118). The bearer KIND (guest or session) is part of it, the
+ * bearer token is not; a server's OAuth access token is, because the request
+ * body carries it.
  */
 export function getServerRequestKey(serverNameOrId: string): string | null {
   const cached = serverRequestKeyCache;
@@ -203,15 +205,16 @@ export function getServerRequestKey(serverNameOrId: string): string | null {
   ) {
     return cached.key;
   }
-  let key: string | null;
-  try {
-    key = JSON.stringify([
-      shouldPreferGuestBearer(),
-      buildServerRequest(serverNameOrId),
-    ]);
-  } catch {
-    key = null;
-  }
+  // Only "not ready yet" reads as null. Anything else `buildServerRequest`
+  // throws is a bug and surfaces as one instead of silently stopping callers.
+  const key =
+    apiContext.clientConfigSyncPending ||
+    !tryResolveProjectServer(serverNameOrId)
+      ? null
+      : JSON.stringify([
+          shouldPreferGuestBearer(),
+          buildServerRequest(serverNameOrId),
+        ]);
   serverRequestKeyCache = { revision: apiContextRevision, serverNameOrId, key };
   return key;
 }
