@@ -6,6 +6,7 @@ import {
 } from "../../../shared/credential-urls";
 import { isInjectedScriptException } from "../../../shared/injected-script-frames";
 import { getCachedGuestSession } from "./guest-session";
+import { getPostHogTabStorageOptions } from "./posthog-tab-storage";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
 import { scrubSensitiveUrl } from "../../../shared/credential-url";
@@ -88,6 +89,7 @@ function getPostHogBootstrap(serverFlags?: ClientFeatureFlagValues | null) {
 // them from PostHog. Remote config (/array/<token>/config) still loads, so
 // replay and the other remotely configured features are unaffected.
 const SERVER_EVALUATED_FLAG_OPTIONS = {
+  ...getPostHogTabStorageOptions(),
   advanced_disable_feature_flags: true,
   advanced_disable_feature_flags_on_first_load: true,
 } as const;

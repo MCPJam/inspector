@@ -13,14 +13,8 @@ import {
 } from "./platform-client.js";
 
 /**
- * Credentials for `mcpjam test`: explicit provider keys for BYOK inference,
- * and a LAZY resolver for MCPJam-hosted inference.
- *
- * The SDK runner never reads the environment; this module reads the standard
- * provider variables explicitly, once, and hands the SDK plain values. The
- * platform resolver runs only when a selected case actually needs the MCPJam
- * rail, so a BYOK-only run never touches the login store, never lists
- * projects and never sends a platform request.
+ * Provider keys pay for inference. Every eval also resolves MCPJam identity,
+ * including BYOK runs whose results remain local.
  */
 
 /** Standard provider key variables, per SDK provider id. First set wins. */
@@ -167,6 +161,11 @@ export function createMcpjamConnectionResolver(
         message
       );
     };
+    const selectedKey = options.apiKey ?? deps.env.MCPJAM_API_KEY;
+    if (selectedKey !== undefined && !selectedKey.trim().startsWith("sk_")) {
+      throw new SuiteFileRunError({ code: "CREDENTIALS_REJECTED", phase: "setup", category: "credentials",
+        message: "This MCPJam API key is invalid or retired. Create an sk_ key or run `mcpjam cloud login`." });
+    }
     const credentialDeps = {
       env: deps.env,
       warn,

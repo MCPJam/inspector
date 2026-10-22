@@ -80,6 +80,30 @@ describe("describeBackendStreamFailure", () => {
     },
   );
 
+  // A turn on a retired model, or on a model the org's OpenRouter allowlist
+  // leaves out, would page as `internal/unknown` by status alone. The backend
+  // is refusing the user's own model choice, as designed.
+  it.each([
+    [
+      "model_retired",
+      "This model has been retired and is no longer available on MCPJam. Please switch to a newer model.",
+      "provider/model_retired",
+    ],
+    [
+      "model_not_allowed",
+      "Model openrouter/anthropic/claude-haiku-5.5 is not in this organization's OpenRouter allowlist",
+      "org/model_not_allowed",
+    ],
+  ])(
+    "reads a 400 %s as the user's model choice, not an MCPJam fault",
+    (code, message, slug) => {
+      const normalized = describeBackendStreamFailure(400, message, code);
+
+      expect(normalized.slug).toBe(slug);
+      expect(originOf(normalized)).toBe("user_config");
+    },
+  );
+
   // The regression this change exists for. `categorizeError` in the backend
   // mirrors the UPSTREAM provider's status onto our own response, so MCPJam's
   // revoked managed key arrives as a 401 and MCPJam's own quota as a 429 —

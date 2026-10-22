@@ -106,12 +106,14 @@ import {
 } from "../../utils/server-secrets.js";
 import {
   buildXaaMintArgs,
-  isXaaMintErrorReported,
   mintXaaAccessToken,
   resolveXaaConnectRegistrationMode,
   resolveXaaIssuer,
 } from "../../services/xaa-mint.js";
-import { toXaaConnectFailure } from "../../services/xaa-connect-error.js";
+import {
+  reportXaaMintFailure,
+  toXaaConnectFailure,
+} from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
@@ -2207,17 +2209,15 @@ export async function createAuthorizedManager(
           try {
             connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
           } catch (error) {
-            if (!isXaaMintErrorReported(error)) {
-              logger.error("[XAA connect] mint failed", error, {
-                serverId,
-                connectionId: options?.connectionIds?.[serverId],
-                serverName: displayServerName,
-                resource: auth.serverConfig.url,
-              });
-            }
-            // Re-framed AFTER the log above, so the debugger-worded original is
-            // what reaches Sentry/Axiom (as `cause`) while the caller gets the
-            // connect-context sentence.
+            reportXaaMintFailure(error, {
+              serverId,
+              connectionId: options?.connectionIds?.[serverId],
+              serverName: displayServerName,
+              resource: auth.serverConfig.url,
+            });
+            // Re-framed AFTER the report above, so the debugger-worded
+            // original is what reaches Sentry/Axiom (as `cause`) while the
+            // caller gets the connect-context sentence.
             throw toXaaConnectFailure(error, xaaFailureTarget);
           }
           // Bounded re-mint: the SDK invokes this once on a 401 and retries; a

@@ -12,6 +12,24 @@ async function fixture(options: Partial<Parameters<typeof startLocalHarnessMcpPl
   return { request, listTools, callTool };
 }
 describe("local MCP plane", () => {
+  it("holds the same endpoint while paused and rebinds only fresh authority", async () => {
+    const { request, listTools } = await fixture();
+    const original = { ...plane!.strategy };
+    plane!.hold();
+    expect((await request("selected")).status).toBe(403);
+    expect(listTools).not.toHaveBeenCalled();
+
+    const freshList = vi.fn(async () => ({ tools: [{ name: "fresh" }] }));
+    const freshManager = { hasServer: () => true, listTools: freshList } as unknown as MCPClientManager;
+    plane!.rebind({ manager: freshManager, serverIds: ["private"], turnId: "next-turn" });
+    expect(plane!.strategy).toEqual(original);
+    expect((await request("selected")).status).toBe(404);
+    expect((await request("private")).status).toBe(200);
+    expect(freshList).toHaveBeenCalledOnce();
+    expect(listTools).not.toHaveBeenCalled();
+    await plane!.close();
+    expect(() => plane!.rebind({ manager: freshManager, serverIds: [], turnId: "late" })).toThrow("closed");
+  });
   it("refuses absent/wrong capabilities and browser origins before touching a server", async () => {
     const { request, listTools } = await fixture();
     expect((await request("selected", null)).status).toBe(403);

@@ -970,6 +970,16 @@ describe("runSyntheticHostSession — execution budgets", () => {
         }),
     );
 
+  it("exposes the remaining turn budget to model-step admission", async () => {
+    const adapter = baseAdapter();
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 5000 });
+    await runSyntheticHostSession(adapter);
+    const remaining = runAssistantTurnMock.mock.calls[0][0].remainingTurnMs;
+    expect(remaining).toEqual(expect.any(Function));
+    expect(remaining()).toBeGreaterThan(0);
+    expect(remaining()).toBeLessThanOrEqual(5000);
+  });
+
   it("ends the session when a turn outlives its budget", async () => {
     hangUntilAborted();
     const adapter = baseAdapter() as any;
@@ -1069,4 +1079,21 @@ describe("captureAndPersistWidgetSnapshotsForSession — upload scope", () => {
       accessVersion: 3,
     });
   });
+});
+
+
+it("forwards frozen agent-loop tool policies through the swarm drain", async () => {
+  createBrowserSessionContextMock.mockReturnValue(buildFakeBrowserContext({ computerUse: false }));
+  const adapter = baseAdapter();
+  const tasks = { mode: "await" as const };
+  const result = await runSyntheticHostSession({
+    ...adapter,
+    runtime: { ...adapter.runtime, agentLoop: "codex", respectToolVisibility: false,
+      modelVisibleMcpToolResults: { directContent: { text: true } }, tasks },
+  } as never);
+  expect(result).toEqual({ outcome: "succeeded" });
+  expect(runAssistantTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+    agentLoop: "codex", respectToolVisibility: false,
+    modelVisibleMcpToolResults: { directContent: { text: true } }, tasks,
+  }));
 });

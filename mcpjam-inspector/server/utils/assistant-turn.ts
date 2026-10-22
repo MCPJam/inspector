@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from './harness/agent-loop-dispatch.js';
 /**
  * Assistant turn engine (Stage 1 of horizontally-safe synthetic scenario
  * sessions — see plan v3 §A "engine extraction").
@@ -164,6 +165,9 @@ export interface RunAssistantTurnOptions {
    * resolved host config's `harness` field.
    */
   harness?: Harness;
+  agentLoop?: Harness;
+  harnessTurnContext?: string;
+  harnessUnavailableAppTools?: boolean;
   harnessExecutionTarget?: MCPJamHandlerOptions["harnessExecutionTarget"];
 
   streamSink: RunAssistantTurnStreamSink;
@@ -179,6 +183,7 @@ export interface RunAssistantTurnOptions {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
+  remainingTurnMs?: MCPJamHandlerOptions["remainingTurnMs"];
   heartbeatIntervalMs?: number;
   maxSteps?: number;
 
@@ -513,6 +518,9 @@ function buildHandlerOptions(
       : {}),
     // Pass the verified harness selector through to its driver.
     ...(opts.harness ? { harness: opts.harness } : {}),
+    ...(opts.agentLoop ? { agentLoop: opts.agentLoop } : {}),
+    harnessTurnContext: opts.harnessTurnContext,
+    harnessUnavailableAppTools: opts.harnessUnavailableAppTools,
     ...(opts.harnessExecutionTarget ? { harnessExecutionTarget: opts.harnessExecutionTarget } : {}),
     // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
     // eval/synthetic harness turn driven through this facade can (a) reach MCP
@@ -608,6 +616,7 @@ function buildHandlerOptions(
       ? { clientIp: opts.authContext.clientIp }
       : {}),
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
+    ...(opts.remainingTurnMs ? { remainingTurnMs: opts.remainingTurnMs } : {}),
     ...(opts.heartbeatIntervalMs !== undefined
       ? { heartbeatIntervalMs: opts.heartbeatIntervalMs }
       : {}),
@@ -649,6 +658,8 @@ function buildHandlerOptions(
 export async function runAssistantTurn(
   opts: RunAssistantTurnOptions,
 ): Promise<RunAssistantTurnResult> {
+  const dispatch = resolveAgentLoop({ agentLoop: opts.agentLoop, harness: opts.agentLoop ? undefined : opts.harness });
+  opts = { ...opts, harness: dispatch.harnessId };
   let capturedMessages: ModelMessage[] | undefined;
   let capturedTrace: PersistedTurnTrace | undefined;
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
@@ -713,19 +724,10 @@ export async function runAssistantTurn(
         : {}),
     });
     if (effortRefusal) {
-      throw new Error(
-        `This host runs the ${opts.harness} harness, which isn't available: ` +
-          `${effortRefusal}.`,
-      );
+      throw new Error(effortRefusal);
     }
     if (refusal) {
-      // Wrapped in the SAME sentence the chat routes build around a pre-flight
-      // refusal, so a reader who meets this in a run log and one who meets it in
-      // a 503 are reading the same thing.
-      throw new Error(
-        `This host runs the ${opts.harness} harness, which isn't available: ` +
-          `${refusal.reason}.`,
-      );
+      throw new Error(refusal.reason);
     }
     if (warning) {
       logger.warn("[assistant-turn] running an unverified harness model", {
