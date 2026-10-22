@@ -28,7 +28,7 @@ import { spawnAppServer, initialize } from "./app-server-client.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ARTIFACTS = join(HERE, "..", "artifacts");
-const PINNED_CODEX = "0.149.1";
+const PINNED_CODEX = "0.163.0";
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => {
@@ -480,6 +480,8 @@ const gates = {
     // Every gpt-5-family id in MCPJam's hosted catalog
     // (shared/hosted-model-ids.generated.ts), plus two non-hosted controls.
     const candidates = [
+      "gpt-6-luna",
+      "gpt-6.1-sol",
       "gpt-5",
       "gpt-5-chat",
       "gpt-5-codex",
@@ -531,6 +533,10 @@ const gates = {
       matrix[model] = {
         knownToCli: !warnings.some((w) => w.includes("not found")),
         toolCount: tools.length,
+        additionalToolCount: run.http[0]?.body?.input
+          ?.filter((item) => item.type === "additional_tools")
+          .reduce((count, item) => count + (item.tools ?? []).reduce(
+            (total, tool) => total + (tool.tools?.length ?? 1), 0), 0) ?? 0,
         turnStatus: run.completed?.status,
         ...(run.error
           ? { error: String(run.error.message).slice(0, 120) }

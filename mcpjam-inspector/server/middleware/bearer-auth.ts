@@ -16,6 +16,7 @@ import {
 import { logger } from "../utils/logger.js";
 import { scrubCredentialUrl } from "../../shared/credential-urls.js";
 import { setRequestLogContext } from "../utils/request-logger.js";
+import { logConvexId } from "../utils/log-convex-id.js";
 import {
   handleSurfaceServiceAuth,
   isDiscordServiceToken,
@@ -261,10 +262,11 @@ export async function bearerAuthMiddleware(
       if (isServiceCredentialUnavailableError(error)) {
         return hostedOnlyResponse(c, WORKOS_API_KEY_FEATURE);
       }
-      logger.error("Failed to resolve MCPJam user from WorkOS externalId", {
-        workosUserId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        "Failed to resolve MCPJam user from WorkOS externalId",
+        error,
+        { workosUserId },
+      );
       return c.json(
         { code: ErrorCode.INTERNAL_ERROR, message: "Identity lookup failed" },
         500
@@ -288,9 +290,8 @@ export async function bearerAuthMiddleware(
       try {
         binding = await lookupWorkosKeyBinding(workosKeyId);
       } catch (error) {
-        logger.error("Failed to look up WorkOS API key org binding", {
+        logger.error("Failed to look up WorkOS API key org binding", error, {
           workos_key_id: workosKeyId,
-          error: error instanceof Error ? error.message : String(error),
         });
         return c.json(
           {
@@ -358,7 +359,9 @@ export async function bearerAuthMiddleware(
     // the entire public API — the rule cannot fire on a field that is never
     // populated, so a v1 error class spiking across every customer counted as
     // one org forever. This is the only place the API-key path knows the org.
-    setRequestLogContext(c, { orgId: binding.mcpjamOrganizationId });
+    setRequestLogContext(c, {
+      orgId: logConvexId(binding.mcpjamOrganizationId),
+    });
 
     logger.info("WorkOS API key request", {
       event: "auth.workos_api_key",

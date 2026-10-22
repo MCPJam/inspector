@@ -306,6 +306,10 @@ describe("v1 client routes", () => {
         "https://convex-http.example.com/public/host-catalog",
         expect.objectContaining({ method: "GET" })
       );
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "hosts:createHost",
+        expect.objectContaining({ applyDefaultSystemPrompt: true }),
+      );
       expect(createdHostInput()).toMatchObject({
         hostStyle: "claude",
         modelId: "backend/claude-live",

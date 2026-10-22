@@ -41,11 +41,15 @@ vi.mock("convex/react", () => ({
   useAction: () => vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@/components/conformance/directory-readiness/DirectoryReadinessSection", () => ({
-  DirectoryReadinessSection: () => null,
-}));
+vi.mock(
+  "@/components/conformance/directory-readiness/DirectoryReadinessSection",
+  () => ({
+    DirectoryReadinessSection: () => null,
+  }),
+);
 
 import { ConformanceTab } from "../ConformancePanel";
+import { RUN_LABEL } from "../ConformancePageChrome";
 
 function createHttpServer(): ServerWithName {
   return {
@@ -81,7 +85,9 @@ describe("ConformanceTab persist", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /run available checks/i })).toBeInTheDocument(),
+      expect(
+        screen.getAllByRole("button", { name: RUN_LABEL })[0],
+      ).toBeInTheDocument(),
     );
     expect(startRun).not.toHaveBeenCalled();
 
@@ -89,7 +95,9 @@ describe("ConformanceTab persist", () => {
     render(<ConformanceTab server={createHttpServer()} persist={persist} />);
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /run available checks/i })).toBeInTheDocument(),
+      expect(
+        screen.getAllByRole("button", { name: RUN_LABEL })[0],
+      ).toBeInTheDocument(),
     );
     expect(startRun).not.toHaveBeenCalled();
   });
@@ -103,9 +111,7 @@ describe("ConformanceTab persist", () => {
       />,
     );
 
-    await user.click(
-      screen.getByRole("button", { name: /run available checks/i }),
-    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
 
     await waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
   });
