@@ -114,6 +114,33 @@ describe("stream answered by a server without the run's runner", () => {
     expect(result.current.error).toBe("Run not found");
   });
 
+  it("does not reopen a stream that fails after delivering the runner's events", async () => {
+    streams.mockResolvedValue(undefined);
+    streams.mockImplementationOnce(async (_id, onEvent) => {
+      onEvent({ ...runLevel, type: "run_remote" } as SwarmStreamEvent);
+    });
+    // The reopen reaches the owner, which streams an event before the
+    // connection drops: another reopen would replay the owner's buffer.
+    streams.mockImplementationOnce(async (_id, onEvent) => {
+      onEvent({
+        type: "session_start",
+        runId: "run-1",
+        hostId: "host",
+        chatSessionId: "session",
+        sessionIndex: 0,
+      });
+      throw new Error("network error");
+    });
+    const { result } = renderHook(() => useJourneyRunStream("run-1", true));
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(streams).toHaveBeenCalledTimes(2);
+    expect(result.current.error).toBe("network error");
+    expect(result.current.connected).toBe(false);
+  });
+
   it("is live only once a stream delivers the runner's events", async () => {
     let emit!: (event: SwarmStreamEvent) => void;
     streams.mockImplementationOnce(async (_id, onEvent) => {
