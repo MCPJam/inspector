@@ -54,7 +54,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
   # Resolved once here so the environment URL, smoke test, and job
   # summary all point at the same target. Falls back to the known
   # production hostname when the override var is unset — hardcoded in
