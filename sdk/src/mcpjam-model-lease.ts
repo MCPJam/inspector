@@ -313,7 +313,7 @@ const CLIENT_OWNED_HEADERS = new Set(["authorization", "content-type"]);
  * anywhere else, anyone on the path could read it. (The fixed-key path keeps
  * its historical behaviour.)
  */
-function assertSecureCallbackOrigin(baseUrl: string): void {
+export function assertSecureCallbackOrigin(baseUrl: string): void {
   let url: URL;
   try {
     url = new URL(baseUrl);

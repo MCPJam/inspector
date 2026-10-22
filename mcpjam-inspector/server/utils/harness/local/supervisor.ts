@@ -678,10 +678,11 @@ export class LocalHarnessSupervisor {
         platform: this.platform,
       });
       if (outcome.outcome === "escaped") {
-        logger.error("[local-harness] process tree survived SIGKILL", {
-          sessionId: request.sessionId,
-          pid,
-        });
+        logger.error(
+          "[local-harness] process tree survived SIGKILL",
+          undefined,
+          { sessionId: request.sessionId, pid },
+        );
       }
       if (outcome.outcome === "unknown") {
         logger.warn("[local-harness] tree not proven stopped; will retry", {

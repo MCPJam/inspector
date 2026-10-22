@@ -1,3 +1,4 @@
+import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { legacyPluginFormWire } from "../../services/plugin-host/owned-legacy.js";
 import type { ModelToolExecutor } from "../../utils/model-tool-executor.js";
 
@@ -46,6 +47,7 @@ export function pluginModelMrtrEnabled(input: {
  */
 export function chatPluginFormPlan(input: {
   harness: string | undefined;
+  agentLoop?: string;
   serverIds: readonly string[];
   pinFor: (serverId: string) => string | undefined;
   mrtrEnabled: boolean;
@@ -55,7 +57,7 @@ export function chatPluginFormPlan(input: {
   modernServerIds: string[];
   legacyServerIds: string[];
 } {
-  const admitted = !input.harness || input.harness === "codex";
+  const admitted = usesMcpjamClient(input);
   if (!admitted)
     return { admitted, modernServerIds: [], legacyServerIds: [] };
   const modernServerIds =

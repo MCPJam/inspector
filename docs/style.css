@@ -10,8 +10,22 @@
  * ─────────────────────────────────────────────────────────────────────────── */
 
 /* Geist Mono — docs.json fonts only accepts heading+body, so the code face
-   is loaded here. */
-@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap");
+   is loaded here. Served from /fonts rather than Google Fonts so a page view
+   does not send the visitor's IP to Google. */
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/geist-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/geist-mono-latin-500-normal.woff2") format("woff2");
+}
 
 /* BEGIN GENERATED — sync via `npm run docs:sync-tokens` */
 /* Mirrors design-system/src/tokens.css — edits here will be overwritten. */

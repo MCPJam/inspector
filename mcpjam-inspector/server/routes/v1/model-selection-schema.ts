@@ -14,6 +14,7 @@
  */
 import { z } from "zod";
 import {
+  selectionConfigKey,
   validateModelSelection,
   type LegacyModelSelection,
   type ModelSelection,
@@ -116,4 +117,29 @@ export function selectionModelMismatch(
   return selection.modelId === modelId.trim()
     ? undefined
     : `selection.modelId "${selection.modelId}" must match model "${modelId.trim()}".`;
+}
+
+/**
+ * The selection, only if it is for `modelId` (verbatim, after a trim). Same
+ * rule as the SDK's `selectionIfMatches`, widened to a STORED legacy
+ * selection, which a store-once row may hold.
+ */
+export function requestedSelectionIfMatches(
+  selection: RequestedModelSelection | undefined,
+  modelId: string | undefined,
+): RequestedModelSelection | undefined {
+  if (selection === undefined || modelId === undefined) return undefined;
+  return selection.modelId === modelId.trim() ? selection : undefined;
+}
+
+/**
+ * Two selections say the same thing (by value, not object identity). A legacy
+ * selection's key carries its `provider`, so two legacy selections for one
+ * model with different providers are different selections.
+ */
+export function sameRequestedSelection(
+  a: RequestedModelSelection,
+  b: RequestedModelSelection,
+): boolean {
+  return selectionConfigKey(a) === selectionConfigKey(b);
 }
