@@ -62,14 +62,17 @@ export type OwnKeyTurn = {
 export async function ownKeyTurnRefusal(
   turn: OwnKeyTurn,
 ): Promise<WebRouteError | undefined> {
-  return (await checkOwnKeyTurn(turn)).refusal;
+  return (await ownKeyTurnCheck(turn)).refusal;
 }
 
 /**
  * The turn's refusal, or the `performance.now()` its allowing answer was read
- * at (`undefined` when nothing needed reading).
+ * at (`undefined` when nothing needed reading). A caller that wraps the turn's
+ * model hands that `readAt` to `withOwnKeyTurnPolicy` as `allowedAt`: an answer
+ * shared with other turns can be up to `OWN_KEY_POLICY_RECHECK_MS` older than
+ * the call that received it.
  */
-async function checkOwnKeyTurn(
+export async function ownKeyTurnCheck(
   turn: OwnKeyTurn,
 ): Promise<{ refusal: WebRouteError | undefined; readAt?: number }> {
   if (!turn.projectId) return { refusal: undefined };
@@ -142,9 +145,7 @@ async function readPolicy(
 
   const allowedAt = allowedScopes.get(scope);
   if (allowedAt !== undefined) {
-    // A negative age is another timebase; never trust it as fresh.
-    const age = performance.now() - allowedAt;
-    if (age >= 0 && age < OWN_KEY_POLICY_RECHECK_MS) {
+    if (performance.now() - allowedAt < OWN_KEY_POLICY_RECHECK_MS) {
       return { orgConfig: undefined, startedAt: allowedAt };
     }
     allowedScopes.delete(scope);
@@ -231,9 +232,11 @@ export const OWN_KEY_POLICY_RECHECK_MS = 15_000;
  * asks `readPolicy`, which answers from the scope's shared answer or read
  * when another turn of the same user and project already has one.
  *
- * `allowedAt` is the `performance.now()` taken just BEFORE the caller's own
- * `ownKeyTurnRefusal` check let the turn run. A check that is already stale
- * when the model is wrapped is read again before the first request.
+ * `allowedAt` is when the read that let the turn run STARTED: the `readAt`
+ * of the caller's own `ownKeyTurnCheck`. Not a time the caller takes itself,
+ * which can be later than a shared read's start and would stretch the window
+ * past a revocation. A check that is already stale when the model is wrapped
+ * is read again before the first request.
  */
 export function withOwnKeyTurnPolicy(
   model: LanguageModel,
@@ -261,7 +264,7 @@ export function withOwnKeyTurnPolicy(
         // its answer from when that read STARTED: a slow read must not
         // stretch the window by its own latency.
         const checkedAt = performance.now();
-        const { refusal, readAt = checkedAt } = await checkOwnKeyTurn(turn);
+        const { refusal, readAt = checkedAt } = await ownKeyTurnCheck(turn);
         if (refusal) throw refusal;
         allowedAt = Math.max(allowedAt ?? readAt, readAt);
         return params;

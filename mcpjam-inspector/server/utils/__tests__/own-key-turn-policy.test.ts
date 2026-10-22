@@ -9,6 +9,7 @@ vi.mock("../org-model-config", async (importOriginal) => ({
 
 import {
   OWN_KEY_POLICY_RECHECK_MS,
+  ownKeyTurnCheck,
   ownKeyTurnRefusal,
   resetOwnKeyPolicyCacheForTests,
   withOwnKeyTurnPolicy,
@@ -322,11 +323,15 @@ describe("ownKeyTurnRefusal", () => {
         model: withOwnKeyTurnPolicy(streaming(), turn()),
       }));
       await Promise.all(turns.map(() => ownKeyTurnRefusal(turn())));
-      await Promise.all(turns.map(({ model }) => model.doStream({ prompt: [] })));
+      await Promise.all(
+        turns.map(({ model }) => model.doStream({ prompt: [] })),
+      );
       expect(resolveOrgModelConfig).toHaveBeenCalledTimes(1);
 
       vi.advanceTimersByTime(OWN_KEY_POLICY_RECHECK_MS);
-      await Promise.all(turns.map(({ model }) => model.doStream({ prompt: [] })));
+      await Promise.all(
+        turns.map(({ model }) => model.doStream({ prompt: [] })),
+      );
       await ownKeyTurnRefusal(turn());
       expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
     });
@@ -348,11 +353,23 @@ describe("ownKeyTurnRefusal", () => {
       ["another project", { projectId: "project-2" }],
       [
         "another guest scenario",
-        { auth: { authHeader: "Bearer user-token", scenarioId: "scn-2", accessVersion: 1 } },
+        {
+          auth: {
+            authHeader: "Bearer user-token",
+            scenarioId: "scn-2",
+            accessVersion: 1,
+          },
+        },
       ],
       [
         "another access version",
-        { auth: { authHeader: "Bearer user-token", scenarioId: "scn-1", accessVersion: 2 } },
+        {
+          auth: {
+            authHeader: "Bearer user-token",
+            scenarioId: "scn-1",
+            accessVersion: 2,
+          },
+        },
       ],
       [
         "other servers",
@@ -363,7 +380,13 @@ describe("ownKeyTurnRefusal", () => {
       if ("auth" in other && "scenarioId" in other.auth) {
         // Same scenario at access version 1, so only the field under test differs.
         await ownKeyTurnRefusal(
-          turn({ auth: { authHeader: "Bearer user-token", scenarioId: "scn-1", accessVersion: 1 } }),
+          turn({
+            auth: {
+              authHeader: "Bearer user-token",
+              scenarioId: "scn-1",
+              accessVersion: 1,
+            },
+          }),
         );
       } else {
         await ownKeyTurnRefusal(turn());
@@ -449,6 +472,52 @@ describe("ownKeyTurnRefusal", () => {
           await ownKeyTurnRefusal(turn());
         },
       );
+      expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
+    });
+
+    it("dates a turn wrapped after a shared answer from that answer's read", async () => {
+      // The chat route's shape: a pre-flight check, then the model wrapped
+      // with what it returned. A pre-flight answered from another turn's read
+      // must not restart the window, or a revocation would hold for ~30 s.
+      useFakeClock();
+      resolveOrgModelConfig.mockResolvedValueOnce(allow);
+      await ownKeyTurnRefusal(turn());
+
+      // Revoked, then a new turn arrives just inside the shared window.
+      resolveOrgModelConfig.mockResolvedValue(strict);
+      vi.advanceTimersByTime(OWN_KEY_POLICY_RECHECK_MS - 100);
+      const check = await ownKeyTurnCheck(turn());
+      expect(check.refusal).toBeUndefined();
+      const model = withOwnKeyTurnPolicy(streaming(), turn(), {
+        allowedAt: check.readAt,
+      });
+
+      vi.advanceTimersByTime(100);
+      await expect(model.doStream({ prompt: [] })).rejects.toMatchObject({
+        status: 403,
+        details: { code: "org_keys_required" },
+      });
+      expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
+    });
+
+    it("fails every caller of a shared read that fails, then reads again", async () => {
+      let fail!: (error: Error) => void;
+      resolveOrgModelConfig.mockImplementationOnce(
+        () => new Promise((_, reject) => (fail = reject)),
+      );
+      const first = ownKeyTurnRefusal(turn());
+      const second = ownKeyTurnRefusal(turn());
+      fail(new Error("network down"));
+      for (const refusal of await Promise.all([first, second])) {
+        expect(refusal).toMatchObject({
+          status: 503,
+          details: { code: "ai_key_policy_unavailable" },
+        });
+      }
+      expect(resolveOrgModelConfig).toHaveBeenCalledTimes(1);
+
+      resolveOrgModelConfig.mockResolvedValueOnce(allow);
+      expect(await ownKeyTurnRefusal(turn())).toBeUndefined();
       expect(resolveOrgModelConfig).toHaveBeenCalledTimes(2);
     });
   });
