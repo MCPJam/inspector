@@ -1026,7 +1026,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Same guest-allowed Anthropic model rationale as the Claude
         // template — the real CLI's model choice never crosses the MCP
         // wire, so this is a product default, not probe data.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
         // Run the REAL Claude Code runtime (the @ai-sdk/harness-claude-code
@@ -1944,11 +1944,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // surface colors + the shimmering "Thinking" indicator). See
         // CODEX_HOST_STYLE in client-styles/built-ins.ts.
         hostStyle: "codex",
-        // Canonical id (openai/<slug>) so the chat-composer model picker
-        // resolves it. gpt-5-nano is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so
-        // guests get it without an OpenAI key; users can swap to a
-        // codex-specific model after creation.
-        modelId: "openai/gpt-5-nano",
+        // Canonical hosted id so the chat-composer model picker resolves it.
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
         // Run the REAL OpenAI Codex runtime (the @ai-sdk/harness-codex adapter)

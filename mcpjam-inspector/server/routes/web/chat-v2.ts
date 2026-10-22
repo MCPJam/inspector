@@ -1007,7 +1007,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           422,
           ErrorCode.FEATURE_NOT_SUPPORTED,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+          hostModelRefusal,
           {
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,
@@ -1199,7 +1199,7 @@ chatV2.post("/", async (c) => {
           status === 503
             ? ErrorCode.INTERNAL_ERROR
             : ErrorCode.FEATURE_NOT_SUPPORTED,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          availability.reason,
           {
             reason: "HARNESS_UNAVAILABLE",
             harness: resolvedExecution.harness,
@@ -1553,7 +1553,8 @@ chatV2.post("/", async (c) => {
       pluginPins?.mcpProtocolVersionsByServerId?.[id] ?? pluginPins?.initializePins?.mcpProtocolVersion;
     const pluginFormPlan = pluginPins
       ? chatPluginFormPlan({
-          harness: resolvedExecution.harness,
+          harness: resolvedExecution.agentLoop ? undefined : resolvedExecution.harness,
+          agentLoop: resolvedExecution.agentLoop,
           serverIds: effectiveServerIds,
           pinFor: pluginPinFor,
           mrtrEnabled,
@@ -1564,7 +1565,7 @@ chatV2.post("/", async (c) => {
     // connection negotiated.
     let pluginNegotiatedVersion: (serverId: string) => string | undefined = () => undefined;
     if (pluginWorkspace && hostRuntimeConfig && pluginFormPlan?.admitted) {
-      assertPluginWorkspaceRuntime({ harness: resolvedExecution.harness, hostPolicy: { hostStyle: hostRuntimeConfig.hostStyle as string | undefined } });
+      assertPluginWorkspaceRuntime({ harness: resolvedExecution.agentLoop ? undefined : resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop, hostPolicy: { hostStyle: hostRuntimeConfig.hostStyle as string | undefined } });
       modelPluginBearer = await getConvexBearerForRequest(c);
       modelPluginSubject = toolApprovalSubjectFromAuthHeader(c.req.header("authorization"));
       if (modelPluginSubject === "anonymous") throw new Error("Plugin model identity unavailable");
@@ -2717,7 +2718,7 @@ chatV2.post("/", async (c) => {
           uiMessages: appMessages,
           ...(pluginContext ? { pluginContext } : {}),
           ...(resolvedExecution.harness
-            ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
+            ? { harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
           ...(tasksSeam ? { tasks: tasksSeam } : {}),
           ...(resolvedProgressiveToolDiscovery !== undefined
@@ -2799,6 +2800,7 @@ chatV2.post("/", async (c) => {
           },
         },
         persist: {
+          executionBindingVersion: resolvedExecution.executionBindingVersion,
           executionTarget: toResumeExecutionTarget(executionTarget),
           chatSessionId: body.chatSessionId,
           projectId: hostedBody.projectId,
@@ -2817,7 +2819,7 @@ chatV2.post("/", async (c) => {
           authenticatedUserId,
           originalMessages: messages,
           ...(resolvedExecution.harness
-            ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
+            ? { harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
           // Harness-engine delivery of the environment's resolved skills.
           // Presence (even empty) is what makes it authoritative downstream.

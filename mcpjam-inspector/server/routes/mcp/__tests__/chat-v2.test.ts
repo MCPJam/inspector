@@ -2363,7 +2363,7 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
-    it("advertises built-in tools for MCPJam guest requests after resolving guest auth", async () => {
+    it("withholds web_search from MCPJam guest requests (the backend refuses guest searches)", async () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
@@ -2403,6 +2403,58 @@ describe("POST /api/mcp/chat-v2", () => {
           }),
         });
 
+        const streamBody = JSON.parse(
+          String((init as RequestInit).body ?? "{}"),
+        );
+        expect(streamBody.tools ?? []).not.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ name: "web_search" }),
+          ]),
+        );
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("keeps web_search for a guest visiting a shared scenario (billed to its owner)", async () => {
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: { builtInToolIds: ["web_search"] },
+      });
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse(completedStreamEvents());
+          }
+
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postJson(app, "/api/mcp/chat-v2", {
+          scenarioId: "cbx_1",
+          messages: [{ role: "user", content: "Search for current docs" }],
+          model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+          projectId: "project-1",
+          builtInToolIds: ["web_search"],
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const streamCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+
+        expect(streamCall).toBeDefined();
+        const [, init] = streamCall!;
         const streamBody = JSON.parse(
           String((init as RequestInit).body ?? "{}"),
         );

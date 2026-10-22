@@ -133,6 +133,7 @@ import { signInRemedyMessage } from "@/lib/sign-in-required";
 import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { cn } from "@/lib/utils";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
+import { reusedGoalJudgeConfig } from "@/components/swarms/reused-goal-judge";
 import {
   preflightSwarmTargets,
   resolveSwarmEnvironment,
@@ -614,6 +615,11 @@ export function NewSwarmCreateFlow({
   const [iterationsByPersona, setIterationsByPersona] = useState<
     Record<string, number>
   >(restoredDraft?.iterationsByPersona ?? {});
+  // The judge picked on Confirm. Not part of the resumable draft: a reload
+  // falls back to the managed default, which is what an untouched row means.
+  const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
+    undefined,
+  );
   const handleIterationsChange = useCallback(
     (personaKey: string, value: number) => {
       // Clearing the field reports "", which Number() turns into 0; the clamp
@@ -1566,8 +1572,13 @@ export function NewSwarmCreateFlow({
             }
 
             // Only when the author set one. Absent must leave the journey's
-            // own judge alone, and `null` would CLEAR it.
-            if (payload.judgeConfig) patch.judgeConfig = payload.judgeConfig;
+            // own judge alone, and `null` would CLEAR it. A pick is layered
+            // onto the goal's own judge, never sent in its place.
+            if (payload.judgeConfig)
+              patch.judgeConfig = reusedGoalJudgeConfig(
+                target.judgeConfig,
+                payload.judgeConfig,
+              );
 
             if (Object.keys(patch).length > 0) {
               try {
@@ -1691,20 +1702,23 @@ export function NewSwarmCreateFlow({
         // so a counter moved since reaches the preview and the launch here.
         targets = withChosenIterations(targets, iterationsByPersona);
 
-        // ── Sponsored split: verify, then launch what was shown ───────────
+        // ── Sponsored split: verify, then launch ──────────────────────────
         //
         // Every run has a goal id now, so ask the backend how THIS launch's
         // conversations would be funded (sponsored versus the organization's
-        // credits) and compare it with what the person was looking at. If it
-        // is not the same, stop BEFORE creating any run and show the new
-        // split: they launch again with it on screen. Otherwise each run is
-        // launched with the sponsored count that was shown, so the backend
-        // refuses it (409) rather than moving conversations onto org credits.
+        // credits). Stop BEFORE creating any run only when that split is worse
+        // than what was on screen: fewer sponsored, so more on org credits.
+        // Compare only goals covered by the display: sponsorship for new goals
+        // must not mask a drop for existing goals. A split at least as good as
+        // the one shown launches in the same click. Each run is
+        // launched with its previewed sponsored count, so the backend refuses
+        // it (409) rather than moving conversations onto org credits.
         //
         // A preview that fails, or sponsorship not applying here, is the
         // launch exactly as it was before this existed.
         let expectedSponsoredByRun: number[] | null = null;
         let fundingSplit: FundingSplit | null = null;
+        let shownGoalsSplit: FundingSplit | null = null;
         if (targets.length > 0) {
           try {
             const preview = await fetchSwarmFundingPreview(
@@ -1714,6 +1728,15 @@ export function NewSwarmCreateFlow({
             fundingSplit = fundingSplitOf(preview, targets.length);
             if (fundingSplit) {
               expectedSponsoredByRun = preview.runs.map((run) => run.sponsored);
+              const shownRuns = preview.runs.filter((_, index) =>
+                payload.funding.shownJourneyIds.includes(
+                  targets[index].journeyId,
+                ),
+              );
+              shownGoalsSplit = fundingSplitOf(
+                { ...preview, runs: shownRuns },
+                payload.funding.shownJourneyIds.length,
+              );
             }
           } catch {
             // Handled below with the "no usable split" case.
@@ -1727,24 +1750,28 @@ export function NewSwarmCreateFlow({
         //
         // Both stops return before the launch's own summary, so a failure from
         // earlier in this pass (a goal that could not be created) is said here.
-        if (!fundingSplit && (payload.funding.shownSponsored ?? 0) > 0) {
-          setFundingNotice(
-            fundingUnverifiedNotice(payload.funding.shownSponsored ?? 0),
-          );
+        const shownSponsored = payload.funding.shownSponsored;
+        if (!shownGoalsSplit && (shownSponsored ?? 0) > 0) {
+          setFundingNotice(fundingUnverifiedNotice());
           if (firstError) setErrorMessage(alsoFailedNotice(firstError));
           setFundingRefreshKey((key) => key + 1);
           return;
         }
-        if (fundingSplit) {
-          const shown = payload.funding.shownSponsored;
-          if ((shown ?? 0) !== fundingSplit.sponsored) {
-            setFundingNotice(
-              fundingReviewNotice({ shown, now: fundingSplit }),
-            );
-            if (firstError) setErrorMessage(alsoFailedNotice(firstError));
-            setFundingRefreshKey((key) => key + 1);
-            return;
-          }
+        if (
+          shownGoalsSplit &&
+          shownSponsored !== null &&
+          shownGoalsSplit.sponsored < shownSponsored
+        ) {
+          setFundingNotice(
+            fundingReviewNotice({
+              shown: shownSponsored,
+              now: shownGoalsSplit,
+              partial: payload.funding.shownJourneyIds.length < targets.length,
+            }),
+          );
+          if (firstError) setErrorMessage(alsoFailedNotice(firstError));
+          setFundingRefreshKey((key) => key + 1);
+          return;
         }
         // With sponsored conversations in the wave, runs launch one at a time
         // in the order the preview counted them, so each run's expected count
@@ -2369,6 +2396,8 @@ export function NewSwarmCreateFlow({
               await onUpdateJourney(journeyRefId, { goal });
             }}
             projectId={projectId}
+            judgeConfig={judgeConfig}
+            onJudgeConfigChange={setJudgeConfig}
             createdTargets={createdTargets}
             fundingRefreshKey={fundingRefreshKey}
             fundingNotice={fundingNotice}

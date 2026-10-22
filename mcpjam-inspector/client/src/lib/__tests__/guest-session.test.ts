@@ -264,14 +264,17 @@ describe("guest-session module", () => {
       expect((error as { status?: number }).status).toBe(503);
     });
 
-    it("rejects without a status on a network error", async () => {
-      vi.mocked(global.fetch).mockRejectedValue(new Error("offline"));
+    it("rejects without a status on a network error, keeping what fetch threw as the cause", async () => {
+      const thrown = new TypeError("offline");
+      vi.mocked(global.fetch).mockRejectedValue(thrown);
 
       const error = await guestSession
         .getOrCreateGuestSessionOrThrow()
         .catch((e: unknown) => e);
+      expect((error as Error).name).toBe("GuestSessionRequestError");
       expect((error as Error).message).toBe("offline");
       expect((error as { status?: number }).status).toBeUndefined();
+      expect((error as Error).cause).toBe(thrown);
     });
 
     it("resolves null on a 429 refusal instead of throwing", async () => {

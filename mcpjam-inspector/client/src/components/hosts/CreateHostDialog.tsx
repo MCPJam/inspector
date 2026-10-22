@@ -294,6 +294,7 @@ export function CreateHostDialog({
         projectId,
         name: trimmed,
         input: { ...seed, serverIds: [] },
+        applyDefaultSystemPrompt: true,
         // Standalone (Swarms-owned) host when requested; omitted → legacy
         // scenario-minting path.
         ...(owner ? { owner } : {}),
@@ -429,12 +430,19 @@ export function CreateHostDialog({
             Checking for your {externalCredential.label}…
           </p>
         )}
-        {!HOSTED_MODE && selectedLocalHarness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs in a private project workspace on this computer. Creating this client installs its runtime and allows local commands with your full OS-user permissions. Evals and swarms run commands without asking for approval.</p>}
+        {!HOSTED_MODE && selectedLocalHarness && (
+          <p className="text-sm text-muted-foreground">
+            Install {LOCAL_HARNESS_CLIENT_NAMES[selectedLocalHarness]} on this computer. It runs commands in its project folder with your account’s permissions.{" "}
+            {selectedLocalHarness === "codex"
+              ? "Codex evals and swarms run locally on Apple silicon Macs and in the cloud elsewhere."
+              : "Evals and swarms use this client’s approval settings."}
+          </p>
+        )}
         {needsSignIn && (
           <GuestSignInMessage
             compact
             location="create_client_dialog"
-            message={`Sign in to use ${selectedTemplateLabel || "this client"}. It runs in the cloud on your account, so it's off for guests.`}
+            message={`Sign in to use ${selectedTemplateLabel || "this client"}.`}
           />
         )}
         {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}

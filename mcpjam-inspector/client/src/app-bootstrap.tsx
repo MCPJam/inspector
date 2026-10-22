@@ -1,5 +1,6 @@
 // Must stay first; OAuth modules and SDKs retain window.fetch at load time.
 import "./lib/install-telemetry-transport";
+import { promoSignInReturn } from "@/lib/promo-intent";
 import { HostedAuthEntry } from "./components/auth/hosted-auth-entry";
 import { authRefusalDiagnostics } from "./lib/auth/auth-refusal-diagnostics";
 import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";
@@ -53,7 +54,11 @@ import {
   isDebugOAuthCallbackPath,
   normalizeInitialLegacyHashBookmark,
 } from "./lib/app-navigation";
-import { queueProjectSignInReturnPath } from "./lib/app-signin-return-path";
+import {
+  queueProjectSignInReturnPath,
+  readAppSignInReturnPath,
+  consumeAppSignInReturnPath,
+} from "./lib/app-signin-return-path";
 import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
@@ -425,6 +430,10 @@ if (isInIframe) {
        */
       onRedirectCallback={({ state }) => {
         const carried = state as Record<string, unknown> | null;
+        const promoReturn = promoSignInReturn(carried);
+        if (promoReturn && readAppSignInReturnPath() === "/redeem") {
+          consumeAppSignInReturnPath();
+        }
         const returnTo =
           takeHandoffSignInReturn(
             carried?.[HANDOFF_SIGN_IN_STATE_KEY],
@@ -438,7 +447,11 @@ if (isInIframe) {
           takePermalinkSignInReturn(
             carried?.[PERMALINK_SIGN_IN_STATE_KEY],
             window.location.origin,
-          );
+          ) ??
+          promoReturn ??
+          (readAppSignInReturnPath() === "/redeem"
+            ? consumeAppSignInReturnPath()
+            : null);
         if (returnTo) {
           // A scoped return cannot navigate until App has the database user
           // and authoritative memberships. Keep it in same-origin storage and
