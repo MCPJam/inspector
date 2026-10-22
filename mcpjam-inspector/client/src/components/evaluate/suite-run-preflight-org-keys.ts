@@ -254,22 +254,32 @@ function orgKeyJudgeProblem(
 }
 
 /**
- * A model saved on an organization Azure OpenAI connection without a
+ * An Azure OpenAI model that runs on the organization's connection without a
  * deployment: Azure runs only the deployments an admin named, so every
- * attempt would be refused.
+ * attempt would be refused. A legacy or unlabelled row runs there too when
+ * the organization has an Azure connection, and its saved id is what the
+ * runner sends.
  */
 function azureDeploymentProblem(
   orgConfig: PreflightOrgConfig,
   model: PreflightModel,
 ): string | null {
-  const selection = model.selection;
-  if (model.selectionKnown === false || selection?.source !== "org") {
+  if (model.selectionKnown === false) return null;
+  if (orgModelVendor(orgConfig, model) !== AZURE_PROVIDER_KEY) return null;
+  const orgSelection =
+    model.selection?.source === "org" ? model.selection : undefined;
+  if (
+    !orgSelection &&
+    !orgConfig.providers.some(
+      (provider) =>
+        provider.providerKey === AZURE_PROVIDER_KEY && provider.enabled,
+    )
+  ) {
     return null;
   }
-  if (orgModelVendor(orgConfig, model) !== AZURE_PROVIDER_KEY) return null;
   return azureDeploymentName({
-    modelId: selection.modelId ?? model.model,
-    nativeModelId: selection.nativeModelId,
+    modelId: orgSelection?.modelId ?? model.model,
+    nativeModelId: orgSelection?.nativeModelId,
   })
     ? null
     : azureDeploymentMissingReason(model.model);

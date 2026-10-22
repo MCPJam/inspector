@@ -136,6 +136,26 @@ export function isOrgConfigurationRefusal(
   );
 }
 
+/**
+ * The refusal of a model on an organization Azure OpenAI connection that
+ * names no deployment, else `undefined`. The backend refuses every attempt
+ * at it, so the case is refused once instead.
+ */
+export function azureDeploymentRefusal(
+  providerKey: string,
+  selection: { modelId: string; nativeModelId?: string },
+  evidence?: Record<string, unknown>,
+): ModelRefusal | undefined {
+  if (providerKey !== AZURE_PROVIDER_KEY || azureDeploymentName(selection)) {
+    return undefined;
+  }
+  return {
+    code: "invalid_model",
+    reason: azureDeploymentMissingReason(selection.modelId),
+    evidence: { ...evidence, providerKey, missing: AZURE_DEPLOYMENT_MISSING },
+  };
+}
+
 /** Rail the runner executes a resolved selection on. */
 export type LocalResolutionRail =
   /** MCPJam-hosted: backend `/stream` (its admission decides the rest). */
@@ -346,21 +366,12 @@ export function resolveLocalModelSelection(
         );
       }
     }
-    if (
-      input.orgProviderKey === AZURE_PROVIDER_KEY &&
-      !azureDeploymentName(selection)
-    ) {
-      // Every attempt would be refused by the backend: refuse the case once.
-      return refuse(
-        "invalid_model",
-        azureDeploymentMissingReason(selection.modelId),
-        {
-          ...evidence,
-          providerKey: input.orgProviderKey,
-          missing: AZURE_DEPLOYMENT_MISSING,
-        },
-      );
-    }
+    const azureRefusal = azureDeploymentRefusal(
+      input.orgProviderKey,
+      selection,
+      evidence,
+    );
+    if (azureRefusal) return { ok: false, refusals: [azureRefusal] };
     return {
       ok: true,
       plan: {
