@@ -454,10 +454,13 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     readToolsRetryRevision,
     readToolsRetryRevision
   );
-  // A listing still in flight when the Playground closes must not write.
+  // A listing still in flight when the Playground closes must not write, and
+  // must not count as in flight: StrictMode remounts at once, and the replayed
+  // effect would otherwise skip the request and leave `fetchingTools` set.
   useEffect(
     () => () => {
       toolsRequestSeqRef.current += 1;
+      toolsInFlightKeyRef.current = null;
     },
     []
   );
