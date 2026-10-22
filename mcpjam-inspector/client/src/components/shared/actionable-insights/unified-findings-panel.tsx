@@ -369,14 +369,19 @@ export function UnifiedFindingsPanel({
         <div className="mb-5">
           <StateNote testId="unified-findings-historical">
             These explanations are not linked to problems.
-            {analyze.available && !visitor
+            {analyze.available && !analyze.pending && !visitor
               ? " Analyze again to link them."
               : ""}
           </StateNote>
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm">
             {problemsView.unlinkedExplanations.map((row) => (
               <li key={row.id}>
-                <FindingText text={row.rootCause ?? row.title} />
+                <FindingText text={row.title} />
+                {row.rootCause ? (
+                  <p className="text-muted-foreground">
+                    <FindingText text={row.rootCause} />
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>

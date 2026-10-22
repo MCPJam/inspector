@@ -279,6 +279,7 @@ describe("the observation view", () => {
     expect(
       screen.getByText("The tool rejected the project name."),
     ).toBeVisible();
+    expect(screen.getByText("t")).toBeVisible();
   });
 
   it("does not invite a visitor to analyze an older run", () => {
@@ -295,6 +296,21 @@ describe("the observation view", () => {
       /^These explanations are not linked to problems\.$/,
     );
     expect(screen.getByText("Old cause")).toBeVisible();
+  });
+
+  it("does not invite a rerun while an analysis is already running", () => {
+    renderPanel({
+      analyze: { available: true, pending: true, error: null, onRun: vi.fn() },
+      problemsView: view({
+        status: "historical_unlinked",
+        unlinkedExplanations: [
+          { id: "m", title: "Old cause", rootCause: null },
+        ],
+      }),
+    });
+    expect(
+      screen.getByTestId("unified-findings-historical"),
+    ).not.toHaveTextContent("Analyze again");
   });
 
   it("names the skill version the recommendations follow", () => {
@@ -388,6 +404,22 @@ describe("coverageLine", () => {
 });
 
 describe("buildOptionPrompt", () => {
+  it("uses the singular for a one-iteration problem", () => {
+    const single = problem({
+      iterationIds: ["it_1"],
+      coverage: {
+        observed: 1,
+        explained: 0,
+        addressed: 1,
+        unresolved: 0,
+        unresolvedIterationIds: [],
+      },
+    });
+    expect(
+      buildOptionPrompt(single, option({ iterationIds: ["it_1"] })),
+    ).toContain("This applies to 1 of the 1 affected iteration: it_1.");
+  });
+
   it("carries only the selected option's iterations and fences recorded excerpts", () => {
     const prompt = buildOptionPrompt(problem(), option(), {
       rerunLabel: "this eval suite",
