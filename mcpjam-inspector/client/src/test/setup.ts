@@ -7,6 +7,9 @@ import { cleanup } from "@testing-library/react";
 import { transferableAbortController } from "node:util";
 import "@testing-library/jest-dom/vitest";
 
+// Route tests render route bodies without waiting for a lazy chunk.
+vi.mock("@/lazy-route-tabs", () => import("./mocks/eager-route-tabs"));
+
 /**
  * Bridge jsdom's `AbortSignal` across to Node's `Request`.
  *
