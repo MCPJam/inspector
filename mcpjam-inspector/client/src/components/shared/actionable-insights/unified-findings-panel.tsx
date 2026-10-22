@@ -6,6 +6,7 @@ import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   sortFindingsForDisplay,
   type ActionableFinding,
+  type EvalFindingsView,
   type InsightsFindingProvenance,
   type InsightsObservationCoverage,
   type InsightsObservationState,
@@ -13,10 +14,13 @@ import {
 } from "@/lib/insights-envelope-api";
 import type { FindingPromptContext } from "./finding-prompts";
 import { CopyFindingPrompt } from "./finding-summary";
+import { CopyOptionPrompt } from "./problem-details";
+import { FindingText } from "./finding-text";
 import {
   FindingsAllSheet,
   FindingsCarousel,
   FindingsPager,
+  ProblemsCarousel,
   useFindingsCarousel,
 } from "./findings-carousel";
 import type { FindingEvidenceLocator } from "./finding-evidence";
@@ -76,6 +80,11 @@ export type UnifiedFindingsPanelProps = {
    * passes nothing and keeps the note.
    */
   fallback?: React.ReactNode;
+  /**
+   * The backend's observation view. When present it is rendered alone: one
+   * problem per recorded observation, never mixed with `findings`.
+   */
+  problemsView?: EvalFindingsView | null;
 };
 
 function StateNote({
@@ -175,6 +184,7 @@ export function UnifiedFindingsPanel({
   onOpenEvidence,
   iterationRows,
   fallback,
+  problemsView,
 }: UnifiedFindingsPanelProps) {
   const [allOpen, setAllOpen] = useState(false);
   const seeAllTrigger = useRef<HTMLButtonElement>(null);
@@ -199,7 +209,13 @@ export function UnifiedFindingsPanel({
     [snapshot?.deterministicFindings, findings],
   );
   const carousel = useFindingsCarousel();
-  const current = sorted[carousel.selected] ?? sorted[0];
+  const problems = problemsView?.problems ?? null;
+  const currentProblem = problems?.[carousel.selected] ?? problems?.[0];
+  const current = problems
+    ? undefined
+    : (sorted[carousel.selected] ?? sorted[0]);
+  const hasCurrent = Boolean(problems ? currentProblem : current);
+  const itemCount = problems ? problems.length : sorted.length;
   const enrichment = snapshot?.enrichment;
   const discovery =
     mode === "ai" && enrichment?.status === "ready"
@@ -225,12 +241,12 @@ export function UnifiedFindingsPanel({
         <div className="flex items-center gap-2">
           <FindingsPager
             selected={carousel.selected}
-            count={sorted.length}
+            count={itemCount}
             canPrev={carousel.canPrev}
             canNext={carousel.canNext}
             onPrev={carousel.scrollPrev}
             onNext={carousel.scrollNext}
-            onSeeAll={() => setAllOpen(true)}
+            {...(problems ? {} : { onSeeAll: () => setAllOpen(true) })}
             seeAllRef={seeAllTrigger}
           />
           {analyze.pending ? (
@@ -248,7 +264,32 @@ export function UnifiedFindingsPanel({
                     : "Analyzing…"}
             </span>
           ) : null}
-          {current ? (
+          {problemsView && analyze.available && !analyze.pending && !visitor ? (
+            <span className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 shadow-none"
+                onClick={analyze.onRun}
+                data-testid="unified-findings-analyze"
+              >
+                {problemsView.status === "deterministic"
+                  ? "Analyze with AI"
+                  : "Analyze again"}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Uses AI credits
+              </span>
+            </span>
+          ) : null}
+          {currentProblem?.options[0] ? (
+            <CopyOptionPrompt
+              key={`${currentProblem.id}:${currentProblem.options[0].id}`}
+              problem={currentProblem}
+              option={currentProblem.options[0]}
+              context={context}
+            />
+          ) : current ? (
             <CopyFindingPrompt
               key={current.id}
               finding={current}
@@ -317,9 +358,33 @@ export function UnifiedFindingsPanel({
               testId="unified-findings-analysis-error"
             >
               Analysis could not finish: {analyze.error}
-              {current ? " Existing findings are still available below." : ""}
+              {hasCurrent
+                ? " Existing findings are still available below."
+                : ""}
             </StateNote>
           ) : null}
+        </div>
+      ) : null}
+      {problemsView?.status === "historical_unlinked" ? (
+        <div className="mb-5">
+          <StateNote testId="unified-findings-historical">
+            These explanations are not linked to problems.
+            {analyze.available && !analyze.pending && !visitor
+              ? " Analyze again to link them."
+              : ""}
+          </StateNote>
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm">
+            {problemsView.unlinkedExplanations.map((row) => (
+              <li key={row.id}>
+                <FindingText text={row.title} />
+                {row.rootCause ? (
+                  <p className="text-muted-foreground">
+                    <FindingText text={row.rootCause} />
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
       {enrichment?.status === "stale" ? (
@@ -329,7 +394,7 @@ export function UnifiedFindingsPanel({
           </StateNote>
         </div>
       ) : null}
-      {!current &&
+      {!hasCurrent &&
       !backendUnavailableNote &&
       !analyze.error &&
       !build?.error &&
@@ -380,7 +445,21 @@ export function UnifiedFindingsPanel({
             ) : null}
           </div>
         )
-      ) : sorted.length > 0 ? (
+      ) : problems && problems.length > 0 ? (
+        <div data-testid="unified-findings-list">
+          <ProblemsCarousel
+            problems={problems}
+            context={context}
+            onOpenEvidence={onOpenEvidence}
+            iterationRows={iterationRows}
+            setApi={carousel.setApi}
+          />
+          <p className="mt-3 text-xs text-muted-foreground">
+            Recommendations follow{" "}
+            {problemsView?.analysisSkillVersion ?? problemsView?.policyVersion}.
+          </p>
+        </div>
+      ) : !problems && sorted.length > 0 ? (
         <div data-testid="unified-findings-list">
           <FindingsCarousel
             findings={sorted}

@@ -20,8 +20,10 @@ import {
 } from "@/components/ui/carousel";
 import type {
   ActionableFinding,
+  FindingProblem,
   InsightsFindingProvenance,
 } from "@/lib/insights-envelope-api";
+import { ProblemSummary } from "./problem-summary";
 import type { FindingPromptContext } from "./finding-prompts";
 import {
   FindingDetailsContent,
@@ -247,8 +249,8 @@ export function FindingsAllSheet({
                           finding.severity === "high"
                             ? "bg-destructive"
                             : finding.severity === "medium"
-                            ? "bg-warning"
-                            : "bg-muted-foreground"
+                              ? "bg-warning"
+                              : "bg-muted-foreground"
                         }`}
                       />
                       <span className="text-[13px] font-medium tabular-nums text-card-foreground">
@@ -329,6 +331,56 @@ export function FindingsCarousel({
                 onOpenEvidence={onOpenEvidence}
                 iterationRows={iterationRows}
                 findingsById={findingsById}
+              />
+            </CarouselItem>
+          ))}
+        </CarouselContent>
+      </Carousel>
+    </div>
+  );
+}
+
+/** The observation view's problems, one slide each, in the backend's order. */
+export function ProblemsCarousel({
+  problems,
+  context,
+  onOpenEvidence,
+  iterationRows,
+  setApi,
+}: {
+  problems: readonly FindingProblem[];
+  context?: FindingPromptContext;
+  onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
+  iterationRows?: Record<string, AffectedIterationRow>;
+  setApi?: (api: CarouselApi) => void;
+}) {
+  const reducedMotion =
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return (
+    <div data-testid="problems-carousel">
+      <Carousel
+        opts={{
+          align: "start",
+          containScroll: "trimSnaps",
+          duration: reducedMotion ? 0 : 20,
+        }}
+        setApi={setApi}
+        className="w-full"
+        aria-label="Problems"
+      >
+        <CarouselContent>
+          {problems.map((problem, index) => (
+            <CarouselItem
+              key={problem.id}
+              aria-label={`Problem ${index + 1} of ${problems.length}`}
+            >
+              <ProblemSummary
+                problem={problem}
+                lead={index === 0}
+                context={context}
+                onOpenEvidence={onOpenEvidence}
+                iterationRows={iterationRows}
               />
             </CarouselItem>
           ))}
