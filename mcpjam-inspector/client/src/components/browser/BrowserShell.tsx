@@ -204,7 +204,10 @@ export function BrowserShell({
       <div className="flex h-full min-h-0 flex-col">
         {placeholder ?? children}
         {error ? (
-          <div role="alert" className="px-3 text-xs text-destructive">
+          <div
+            role="alert"
+            className="px-3 text-xs break-words text-destructive"
+          >
             {error}
           </div>
         ) : null}
@@ -258,7 +261,9 @@ export function BrowserShell({
       </div>
       {error ? (
         <div
-          className={cn("shrink-0 px-3 pb-2 text-xs text-destructive")}
+          className={cn(
+            "shrink-0 px-3 pb-2 text-xs break-words text-destructive",
+          )}
           data-testid="browser-error"
         >
           {error}

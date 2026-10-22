@@ -26,6 +26,8 @@ import {
   watchLocalBrowserSession,
   type LocalBrowserDeps,
 } from "../local-browser-session";
+import { createLocalBrowserSecurityPolicy } from "../security-policy";
+import { logger } from "../../../../utils/logger";
 import { fakeContext, fakePage } from "../../daemon/__tests__/fake-page";
 import {
   contextSurfaceCount,
@@ -233,6 +235,61 @@ describe("local browser session", () => {
       ensureLocalBrowserSession({ projectId: "proj-a" }, deps),
     ).rejects.toMatchObject({ code: "profile_in_use" });
     expect(launched).toHaveLength(0);
+  });
+
+  function launchFailingWith(message: string) {
+    const dispose = vi.fn();
+    const { deps } = makeDeps({
+      security: async () => createLocalBrowserSecurityPolicy({ dispose }),
+      launch: async () => {
+        throw new Error(message);
+      },
+    });
+    return {
+      dispose,
+      refusal: ensureLocalBrowserSession({ projectId: "proj-a" }, deps),
+    };
+  }
+
+  // The two shapes Playwright 1.63 gives a launch where AppArmor denies the
+  // user namespace Chromium's sandbox needs (Ubuntu 24.04+ by default), and
+  // Chromium's own line alone.
+  it.each([
+    "browserType.launchPersistentContext: Target page, context or browser has been closed\nBrowser logs:\nChromium sandboxing failed!\n================================\nCall log:\n  - [pid=1][err] [FATAL:zygote_host_impl_linux.cc:129] No usable sandbox!",
+    "browserType.launch: Failed to launch the browser process.\nBrowser logs:\nChromium sandboxing failed!\n================================",
+    "browserType.launch: Target page, context or browser has been closed\nCall log:\n  - [pid=1][err] [FATAL:zygote_host_impl_linux.cc:129] No usable sandbox!",
+  ])("names the host's sandbox restriction: %#", async (message) => {
+    const { dispose, refusal } = launchFailingWith(message);
+    await expect(refusal).rejects.toBeInstanceOf(LocalBrowserUnavailableError);
+    await expect(refusal).rejects.toMatchObject({
+      code: "chromium_sandbox_unavailable",
+      message: expect.stringMatching(
+        /AppArmor user namespaces for Playwright's Chromium in ~\/\.cache\/ms-playwright \(https:\/\/chromium\.googlesource\.com\/.*apparmor-userns-restrictions\.md\)/,
+      ),
+    });
+    expect(dispose).toHaveBeenCalled();
+  });
+
+  it("refuses any other launch failure with its first line, and logs the rest", async () => {
+    // `--verbose` prints debug logs with their arguments; the refusal points
+    // there for the call log it leaves out.
+    const debug = vi.spyOn(logger, "debug");
+    const { dispose, refusal } = launchFailingWith(
+      "browserType.launch: Executable doesn't exist at /x/chrome.\nCall log:\n  - <launching> /x/chrome",
+    );
+    await expect(refusal).rejects.toMatchObject({
+      code: "launch_failed",
+      message:
+        "Chromium could not start on this machine (browserType.launch: Executable doesn't exist at /x/chrome). Start the Inspector with --verbose to see the full error, then try again.",
+    });
+    expect(dispose).toHaveBeenCalled();
+    expect(debug).toHaveBeenCalledWith(
+      "Local Browser launch failed",
+      expect.objectContaining({
+        message: expect.stringContaining("<launching> /x/chrome"),
+      }),
+    );
+    debug.mockRestore();
   });
 
   it("refuses an ephemeral browser that will not name its run", async () => {
