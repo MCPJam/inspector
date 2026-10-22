@@ -37,7 +37,7 @@ import { logger } from "../../../utils/logger.js";
 const PROJECT_ID = "k57a1b2c3d4e5f6g7h8j9k0m1n2p3q4r";
 const SUITE_ID = "s57a1b2c3d4e5f6g7h8j9k0m1n2p3q4r";
 
-function syncSuite(judge: unknown) {
+function syncSuite(judge: unknown, extra: Record<string, unknown> = {}) {
   const app = new Hono();
   app.route("/api/v1", v1Routes);
   return app.request(`/api/v1/projects/${PROJECT_ID}/eval-suites/from-file`, {
@@ -51,6 +51,7 @@ function syncSuite(judge: unknown) {
       name: "Checkout",
       sourceHash: "a".repeat(64),
       ...(judge === undefined ? {} : { judge }),
+      ...extra,
     }),
   });
 }
@@ -107,6 +108,22 @@ describe("POST /eval-suites/from-file sends the judge in catalog spelling", () =
       enabled: true,
       model: "anthropic/claude-haiku-4.5",
     });
+  });
+
+  // PLB-188: the file's `defaults.model` becomes the suite's model, which a
+  // case created without `models` falls back to.
+  it("sends a defaults.model written mcpjam/ in catalog spelling", async () => {
+    const res = await syncSuite(undefined, {
+      defaultConfig: { modelId: "mcpjam/anthropic/claude-haiku-4.5" },
+    });
+
+    expect(res.status).toBe(201);
+    const call = convexMutationMock.mock.calls.find(
+      ([name]) => name === "testSuites:resolveOrCreateFileOwnedSuite",
+    );
+    expect(
+      (call![1] as { defaultConfig?: unknown }).defaultConfig,
+    ).toEqual({ modelId: "anthropic/claude-haiku-4.5" });
   });
 
   it("forwards a judge without a model exactly", async () => {
