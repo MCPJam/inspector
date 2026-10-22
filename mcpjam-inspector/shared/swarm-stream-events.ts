@@ -126,8 +126,8 @@ export type SwarmStreamLifecyclePayload =
     }
   | { type: "run_complete" }
   /**
-   * This server has no live stream for a run the backend still reports as
-   * running: another replica owns its runner, the runner has not started yet,
+   * This server has no live stream for a run the backend has not reported as
+   * settled: another replica owns its runner, the runner has not started yet,
    * or it was lost before the backend settled the run. Not a completion; the
    * stream closes and the client keeps its durable view and may reconnect.
    */

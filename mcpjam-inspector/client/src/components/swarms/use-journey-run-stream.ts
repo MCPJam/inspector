@@ -196,11 +196,12 @@ export function reduceSwarmStreamEvent(
 }
 
 /**
- * Delays before reopening a stream the server answered with `run_remote`.
- * With no replica affinity the next request can land on the server that owns
- * the runner, and a runner that had not started yet has usually registered by
- * then. Bounded, so a run whose runner was lost stops asking; the durable
- * Convex view carries it until the backend settles the run.
+ * Delays before each reopen once a server has answered `run_remote`; a reopen
+ * that fails spends one too. With no replica affinity the next request can
+ * land on the server that owns the runner, and a runner that had not started
+ * yet has usually registered by then. Bounded, so a run whose runner was lost
+ * stops asking; the durable Convex view carries it until the backend settles
+ * the run.
  */
 const REMOTE_RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 15_000];
 
@@ -208,6 +209,7 @@ const REMOTE_RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 15_000];
  * Auto-connects to the journey-run SSE while `enabled` (typically when the
  * run detail is open and status is `running`). Aborts on unmount / disable /
  * `run_complete`, and reconnects a bounded number of times after `run_remote`.
+ * `connected` is true only while a stream delivers the runner's events.
  */
 export function useJourneyRunStream(
   runId: string | null,
@@ -241,18 +243,20 @@ export function useJourneyRunStream(
     const controller = new AbortController();
     let reconnects = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-    setState({
-      ...emptyRunStreamState(),
-      connected: true,
-    });
+    setState(emptyRunStreamState());
 
     const open = () => {
       let remote = false;
+      let failure: string | null = null;
       void streamJourneyRun(
         runId,
         (event) => {
           if (genRef.current !== gen) return;
           if (event.type === "run_remote") remote = true;
+          // A server without the runner answers only run_remote or
+          // run_complete, so neither one means the stream is live.
+          const live =
+            event.type !== "run_remote" && event.type !== "run_complete";
           const wave = swarmRunGroupIdRef.current;
           const organization = organizationIdRef.current;
           if (
@@ -276,31 +280,38 @@ export function useJourneyRunStream(
               surface: "swarm",
             });
           }
-          setState((prev) => reduceSwarmStreamEvent(prev, event));
+          setState((prev) => {
+            const next = reduceSwarmStreamEvent(prev, event);
+            return live && !next.connected
+              ? { ...next, connected: true }
+              : next;
+          });
         },
         controller.signal,
       )
         .catch((err) => {
-          if (genRef.current !== gen) return;
-          if (controller.signal.aborted) return;
+          failure = err instanceof Error ? err.message : String(err);
+        })
+        .finally(() => {
+          if (genRef.current !== gen || controller.signal.aborted) return;
+          // Once a server has answered run_remote, a reopen that fails (a 502
+          // mid-deploy, a transient 404) spends a retry instead of ending the
+          // chain; only a failure with no retry left is shown as an error.
+          const delay =
+            remote || (failure !== null && reconnects > 0)
+              ? REMOTE_RECONNECT_DELAYS_MS[reconnects]
+              : undefined;
           setState((prev) => ({
             ...prev,
             connected: false,
-            error: err instanceof Error ? err.message : String(err),
+            ...(failure !== null && delay === undefined
+              ? { error: failure }
+              : {}),
           }));
-        })
-        .finally(() => {
-          if (genRef.current !== gen) return;
-          setState((prev) => ({ ...prev, connected: false }));
-          const delay = remote
-            ? REMOTE_RECONNECT_DELAYS_MS[reconnects]
-            : undefined;
-          if (delay === undefined || controller.signal.aborted) return;
+          if (delay === undefined) return;
           reconnects += 1;
           reconnectTimer = setTimeout(() => {
-            if (genRef.current !== gen) return;
-            setState((prev) => ({ ...prev, connected: true }));
-            open();
+            if (genRef.current === gen) open();
           }, delay);
         });
     };
