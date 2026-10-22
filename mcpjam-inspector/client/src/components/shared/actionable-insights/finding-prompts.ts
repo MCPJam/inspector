@@ -149,6 +149,16 @@ function affectedLine(finding: ActionableFinding): string {
   return `Affected: ${finding.affected.count} of ${finding.affected.total} ${finding.affected.unit}.`;
 }
 
+/** Server surfaces in words, shared by the panel and the prompts. */
+export const SURFACES: Record<string, string> = {
+  description: "Tool description",
+  input_schema: "Input schema",
+  output_schema: "Output schema",
+  handler: "Tool handler",
+  server_instructions: "Server instructions",
+  capability: "Server capability",
+};
+
 export type FindingPromptContext = {
   /** What the reader should re-run to verify, in their words — e.g.
    * "this eval suite", "this swarm wave", "this user-testing study". */

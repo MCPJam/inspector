@@ -54,11 +54,7 @@ export function ProblemSummary({
       }
     : undefined;
   return (
-    <article
-      data-testid={lead ? "problem-lead" : "problem"}
-      data-problem-id={problem.id}
-      data-option-kind={option?.kind}
-    >
+    <article data-testid={lead ? "problem-lead" : "problem"}>
       <div className="grid grid-cols-1 md:grid-cols-2">
         <section className="min-w-0 pb-5 md:pr-7 md:pb-2">
           <h4 className="flex items-center gap-2 text-sm font-semibold">
@@ -68,10 +64,7 @@ export function ProblemSummary({
             />
             What happened
           </h4>
-          <p
-            className="mt-3 break-words text-[15px] leading-7"
-            data-testid="problem-observed"
-          >
+          <p className="mt-3 break-words text-[15px] leading-7">
             <FindingText text={problem.observed} />
           </p>
           <p className="mt-2 text-xs text-muted-foreground">
@@ -85,10 +78,7 @@ export function ProblemSummary({
           </h4>
           {option ? (
             <>
-              <p
-                className="mt-3 break-words text-[15px] leading-7"
-                data-testid="problem-recommendation"
-              >
+              <p className="mt-3 break-words text-[15px] leading-7">
                 <FindingText text={option.change} />
               </p>
               <p className="mt-3 text-sm leading-relaxed">
