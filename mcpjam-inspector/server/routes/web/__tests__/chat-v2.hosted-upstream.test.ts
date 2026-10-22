@@ -91,9 +91,16 @@ function json(body: unknown): Response {
   });
 }
 
+// A `new Request(input, init)` follows `init.signal` only through a weak
+// reference, so a stalled request nothing else holds can be garbage collected
+// and never see the abort. Holding it here until then keeps the abort visible.
+const stalledRequests = new Set<Request>();
+
 function stallUntilAborted(request: Request, onAbort: () => void) {
+  stalledRequests.add(request);
   return new Promise<Response>((_resolve, reject) => {
     const rejectOnAbort = () => {
+      stalledRequests.delete(request);
       onAbort();
       reject(request.signal.reason);
     };
@@ -305,14 +312,16 @@ describe("hosted chat turn (MJ-001)", () => {
     // evidence the stuck connect was cancelled rather than left to run out
     // the manager's own per-request timeout and retries.
     let aborted = false;
-    const started = new Promise<void>((resolve) => {
-      upstream.current = (request) => {
-        resolve();
-        return stallUntilAborted(request, () => {
-          aborted = true;
-        });
-      };
+    let received!: () => void;
+    const requestReceived = new Promise<void>((resolve) => {
+      received = resolve;
     });
+    upstream.current = (request) => {
+      received();
+      return stallUntilAborted(request, () => {
+        aborted = true;
+      });
+    };
     const disconnectAll = vi.spyOn(
       MCPClientManager.prototype,
       "disconnectAllServers",
@@ -320,37 +329,28 @@ describe("hosted chat turn (MJ-001)", () => {
     const { prepareChatV2 } = await vi.importActual<
       typeof import("../../../utils/chat-v2-orchestration.js")
     >("../../../utils/chat-v2-orchestration.js");
-    prepareChatV2Mock.mockImplementation((args: any) => {
+    prepareChatV2Mock.mockImplementation(async (args: any) => {
       // The hosted turn asks for the real budget; shortened here so the test
       // does not wait 30 s.
       expect(args.toolListingTimeoutMs).toBe(WEB_CHAT_TOOL_LISTING_TIMEOUT_MS);
+      // The manager starts this connect when it is built, before the turn
+      // gets here. Starting the short budget only once the server holds the
+      // request keeps a slow runner from expiring it before the request is
+      // sent, which leaves nothing in flight to abort.
+      await requestReceived;
       return prepareChatV2({ ...args, toolListingTimeoutMs: 50 });
     });
 
     const { app, token } = createWebTestApp();
-    // Start the deadline clock only after the real manager reached the upstream.
-    // Otherwise a busy runner can time out before there is a request to abort.
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    try {
-      const pending = postJson(app, "/api/web/chat-v2", body, token);
-      await started;
-      expect(aborted).toBe(false);
-      await vi.advanceTimersByTimeAsync(50);
-      const response = await pending;
+    const response = await postJson(app, "/api/web/chat-v2", body, token);
 
-      expect(response.status).toBe(424);
-      const payload = (await response.json()) as {
-        code: string;
-        message: string;
-      };
-      expect(payload.code).toBe("TIMEOUT");
-      expect(payload.message).toMatch(/MCP server ".*" timed out/);
-      expect(disconnectAll).toHaveBeenCalled();
-      expect(aborted).toBe(true);
-      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-      disconnectAll.mockRestore();
-    }
+    expect(response.status).toBe(424);
+    const payload = (await response.json()) as any;
+    expect(payload.code).toBe("TIMEOUT");
+    expect(payload.message).toMatch(/MCP server ".*" timed out/);
+    expect(disconnectAll).toHaveBeenCalled();
+    expect(aborted).toBe(true);
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    disconnectAll.mockRestore();
   });
 });

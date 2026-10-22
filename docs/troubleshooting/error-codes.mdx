@@ -636,6 +636,18 @@ This model's provider is not enabled on MCPJam's hosted AI gateway, so MCPJam ca
 - Choose a model from a different provider.
 - Add your own key for this provider under **Settings → LLM Providers** (BYOK) to run the model on your key instead of MCPJam's gateway.
 
+### Model retired
+
+`provider/model_retired`
+
+This model has been retired and is no longer available on MCPJam. Retrying won't help.
+
+**Likely causes**
+- The model saved on this chat, eval or suite has been retired from MCPJam.
+
+**Next steps**
+- Choose a newer model, then run again.
+
 ### Provider quota
 
 `provider/quota`
@@ -944,6 +956,20 @@ the connection was deleted, disabled or moved, or its API key was removed.
 **Next steps**
 - Choose a model from an organization provider that is still connected.
 - Organization admins can add or reconnect the provider under **Organization → AI providers**.
+
+### Organization model not allowed
+
+`org/model_not_allowed`
+
+The organization provider this model runs on only allows certain models, and
+this model is not one of them.
+
+**Likely causes**
+- The organization's OpenRouter provider has a list of selected models that leaves this model out, or its Azure OpenAI provider has no deployment for it.
+
+**Next steps**
+- Choose a model the organization provider allows.
+- Organization admins can change the provider's models under **Organization → AI providers**.
 
 ### Organization provider unavailable
 

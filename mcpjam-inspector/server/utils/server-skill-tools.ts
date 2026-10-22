@@ -53,7 +53,7 @@
  * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
  */
 
-import { tool } from "ai";
+import { skillTool as tool } from "./skill-tool.js";
 import { z } from "zod";
 import {
   formatSkillCatalogBody,

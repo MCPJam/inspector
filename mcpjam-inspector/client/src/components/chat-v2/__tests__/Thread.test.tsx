@@ -120,6 +120,15 @@ describe("Thread", () => {
     expect(screen.getByTestId("thinking-indicator").parentElement).not.toHaveClass("pt-8", "pb-16");
   });
 
+  it("offers approval responses only after the stream has settled", () => {
+    const onToolApprovalResponse = vi.fn();
+    const messages = [createMessage({ role: "assistant" })];
+    const view = renderWithHost(<Thread {...defaultProps} messages={messages} isLoading onToolApprovalResponse={onToolApprovalResponse} />);
+    expect(mockMessageView).toHaveBeenLastCalledWith(expect.objectContaining({ onToolApprovalResponse: undefined }));
+    view.rerender(<Thread {...defaultProps} messages={messages} isLoading={false} onToolApprovalResponse={onToolApprovalResponse} />);
+    expect(mockMessageView).toHaveBeenLastCalledWith(expect.objectContaining({ onToolApprovalResponse }));
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     useWidgetSurfaceStore.setState({
@@ -253,7 +262,7 @@ describe("Thread", () => {
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           interactive: true,
-          reasoningDisplayMode: "inline",
+          reasoningDisplayMode: "collapsed",
         }),
       );
     });
