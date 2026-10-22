@@ -121,9 +121,9 @@ describe("POST /eval-suites/from-file sends the judge in catalog spelling", () =
     const call = convexMutationMock.mock.calls.find(
       ([name]) => name === "testSuites:resolveOrCreateFileOwnedSuite",
     );
-    expect(
-      (call![1] as { defaultConfig?: unknown }).defaultConfig,
-    ).toEqual({ modelId: "anthropic/claude-haiku-4.5" });
+    expect((call![1] as { defaultConfig?: unknown }).defaultConfig).toEqual({
+      modelId: "anthropic/claude-haiku-4.5",
+    });
   });
 
   it("forwards a judge without a model exactly", async () => {

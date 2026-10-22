@@ -220,6 +220,26 @@ describe("vocabulary 2 — the CLI's file-sync bodies land", () => {
     ]);
   });
 
+  it("refuses a mcpjam/ case model that is not a hosted catalog id", async () => {
+    // A dashed alias: stored, it would run as provider `mcpjam` and fail.
+    const res = await request(
+      "POST",
+      `${SUITE_PATH}/cases/batch?declaredSuiteId=${DECLARED_SUITE_ID}`,
+      {
+        cases: [
+          {
+            ...CLI_CREATE_BODY_V2,
+            models: [{ model: "mcpjam/anthropic/claude-haiku-4-5" }],
+          },
+        ],
+        declaredSuiteId: DECLARED_SUITE_ID,
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("mcpjam/anthropic/claude-haiku-4-5");
+    expect(authoredCase()).toBeUndefined();
+  });
+
   it("patches a case model written mcpjam/<vendor>/<model> to the hosted pick", async () => {
     const res = await request(
       "PATCH",

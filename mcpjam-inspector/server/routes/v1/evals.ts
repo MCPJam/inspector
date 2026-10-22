@@ -257,6 +257,7 @@ import {
 import {
   canonicalTargetModelEntry,
   canonicalTargetModelId,
+  isUnmappedHostedTarget,
 } from "./target-model-id.js";
 import {
   hostedCatalogModelDefinitions,
@@ -2921,7 +2922,12 @@ function providerForModelId(modelId: string): string {
  * verbatim against environment and host model ids downstream, so keeping
  * `" gpt-4o "` would mint a model that resolves to the right provider and then
  * matches nothing. Same normalization as `withTrimmedModelId` on the host write
- * boundary and the backend's `normalizeModelId`; only ever a trim.
+ * boundary and the backend's `normalizeModelId`.
+ *
+ * A target written `mcpjam/<vendor>/<model>` is stored as the hosted pick it
+ * names (`canonicalTargetModelEntry`), and one whose prefixed id is not a
+ * hosted catalog id is refused here: stored, it would run as provider
+ * `mcpjam`, which no rail serves.
  */
 function toPersistedModelEntry(sent: {
   model: string;
@@ -2932,10 +2938,20 @@ function toPersistedModelEntry(sent: {
   provider: string;
   selection?: RequestedModelSelection;
 } {
-  // `mcpjam/<vendor>/<model>` is stored as the hosted pick it names, or a
-  // hosted run would send the case down the BYOK path (PLB-188).
   const entry = canonicalTargetModelEntry(sent);
   const model = requireNonBlankModelId(entry.model);
+  // A non-hosted selection names its own model; the mismatch check below
+  // answers a prefixed id beside one.
+  if (
+    isUnmappedHostedTarget(model) &&
+    (!entry.selection || entry.selection.source === "hosted")
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `models[].model "${model}" is not a model MCPJam hosts. Use a hosted catalog id after "mcpjam/" (for example "mcpjam/anthropic/claude-haiku-4.5"), or drop the prefix to run on your own key.`,
+    );
+  }
   // A saved selection is FOR one model. Refuse a mismatch here rather than
   // persist a case whose chip and stored selection name different models.
   const mismatch = selectionModelMismatch(model, entry.selection);
