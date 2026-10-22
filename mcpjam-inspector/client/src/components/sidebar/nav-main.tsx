@@ -37,10 +37,9 @@ interface NavMainProps {
 }
 
 export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) {
-  const { open: sidebarOpen, isMobile } = useSidebar();
+  const { open: sidebarOpen, isMobile, setOpenMobile } = useSidebar();
   // The mobile sheet always shows labels, whatever the desktop rail does.
   const labelVisible = sidebarOpen || !!isMobile;
-  const { open: sidebarOpen, isMobile, setOpenMobile } = useSidebar();
 
   const handleClick = (url: string) => {
     if (onItemClick) {
