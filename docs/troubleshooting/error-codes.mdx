@@ -503,7 +503,7 @@ The response was HTTP 403 with an HTML content type and no authentication challe
 - A corporate proxy or SSO portal intercepted the request.
 
 **Next steps**
-- Allow MCPJam's egress addresses, or the address you connect from, on the server's firewall.
+- Allow MCPJam's [egress addresses](/hosted/network), or the address you connect from, on the server's firewall.
 - Open the server URL in a browser from the same network to see what answers.
 
 ### No Bearer challenge
@@ -635,6 +635,18 @@ This model's provider is not enabled on MCPJam's hosted AI gateway, so MCPJam ca
 **Next steps**
 - Choose a model from a different provider.
 - Add your own key for this provider under **Settings → LLM Providers** (BYOK) to run the model on your key instead of MCPJam's gateway.
+
+### Model retired
+
+`provider/model_retired`
+
+This model has been retired and is no longer available on MCPJam. Retrying won't help.
+
+**Likely causes**
+- The model saved on this chat, eval or suite has been retired from MCPJam.
+
+**Next steps**
+- Choose a newer model, then run again.
 
 ### Provider quota
 
@@ -945,6 +957,20 @@ the connection was deleted, disabled or moved, or its API key was removed.
 - Choose a model from an organization provider that is still connected.
 - Organization admins can add or reconnect the provider under **Organization → AI providers**.
 
+### Organization model not allowed
+
+`org/model_not_allowed`
+
+The organization provider this model runs on only allows certain models, and
+this model is not one of them.
+
+**Likely causes**
+- The organization's OpenRouter provider has a list of selected models that leaves this model out, or its Azure OpenAI provider has no deployment for it.
+
+**Next steps**
+- Choose a model the organization provider allows.
+- Organization admins can change the provider's models under **Organization → AI providers**.
+
 ### Organization provider unavailable
 
 `org/provider_unavailable`
@@ -1040,3 +1066,9 @@ An error occurred that the inspector could not classify.
 **Next steps**
 - Open the details panel of the ErrorCard and copy the raw message.
 - File an issue with the raw message so we can add it to the catalog.
+
+## Generation failed
+
+Persona or goal generation returned a response that could not be used. Try generation again. If it keeps failing, contact support with the request ID.
+
+The request ID lets the team find the saved failed response and its retry outcome. Failed model output is kept in private diagnostics and is not returned to the browser.

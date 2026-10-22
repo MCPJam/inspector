@@ -80,6 +80,7 @@ const DOCS_BASE = "/troubleshooting/error-codes";
  * A slug missing from this table fails the catalog test.
  */
 const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
+  "generation/invalid_output": "ambiguous",
   // --- The server answered, and the answer was the problem -----------------
   // This is a server-side error only when the wire evidence identifies the
   // server as the failing boundary. Keep protocol codes that can also be
@@ -132,6 +133,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
   "provider/mcpjam_limit_insufficient": "user_config",
+  // MCPJam retired the model the request names. Nothing failed: the backend
+  // refused before any provider work, and choosing a current model is the fix.
+  "provider/model_retired": "user_config",
   // The provider failed and the saved selection forbids a fallback. Whose
   // failure it was is not settled by the refusal itself — MCPJam's Gateway,
   // the upstream model provider, or a transient network fault — so it never
@@ -638,7 +642,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "A corporate proxy or SSO portal intercepted the request.",
     ],
     [
-      "Allow MCPJam's egress addresses, or the address you connect from, on the server's firewall.",
+      "Allow MCPJam's egress addresses (docs.mcpjam.com/hosted/network), or the address you connect from, on the server's firewall.",
       "Open the server URL in a browser from the same network to see what answers.",
     ],
     "proxy-rejected",
@@ -834,6 +838,19 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     "provider-not-allowlisted",
     "warning",
   ),
+  // The backend's `model_retired` code. Retrying meets the same refusal, so
+  // the only remedy is a newer model.
+  "provider/model_retired": entry(
+    "provider/model_retired",
+    "Model retired",
+    "This model has been retired and is no longer available on MCPJam. Choose a newer model.",
+    [
+      "The model saved on this chat, eval or suite has been retired from MCPJam.",
+    ],
+    ["Choose a newer model, then run again."],
+    "model-retired",
+    "warning",
+  ),
   // The backend refuses on one of two allowances and says which in its own
   // copy, so these are two slugs rather than one that lists both and makes the
   // reader pick. The unlabelled slug below stays as the net for copy that
@@ -985,6 +1002,14 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
 
   // --- Organization AI-key policy (org-policy-catalog.ts) ---
   ...orgPolicyCatalogEntries(entry),
+
+  "generation/invalid_output": entry(
+    "generation/invalid_output", "Generation failed",
+    "Generation failed. Please try again.",
+    ["The generation response did not match the required format."],
+    ["Try generation again. If it keeps failing, contact support with the request ID."],
+    "generation-failed",
+  ),
 
   // --- Internal / unknown ---
   "internal/unknown": entry(

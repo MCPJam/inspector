@@ -30,6 +30,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import type {
+  ElicitationFormSchemaSelector,
   InputRequests,
   InputResponses,
   MrtrInputCollector,
@@ -494,6 +495,7 @@ export function buildInputRequestDisplays(
   inputRequests: InputRequests,
   fieldCap: number = MRTR_DISPLAY_FIELD_MAX_BYTES,
   schemaCap: number = fieldCap,
+  selectFormSchema?: ElicitationFormSchemaSelector,
 ): MrtrInputRequestDisplay[] {
   const displays: MrtrInputRequestDisplay[] = [];
   for (const key of Object.keys(inputRequests)) {
@@ -529,7 +531,9 @@ export function buildInputRequestDisplays(
       });
       continue;
     }
-    const schema = params.requestedSchema;
+    const schema = selectFormSchema
+      ? selectFormSchema(params)
+      : params.requestedSchema;
     if (schema !== undefined) {
       // Reject an oversized schema rather than ship an unbounded blob to the UI.
       const bytes = Buffer.byteLength(JSON.stringify(schema), "utf8");
@@ -608,6 +612,8 @@ export interface HostedMrtrCollectorDeps {
   ttlMs?: number;
   /** Owned private adapters may admit larger schemas, preserving message/URL caps. */
   schemaDisplayMaxBytes?: number;
+  /** Where a form's schema comes from; the core `requestedSchema` when absent. */
+  selectFormSchema?: ElicitationFormSchemaSelector;
   // Seams for testing.
   create?: typeof createContinuation;
   encode?: typeof encodeResumeState;
@@ -640,6 +646,7 @@ export function createHostedMrtrCollector(
       inputRequests,
       undefined,
       deps.schemaDisplayMaxBytes,
+      deps.selectFormSchema,
     );
     const resumeState = encode(state);
     const continuationId = mintId();
@@ -670,15 +677,19 @@ export function createHostedMrtrCollector(
     if (!created.ok) {
       // No durable record ⇒ nothing for the browser to answer. Fail the op
       // honestly rather than emit a continuation id the store never accepted.
-      logger.error("[mrtr-continuation] create failed; failing operation", {
-        error: created.error,
-        ...redactContinuationForLog({
-          continuationId,
-          serverId: deps.serverId,
-          round: state.round,
-          operationMethod: state.method as MrtrOperationMethod,
-        }),
-      });
+      logger.error(
+        "[mrtr-continuation] create failed; failing operation",
+        undefined,
+        {
+          error: created.error,
+          ...redactContinuationForLog({
+            continuationId,
+            serverId: deps.serverId,
+            round: state.round,
+            operationMethod: state.method as MrtrOperationMethod,
+          }),
+        },
+      );
       throw new Error(
         `Failed to persist MRTR continuation (${created.status}): ${created.error}`,
       );
@@ -760,6 +771,8 @@ export interface ResumeMrtrDeps {
   serverName?: string;
   /** Same owned schema budget for new and replayed rounds; ordinary defaults remain. */
   schemaDisplayMaxBytes?: number;
+  /** Same schema choice for new and replayed rounds as the first display. */
+  selectFormSchema?: ElicitationFormSchemaSelector;
   // Store seams (default to the real client) for testing.
   claim?: typeof claimContinuation;
   submitResponse?: typeof submitContinuationResponse;
@@ -826,6 +839,7 @@ function replayCurrentRound(
       parked.pendingInputRequests,
       undefined,
       deps.schemaDisplayMaxBytes,
+      deps.selectFormSchema,
     );
     if (displays.length === 0) return null;
     // The claim payload carries no deadline; only emit the browser event when
@@ -1198,6 +1212,7 @@ export async function resumeMrtrContinuationLeg(
       nextState.pendingInputRequests,
       undefined,
       deps.schemaDisplayMaxBytes,
+      deps.selectFormSchema,
     );
   } catch (err) {
     return postWireLocalFailure(

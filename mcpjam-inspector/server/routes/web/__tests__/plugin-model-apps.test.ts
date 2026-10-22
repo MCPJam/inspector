@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   release: vi.fn(),
   read: vi.fn(),
   runtime: vi.fn(),
+  html: "<p>app</p>",
+  mimeTypeValid: true,
 }));
 vi.mock("../../../services/plugin-host/request-runtime.js", () => ({
   createPluginRequestRuntime: mocks.runtime,
@@ -15,7 +17,10 @@ vi.mock("../../../services/plugin-host/request-invocation.js", () => ({
   invokePluginRequest: mocks.invoke,
 }));
 vi.mock("../../../utils/widget-resource-content.js", () => ({
-  widgetResourceContent: () => ({ html: "<p>app</p>", mimeTypeValid: true }),
+  widgetResourceContent: () => ({
+    html: mocks.html,
+    mimeTypeValid: mocks.mimeTypeValid,
+  }),
 }));
 vi.mock("../../../utils/ui-resource-meta.js", () => ({
   canSkipListingLookup: () => true,
@@ -93,6 +98,8 @@ function fixture() {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.html = "<p>app</p>";
+  mocks.mimeTypeValid = true;
   mocks.read.mockResolvedValue({
     contents: [{ uri: "ui://app", text: "<p>app</p>" }],
   });
@@ -110,6 +117,23 @@ beforeEach(() => {
   });
 });
 describe("saved-server model App resource route", () => {
+  it.each([
+    ["above the old 1 MiB limit", "a".repeat(1024 * 1024 + 1), true, 200],
+    ["exactly 5 MiB", "a".repeat(5 * 1024 * 1024), true, 200],
+    ["over 5 MiB in UTF-8 bytes", "é".repeat(2621441), true, 403],
+    ["invalid MIME", "<p>app</p>", false, 403],
+  ])("uses the common UI bound: %s", async (_name, html, valid, status) => {
+    mocks.html = html;
+    mocks.mimeTypeValid = valid;
+    const f = fixture();
+    try {
+      expect((await f.request()).status).toBe(status);
+      expect(mocks.release).toHaveBeenCalledOnce();
+    } finally {
+      modelApps.close(f.token, actor);
+    }
+  });
+
   it("loads only the original saved server through admitted request runtime", async () => {
     const fixtureData = fixture();
     const response = await fixtureData.request();
@@ -235,6 +259,65 @@ describe("original model App context", () => {
       tool: { _meta: meta },
     });
     expect((await request()).status).toBe(403);
+    modelApps.close(f.token, actor);
+  });
+  it("removes all of its context through the same ownership checks", async () => {
+    const f = fixture();
+    const owner = {
+      projectId: "project",
+      pluginWorkspace: { version: 1, workspaceId: "workspace" },
+      instanceToken: f.token,
+    };
+    const post = (path: string, body: Record<string, unknown>) =>
+      f.router.request(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...owner, ...body }),
+      });
+    await post("/context", {
+      operationId: crypto.randomUUID(),
+      sequence: 1,
+      params: {
+        content: [{ type: "text", text: "Selected part" }],
+        structuredContent: { view: "front" },
+      },
+    });
+    const removal = { operationId: crypto.randomUUID(), basis: 0 };
+    const response = await post("/context/remove-all", removal);
+    expect(response.status).toBe(200);
+    const removed = await response.json();
+    expect(removed).toMatchObject({
+      outcome: "applied",
+      snapshot: { state: null, held: true, removedAt: 1 },
+    });
+    // A retry of the same operation answers from its receipt.
+    expect(await (await post("/context/remove-all", removal)).json()).toEqual(
+      removed,
+    );
+    // The single-block route is gone.
+    expect(
+      (
+        await post("/context/remove", {
+          ...removal,
+          updateId: removal.operationId,
+          index: 0,
+        })
+      ).status,
+    ).toBe(404);
+    // A changed source is refused before anything is removed.
+    mocks.resolve.mockResolvedValue({
+      revision: "other",
+      contextEnabled: true,
+      tool: { _meta: meta },
+    });
+    expect(
+      (
+        await post("/context/remove-all", {
+          ...removal,
+          operationId: crypto.randomUUID(),
+        })
+      ).status,
+    ).toBe(403);
     modelApps.close(f.token, actor);
   });
   it("does not advertise context when fresh host policy withholds it", async () => {

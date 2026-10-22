@@ -1,6 +1,7 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRegistration } from "../ThreadAppPanel";
+import { ALL_EXTENSION_CAPABILITIES } from "../extension-owners";
 const fixture = vi.hoisted(() => ({
   context: vi.fn(),
   log: vi.fn(),
@@ -104,6 +105,77 @@ describe("retained App registration", () => {
     expect(changedHost.services).toBe(initialHost.services);
     expect(changedHost.resolvers).toBe(initialHost.resolvers);
     expect(changedHost).toBe(initialHost);
+  });
+});
+
+describe("an entrypoint App's display modes", () => {
+  const props = (capabilities?: Record<string, boolean>) =>
+    ({
+      scope: {
+        projectId: "p",
+        hostId: "h",
+        threadId: "t",
+        pluginWorkspace: { version: 1, workspaceId: "w" },
+      },
+      publishContext: vi.fn(),
+      row: {
+        key: "k",
+        status: "live",
+        server: { serverId: "s", name: "Disposable" },
+        declaration: { kind: "global", toolName: "open", title: "Library" },
+        abort: new AbortController(),
+        handle: {
+          instanceId: "i",
+          instanceToken: "token",
+          operationId: "op",
+          appToolsEnabled: false,
+        },
+        result: { content: [] },
+      },
+      navigate: vi.fn(),
+      openFile: vi.fn(),
+      api: {},
+      approve: vi.fn(),
+      signal: new AbortController().signal,
+      host: { environment: {}, surface: {}, resolvers: {}, services: {} },
+      displayMode: "fullscreen",
+      onDisplayModeChange: vi.fn(),
+      onAppSupportedDisplayModesChange: vi.fn(),
+      ...(capabilities ? { capabilities } : {}),
+    }) as unknown as Parameters<typeof AppRegistration>[0];
+
+  it("follows OpenAI's rules and logs an App that can't show fullscreen", () => {
+    fixture.upsert.mockClear();
+    fixture.log.mockClear();
+    render(<AppRegistration {...props()} />);
+    const [, , registered, host] = fixture.upsert.mock.calls[0];
+    expect(host.surface.openAIDisplayModes).toBe(true);
+    registered.onAppSupportedDisplayModesChange(["inline", "fullscreen"]);
+    expect(fixture.log).not.toHaveBeenCalled();
+    registered.onAppSupportedDisplayModesChange(["inline"]);
+    expect(fixture.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "s",
+        label: "display-mode",
+        level: "error",
+        message: expect.stringContaining("doesn't support full screen"),
+      }),
+    );
+  });
+
+  it("keeps the previous behaviour when the Display modes toggle is off", () => {
+    fixture.upsert.mockClear();
+    fixture.log.mockClear();
+    const capabilities = Object.fromEntries(
+      Object.keys(ALL_EXTENSION_CAPABILITIES).map((key) => [key, true]),
+    );
+    render(
+      <AppRegistration {...props({ ...capabilities, displayModes: false })} />,
+    );
+    const [, , registered, host] = fixture.upsert.mock.calls[0];
+    expect(host.surface.openAIDisplayModes).toBeUndefined();
+    registered.onAppSupportedDisplayModesChange(["inline"]);
+    expect(fixture.log).not.toHaveBeenCalled();
   });
 });
 

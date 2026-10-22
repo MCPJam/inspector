@@ -42,6 +42,7 @@ import {
   GATED_FEATURE_COPY,
   type GatedFeatureId,
 } from "@/components/guest-preview/feature-highlights";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 
 /**
  * The creation flow from the tab root or `/new`, in whichever project the
@@ -134,6 +135,7 @@ export function FeatureSignUpNudgeDialog({
             Sign in
           </Button>
         </div>
+        <LegalConsentNotice />
       </DialogContent>
     </Dialog>
   );

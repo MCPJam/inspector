@@ -1,3 +1,4 @@
+import { useOrgUsagePages } from "./org-usage-pages";
 import { useCallback, useState } from "react";
 import { useQuery, useAction } from "convex/react";
 import type { PolicyEligibility } from "@/shared/org-ai-key-policy";
@@ -105,23 +106,7 @@ export function useOrgModelUsageSummary(
   organizationId: string | null,
   options: { enabled?: boolean; rangeDays?: number } = {}
 ): { summary: OrgModelUsageSummary | undefined; isLoading: boolean } {
-  const enabled = options.enabled ?? true;
-  const shouldQuery = !!organizationId && enabled;
-
-  const summary = useQuery(
-    "organizationModelProviders:getUsageSummary" as any,
-    shouldQuery
-      ? ({
-          organizationId,
-          rangeDays: options.rangeDays ?? 30,
-        } as any)
-      : "skip"
-  ) as OrgModelUsageSummary | undefined;
-
-  return {
-    summary,
-    isLoading: shouldQuery && summary === undefined,
-  };
+  return useOrgUsagePages(organizationId, options.enabled ?? true, options.rangeDays ?? 30);
 }
 
 export function useOrgModelConfig(

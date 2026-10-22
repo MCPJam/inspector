@@ -1,3 +1,4 @@
+import { prepareRestoredHarnessApproval, type ApprovalServerSelection } from "@/lib/prepare-restored-harness-approval";
 import {
   orgPolicyBlocksChatSend,
   orgPolicySendRefusal,
@@ -79,6 +80,7 @@ import {
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
@@ -284,8 +286,7 @@ import {
   isSandboxNoticeDataPart,
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
-import { isHistoryNoticeDataPart } from "@/shared/history-notice";
-import { useHistoryNoticeStore } from "@/stores/history-notice-store";
+import { noteTurnNoticePart } from "@/lib/turn-notice-parts";
 import {
   HOSTED_TASKS_VERSION,
   isTaskCreatedDataPart,
@@ -706,6 +707,8 @@ export interface UseChatSessionReturn {
     isCurrent?: () => boolean;
 
     pluginMentions?: PluginMentionSelection[];
+    /** Items an App's editable draft left in the composer, sent as-is. */
+    extraParts?: UIMessage["parts"];
     widgetModelContext?: WidgetModelContextEntry[];
     /**
      * Resolves `true` once the message was actually dispatched, `false` on
@@ -2133,6 +2136,7 @@ export function useChatSession(
     onResetRef.current = onReset;
   }, [onReset]);
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const isMemberActor = useIsMemberActor();
   // Elicitation answers go straight to Convex — the blocked replica isn't
   // addressable from here (see `elicitation-api.ts`).
   const convexClient = useConvex();
@@ -2526,6 +2530,7 @@ export function useChatSession(
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (noteTurnNoticePart(part, chatSessionIdRef.current)) return;
       if (part && typeof part === "object" && "type" in part && part.type === "data-platform-paid-fallback") {
         const session = chatSessionIdRef.current ?? "new";
         if (!paidFallbackNotices.current.has(session)) {
@@ -2784,18 +2789,6 @@ export function useChatSession(
           useHarnessAgentActivityStore
             .getState()
             .applyBackgroundTask(part.data);
-        } else if (isHistoryNoticeDataPart(part)) {
-          // Earlier replies in this chat are not in the model's context this
-          // turn; the thread says so, once, inline. Recorded for the chat the
-          // turn belongs to, which the part names: a part from an earlier
-          // turn can arrive after a reset, fork or thread switch.
-          const sessionId =
-            part.data.chatSessionId ?? chatSessionIdRef.current;
-          if (sessionId) {
-            useHistoryNoticeStore
-              .getState()
-              .noteEarlierRepliesNotSent(sessionId);
-          }
         } else if (isSandboxNoticeDataPart(part)) {
           // One-time fact about the scenario's ephemeral sandbox. Exactly-once
           // delivery is the BACKEND's job (it marks the notice consumed in the
@@ -2984,9 +2977,7 @@ export function useChatSession(
     [savedModelIdsSignature],
   );
 
-  // Build available models — the same composition every picker surface
-  // uses (see `composeAvailableModels`); only the org-config source is
-  // chat-specific (scenario embeds resolve a host-provided project context).
+  // Shared picker composition; scenario embeds use a host-provided org context.
   const outOfCreditsReason = useOutOfCreditsReason();
   const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
@@ -2995,7 +2986,7 @@ export function useChatSession(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
-        isAuthenticated,
+        isAuthenticated: isMemberActor === true,
         isOllamaRunning,
         ollamaModels,
         hasToken,
@@ -3013,7 +3004,7 @@ export function useChatSession(
       isOllamaRunning,
       ollamaModels,
       getAzureBaseUrl,
-      isAuthenticated,
+      isMemberActor,
       customProviders,
       hostedOrgModelConfig,
       outOfCredits,
@@ -3371,17 +3362,16 @@ export function useChatSession(
     });
   }, [appState, hostedProjectId, selectedServers]);
   // ── Hidden environment (a Playground chat's plugins) ────────────────────
-  //
-  // Only the web chat route resolves an environment, so a chat carries its
-  // hidden environment only where that route can run the turn. In the hosted
-  // app it always can. On this machine, a turn that has to stay on the local
-  // route — a client run here, a local-only server, a model keyed on this
-  // machine, this machine's browser or shell — runs as the plain client turn
-  // it would have been, and the surface says the plugins were off.
+  // Only the web chat route resolves an environment. On this machine a turn
+  // that must stay local (a client run here, a local-only server, a model
+  // keyed here, this machine's browser or shell) runs without its plugins and
+  // says so, unless they were composed for that client here (venue `local`).
   const hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null =
     !hostedHiddenEnvironment || HOSTED_MODE
       ? null
-      : !explicitRequiresWebChatApi && localHarnessExecution?.requested === true
+      : !explicitRequiresWebChatApi &&
+          localHarnessExecution?.requested === true &&
+          hostedHiddenEnvironment.venue !== "local"
         ? "local_harness"
         : hasLocalOnlySelectedServer
           ? "local_server"
@@ -3436,15 +3426,13 @@ export function useChatSession(
     !hostedScenarioId &&
     localHarnessExecution?.requested === true;
   const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi;
-  const shouldUseOrgAwareChatApi =
-    isHostedTransport ||
-    (selectedModelUsesOrgRuntime &&
-      !localMcpRuntimeRequired &&
-      // Local execution only exists on the local `/api/mcp` route. An
-      // org-runtime model would otherwise route an explicitly local turn to
-      // `/api/web/chat-v2`, which refuses the target — so the ask has to keep
-      // the turn on the route that can honour it.
-      !localHarnessRequested);
+  // An org-runtime model stays on the local `/api/mcp` route in a local build,
+  // like every other model. That route resolves the org connection itself (the
+  // key stays in Convex) and runs tools on this app's own MCP connections, so
+  // a tool result names its server the way the widget looks it up. The web
+  // route keys servers by Convex id — which the local widget endpoints can't
+  // resolve ("Unknown MCP server") — and reconnects every server per turn.
+  const shouldUseOrgAwareChatApi = isHostedTransport;
   const requestChoice = useMemo(() => chatRequestSelection({
     intent: effectiveSelectionIntent,
     selection: savedSelection,
@@ -3645,6 +3633,7 @@ export function useChatSession(
   // hosted send carries real ids for ad-hoc/App servers, not display names.
   // Carries the NAMES snapshot the ids were resolved from, so a selection
   // change during the async preflight can't pair stale ids with fresh names.
+  const restoredApprovalSelectionRef = useRef<ApprovalServerSelection | null>(null);
   const resolvedHostedServersRef = useRef<{
     serverIds: string[];
     serverNames: string[];
@@ -3688,11 +3677,10 @@ export function useChatSession(
     //
     // Scoped to the /api/mcp/chat-v2 path (`!shouldUseOrgAwareChatApi`): the
     // local engine only exists on the local server's mcp route (both this
-    // transmission AND the server-side resolver live there). An org-runtime
-    // model routes to /api/web/chat-v2, which has no local engine — so we send
-    // nothing local there (no stray consent header on the web route) and that
-    // turn's bash resolves cloud, as it must. Local engine + org model is a
-    // deliberate non-combo in v1.
+    // transmission AND the server-side resolver live there). A turn on
+    // /api/web/chat-v2 has no local engine — so we send nothing local there
+    // (no stray consent header on the web route) and that turn's bash
+    // resolves cloud, as it must.
     const sendLocalEngine =
       !shouldUseOrgAwareChatApi &&
       resolvedLocalEngine &&
@@ -4403,15 +4391,32 @@ export function useChatSession(
   // UI/page tools are client-fulfilled. Their approval response must be
   // routed through the shared defer/fulfill handler; a raw AI SDK approval
   // response would leave a no-execute page tool without a result.
-  const addToolApprovalResponse = useMemo(
-    () =>
-      createUiAwareApprovalResponseHandler({
-        getMessages: () => messagesRef.current,
-        addToolApprovalResponse: sdkAddToolApprovalResponse,
-        addToolOutput,
-      }),
-    [sdkAddToolApprovalResponse, addToolOutput],
-  );
+  const addToolApprovalResponse = useMemo(() => {
+    const respond = createUiAwareApprovalResponseHandler({
+      getMessages: () => messagesRef.current,
+      addToolApprovalResponse: sdkAddToolApprovalResponse,
+      addToolOutput,
+    });
+    return async (response: Parameters<typeof respond>[0]) => {
+      const selection = restoredApprovalSelectionRef.current;
+      if (reasoningEffortHarness && isHostedTransport && hostedEnsureServerIds &&
+          selection?.sessionId === chatSessionIdRef.current) {
+        try {
+          resolvedHostedServersRef.current = await prepareRestoredHarnessApproval({
+            selection,
+            targetKey: hostedTargetKeyRef.current,
+            currentSessionId: () => chatSessionIdRef.current,
+            currentTargetKey: () => hostedTargetKeyRef.current,
+            resolve: hostedEnsureServerIds,
+          });
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Could not prepare the saved servers for this approval. Try approving again.");
+          return;
+        }
+      }
+      return respond(response);
+    };
+  }, [sdkAddToolApprovalResponse, addToolOutput, reasoningEffortHarness, isHostedTransport, hostedEnsureServerIds]);
 
   useEffect(() => {
     const sessionId = chatSessionIdRef.current;
@@ -4956,6 +4961,7 @@ export function useChatSession(
       pluginMessage?: PluginMessageIntent;
       isCurrent?: () => boolean;
       pluginMentions?: PluginMentionSelection[];
+      extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
     }) => {
       const {
@@ -4966,6 +4972,7 @@ export function useChatSession(
         pluginMessage,
         isCurrent,
         pluginMentions,
+        extraParts,
       } = options;
 
       // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
@@ -5114,12 +5121,13 @@ export function useChatSession(
               { parts: pluginMessageParts(pluginMessage.params), ...extra },
               { body: { pluginMessage } },
             );
-          } else if (pluginMentions?.length) {
+          } else if (pluginMentions?.length || extraParts?.length) {
             baseSendMessage({
               parts: [
-                ...buildMentionContextMessages(pluginMentions).flatMap(
+                ...buildMentionContextMessages(pluginMentions ?? []).flatMap(
                   (message) => message.parts,
                 ),
+                ...(extraParts ?? []),
                 { type: "text", text },
                 ...(files ?? []),
               ],
@@ -5715,6 +5723,9 @@ export function useChatSession(
         return;
       }
 
+      restoredApprovalSelectionRef.current = Array.isArray(session.resumeConfig?.selectedServers)
+        ? { sessionId: session.chatSessionId, serverNames: [...session.resumeConfig.selectedServers] }
+        : null;
       skipNextForkDetectionRef.current = true;
       rewindRef.current = null;
       await queueSessionHydration({
@@ -6110,15 +6121,10 @@ export function useChatSession(
     requiresAuthForChat && isAuthenticated && !authHeaders;
   const orgOrHostedContextRequired =
     HOSTED_MODE || hostedRequiresWebChatApi || selectedModelUsesOrgRuntime;
-  const selectedServerIdsRequired =
-    HOSTED_MODE ||
-    hostedRequiresWebChatApi ||
-    (selectedModelUsesOrgRuntime &&
-      !localMcpRuntimeRequired &&
-      // Same carve-out as the route choice above, and for a sharper reason:
-      // this one feeds `hostedContextNotReady`, so getting it wrong leaves
-      // submit disabled forever with no way for the user to find out why.
-      !localHarnessRequested);
+  // Only the web route needs a Convex id per selected server. An org-runtime
+  // model in a local build runs on the local route by server name, so it needs
+  // the project (above) but never waits on ids.
+  const selectedServerIdsRequired = isHostedTransport;
   // When the surface provides a send-time resolver (`ensureServerIds`), the
   // preflight resolves ad-hoc/App server names → Convex ids at send, so a
   // pre-resolved id per selected server is NOT required up front — requiring

@@ -59,6 +59,7 @@ import {
   bearerAuthMiddleware,
   resetWorkOSRateLimitForTests,
 } from "../bearer-auth.js";
+import { logger } from "../../utils/logger.js";
 
 function createApp(): Hono {
   const app = new Hono();
@@ -234,8 +235,9 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     resolveUserByExternalIdMock.mockResolvedValueOnce({
       _id: "mcpjam_user_log",
     });
+    const orgId = "orglog".padEnd(32, "0");
     lookupWorkosKeyBindingMock.mockResolvedValueOnce({
-      mcpjamOrganizationId: "org_log",
+      mcpjamOrganizationId: orgId,
     });
 
     const app = new Hono();
@@ -269,7 +271,7 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { orgId: unknown }).orgId).toBe("org_log");
+    expect(((await res.json()) as { orgId: unknown }).orgId).toBe(orgId);
   });
 
   it("returns 401 UNAUTHORIZED with details.reason ORPHANED_KEY when the key has no org binding", async () => {
@@ -376,6 +378,33 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     expect(res.status).toBe(500);
     const body = (await res.json()) as { code?: string };
     expect(body.code).toBe("INTERNAL_ERROR");
+  });
+
+  it("hands the user lookup's thrown Error to logger.error, not the context object", async () => {
+    // Sentry captures logger.error's second argument. Passing the context
+    // there captured a plain object as "Error: Error" with no throw-site stack
+    // (INSPECTOR-HONO-3R).
+    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => {});
+    validateApiKeyMock.mockResolvedValueOnce({
+      apiKey: { id: "api_key_lookup", owner: { id: "user_lookup" } },
+    });
+    const thrown = new Error("convex unreachable");
+    resolveUserByExternalIdMock.mockRejectedValueOnce(thrown);
+
+    try {
+      const res = await createApp().request("/test", {
+        headers: { authorization: "Bearer sk_lookup" },
+      });
+
+      expect(res.status).toBe(500);
+      expect(errorLog).toHaveBeenCalledWith(
+        "Failed to resolve MCPJam user from WorkOS externalId",
+        thrown,
+        { workosUserId: "user_lookup" },
+      );
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });
 

@@ -73,12 +73,14 @@ import {
 } from "./server-secrets.js";
 import {
   buildXaaMintArgs,
-  isXaaMintErrorReported,
   mintXaaAccessToken,
   resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
-import { toXaaConnectFailure } from "../services/xaa-connect-error.js";
+import {
+  reportXaaMintFailure,
+  toXaaConnectFailure,
+} from "../services/xaa-connect-error.js";
 import {
   getLocalConfidentialCimdProvider,
   withSkillsExtensionCapability,
@@ -144,6 +146,12 @@ type LocalAuthorizeServerConfig =
        * materialization, immediately before the SDK config is built.
        */
       cwd?: string;
+      /**
+       * The backend's record that this row is a plugin's component, so it is
+       * prepared from its bundle even when its config names no placeholder.
+       * Absent on ordinary rows and from older backends.
+       */
+      pluginComponent?: true;
       hasEnv?: boolean;
       timeout?: number;
       clientCapabilities?: unknown;
@@ -1050,6 +1058,7 @@ async function applyLocalRuntimeResolution<
       serverName: args.managerKey,
       displayName: args.serverDisplayName ?? args.managerKey,
       onLease: args.onPluginLease,
+      pluginComponent: stdioConfig.pluginComponent === true,
       spec: {
         command: stdioConfig.command,
         args: stdioConfig.args ?? [],
@@ -1114,7 +1123,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
   accessScope?: "project_member" | "chat_v2";
   scenarioId?: string;
   accessVersion?: number;
-}): Promise<PluginStdioLaunchSpec> {
+}): Promise<PluginStdioLaunchSpec & { pluginComponent?: true }> {
   const result = await authorizeServerLocal(
     null,
     args.bearerToken,
@@ -1157,6 +1166,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
     args: config.args ?? [],
     env,
     ...(config.cwd !== undefined ? { workingDirectory: config.cwd } : {}),
+    ...(config.pluginComponent ? { pluginComponent: true as const } : {}),
   };
 }
 
@@ -1487,14 +1497,12 @@ export async function resolveLocalServerForConnect(
       const minted = await mintXaaAccessToken(mintArgs);
       resolvedOauthAccessToken = minted.accessToken;
     } catch (error) {
-      if (!isXaaMintErrorReported(error)) {
-        logger.error("[XAA connect] mint failed", error, {
-          serverId,
-          serverName: options?.serverDisplayName ?? serverId,
-          resource: sc.url,
-        });
-      }
-      // Re-framed AFTER the log above: the debugger-worded original still
+      reportXaaMintFailure(error, {
+        serverId,
+        serverName: options?.serverDisplayName ?? serverId,
+        resource: sc.url,
+      });
+      // Re-framed AFTER the report above: the debugger-worded original still
       // reaches Sentry/Axiom (as `cause`), the caller gets one sentence that
       // names this server and the action that fixes it.
       throw toXaaConnectFailure(error, xaaFailureTarget);

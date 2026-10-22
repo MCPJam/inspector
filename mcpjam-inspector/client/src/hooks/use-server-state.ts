@@ -80,10 +80,12 @@ import {
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
+  onlyStoresCredential,
   readHostedOAuthPendingMarker,
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
+import { markOnboardingSignInCompleted } from "@/lib/plugin-onboarding-intent";
 import {
   markPendingChatScopeStepUpCancelled,
   markPendingChatScopeStepUpReady,
@@ -1284,9 +1286,9 @@ export function useServerState({
 
   const latestEffectiveServersRef = useRef(effectiveServers);
 
-  useEffect(() => {
-    latestEffectiveServersRef.current = effectiveServers;
-  }, [effectiveServers]);
+  // Child effects can request readiness before this hook's passive effects.
+  // Publish the rendered snapshot now so that first attempt sees its servers.
+  latestEffectiveServersRef.current = effectiveServers;
 
   const isClientConfigSyncPending = useProjectClientConfigSyncPending(
     effectiveActiveProjectId,
@@ -3069,22 +3071,21 @@ export function useServerState({
           });
         localStorage.removeItem("mcp-oauth-return-hash");
         if (hostedCallbackContext) {
-          // The pending marker is written for local-mode project flows too —
-          // clear it whenever a marker-backed callback settles, not only on
-          // the hosted completion path.
+          // Local-mode project flows write the marker too; clear it here.
           clearHostedOAuthPendingState();
         }
         if (result.success) {
           localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
         }
 
-        if (!result.success && hostedCallbackContext?.connectionIntent) {
+        if (!result.success && onlyStoresCredential(hostedCallbackContext)) {
           if (!suppressErrorToast) {
             toast.error(result.error ?? "Could not connect the account");
           }
           return;
         }
-        if (result.success && hostedCallbackContext?.connectionIntent) {
+        if (result.success && onlyStoresCredential(hostedCallbackContext)) {
+          markOnboardingSignInCompleted(hostedCallbackContext?.pluginSignIn);
           if (!HOSTED_MODE && result.serverName) {
             const existing =
               appStateServersRef.current[result.serverName] ??
@@ -3093,9 +3094,7 @@ export function useServerState({
               await guardedReconnectServer(result.serverName, existing.config);
           }
           notifyOAuthConnectionsChanged();
-          if (!suppressSuccessToast) {
-            toast.success("Account connected");
-          }
+          if (!suppressSuccessToast) toast.success("Account connected");
           return;
         }
         if (result.success && result.serverConfig && result.serverName) {
@@ -3823,16 +3822,16 @@ export function useServerState({
         : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
       saveOAuthConfigToLocalStorage(formData);
 
+      // Keyed by server id where one exists; name is the last-resort key for
+      // servers that haven't synced an id yet. Declared outside the try so the
+      // catch can clear a marker this attempt left pending.
+      const escalationIdentity: AutoEscalationIdentity = {
+        projectId: appState.activeProjectId,
+        serverId: hostedServerId ?? null,
+        serverName: formData.name,
+      };
       try {
         if (formData.type === "http" && formData.useOAuth && formData.url) {
-          // Keyed by project + server id so identically named servers across
-          // projects don't share escalation state; name is the last-resort
-          // key for servers that haven't synced an id yet.
-          const escalationIdentity: AutoEscalationIdentity = {
-            projectId: appState.activeProjectId,
-            serverId: hostedServerId ?? null,
-            serverName: formData.name,
-          };
           // Reuse the canonical config from `toMCPConfig` (which carries the
           // 2026 `mcpProtocolVersion` stamp) rather than rebuilding a URL-only
           // config that drops the wire era — otherwise this first stored-cred
@@ -4163,9 +4162,9 @@ export function useServerState({
                 );
               }
             } else {
-              // Redirect pending — the marker stays PENDING on purpose; it's
-              // what survives the page navigation so the post-callback
-              // reconnect doesn't re-prompt.
+              // Redirect pending — the marker stays PENDING; the page is about
+              // to unload, and the marker does not outlive the redirect (see
+              // auto-oauth-escalation.ts).
               showConnectionSuccess(
                 "OAuth flow initiated. You will be redirected to authorize access.",
               );
@@ -4287,6 +4286,10 @@ export function useServerState({
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
         if (isStaleOp(formData.name, token)) return;
+        // A throw after `markPending` (registry OAuth config lookup, OAuth
+        // init) is terminal too; a pending marker would turn the next 401
+        // into a false "still returns 401 after OAuth".
+        autoOAuthEscalation.markFailed(escalationIdentity);
         dispatch({
           type: "CONNECT_FAILURE",
           name: formData.name,
@@ -5144,6 +5147,31 @@ export function useServerState({
     previewedHostIdForToast,
   ]);
 
+  // Markers are written under this hook's identity, so App-side cleanup must
+  // go through here instead of rebuilding the key from its own ids.
+  const clearAutoOAuthEscalation = useCallback(
+    (serverName: string) => {
+      const resolved = tryResolveProjectServer(serverName);
+      autoOAuthEscalation.markFailed({
+        // Auto escalation is created in the active project scope. Use that
+        // same identity for cleanup even when a stale resolver entry points at
+        // a different project.
+        projectId: appState.activeProjectId,
+        serverId: resolved?.serverId ?? null,
+        serverName,
+      });
+      // A connect may have marked Auto before its hosted id was available.
+      // Clear that name-keyed fallback as well so Cancel never suppresses the
+      // next deliberate authorization attempt.
+      autoOAuthEscalation.markFailed({
+        projectId: appState.activeProjectId,
+        serverId: null,
+        serverName,
+      });
+    },
+    [appState.activeProjectId],
+  );
+
   const handleDisconnect = useCallback(
     async (serverName: string) => {
       checkWasConnectedRef.current.delete(serverName);
@@ -5151,6 +5179,9 @@ export function useServerState({
       if (queuedScope)
         serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
+      // The op token bump makes an in-flight Auto connect return without
+      // clearing its marker; clear it here so the next connect re-prompts.
+      clearAutoOAuthEscalation(serverName);
       logger.info("Disconnecting from server", { serverName });
       dispatch({ type: "DISCONNECT", name: serverName });
       try {
@@ -5170,7 +5201,7 @@ export function useServerState({
         });
       }
     },
-    [dispatch, logger],
+    [clearAutoOAuthEscalation, dispatch, logger],
   );
 
   // Runtime-only counterpart to `handleDisconnect`. Just flips the in-memory
@@ -5188,30 +5219,14 @@ export function useServerState({
       if (queuedScope)
         serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
-      const resolved = tryResolveProjectServer(serverName);
-      autoOAuthEscalation.markFailed({
-        // Auto escalation is created in the active project scope. Use that
-        // same identity for cleanup even when a stale resolver entry points at
-        // a different project.
-        projectId: appState.activeProjectId,
-        serverId: resolved?.serverId ?? null,
-        serverName,
-      });
-      // A connect may have marked Auto before its hosted id was available.
-      // Clear that name-keyed fallback as well so Cancel never suppresses the
-      // next deliberate authorization attempt.
-      autoOAuthEscalation.markFailed({
-        projectId: appState.activeProjectId,
-        serverId: null,
-        serverName,
-      });
+      clearAutoOAuthEscalation(serverName);
       clearPendingOAuthAttempt(serverName);
       if (readHostedOAuthPendingMarker()?.serverName === serverName) {
         clearHostedOAuthPendingState();
       }
       dispatch({ type: "DISCONNECT", name: serverName });
     },
-    [appState.activeProjectId, dispatch],
+    [clearAutoOAuthEscalation, dispatch],
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
@@ -5935,7 +5950,7 @@ export function useServerState({
         if (authResult.kind === "reauth_required") {
           if (isStaleOp(serverName, token)) {
             return {
-              status: "reauth",
+              status: "superseded",
               error: authResult.error,
             };
           }
@@ -6741,6 +6756,7 @@ export function useServerState({
     handleConnect,
     handleDisconnect,
     handleRuntimeDisconnect,
+    clearAutoOAuthEscalation,
     handleReconnect,
     reconnectServerWithResult,
     connectServerWithResult,

@@ -252,6 +252,7 @@ function registerEvalSuite(
       try {
         result = await selectedSuite.run(executor, {
           ...options.run,
+          surface: "vitest",
           summary: "none",
         });
       } finally {
@@ -372,7 +373,7 @@ function registerTestEval(
     beforeAll(async () => {
       executor = await resolveExecutor(options);
       try {
-        run = await test.run(executor, { ...options.run, summary: "none" });
+        run = await test.run(executor, { ...options.run, surface: "vitest", summary: "none" });
       } finally {
         const completed = run ?? test.getResults();
         if (completed && options.summary !== "none") {

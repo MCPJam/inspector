@@ -1,3 +1,4 @@
+import { setImmediate } from "node:timers/promises";
 import { Hono } from "hono";
 import {
   afterAll,
@@ -460,6 +461,7 @@ describe("App call backend trips", () => {
   const settled = () =>
     vi.waitFor(() => expect(f.log).toContain("receipt.write:completed"));
   beforeEach(async () => {
+    await import("../plugin-instances");
     const { resetPluginFastStoreDetection } =
       await import("../../../services/plugin-host/service-store");
     const { resetPluginCombinedClaimDetection } =
@@ -478,6 +480,7 @@ describe("App call backend trips", () => {
   afterEach(() => {
     delete process.env.CONVEX_URL;
     f.latency = undefined;
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -513,9 +516,6 @@ describe("App call backend trips", () => {
   const AFTER_ANSWER = ["receipt.write:completed"];
   const backendTrips = (log: string[]) =>
     log.filter((entry) => !entry.startsWith("tools/")).length;
-  /** Before this change, for the report: 23 backend calls, 15 one after
-   * another, all before the answer (5 tools/list). */
-  const BEFORE = { backend: 23, sequential: 15, toolsList: 5 };
 
   it("an App tools/call makes its backend trips in this order, all through the Convex client", async () => {
     const instanceToken = await open("thread-trips");
@@ -700,12 +700,7 @@ describe("App call backend trips", () => {
     },
   );
 
-  /**
-   * Measured from a laptop against the dev deployment: a Convex query about
-   * 90 ms, a mutation about 100 ms, an HTTP action about 500 ms, and a full
-   * target authorization 500-900 ms. Run at a fifth of real time; reported in
-   * real milliseconds.
-   */
+  // Simulated network latency, scaled to keep the scenario short.
   const SCALE = 5;
   const REAL = {
     convex: 90,
@@ -730,85 +725,99 @@ describe("App call backend trips", () => {
     expect([response.status, body]).toEqual([200, expect.anything()]);
     return Math.round((performance.now() - started) * SCALE);
   };
+  /** The completion records landed and no trip is still in flight. */
+  const drained = async (completed: number) => {
+    await vi.waitFor(() =>
+      expect(f.log.filter((entry) => entry === AFTER_ANSWER[0])).toHaveLength(
+        completed,
+      ),
+    );
+    await vi.waitFor(() => expect(f.flight).toBe(0));
+  };
+
+  const driveSimulatedTime = async (scenario: Promise<void>) => {
+    let done = false;
+    // Handle rejection while driving; awaiting scenario below reports it.
+    const markSettled = () => {
+      done = true;
+    };
+    const settledScenario = scenario.then(markSettled, markSettled);
+    for (let elapsed = 0; !done && elapsed < 5_000; elapsed++) {
+      await vi.advanceTimersByTimeAsync(1);
+      await setImmediate();
+    }
+    expect(done, "Scenario exceeded 5000 ms of simulated time").toBe(true);
+    await settledScenario;
+    await scenario;
+  };
 
   it("an App call and an activation each answer in about 600 ms at realistic latencies, racing or not", async () => {
-    realistic();
-    // Each step settles (its completion record lands) before the next.
-    const measure = async (run: () => Promise<Response>) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const scenario = (async () => {
+      realistic();
+      const measure = async (run: () => Promise<Response>) => {
+        reset();
+        const ms = await timed(run);
+        await settled();
+        return ms;
+      };
+      const thread = await open("thread-latency");
+      const threadExecute = await measure(() => execute(thread));
+      await measure(() => call(thread));
+      const steady = await measure(() => call(thread));
+      const global = await open("global-latency", "global");
+      const globalExecute = await measure(() => execute(global));
+      // The App's first call while its entrypoint call runs: the App asks
+      // right after it loads. Each request leases its own connection, so the
+      // second pays one connection authorization.
+      const raced = await open("thread-latency-race");
       reset();
-      const ms = await timed(run);
-      await settled();
-      return ms;
-    };
-    const thread = await open("thread-latency");
-    const threadExecute = await measure(() => execute(thread));
-    await measure(() => call(thread));
-    const steady = await measure(() => call(thread));
-    const global = await open("global-latency", "global");
-    const globalExecute = await measure(() => execute(global));
-    // The App's first call while its entrypoint call runs: the App asks
-    // right after it loads. Each request leases its own connection, so the
-    // second pays one connection authorization.
-    const raced = await open("thread-latency-race");
-    f.toolCalls = [];
-    const race = await Promise.all([
-      timed(() => execute(raced)),
-      (async () => {
-        await wait(REAL.convex / SCALE);
-        return timed(() => call(raced));
-      })(),
-    ]);
-    // Each tool ran once, and the App's first call is nowhere near the
-    // 15 s an OpenAI SDK App waits for an answer.
-    expect(f.toolCalls.sort()).toEqual([appTool.name, tool.name].sort());
-    expect(Math.max(...race)).toBeLessThan(3_000);
-    console.info(
-      "[app-call-latency]",
-      JSON.stringify({
-        latency: REAL,
-        trips: {
-          before: BEFORE,
-          after: {
-            backend: backendTrips(APP_CALL) + AFTER_ANSWER.length,
-            beforeAnswer: backendTrips(APP_CALL),
-            sequential: 6,
-            toolsList: 1,
-          },
-        },
-        threadExecute,
-        globalExecute,
-        steadyCall: steady,
-        race: { execute: race[0], firstCall: race[1] },
-      }),
-    );
-    // Six round trips (90-100 ms) and the catalog: about 600 ms.
-    for (const ms of [threadExecute, globalExecute, steady, race[0]])
-      expect(ms).toBeLessThan(750);
+      const race = await Promise.all([
+        timed(() => execute(raced)),
+        (async () => {
+          await wait(REAL.convex / SCALE);
+          return timed(() => call(raced));
+        })(),
+      ]);
+      // Each tool ran once, and the App's first call is nowhere near the
+      // 15 s an OpenAI SDK App waits for an answer.
+      expect(f.toolCalls.sort()).toEqual([appTool.name, tool.name].sort());
+      expect(Math.max(...race)).toBeLessThan(3_000);
+      // Drain before the fake clock goes: its pending trips never finish.
+      await drained(2);
+
+      // Six round trips (90-100 ms) and the catalog: about 600 ms.
+      for (const ms of [threadExecute, globalExecute, steady, race[0]])
+        expect(ms).toBeLessThan(750);
+    })();
+    await driveSimulatedTime(scenario);
   });
 
   it("re-authorizes an App's connection ahead of its window, so a call past 60 s stays fast", async () => {
-    realistic();
-    const start = Date.now();
-    const clock = vi.spyOn(Date, "now").mockReturnValue(start);
-    const app = await open("thread-latency-window");
-    await timed(() => call(app));
-    // 35 s later the App calls again: this call answers on the current
-    // authorization while a full one runs beside it.
-    clock.mockReturnValue(start + 35_000);
-    reset();
-    const refreshing = await timed(() => call(app));
-    await vi.waitFor(() => expect(f.counts["target-authorization"]).toBe(1));
-    await wait((REAL.authorize * 2) / SCALE);
-    // 64 s after the connection was first authorized.
-    clock.mockReturnValue(start + 64_000);
-    reset();
-    const pastWindow = await timed(() => call(app));
-    expect(f.counts["target-authorization"]).toBeUndefined();
-    console.info(
-      "[app-call-window]",
-      JSON.stringify({ refreshing, pastWindow }),
-    );
-    expect(refreshing).toBeLessThan(750);
-    expect(pastWindow).toBeLessThan(750);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const scenario = (async () => {
+      realistic();
+      const start = Date.now();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+      const app = await open("thread-latency-window");
+      await timed(() => call(app));
+      // 35 s later the App calls again: this call answers on the current
+      // authorization while a full one runs beside it.
+      clock.mockReturnValue(start + 35_000);
+      reset();
+      const refreshing = await timed(() => call(app));
+      await vi.waitFor(() => expect(f.counts["target-authorization"]).toBe(1));
+      await wait((REAL.authorize * 2) / SCALE);
+      // 64 s after the connection was first authorized.
+      clock.mockReturnValue(start + 64_000);
+      reset();
+      const pastWindow = await timed(() => call(app));
+      expect(f.counts["target-authorization"]).toBeUndefined();
+      await drained(1);
+
+      expect(refreshing).toBeLessThan(750);
+      expect(pastWindow).toBeLessThan(750);
+    })();
+    await driveSimulatedTime(scenario);
   });
 });

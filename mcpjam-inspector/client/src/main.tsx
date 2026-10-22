@@ -1,5 +1,6 @@
-// Must stay the first import; OAuth modules retain window.fetch at load time.
-import "./lib/install-failed-request-tracker";
+// Must stay first; OAuth modules and SDKs retain window.fetch at load time.
+import "./lib/install-telemetry-transport";
+import { capturePromoIntent, watchPromoIntent } from "./lib/promo-intent";
 import {
   consumeAccessLinkFromUrl,
   watchForAccessLinks,
@@ -10,6 +11,19 @@ import { createRoot, type Root } from "react-dom/client";
 import { appRoot } from "./app-root";
 import LoadingScreen from "./components/LoadingScreen";
 import { Button } from "@mcpjam/design-system/button";
+// Bundled rather than fetched from Google Fonts, which would send every
+// visitor's IP address to Google before any consent.
+import "@fontsource/caveat/400.css";
+import "@fontsource/caveat/500.css";
+import "@fontsource/caveat/600.css";
+import "@fontsource/caveat/700.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
+import "@fontsource/ibm-plex-mono/700.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
+import "@fontsource/jetbrains-mono/600.css";
 import "./index.css";
 import { buildElectronMcpCallbackUrl } from "./lib/electron-mcp-callback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
@@ -72,6 +86,8 @@ function FirstRunOAuthReturnBootScreen({ serverName }: { serverName: string }) {
 }
 
 consumeAccessLinkFromUrl();
+capturePromoIntent();
+watchPromoIntent();
 watchForAccessLinks();
 // After the access link, whose `#token=` it would otherwise drop wholesale
 // along with any other fragment it cannot vouch for; before anything that

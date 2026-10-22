@@ -26,6 +26,9 @@ import {
   type LocalOrgAttemptRequest,
 } from "./org-runtime-admission.js";
 
+import { observeLocalProviderAttempts } from "./local-provider-attempts.js";
+import type { LocalExecutionAttempt } from "./local-execution-record.js";
+
 type AttemptModel = ReturnType<typeof wrapLanguageModel>;
 
 function asAttemptModel(model: LanguageModel): AttemptModel {
@@ -47,6 +50,7 @@ export function admitEachLocalOrgAttempt(
   model: LanguageModel,
   admission: LocalOrgAttemptRequest | undefined,
   modelId: string,
+  attempts?: LocalExecutionAttempt[],
 ): AttemptModel {
   const admittedModel = async (abortSignal: AbortSignal | undefined) => {
     if (!admission) {
@@ -56,7 +60,10 @@ export function admitEachLocalOrgAttempt(
     }
     const provider = await admitLocalOrgAttempt(admission, { abortSignal });
     assertOrgModelAllowed(provider, modelId);
-    return asAttemptModel(buildOrgModelFromResolvedConfig(provider, modelId));
+    const prepared = buildOrgModelFromResolvedConfig(provider, modelId);
+    return attempts
+      ? observeLocalProviderAttempts(prepared, modelId, attempts)
+      : asAttemptModel(prepared);
   };
   return wrapLanguageModel({
     model: asAttemptModel(model),

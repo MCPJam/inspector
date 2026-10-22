@@ -4,6 +4,7 @@ import {
   usePluginSetupStatus,
   usePluginVersion,
 } from "@/hooks/usePluginImportApi";
+import { usePluginServerSignIn } from "@/hooks/usePluginServerSignIn";
 import type { PluginServerDetail } from "@/components/connection/ServerDetailModal";
 import {
   PluginServerCard,
@@ -85,6 +86,7 @@ export function InstalledPluginServerCards({
   const activeVersionId = plugin.activeVersionId ?? null;
   const version = usePluginVersion(activeVersionId);
   const setupStatus = usePluginSetupStatus(activeVersionId);
+  const signIn = usePluginServerSignIn(plugin.projectId);
   const cards = pluginCardServers(plugin, version, row);
   const pluginLabel = plugin.displayName || plugin.name;
   const showsNowhere =
@@ -117,12 +119,22 @@ export function InstalledPluginServerCards({
         const readiness = setupStatus?.components.find(
           (component) => component.componentKey === card.componentKey,
         )?.readiness;
+        const unavailable = row?.servers.find(
+          (server) => server.componentKey === card.componentKey,
+        )?.unavailable;
         const status = describePluginStatus({
           enabled: plugin.enabled,
           activeVersionId,
           row,
           readiness,
+          unavailable,
         });
+        const { componentKey } = card;
+        const needsSignIn =
+          (unavailable ?? readiness) === "needs_auth" &&
+          signIn.available &&
+          !!activeVersionId &&
+          !!componentKey;
         return (
           <PluginServerCard
             key={card.serverId}
@@ -138,6 +150,18 @@ export function InstalledPluginServerCards({
                 serverName: card.name,
               })
             }
+            {...(needsSignIn
+              ? {
+                  signIn: {
+                    pending: signIn.pendingKey === componentKey,
+                    onSignIn: () =>
+                      void signIn.signIn({
+                        pluginVersionId: activeVersionId,
+                        componentKey,
+                      }),
+                  },
+                }
+              : {})}
           />
         );
       })}

@@ -40,6 +40,13 @@ on:
         required: false
         default: ""
         type: string
+      # Both dispatch as a token's owner or a bot, so the Slack post would
+      # name them rather than the person who asked for the release.
+      requested_by:
+        description: "Set by Soundcheck or release-trigger.yml: who started this release"
+        required: false
+        default: ""
+        type: string
 
 # One release at a time. A second dispatch waits, then finds its versions
 # already on npm.
@@ -48,7 +55,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
 
 # Every Ubuntu job below runs on `vars.RELEASE_RUNNER` when it is set, else
 # `ubuntu-latest`. On the shared runners a release's short jobs (publish,
@@ -506,7 +513,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Verify evaluator publication ordering
-        run: node --test .github/scripts/publish-evaluators-first.test.mjs
+        run: node --test .github/scripts/publish-evaluators-first.test.mjs .github/scripts/sdk-sourcemaps.test.mjs
 
       - name: Build evaluators
         run: npm run build -w @mcpjam/evaluators
@@ -543,7 +550,10 @@ jobs:
           # so a token alone would not have been enough.) The upload itself is
           # best-effort: the plugin reports upload failures without failing the
           # build, and Sentry being down must not fail a release. The assert
-          # below is what is allowed to.
+          # below is what is allowed to. `build:server` follows the same rule for
+          # the server's maps (mcpjam-inspector/scripts/server-sourcemaps.mjs):
+          # a missing or mismatched map fails this step, while a failed upload
+          # is an error annotation and step-summary line, not a failed release.
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           MCPJAM_BUILD_SURFACE: npm
 
@@ -706,17 +716,6 @@ jobs:
               || fail "mcpjam-inspector/dist/client is missing — publishing now would ship an inspector with no UI."
           fi
 
-      # NOTE: sdk's `prepublishOnly: npm run build` re-runs during the publish
-      # below, overwriting these injected debug ids in the packed tarball. That
-      # is a pre-existing bug (it predates this job split) and is tracked
-      # separately — the real fix is to inject inside the sdk's own prepack.
-      # Left in place so behavior matches what shipped before.
-      - name: Inject SDK sourcemap debug ids
-        if: fromJSON(needs.preflight.outputs.publish_sdk)
-        run: npx @sentry/cli sourcemaps inject ./sdk/dist
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-
       - name: Publish evaluator dependency first
         if: fromJSON(needs.preflight.outputs.publish_evaluators)
         run: node .github/scripts/publish-evaluators-first.mjs
@@ -732,6 +731,8 @@ jobs:
         if: fromJSON(needs.preflight.outputs.publish_sdk)
         continue-on-error: true
         run: |
+          # npm's SDK prepack injects after its prepublish rebuild. No build or
+          # injection may run between packing and uploading these same files.
           version=$(node -p "require('./sdk/package.json').version")
           npx @sentry/cli sourcemaps upload \
             --release="@mcpjam/sdk@${version}" \
@@ -764,6 +765,7 @@ jobs:
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
   deploy-backend-prod:
     needs:
@@ -874,6 +876,8 @@ jobs:
     uses: ./.github/workflows/deploy-webapp.yml
     with:
       require_staging_green: false
+      # This run's own start and finish posts cover the webapp deploy.
+      announce: false
     secrets: inherit
 
   # The Slack bot renders the server's envelope, so a release redeploys it
@@ -1090,3 +1094,138 @@ jobs:
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
           draft: false
+
+  # Tells #engineering a release is going out and how it ended, so an alert
+  # during or after it has context. The backend and webapp deploys it starts
+  # stay quiet, so a release posts once at each end. Only a run
+  # that publishes something posts, and a Slack problem never fails it.
+  announce-start:
+    needs: preflight
+    if: needs.preflight.outputs.publish_any == 'true'
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    outputs:
+      started_at: ${{ steps.post.outputs.started_at }}
+      slack_ts: ${{ steps.post.outputs.slack_ts }}
+      kind: ${{ steps.post.outputs.kind }}
+    steps:
+      - name: Announce the release in Slack
+        id: post
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOYS_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ vars.SLACK_DEPLOYS_CHANNEL || 'C0BF4A8A1QQ' }}
+          NAME: ${{ needs.preflight.outputs.release_tag || inputs.versions || 'packages' }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+          BACKEND: ${{ inputs.deploy_backend_prod }}
+          WEBAPP: ${{ inputs.deploy_webapp }}
+          DESKTOP: ${{ needs.preflight.outputs.build_inspector_artifacts }}
+          REQUESTED_BY: ${{ inputs.requested_by }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          echo "started_at=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+          if [ -z "${SLACK_BOT_TOKEN:-}" ]; then
+            echo "::warning::SLACK_DEPLOYS_BOT_TOKEN is not set, so this release was not announced."
+            exit 0
+          fi
+          parts="npm"
+          [ "$DESKTOP" = true ] && parts="$parts + desktop"
+          [ "$WEBAPP" = true ] && parts="webapp + $parts"
+          [ "$BACKEND" = true ] && parts="backend + $parts"
+          # The bold label says what kind of release this is; the finish reuses it.
+          kind="Package release $NAME"
+          if [ "$BACKEND" = true ] || [ "$WEBAPP" = true ]; then kind="Full release $NAME"; fi
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          who="by $GITHUB_TRIGGERING_ACTOR"
+          case "$GITHUB_TRIGGERING_ACTOR" in *"[bot]") who="automatically" ;; esac
+          if [ -n "${REQUESTED_BY:-}" ]; then who="by $REQUESTED_BY"; fi
+          # Not `releases/latest`: `finalize` may already have published this
+          # release, so skip its own tag and take the newest published Inspector
+          # release (`v*`, not a `local-harness-pack-*` one) by date. 30 reaches
+          # well past any drafts; a miss only drops the count.
+          prev="$(TAG="$RELEASE_TAG" gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" \
+            --jq '[.[] | select(.draft == false and .prerelease == false and (.tag_name | test("^v[0-9]")) and .tag_name != env.TAG)] | sort_by(.published_at) | last | .tag_name // empty')" || prev=""
+          count=""
+          if [ -n "$prev" ]; then
+            count="$(gh api "repos/$GITHUB_REPOSITORY/compare/$prev...$GITHUB_SHA" --jq .total_commits)" || count=""
+          fi
+          changes=""
+          if [ -n "$count" ]; then
+            changes=" · <$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$prev...${GITHUB_SHA:0:9}|$count commits since $prev>"
+          fi
+          text="🚀 *$kind* · started $who · $parts$changes · <$RUN_URL|run>"
+          # The Web API, not a webhook: a webhook can't reply in a thread. The
+          # token goes through a header file (mktemp: mode 0600), never a command
+          # line. Slack answers 200 even on an error, so `ok` is checked, and `ts`
+          # is the thread the finish line replies in.
+          auth="$(mktemp)"
+          trap 'rm -f "$auth"' EXIT
+          printf 'Authorization: Bearer %s\n' "$SLACK_BOT_TOKEN" > "$auth"
+          resp="$(jq -n --arg channel "$SLACK_CHANNEL" --arg text "$text" \
+              '{channel: $channel, text: $text, unfurl_links: false}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST https://slack.com/api/chat.postMessage \
+                -H @"$auth" -H 'Content-Type: application/json; charset=utf-8' -d @-)" || exit 1
+          if [ "$(jq -r .ok <<< "$resp")" != true ]; then
+            echo "::warning::Slack refused the post: $(jq -r .error <<< "$resp")"
+            exit 1
+          fi
+          echo "slack_ts=$(jq -r .ts <<< "$resp")" >> "$GITHUB_OUTPUT"
+
+  # Waits for every job nothing else waits on, not just `finalize`: the image
+  # push, the hosted template roll-out and the evals action can each still be
+  # running, or fail, after `finalize` succeeds.
+  announce-finish:
+    needs: [preflight, announce-start, finalize, docker-release, roll-out-hosted-template, publish-evals-action]
+    if: always() && needs.announce-start.result == 'success'
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      actions: read
+    steps:
+      - name: Announce the result in Slack
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOYS_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ vars.SLACK_DEPLOYS_CHANNEL || 'C0BF4A8A1QQ' }}
+          SLACK_TS: ${{ needs.announce-start.outputs.slack_ts }}
+          KIND: ${{ needs.announce-start.outputs.kind || format('Release {0}', needs.preflight.outputs.release_tag || inputs.versions || 'packages') }}
+          NAME: ${{ needs.preflight.outputs.release_tag || inputs.versions || 'packages' }}
+          STARTED_AT: ${{ needs.announce-start.outputs.started_at }}
+          FINALIZE: ${{ needs.finalize.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          [ -n "${SLACK_BOT_TOKEN:-}" ] || exit 0
+          mins=$(( ( $(date -u +%s) - ${STARTED_AT:-$(date -u +%s)} ) / 60 ))
+          # A failed lookup is not "no failed jobs": `finalize` can succeed while
+          # a deploy it does not require failed, so say the outcome is unknown.
+          if ! failed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(", ")')"; then
+            text="⚠️ *$KIND* ended (${mins}m), job results unreadable · <$RUN_URL|run>"
+          elif [ -n "$failed" ]; then
+            text="❌ *$KIND* failed (${mins}m) at $failed · <$RUN_URL|run>"
+          elif [ "$FINALIZE" = success ]; then
+            text="✅ *$KIND* done (${mins}m) · <$RUN_URL|run>"
+          else
+            text="⚪ *$KIND* stopped (${mins}m) · <$RUN_URL|run>"
+          fi
+          # Replies in the start line's thread, or on its own if that line never
+          # went out. Anything but a success is also sent to the channel.
+          broadcast=true
+          case "$text" in "✅"*) broadcast=false ;; esac
+          auth="$(mktemp)"
+          trap 'rm -f "$auth"' EXIT
+          printf 'Authorization: Bearer %s\n' "$SLACK_BOT_TOKEN" > "$auth"
+          resp="$(jq -n --arg channel "$SLACK_CHANNEL" --arg text "$text" --arg ts "${SLACK_TS:-}" \
+              --argjson broadcast "$broadcast" \
+              '{channel: $channel, text: $text, unfurl_links: false}
+               + (if $ts == "" then {} else {thread_ts: $ts, reply_broadcast: $broadcast} end)' \
+            | curl -fsS --max-time 20 --retry 2 -X POST https://slack.com/api/chat.postMessage \
+                -H @"$auth" -H 'Content-Type: application/json; charset=utf-8' -d @-)" || exit 1
+          if [ "$(jq -r .ok <<< "$resp")" != true ]; then
+            echo "::warning::Slack refused the post: $(jq -r .error <<< "$resp")"
+            exit 1
+          fi

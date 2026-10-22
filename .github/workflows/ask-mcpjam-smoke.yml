@@ -72,7 +72,7 @@ permissions:
   actions: read
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
   SOURCE: ${{ inputs.source || (inputs.npm_spec != '' && 'npm') || 'build' }}
   NPM_SPEC: ${{ inputs.npm_spec }}
 
@@ -159,8 +159,12 @@ jobs:
           dest="$RUNNER_TEMP/packs"
           mkdir -p "$dest"
           tarballs=""
+          pack_args=()
+          if [ "$SOURCE" = "artifact" ]; then
+            pack_args+=(--ignore-scripts)
+          fi
           for ws in @mcpjam/evaluators @mcpjam/sdk @mcpjam/inspector; do
-            file=$(npm pack --json --pack-destination "$dest" -w "$ws" | jq -r '.[0].filename')
+            file=$(npm pack --json "${pack_args[@]}" --pack-destination "$dest" -w "$ws" | jq -r '.[0].filename')
             case "$file" in /*) ;; *) file="$dest/$file" ;; esac
             tarballs="$tarballs $file"
           done

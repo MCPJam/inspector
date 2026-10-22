@@ -1,4 +1,19 @@
 import {
+  EvalBillingError,
+  billingAttemptError,
+  validateBillableSteps,
+} from "./eval-iteration-payment.js";
+import {
+  wrapAgentWithAbortSignal,
+  wrapBillableExecutor,
+  executePaidIterations,
+} from "./eval-executor-wrapper.js";
+import {
+  startEvalRun,
+  executorProviders,
+  type EvalIdentityOptions,
+} from "./eval-run-start.js";
+import {
   assertEvalCaptureWithinLimit,
   DEFAULT_MAX_CAPTURED_BYTES,
   EvalCaptureLimitError,
@@ -79,7 +94,7 @@ import type { EvaluatorResult } from "./contract/evaluator-types.js";
 import { definitionHash, resolveScoreDefinition } from "./contract/derive.js";
 import type { Scorer } from "./scorers/types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
-import { posthog } from "./telemetry.js";
+import { captureSdkRun } from "./telemetry.js";
 import {
   captureEvalReporting,
   notRequestedReceipt,
@@ -326,6 +341,8 @@ export type EvaluatorOverride = {
 };
 
 export interface EvalTestConfig {
+  /** Prompts prepaid per iteration; retries reuse payment. Defaults to one. */
+  billableSteps?: number;
   /**
    * This case's DECLARED identity. Required.
    *
@@ -432,7 +449,7 @@ export interface EvalTestConfig {
 /**
  * Options for running an EvalTest
  */
-export interface EvalTestRunOptions {
+export interface EvalTestRunOptions extends EvalIdentityOptions {
   iterations: number;
   summary?: "none" | "table";
   concurrency?: number; // default: 5
@@ -468,6 +485,7 @@ export interface EvalTestRunOptions {
  * Result details for a single iteration
  */
 export interface IterationResult {
+  billingPaymentId?: string;
   passed: boolean;
   /**
    * What happened to this iteration's EXECUTION, independent of `passed`.
@@ -566,48 +584,6 @@ export interface EvalRunResult {
 
 const ITERATION_ABORT_GRACE_MS = 1000;
 
-/**
- * Sleep for a given number of milliseconds
- */
-
-function mergeAbortSignals(
-  first?: AbortSignal,
-  second?: AbortSignal
-): AbortSignal | undefined {
-  if (!first) {
-    return second;
-  }
-
-  if (!second) {
-    return first;
-  }
-
-  if (first.aborted) {
-    return AbortSignal.abort(first.reason);
-  }
-
-  if (second.aborted) {
-    return AbortSignal.abort(second.reason);
-  }
-
-  const controller = new AbortController();
-  const abort = (signal: AbortSignal) => {
-    cleanup();
-    controller.abort(signal.reason);
-  };
-  const onFirstAbort = () => abort(first);
-  const onSecondAbort = () => abort(second);
-  const cleanup = () => {
-    first.removeEventListener("abort", onFirstAbort);
-    second.removeEventListener("abort", onSecondAbort);
-  };
-
-  first.addEventListener("abort", onFirstAbort, { once: true });
-  second.addEventListener("abort", onSecondAbort, { once: true });
-
-  return controller.signal;
-}
-
 function collectPromptMetrics(
   promptResults: PromptResult[]
 ): Pick<IterationResult, "latencies" | "tokens" | "prompts"> {
@@ -631,31 +607,6 @@ function collectPromptMetrics(
       ),
     },
     prompts: promptResults,
-  };
-}
-
-function wrapAgentWithAbortSignal(
-  agent: HostExecutor,
-  abortSignal: AbortSignal
-): HostExecutor {
-  return {
-    run: (message, options) =>
-      agent.run(message, {
-        ...options,
-        abortSignal: mergeAbortSignals(options?.abortSignal, abortSignal),
-      }),
-    withOptions: (options) =>
-      wrapAgentWithAbortSignal(agent.withOptions(options), abortSignal),
-    getPromptHistory: () => agent.getPromptHistory(),
-    resetPromptHistory: () => agent.resetPromptHistory(),
-    // Forward host-introspection methods so per-iteration metadata
-    // stamping can capture the live snapshot from a HostRuntime clone.
-    getHostSnapshot: agent.getHostSnapshot
-      ? () => agent.getHostSnapshot!()
-      : undefined,
-    getServerReplayConfigs: agent.getServerReplayConfigs
-      ? () => agent.getServerReplayConfigs!()
-      : undefined,
   };
 }
 
@@ -752,6 +703,7 @@ export class EvalTest {
       }
       config = rest;
     }
+    validateBillableSteps(config.billableSteps);
     assertDeclaredCaseId(config);
     // After `assertDeclaredCaseId`, so a config with an `externalCaseId` and
     // no `id` gets the missing-id error that already names `id := externalCaseId`
@@ -892,6 +844,7 @@ export class EvalTest {
         integer("evaluator timeoutMs", evaluator.timeoutMs);
     }
     this.running = true;
+    const identityOptions = { ...options };
     try {
       if (
         !options.__suppressMcpjamAutoSave &&
@@ -913,6 +866,13 @@ export class EvalTest {
           }),
         };
       }
+      const runContext =
+        options.__evalRunContext ??
+        (await startEvalRun({
+          ...identityOptions,
+          plannedIterations: options.iterations,
+          providers: executorProviders(executor),
+        }));
       this.lastReportingReceipt = notRequestedReceipt("disabled");
       const controller = new AbortController();
       const cancel = () =>
@@ -957,14 +917,7 @@ export class EvalTest {
         // public-facing parameter name is `executor`.
         const agent = executor;
         if (!options.__suppressTelemetry) {
-          posthog.capture({
-            distinctId: "anonymous",
-            event: "eval_test_run_triggered",
-            properties: {
-              iterations: options.iterations,
-              concurrency: options.concurrency ?? 5,
-            },
-          });
+          captureSdkRun(options.iterations, options.concurrency ?? 5);
         }
         const concurrency = options.concurrency ?? 5;
         const retries = options.retries ?? 0;
@@ -972,6 +925,7 @@ export class EvalTest {
         const onProgress = options.onProgress;
 
         let completedCount = 0;
+        const billingState: { error?: unknown } = {};
 
         const testFn =
           this.config.test ??
@@ -1019,13 +973,18 @@ export class EvalTest {
                 attempt
               );
 
+              let budget: ReturnType<typeof wrapBillableExecutor> | undefined;
               try {
                 // Create a fresh agent clone for this iteration to avoid race conditions
                 // when multiple iterations run concurrently
-                iterationAgent = wrapAgentWithAbortSignal(
-                  agent.withOptions({}),
-                  abortController.signal
+                budget = wrapBillableExecutor(
+                  wrapAgentWithAbortSignal(
+                    agent.withOptions({}),
+                    abortController.signal
+                  ),
+                  this.config.billableSteps ?? 1
                 );
+                iterationAgent = budget.executor;
                 const hardTimeoutPromise = new Promise<never>((_, reject) => {
                   timeoutId = setTimeout(() => {
                     timeoutTriggered = true;
@@ -1053,6 +1012,7 @@ export class EvalTest {
                   hardTimeoutPromise,
                   cancelled,
                 ]);
+                budget.assertWithinBudget();
                 // Disarm BEFORE scoring. The iteration timeout bounds the agent
                 // run; scorers carry their own per-scorer bound. Leaving it armed
                 // meant a slow judge could trip it and stamp "Operation timed out"
@@ -1136,9 +1096,15 @@ export class EvalTest {
                   scores: graded.scores,
                   evaluatorResults: graded.scores.map(toEvaluatorResult),
                 };
-              } catch (error) {
+              } catch (caughtError) {
+                const error = billingAttemptError(caughtError, budget);
                 reportedEvidence = capture.close();
                 if (error instanceof EvalCaptureLimitError) throw error;
+                if (error instanceof EvalBillingError) {
+                  billingState.error = error;
+                  lastError = error.message;
+                  break;
+                }
                 assertEvalCaptureWithinLimit(
                   {
                     prompts: iterationAgent?.getPromptHistory() ?? [],
@@ -1276,24 +1242,29 @@ export class EvalTest {
           }
         };
 
-        // Only active workers allocate promises; queued iterations never clone an executor.
-        const results = new Array<IterationResult>(total);
-        let next = 0;
-        await Promise.all(
-          Array.from({ length: Math.min(concurrency, total) }, async () => {
-            while (next < total) {
-              const index = next++;
-              results[index] = await runSingleIteration(index);
-            }
-          })
+        iterationResults.push(
+          ...(await executePaidIterations(
+            runContext,
+            {
+              total,
+              concurrency,
+              caseId: this.config.id,
+              billableSteps: this.config.billableSteps ?? 1,
+              signal: options.signal,
+            },
+            runSingleIteration,
+            billingState
+          ))
         );
-        iterationResults.push(...results);
 
         const runResult = this.aggregateResults(
           iterationResults,
           evaluationConfig
         );
-        if (this.config.runEvaluators?.length) {
+        if (
+          this.config.runEvaluators?.length &&
+          billingState.error === undefined
+        ) {
           let context:
             ReturnType<typeof runEvaluatorContextFromIterations> | undefined;
           const identity = {
@@ -1343,6 +1314,9 @@ export class EvalTest {
           runResult.observerErrors = observerErrors;
         try {
           await this.autoSaveRunIfConfigured(runResult, options, agent);
+        } catch (error) {
+          // Reporting diagnostics remain in the receipt; preserve the execution refusal.
+          if (billingState.error === undefined) throw error;
         } finally {
           if (options.summary === "table") {
             try {
@@ -1355,6 +1329,7 @@ export class EvalTest {
           }
         }
 
+        if (billingState.error !== undefined) throw billingState.error;
         return runResult;
       } finally {
         this.running = false;
@@ -1437,7 +1412,7 @@ export class EvalTest {
         ...config?.transport,
         signal: config?.transport?.signal,
       },
-      expectedIterations: config?.expectedIterations ?? options.iterations,
+      expectedIterations: runResult.iterations,
       suiteName: config?.suiteName ?? `EvalTest: ${this.getName()}`,
       suiteDescription: config?.suiteDescription,
       serverNames: config?.serverNames,

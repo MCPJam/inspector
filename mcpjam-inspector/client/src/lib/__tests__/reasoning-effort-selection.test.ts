@@ -4,6 +4,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
 import {
   carryEffortToModel,
+  nonLegacySelection,
   environmentsForModelCell,
   selectionReasoningEffort,
   setEffortForRow,
@@ -153,6 +154,104 @@ describe("setEffortForRow", () => {
         bareIds: "canonicalize",
       }),
     ).toEqual({ modelId: "gpt-5", selection: undefined });
+  });
+
+  it("mints a selection from the row for a stored legacy one, never settings on it", () => {
+    // What the host config DTO carries for an id outside the hosted catalog.
+    // The backend's legacy validator is closed, so `{ source: "legacy",
+    // settings }` would be refused on save.
+    const legacy = { source: "legacy", modelId: "gpt-5" } as const;
+    expect(nonLegacySelection(legacy)).toBeUndefined();
+    expect(selectionReasoningEffort(legacy)).toBeUndefined();
+    const set = setEffortForRow({
+      ...args,
+      selection: legacy,
+      effort: "high",
+      bareIds: "canonicalize",
+    })!;
+    expect(set.modelId).toBe("openai/gpt-5");
+    expect(set.selection?.source).toBe("local");
+    expect(set.selection?.settings?.reasoningEffort).toBe("high");
+    // "keep-id" surfaces stay disabled, exactly as with no selection.
+    expect(
+      setEffortForRow({ ...args, selection: legacy, effort: "high" }),
+    ).toBeNull();
+    // The picker still resolves the legacy id to its own row.
+    expect(
+      findModelForStoredChoice(
+        { modelId: legacy.modelId, selection: legacy },
+        [gpt5, byokGpt5],
+        undefined,
+      ),
+    ).toBe(byokGpt5);
+  });
+
+  it("refuses to mint a hosted selection for a stored legacy one", () => {
+    // Whatever row a caller resolved: "own key only" never lands on MCPJam
+    // credits through an effort pick.
+    const legacy = { source: "legacy", modelId: "openai/gpt-5" } as const;
+    for (const bareIds of ["canonicalize", "keep-id"] as const) {
+      expect(
+        setEffortForRow({
+          purpose: "chat",
+          row: gpt5,
+          selection: legacy,
+          effort: "high",
+          bareIds,
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it("clears nothing on a stored legacy selection instead of minting one", () => {
+    // A row whose id is already canonical would otherwise yield a full `local`
+    // selection from a no-op clear, changing the host's connection.
+    const localGpt5 = {
+      id: "openai/gpt-5",
+      name: "GPT-5",
+      provider: "openai",
+      hosted: false,
+    } as ModelDefinition;
+    const legacy = { source: "legacy", modelId: "openai/gpt-5" } as const;
+    for (const bareIds of ["canonicalize", "keep-id"] as const) {
+      expect(
+        setEffortForRow({
+          purpose: "evalTarget",
+          row: localGpt5,
+          selection: legacy,
+          effort: undefined,
+          bareIds,
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it("an effort pick on a legacy host never mints a hosted selection", () => {
+    // What the hosts page does: resolve the row through
+    // findModelForStoredChoice, then write the effort for that row. With the
+    // hosted twin listed first, the legacy host still lands on its own key.
+    const localGpt5 = {
+      id: "openai/gpt-5",
+      name: "GPT-5",
+      provider: "openai",
+      hosted: false,
+    } as ModelDefinition;
+    const legacy = { source: "legacy", modelId: "openai/gpt-5" } as const;
+    const row = findModelForStoredChoice(
+      { modelId: legacy.modelId, selection: legacy },
+      [gpt5, localGpt5],
+      undefined,
+    )!;
+    expect(row).toBe(localGpt5);
+    const set = setEffortForRow({
+      purpose: "chat",
+      row,
+      selection: legacy,
+      effort: "high",
+      bareIds: "canonicalize",
+    })!;
+    expect(set.selection?.source).toBe("local");
+    expect(set.selection?.settings?.reasoningEffort).toBe("high");
   });
 
   it("edits the existing selection of a hosted row in place", () => {

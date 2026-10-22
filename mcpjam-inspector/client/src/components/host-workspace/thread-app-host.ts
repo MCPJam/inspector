@@ -26,12 +26,16 @@ function chatDisplayModes(modes: unknown): ChatDisplayMode[] {
     : [...CHAT_DISPLAY_MODES];
 }
 
-/** Compose only the actual qualified ports. A normal chat host is not authority. */
+/** Compose only the actual qualified ports. A normal chat host is not authority.
+ * `openAIDisplayModes` is the client's Display modes extension toggle: on, the
+ * App starts in the mode OpenAI's rules pick (see `openAIDisplayModes` in
+ * `@mcpjam/sdk/widget-runtime`) instead of always inline. */
 export function createThreadAppHost(
   host: WidgetHost,
   handle: ThreadAppHandle,
   serverId: string,
   presentation: ThreadAppPresentation = "thread",
+  { openAIDisplayModes = false }: { openAIDisplayModes?: boolean } = {},
 ): WidgetHost {
   const model = presentation === "model";
   const unavailable = async () => {
@@ -50,7 +54,7 @@ export function createThreadAppHost(
       draftHostContext: model
         ? {
             ...draftHostContext,
-            displayMode: "inline",
+            ...(openAIDisplayModes ? {} : { displayMode: "inline" }),
             availableDisplayModes: chatDisplayModes(
               draftHostContext.availableDisplayModes,
             ),
@@ -67,6 +71,7 @@ export function createThreadAppHost(
       // An entrypoint is fullscreen by the host's choice, so an App that
       // declares only `inline` still opens rather than being refused.
       ...(model ? {} : { fixedDisplayMode: "fullscreen" as const }),
+      ...(openAIDisplayModes ? { openAIDisplayModes: true } : {}),
     },
     resolvers: {
       // window.openai follows the client's own "Inject window.openai" setting,

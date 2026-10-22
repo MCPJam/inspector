@@ -386,20 +386,10 @@ export function GenerateSwarmDialog({
                     customized: true,
                   }))
                 }
-                // Seeded on open, so the X is the only way back to the
-                // client's own servers — what the empty label promises. It can
-                // leave the dialog blocked (`noServers` below says so and how
-                // to fix it), which beats a choice with no way out.
-                onClearSelection={() =>
-                  setTargetState((prev) => ({
-                    ...prev,
-                    stack: { ...prev.stack, serverAttachmentId: null },
-                    customized: true,
-                  }))
-                }
+                offerClear={false}
                 // BB-3: lead with "server", not "group" — the project
                 // environment editor's exact label.
-                emptyTriggerLabel="Client default · pick a server or group"
+                emptyTriggerLabel="Pick a server or group"
                 triggerTestId="generate-server-picker"
                 triggerId="generate-swarm-server"
                 inModal

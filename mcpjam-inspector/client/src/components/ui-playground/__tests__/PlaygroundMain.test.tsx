@@ -117,10 +117,6 @@ vi.mock("lucide-react", async (importOriginal) => ({
   ArrowLeft: () => <span data-testid="icon-arrow-left" />,
   Code2: () => <span data-testid="icon-code2" />,
   MessageSquare: () => <span data-testid="icon-message-square" />,
-  // Icons used by MultiHostPicker (rendered via PlaygroundHostPicker in the
-  // header `leading` slot)
-  Server: () => <span data-testid="icon-server" />,
-  X: () => <span data-testid="icon-x" />,
 }));
 
 // Mock UI components
@@ -241,6 +237,8 @@ const mockHiddenEnvironment = vi.hoisted(() => ({
   calls: [] as any[],
   state: {
     plugins: [] as any[],
+    hasRunnablePlugins: false,
+    venue: "hosted" as const,
     pluginServers: [] as any[],
     wanted: false,
     environmentId: null as string | null,
@@ -879,7 +877,7 @@ describe("PlaygroundMain", () => {
   };
 
   beforeEach(() => {
-    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false });
+    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false, browserLocation: null });
     vi.clearAllMocks();
     mockEnvironmentReadiness.enabled = false;
     localStorage.clear();
@@ -971,6 +969,7 @@ describe("PlaygroundMain", () => {
       mockHiddenEnvironment.state = {
         ...nothing,
         plugins: [bitsRow],
+        hasRunnablePlugins: true,
         pluginServers: [bitsServer],
         wanted: true,
         environmentId,
@@ -1001,6 +1000,7 @@ describe("PlaygroundMain", () => {
       expect(hosted.hiddenEnvironment).toEqual({
         environmentId: "env_hidden",
         pluginServerIds: ["srv_bits"],
+        venue: "hosted",
         recover,
       });
       // Not an explicit environment: the chat hook decides per turn whether
@@ -1223,6 +1223,9 @@ describe("PlaygroundMain", () => {
       mockConvexAuthState.isAuthenticated = true;
       mockDefaultHostConfig.result = { builtInToolIds: ["browser"] };
       mockSharedAppState.projects = { default: { sharedProjectId: "project-1" } };
+      // Cloud reads the host's capability as-is; a local Browser answers from
+      // its own setting instead.
+      localStorage.setItem("mcp-browser-engine:project-1", "cloud");
       try {
         render(<PlaygroundMain {...defaultProps} />);
         expect(capturedChatSessionOptions.builtInToolIds).toEqual(["browser"]);
@@ -4288,7 +4291,8 @@ describe("PlaygroundMain", () => {
     const RESTORED_SESSION_ID = "restored-target-session";
 
     const arriveAtRestoredConversation = (
-      resumeConfig: Record<string, unknown>
+      resumeConfig: Record<string, unknown>,
+      sessionFields: Record<string, unknown> = {}
     ) => {
       window.history.replaceState(
         {},
@@ -4312,6 +4316,7 @@ describe("PlaygroundMain", () => {
           isUnread: false,
           messagesBlobUrl: "https://storage.test/blob",
           resumeConfig,
+          ...sessionFields,
         },
         widgetSnapshots: [],
       });
@@ -4323,9 +4328,10 @@ describe("PlaygroundMain", () => {
      */
     const openRestoredConversation = async (
       resumeConfig: Record<string, unknown>,
-      extraProps: Record<string, unknown> = {}
+      extraProps: Record<string, unknown> = {},
+      sessionFields: Record<string, unknown> = {}
     ) => {
-      arriveAtRestoredConversation(resumeConfig);
+      arriveAtRestoredConversation(resumeConfig, sessionFields);
       const props = { ...defaultProps, ...extraProps };
       const { rerender: rerenderRaw } = render(
         <PlaygroundMain {...props} syncConversationToUrl />
@@ -4383,6 +4389,32 @@ describe("PlaygroundMain", () => {
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
     });
+
+    // The binding outranks every engine default, so a local conversation
+    // bound to Cloud keeps minting hosted tokens the backend refuses.
+    it.each([
+      ["local", "local"],
+      ["hosted", "cloud"],
+    ])(
+      "binds a reopened %s browser conversation to where its browser runs",
+      async (engine, location) => {
+        await openRestoredConversation(
+          { executionTarget: { kind: "adhoc" } },
+          {},
+          {
+            projectId: "project-1",
+            browser: { browserSessionId: "logical", state: "active", engine },
+          }
+        );
+        await waitFor(() =>
+          expect(useActiveChatSessionStore.getState().browserLocation).toEqual({
+            projectId: "project-1",
+            sessionId: RESTORED_SESSION_ID,
+            engine: location,
+          })
+        );
+      }
+    );
 
     it("reopens an explicitly ad-hoc conversation without the unavailable-configuration gate", async () => {
       await openRestoredConversation({ executionTarget: { kind: "adhoc" } });

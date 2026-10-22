@@ -40,6 +40,11 @@ import type {
   EvalSuiteRun,
   EvalSuiteRunListItem,
 } from "@/components/evals/types";
+import {
+  isPendingCaseRow,
+  usePendingCaseRows,
+  type CaseLaunchScope,
+} from "./pending-case-launches";
 
 const UNKNOWN_MODEL = "Unknown model";
 const ALL_FILTER = "__all__";
@@ -59,7 +64,8 @@ const age = (ts: number) => {
 export function CaseRunTimeline({
   caseTitle,
   suiteName,
-  iterations,
+  iterations: savedIterations,
+  scope,
   suiteRuns = [],
   hostNamesById,
   defaultHostLabel,
@@ -77,6 +83,7 @@ export function CaseRunTimeline({
   caseTitle: string;
   suiteName?: string;
   iterations: EvalIteration[];
+  scope?: CaseLaunchScope;
   suiteRuns?: (EvalSuiteRun | EvalSuiteRunListItem)[];
   hostNamesById?: Map<string, string | null>;
   defaultHostLabel?: string;
@@ -91,6 +98,11 @@ export function CaseRunTimeline({
   onSelectLive?: () => void;
   children: ReactNode;
 }) {
+  const pendingRows = usePendingCaseRows(scope, savedIterations, suiteRuns);
+  const iterations = useMemo(
+    () => [...savedIterations, ...pendingRows],
+    [savedIterations, pendingRows],
+  );
   const [clientFilter, setClientFilter] = useState<string | null>(null);
   const [modelFilter, setModelFilter] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -106,7 +118,11 @@ export function CaseRunTimeline({
       new Map(
         iterations.map((it) => {
           const run = suiteRuns.find((run) => run._id === it.suiteRunId);
-          const recordedClient = run ? runHostLabel(run, hostNamesById) : null;
+          const recordedClient = isPendingCaseRow(it)
+            ? it.client
+            : run
+              ? runHostLabel(run, hostNamesById)
+              : null;
           const snapshotStyle = (
             it.testCaseSnapshot as
               { hostConfigOverride?: { hostStyle?: unknown } } | undefined
@@ -131,7 +147,9 @@ export function CaseRunTimeline({
             {
               // The TARGET (`targetKey`; the bare model id when default), so
               // Sonnet at Low and at High remain separate model options.
-              model: runIterationTargetKey(run, it) || UNKNOWN_MODEL,
+              model: isPendingCaseRow(it)
+                ? it.model
+                : runIterationTargetKey(run, it) || UNKNOWN_MODEL,
               client,
             },
           ];
@@ -181,8 +199,10 @@ export function CaseRunTimeline({
         })
         .sort(
           (a, b) =>
-            (a.iterationNumber ?? 0) - (b.iterationNumber ?? 0) ||
-            a.createdAt - b.createdAt,
+            b.createdAt - a.createdAt ||
+            (a.suiteRunId ?? "").localeCompare(b.suiteRunId ?? "") ||
+            a.iterationNumber - b.iterationNumber ||
+            a._id.localeCompare(b._id),
         ),
     [iterations, runMetadata, selectedClient, selectedModel],
   );
@@ -234,13 +254,16 @@ export function CaseRunTimeline({
           ? "Timeout"
           : result === "cancelled"
             ? "Stopped"
-            : live || result === "pending"
-              ? "Running"
-              : "No verdict");
+            : selected?.status === "pending"
+              ? "Pending"
+              : live || result === "pending"
+                ? "Running"
+                : "No verdict");
   // Number batches, not their individual model/iteration rows.
   const orderedRunIds = [
     ...new Set(
       [...iterations]
+        .filter((it) => !isPendingCaseRow(it))
         .sort((a, b) => a.createdAt - b.createdAt || a._id.localeCompare(b._id))
         .map(
           (it) =>
@@ -353,7 +376,7 @@ export function CaseRunTimeline({
         {[
           {
             label: "Passed",
-            value: `${passed}/${filtered.length + (showPendingRun ? 1 : 0)}`,
+            value: `${passed}/${filtered.filter((it) => !isPendingCaseRow(it)).length + (showPendingRun ? 1 : 0)}`,
             tone: hasFailures
               ? "text-destructive"
               : showPendingRun
@@ -416,7 +439,13 @@ export function CaseRunTimeline({
             <span>Time</span>
           </div>
           {(showPendingRun ? [null, ...filtered] : filtered).map((it) => {
-            const result = it ? computeIterationResult(it) : "pending";
+            const temporary = Boolean(it && isPendingCaseRow(it));
+            const result =
+              it?.status === "pending" || it?.status === "running"
+                ? "pending"
+                : it
+                  ? computeIterationResult(it)
+                  : "pending";
             const { client, model: recordedModel } = it
               ? runMetadata.get(it._id)!
               : {
@@ -433,8 +462,9 @@ export function CaseRunTimeline({
               >
                 <button
                   type="button"
+                  disabled={temporary}
                   data-testid="case-run-row"
-                  aria-haspopup="dialog"
+                  aria-haspopup={temporary ? undefined : "dialog"}
                   aria-expanded={open}
                   onClick={() => {
                     if (it) onSelect(it);
@@ -450,7 +480,7 @@ export function CaseRunTimeline({
                     className="truncate font-medium"
                     data-testid="case-run-number"
                   >
-                    {it ? `#${runNumber(it)}` : "—"}
+                    {it && !temporary ? `#${runNumber(it)}` : "—"}
                   </span>
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span
@@ -496,14 +526,16 @@ export function CaseRunTimeline({
                           ? "Timeout"
                           : result === "cancelled"
                             ? "Stopped"
-                            : "Running"}
+                            : it?.status === "pending"
+                              ? "Pending"
+                              : "Running"}
                   </span>
                   <span className="min-w-0 truncate tabular-nums text-muted-foreground">
                     {/* Same reading the P50/P95 cards above are built from,
                         and the same one the run matrix shows per iteration —
                         `duration()` reported a latency for iterations the
                         cards excluded, so a row and the header disagreed. */}
-                    {it
+                    {it && !temporary
                       ? formatRunCaseLatencyMs(iterationLatencyP95([it]))
                       : "—"}
                   </span>
@@ -584,7 +616,7 @@ export function CaseRunTimeline({
                       ? "bg-success/15 text-success"
                       : verdict === "Failed" || verdict === "Timeout"
                         ? "bg-destructive/15 text-destructive"
-                        : verdict === "Running"
+                        : verdict === "Running" || verdict === "Pending"
                           ? "bg-warning/30 text-foreground"
                           : "bg-muted text-muted-foreground",
                 )}

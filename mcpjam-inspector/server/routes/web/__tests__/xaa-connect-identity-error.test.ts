@@ -44,6 +44,7 @@ vi.mock("../../../services/xaa-confidential-cimd.js", () => ({
 
 vi.mock("../../../utils/logger.js", () => ({
   logger: { error: loggerErrorMock },
+  captureOriginErrorToSentry: vi.fn(),
 }));
 
 // Stub the manager (as auth-manager.test.ts does): the real one starts

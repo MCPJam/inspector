@@ -1,3 +1,4 @@
+import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
   browserFeatureUnavailable,
@@ -102,6 +103,10 @@ import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { withSelectionRouting } from "../../utils/selection-rail.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
+import {
+  releaseUncommittedHarnessLane,
+  type HarnessSessionCommitPayload,
+} from "../../utils/harness/harness-session-state.js";
 import {
   persistChatSessionToConvex,
   type AgentTurnToolMode,
@@ -1254,6 +1259,25 @@ async function handleTurn(c: Context): Promise<Response> {
   let handoffResumed = false;
   let leaseSettled = false;
   let turnSucceeded = false;
+  // This route persists harness turns itself, so the engine's resume-state
+  // commit rides the first write that lands and the lane advances with the
+  // transcript. A commit no write has landed is released unapplied in the
+  // `finally`, so the caller's next turn is not refused until the lease TTL.
+  let unsettledHarnessCommit: HarnessSessionCommitPayload | undefined;
+  const persistTurn = async (
+    ...[options, c]: Parameters<typeof persistChatSessionToConvex>
+  ) => {
+    const outcome = await persistChatSessionToConvex(
+      unsettledHarnessCommit
+        ? { ...options, harnessSessionCommit: unsettledHarnessCommit }
+        : options,
+      c,
+    );
+    if (outcome.outcome === "saved" || outcome.outcome === "duplicate") {
+      unsettledHarnessCommit = undefined;
+    }
+    return outcome;
+  };
   /**
    * Set the instant before the engine is invoked, and never cleared.
    *
@@ -1447,7 +1471,6 @@ async function handleTurn(c: Context): Promise<Response> {
       target.host?.runtimeConfig,
       String(resolvedModelDefinition.id),
     );
-    // What decides the rail: the same saved selection, or a stored legacy one.
     const routingSelection = hostRoutingSelectionForModel(
       target.host?.runtimeConfig,
       resolvedModelDefinition,
@@ -1466,9 +1489,9 @@ async function handleTurn(c: Context): Promise<Response> {
     // continuations reload, including one that came from the host.
     const turnReasoningEffort =
       pinnedReasoningEffort ?? hostSelection?.settings?.reasoningEffort;
-    // What the session records for this turn: the selection it ran, effort
-    // included (last turn wins, like its modelId).
-    const sessionModelSelection = ranTurnSelection({
+    // Compatibility origin cannot be stored on a session selection.
+    const selectionOrigin = routingSelection ? readRuntimeModelChoice(target.host?.runtimeConfig).origin : undefined;
+    const sessionModelSelection = selectionOrigin ? undefined : ranTurnSelection({
       selection: routingSelection,
       model: modelDefinition,
       reasoningEffort: turnReasoningEffort,
@@ -1532,7 +1555,7 @@ async function handleTurn(c: Context): Promise<Response> {
       return v1Error(
         c,
         "FEATURE_NOT_SUPPORTED",
-        `This host runs the ${engineDecision.harness} harness, which this turn can't run: ${engineDecision.reason}.`,
+        engineDecision.reason,
         {
           reason: "HARNESS_UNAVAILABLE",
           harness: engineDecision.harness,
@@ -1846,7 +1869,7 @@ async function handleTurn(c: Context): Promise<Response> {
       // forwarded selection / top-level field on the hosted rails) or refused,
       // instead of dropped. Only a backend-resolvable selection is sent
       // (never `local` or legacy). An unlabelled host takes today's path.
-      ...(routingSelection ? { modelSelection: routingSelection } : {}),
+      ...(routingSelection ? { modelSelection: routingSelection, modelSelectionOrigin: selectionOrigin } : {}),
       ...(turnReasoningEffort !== undefined
         ? { settings: { reasoningEffort: turnReasoningEffort } }
         : {}),
@@ -2001,6 +2024,7 @@ async function handleTurn(c: Context): Promise<Response> {
       tools,
       ...(builtInTools ? { builtInTools } : {}),
       mcpClientManager: manager,
+      selectedServerIds,
       authContext: { kind: "user_bearer", token: authHeader },
       sourceType: "direct",
       origin: "api",
@@ -2055,6 +2079,7 @@ async function handleTurn(c: Context): Promise<Response> {
         lastEngineError = event;
       },
     } as never);
+    unsettledHarnessCommit = result.harnessSessionCommit;
 
     await runtime.finalizeUsage(result);
     // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
@@ -2091,7 +2116,7 @@ async function handleTurn(c: Context): Promise<Response> {
     ) {
       // The shell and incrementally uploaded screenshots survive failure; retain
       // the partial transcript/trace as well so retries can inspect what ran.
-      const failed = await persistChatSessionToConvex(
+      const failed = await persistTurn(
         {
           chatSessionId: runtimeChatSessionId,
           modelId: String(modelDefinition.id),
@@ -2204,7 +2229,7 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(pins.serverIds ? { serverIds: pins.serverIds } : {}),
     };
 
-    const persisted = await persistChatSessionToConvex(
+    const persisted = await persistTurn(
       {
         chatSessionId: runtimeChatSessionId,
         modelId: String(modelDefinition.id),
@@ -2458,6 +2483,14 @@ async function handleTurn(c: Context): Promise<Response> {
       await flushBrowserEvidence(browserOutbox);
 
     requestSignal.removeEventListener("abort", onRequestAbort);
+    // Awaited on every exit, so the caller's next turn cannot race it.
+    if (unsettledHarnessCommit) {
+      await releaseUncommittedHarnessLane({
+        commit: unsettledHarnessCommit,
+        projectId,
+        bearer: authHeader,
+      });
+    }
     // Release admission before attempting desktop cleanup.
     if (shouldReleaseLease({ leaseTurnId, leaseSettled, modelCallStarted })) {
       await releaseTurnLease(client, leaseTurnId!, executionOwnerToken);
