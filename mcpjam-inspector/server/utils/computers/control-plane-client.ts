@@ -729,6 +729,8 @@ export async function provisionPlaygroundTerminalSandbox(args: {
   projectId: string;
   chatSessionId: string;
   projectEnvironmentId?: string;
+  /** The turn's harness id; the backend gates the box on that harness's flag. */
+  harness?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<ControlPlaneResult<PlaygroundTerminalSandbox>> {
@@ -755,6 +757,7 @@ export async function provisionPlaygroundTerminalSandbox(args: {
           ...(args.projectEnvironmentId
             ? { projectEnvironmentId: args.projectEnvironmentId }
             : {}),
+          ...(args.harness ? { harness: args.harness } : {}),
         },
         signal,
       ),

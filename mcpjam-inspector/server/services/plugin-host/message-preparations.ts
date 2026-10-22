@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { PLUGIN_MESSAGE_PREPARATION_MS } from "../../../shared/plugin-message.js";
 import { PluginInvocationError } from "./invocation.js";
 
 export type MessagePreparation = {
@@ -33,7 +34,10 @@ export class MessagePreparations {
     if (this.records.size >= 512)
       throw new PluginInvocationError("INSTANCE_MESSAGE_LIMIT");
     const token = randomBytes(32).toString("base64url");
-    this.records.set(token, { ...value, expires: this.now() + 60_000 });
+    this.records.set(token, {
+      ...value,
+      expires: this.now() + PLUGIN_MESSAGE_PREPARATION_MS,
+    });
     return token;
   }
   read(

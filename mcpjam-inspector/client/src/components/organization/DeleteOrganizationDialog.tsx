@@ -19,7 +19,9 @@ export function DeleteOrganizationDialog({
   name,
   pending,
   onConfirm,
+  cancellationWindowHours = 0,
 }: {
+  cancellationWindowHours?: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   name: string;
@@ -47,8 +49,10 @@ export function DeleteOrganizationDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete Organization?</AlertDialogTitle>
           <AlertDialogDescription>
-            Deleting “{name}” permanently removes the organization and its
-            members’ access. This action cannot be undone.
+            Deleting “{name}” removes the organization and its members’ access.{" "}
+            {cancellationWindowHours > 0
+              ? `You can cancel within ${cancellationWindowHours} hours. After that, deletion is permanent.`
+              : "This action cannot be undone."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-4">
@@ -83,7 +87,11 @@ export function DeleteOrganizationDialog({
               onChange={(e) => setPermanentAcknowledged(e.target.checked)}
               className="mt-1 accent-destructive"
             />
-            I understand that deleting this organization is permanent.
+            I understand that{" "}
+            {cancellationWindowHours > 0
+              ? `deletion is permanent after the ${cancellationWindowHours}-hour cancellation window`
+              : "deleting this organization is permanent"}
+            .
           </label>
         </div>
         <AlertDialogFooter>
@@ -100,7 +108,11 @@ export function DeleteOrganizationDialog({
             ) : (
               <Trash2 aria-hidden="true" className="size-4" />
             )}
-            {pending ? "Deleting..." : "Permanently delete organization"}
+            {pending
+              ? "Deleting..."
+              : cancellationWindowHours > 0
+                ? "Delete organization"
+                : "Permanently delete organization"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

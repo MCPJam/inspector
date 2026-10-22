@@ -1,3 +1,8 @@
+import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
+import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
+import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
+import { withSwarmStepAdmissionRetry } from "./swarm-step-admission.js";
+import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 /**
  * MCPJam Stream Handler
@@ -25,13 +30,18 @@ import type {
   ToolResultPart,
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
   Harness,
   ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
+import {
+  isAiPolicyRecognizedDenialCode,
+  orgPolicyRefusalSlug,
+  type BackendStreamFailureContext,
+} from "./org-policy-stream-refusal.js";
 import {
   describeAsSlug,
   describeError,
@@ -91,11 +101,16 @@ import {
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
 import {
+  DEFAULT_TURN_MAX_STEPS,
+  STEP_LIMIT_REFUSAL_MESSAGE,
+} from "@/shared/turn-step-budget";
+import {
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
   scrubChatGPTAppsToolResultsForBackend,
 } from "./chat-helpers";
 import { normalizeModelMessagesForConvex } from "./normalize-model-messages-for-convex";
+import { hostedMessagesWithoutEmptyText } from "./empty-text-blocks";
 import {
   serializeToolsForConvex,
   type ToolDefinition,
@@ -354,7 +369,7 @@ import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
 import { serviceCredentialHeaders } from "../services/service-credential.js";
 
-const DEFAULT_MAX_STEPS = 30;
+const DEFAULT_MAX_STEPS = DEFAULT_TURN_MAX_STEPS;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
 const STEP_LOG_THRESHOLD = 20;
 const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
@@ -687,14 +702,33 @@ export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
  */
 const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
 
+/**
+ * Backend refusal code (convex `stream/routes.ts`): MCPJam retired the model
+ * the request names. Arrives as HTTP 400.
+ */
+const MODEL_RETIRED_CODE = "model_retired";
+
+/**
+ * Backend refusal code (convex `stream/orgRoutes.ts`): the organization's own
+ * provider connection does not serve this model (OpenRouter's selected models,
+ * Azure's deployments). Arrives as HTTP 400.
+ */
+const ORG_MODEL_NOT_ALLOWED_CODE = "model_not_allowed";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
   code?: string,
+  context?: BackendStreamFailureContext,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
+
+  // The organization's AI-key policy refused the request. Before every status
+  // rule below: see {@link orgPolicyRefusalSlug}.
+  const orgPolicySlug = orgPolicyRefusalSlug(code, context);
+  if (orgPolicySlug) return describeAsSlug(orgPolicySlug, detail);
 
   // Before the status branches: a body that names MCPJam settles ownership no
   // matter which upstream status was mirrored onto it. The slug still comes
@@ -732,6 +766,15 @@ export function describeBackendStreamFailure(
     return describeAsSlug("provider/mcpjam_limit", detail);
   }
 
+  // A 400 that refuses the user's own model choice: the model is retired, or
+  // the organization's provider does not allow it. Read by status alone it is
+  // `internal/unknown`, which the internal hop promotes to an MCPJam page. Both
+  // slugs are `user_config`, so neither pages.
+  if (code === MODEL_RETIRED_CODE)
+    return describeAsSlug("provider/model_retired", detail);
+  if (code === ORG_MODEL_NOT_ALLOWED_CODE)
+    return describeAsSlug("org/model_not_allowed", detail);
+
   if (status !== undefined && status >= 500) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }
@@ -760,10 +803,17 @@ export function describeStreamErrorChunkFailure(
   status: number | undefined,
   rawText: string,
   code?: string,
+  context?: BackendStreamFailureContext,
 ): NormalizedError {
   const detail = new Error(
     status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
   );
+
+  // A mid-stream policy refusal (the org's provider rejecting its key, or
+  // throttling) carries the UPSTREAM status, which read alone would blame the
+  // user's key or page us. Its code settles it.
+  const orgPolicySlug = orgPolicyRefusalSlug(code, context);
+  if (orgPolicySlug) return describeAsSlug(orgPolicySlug, detail);
 
   if (code === "platform_free_budget_exhausted")
     return describeAsSlug("provider/mcpjam_platform_budget", detail);
@@ -896,6 +946,14 @@ export interface MCPJamHandlerOptions {
    * selection's saved effort.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The turn's saved selection, forwarded on every hosted step and read by
+   * `runHarnessTurn`: an org selection runs the harness on the organization's own
+   * provider key (its canonical id is the turn's model, its connection is
+   * what the lease is minted for). Absent ⇒ the hosted path, unchanged.
+   */
+  modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
   tools: ToolSet;
   /**
    * MCPJam's own server-executed built-in tools (e.g. web_search) as a subset
@@ -1099,6 +1157,9 @@ export interface MCPJamHandlerOptions {
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
    *  When "claude-code", handleMCPJamFreeChatModel routes to runHarnessTurn. */
   harness?: Harness;
+  agentLoop?: Harness;
+  harnessTurnContext?: string;
+  harnessUnavailableAppTools?: boolean;
   /** Which MCP-proxy plane the harness uses to route its MCP through MCPJam —
    *  set by the CALLER ROUTE (local `/api/mcp/*` vs hosted `/api/web/*`), not a
    *  global env. Absent ⇒ harness runs without proxied MCP. See
@@ -1400,6 +1461,8 @@ export interface MCPJamHandlerOptions {
    * release per-request resources (e.g. MCPClientManager teardown).
    */
   abortSignal?: AbortSignal;
+  /** Remaining execution time; admission waits must leave room to report. */
+  remainingTurnMs?: () => number;
   /**
    * Idle heartbeat interval. While the stream has been silent for at least
    * this many ms, the handler writes a transient `heartbeat` trace event so
@@ -1425,6 +1488,7 @@ export interface MCPJamHandlerOptions {
 }
 
 interface StepContext {
+  admissionBudget: AdmissionWaitBudget;
   durableCheckpoint?: MCPJamHandlerOptions["durableCheckpoint"];
   writer: {
     write: (chunk: UIMessageChunk) => void;
@@ -1505,6 +1569,7 @@ interface StepContext {
   // Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing.
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   abortSignal?: AbortSignal;
+  remainingTurnMs?: () => number;
 }
 
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
@@ -1864,11 +1929,8 @@ function normalizePreservedReasoning(messages: ModelMessage[]): ModelMessage[] {
  * Scrub messages for sending to the backend LLM.
  * Removes UI-specific metadata that shouldn't be sent to the model.
  *
- * `preserveReasoningFromIndex` is the index of the first message in the
- * *current* user turn (post the latest user message). Messages at or after
- * that index keep their reasoning parts so a thinking model can see its
- * own scratchpad between tool steps. Messages before that index still get
- * reasoning pruned to match prior behavior.
+ * `preserveReasoningFromIndex` starts the current user turn. Reasoning from
+ * that index survives tool steps; reasoning from earlier turns is pruned.
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
@@ -2318,6 +2380,9 @@ async function processStream(
   // supplied. Chat / synthetic omit (handler still writes the UI
   // chunk + trace event unchanged).
   onToolCall?: (event: MCPJamToolCallEvent) => void,
+  // The backend path this stream came from, so an error chunk's code can be
+  // read per route (`credential_missing` on `/stream/org`).
+  dispatchPath?: string,
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
@@ -2673,6 +2738,7 @@ async function processStream(
             parsed.statusCode,
             errorText,
             parsed.code,
+            dispatchPath !== undefined ? { endpointPath: dispatchPath } : undefined,
           );
           throw Object.assign(new Error(parsed.message), {
             normalized,
@@ -3645,15 +3711,17 @@ async function processOneStep(ctx: StepContext): Promise<{
   const llmStartAbs = stepStartAbs;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
 
-  // Scrub messages before sending to backend. Preserve reasoning on
-  // assistant messages added during the current turn so thinking models can
-  // see their own scratchpad across tool steps.
-  const backendMessages = scrubMessagesForBackend(
-    messageHistory,
-    tools,
-    mcpClientManager,
-    selectedServers,
-    traceTurn.promptMessageStartIndex,
+  // Keep current-turn reasoning while cleaning only the outgoing provider copy.
+  const backendMessages = hostedMessagesWithoutEmptyText(
+    scrubMessagesForBackend(
+      messageHistory,
+      tools,
+      mcpClientManager,
+      selectedServers,
+      traceTurn.promptMessageStartIndex,
+    ),
+    modelId,
+    provider,
   );
   const scrubbedMessages = historyPresentation
     ? presentHistoryForModel(backendMessages, tools, historyPresentation)
@@ -3703,15 +3771,13 @@ async function processOneStep(ctx: StepContext): Promise<{
     clientIp,
     onLiveTextDelta,
   } = ctx;
-  // Hash the originating IP for the per-IP daily spend cap. Hashing here
-  // (server-side) keeps the raw IP off the wire to Convex. If no hash can be
-  // produced, omit the header so Convex uses its cookie-only guest fallback
-  // instead of pooling unrelated guests in a shared unknown-IP bucket.
+  // Hash IPs server-side; absent hashes keep the per-cookie guest fallback.
   const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
   const convexHeaders: Record<string, string> = {
     "content-type": "application/json",
     ...(authHeader ? { authorization: authHeader } : {}),
     ...(extraHeaders ?? {}),
+    ...inspectorAiRequestHeaders("stream"),
   };
   for (const header of Object.keys(convexHeaders)) {
     if (header.toLowerCase() === GUEST_IP_HASH_HEADER) {
@@ -3748,8 +3814,8 @@ async function processOneStep(ctx: StepContext): Promise<{
   // back: a provider that rejects the request outright still failed as the
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
-  try {
-    res = await fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
+  res = await withSwarmStepAdmissionRetry(
+    () => fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
       method: "POST",
       headers: convexHeaders,
       body: JSON.stringify({
@@ -3776,17 +3842,15 @@ async function processOneStep(ctx: StepContext): Promise<{
         ...(extraBodyFields ?? {}),
       }),
       ...(abortSignal ? { signal: abortSignal } : {}),
-    });
-  } catch (error) {
-    // AbortError on fetch is the standard cancellation signal — propagate
-    // it without writing a fail span. Real network errors fall through to
-    // the existing failure path via the !res.ok branch (we synthesize a
-    // 500-shaped error below for parity).
-    if (isAbortError(error)) {
-      throw error;
-    }
-    throw error;
-  }
+    }),
+    {
+      sourceType,
+      stepIndex,
+      budget: ctx.admissionBudget,
+      signal: abortSignal,
+      remainingTurnMs: ctx.remainingTurnMs,
+    },
+  );
 
   // A 200 OK with Content-Type: application/json is a non-stream denial
   // (e.g. spend-precheck: `{ok:false, code:"user_rate_limit", ...}`).
@@ -3930,6 +3994,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       res.status,
       errorText,
       parsed.code,
+      { endpointPath: dispatchPath },
     );
     // `isJsonDenial` proves only that the body was JSON — NOT that it was the
     // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
@@ -3939,8 +4004,13 @@ async function processOneStep(ctx: StepContext): Promise<{
     // happen to carry a code would silence exactly the failures worth paging
     // on. Only the codes below are user-owned refusals from a backend that is
     // working correctly, so only they skip the boundary.
+    //
+    // The organization AI-key policy's refusals are recognized at any status
+    // (they arrive as 403/422/503): the org's own configuration, or its own
+    // provider, said no (see `org-policy-stream-refusal.ts`).
     const isRecognizedDenial =
-      isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "");
+      (isJsonDenial && USER_OWNED_DENIAL_CODES.has(parsed.code ?? "")) ||
+      isAiPolicyRecognizedDenialCode(parsed.code);
     // Through the reporter, not a bare capture call: reportRouteFailure runs
     // the same maybeCaptureOriginError decision (source becomes the identical
     // `route:mcp.chat-v2.backend-stream` Sentry tag), then a free-form Axiom
@@ -4047,6 +4117,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     onLiveTextDelta,
     abortSignal,
     onToolCall,
+    dispatchPath,
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -4901,13 +4972,17 @@ export async function runChatEngineLoop(
     progressivePlan,
     discoveryState,
   } = options;
-  // The turn's effort rides every per-step hosted body as the top-level field
-  // (which the backend prefers over a forwarded selection's). Set last so a
-  // caller-supplied extra field cannot contradict the typed one.
-  const extraBodyFields: Record<string, unknown> | undefined =
-    options.reasoningEffort !== undefined
-      ? { ...(callerExtraBodyFields ?? {}), reasoningEffort: options.reasoningEffort }
-      : callerExtraBodyFields;
+  // Typed settings and origin are authoritative on every step.
+  const extraBodyFields = {
+    ...callerExtraBodyFields,
+    ...(options.reasoningEffort !== undefined ? { reasoningEffort: options.reasoningEffort } : {}),
+    ...streamSelectionFields(
+      options.modelSelection ?? callerExtraBodyFields?.modelSelection,
+      { id: modelId, provider },
+      endpointPath ?? "/stream",
+      options.modelSelectionOrigin,
+    ),
+  };
   // One typed route.operation.failed per turn, whatever combination of the
   // three failure sites fires; the system fallback covers eval/swarm runs
   // that have no request context. Later failures in the same turn still get
@@ -4998,6 +5073,7 @@ export async function runChatEngineLoop(
   // / auto-deny re-scans re-walk the whole history on later ones, and all
   // three must reach the same answer about the same call — once.
   const approvalDecisions = createApprovalDecisionCache();
+  const admissionBudget = new AdmissionWaitBudget();
   const traceTurn: LiveTraceTurnContext = {
     recordedRequestPayloads: [],
     turnId: generateLiveTraceTurnId(),
@@ -5161,6 +5237,41 @@ export async function runChatEngineLoop(
         return;
       }
 
+      // A resumed request whose user message has already spent its step
+      // budget can run no model call — the loop below would not enter. It
+      // used to end in a SUCCESSFUL finish (`length`, from `hitStepCap`) that
+      // changed nothing in the browser's last step, which therefore still
+      // looked resumable, so the browser posted it again every few seconds
+      // for as long as the tab stayed open, each time persisting an empty
+      // turn. An error ends that: the browser never auto-resends after one.
+      //
+      // Only for browser-sent history, where the browser drives the loop. An
+      // explicit MRTR / scope step-up continuation is exempt: it answers a
+      // suspended call the user acted on, not an automatic resume. So is an
+      // answered approval: `handlePendingApprovals` runs the approved call
+      // without a model call, even on the step budget's last step. The hosted
+      // routes refuse this case before connecting anything
+      // (`agent-loop-guard.ts`); this is the engine's backstop for any caller
+      // that reaches it anyway.
+      if (
+        options.clientSuppliedHistory === true &&
+        !(scopeStepUpResume ?? mrtrResume) &&
+        !hasUnresolvedApprovalResponses(messageHistory) &&
+        hitStepCap()
+      ) {
+        logger.warn(
+          "[mcpjam-stream-handler] continuation refused: step budget already spent",
+          {
+            effectiveSteps: effectiveSteps(),
+            maxSteps: resolvedMaxSteps,
+            modelId,
+            turnId: traceTurn.turnId,
+          },
+        );
+        emitError(safeWriter, STEP_LIMIT_REFUSAL_MESSAGE);
+        return;
+      }
+
       driver.emitTurnStart(safeWriter);
 
       startHeartbeat();
@@ -5315,6 +5426,7 @@ export async function runChatEngineLoop(
         });
         const { shouldContinue, didEmitFinish, modelFinishReason } =
           await processOneStep({
+            admissionBudget,
             durableCheckpoint: options.durableCheckpoint,
             writer: safeWriter,
             messageHistory,
@@ -5368,6 +5480,7 @@ export async function runChatEngineLoop(
             // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
             prepareAdvertisedTools,
             abortSignal,
+            remainingTurnMs: options.remainingTurnMs,
           });
 
         steps++;
@@ -5760,7 +5873,10 @@ export async function handleMCPJamFreeChatModel(
   // validated HarnessId (readHarness → isHarness) or undefined, so a truthiness
   // check is the right gate — runHarnessTurn re-resolves the adapter defensively.
   // Both satisfy the same ChatEngineLoopResult contract (streamSink "ui" → Response).
-  const useHarness = Boolean(options.harness && !options.scopeStepUpResume);
+  const dispatch = resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : options.harness });
+  options = { ...options, harness: dispatch.harnessId };
+  assertAgentLoopResume(options.agentLoop, Boolean(options.scopeStepUpResume));
+  const useHarness = Boolean((options.agentLoop ?? options.harness) && !options.scopeStepUpResume);
   const result = await (useHarness
     ? runHarnessTurn(options, "ui")
     : runChatEngineLoop(options, "ui"));

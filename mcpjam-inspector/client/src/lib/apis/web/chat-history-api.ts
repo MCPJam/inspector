@@ -77,7 +77,12 @@ export interface ResumeConfig {
  */
 export interface ChatHistoryDetailSession extends ChatHistorySession {
   origin?: string;
-  browser?: { browserSessionId: string; state: string } | null;
+  browser?: {
+    browserSessionId: string;
+    state: string;
+    /** `"local"` for a browser on the user's machine; anything else is hosted. */
+    engine?: string;
+  } | null;
   messagesBlobUrl: string | null;
   usedServerIds?: string[];
   resumeConfig?: ResumeConfig;

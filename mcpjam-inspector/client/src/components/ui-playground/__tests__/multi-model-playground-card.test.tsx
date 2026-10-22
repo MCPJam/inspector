@@ -178,7 +178,9 @@ const model = {
   provider: "openai" as const,
 };
 
-function Harness({ browserWorkspace, extensionBinding }: {
+function Harness({ browserWorkspace, extensionBinding, selection, compareKind = "model" }: {
+  selection?: Parameters<typeof MultiModelPlaygroundCard>[0]["selection"];
+  compareKind?: "model" | "host";
   browserWorkspace?: { id: string; order: number; clientCount: number };
   extensionBinding?: Parameters<
     typeof MultiModelPlaygroundCard
@@ -201,8 +203,9 @@ function Harness({ browserWorkspace, extensionBinding }: {
         hostedContext={{ projectId: "project-1", selectedServerIds: [] }}
         compareId={String(model.id)}
         compareLabel={model.name}
-        compareKind="model"
+        compareKind={compareKind}
         model={model}
+        selection={selection}
         comparisonSummaries={Object.values(summaries)}
         selectedServers={[]}
         broadcastRequest={null}
@@ -232,6 +235,13 @@ function Harness({ browserWorkspace, extensionBinding }: {
 }
 
 describe("MultiModelPlaygroundCard", () => {
+  it("passes a model card's selection while host cards explicitly inherit", () => {
+    const selection = { modelId: String(model.id), source: "hosted" as const, fallback: { provider: "none", model: "none" } as const };
+    const { rerender } = render(<Harness selection={selection} />);
+    expect(lane.chatOptions.mock.calls.at(-1)![0]).toMatchObject({ pickedModelSelection: selection, selectionIntent: "picked" });
+    rerender(<Harness compareKind="host" />);
+    expect(lane.chatOptions.mock.calls.at(-1)![0]).toMatchObject({ selectionIntent: "inherit" });
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     useBrowserComparisonStore.setState({ clients: {}, selected: {} });
@@ -529,6 +539,35 @@ describe("MultiModelPlaygroundCard", () => {
       const root = screen.getByTestId("multi-model-playground-card-root");
       expect(root.className).not.toMatch(/min-h-\[\d+rem\]/);
       expect(root.className).toContain("min-h-0");
+    });
+
+    it("puts a caller's class on the card root (the phone switcher hides a lane with it)", () => {
+      render(
+        <MultiModelPlaygroundCard
+          className="hidden"
+          compareId={String(model.id)}
+          compareLabel={model.name}
+          compareKind="model"
+          model={model}
+          comparisonSummaries={[]}
+          selectedServers={[]}
+          broadcastRequest={null}
+          deterministicExecutionRequest={null}
+          stopRequestId={0}
+          executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+          displayMode="inline"
+          onDisplayModeChange={vi.fn()}
+          hostStyle="chatgpt"
+          effectiveThreadTheme="light"
+          deviceType="desktop"
+          onSummaryChange={vi.fn()}
+        />,
+      );
+
+      // A class token, not a substring: the root also carries overflow-hidden.
+      expect(screen.getByTestId("multi-model-playground-card-root")).toHaveClass(
+        "hidden",
+      );
     });
 
     it("shell drops its min-height in default desktop inline compare", () => {

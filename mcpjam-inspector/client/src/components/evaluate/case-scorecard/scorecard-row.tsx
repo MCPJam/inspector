@@ -13,21 +13,30 @@ import { ChevronRight, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import type { Predicate } from "@/shared/eval-matching";
-import { CheckRow } from "@/components/evals/checks-section";
+import {
+  CheckRow,
+  type ToolArgSchemas,
+} from "@/components/evals/checks-section";
 import {
   RoleChip,
   RoleSegmentGroup,
 } from "@/components/evals/scorer-role-control";
 import { withPredicateRole } from "@/components/evals/suite-scorer-table-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
-import { StatusDot, type SimpleCaseOverlay, overlayStatus } from "../simple-case/status-dot";
+import {
+  StatusDot,
+  type SimpleCaseOverlay,
+  overlayStatus,
+} from "../simple-case/status-dot";
 import { ProvenanceChip } from "./provenance-chip";
 import { RowMarker } from "./row-marker";
 import type { ScorecardRow } from "./case-scorecard-model";
+import { PaperCheckRow } from "../case-spine/paper-check-row";
 
 export function ScorecardRowView({
   row,
   availableTools,
+  toolArgSchemas,
   readOnly,
   checkPolicy,
   overlay,
@@ -36,9 +45,14 @@ export function ScorecardRowView({
   onRemove,
   onSelect,
   onOpenSuiteSettings,
+  paper = false,
+  newest = false,
+  dragId,
 }: {
   row: ScorecardRow;
+  dragId?: string;
   availableTools?: string[];
+  toolArgSchemas?: ToolArgSchemas;
   readOnly: boolean;
   /**
    * Whether the backend accepts a role on a check. Absent, loading and
@@ -52,11 +66,32 @@ export function ScorecardRowView({
   onRemove?: () => void;
   onSelect?: () => void;
   onOpenSuiteSettings?: () => void;
+  paper?: boolean;
+  newest?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const editable = row.editable && !readOnly;
   const canEditFields = editable && Boolean(onChangePredicate) && row.predicate;
-  const canRole = editable && checkPolicy && row.roleLock === "none" && row.predicate;
+  const canRole =
+    editable && checkPolicy && row.roleLock === "none" && row.predicate;
+
+  if (paper)
+    return (
+      <PaperCheckRow
+        dragId={dragId}
+        row={row}
+        newest={newest}
+        availableTools={availableTools}
+        toolArgSchemas={toolArgSchemas}
+        readOnly={readOnly}
+        checkPolicy={checkPolicy}
+        overlay={overlay}
+        onChangePredicate={onChangePredicate}
+        onRemove={onRemove}
+        onSelect={onSelect}
+        onOpenSuiteSettings={onOpenSuiteSettings}
+      />
+    );
 
   return (
     <li
@@ -102,7 +137,9 @@ export function ScorecardRowView({
           </span>
         )}
 
-        {row.stepId ? <StatusDot status={overlayStatus(overlay, row.stepId)} /> : null}
+        {row.stepId ? (
+          <StatusDot status={overlayStatus(overlay, row.stepId)} />
+        ) : null}
 
         {row.provenance === "builtin" ? null : canRole && onChangePredicate ? (
           <RoleSegmentGroup

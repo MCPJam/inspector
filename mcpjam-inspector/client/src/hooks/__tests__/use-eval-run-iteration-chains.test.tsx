@@ -6,7 +6,7 @@
  * request at all — that is what keeps every non-Evaluate mount of the views
  * downstream at exactly zero reads.
  */
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchChains = vi.fn();
@@ -78,6 +78,55 @@ describe("useEvalRunIterationChains", () => {
 
     await Promise.resolve();
     expect(fetchChains).not.toHaveBeenCalled();
+  });
+
+  it("never reports the previous run's chains on the render that switches runs", async () => {
+    fetchChains.mockResolvedValueOnce(chainPage(["iter_1", "iter_2"]));
+    // The second run's read never resolves: everything after the switch is
+    // the in-flight window.
+    fetchChains.mockReturnValueOnce(new Promise(() => {}));
+    const seen: string[] = [];
+    const { result, rerender } = renderHook(
+      ({ run }) => {
+        const state = useEvalRunIterationChains({
+          projectId: "proj_1",
+          run,
+          enabled: true,
+        });
+        seen.push(`${run._id}:${state.status}:${state.chains.size}`);
+        return state;
+      },
+      { initialProps: { run: terminalRun } },
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    const switchedAt = seen.length;
+    rerender({ run: { ...terminalRun, _id: "run_2" } });
+
+    const afterSwitch = seen.slice(switchedAt);
+    expect(afterSwitch.length).toBeGreaterThan(0);
+    expect(afterSwitch.every((entry) => entry === "run_2:loading:0")).toBe(
+      true,
+    );
+  });
+
+  it("reads the same run again on retry after a failed read", async () => {
+    fetchChains.mockRejectedValueOnce(new Error("boom"));
+    fetchChains.mockResolvedValueOnce(chainPage(["iter_1"]));
+    const { result } = renderHook(() =>
+      useEvalRunIterationChains({
+        projectId: "proj_1",
+        run: terminalRun,
+        enabled: true,
+      }),
+    );
+    await waitFor(() => expect(result.current.status).toBe("error"));
+
+    act(() => result.current.retry?.());
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(fetchChains).toHaveBeenCalledTimes(2);
+    expect(result.current.chains.get("iter_1")?.status).toBe("verified");
   });
 
   it("issues no request while the run is still going", async () => {

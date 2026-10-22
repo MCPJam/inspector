@@ -179,3 +179,189 @@ describe("ErrorBox provider_not_allowlisted", () => {
     ).toHaveTextContent("Retrying or changing your API key won't help.");
   });
 });
+
+describe("ErrorBox organization AI-key refusals", () => {
+  beforeEach(() => {
+    useModelPickerIntentStore.setState({ providersTabResponderCount: 0 });
+  });
+
+  it("offers an admin Manage AI providers and never a top-up or retry", () => {
+    const onManageOrgProviders = vi.fn();
+    render(
+      <ErrorBox
+        message="This organization requires its own provider keys."
+        code="org_keys_required"
+        isRetryable={false}
+        canTopUp
+        onTopUp={vi.fn()}
+        onRetry={vi.fn()}
+        onManageOrgProviders={onManageOrgProviders}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-error-org-keys")).toHaveAttribute(
+      "data-refusal-code",
+      "org_keys_required",
+    );
+    expect(
+      screen.getByText("Organization provider required"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage AI providers" }));
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /credits|retry/i })).toBeNull();
+  });
+
+  it("tells a member to ask an organization admin", () => {
+    render(
+      <ErrorBox
+        message="refused"
+        code="provider_auth_failed"
+        onResetChat={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/ask an organization admin/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Manage AI providers" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Reset chat" })).toBeInTheDocument();
+  });
+
+  it("reads the code from the details envelope (credential_missing from /stream/org)", () => {
+    render(
+      <ErrorBox
+        message="refused"
+        errorDetails={JSON.stringify({ code: "credential_missing" })}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-error-org-keys")).toHaveAttribute(
+      "data-refusal-code",
+      "credential_missing",
+    );
+    expect(screen.getByText(/ask an organization admin/i)).toBeInTheDocument();
+  });
+
+  it("opens the model picker to choose an organization model when one is mounted", () => {
+    const unregister = useModelPickerIntentStore
+      .getState()
+      .registerProvidersTabResponder();
+    const before = useModelPickerIntentStore.getState().openProvidersTabNonce;
+    render(<ErrorBox message="refused" code="org_keys_required" />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Choose an organization model" }),
+    );
+    expect(useModelPickerIntentStore.getState().openProvidersTabNonce).toBe(
+      before + 1,
+    );
+    unregister();
+  });
+
+  it("shows Ask MCPJam's org_runtime_unsupported with no model to choose and no retry", () => {
+    const unregister = useModelPickerIntentStore
+      .getState()
+      .registerProvidersTabResponder();
+    render(
+      <ErrorBox
+        message="Ask MCPJam can't run on this organization's providers yet."
+        code="org_runtime_unsupported"
+        isRetryable={false}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-error-org-keys")).toHaveAttribute(
+      "data-refusal-code",
+      "org_runtime_unsupported",
+    );
+    expect(
+      screen.getByText("Unavailable with organization keys"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Choose an organization model" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+    // Nothing to ask an admin for: the feature itself can't run.
+    expect(screen.queryByText(/ask an organization admin/i)).toBeNull();
+    unregister();
+  });
+
+  it("lets the actions wrap under the text instead of squeezing it", () => {
+    render(
+      <ErrorBox
+        message="refused"
+        code="org_keys_required"
+        onManageOrgProviders={vi.fn()}
+        onResetChat={vi.fn()}
+      />,
+    );
+
+    // A narrow pane wraps the action row onto its own line; a fixed-width
+    // row would leave the text one word wide.
+    expect(screen.getByTestId("chat-error-org-keys-layout")).toHaveClass(
+      "flex-wrap",
+    );
+    expect(screen.getByTestId("chat-error-org-keys-actions")).not.toHaveClass(
+      "flex-shrink-0",
+    );
+  });
+
+  it("offers a retry only for the transient refusals", () => {
+    const onRetry = vi.fn();
+    render(
+      <ErrorBox message="busy" code="provider_unavailable" onRetry={onRetry} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("ErrorBox free-tier model refusal", () => {
+  it("opens plan and organization-provider actions without personal BYOK or retry", () => {
+    const onTopUp = vi.fn();
+    const onManageOrgProviders = vi.fn();
+    render(
+      <ErrorBox
+        message="Restricted"
+        code="free_tier_model_restricted"
+        canTopUp
+        onTopUp={onTopUp}
+        creditActionLabel="Compare plans"
+        onManageOrgProviders={onManageOrgProviders}
+        onRetry={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Compare plans" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Manage AI providers" }),
+    );
+    expect(onTopUp).toHaveBeenCalledOnce();
+    expect(onManageOrgProviders).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("button", { name: /use your own API key|retry/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reads the refusal code from details and directs members to their admin", () => {
+    render(
+      <ErrorBox
+        message="Restricted"
+        errorDetails={JSON.stringify({ code: "free_tier_model_restricted" })}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(/organization admin/i);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+});
+
+it("keeps reset and omits upgrade advice when no upgrade action is available", () => {
+  const reset = vi.fn();
+  render(<ErrorBox message="Restricted" code="free_tier_model_restricted" canTopUp onResetChat={reset} />);
+  expect(screen.queryByText(/Upgrade your plan/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Compare plans" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Reset chat" }));
+  expect(reset).toHaveBeenCalledOnce();
+});

@@ -1,4 +1,5 @@
 import type { ConnectionIntent } from "@/shared/oauth-connections";
+import { readOAuthCallbackParams } from "./oauth-callback-inbox";
 import {
   isHostedOAuthSurface,
   type HostedOAuthSurface,
@@ -14,8 +15,15 @@ import {
   routePaths,
 } from "@/lib/app-navigation";
 
+/** The plugin server a sign-in is for (see `lib/plugins/plugin-sign-in.ts`). */
+export interface PluginSignInBinding {
+  pluginVersionId: string;
+  componentKey: string;
+}
+
 export interface HostedOAuthPendingMarker {
   connectionIntent?: ConnectionIntent;
+  pluginSignIn?: PluginSignInBinding;
   initiatingUserId?: string | null;
   surface: HostedOAuthSurface;
   organizationId?: string | null;
@@ -135,6 +143,7 @@ export function writeHostedOAuthPendingMarker(
         ...(marker.connectionIntent
           ? { connectionIntent: marker.connectionIntent }
           : {}),
+        ...(marker.pluginSignIn ? { pluginSignIn: marker.pluginSignIn } : {}),
         accessScope: marker.accessScope ?? null,
         scenarioId: marker.scenarioId ?? null,
         returnPath: normalizeHostedOAuthReturnPath(
@@ -188,6 +197,14 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
             },
           }
         : {}),
+      ...(isPluginSignInBinding(parsed.pluginSignIn)
+        ? {
+            pluginSignIn: {
+              pluginVersionId: parsed.pluginSignIn.pluginVersionId,
+              componentKey: parsed.pluginSignIn.componentKey,
+            },
+          }
+        : {}),
       organizationId:
         typeof parsed.organizationId === "string"
           ? parsed.organizationId
@@ -219,6 +236,27 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
     clearHostedOAuthPendingMarker();
     return null;
   }
+}
+
+function isPluginSignInBinding(value: unknown): value is PluginSignInBinding {
+  const binding = value as Partial<PluginSignInBinding> | null | undefined;
+  return (
+    typeof binding?.pluginVersionId === "string" &&
+    binding.pluginVersionId.length > 0 &&
+    typeof binding.componentKey === "string" &&
+    binding.componentKey.length > 0
+  );
+}
+
+/**
+ * A callback that only stores a credential: a change to a server's
+ * connections, or a plugin server's sign-in. It must never add or rewrite a
+ * project server, which is what the ordinary completion path does.
+ */
+export function onlyStoresCredential(
+  context: HostedOAuthPendingMarker | null | undefined,
+): boolean {
+  return !!(context?.connectionIntent || context?.pluginSignIn);
 }
 
 export function clearHostedOAuthPendingMarker(): void {
@@ -273,16 +311,12 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
   // from getRedirectUri()). WorkOS sign-in lands on /callback?code=… which
   // would otherwise be misread here and pair with a stale mcp-oauth-pending
   // marker, producing a ghost "Finishing OAuth…" gate after sign-in.
-  const pathname = window.location.pathname;
-  if (
-    pathname !== "/oauth/callback" &&
-    !pathname.startsWith("/oauth/callback/")
-  ) {
-    return null;
-  }
-
-  const urlParams = new URLSearchParams(window.location.search);
-  if (!urlParams.get("code") && !urlParams.get("error")) {
+  //
+  // The answer is read from the inbox `main.tsx` moved it into, not from
+  // `window.location.search` — the address bar holds only `?oauth_pending=1`
+  // by now. The inbox applies the same path scope.
+  const urlParams = readOAuthCallbackParams();
+  if (!urlParams || (!urlParams.get("code") && !urlParams.get("error"))) {
     return null;
   }
 

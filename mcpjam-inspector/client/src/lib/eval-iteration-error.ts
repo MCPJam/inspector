@@ -1,5 +1,10 @@
 import { describeError, type NormalizedError } from "@mcpjam/sdk/browser";
 import type { EvalIteration } from "@/components/evals/types";
+import {
+  describeOrgKeysRefusal,
+  orgKeysRefusalCodeInText,
+  orgKeysRefusalNextStep,
+} from "@/lib/org-keys-refusal";
 
 /** Preserve diagnostics without making worker internals the run's headline. */
 export function describeEvalIterationError(
@@ -14,7 +19,15 @@ export function describeEvalIterationError(
     /worker heartbeat lost/i.test(iteration.error ?? "");
   const setup = iteration.status === "setup_failed";
   const cancelled = iteration.status === "cancelled";
-  if (!timeout && !setup && !cancelled && !iteration.error) return null;
+  // The organization's AI key policy refused the run's model (or its own
+  // provider did): configuration, not the host or the server. A failed
+  // iteration may carry the code only in its diagnostics.
+  const refusalCode =
+    setup || iteration.status === "failed"
+      ? orgKeysRefusalCodeInText(iteration.error, iteration.errorDetails)
+      : undefined;
+  if (!timeout && !setup && !cancelled && !iteration.error && !refusalCode)
+    return null;
 
   const base = describeError(iteration.error ?? "");
   let details = iteration.errorDetails;
@@ -26,6 +39,20 @@ export function describeEvalIterationError(
     }
   }
   const rawMessage = [iteration.error, details].filter(Boolean).join("\n\n");
+  if (refusalCode && !timeout) {
+    const described = describeOrgKeysRefusal(refusalCode, "member");
+    return {
+      ...base,
+      slug: "eval/ai_refused",
+      title: described.title,
+      severity: "warning",
+      oneLine: described.body,
+      likelyCauses: [],
+      nextSteps: [orgKeysRefusalNextStep(described.remediation)],
+      rawMessage,
+      rawCode: refusalCode,
+    };
+  }
   if (timeout)
     return {
       ...base,

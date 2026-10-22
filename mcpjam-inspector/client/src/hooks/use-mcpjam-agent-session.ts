@@ -13,6 +13,7 @@
  * agent through it instead.
  */
 import { pinEvalTurn, readEvalScope } from "@/lib/mcpjam-agent/eval-scope";
+import { rejectedInputTurn } from "@/lib/mcpjam-agent/rejected-input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { generateId } from "ai";
@@ -175,12 +176,18 @@ export interface UseMcpjamAgentSessionResult {
   status: ReturnType<typeof useChat>["status"];
   error: ReturnType<typeof useChat>["error"];
   /**
+   * One line when the turn stopped short of resuming on its own — the reply
+   * was cut off, or it spent its step budget — else `null`.
+   */
+  autoResumeNotice: string | null;
+  /**
    * Send the next user message. Async because a pending clarifying question
    * has to be settled — and its tool output actually written — before the
    * next request can carry a valid message history. Callers may ignore the
    * promise; it is exposed so tests can await the full sequence.
    */
   submit: (text: string) => Promise<void>;
+  editRejectedMessage: () => string | null;
   /** Stop in-flight generation. */
   stop: ReturnType<typeof useChat>["stop"];
   /** Resolved active model — exposed for headers / debugging. */
@@ -252,19 +259,25 @@ export function useMcpjamAgentSession(
   // handoff) and must never re-seed stale history". Computed inside the
   // memo — NOT a mount-scoped ref — so a `chatSessionId` change without a
   // remount re-evaluates it for the new session's instance.
-  const { chat, config, handleToolApprovalResponse, instanceWasPristine } =
-    useMemo(() => {
-      const entry = getOrCreateAgentChat(chatSessionId);
-      return {
-        chat: entry.chat,
-        config: entry.config,
-        handleToolApprovalResponse: entry.handleToolApprovalResponse,
-        instanceWasPristine:
-          !entry.config.seeded &&
-          entry.chat.messages.length === 0 &&
-          entry.chat.status === "ready",
-      };
-    }, [chatSessionId]);
+  const {
+    chat,
+    config,
+    handleToolApprovalResponse,
+    autoResumeNoticeFor,
+    instanceWasPristine,
+  } = useMemo(() => {
+    const entry = getOrCreateAgentChat(chatSessionId);
+    return {
+      chat: entry.chat,
+      config: entry.config,
+      handleToolApprovalResponse: entry.handleToolApprovalResponse,
+      autoResumeNoticeFor: entry.autoResumeNotice,
+      instanceWasPristine:
+        !entry.config.seeded &&
+        entry.chat.messages.length === 0 &&
+        entry.chat.status === "ready",
+    };
+  }, [chatSessionId]);
   useEffect(() => {
     config.projectId = projectId ?? null;
     config.model = resolvedModel;
@@ -340,9 +353,15 @@ export function useMcpjamAgentSession(
   // Transport, `onToolCall` (WebMCP UI tool fulfillment), and
   // `sendAutomaticallyWhen` are wired at instance creation in
   // `agent-chat-instances.ts` — they read the mutable `config` synced above.
-  const { messages, sendMessage, status, error, stop, setMessages } = useChat({
-    chat,
-  });
+  const {
+    messages,
+    sendMessage,
+    status,
+    error,
+    stop,
+    setMessages,
+    clearError,
+  } = useChat({ chat });
 
   // Lifecycle telemetry — track each user message round-trip so we can read
   // engagement (message_sent), latency (response_finished.duration_ms), tool
@@ -498,10 +517,21 @@ export function useMcpjamAgentSession(
     status,
   ]);
 
+  const editRejectedMessage = useCallback(() => {
+    const rejected = rejectedInputTurn(chat.messages, chat.error?.message);
+    if (!rejected) return null;
+    setMessages(rejected.messages);
+    clearError();
+    return rejected.text;
+  }, [chat, setMessages, clearError]);
+
   const submit = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // A refused turn must not ride on the next request, even when the user
+      // types a replacement instead of using Edit message.
+      editRejectedMessage();
       // Typing instead of answering IS an answer to the clarifying question:
       // the user moved on. The message is NOT fed in as the answer — it's the
       // next thing they wanted to say, and the model should read it as such
@@ -531,7 +561,7 @@ export function useMcpjamAgentSession(
       // Turn timing/attribution lives on the shared Chat entry so a hand-off
       // to another surface mid-turn still reports the right duration and
       // emits the completion exactly once.
-      const priorMessages = messagesForDeferRef.current;
+      const priorMessages = chat.messages;
       const boundaryMessageId =
         priorMessages.length > 0
           ? priorMessages[priorMessages.length - 1]?.id ?? null
@@ -561,7 +591,15 @@ export function useMcpjamAgentSession(
         metadata: withMessageTimestampMetadata(undefined, Date.now()),
       });
     },
-    [chat, chatSessionId, config, providedSessionId, sendMessage, surface],
+    [
+      chat,
+      chatSessionId,
+      config,
+      providedSessionId,
+      sendMessage,
+      surface,
+      editRejectedMessage,
+    ],
   );
 
   // Stopping generation abandons the turn a parked question belongs to, so
@@ -573,12 +611,19 @@ export function useMcpjamAgentSession(
     return stop();
   }, [chatSessionId, stop]);
 
+  // Only once the response has settled. The instance records the notice in
+  // its auto-resume decision, which the SDK makes before this render sees
+  // `ready`.
+  const autoResumeNotice = status === "ready" ? autoResumeNoticeFor() : null;
+
   return {
     chatSessionId,
     messages,
     status,
     error,
+    autoResumeNotice,
     submit,
+    editRejectedMessage,
     stop: stopWithPendingQuestions,
     model: resolvedModel,
     hydrating,

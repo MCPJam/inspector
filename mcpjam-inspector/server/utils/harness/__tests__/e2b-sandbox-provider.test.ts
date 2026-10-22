@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => {
     constructor(
       public exitCode: number,
       public stdout: string,
-      public stderr: string
+      public stderr: string,
     ) {
       super("exit status " + exitCode);
       this.name = "CommandExitError";
@@ -48,7 +48,11 @@ vi.mock("e2b", () => ({
 }));
 
 import { reapHarnessBridgesCommand } from "../bridge-reaper.js";
-import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
+import { logger } from "../../logger.js";
+import {
+  createBridgeStderrRedactor,
+  createE2BHarnessSandboxProvider,
+} from "../e2b-sandbox-provider.js";
 import {
   HARNESS_TEMPLATE_PNPM_VERSION,
   harnessPnpmGuardCommand,
@@ -77,11 +81,11 @@ describe("the pnpm guard", () => {
     // because the box could not reach the package registry reported nothing
     // about the box, the exit code, or the registry.
     sandboxState.run.mockRejectedValueOnce(
-      new FakeCommandExitError(1, "", "npm error code ECONNRESET")
+      new FakeCommandExitError(1, "", "npm error code ECONNRESET"),
     );
 
     await expect(provider().createSession()).rejects.toThrow(
-      /pnpm is missing on sandbox sbx_1.*exit 1.*ECONNRESET/s
+      /pnpm is missing on sandbox sbx_1.*exit 1.*ECONNRESET/s,
     );
   });
 
@@ -89,11 +93,11 @@ describe("the pnpm guard", () => {
     // The message has to point at the actual mechanism, because the fix is an
     // ordering one and nothing else in the failure hints at it.
     sandboxState.run.mockRejectedValueOnce(
-      new FakeCommandExitError(1, "", "network request failed")
+      new FakeCommandExitError(1, "", "network request failed"),
     );
 
     await expect(provider().createSession()).rejects.toThrow(
-      /egress is already locked to the model proxy/i
+      /egress is already locked to the model proxy/i,
     );
   });
 
@@ -145,7 +149,7 @@ describe("the pnpm guard", () => {
     expect(command).toBe(harnessPnpmGuardCommand());
     for (const install of command.match(/npm install -g pnpm@[\d.]+/g) ?? []) {
       expect(install).toBe(
-        `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`
+        `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
       );
     }
   });
@@ -160,11 +164,11 @@ describe("abort plumbing", () => {
 
     expect(sandboxState.connect).toHaveBeenCalledWith(
       "sbx_1",
-      expect.objectContaining({ signal: controller.signal })
+      expect.objectContaining({ signal: controller.signal }),
     );
     expect(sandboxState.run).toHaveBeenCalledWith(
       expect.stringContaining("pnpm"),
-      expect.objectContaining({ signal: controller.signal })
+      expect.objectContaining({ signal: controller.signal }),
     );
   });
 
@@ -211,7 +215,7 @@ describe("abort plumbing", () => {
         "echo hi",
         expect.objectContaining({
           envs: expect.objectContaining({ STRIPE_API_KEY: "sk_live_x" }),
-        })
+        }),
       );
       expect(stamped).toHaveBeenCalledTimes(1);
     });
@@ -241,7 +245,7 @@ describe("abort plumbing", () => {
       sandboxState.run.mockRejectedValueOnce(new Error("socket hang up"));
 
       await expect(session.run({ command: "echo hi" })).rejects.toThrow(
-        "socket hang up"
+        "socket hang up",
       );
       expect(stamped).not.toHaveBeenCalled();
     });
@@ -250,7 +254,7 @@ describe("abort plumbing", () => {
       const stamped = vi.fn();
       const session = await withEnv(stamped).createSession();
       sandboxState.run.mockRejectedValueOnce(
-        new FakeCommandExitError(2, "", "bad command")
+        new FakeCommandExitError(2, "", "bad command"),
       );
 
       await expect(session.run({ command: "false" })).resolves.toMatchObject({
@@ -269,7 +273,7 @@ describe("abort plumbing", () => {
 
     expect(sandboxState.run).toHaveBeenCalledWith(
       "echo hi",
-      expect.objectContaining({ signal: controller.signal })
+      expect.objectContaining({ signal: controller.signal }),
     );
   });
 
@@ -294,7 +298,7 @@ describe("abort plumbing", () => {
 
     expect(sandboxState.connect).toHaveBeenCalledWith(
       "sbx_1",
-      expect.objectContaining({ signal: controller.signal })
+      expect.objectContaining({ signal: controller.signal }),
     );
   });
 });
@@ -387,6 +391,78 @@ describe("bridge spawn", () => {
       expect.objectContaining({ background: true }),
     );
   });
+
+  it("caps and redacts the bridge's stderr before anything downstream reads it", async () => {
+    // The harness framework copies every stderr line into this process's
+    // stderr (and from there the log pipeline) and into startup errors.
+    let finish!: () => void;
+    sandboxState.run.mockImplementation(
+      async (
+        _command: string,
+        opts?: { background?: boolean; onStderr?: (d: string) => void },
+      ) => {
+        if (!opts?.background) return { exitCode: 0, stdout: "", stderr: "" };
+        opts.onStderr?.(
+          "[codex] POST https://mcp.acme.com/tenants/42/mcp?key=k failed for jane@acme.com\n",
+        );
+        opts.onStderr?.(`[codex] ${"x".repeat(2500)}\n`);
+        return {
+          pid: 42,
+          wait: () =>
+            new Promise<{ exitCode: number }>((resolve) => {
+              finish = () => resolve({ exitCode: 0 });
+            }),
+          kill: vi.fn(),
+        };
+      },
+    );
+    const session = await provider().createSession();
+    const proc = await session.spawn(bridgeSpawn);
+    finish();
+
+    const text = await new Response(proc.stderr).text();
+    const [first, second] = text.split("\n");
+    expect(first).toBe(
+      "[codex] POST https://mcp.acme.com/… failed for [redacted-email]",
+    );
+    expect(second).toBe(`[codex] ${"x".repeat(1992)}… [+508 chars]`);
+  });
+});
+
+describe("createBridgeStderrRedactor", () => {
+  it("redacts a credential a chunk boundary splits", () => {
+    const redactor = createBridgeStderrRedactor();
+    const out =
+      redactor.push("[codex] opened /res") +
+      redactor.push("ults/tok_secret_123 and ?co") +
+      redactor.push("de=one_time&x=1\n") +
+      redactor.flush();
+    expect(out).not.toContain("tok_secret_123");
+    expect(out).not.toContain("one_time");
+    expect(out.endsWith("\n")).toBe(true);
+  });
+
+  it("flushes an unterminated last line at the end of the stream", () => {
+    const redactor = createBridgeStderrRedactor();
+    expect(redactor.push("partial /results/tok_x")).toBe("");
+    expect(redactor.flush()).toBe("partial /results/[redacted]");
+  });
+
+  it("bounds the hold-back for a line that never ends", () => {
+    const redactor = createBridgeStderrRedactor();
+    expect(redactor.push("y".repeat(4100)).length).toBeGreaterThan(0);
+  });
+
+  it("drops the rest of an overflowed line instead of emitting it on its own", () => {
+    const redactor = createBridgeStderrRedactor();
+    const out =
+      redactor.push(`${"y".repeat(4100)}?co`) +
+      redactor.push("de=one_time_secret") +
+      redactor.push("&x=1\nnext line\n") +
+      redactor.flush();
+    expect(out).not.toContain("one_time_secret");
+    expect(out.endsWith("next line\n")).toBe(true);
+  });
 });
 
 describe("exec result normalization", () => {
@@ -396,7 +472,7 @@ describe("exec result normalization", () => {
     // pinning that they stay different.
     const session = await provider().createSession();
     sandboxState.run.mockRejectedValueOnce(
-      new FakeCommandExitError(3, "out", "err")
+      new FakeCommandExitError(3, "out", "err"),
     );
 
     await expect(session.run({ command: "false" })).resolves.toEqual({
@@ -404,5 +480,73 @@ describe("exec result normalization", () => {
       stdout: "out",
       stderr: "err",
     });
+  });
+});
+
+describe("model-proxy connections on resume", () => {
+  // E2B stamps the lease header per connection (see
+  // model-proxy-connections.ts), so a resume must close the box's connections
+  // to the proxy before the surviving runtime continues on them.
+  const isClose = (call: unknown[]) =>
+    typeof call[0] === "string" && call[0].includes("ss -K");
+
+  it("closes the proxy host's connections as root when a session resumes", async () => {
+    let url: string | undefined;
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => url,
+    });
+    // The turn mints its lease after building the provider.
+    url = "https://proxy.convex.site/model";
+
+    await p.resumeSession!({ sessionId: "s" });
+
+    const close = sandboxState.run.mock.calls.find(isClose);
+    expect(close?.[0]).toContain("getent ahosts proxy.convex.site");
+    expect(close?.[0]).toContain('ss -K dst "$ip" dport = :443');
+    // `ss` reads a bare IPv6 address as address:port.
+    expect(close?.[0]).toContain('*:*) ip="[$ip]"');
+    expect(close?.[1]).toMatchObject({ user: "root" });
+  });
+
+  it("leaves a new session's connections alone", async () => {
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => "https://proxy.convex.site/model",
+    });
+
+    await p.createSession();
+
+    expect(sandboxState.run.mock.calls.some(isClose)).toBe(false);
+  });
+
+  it("still resumes when the close fails, and refuses a host it cannot quote", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    sandboxState.run.mockImplementation(async (command: string) => {
+      if (command.includes("ss -K")) {
+        throw new FakeCommandExitError(1, "", "Error: cannot close");
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const failing = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => "https://proxy.convex.site/model",
+    });
+    await expect(
+      failing.resumeSession!({ sessionId: "s" }),
+    ).resolves.toBeDefined();
+    expect(warn).toHaveBeenCalledWith(
+      "[harness] could not close model-proxy connections: exit status 1",
+    );
+
+    sandboxState.run.mockClear();
+    for (const unsafe of ["https://proxy.site;reboot/", "not a url"]) {
+      const p = createE2BHarnessSandboxProvider({
+        sandboxId: "sbx_1",
+        proxyUrl: () => unsafe,
+      });
+      await p.resumeSession!({ sessionId: "s" });
+    }
+    expect(sandboxState.run.mock.calls.some(isClose)).toBe(false);
   });
 });

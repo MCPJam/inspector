@@ -146,6 +146,7 @@ export function TasksTab({
   // can carry it forward instead of re-issuing the call or blanking the list.
   const listedTasksRef = useRef<NormalizedTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
+  const [taskSelection, setTaskSelection] = useState(0);
   const [taskResult, setTaskResult] = useState<unknown>(null);
   const [pendingRequest, setPendingRequest] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
@@ -1577,7 +1578,7 @@ export function TasksTab({
               onClick={() => setIsSidebarVisible(false)}
               variant="ghost"
               size="sm"
-              className="h-7 w-7 p-0"
+              className="hidden md:inline-flex h-7 w-7 p-0"
               title="Hide sidebar"
             >
               <PanelLeftClose className="h-3.5 w-3.5" />
@@ -1646,7 +1647,10 @@ export function TasksTab({
                           ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
                           : "hover:shadow-sm"
                       }`}
-                      onClick={() => setSelectedTaskId(task.taskId)}
+                      onClick={() => {
+                        setSelectedTaskId(task.taskId);
+                        setTaskSelection((request) => request + 1);
+                      }}
                     >
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5">
@@ -1689,8 +1693,8 @@ export function TasksTab({
       {selectedTask ? (
         <>
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-4 md:px-6 border-b border-border bg-background">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
                 <TaskStatusIcon status={selectedTask.status} />
                 <Badge
@@ -1702,7 +1706,7 @@ export function TasksTab({
                   {selectedTask.status}
                 </Badge>
               </div>
-              <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
+              <code className="break-all font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
                 {selectedTask.taskId}
               </code>
               <Badge variant="outline" className="text-xs">
@@ -1936,6 +1940,11 @@ export function TasksTab({
     <>
       <ThreePanelLayout
         id="tasks"
+        mobileNavigation={{
+          selectionKey: selectedTaskId ? `${selectedTaskId}:${taskSelection}` : "",
+          selectionPanel: "content",
+          onBack: () => setSelectedTaskId(""),
+        }}
         sidebar={sidebarContent}
         content={centerContent}
         sidebarVisible={isSidebarVisible}

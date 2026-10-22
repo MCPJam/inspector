@@ -93,3 +93,34 @@ describe("project sign-in return recovery", () => {
     ).toEqual({ kind: "none" });
   });
 });
+
+// Auth-transition recovery drops detail IDs instead of moving them between projects.
+it.each(["k5700000000000000000000000b", null, "k5700000000000000000000000a"])(
+  "recovers to a verified project's Home (preferred %s)",
+  (fallbackProjectId) => {
+    const intent = createProjectSignInReturnRecoveryIntent(
+      `/p/k5700000000000000000000000a/evals/suite/old?view=runs#case`,
+    )!;
+    intent.fallback = "home";
+    expect(
+      resolveProjectSignInReturnRecovery({
+        intent,
+        membershipProjectIds: new Set(["k5700000000000000000000000b"]),
+        fallbackProjectId,
+      }),
+    ).toEqual({ kind: "switch", path: "/p/k5700000000000000000000000b/home" });
+  },
+);
+it("keeps a deliberate sign-in link without transition provenance unchanged", () => {
+  const intent = createProjectSignInReturnRecoveryIntent(
+    "/p/k5700000000000000000000000a/home",
+  )!;
+  intent.fallback = "none";
+  expect(
+    resolveProjectSignInReturnRecovery({
+      intent,
+      membershipProjectIds: new Set(),
+      fallbackProjectId: null,
+    }),
+  ).toEqual({ kind: "open", path: intent.path });
+});

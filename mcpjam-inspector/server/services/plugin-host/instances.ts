@@ -3,7 +3,7 @@ import { pluginFormSources } from "./form-sources.js";
 import {
   PluginContextWorkspace,
   type PluginContextUpdate,
-  type PluginContextRemoval,
+  type PluginContextRemoveAll,
 } from "./context.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -575,7 +575,7 @@ export class PluginInstanceRegistry {
     identity: PluginInstanceIdentity,
     command:
       | { kind: "update"; request: PluginContextUpdate }
-      | { kind: "remove"; request: PluginContextRemoval },
+      | { kind: "remove-all"; request: PluginContextRemoveAll },
     signal: AbortSignal,
     authorize: () => Promise<void>,
     port:
@@ -602,7 +602,7 @@ export class PluginInstanceRegistry {
               instance.owner.generation,
               command.request,
             )
-          : candidate.remove(
+          : candidate.removeAll(
               instance.owner.instanceId,
               instance.owner.generation,
               command.request,

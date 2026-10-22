@@ -5,7 +5,7 @@
  * They are compatible with AI SDK's tool format.
  */
 
-import { tool } from "ai";
+import { skillTool as tool } from "./skill-tool.js";
 import { z } from "zod";
 import fs from "fs/promises";
 import path from "path";

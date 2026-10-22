@@ -8,6 +8,7 @@ import { checkSessionRevocation } from "../../services/revoked-session-cache.js"
 import { sessionRevokedResponse } from "../../middleware/session-revocation.js";
 import { evaluateClientFeatureFlags } from "../../utils/analytics.js";
 import { getAttestedClientIp } from "../../utils/client-ip.js";
+import { flagAccountEmail } from "../../utils/flag-account.js";
 import { logger } from "../../utils/logger.js";
 
 /**
@@ -43,7 +44,7 @@ const LOCAL_PLATFORMS = new Set(["npm", "docker", "mac", "win", "electron"]);
 
 /** Whose flags a request gets: an id, nobody, or a signed-out session. */
 type FlagsIdentity =
-  | { kind: "id"; distinctId: string; member?: boolean }
+  | { kind: "id"; distinctId: string; member?: boolean; email?: string }
   | { kind: "none" }
   | { kind: "revoked" };
 
@@ -69,7 +70,8 @@ async function verifiedIdentity(token: string): Promise<FlagsIdentity> {
   if (!checkSessionRevocation(session.sid, { requireFresh: false }).ok) {
     return { kind: "revoked" };
   }
-  return { kind: "id", distinctId: session.sub, member: true };
+  return { kind: "id", distinctId: session.sub, member: true,
+    email: await flagAccountEmail(token, session.sub) };
 }
 
 async function resolveIdentity(c: Context): Promise<FlagsIdentity> {
@@ -169,6 +171,7 @@ clientFlags.get("/", async (c) => {
       ? await evaluateClientFeatureFlags(
           identity.distinctId,
           flagPersonProperties(c),
+          identity.email,
         )
       : {};
   if (!HOSTED_MODE) {

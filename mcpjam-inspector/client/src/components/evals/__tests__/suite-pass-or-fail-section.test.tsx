@@ -23,6 +23,11 @@ import {
 } from "../suite-policy-controls";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => true,
 }));
@@ -149,24 +154,20 @@ describe("SuitePassOrFailSection", () => {
     ).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("mounts the judge's gate panel and rubric editor under user value", () => {
-    // The LAST link of the chain is the one a judge measures, so its readiness
-    // and its criteria belong beside it rather than in a row of their own.
+  it("shows only the judge model in the Judge section for now", () => {
+    // The gate panel and grading instructions keep their stored values but are
+    // not rendered until they are simpler to explain.
     const { container } = renderSection({
       judgeAccessory: <div data-testid="gate-panel" />,
       rubricEditor: <div data-testid="rubric-editor" />,
     });
     const group = container.querySelector(
-      '[data-stage-group="userValue"]',
+      '[data-setting-key="judge"]',
     ) as HTMLElement;
-    expect(within(group).getByTestId("gate-panel")).toBeTruthy();
-    expect(within(group).getByTestId("rubric-editor")).toBeTruthy();
-    // Stamped so the settings manifest can claim it, and labelled so a reader
-    // can match the row to the manifest entry.
-    const rubricRow = container.querySelector(
-      '[data-setting-key="judgeRubric"]',
-    );
-    expect(rubricRow?.textContent).toContain("Grading instructions");
+    expect(within(group).getByText("Judge model")).toBeTruthy();
+    expect(within(group).getByTestId("suite-judge-model-trigger")).toBeTruthy();
+    expect(within(group).queryByTestId("gate-panel")).toBeNull();
+    expect(within(group).queryByTestId("rubric-editor")).toBeNull();
   });
 
   it("keeps one Add-scorer affordance for the whole section", () => {

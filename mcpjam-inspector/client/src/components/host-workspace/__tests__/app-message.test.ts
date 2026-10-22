@@ -68,8 +68,10 @@ describe("App message host adapter", () => {
   });
 });
 
-it("refuses unsupported send:false before dispatch through the owned host port", async () => {
-  const send = vi.fn(async () => true);
+it("passes a draft to the owned host port and describes one that is not placed", async () => {
+  const { useTrafficLogStore } = await import("@/stores/traffic-log-store");
+  useTrafficLogStore.getState().clear();
+  const send = vi.fn(async (_intent: unknown, _live: () => boolean) => true);
   const policy = {
     resolvers: {
       resolveEffectiveHostCapabilities: () => ({ message: {} }),
@@ -82,13 +84,23 @@ it("refuses unsupported send:false before dispatch through the owned host port",
     { instanceToken: intent.instanceToken, messageEnabled: true } as never,
     { threadId: "thread", isLive: () => true, send },
   );
-  await expect(
-    host.services.sendMessage!({
-      ...intent.params,
-      _meta: { "openai/message": { target: "active", send: false } },
-    } as never),
-  ).rejects.toThrow();
-  expect(send).not.toHaveBeenCalled();
+  const draft = {
+    ...intent.params,
+    _meta: { "openai/message": { target: "active", send: false } },
+  };
+  await expect(host.services.sendMessage!(draft as never)).resolves.toEqual({});
+  expect(send.mock.calls[0]?.[0]).toMatchObject({ params: draft });
+  send.mockResolvedValueOnce(false);
+  await expect(host.services.sendMessage!(draft as never)).rejects.toThrow(
+    "The draft could not be added to the composer",
+  );
+  expect(
+    useTrafficLogStore
+      .getState()
+      .mcpServerItems.some(
+        (item) => item.method === "plugin-extensions/app-draft-refused",
+      ),
+  ).toBe(true);
 });
 
 it("binds a global App's message to the chat that is current when it is sent", async () => {

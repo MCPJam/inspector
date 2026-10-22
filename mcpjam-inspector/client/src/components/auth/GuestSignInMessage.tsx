@@ -1,4 +1,5 @@
-import { useAuth } from "@workos-inc/authkit-react";
+import type { ComponentProps } from "react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
@@ -15,7 +16,7 @@ import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
  * `server/utils/host-runtime-config.ts`). Without this affordance the guest
  * either sees the control silently missing or hits an opaque runtime error.
  * Instead we name the situation and offer the exact next step — WorkOS
- * sign-in — wired to the same `useAuth().signIn` flow the header uses.
+ * sign-in — wired to the same `useInspectorAuth().signIn` flow the header uses.
  *
  * Surface-agnostic: pass a `message` naming what THIS surface gates. Mirrors
  * {@link ComputersUnavailableMessage}'s tone (state the fact, don't blame the
@@ -34,18 +35,6 @@ export function GuestSignInMessage({
   /** Inline (in-tab) layout instead of a full-height centered pane. */
   compact?: boolean;
 }) {
-  const { signIn } = useAuth();
-
-  const handleSignIn = () => {
-    // track() injects platform/environment/location (standardEventProps); the
-    // analytics ratchet forbids raw posthog.capture outside lib/analytics.ts.
-    track("login_button_clicked", {
-      location: location ?? "guest_signin_message",
-    });
-    captureAppSignInReturnPath();
-    signIn(permalinkSignInOptions());
-  };
-
   return (
     <div
       className={
@@ -57,9 +46,39 @@ export function GuestSignInMessage({
       <span className={compact ? "max-w-md" : "max-w-md text-center"}>
         {message}
       </span>
-      <Button size="sm" onClick={handleSignIn}>
-        Sign in
-      </Button>
+      <GuestSignInButton location={location} size="sm" />
     </div>
+  );
+}
+
+export function GuestSignInButton({
+  location,
+  size,
+  className,
+}: {
+  location?: string;
+  size?: ComponentProps<typeof Button>["size"];
+  className?: string;
+}) {
+  const { signIn } = useInspectorAuth();
+
+  const handleSignIn = () => {
+    // track() adds standard event props; the ratchet forbids raw PostHog calls.
+    track("login_button_clicked", {
+      location: location ?? "guest_signin_message",
+    });
+    captureAppSignInReturnPath();
+    signIn(permalinkSignInOptions());
+  };
+
+  return (
+    <Button
+      type="button"
+      size={size}
+      className={className}
+      onClick={handleSignIn}
+    >
+      Sign in
+    </Button>
   );
 }

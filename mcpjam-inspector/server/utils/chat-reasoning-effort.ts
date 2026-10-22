@@ -10,7 +10,8 @@
  * Precedence, per turn:
  *   - a host-wins turn (a scenario / share link, whose body the visitor owns):
  *     the host's saved effort only; the body's is ignored.
- *   - otherwise: the body's effort, else the host's saved one.
+ *   - otherwise: the body's effort, else the explicit selection's (including
+ *     a cleared effort), else the matching host's saved one.
  *
  * "Refuse, never drop": every route either applies the effort or refuses it
  * before spend. The hosted `/stream` and org-cloud rails receive it as a
@@ -24,6 +25,7 @@ import {
   selectionIfMatches,
   type ModelReasoningEffort,
   type ModelSelection,
+  type RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 
@@ -65,11 +67,18 @@ export function resolveChatReasoningEffort(args: {
   bodyEffort?: ModelReasoningEffort;
   /** The host's selection ALREADY narrowed to this turn's model. */
   hostSelection?: ModelSelection;
+  /** An explicit choice owns settings, including the absence of effort. */
+  requestSelection?: RequestedModelSelection;
   /** A scenario / share-link turn: the host's value wins, the body's is ignored. */
   hostWins: boolean;
 }): ModelReasoningEffort | undefined {
   const saved = args.hostSelection?.settings?.reasoningEffort;
-  return args.hostWins ? saved : (args.bodyEffort ?? saved);
+  if (args.hostWins) return saved;
+  const requested = args.requestSelection;
+  const selectedEffort = requested?.source === "legacy"
+    ? undefined
+    : requested?.settings?.reasoningEffort;
+  return args.bodyEffort ?? (requested ? selectedEffort : saved);
 }
 
 export type DirectChatEffort =

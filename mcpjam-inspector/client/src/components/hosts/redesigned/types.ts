@@ -469,8 +469,9 @@ export interface HostRedesignContext {
    * Project Computers visualization inputs. All optional so the builder
    * stays pure and callers that don't surface the islands (e.g. the
    * scenario read-only canvas) can omit them. When `computersEnabled` is
-   * not exactly `true`, the builder emits NO island nodes/edges, so the
-   * GA canvas is byte-for-byte unchanged.
+   * not exactly `true` and no computer is attached, the builder emits NO
+   * island nodes/edges. A harness draft (Claude Code / Codex / Cursor) never
+   * gets a Computer island, whatever the flag: it runs on a throwaway box.
    */
   computersEnabled?: boolean;
   browsersEnabled?: boolean;
@@ -496,7 +497,7 @@ export const APPS_HUB_NODE_ID = "host-matrix:apps";
 export const SANDBOX_HUB_NODE_ID = "host-matrix:sandbox";
 export const SERVERS_HUB_NODE_ID = "servers-hub";
 export const ADD_SERVER_NODE_ID = "add-server";
-/** Project Computers islands (gated behind `computers-enabled`). */
+/** Project Computers islands (gated behind the machine flag, `sandbox-images-enabled`). */
 export const BUILTIN_TOOLS_NODE_ID = "builtin-tools";
 export const BROWSER_NODE_ID = "browser";
 export const COMPUTER_NODE_ID = "computer";

@@ -297,13 +297,17 @@ export function ScenarioShareEmptyPanel({
                 aria-hidden
                 className="pointer-events-none absolute -inset-3 rounded-[1.75rem] bg-primary/[0.07] opacity-0 blur-xl transition-opacity duration-300 group-hover:opacity-100"
               />
+              {/* The tester link is a credential: kept out of autocapture
+                  and both replays (the repo's secret-surface convention). */}
               <a
                 href={share.shareLink!}
                 target="_blank"
                 rel="noreferrer"
                 aria-label="Try the study yourself. Opens the live study in a new tab"
                 data-testid="user-testing-share-empty-preview"
+                data-ph-no-capture
                 className={cn(
+                  "ph-no-capture rr-block",
                   "relative flex w-full items-center gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3.5 shadow-sm",
                   "transition-all duration-200 hover:border-primary/40 hover:shadow-md",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
@@ -367,7 +371,8 @@ export function ScenarioShareEmptyPanel({
 
         <div className="flex flex-wrap items-center gap-2">
           <span
-            className="min-w-0 flex-1 basis-full truncate rounded-lg border border-border/60 bg-muted/30 px-3 py-1.5 font-mono text-xs text-muted-foreground sm:basis-0"
+            className="ph-no-capture rr-block min-w-0 flex-1 basis-full truncate rounded-lg border border-border/60 bg-muted/30 px-3 py-1.5 font-mono text-xs text-muted-foreground sm:basis-0"
+            data-ph-no-capture
             title={share.shareLink ?? undefined}
           >
             {share.displayLink ?? "No share link yet."}

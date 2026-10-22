@@ -1058,6 +1058,28 @@ describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields
       )
     ).toThrow(/sandbox\.browserStorage has unknown key "cookies"/);
   });
+
+  it("keeps sandbox.sameOriginAppIframe, true and false alike", () => {
+    const withValue = (value: unknown) =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            apps: { sandbox: { sameOriginAppIframe: value } as never },
+          },
+        })
+      );
+    expect(withValue(false).mcpProfile?.apps?.sandbox).toEqual({
+      sameOriginAppIframe: false,
+    });
+    // An explicit `true` is a measurement, not the same as "never probed".
+    expect(withValue(true).mcpProfile?.apps?.sandbox).toEqual({
+      sameOriginAppIframe: true,
+    });
+    expect(() => withValue("no")).toThrow(
+      /sandbox\.sameOriginAppIframe must be a boolean/
+    );
+  });
 });
 
 describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {

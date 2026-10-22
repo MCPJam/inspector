@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { originOf } from "@mcpjam/sdk";
+import { isAccountLimit } from "../../../shared/swarm-attempt-error.js";
 import {
   PROVIDER_NOT_ALLOWLISTED_CODE,
   describeBackendStreamFailure,
@@ -8,6 +9,7 @@ import {
   isUserOwnedDenialCode,
   parseStreamErrorChunkText,
 } from "../mcpjam-stream-handler.js";
+import { isAiPolicyRecognizedDenialCode } from "../org-policy-stream-refusal.js";
 
 describe("describeBackendStreamFailure", () => {
   it.each([401, 502])(
@@ -74,6 +76,30 @@ describe("describeBackendStreamFailure", () => {
       );
 
       expect(normalized.slug).toBe("provider/mcpjam_limit");
+      expect(originOf(normalized)).toBe("user_config");
+    },
+  );
+
+  // A turn on a retired model, or on a model the org's OpenRouter allowlist
+  // leaves out, would page as `internal/unknown` by status alone. The backend
+  // is refusing the user's own model choice, as designed.
+  it.each([
+    [
+      "model_retired",
+      "This model has been retired and is no longer available on MCPJam. Please switch to a newer model.",
+      "provider/model_retired",
+    ],
+    [
+      "model_not_allowed",
+      "Model openrouter/anthropic/claude-haiku-5.5 is not in this organization's OpenRouter allowlist",
+      "org/model_not_allowed",
+    ],
+  ])(
+    "reads a 400 %s as the user's model choice, not an MCPJam fault",
+    (code, message, slug) => {
+      const normalized = describeBackendStreamFailure(400, message, code);
+
+      expect(normalized.slug).toBe(slug);
       expect(originOf(normalized)).toBe("user_config");
     },
   );
@@ -360,6 +386,85 @@ describe("isMcpjamOwnedFailureCode", () => {
     }
     for (const code of theirs) {
       expect(isMcpjamOwnedFailureCode(code)).toBe(false);
+    }
+  });
+});
+
+describe("the organization AI-key policy's refusals", () => {
+  const CASES: Array<[string, number, string, string]> = [
+    ["org_keys_required", 403, "org/keys_required", "user_config"],
+    ["org_model_unconfigured", 422, "org/model_unconfigured", "user_config"],
+    ["org_runtime_unsupported", 422, "org/runtime_unsupported", "user_config"],
+    ["ai_scope_unresolved", 403, "org/scope_unresolved", "user_config"],
+    ["ai_key_policy_unavailable", 503, "org/key_policy_unavailable", "mcpjam"],
+    ["provider_auth_failed", 422, "org/provider_auth_failed", "user_config"],
+    ["provider_unavailable", 503, "org/provider_unavailable", "ambiguous"],
+  ];
+
+  it.each(CASES)(
+    "reads a non-OK %s (HTTP %i) as its own slug, never the status verdict",
+    (code, status, slug, origin) => {
+      const normalized = describeBackendStreamFailure(
+        status,
+        JSON.stringify({ ok: false, code, error: "Refused." }),
+        code,
+      );
+      expect(normalized.slug).toBe(slug);
+      expect(originOf(normalized)).toBe(origin);
+      // Never a credential wall, an account limit or an MCPJam outage by status.
+      expect(normalized.slug).not.toBe("provider/auth_error");
+      expect(normalized.slug).not.toMatch(
+        /mcpjam_limit|mcpjam_platform_budget/,
+      );
+    },
+  );
+
+  it.each(CASES)(
+    "reads a mid-stream %s chunk the same way",
+    (code, status, slug, origin) => {
+      const normalized = describeStreamErrorChunkFailure(status, "x", code);
+      expect(normalized.slug).toBe(slug);
+      expect(originOf(normalized)).toBe(origin);
+    },
+  );
+
+  it("maps credential_missing only on /stream/org", () => {
+    expect(
+      describeBackendStreamFailure(422, "x", "credential_missing", {
+        endpointPath: "/stream/org",
+      }).slug,
+    ).toBe("org/credential_missing");
+    expect(
+      describeStreamErrorChunkFailure(422, "x", "credential_missing", {
+        endpointPath: "/stream/org",
+      }).slug,
+    ).toBe("org/credential_missing");
+    // On the hosted route the code is not the org connection's.
+    expect(
+      describeBackendStreamFailure(422, "x", "credential_missing", {
+        endpointPath: "/stream",
+      }).slug,
+    ).not.toBe("org/credential_missing");
+  });
+
+  it("recognizes every refusal but the policy-read failure as an expected denial", () => {
+    for (const [code] of CASES) {
+      expect(isAiPolicyRecognizedDenialCode(code)).toBe(
+        code !== "ai_key_policy_unavailable",
+      );
+    }
+    expect(isAiPolicyRecognizedDenialCode("credential_missing")).toBe(true);
+    expect(isAiPolicyRecognizedDenialCode("user_rate_limit")).toBe(false);
+    expect(isAiPolicyRecognizedDenialCode(undefined)).toBe(false);
+  });
+
+  it("is never an account-owned denial or an MCPJam-owned failure", () => {
+    for (const [code] of CASES) {
+      // Not in USER_OWNED_DENIAL_CODES: that set mirrors the account-limit
+      // vocabulary, and an org that requires its own keys has hit no limit.
+      expect(isUserOwnedDenialCode(code)).toBe(false);
+      expect(isMcpjamOwnedFailureCode(code)).toBe(false);
+      expect(isAccountLimit(`Refused. (${code}, HTTP 403)`, code)).toBe(false);
     }
   });
 });

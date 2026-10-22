@@ -176,3 +176,48 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
     expect(onChange).toHaveBeenCalledWith([]);
   });
 });
+
+describe("BuiltInToolCheckboxList — notes", () => {
+  const NOTE =
+    "Off while your organization requires its own AI keys. Web search can't run on them yet.";
+
+  it.each(["default", "minimal"] as const)(
+    "shows a tool's note without blocking it (%s)",
+    (variant) => {
+      const onChange = vi.fn();
+      render(
+        <BuiltInToolCheckboxList
+          label="Built-in tools"
+          selected={[]}
+          available={[WEB_SEARCH]}
+          onChange={onChange}
+          variant={variant}
+          notes={{ web_search: NOTE }}
+        />,
+      );
+      expect(
+        screen.getByTestId("built-in-tool-note-web_search"),
+      ).toHaveTextContent(NOTE);
+      const toggle =
+        variant === "minimal"
+          ? screen.getByRole("switch", { name: "Web Search" })
+          : screen.getByRole("checkbox");
+      expect(toggle).not.toBeDisabled();
+      fireEvent.click(toggle);
+      expect(onChange).toHaveBeenCalledWith(["web_search"]);
+    },
+  );
+
+  it("shows no note for a tool without one", () => {
+    render(
+      <BuiltInToolCheckboxList
+        selected={[]}
+        available={[WEB_SEARCH]}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByTestId("built-in-tool-note-web_search"),
+    ).not.toBeInTheDocument();
+  });
+});

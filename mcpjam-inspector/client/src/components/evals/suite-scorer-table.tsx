@@ -45,10 +45,8 @@ import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { gateSwitchDisabledReason } from "./judge-gate-panel";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
-import {
-  SuiteJudgeCard,
-  type GroundednessRunEvidence,
-} from "./suite-judge-card";
+import type { GroundednessRunEvidence } from "./suite-judge-card";
+import { JudgeModelControl } from "./judges-section";
 import {
   authorablePredicateKinds,
   buildScorerTable,
@@ -104,16 +102,13 @@ export function SuiteScorerTable({
   judgeConfig,
   onJudgeConfigChange,
   availableModels = [],
+  requireOrgKeys = false,
+  onManageOrgProviders,
   scenarioMigrationNotice,
-  judgeAccessory,
-  rubricEditor,
   stageFacts,
   capabilities,
   unavailableReason,
   passOrFailHint,
-  judgeHint,
-  groundednessEvidence,
-  judgeRubric,
   headerContent,
   headerDescription,
   headerActions,
@@ -126,6 +121,13 @@ export function SuiteScorerTable({
   /** Suite scope only: a case reads the judge's config and may only skip it. */
   onJudgeConfigChange?: (next: EvalJudgeConfig | undefined) => void;
   availableModels?: ModelDefinition[];
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
   scenarioMigrationNotice?: React.ReactNode;
   judgeAccessory?: React.ReactNode;
   rubricEditor?: React.ReactNode;
@@ -210,7 +212,6 @@ export function SuiteScorerTable({
   );
   const [editMode, setEditMode] = useState(false);
   const [matchEditorOpen, setMatchEditorOpen] = useState(false);
-  const [judgeEditorOpen, setJudgeEditorOpen] = useState(false);
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
   const authorableKinds = authorablePredicateKinds(
     capabilities?.scorers?.predicateKinds,
@@ -219,6 +220,9 @@ export function SuiteScorerTable({
     capabilities?.judge,
     unavailableReason,
   );
+  // A deployment without judge gating can never make the judge Required, so
+  // the role is shown, not offered.
+  const judgeGatingOff = capabilities?.judge?.gating.enabled === false;
 
   /** A rule this page may edit in place: its own list, not an inherited one. */
   const editable = (rule: EffectiveRule | undefined) =>
@@ -366,23 +370,17 @@ export function SuiteScorerTable({
   const editableRowIds = table.groups.flatMap((group) =>
     group.rows.filter(rowOpensEditor).map((row) => row.id),
   );
-  const showEditEvaluators =
-    editableRowIds.length > 0 || hasMatchEditor || hasJudgeEditor;
+  const showEditEvaluators = editableRowIds.length > 0 || hasMatchEditor;
   const allEditorsOpen =
-    showEditEvaluators &&
-    editMode &&
-    (!hasMatchEditor || matchEditorOpen) &&
-    (!hasJudgeEditor || judgeEditorOpen);
+    showEditEvaluators && editMode && (!hasMatchEditor || matchEditorOpen);
   const openAllEditors = () => {
     setEditMode(true);
     if (hasMatchEditor) setMatchEditorOpen(true);
-    if (hasJudgeEditor) setJudgeEditorOpen(true);
   };
   const toggleAllEditors = () => {
     if (allEditorsOpen) {
       setEditMode(false);
       setMatchEditorOpen(false);
-      setJudgeEditorOpen(false);
       return;
     }
     openAllEditors();
@@ -493,6 +491,7 @@ export function SuiteScorerTable({
                         }}
                         checkPolicy={checkPolicy}
                         judgeDisabledReason={judgeDisabledReason}
+                        judgeGatingOff={judgeGatingOff}
                         judgeConfig={judgeConfig}
                         expanded={editMode}
                         editable={
@@ -557,65 +556,44 @@ export function SuiteScorerTable({
                     </div>
                   </details>
                 ) : null}
-                {scope.kind === "suite" &&
-                onJudgeConfigChange &&
-                group.stage === "userValue" ? (
-                  <details
-                    className="space-y-5 pt-2"
-                    data-setting-key="judge"
-                    data-subsection-id="judge"
-                    open={judgeEditorOpen}
-                    onToggle={(event) =>
-                      setJudgeEditorOpen(
-                        (event.currentTarget as HTMLDetailsElement).open,
-                      )
-                    }
-                  >
-                    <summary className="cursor-pointer text-xs font-medium">
-                      Judge — model, criteria and gate
-                    </summary>
-                    <div>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {judgeHint}
-                      </p>
-                    </div>
-                    <SuiteJudgeCard
-                      slot="goalCompletion"
-                      judgeConfig={judgeConfig}
-                      onJudgeConfigChange={onJudgeConfigChange}
-                      availableModels={availableModels}
-                      judgesCapabilities={capabilities?.judges}
-                      judgeAccessory={judgeAccessory}
-                      rubricEditor={rubricEditor}
-                    />
-                    <SuiteJudgeCard
-                      slot="groundedness"
-                      judgeConfig={judgeConfig}
-                      onJudgeConfigChange={onJudgeConfigChange}
-                      availableModels={availableModels}
-                      judgesCapabilities={capabilities?.judges}
-                      groundednessEvidence={groundednessEvidence}
-                    />
-                    {rubricChecks ? (
-                      <SuiteJudgeCard
-                        slot="rubricChecks"
-                        judgeConfig={judgeConfig}
-                        onJudgeConfigChange={onJudgeConfigChange}
-                        availableModels={availableModels}
-                        judgesCapabilities={capabilities?.judges}
-                        criteria={judgeRubric?.criteria ?? []}
-                        goalJudgeOff={
-                          judgeMode(judgeConfig, goalPolicy) === "off"
-                        }
-                      />
-                    ) : null}
-                  </details>
-                ) : null}
               </div>
             </section>
           ))}
         </div>
       </div>
+      {hasJudgeEditor && onJudgeConfigChange ? (
+        // Its own section, not a disclosure under User value. Only the model
+        // is shown for now: the judge's other settings (gate, grading
+        // instructions, rubric checks, groundedness) keep their stored values
+        // and are not rendered here until they are simpler to explain. The
+        // Goal completion row above stays the judge's on/off.
+        <section
+          className="border-b border-border py-8"
+          aria-labelledby="suite-judge-heading"
+          data-setting-key="judge"
+          data-subsection-id="judge"
+        >
+          <h3
+            id="suite-judge-heading"
+            className="text-lg font-semibold tracking-tight text-foreground"
+          >
+            Judge model
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Choose the model used to grade the outcome of each test run.
+          </p>
+          <div className="mt-4">
+            <JudgeModelControl
+              id="suite-judge-model"
+              value={judgeConfig}
+              onChange={onJudgeConfigChange}
+              availableModels={availableModels}
+              requireOrgKeys={requireOrgKeys}
+              onManageOrgProviders={onManageOrgProviders}
+            />
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -647,6 +625,7 @@ function ScorerRow({
   onEnabledChange,
   checkPolicy,
   judgeDisabledReason,
+  judgeGatingOff,
   judgeConfig,
   expanded,
   editable,
@@ -663,6 +642,7 @@ function ScorerRow({
   onEnabledChange: (enabled: boolean) => void;
   checkPolicy: boolean;
   judgeDisabledReason: string | undefined;
+  judgeGatingOff: boolean;
   judgeConfig: EvalJudgeConfig | undefined;
   expanded: boolean;
   /** This page may change the row's threshold, role and body in place. */
@@ -697,9 +677,7 @@ function ScorerRow({
   // edited in place; everything else is shown read-only.
   const editorPredicate = row.kind === "preset" ? row.preset : predicate;
   const editorWritable =
-    row.kind === "predicate" &&
-    editable &&
-    row.predicateIndex !== undefined;
+    row.kind === "predicate" && editable && row.predicateIndex !== undefined;
   // Owned checks edit in place. A check that is off previews its fields
   // here, because Edit evaluators opens it before the box is ticked. An
   // inherited check that is already on keeps its number on the title line.
@@ -815,6 +793,7 @@ function ScorerRow({
             predicate={predicate}
             checkPolicy={checkPolicy}
             judgeDisabledReason={judgeDisabledReason}
+            judgeGatingOff={judgeGatingOff}
             judgeEditable={judgeEditable}
             editable={editable}
             onPredicateChange={onPredicateChange}
@@ -893,6 +872,7 @@ function RoleCell({
   predicate,
   checkPolicy,
   judgeDisabledReason,
+  judgeGatingOff,
   judgeEditable,
   editable,
   onPredicateChange,
@@ -902,6 +882,7 @@ function RoleCell({
   predicate: Predicate | undefined;
   checkPolicy: boolean;
   judgeDisabledReason: string | undefined;
+  judgeGatingOff: boolean;
   /** The suite page edits the judge's role; a case only reads it. */
   judgeEditable: boolean;
   /** This page owns the assertion; an inherited one reads its role. */
@@ -917,7 +898,7 @@ function RoleCell({
     return <RoleChip role={row.role} />;
   }
   if (row.kind === "judge") {
-    if (row.judgeSlot === "groundedness" || !judgeEditable) {
+    if (row.judgeSlot === "groundedness" || !judgeEditable || judgeGatingOff) {
       return <RoleChip role={row.role} />;
     }
     const requiredEnabled = judgeDisabledReason === undefined;

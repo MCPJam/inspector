@@ -1,3 +1,4 @@
+import { LOCAL_EVAL_MODEL } from "../../../test/support/local-eval-model";
 import { logger } from "../../../utils/logger";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -383,8 +384,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           title: "Case",
           query: "Hello",
           runs: 2,
-          model: "gpt-4-turbo",
-          provider: "openai",
+          ...LOCAL_EVAL_MODEL,
           expectedToolCalls: [],
           promptTurns: [
             { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
@@ -465,9 +465,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   });
 
   async function runQuickTestCase(compareRunId?: string, intent?: string) {
-    // Use a BYOK-only model id so the runner takes the local generateText
-    // path (which the test mocks). gpt-5-mini has a hosted "openai/gpt-5-mini"
-    // counterpart and would otherwise route through the backend.
+    // The saved own-key selection keeps this on the mocked local stream.
     await runEvalSuiteWithAiSdk({
       suiteId: "suite-1",
       runId: null,
@@ -477,8 +475,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Case",
             query: "Hello",
             runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
+            ...LOCAL_EVAL_MODEL,
             expectedToolCalls: [],
             ...(intent !== undefined ? { intent } : {}),
             promptTurns: [
@@ -522,8 +519,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Case",
             query: "Hello",
             runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
+            ...LOCAL_EVAL_MODEL,
             expectedToolCalls: [],
             promptTurns: [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
@@ -1334,8 +1330,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Case",
             query: "Hello",
             runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
+            ...LOCAL_EVAL_MODEL,
             // Expecting a tool the mock assistant never calls → matchPassed=false
             // → finalizePassedForEval mock returns false → passed=false.
             expectedToolCalls: [
@@ -1970,10 +1965,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         title: "Case",
         query: "Hello",
         runs: 1,
-        // BYOK-only id so the runner takes the local streamText path the
-        // test mocks instead of routing to the hosted backend.
-        model: "gpt-4-turbo",
-        provider: "openai",
+        // The saved own-key selection takes the local streamText path
+        // controlled by this test.
+        ...LOCAL_EVAL_MODEL,
         expectedToolCalls: [],
         promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
         testCaseId: "case-1",
@@ -2365,8 +2359,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Case",
             query: "Hello",
             runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
+            ...LOCAL_EVAL_MODEL,
             expectedToolCalls: [],
             promptTurns: [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
@@ -2491,8 +2484,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Case",
             query: "Hello",
             runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
+            ...LOCAL_EVAL_MODEL,
             expectedToolCalls: [],
             promptTurns: [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
@@ -2579,8 +2571,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Org BYOK Case",
             query: "Hello",
             runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
+            ...LOCAL_EVAL_MODEL,
             expectedToolCalls: [],
             promptTurns: [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
@@ -2810,8 +2801,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
                 title: "Case",
                 query: "Hello",
                 runs: 1,
-                model: "gpt-4-turbo",
-                provider: "openai",
+                ...LOCAL_EVAL_MODEL,
                 expectedToolCalls: [],
                 promptTurns: [
                   { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
@@ -2882,8 +2872,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               title: "Negative case",
               query: "Hello",
               runs: 1,
-              model: "gpt-4-turbo",
-              provider: "openai",
+              ...LOCAL_EVAL_MODEL,
               isNegativeTest: true,
               expectedToolCalls: [],
               promptTurns: [
@@ -3836,6 +3825,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       runs: 1,
       model,
       provider,
+      ...(model === LOCAL_EVAL_MODEL.model
+        ? { legacySelection: LOCAL_EVAL_MODEL.legacySelection }
+        : {}),
       expectedToolCalls: [{ toolName: "lookup", arguments: {} }],
       promptTurns: [
         {
@@ -3946,8 +3938,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               title: "Right tool, wrong argument",
               query: "Hello",
               runs: 1,
-              model: "gpt-4-turbo",
-              provider: "openai",
+              ...LOCAL_EVAL_MODEL,
               expectedToolCalls: expected,
               promptTurns: [
                 { id: "turn-1", prompt: "Hello", expectedToolCalls: expected },
@@ -4136,8 +4127,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Aborted",
             query: "Hello",
             runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
+            ...LOCAL_EVAL_MODEL,
             expectedToolCalls: [],
             promptTurns: [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
@@ -4387,8 +4377,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               title: "Case",
               query: "Hello",
               runs: 1,
-              model: "gpt-4-turbo",
-              provider: "openai",
+              ...LOCAL_EVAL_MODEL,
               expectedToolCalls: [],
               promptTurns: [
                 { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
@@ -4633,8 +4622,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           title: "Case",
           query: "Hello",
           runs: 1,
-          model: "gpt-4-turbo",
-          provider: "openai",
+          ...LOCAL_EVAL_MODEL,
           expectedToolCalls: [],
           promptTurns: [
             { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
@@ -4701,8 +4689,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           title: "Case",
           query: "Hello",
           runs: 1,
-          model: "gpt-4-turbo",
-          provider: "openai",
+          ...LOCAL_EVAL_MODEL,
           expectedToolCalls: [],
           promptTurns: [
             { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
@@ -4790,8 +4777,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Show me a redbull",
             query: "Show me a redbull",
             runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
+            ...LOCAL_EVAL_MODEL,
             expectedToolCalls: [],
             steps: [
               { id: "s1", kind: "prompt", prompt: "Show me a redbull" },
@@ -4863,8 +4849,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Pinned",
             query: "",
             runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
+            ...LOCAL_EVAL_MODEL,
             expectedToolCalls: [],
             steps: [
               { id: "p1", kind: "prompt", prompt: "hi" },
@@ -4919,8 +4904,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             title: "Model-free pinned",
             query: "",
             runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
+            ...LOCAL_EVAL_MODEL,
             expectedToolCalls: [],
             steps: [
               {
@@ -4982,8 +4966,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           title: "Case",
           query: "Hello",
           runs: 1,
-          model: "gpt-4-turbo",
-          provider: "openai",
+          ...LOCAL_EVAL_MODEL,
           expectedToolCalls: [],
           promptTurns: [
             { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },

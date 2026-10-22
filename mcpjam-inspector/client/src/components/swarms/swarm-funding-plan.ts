@@ -113,16 +113,49 @@ export function fundingSplitOf(
   );
 }
 
+/**
+ * Why Continue is off while the org is out of credits, or null. Only once no
+ * conversation in the launch is known to be sponsored: the split says none, or
+ * no allowance is left. A split still unknown (goals not created yet) may be
+ * sponsored, so it never blocks.
+ */
+export function launchOutOfCreditsReason({
+  outOfCreditsReason,
+  split,
+  pendingGoals,
+  allowanceRemaining,
+}: {
+  outOfCreditsReason: string | null;
+  split: FundingSplit | null;
+  pendingGoals: number;
+  allowanceRemaining: number | undefined;
+}): string | null {
+  if (outOfCreditsReason === null) return null;
+  const noneSponsored =
+    (split !== null && pendingGoals === 0 && split.sponsored === 0) ||
+    allowanceRemaining === 0;
+  return noneSponsored ? outOfCreditsReason : null;
+}
+
 const plural = (count: number, one: string, many: string) =>
   `${count.toLocaleString()} ${count === 1 ? one : many}`;
 
-/** "5 sponsored conversations · 10 use org credits". */
+/**
+ * "5 sponsored · 10 use org credits", or just the side that is non-zero:
+ * "15 sponsored conversations", "15 conversations use org credits".
+ */
 export function fundingHeadline(split: FundingSplit): string {
-  return `${plural(
-    split.sponsored,
-    "sponsored conversation",
-    "sponsored conversations",
-  )} · ${split.credits.toLocaleString()} ${
+  if (split.credits === 0) {
+    return plural(
+      split.sponsored,
+      "sponsored conversation",
+      "sponsored conversations",
+    );
+  }
+  if (split.sponsored === 0) {
+    return `${plural(split.credits, "conversation uses", "conversations use")} org credits`;
+  }
+  return `${split.sponsored.toLocaleString()} sponsored · ${split.credits.toLocaleString()} ${
     split.credits === 1 ? "uses" : "use"
   } org credits`;
 }
@@ -176,6 +209,10 @@ function ineligibilityClause(
       return "the judge is set to a model MCPJam doesn't host";
     case "judge_model_not_included":
       return "the judge model isn't included in them";
+    // Run-wide: every model the run uses must come from the organization's
+    // own providers, which sponsored conversations never cover.
+    case "org_keys_required":
+      return "this organization requires its own provider keys";
     default:
       return null;
   }
@@ -229,22 +266,18 @@ export function creditFundingExplanation(
 }
 
 /**
- * The sentence shown when a launch stops before creating any run because the
- * split is not the one the person was looking at. Nothing was launched, and
- * nothing will be until they launch again with the split now on screen.
+ * Shown when a launch stops before creating any run because fewer
+ * conversations are sponsored than the split that was on screen, so more
+ * would use org credits. Pressing Continue again launches with the new split.
  */
 export function fundingReviewNotice(args: {
-  shown: number | null;
+  shown: number;
   now: FundingSplit;
+  partial?: boolean;
 }): string {
-  const now = fundingHeadline(args.now);
-  return args.shown === null
-    ? `This launch can use sponsored conversations: ${now}. Nothing was launched. Review the split, then launch again.`
-    : `Sponsored conversations changed while you were reviewing this launch. It was ${plural(
-        args.shown,
-        "sponsored conversation",
-        "sponsored conversations",
-      )}; now it is ${now}. Nothing was launched. Review the split, then launch again.`;
+  return `${plural(args.now.credits, "conversation", "conversations")}${
+    args.partial ? " from existing goals" : ""
+  } will now use org credits. Press Continue to launch.`;
 }
 
 /**
@@ -252,12 +285,8 @@ export function fundingReviewNotice(args: {
  * without it could move conversations onto the organization's credits, so
  * nothing is launched.
  */
-export function fundingUnverifiedNotice(shown: number): string {
-  return `We couldn't confirm the ${plural(
-    shown,
-    "sponsored conversation",
-    "sponsored conversations",
-  )} you were shown, so nothing was launched. Try launching again.`;
+export function fundingUnverifiedNotice(): string {
+  return "We couldn't confirm the sponsored conversations. Nothing has launched yet. Press Continue to try again.";
 }
 
 /**

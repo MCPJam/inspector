@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import {
   AdmissionWaitBudget,
@@ -34,7 +35,8 @@ import type {
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 import { ConvexHttpClient } from "convex/browser";
-import type { ModelDefinition } from "@/shared/types";
+import { getCanonicalModelId, type ModelDefinition } from "@/shared/types";
+import { hostedCatalogModelDefinitions } from "../hosted-model-catalog.js";
 // `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
 // (org-model-config.ts) — that helper falls back to BYOK provider parsing
 // when the scenario modelId isn't in SUPPORTED_MODELS, which is the common
@@ -50,6 +52,10 @@ import {
   sponsoredPlatformFailure,
 } from "../../../shared/swarm-sponsorship.js";
 import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
+import {
+  isXaaConnectFailureReason,
+  xaaAuthorizationServerStatusOf,
+} from "../../../shared/xaa-connect-failure.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import {
   resolveTurnRuntime,
@@ -141,6 +147,7 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
+import { failedHarnessPersist, requirePersistedHarnessTurn } from "./harness-persistence.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 import { ranTurnSelection } from "../../utils/session-model-selection";
@@ -285,6 +292,12 @@ interface SessionResult {
   outcome: SessionOutcome;
   errorMessage?: string;
   errorReason?: string;
+  /**
+   * The HTTP status a server's authorization server answered a refused
+   * sign-in (XAA) with. Structured for the same reason as `errorReason`: the
+   * swarm runner decides whether to stop signing in by it.
+   */
+  authorizationServerStatus?: number;
   errorRefusal?: SpendRefusal;
 }
 
@@ -399,6 +412,8 @@ export interface SyntheticHostRuntime {
   harnessSandboxBinding?: TrustedHarnessSandboxBinding;
   harnessExecutionTarget?: LocalHarnessExecutionTarget;
   harness?: Harness;
+  agentLoop?: Harness;
+  tasks?: MCPJamHandlerOptions["tasks"];
   /**
    * Scenario-access version for the drain's `/stream/org/resolve` authorization
    * and the scenario-scoped widget capture. Set on the scenario surface; the
@@ -555,7 +570,9 @@ export async function runSyntheticHostSession(
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     computer,
-    harness,
+    harness: configuredHarness,
+    agentLoop,
+    tasks,
     sandboxBinding,
     harnessSandboxBinding,
     harnessExecutionTarget,
@@ -586,7 +603,7 @@ export async function runSyntheticHostSession(
   // the swarm runner knows whether the ephemeral regime is in force, and a
   // rule here that assumed it would refuse every harness on the legacy path
   // too. The runner sets this whenever it could not produce a binding.
-  if (runtime.harness && runtime.harnessBlockedReason) {
+  if ((agentLoop ?? configuredHarness) && runtime.harnessBlockedReason) {
     const reason = runtime.harnessBlockedReason;
     logger.warn("[sessionSimulation.runner] harness turn refused", {
       runId: adapter.runId,
@@ -600,6 +617,16 @@ export async function runSyntheticHostSession(
       message: reason,
     });
     return { outcome: "failed", errorMessage: reason };
+  }
+
+  let harness: ReturnType<typeof resolveAgentLoop>["harnessId"];
+  try {
+    harness = resolveAgentLoop({ agentLoop, harness: configuredHarness }).harnessId;
+  } catch (error) {
+    return {
+      outcome: "failed",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
   }
 
   const sessionStartedAt = Date.now();
@@ -943,6 +970,8 @@ export async function runSyntheticHostSession(
         harness,
         modelId: String(modelDefinition.id),
         provider: modelDefinition.provider,
+        hosted: modelDefinition.hosted,
+        ...(modelSelection ? { selection: modelSelection } : {}),
         hasProjectId: Boolean(projectId),
       });
 
@@ -1026,6 +1055,7 @@ export async function runSyntheticHostSession(
       requireToolApproval,
       respectToolVisibility,
       modelVisibleMcpToolResults,
+      tasks,
       ...(harness ? { harness } : {}),
       ...(progressiveToolDiscovery !== undefined
         ? {
@@ -1268,6 +1298,10 @@ export async function runSyntheticHostSession(
             selectedServers: selectedServerIds,
             requireToolApproval,
             ...(harness ? { harness } : {}),
+            agentLoop,
+            tasks,
+            respectToolVisibility,
+            modelVisibleMcpToolResults,
             // Harness MCP-proxy plane (harness hosts with MCP servers) + swarm
             // continuity identity (`swarm-chat` owner lane). `harnessMcpProxy` is
             // resolved once above; `journeyRunId`/`hostId` are the swarm run + pinned
@@ -1316,6 +1350,7 @@ export async function runSyntheticHostSession(
             projectId,
             authHeader,
             abortSignal: turnDeadline!.signal,
+            remainingTurnMs: () => turnDeadline!.remainingMs(),
             // Threaded into the per-step /stream (or /stream/org) body and the
             // /stream/org/local-usage writeback so the backend BYOK and JAM-paid
             // writers can stamp the run id onto llmUsageRecord for per-run spend
@@ -1460,9 +1495,19 @@ export async function runSyntheticHostSession(
         // derives the lane's journeyRunId/hostId from the top-level swarm
         // attribution above. Undefined for the emulated engine.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
-      });
+      }).catch(failedHarnessPersist(harnessSessionCommit));
       warnIfSimulationPersistNotSaved(turnPersist, "turn", chatSessionId);
+      // Do not retry a rejected turn from the terminal empty-session fallback.
       anyTurnPersisted = true;
+      await requirePersistedHarnessTurn({
+        turnError: failedTurn,
+        outcome: turnPersist,
+        commit: harnessSessionCommit,
+        projectId,
+        journeyRunId: persist.journeyRunId,
+        hostId: persist.hostId,
+        bearer: authHeader,
+      });
 
       // MCP App widget snapshots so the Sessions viewer renders the actual
       // widget instead of a collapsed tool pill. Best-effort — a failure here
@@ -1579,7 +1624,16 @@ export async function runSyntheticHostSession(
     // it to distinguish a provider 429 (stop THIS host) from an org spend-cap
     // breach (stop the WHOLE run). The scenario runner ignores it for
     // rate-limited outcomes, so this is a safe additive change.
-    if (classifyTurnFailure(message) === "rate_limited") {
+    //
+    // A server's enterprise sign-in (XAA) failure is never a rate limit, even
+    // when its authorization server answered 429: the "(HTTP 429)" in its
+    // sentence would otherwise card it as the user's AI provider throttling
+    // their key. It keeps its structured reason and fails below.
+    const errorReason = readErrorReason(error);
+    if (
+      !isXaaConnectFailureReason(errorReason) &&
+      classifyTurnFailure(message) === "rate_limited"
+    ) {
       emit?.({
         type: "session_complete",
         status: "rate_limited",
@@ -1598,11 +1652,14 @@ export async function runSyntheticHostSession(
       status: "failed",
       errorMessage: message,
     });
-    const errorReason = readErrorReason(error);
+    const authorizationServerStatus = xaaAuthorizationServerStatusOf(error);
     return {
       outcome: "failed",
       errorMessage: message,
       ...(errorReason ? { errorReason } : {}),
+      ...(authorizationServerStatus !== undefined
+        ? { authorizationServerStatus }
+        : {}),
       errorRefusal,
     };
   } finally {
@@ -2081,7 +2138,7 @@ export async function drainAssistantTurn(
     chatSessionId: args.chatSessionId,
     requireToolApproval: args.requireToolApproval,
     tools: args.tools as ToolSet,
-    ...(args.harness ? { harness: args.harness } : {}),
+    ...((args.agentLoop ?? args.harness) ? { harness: args.agentLoop ?? args.harness } : {}),
     ...(mergedExtraBodyFields
       ? { extraBodyFields: mergedExtraBodyFields }
       : {}),
@@ -2112,7 +2169,7 @@ export async function drainAssistantTurn(
     if (
       rt.runtime.kind !== "hosted" ||
       rt.modelSource !== "mcpjam" ||
-      args.harness ||
+      args.agentLoop || args.harness ||
       rt.runtime.harness ||
       !journeyRunId ||
       !hostId
@@ -2153,6 +2210,10 @@ export async function drainAssistantTurn(
       streamSink: "none",
       messages: args.messages,
       systemPrompt: args.systemPrompt,
+    agentLoop: args.agentLoop,
+    respectToolVisibility: args.respectToolVisibility,
+    tasks: args.tasks,
+    harnessTurnContext: args.harnessTurnContext,
       ...(args.temperature !== undefined
         ? { temperature: args.temperature }
         : {}),
@@ -2234,6 +2295,28 @@ export async function drainAssistantTurn(
     };
   }
 
+  // The id `/stream` is sent must be the one the hosted check decided on. A
+  // snapshot pinned before selections existed carries the bare id
+  // (`gpt-5.6-luna`), which `isHostedCatalogModel` canonicalizes to
+  // `openai/gpt-5.6-luna` to route the turn here, while the engine writes
+  // `modelDefinition.id` into the body and `/stream`'s catalog knows only the
+  // prefixed id, refusing the bare one as `invalid_model`. Canonicalized
+  // against the live hosted catalog too, so a model the backend added after
+  // the snapshot resolves the same way. Same override the hosted eval turn
+  // makes. `/stream/org` keeps the bare id: that is the org provider's own
+  // model name.
+  const turnModelDefinition =
+    rt.modelSource === "mcpjam"
+      ? {
+          ...modelDefinition,
+          id: getCanonicalModelId(
+            String(modelDefinition.id),
+            modelDefinition.provider,
+            hostedCatalogModelDefinitions(),
+          ),
+        }
+      : modelDefinition;
+
   // Hosted engines (JAM-paid `/stream`, cloud org-BYOK `/stream/org`). The
   // endpoint + extra body fields + harness selector ride `rt.runtime`.
   const result = await runUnifiedAssistantTurn({
@@ -2242,8 +2325,12 @@ export async function drainAssistantTurn(
     persistMode: "caller",
     ...(args.maxSteps !== undefined ? { maxSteps: args.maxSteps } : {}),
     messages: args.messages,
-    modelDefinition,
+    modelDefinition: turnModelDefinition,
     systemPrompt: args.systemPrompt,
+    agentLoop: args.agentLoop,
+    respectToolVisibility: args.respectToolVisibility,
+    tasks: args.tasks,
+    harnessTurnContext: args.harnessTurnContext,
     ...(args.temperature !== undefined
       ? { temperature: args.temperature }
       : {}),
@@ -2300,6 +2387,7 @@ export async function drainAssistantTurn(
     ...(args.progressivePlan ? { progressivePlan: args.progressivePlan } : {}),
     ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
     ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
+    ...(args.remainingTurnMs ? { remainingTurnMs: args.remainingTurnMs } : {}),
     ...(hooks?.onToolCall ? { onToolCall: hooks.onToolCall } : {}),
     ...(hooks?.onToolResult ? { onToolResult: hooks.onToolResult } : {}),
     ...(hooks?.onLiveTextDelta

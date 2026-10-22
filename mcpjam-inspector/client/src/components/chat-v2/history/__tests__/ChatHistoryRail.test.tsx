@@ -657,4 +657,50 @@ describe("ChatHistoryRail", () => {
       expect(archiveManySessionIdsMock).toHaveBeenCalledWith(["p1"]),
     );
   });
+
+  it("settles an allowed archive-all after it completes", async () => {
+    archiveManySessionIdsMock.mockResolvedValue(undefined);
+    const order: string[] = [];
+    useChatHistoryMock.mockImplementation(() => ({
+      personal: [sessionStub("p1")],
+      project: [],
+      loading: false,
+      error: null,
+      isReactive: false,
+      refetch: refetchMock,
+      actions: {
+        rename: vi.fn(),
+        archive: vi.fn(),
+        unarchive: vi.fn(),
+        share: vi.fn(),
+        unshare: vi.fn(),
+        pin: vi.fn(),
+        unpin: vi.fn(),
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
+      },
+    }));
+
+    render(
+      <ChatHistoryRail
+        activeSessionId="p1"
+        isAuthenticated
+        isStreaming={false}
+        projectId="project-1"
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+        beforeResetChatAfterArchiveAll={async () => true}
+        onArchiveAllComplete={() => order.push("complete")}
+        onArchiveAllSettled={() => order.push("settled")}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /archive all sessions in sessions/i,
+      }),
+    );
+
+    await waitFor(() => expect(order).toEqual(["complete", "settled"]));
+  });
 });

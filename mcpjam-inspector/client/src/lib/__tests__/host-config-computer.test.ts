@@ -168,6 +168,16 @@ describe("shouldShowComputerToggle", () => {
     ).toBe(false);
   });
 
+  it("always hides for a harness client, even with a computer attached", () => {
+    expect(
+      shouldShowComputerToggle({
+        catalogHasComputerBackedTool: true,
+        computerAttached: true,
+        hasHarness: true,
+      }),
+    ).toBe(false);
+  });
+
   it("always hides when disallowed (eval suites), even if a computer is attached", () => {
     expect(
       shouldShowComputerToggle({
@@ -300,4 +310,11 @@ describe("hostConfigNeedsAccount", () => {
     expect(hostConfigNeedsAccount({} as never)).toBe(false);
     expect(hostConfigNeedsAccount(undefined)).toBe(false);
   });
+});
+
+
+it("requires an account for agent-loop clients and clears the selector on detach", () => {
+  const value = { ...emptyHostConfigInputV2({}), agentLoop: "codex" as const };
+  expect(hostConfigNeedsAccount(value)).toBe(true);
+  expect(detachComputerPatch(value, undefined).agentLoop).toBeUndefined();
 });

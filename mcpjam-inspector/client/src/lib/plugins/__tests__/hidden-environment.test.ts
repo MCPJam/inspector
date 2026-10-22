@@ -4,12 +4,15 @@ import {
   HIDDEN_ENVIRONMENT_RETRY_FAILED_MESSAGE,
   hiddenEnvironmentCompositionKey,
   hiddenEnvironmentServerOverride,
+  hiddenEnvironmentVenue,
+  needsLocalVenue,
   plainHiddenEnvironmentFailure,
   readRecoverableHiddenEnvironmentCode,
   retargetHiddenEnvironmentBody,
   runnablePluginServerIds,
   runnablePluginVersionIds,
   skippedPluginsForNotice,
+  unavailableServersForNotice,
 } from "../hidden-environment";
 
 function row(
@@ -62,7 +65,7 @@ describe("runnable plugins", () => {
     expect(runnablePluginServerIds(rows)).toEqual(["srv_a", "srv_b"]);
   });
 
-  it("never treats a plugin with a local or computer component as runnable", () => {
+  it("never treats a plugin with a local or computer component as runnable when hosted", () => {
     // The hosted-venue read skips these; this holds even if a read did not.
     const local = row("local", {
       servers: [
@@ -91,6 +94,81 @@ describe("runnable plugins", () => {
     expect(runnablePluginServerIds([local, mixed, row("a")])).toEqual([
       "srv_a",
     ]);
+    // Composed to run here, a local component runs; a computer one still not.
+    expect(runnablePluginVersionIds([local, mixed, row("a")], "local")).toEqual(
+      ["ver_local", "ver_a"],
+    );
+    expect(runnablePluginServerIds([local, mixed, row("a")], "local")).toEqual([
+      "srv_l",
+      "srv_a",
+    ]);
+    // A local server still waiting on setup keeps the plugin composed here,
+    // so its remote server runs and the plugin is named as partly skipped.
+    const waiting = row("waiting", {
+      servers: [
+        {
+          serverId: "srv_w",
+          name: "w",
+          componentKey: "w",
+          placement: "local",
+          unavailable: "needs_setup",
+        },
+        {
+          serverId: "srv_wr",
+          name: "wr",
+          componentKey: "wr",
+          placement: "remote",
+        },
+      ],
+    });
+    expect([local, mixed, row("a"), waiting].map(needsLocalVenue)).toEqual([
+      true,
+      false,
+      false,
+      true,
+    ]);
+    expect(runnablePluginServerIds([waiting], "local")).toEqual(["srv_wr"]);
+  });
+
+  it("leaves out a server the member can't use yet, keeping its plugin", () => {
+    const partial = row("p", {
+      servers: [
+        {
+          serverId: "srv_p",
+          name: "p",
+          componentKey: "p",
+          placement: "remote",
+        },
+        {
+          serverId: "srv_crm",
+          name: "crm",
+          componentKey: "crm",
+          placement: "remote",
+          unavailable: "needs_auth",
+        },
+      ],
+    });
+    expect(runnablePluginVersionIds([partial])).toEqual(["ver_p"]);
+    expect(runnablePluginServerIds([partial])).toEqual(["srv_p"]);
+  });
+});
+
+describe("hiddenEnvironmentVenue", () => {
+  it("is local only for a client the member runs here, with a plugin that needs it", () => {
+    const local = { hostedMode: false, clientRunsHere: true, needsLocal: true };
+    expect(hiddenEnvironmentVenue(local)).toBe("local");
+    // The hosted app never reaches the member's machine.
+    expect(hiddenEnvironmentVenue({ ...local, hostedMode: true })).toBe(
+      "hosted",
+    );
+    // A local build with no choice to run the client here is not one.
+    expect(hiddenEnvironmentVenue({ ...local, clientRunsHere: false })).toBe(
+      "hosted",
+    );
+    // Nothing to run here: the chat keeps the route it had.
+    expect(hiddenEnvironmentVenue({ ...local, needsLocal: false })).toBe(
+      "hosted",
+    );
   });
 });
 
@@ -115,6 +193,13 @@ describe("hiddenEnvironmentCompositionKey", () => {
     );
     expect(hiddenEnvironmentCompositionKey(base)).not.toBe(
       hiddenEnvironmentCompositionKey({ ...base, secretIds: ["s"] }),
+    );
+    // Hosted keys are unchanged; a local venue is its own composition.
+    expect(hiddenEnvironmentCompositionKey(base)).toBe(
+      hiddenEnvironmentCompositionKey({ ...base, venue: "hosted" }),
+    );
+    expect(hiddenEnvironmentCompositionKey(base)).not.toBe(
+      hiddenEnvironmentCompositionKey({ ...base, venue: "local" }),
     );
   });
 });
@@ -152,6 +237,73 @@ describe("skippedPluginsForNotice", () => {
     ]);
   });
 
+  it("names an active plugin running without a server, as a partial skip", () => {
+    const partial = row("p", {
+      servers: [
+        {
+          serverId: "srv_p",
+          name: "p",
+          componentKey: "p",
+          placement: "remote",
+        },
+        {
+          serverId: "srv_k",
+          name: "k",
+          componentKey: "k",
+          placement: "remote",
+          unavailable: "needs_setup",
+        },
+      ],
+    });
+    expect(skippedPluginsForNotice([row("a"), partial])).toEqual([
+      {
+        pluginId: "plg_p",
+        name: "p",
+        displayName: null,
+        reason: "needs_setup",
+        partial: true,
+      },
+    ]);
+  });
+
+  it("names the server to sign in to when signing in is the fix", () => {
+    const partial = row("p", {
+      servers: [
+        {
+          serverId: "srv_s",
+          name: "s",
+          componentKey: "s",
+          placement: "remote",
+          unavailable: "needs_setup",
+        },
+        {
+          serverId: "srv_k",
+          name: "k",
+          componentKey: "k",
+          placement: "remote",
+          unavailable: "needs_auth",
+        },
+      ],
+    });
+    const whole = row("w", {
+      status: "skipped",
+      reason: "needs_auth",
+      componentKey: "w",
+    });
+    expect(skippedPluginsForNotice([partial])[0].reason).toBe("needs_auth");
+    expect(
+      skippedPluginsForNotice([partial, whole]).map((plugin) => plugin.signIn),
+    ).toEqual([
+      { pluginVersionId: "ver_p", componentKey: "k" },
+      { pluginVersionId: "ver_w", componentKey: "w" },
+    ]);
+    expect(
+      skippedPluginsForNotice([
+        row("s", { status: "skipped", reason: "needs_setup" }),
+      ])[0].signIn,
+    ).toBeUndefined();
+  });
+
   it("says where a placement skip's component would have run", () => {
     const skipped = (placement: "local" | "computer") =>
       row(placement, {
@@ -173,6 +325,77 @@ describe("skippedPluginsForNotice", () => {
         (plugin) => plugin.placement,
       ),
     ).toEqual(["local", "computer"]);
+  });
+});
+
+describe("unavailableServersForNotice", () => {
+  const twoServers = row("mail", {
+    displayName: "Mail",
+    servers: [
+      {
+        serverId: "srv_inbox",
+        name: "inbox",
+        componentKey: "inbox",
+        placement: "remote",
+      },
+      {
+        serverId: "srv_send",
+        name: "send",
+        componentKey: "send",
+        placement: "remote",
+      },
+    ],
+  });
+
+  it("names the plugin whose server the turn ran without, as a partial skip", () => {
+    expect(
+      unavailableServersForNotice(
+        [row("a"), twoServers],
+        [{ serverId: "srv_send", reason: "unreachable" }],
+      ),
+    ).toEqual([
+      {
+        pluginId: "plg_mail",
+        name: "mail",
+        displayName: "Mail",
+        reason: "unreachable",
+        partial: true,
+      },
+    ]);
+  });
+
+  it("says sign in when any of the plugin's servers needs it", () => {
+    expect(
+      unavailableServersForNotice(
+        [twoServers],
+        [
+          { serverId: "srv_send", reason: "unreachable" },
+          { serverId: "srv_inbox", reason: "needs_auth" },
+        ],
+      ).map((plugin) => plugin.reason),
+    ).toEqual(["needs_auth"]);
+  });
+
+  it("names the server to sign in to only for a sign-in", () => {
+    const signIns = (reason: "needs_auth" | "unreachable") =>
+      unavailableServersForNotice(
+        [twoServers],
+        [{ serverId: "srv_send", reason }],
+      )[0].signIn;
+    expect(signIns("needs_auth")).toEqual({
+      pluginVersionId: "ver_mail",
+      componentKey: "send",
+    });
+    expect(signIns("unreachable")).toBeUndefined();
+  });
+
+  it("says nothing for a server no plugin lists", () => {
+    expect(
+      unavailableServersForNotice(
+        [row("a")],
+        [{ serverId: "srv_elsewhere", reason: "unreachable" }],
+      ),
+    ).toEqual([]);
   });
 });
 

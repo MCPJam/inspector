@@ -6,8 +6,11 @@ import { BehaviorTab } from "../BehaviorTab";
 // BehaviorTab pulls the model picker through provider-backed hooks; stub them
 // so the test stays focused on the harness gray-out wiring (the thing under
 // test), not the model pipeline.
+const catalog = vi.hoisted(() => ({
+  current: [] as Array<Record<string, unknown>>,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
-  useAvailableModels: () => ({ availableModels: [] }),
+  useAvailableModels: () => ({ availableModels: catalog.current }),
 }));
 // The approval switch now asks the server which transport a harness runs,
 // because that answer is no longer a property of the harness name. Default the
@@ -25,10 +28,19 @@ vi.mock("@/hooks/useHarnessCapabilities", () => ({
 vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
   // Carries `disabled` through: it is the prop the harness gating decides, and
   // a stub that swallowed it would let the model selector silently un-gate.
-  ModelSelector: ({ disabled }: { disabled?: boolean }) => (
+  ModelSelector: ({
+    disabled,
+    availableModels,
+  }: {
+    disabled?: boolean;
+    availableModels?: Array<{ id: string; orgProvider?: { id?: string } }>;
+  }) => (
     <div
       data-testid="model-selector"
       data-disabled={disabled ? "true" : undefined}
+      data-models={(availableModels ?? [])
+        .map((m) => `${m.orgProvider?.id ?? "hosted"}:${m.id}`)
+        .join(",")}
     />
   ),
 }));
@@ -36,7 +48,10 @@ vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
 function renderBehaviorTab(
   partial?: Parameters<typeof emptyHostConfigInputV2>[0],
 ) {
-  const draft = emptyHostConfigInputV2(partial);
+  const draft = {
+    ...emptyHostConfigInputV2(partial),
+    systemPromptDefault: partial?.systemPromptDefault,
+  };
   return render(
     <BehaviorTab draft={draft} onDraftChange={vi.fn()} attention={[]} />,
   );
@@ -52,7 +67,7 @@ function sliderRoot(container: HTMLElement): Element {
 }
 
 describe("BehaviorTab harness gray-out", () => {
-  it("disables temperature for a claude-code harness host but not model/system prompt", () => {
+  it("disables temperature for a claude-code harness while keeping its model editable", () => {
     const { container } = renderBehaviorTab({ harness: "claude-code" });
 
     // Permanently not enforced for the harness → disabled with an honest note.
@@ -61,15 +76,12 @@ describe("BehaviorTab harness gray-out", () => {
       screen.getByText(/runs its own loop and ignores temperature/i),
     ).toBeInTheDocument();
 
-    // Model + system prompt DO cross into the harness, so they stay editable
-    // (no blanket isHarnessHost disable). Claude Code's model credentials are
+    // Claude Code's model credentials are
     // brokered by MCPJam, so the selection is what the runtime launches with.
     expect(screen.getByTestId("model-selector")).not.toHaveAttribute(
       "data-disabled",
     );
-    expect(
-      screen.getByPlaceholderText(/helpful assistant/i),
-    ).not.toHaveAttribute("readonly");
+    expect(screen.getByDisplayValue("No system prompt applied")).toBeDisabled();
   });
 
   it("leaves approval EDITABLE for claude-code now that its proxy phase landed", () => {
@@ -214,6 +226,114 @@ describe("approval follows the server's answer about the runtime", () => {
       capabilitiesAnswer.current = { supportsNativeToolApproval: false };
       renderBehaviorTab({ harness });
       expect(screen.getByLabelText(/require tool approval/i)).not.toBeDisabled();
+    },
+  );
+});
+
+describe("the model list a harness host offers", () => {
+  afterEach(() => {
+    catalog.current = [];
+  });
+
+  const HOSTED_HAIKU = {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Haiku",
+    provider: "anthropic",
+    hosted: true,
+  };
+  const HOSTED_GPT = {
+    id: "openai/gpt-5-mini",
+    name: "GPT-5 mini",
+    provider: "openai",
+    hosted: true,
+  };
+  const ORG_ANTHROPIC = {
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+    hosted: false,
+    orgProvider: { providerKey: "anthropic", id: "orgprov_a" },
+  };
+  const ORG_OPENAI = {
+    id: "gpt-5-mini",
+    name: "GPT-5 mini",
+    provider: "openai",
+    hosted: false,
+    orgProvider: { providerKey: "openai", id: "orgprov_o" },
+  };
+
+  it("a Claude Code host offers hosted rows and the org's Anthropic rows", () => {
+    catalog.current = [HOSTED_HAIKU, HOSTED_GPT, ORG_ANTHROPIC, ORG_OPENAI];
+    renderBehaviorTab({ harness: "claude-code" });
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-models",
+      "hosted:anthropic/claude-haiku-4.5,orgprov_a:claude-sonnet-4-5",
+    );
+  });
+
+  it("a Codex host offers hosted rows and the org's OpenAI rows", () => {
+    catalog.current = [HOSTED_HAIKU, HOSTED_GPT, ORG_ANTHROPIC, ORG_OPENAI];
+    renderBehaviorTab({ harness: "codex" });
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-models",
+      "hosted:openai/gpt-5-mini,orgprov_o:gpt-5-mini",
+    );
+  });
+
+  it("offers nothing — not the unfiltered list — when no row can run", () => {
+    catalog.current = [ORG_OPENAI];
+    renderBehaviorTab({ harness: "claude-code" });
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-models",
+      "",
+    );
+  });
+
+  it("an emulated host still offers everything", () => {
+    catalog.current = [HOSTED_HAIKU, ORG_OPENAI];
+    renderBehaviorTab();
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-models",
+      "hosted:anthropic/claude-haiku-4.5,orgprov_o:gpt-5-mini",
+    );
+  });
+});
+
+describe("saved system prompt status", () => {
+  it.each([
+    [
+      "Official text",
+      {
+        source: {
+          publisher: "OpenAI",
+          catalogEntryId: "entry",
+          revision: "2026-10-01",
+          sourceUrl: "https://platform.claude.com",
+        },
+      },
+      "Default system prompt applied",
+    ],
+    ["Custom text", undefined, "Custom system prompt applied"],
+    ["", {}, "No system prompt applied"],
+    ["", undefined, "No system prompt applied"],
+  ] as const)(
+    "conceals text and renders saved state",
+    (text, metadata, status) => {
+      renderBehaviorTab({ systemPrompt: text, systemPromptDefault: metadata });
+      expect(screen.getByDisplayValue(status)).toBeDisabled();
+      expect(screen.getByDisplayValue(status)).toHaveClass(
+        "resize-none",
+        "italic",
+      );
+      expect(screen.getByText("Not editable")).toBeInTheDocument();
+      if (metadata && "source" in metadata) {
+        expect(
+          screen.getByText("Source: OpenAI · 2026-10-01"),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      }
+      if (text)
+        expect(screen.queryByDisplayValue(text)).not.toBeInTheDocument();
     },
   );
 });

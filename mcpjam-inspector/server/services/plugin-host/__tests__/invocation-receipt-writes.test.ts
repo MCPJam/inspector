@@ -261,3 +261,29 @@ describe("receipt writes on an App call's critical path", () => {
     ).toHaveLength(1);
   });
 });
+
+it("recovers the original host failure code but never replays an uncertain effect", async () => {
+  const l = ledger();
+  const execute = vi.fn(async () => {
+    throw new PluginInvocationError("CONTINUATION_PROTOCOL_DENIED");
+  });
+  const first = fixture(l.port, { execute });
+  await expect(
+    first.invoker.invoke("model", "inner-refusal", { name: "tool" }),
+  ).rejects.toMatchObject({
+    code: "CONTINUATION_PROTOCOL_DENIED",
+    outcomeUnknown: true,
+  });
+  expect(l.rows.get("inner-refusal")!.legs[0]).toMatchObject({
+    state: "unknown",
+    errorCode: "CONTINUATION_PROTOCOL_DENIED",
+  });
+  const recovered = fixture(l.port, { execute });
+  await expect(
+    recovered.invoker.invoke("model", "inner-refusal", { name: "tool" }),
+  ).rejects.toMatchObject({
+    code: "CONTINUATION_PROTOCOL_DENIED",
+    outcomeUnknown: true,
+  });
+  expect(execute).toHaveBeenCalledOnce();
+});

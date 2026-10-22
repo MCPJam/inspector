@@ -4,13 +4,15 @@ name: Release trigger
 #
 # Merging the version PR (prepare-release.yml) commits versions npm does not
 # have yet. Release ships a commit only once Tests, Build and Test and Deploy
-# Staging have all passed on it, and that is usually NOT the version commit
-# itself: each push to `main` cancels the previous commit's test and staging
-# runs, which happens to about two commits in three. Every later commit carries
-# the same versions, though, so this watches each of those three workflows
-# finish on `main` and dispatches Release at the first commit that is still the
-# tip, green on all three, and carrying unpublished versions. A version commit
-# that gets cancelled only moves the release to the next green commit.
+# Staging have all passed on it. The first two pass in the merge queue before
+# the commit lands; Deploy Staging runs after, on the push to `main`, and each
+# push cancels the previous commit's staging run, so the version commit itself
+# is often NOT the one released. Every later commit carries the same versions,
+# though, so this runs each time Deploy Staging finishes on `main` (always the
+# last of the three) and dispatches Release at the first commit that is still
+# the tip, green on all three, and carrying unpublished versions. A version
+# commit whose staging run gets cancelled only moves the release to the next
+# green commit.
 #
 # A version PR that ticked skip_verify is released without waiting for any of
 # that: the merge's own push runs this too, and releases the version commit
@@ -22,7 +24,7 @@ name: Release trigger
 
 on:
   workflow_run:
-    workflows: [Tests, Build and Test, Deploy Staging]
+    workflows: [Deploy Staging]
     types: [completed]
     branches: [main]
   # For skip_verify. A version PR always changes some workspace's
@@ -129,11 +131,19 @@ jobs:
             const greenChecks = [];
             if (label && !options.skip_verify) {
               for (const workflow_id of REQUIRED_CHECKS) {
-                const { data } = await github.rest.actions.listWorkflowRuns({
-                  owner, repo, workflow_id, per_page: 50,
-                });
-                if (data.workflow_runs.some((r) => r.head_sha === headSha && r.conclusion === "success")) {
-                  greenChecks.push(workflow_id);
+                // Paged with an early exit, as in release.yml's CI gate. The
+                // queue ran Tests and Build and Test before this commit landed,
+                // so PR runs started since can push that run off page one.
+                let pages = 0;
+                for await (const { data: runs } of github.paginate.iterator(
+                  github.rest.actions.listWorkflowRuns,
+                  { owner, repo, workflow_id, per_page: 100 },
+                )) {
+                  if (runs.some((r) => r.head_sha === headSha && r.conclusion === "success")) {
+                    greenChecks.push(workflow_id);
+                    break;
+                  }
+                  if (++pages >= 5) break;
                 }
               }
             }

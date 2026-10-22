@@ -1,15 +1,30 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   parseOAuthCallbackParams,
   generateOAuthErrorDescription,
 } from "@/lib/oauth/oauthUtils";
+import {
+  consumeOAuthCallbackParams,
+  readOAuthCallbackParams,
+} from "@/lib/oauth-callback-inbox";
 import { CheckCircle2, XCircle } from "lucide-react";
 
-export function buildElectronDebugCallbackUrl(): string {
+/**
+ * The debugger callback's answer. From the inbox `main.tsx` moved it into,
+ * not `window.location.search`: by the time this renders, the address bar of
+ * `/oauth/callback/debug` holds only `?oauth_pending=1` (see
+ * `lib/oauth-callback-inbox.ts`).
+ */
+function readDebugCallbackSearch(): URLSearchParams {
+  return readOAuthCallbackParams() ?? new URLSearchParams();
+}
+
+export function buildElectronDebugCallbackUrl(
+  params: URLSearchParams = readDebugCallbackSearch(),
+): string {
   const callbackUrl = new URL("mcpjam://oauth/callback");
   callbackUrl.searchParams.set("flow", "debug");
 
-  const params = new URLSearchParams(window.location.search);
   for (const [key, value] of params.entries()) {
     callbackUrl.searchParams.append(key, value);
   }
@@ -18,7 +33,14 @@ export function buildElectronDebugCallbackUrl(): string {
 }
 
 export default function OAuthDebugCallback() {
-  const callbackParams = parseOAuthCallbackParams(window.location.search);
+  // Captured ONCE. The answer is consumed after it has been handed to the
+  // opener, and a re-render reading the then-empty inbox would flip this card
+  // from "code sent" to "Missing code or error in response".
+  const [callbackSearch] = useState(readDebugCallbackSearch);
+  const callbackParams = useMemo(
+    () => parseOAuthCallbackParams(callbackSearch.toString()),
+    [callbackSearch],
+  );
   const [codeSent, setCodeSent] = useState(false);
   const [returnToElectronUrl, setReturnToElectronUrl] = useState<string | null>(
     null,
@@ -46,7 +68,7 @@ export default function OAuthDebugCallback() {
     // fallback path for our named OAuth popup windows.
     if (!window.isElectron && !isInPopup && !isNamedOAuthPopup) {
       hasAttemptedSendRef.current = true;
-      const electronUrl = buildElectronDebugCallbackUrl();
+      const electronUrl = buildElectronDebugCallbackUrl(callbackSearch);
       setReturnToElectronUrl(electronUrl);
       window.location.replace(electronUrl);
       return;
@@ -56,7 +78,6 @@ export default function OAuthDebugCallback() {
     if (callbackParams.successful && callbackParams.code) {
       hasAttemptedSendRef.current = true;
       try {
-        const callbackSearch = new URLSearchParams(window.location.search);
         const stateParam = callbackSearch.get("state");
         // 2R-iss: forward the RFC 9207 `iss` so the opener can validate it
         // against the recorded issuer before redeeming the code. An absent
@@ -74,6 +95,8 @@ export default function OAuthDebugCallback() {
         // Method 1: Try window.opener (works most of the time)
         if (isInPopup) {
           window.opener.postMessage(message, window.location.origin);
+          // Handed off: the opener redeems it, so its reload copy goes now.
+          consumeOAuthCallbackParams();
           setCodeSent(true);
 
           // Auto-close popup immediately (small delay to ensure message is sent)
@@ -87,6 +110,7 @@ export default function OAuthDebugCallback() {
             const channel = new BroadcastChannel("oauth_callback_channel");
             channel.postMessage(message);
             channel.close();
+            consumeOAuthCallbackParams();
             setCodeSent(true);
 
             // Auto-close popup after sending
@@ -105,7 +129,7 @@ export default function OAuthDebugCallback() {
         console.error("[OAuth Callback] Failed to send code:", error);
       }
     }
-  }, [callbackParams]);
+  }, [callbackParams, callbackSearch]);
 
   return (
     <div className="flex items-center justify-center min-h-[100vh] p-4">

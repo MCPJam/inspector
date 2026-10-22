@@ -100,6 +100,23 @@ function assess(
   ).result.current;
 }
 
+it("requires a swarm selection even when the client has configured servers", () => {
+  hostsRef.current = [{ hostId: "host-1", name: "Client", serverCount: 3 }];
+  serversRef.current = [REMOTE];
+  attachmentsRef.current = [];
+  const state = composeState();
+  const { result } = renderHook(() =>
+    useCloudServerReadiness({
+      projectId: "proj-1",
+      state,
+      environments: [],
+      requireServerSelection: true,
+    }),
+  );
+  expect(result.current.status).toBe("no_servers");
+  expect(assess(state).status).toBe("ok");
+});
+
 describe("useCloudServerReadiness", () => {
   it("reads a composed client's own server set", () => {
     hostsRef.current = [{ hostId: "host-1", name: "Claude", serverCount: 0 }];

@@ -54,3 +54,22 @@ export async function computeAggregateHash(
     sorted.map((file) => `${file.path}\u0000${file.contentHash}\u0000`).join("")
   );
 }
+
+/**
+ * The execution digest (`ParsedPluginBundle.executionDigest`). Versioned so a
+ * future input can be added without colliding with today's digests.
+ */
+export async function computeExecutionDigest(input: {
+  bundleHash: string;
+  executableFiles: readonly string[];
+  profile: string;
+  revision: number;
+}): Promise<string> {
+  return hashCanonicalJson({
+    digest: "plugin-execution/1",
+    bundleHash: input.bundleHash,
+    executableFiles: [...input.executableFiles].sort(),
+    profile: input.profile,
+    revision: input.revision,
+  });
+}

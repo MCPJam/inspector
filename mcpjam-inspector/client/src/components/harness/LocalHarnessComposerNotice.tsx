@@ -33,7 +33,7 @@ export function LocalHarnessComposerNotice({
   if ((phase === "needs-consent" || phase === "needs-workspace") && onSetup) {
     return (
       <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs" role="status">
-        <span>Set up {name} on this machine. It can run commands in your workspace for chats, evals and swarms.</span>
+        <span>Set up {name} on this computer before sending a message.</span>
         <Button size="sm" type="button" variant="outline" onClick={onSetup}>Set up</Button>
       </div>
     );

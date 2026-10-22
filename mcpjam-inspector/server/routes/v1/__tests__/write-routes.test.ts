@@ -2702,9 +2702,7 @@ describe("v1 write routes", () => {
         expect(res.status).toBe(400);
         const body = (await res.json()) as any;
         expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
-        expect(body.message).toContain(
-          "the Codex harness can't run this host's model"
-        );
+        expect(body.message).toMatch(/not.*verified/);
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
       } finally {
         vi.unstubAllEnvs();

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./app-test";
 
 // Non-hosted builds may provision a guest Convex project, which canonicalizes
 // project routes. Without one, the local fallback keeps the same screen unscoped.
@@ -53,18 +53,22 @@ test.describe("canonical project URLs", () => {
   // One test per route rather than a loop in a single test: each cold load of
   // the app costs a real boot, and three of them do not fit in one test's
   // budget — which is a timeout, not a finding.
-  for (const path of ["/settings", "/profile", "/organizations"]) {
+  for (const path of ["/settings", "/profile"]) {
     test(`${path} never gains a project prefix`, async ({ page }) => {
       await page.goto(path);
       await expect(page.getByTestId("app-shell")).toBeVisible({
         timeout: 30_000,
       });
       await expect(page.getByTestId("route-not-found")).toHaveCount(0);
-      // Not an exact-path assertion: a global route may legitimately redirect
-      // in this build (`/organizations` bounces when the local visitor has no
-      // organization). What must hold either way is that nothing here picked
-      // up a project prefix.
       expect(new URL(page.url()).pathname.startsWith("/p/")).toBe(false);
     });
   }
+
+  test("/organizations redirects a local guest to Servers", async ({
+    page,
+  }) => {
+    await page.goto("/organizations");
+    await expect(page.getByTestId("app-shell")).toBeVisible();
+    await expect(page).toHaveURL(/\/(?:p\/[a-z0-9]{16,64}\/)?servers$/);
+  });
 });

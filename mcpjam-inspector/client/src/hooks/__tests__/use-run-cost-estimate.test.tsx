@@ -567,12 +567,18 @@ describe("surface-specific query dispatch", () => {
     // after someone edits the journey's targets / sessions / turns.
     const { rerender } = render(<JourneyProbe configKey="env-1|2|3" />);
     await waitFor(() => expect(queryCalls).toHaveLength(1));
-    expect(queryCalls[0].args).toEqual({ journeyId: "journey-1" });
+    expect(queryCalls[0].args).toEqual({
+      journeyId: "journey-1",
+      kind: "swarm",
+    });
 
     rerender(<JourneyProbe configKey="env-1,env-2|2|3" />);
     await waitFor(() => expect(queryCalls).toHaveLength(2));
     // The args are unchanged by design — the signature only drives the refetch.
-    expect(queryCalls[1].args).toEqual({ journeyId: "journey-1" });
+    expect(queryCalls[1].args).toEqual({
+      journeyId: "journey-1",
+      kind: "swarm",
+    });
   });
 
   it("does not re-fetch when the journey config signature is unchanged", async () => {
@@ -590,6 +596,9 @@ describe("surface-specific query dispatch", () => {
     expect(RUN_COST_ESTIMATE_QUERIES.journey).toBe(
       "journeyRuns:estimateJourneyRunCredits"
     );
-    expect(queryCalls[0].args).toEqual({ journeyId: "journey-1" });
+    expect(queryCalls[0].args).toEqual({
+      journeyId: "journey-1",
+      kind: "swarm",
+    });
   });
 });

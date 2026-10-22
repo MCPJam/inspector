@@ -37,6 +37,26 @@ beforeEach(() => {
   });
 });
 describe("settings transport ownership", () => {
+  it("preserves the server-resolved action title", async () => {
+    const original = f.fetch.getMockImplementation()!;
+    f.fetch.mockImplementation(async (path, init) =>
+      path.endsWith("/actions")
+        ? response({
+            actions: [{ name: "reset", title: "Reset library", kind: "app" }],
+          })
+        : original(path, init),
+    );
+    const session = await createServerSettingsApi(
+      scope,
+      "server",
+      vi.fn(),
+    ).open(new AbortController().signal);
+    expect(session.actions).toEqual([
+      { name: "reset", title: "Reset library", kind: "app" },
+    ]);
+    await session.close();
+  });
+
   it("reads once and retries a lost response with the exact original operation", async () => {
     const original = f.fetch.getMockImplementation()!;
     let lost = true;

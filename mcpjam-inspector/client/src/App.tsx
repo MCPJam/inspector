@@ -1,3 +1,9 @@
+import {
+  consumeCallbackProjectReturn,
+  useCallbackProjectReturnRecovery,
+} from "./lib/callback-project-return";
+import { projectTransitionRecovery } from "./lib/auth/project-transition-recovery";
+import { useProjectTransitionRecovery } from "./hooks/use-project-transition-recovery";
 import { PricingFeatureSignInGate } from "./components/billing/PricingFeatureSignInGate";
 import { useCurrentPathname } from "./lib/app-navigation";
 import { SettingsDraftProvider } from "./components/settings/SettingsDraftProvider";
@@ -17,14 +23,15 @@ import {
   type ComponentProps,
   type ReactElement,
 } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
-import { autoOAuthEscalation } from "@/lib/oauth/auto-oauth-escalation";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
+import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
+import { UnavailableOrganizationDialog } from "./components/organization/UnavailableOrganizationDialog";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
 import {
@@ -167,6 +174,24 @@ import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
+import { useSessionPrivacy } from "./hooks/useSessionPrivacy";
+import {
+  telemetryMembershipKey,
+  useTelemetryPrivacyContext,
+} from "./hooks/useTelemetryPrivacyContext";
+import { usePostHogRelayAuth } from "./hooks/usePostHogRelayAuth";
+import {
+  recordingSurface,
+  rememberReplayOff,
+  replayOffRemembered,
+  resolveSessionPrivacy,
+} from "./lib/session-privacy";
+import {
+  resetTelemetryIdentity,
+  setTelemetryActor,
+  setTelemetryCaptureContextAndContent,
+  setTelemetryIdentity,
+} from "./lib/telemetry-context";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
@@ -261,20 +286,11 @@ import {
 } from "./lib/project-route";
 import { useProjectRouteCoordinator } from "./hooks/use-project-route-coordinator";
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
-import {
-  createProjectSignInReturnRecoveryIntent,
-  resolveProjectSignInReturnRecovery,
-  type ProjectSignInReturnRecoveryIntent,
-} from "./lib/project-route-recovery";
+import { type ProjectSignInReturnRecoveryIntent } from "./lib/project-route-recovery";
 import {
   captureAppSignInReturnPath,
-  consumeAppSignInReturnPath,
   writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
-import {
-  trackSignInReturnRestored,
-  trackStaleProjectReturnRecovered,
-} from "./lib/project-route-telemetry";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
@@ -296,22 +312,18 @@ import {
   resolveHostedOAuthReturnPath,
 } from "./lib/hosted-oauth-callback";
 import {
+  consumeOAuthCallbackParams,
+  readOAuthCallbackAttempt,
+  readOAuthCallbackParams,
+} from "./lib/oauth-callback-inbox";
+import {
   FIRST_RUN_OAUTH_CANCELLED_EVENT,
   getFirstRunOAuthReturnServerName,
 } from "./lib/first-run-oauth-return";
 import {
-  clearScenarioSignInReturnPath,
   readScenarioSession,
   readScenarioSignInReturnPath,
 } from "./lib/scenario-session";
-import {
-  clearCliSignInReturnPath,
-  readCliSignInReturnPath,
-} from "./lib/cli-signin-return-path";
-import {
-  clearApiKeysSignInReturnPath,
-  readApiKeysSignInReturnPath,
-} from "./lib/api-keys-signin-return-path";
 import {
   OAUTH_AUTHORIZATION_CANCELLED_MESSAGE,
   sanitizeHostedOAuthErrorMessage,
@@ -374,7 +386,6 @@ import {
   buildOrganizationSwitchTarget,
   buildProjectSettingsTarget,
   buildProjectSwitchTarget,
-  getInvalidOrganizationRouteNavigationTarget,
   isDebugOAuthCallbackPath,
   navigationTargetToPath,
   navigateApp,
@@ -486,7 +497,8 @@ function mergeFirstRunAnalyticsContext(
 }
 
 function getHostedOAuthCallbackErrorMessage(): string {
-  const params = new URLSearchParams(window.location.search);
+  // The inbox, not the address bar: see `lib/oauth-callback-inbox.ts`.
+  const params = readOAuthCallbackParams() ?? new URLSearchParams();
   const error = params.get("error");
   const description = params.get("error_description");
 
@@ -1280,6 +1292,7 @@ function useTemplateVerifyDeepLink({
           projectId,
           name: template.label,
           input: { ...seed, serverIds: [] },
+          applyDefaultSystemPrompt: true,
         });
         navigate(buildHostVerifyLandingPath(hostId, requestedFocusTab), {
           replace: true,
@@ -1654,41 +1667,53 @@ function EvaluateRouteContent() {
 }
 
 export function ConformanceRoute() {
-  const { selectedServerEntry, convexProjectId, isAuthenticated } =
-    useAppRouteContext();
-  const { serversByName } = useProjectServers({
+  const {
+    appState,
+    selectedServerEntry,
+    setSelectedServer,
+    convexProjectId,
+    isAuthenticated,
+  } = useAppRouteContext();
+  const { serversByName, serversById } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
   const savedServerId = selectedServerEntry?.name
     ? (serversByName.get(selectedServerEntry.name) ?? null)
     : null;
+  // The page picks its server from its own select, not the header tabs.
+  const connectedServers = Object.values<ServerWithName>(
+    appState.servers,
+  ).filter((s) => s.connectionStatus === "connected");
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      {convexProjectId ? (
-        <div className="shrink-0 overflow-auto border-b border-border/40 px-4 pt-4 lg:px-6">
+    <ConformanceTab
+      server={selectedServerEntry ?? null}
+      servers={connectedServers}
+      onSelectServer={setSelectedServer}
+      persist={
+        convexProjectId
+          ? { projectId: convexProjectId, serverId: savedServerId }
+          : undefined
+      }
+      history={
+        convexProjectId ? (
           <ConformanceHistory
+            key={convexProjectId}
             projectId={convexProjectId}
-            serverId={savedServerId}
+            serverNames={serversById}
           />
-        </div>
-      ) : null}
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <ConformanceTab
-          server={selectedServerEntry ?? null}
-          persist={
-            convexProjectId
-              ? { projectId: convexProjectId, serverId: savedServerId }
-              : undefined
-          }
-        />
-      </div>
-    </div>
+        ) : undefined
+      }
+    />
   );
 }
 
 export function ConformanceRunDetailRoute() {
-  const { convexProjectId } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { serversById } = useProjectServers({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
   const params = useParams<{ runId?: string }>();
   const pathname = getRouteFallbackPathname();
   const raw =
@@ -1697,6 +1722,7 @@ export function ConformanceRunDetailRoute() {
     <ConformanceRunDetailPage
       runId={decodeParam(raw) ?? raw}
       projectId={convexProjectId}
+      serverNames={serversById}
     />
   );
 }
@@ -1761,7 +1787,7 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
   // document is served with `__MCP_GUEST_BOOTSTRAP__` injected regardless of
   // session cookie, so a signed-in user's first render carries a GUEST bearer:
   // WorkOS says "member", Convex says "authenticated", and the socket holds a
-  // guest. Anything reading `useAuth().user` answers "member" for a caller the
+  // guest. Anything reading `useInspectorAuth().user` answers "member" for a caller the
   // backend will treat as a guest. This hook asks `users:getCurrentUser`, whose
   // answer is resolved from the JWT actually received, so it reports the
   // identity a member-only function would see.
@@ -1837,7 +1863,7 @@ function ScenariosRouteContent() {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
-    return null;
+    return <LoadingScreen />;
   }
 
   if (gate) {
@@ -1934,7 +1960,7 @@ function SwarmsRouteContent() {
   // which never get a WorkOS `user.email` — but those actors still own a
   // personal-org project and pass `requireProjectRole('member')` server-side
   // via userId. Do NOT treat "no WorkOS email" as "not a member".
-  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const { user, isLoading: isWorkOsLoading } = useInspectorAuth();
   const isWorkOsSignedIn = !!user;
   // The sidebar filters the Swarms nav item on this flag, but a filtered nav
   // item is not a gate — `/swarms` is a plain route, so a direct URL mounted
@@ -1978,7 +2004,7 @@ function SwarmsRouteContent() {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
-    return null;
+    return <LoadingScreen />;
   }
 
   // Guests stop here. `null` means the viewer is a signed-in member.
@@ -2073,7 +2099,7 @@ export function EnvironmentsRoute() {
   const { environmentId: routeEnvironmentId } = useParams<{
     environmentId?: string;
   }>();
-  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const { user, isLoading: isWorkOsLoading } = useInspectorAuth();
   const isWorkOsSignedIn = !!user;
   const { role } = useViewerProjectRole({
     isAuthenticated,
@@ -2907,7 +2933,7 @@ export default function App() {
     signIn,
     user: workOsUser,
     isLoading: isWorkOsLoading,
-  } = useAuth();
+  } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const guestSessionRefusal = useSyncExternalStore(
     subscribeGuestSessionChanges,
@@ -2999,6 +3025,13 @@ export default function App() {
   const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
+  // The org list once it is authoritative. Its membership key resets the
+  // telemetry identity grant whenever memberships reload; `undefined` until
+  // then, which reads as "still loading", never as "no organizations".
+  const loadedOrganizations =
+    isAuthenticated && !isLoadingOrganizations
+      ? sortedOrganizations
+      : undefined;
   useEffect(() => {
     if (isLoadingOrganizations) {
       return;
@@ -3065,7 +3098,10 @@ export default function App() {
       return;
     }
 
-    const urlParams = new URLSearchParams(window.location.search);
+    // The callback's answer, from the inbox `main.tsx` moved it into before
+    // telemetry started. Read, not consumed: the attempt key dedupes re-runs,
+    // and `finalizeHostedOAuth` consumes it on the way out.
+    const urlParams = readOAuthCallbackParams() ?? new URLSearchParams();
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const state = urlParams.get("state");
@@ -3077,12 +3113,15 @@ export default function App() {
     hostedOAuthAttempts.current.add(attempt);
     setHostedOAuthHandling(true);
 
-    const callbackSearch = window.location.search;
+    // Which callback this is. Every pending page has the same URL
+    // (`?oauth_pending=1`), so the URL cannot tell attempts apart; the inbox's
+    // attempt id can, and it is null once the page has left the callback.
+    const callbackAttempt = readOAuthCallbackAttempt();
     const finalizeHostedOAuth = (errorMessage?: string | null) => {
       // Ignore a completion after the user has left or started another attempt.
       if (
         window.location.pathname !== "/oauth/callback" ||
-        window.location.search !== callbackSearch
+        readOAuthCallbackAttempt() !== callbackAttempt
       )
         return;
       if (errorMessage && callbackContext.serverName) {
@@ -3104,6 +3143,8 @@ export default function App() {
       clearHostedOAuthPendingState();
       localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
       localStorage.removeItem("mcp-oauth-return-hash");
+      // The code is spent; it must not outlive the route.
+      consumeOAuthCallbackParams(callbackAttempt);
       navigateApp(resolveHostedOAuthReturnPath(callbackContext), {
         replace: true,
       });
@@ -3246,7 +3287,22 @@ export default function App() {
     previousWorkOsUserIdRef.current = workOsUserId;
   }, [workOsUser?.id]);
 
+  // Telemetry attributes to this actor from now on. A layout effect, so the
+  // identity grant is cleared before any passive effect — identify, Sentry's
+  // scope — runs for the new actor.
+  useLayoutEffect(() => {
+    setTelemetryActor(actorKey ?? null);
+  }, [actorKey]);
+  // Name and email follow the backend's identity answer for this actor
+  // (set further down, once the contexts in view are known).
   usePostHogIdentify();
+  // PostHog's requests to the relay carry the actor's bearer, so the relay can
+  // check what each event was captured under (server/routes/relay.ts).
+  usePostHogRelayAuth({
+    actorKey,
+    signedIn: !!workOsUser,
+    getAccessToken,
+  });
   // Stops replay while on `/results/<token>` — the init-time
   // `disable_session_recording` flag cannot cover in-app navigation into it.
   useSessionRecordingPathGuard();
@@ -3379,44 +3435,14 @@ export default function App() {
     // first authoritative membership response are ready below.
     if (
       !isAuthLoading &&
+      !isWorkOsLoading &&
+      (!projectTransitionRecovery.store.getState().marker || !!workOsUser) &&
       isAuthenticated &&
       !callbackReturnConsumedRef.current
     ) {
       callbackReturnConsumedRef.current = true;
-      const scenarioReturnPath = readScenarioSignInReturnPath();
-      const persistedCheckoutIntent = readPersistedCheckoutIntent();
-      const billingReturnPath = persistedCheckoutIntent
-        ? readBillingSignInReturnPath()
-        : null;
-      const cliReturnPath = readCliSignInReturnPath();
-      const apiKeysReturnPath = readApiKeysSignInReturnPath();
-      // Consumed (read AND cleared) whether or not it wins: a path left in
-      // storage would outlive this sign-in and hijack the next one.
-      const appReturnPath = consumeAppSignInReturnPath();
-      clearScenarioSignInReturnPath();
-      clearBillingSignInReturnPath();
-      clearCliSignInReturnPath();
-      clearApiKeysSignInReturnPath();
-      // LAST in precedence, deliberately. The scenario, billing, CLI and
-      // API-key flows encode an intent, not just a location, and each has its
-      // own documented ordering; the generic path only says "put me back", so
-      // it fills in for the ordinary case those four do not cover.
-      const restoredPath =
-        scenarioReturnPath ??
-        billingReturnPath ??
-        cliReturnPath ??
-        apiKeysReturnPath ??
-        appReturnPath ??
-        "/";
-      trackSignInReturnRestored(
-        !appReturnPath
-          ? "absent"
-          : restoredPath === appReturnPath
-            ? "restored"
-            : "superseded",
-      );
-      const projectReturnIntent =
-        createProjectSignInReturnRecoveryIntent(restoredPath);
+      const { restoredPath, projectReturnIntent } =
+        consumeCallbackProjectReturn();
       if (projectReturnIntent) {
         setPendingProjectReturnRecovery(projectReturnIntent);
         return;
@@ -3482,6 +3508,7 @@ export default function App() {
     handleConnect,
     handleDisconnect,
     handleRuntimeDisconnect,
+    clearAutoOAuthEscalation,
     handleReconnect,
     reconnectServerWithResult,
     reconnectServerForClientSwitch,
@@ -4048,17 +4075,12 @@ export default function App() {
       // exists. Start a fresh first-run attempt so the settings selected in the
       // inline authentication editor are applied before retrying. Reconnecting
       // the saved row directly would silently discard those edits.
-      autoOAuthEscalation.markFailed({
-        projectId: convexProjectId,
-        serverId: hostedServerIdsByName[serverName],
-        serverName,
-      });
+      clearAutoOAuthEscalation(serverName);
       openFirstRunServerConnection(draft);
     },
     [
-      convexProjectId,
+      clearAutoOAuthEscalation,
       firstRunConnectionState,
-      hostedServerIdsByName,
       openFirstRunServerConnection,
     ],
   );
@@ -4129,7 +4151,11 @@ export default function App() {
       suppressSuccessToast: true,
     })
       .then((result) => {
-        if (result.status === "connected") return;
+        // "superseded": a newer connect owns the outcome and will publish the
+        // terminal runtime row, so this is not a failure.
+        if (result.status === "connected" || result.status === "superseded") {
+          return;
+        }
         if (firstRunConnectionAttemptRef.current !== attemptId) return;
         firstRunOAuthReconnectServerRef.current = null;
         setFirstRunConnectionState({
@@ -4251,11 +4277,7 @@ export default function App() {
 
     if (server.connectionStatus === "failed") {
       if (server.lastError === OAUTH_AUTHORIZATION_CANCELLED_MESSAGE) {
-        autoOAuthEscalation.markFailed({
-          projectId: convexProjectId,
-          serverId: hostedServerIdsByName[firstRunConnectionState.serverName],
-          serverName: firstRunConnectionState.serverName,
-        });
+        clearAutoOAuthEscalation(firstRunConnectionState.serverName);
         firstRunOAuthReturnServerRef.current = null;
         firstRunAuthorizationRetryServerRef.current = null;
         firstRunOAuthReconnectServerRef.current = null;
@@ -4305,10 +4327,9 @@ export default function App() {
     }
   }, [
     appState.servers,
+    clearAutoOAuthEscalation,
     clearPendingDashboardOAuth,
-    convexProjectId,
     firstRunConnectionState,
-    hostedServerIdsByName,
     pendingDashboardOAuth,
   ]);
 
@@ -4692,6 +4713,74 @@ export default function App() {
   } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
     projectId: billingProjectId,
   });
+  // Resolve every visible context using this actor's access. Unverified
+  // contexts stay strict and id-only; the most restrictive answer wins.
+  const telemetryOrganizationIds = [
+    routeScopedOrganizationId,
+    activeOrganizationId,
+    activeProject?.organizationId,
+  ];
+  const telemetryProjectIds = [convexProjectId];
+  const telemetryActor = isWorkOsLoading ? undefined : (actorKey ?? null);
+  const telemetryPrivacy = useTelemetryPrivacyContext({
+    // Content and identity still need answers on surfaces with replay off.
+    enabled: true,
+    actor: telemetryActor,
+    sharedLink: isScenarioChatRoute,
+    membershipKey: telemetryMembershipKey(loadedOrganizations),
+    projectIds: telemetryProjectIds,
+    organizationIds: telemetryOrganizationIds,
+  });
+  // Stamp the context and its fresh answer before passive capture effects run.
+  useLayoutEffect(() => {
+    setTelemetryCaptureContextAndContent(
+      {
+        projectIds: telemetryProjectIds,
+        organizationIds: telemetryOrganizationIds,
+        sharedLink: isScenarioChatRoute,
+      },
+      telemetryPrivacy.actor,
+      telemetryPrivacy.answered ? telemetryPrivacy.policy?.content : undefined,
+    );
+  });
+  // Identity answers belong to this actor; missing answers stay id-only.
+  useLayoutEffect(() => {
+    if (telemetryPrivacy.identity === undefined) {
+      resetTelemetryIdentity();
+    } else {
+      setTelemetryIdentity(telemetryPrivacy.actor, telemetryPrivacy.identity);
+    }
+  }, [telemetryPrivacy.identity, telemetryPrivacy.actor]);
+  // Only fresh backend answers permit replay. Remembered off answers keep
+  // it stopped while the next answer is missing.
+  const answeredRecording = telemetryPrivacy.answered
+    ? telemetryPrivacy.policy?.content === "strict"
+      ? "off"
+      : telemetryPrivacy.policy?.recording
+    : undefined;
+  useEffect(() => {
+    if (answeredRecording !== undefined) {
+      rememberReplayOff(telemetryPrivacy.actor, answeredRecording === "off");
+    }
+  }, [answeredRecording, telemetryPrivacy.actor]);
+  const telemetryRecording =
+    answeredRecording ??
+    (replayOffRemembered(telemetryActor) ? "off" : undefined);
+  // Full replay waits for verified policy and the destination's data.
+  useSessionPrivacy(
+    resolveSessionPrivacy({
+      surface: recordingSurface(),
+      sharedLink: isScenarioChatRoute,
+      recording: telemetryRecording,
+    }),
+    {
+      contextReady:
+        !isAuthLoading &&
+        !isLoadingOrganizations &&
+        !isProjectServerConfigLoading,
+      permissionKey: telemetryPrivacy.scope,
+    },
+  );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =
     billingProjectId && projectPremiumness
@@ -5461,15 +5550,15 @@ export default function App() {
       consumeCheckoutIntent();
       return;
     }
-
-    // Convex guest sessions are authenticated too, so WorkOS is the source of
-    // truth for whether this actor may begin a paid checkout.
     if (!workOsUser) {
       if (isWorkOsLoading || billingSignInStartedRef.current) return;
       billingSignInStartedRef.current = true;
       writeBillingSignInReturnPath(routePaths.billing);
       void Promise.resolve()
         .then(() => signIn())
+        .then((result) => {
+          if (result === "blocked") consumeCheckoutIntent();
+        })
         .catch(() => {
           billingSignInStartedRef.current = false;
           toast.error("Could not start sign in. Try again.");
@@ -5624,51 +5713,10 @@ export default function App() {
     [setSelectedMCPConfigs],
   );
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      return;
-    }
-
-    // A pending delete holds the route only while the org is still listed, so
-    // Back to an org that is already gone still redirects.
-    if (
-      routeOrganizationId &&
-      ((deletingOrganizationIds.includes(routeOrganizationId) &&
-        sortedOrganizations.some((org) => org._id === routeOrganizationId)) ||
-        optimisticallyDeletedOrganizationIds.includes(routeOrganizationId))
-    ) {
-      return;
-    }
-
-    const navigationTarget = getInvalidOrganizationRouteNavigationTarget({
-      routeTab: activeTab,
-      routeOrganizationId,
-      isLoadingOrganizations,
-      hasRouteOrganization,
-    });
-    if (!navigationTarget) {
-      return;
-    }
-
+  const handleUnavailableOrganizationContinue = useCallback(() => {
     setActiveOrganizationId(undefined);
-    if (navigationTarget === routePaths.servers) {
-      navigateToServers({ replace: true });
-    } else {
-      navigateToTarget(navigationTarget, { replace: true });
-    }
-  }, [
-    activeTab,
-    deletingOrganizationIds,
-    hasRouteOrganization,
-    isAuthenticated,
-    isLoadingOrganizations,
-    navigateToServers,
-    navigateToTarget,
-    optimisticallyDeletedOrganizationIds,
-    routeOrganizationId,
-    setActiveOrganizationId,
-    sortedOrganizations,
-  ]);
+    navigateToServers({ replace: true });
+  }, [navigateToServers, setActiveOrganizationId]);
 
   const handleOrganizationDeleted = useCallback(
     (deletedOrganizationId: string) => {
@@ -5847,44 +5895,44 @@ export default function App() {
     }
   }, [shouldRouteToFirstRunHome]);
 
+  const isProjectRecoveryReady =
+    isFeedbackMember === true &&
+    isAuthenticated &&
+    !isAuthLoading &&
+    !isWorkOsLoading &&
+    isUserReady;
   const authoritativeMembershipProjectIds =
-    isUserReady && !isLoadingRemoteProjects
+    isProjectRecoveryReady && !isLoadingRemoteProjects
       ? allMembershipProjectIds
       : undefined;
   const fallbackProjectIdForStaleReturn =
     activeProject && authoritativeMembershipProjectIds?.has(activeProjectId)
       ? activeProjectId
       : (allMembershipProjects?.[0]?._id ?? null);
-  const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
-    intent: pendingProjectReturnRecovery,
+  const projectTransitionPending = useProjectTransitionRecovery({
+    actor: actorKey ? `${workOsUser ? "workos" : "guest"}:${actorKey}` : null,
+    ready: isProjectRecoveryReady,
+    routeReady:
+      isAuthenticated &&
+      !isAuthLoading &&
+      !isWorkOsLoading &&
+      isUserReady &&
+      projectRouteState.status === "ready",
     membershipProjectIds: authoritativeMembershipProjectIds,
     fallbackProjectId: fallbackProjectIdForStaleReturn,
   });
-
-  // Resolve while `/callback` still owns the screen. Clear the one-shot intent
-  // before the only navigation so a bad destination can never loop.
-  useLayoutEffect(() => {
-    if (
-      projectReturnRecoveryDecision.kind === "none" ||
-      projectReturnRecoveryDecision.kind === "wait"
-    ) {
-      return;
-    }
-    setPendingProjectReturnRecovery(null);
-    setCallbackCompleted(true);
-    setCallbackRecoveryExpired(false);
-
-    if (projectReturnRecoveryDecision.kind === "home") {
-      trackStaleProjectReturnRecovered("no-fallback");
-      navigateApp(routePaths.root, { replace: true, unscoped: true });
-      return;
-    }
-
-    if (projectReturnRecoveryDecision.kind === "switch") {
-      trackStaleProjectReturnRecovered("switched");
-    }
-    navigateApp(projectReturnRecoveryDecision.path, { replace: true });
-  }, [projectReturnRecoveryDecision]);
+  useCallbackProjectReturnRecovery({
+    intent: pendingProjectReturnRecovery,
+    membershipProjectIds: authoritativeMembershipProjectIds,
+    fallbackProjectId: fallbackProjectIdForStaleReturn,
+    isCallback: isOAuthCallback,
+    ready: isProjectRecoveryReady,
+    onResolved: () => {
+      setPendingProjectReturnRecovery(null);
+      setCallbackCompleted(true);
+      setCallbackRecoveryExpired(false);
+    },
+  });
 
   /**
    * Picking another project in the switcher NAVIGATES. It does not switch
@@ -6171,7 +6219,6 @@ export default function App() {
     activeTab === "resources" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
-    activeTab === "conformance" ||
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
@@ -6299,6 +6346,7 @@ export default function App() {
     // What the URL's project segment resolved to. `ProjectRouteBoundary`
     // renders on it, and the legacy normalizer reads the rest of this bag to
     // decide which project an old link should adopt.
+    projectTransitionPending,
     projectRouteState,
     activeMcpProfile,
     activeOrganizationId,
@@ -6472,6 +6520,7 @@ export default function App() {
               settings={settingsShellActive}
               headerHidden={appChromeHeaderHidden || settingsShellActive}
             >
+              <PendingOrganizationDeletions />
               {showTrialDecisionNotice ? (
                 <div className="border-b border-border/60 px-4 py-3">
                   <Alert>
@@ -6653,6 +6702,32 @@ export default function App() {
             <Toaster />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <UnavailableOrganizationDialog
+              isAuthenticated={isAuthenticated}
+              routeTab={activeTab}
+              routeOrganizationId={routeOrganizationId}
+              isLoadingOrganizations={isLoadingOrganizations}
+              hasRouteOrganization={hasRouteOrganization}
+              isDeletionPending={
+                !!routeOrganizationId &&
+                ((deletingOrganizationIds.includes(routeOrganizationId) &&
+                  sortedOrganizations.some(
+                    (org) => org._id === routeOrganizationId,
+                  )) ||
+                  optimisticallyDeletedOrganizationIds.includes(
+                    routeOrganizationId,
+                  ))
+              }
+              isDeleted={
+                !!routeOrganizationId &&
+                deletingOrganizationIds.includes(routeOrganizationId)
+              }
+              isSeatPending={sortedOrganizations.some(
+                (org) => org._id === routeOrganizationId && org.seatPending,
+              )}
+              accountEmail={currentUser?.email || workOsUser?.email}
+              onContinue={handleUnavailableOrganizationContinue}
+            />
             <SessionRefreshBanner />
             <GuestSessionRefusedBanner />
             <div

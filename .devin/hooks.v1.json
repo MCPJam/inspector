@@ -1,0 +1,25 @@
+{
+  "SessionStart": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node \"$(git rev-parse --show-toplevel)/.devin/hook-probe.mjs\" || true",
+          "timeout": 10
+        }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node \"$(git rev-parse --show-toplevel)/.devin/hook-probe.mjs\" || true",
+          "timeout": 10
+        }
+      ]
+    }
+  ]
+}

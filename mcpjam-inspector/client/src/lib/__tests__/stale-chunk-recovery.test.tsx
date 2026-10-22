@@ -54,6 +54,10 @@ describe("stale chunk recovery", () => {
   let uninstall: () => void;
 
   beforeEach(() => {
+    vi.useFakeTimers({
+      shouldAdvanceTime: true,
+      toFake: ["setTimeout", "clearTimeout"],
+    });
     vi.mocked(window.location.reload).mockClear();
     uninstall = installStaleChunkRecovery();
     render(<Toaster />);
@@ -61,8 +65,14 @@ describe("stale chunk recovery", () => {
 
   afterEach(() => {
     uninstall();
-    toast.dismiss();
+    // Deliver Sonner's queued notifications while the jsdom window is alive.
+    act(() => {
+      toast.dismiss();
+      vi.runOnlyPendingTimers();
+    });
     cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   it("offers a reload when a chunk from an older build fails to load", async () => {

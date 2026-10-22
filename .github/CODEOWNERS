@@ -1,0 +1,40 @@
+# Owners are review contacts, not additional required approvals. Where code-owner
+# review is required, any one listed owner can approve; the author cannot self-approve.
+# The last matching rule replaces earlier owners, so each area includes a backup.
+
+# Default reviewers for paths without a more specific owner.
+* @prathmeshpatel @chelojimenez @ignaciojimenezr
+
+# Inspector UI and server; existing maintainers back up the additional reviewers.
+/mcpjam-inspector/client/ @ignaciojimenezr @nachocossio @olartgabo
+/mcpjam-inspector/server/ @chelojimenez @ignaciojimenezr @nachocossio
+
+# Feature reviewers; these specific rules override the broader client rule.
+/mcpjam-inspector/client/src/components/evals/ @ignaciojimenezr @weimar-torres-herrera @vigneshgopalandd-maker
+/mcpjam-inspector/client/src/components/evaluate/ @ignaciojimenezr @weimar-torres-herrera @vigneshgopalandd-maker
+/mcpjam-inspector/client/src/components/EvaluateTab.tsx @ignaciojimenezr @vigneshgopalandd-maker
+/mcpjam-inspector/client/src/components/swarms/ @ignaciojimenezr @weimar-torres-herrera
+/mcpjam-inspector/client/src/components/onboarding/ @ignaciojimenezr @ozboms
+/mcpjam-inspector/client/src/components/home/ @ignaciojimenezr @ozboms
+/mcpjam-inspector/server/utils/harness/local/ @chelojimenez @ozboms
+
+# CLI maintenance and bundling conventions.
+/cli/ @chelojimenez @moisonmaxime
+/.gitignore @prathmeshpatel @moisonmaxime
+
+# SDK, protocol/OAuth support, and product documentation.
+/sdk/ @chelojimenez @ZeHuari @nachocossio
+/docs/ @Paoli99 @prathmeshpatel
+
+# CI and quality policy have explicit owners regardless of the application area.
+/.github/ @prathmeshpatel @chelojimenez @olartgabo
+/scripts/slop/ @prathmeshpatel @chelojimenez @olartgabo
+/scripts/git-hooks/ @prathmeshpatel @chelojimenez @olartgabo
+
+# Keep ownership changes with the repository administrators.
+/.github/CODEOWNERS @prathmeshpatel @chelojimenez @ignaciojimenezr
+
+# Preserve Dependabot auto-merge: these filenames are exempt at every depth.
+# They still require the normal PR approval, but not a code-owner approval.
+package.json
+package-lock.json

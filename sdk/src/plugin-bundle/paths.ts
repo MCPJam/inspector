@@ -19,6 +19,8 @@ export interface NormalizedBundleEntry {
   path: string;
   /** Declared uncompressed size in bytes. */
   size: number;
+  /** Any executable bit set; the other permission bits are never kept. */
+  executable: boolean;
 }
 
 export type PathNormalizationResult =
@@ -280,7 +282,12 @@ export function validateBundleEntries(
       );
     }
 
-    files.push({ sourcePath: entry.path, path, size: entry.size });
+    files.push({
+      sourcePath: entry.path,
+      path,
+      size: entry.size,
+      executable: ((entry.mode ?? 0) & 0o111) !== 0,
+    });
   }
 
   files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

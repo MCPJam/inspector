@@ -117,11 +117,13 @@ describe("buildMarketHostProfiles", () => {
       "2025-03-26",
     ]);
     // Ladder-probed: both reach further back than the single version they
-    // happen to negotiate by default, and Codex does not reach 2026-07-28.
+    // happen to negotiate by default. Codex reaches 2026-07-28 since the
+    // 2026-10-12 probe.
     expect(profileFor("codex")?.supportedProtocolVersions).toEqual([
       "2025-03-26",
       "2025-06-18",
       "2025-11-25",
+      "2026-07-28",
     ]);
     expect(profileFor("claude")?.supportedProtocolVersions).toEqual([
       "2025-03-26",

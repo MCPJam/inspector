@@ -12,6 +12,11 @@ const h = vi.hoisted(() => ({
   setupStatus: { value: undefined as unknown },
   softDeletePlugin: vi.fn(),
   toastError: vi.fn(),
+  signIn: {
+    available: false,
+    pendingKey: null as string | null,
+    signIn: vi.fn(),
+  },
 }));
 
 vi.mock("@/hooks/usePluginImportApi", () => ({
@@ -23,6 +28,9 @@ vi.mock("@/hooks/usePluginImportApi", () => ({
     softDeletePlugin: h.softDeletePlugin,
     restorePlugin: vi.fn(),
   }),
+}));
+vi.mock("@/hooks/usePluginServerSignIn", () => ({
+  usePluginServerSignIn: () => h.signIn,
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/lib/toast", () => ({ toast: { error: h.toastError } }));
@@ -62,6 +70,8 @@ beforeEach(() => {
   h.softDeletePlugin.mockResolvedValue(undefined);
   h.version.value = undefined;
   h.setupStatus.value = undefined;
+  h.signIn.available = false;
+  h.signIn.pendingKey = null;
 });
 
 describe("PluginServerCard", () => {
@@ -106,6 +116,31 @@ describe("PluginServerCard", () => {
 
     openMenu();
     fireEvent.click(await screen.findByRole("menuitem", { name: "Configure" }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens Settings from the keyboard, and leaves the ⋮ button's keys alone", () => {
+    const onOpenSettings = vi.fn();
+    render(
+      <PluginServerCard
+        plugin={plugin}
+        server={server}
+        status={{ label: "Active", tone: "active" }}
+        canManage
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+    const card = screen.getByRole("button", { name: "Open settings for cad" });
+    expect(card.tabIndex).toBe(0);
+    fireEvent.keyDown(card, { key: "Enter" });
+    fireEvent.keyDown(card, { key: " " });
+    expect(onOpenSettings).toHaveBeenCalledTimes(2);
+    expect(onOpenSettings).toHaveBeenCalledWith("s_cad");
+
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Open actions menu for cad" }),
+      { key: "Enter" },
+    );
     expect(onOpenSettings).toHaveBeenCalledTimes(2);
   });
 
@@ -208,6 +243,56 @@ describe("InstalledPluginServerCards", () => {
     });
   });
 
+  it("offers Sign in on a server this member still has to sign in to", () => {
+    h.signIn.available = true;
+    const onOpenSettings = vi.fn();
+    const needsAuth = {
+      ...activeRow,
+      servers: [{ ...activeRow.servers[0], unavailable: "needs_auth" }],
+    };
+    const { rerender } = render(
+      <InstalledPluginServerCards
+        plugin={plugin}
+        row={needsAuth}
+        canManage={false}
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+    expect(screen.getByTestId("plugin-server-status").textContent).toBe(
+      "Needs sign-in",
+    );
+    fireEvent.click(screen.getByTestId("plugin-server-sign-in"));
+    expect(h.signIn.signIn).toHaveBeenCalledWith({
+      pluginVersionId: "pv_1",
+      componentKey: "server:cad",
+    });
+    expect(onOpenSettings).not.toHaveBeenCalled();
+
+    h.signIn.available = false;
+    rerender(
+      <InstalledPluginServerCards
+        plugin={plugin}
+        row={needsAuth}
+        canManage={false}
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+    expect(screen.queryByTestId("plugin-server-sign-in")).toBeNull();
+  });
+
+  it("offers no Sign in on a server that runs", () => {
+    h.signIn.available = true;
+    render(
+      <InstalledPluginServerCards
+        plugin={plugin}
+        row={activeRow}
+        canManage
+        onOpenSettings={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("plugin-server-sign-in")).toBeNull();
+  });
+
   it("falls back to the active-plugins row until the version arrives", () => {
     render(
       <InstalledPluginServerCards
@@ -280,7 +365,51 @@ describe("InstalledPluginServerCards", () => {
     const { container } = render(
       <InstalledPluginServerCards
         plugin={plugin}
+        row={{
+          ...activeRow,
+          servers: [],
+          skills: [
+            {
+              skillId: "sk_triage",
+              modelRef: "bits-and-bolts/triage",
+              name: "triage",
+              description: "",
+            },
+          ],
+        }}
+        canManage
+        onOpenSettings={vi.fn()}
+      />,
+    );
+    expect(container.textContent).toBe("");
+  });
+
+  it("gives an active plugin with no servers or skills its own card, opening its Settings", () => {
+    h.version.value = { pluginVersionId: "pv_1", servers: [], skills: [] };
+    const onOpenSettings = vi.fn();
+    render(
+      <InstalledPluginServerCards
+        plugin={plugin}
         row={{ ...activeRow, servers: [] }}
+        canManage
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+    expect(screen.queryByTestId("plugin-server-card")).toBeNull();
+    fireEvent.click(screen.getByTestId("plugin-card"));
+    expect(onOpenSettings).toHaveBeenCalledWith({
+      pluginId: "pl_bits",
+      pluginLabel: "Bits & Bolts",
+      serverId: null,
+      serverName: "Bits & Bolts",
+    });
+  });
+
+  it("waits for an answer before giving an active plugin its own card", () => {
+    const { container } = render(
+      <InstalledPluginServerCards
+        plugin={plugin}
+        row={undefined}
         canManage
         onOpenSettings={vi.fn()}
       />,

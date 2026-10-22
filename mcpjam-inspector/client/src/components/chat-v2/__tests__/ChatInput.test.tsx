@@ -6,6 +6,7 @@ import {
   createEvent,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ChatInput } from "../chat-input";
 import { useState } from "react";
 import { act } from "@testing-library/react";
@@ -528,6 +529,27 @@ describe("ChatInput", () => {
       );
       expect(submitButton).toBeDefined();
       expect(submitButton).toBeDisabled();
+    });
+
+    it("says why Send is off when the model is out of credits", async () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Hello"
+          submitDisabled={true}
+          submitDisabledReason="Out of MCPJam credits · resets in 3h"
+        />
+      );
+
+      const submitButton = screen.getByRole("button", { name: "Send message" });
+      expect(submitButton).toBeDisabled();
+      // The disabled button gets no hover or focus; its wrapper carries the
+      // tooltip, and keyboard users can reach it.
+      expect(submitButton.parentElement).toHaveAttribute("tabindex", "0");
+      await userEvent.setup().hover(submitButton.parentElement!);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Out of MCPJam credits · resets in 3h"
+      );
     });
 
     it("does not request form submit on Enter when submitDisabled is true", () => {
@@ -2039,7 +2061,7 @@ describe("ChatInput", () => {
     });
   });
   describe("App context chips", () => {
-    it("shows one Context chip per App with a removable row per block", async () => {
+    it("shows one Context chip per App, removed as a group", async () => {
       const removeAll = vi.fn();
       const removeRow = vi.fn();
       const parts = {
@@ -2087,8 +2109,11 @@ describe("ChatInput", () => {
       expect(await screen.findByText("Current view")).toBeInTheDocument();
       expect(screen.getByText("Inspecting in mm.")).toBeInTheDocument();
       expect(screen.getByText("mcp://parts/joystick")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Remove Current view" }));
-      expect(removeRow).toHaveBeenCalledTimes(1);
+      // Rows have no × of their own, even when one is supplied.
+      expect(
+        screen.queryByRole("button", { name: "Remove Current view" }),
+      ).toBeNull();
+      expect(removeRow).not.toHaveBeenCalled();
       fireEvent.click(
         screen.getByRole("button", { name: "Remove all Parts context" })
       );

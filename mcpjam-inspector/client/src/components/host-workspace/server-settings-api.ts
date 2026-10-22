@@ -9,6 +9,7 @@ import { appendPluginDiagnostics } from "@/lib/plugin-diagnostics";
 
 export type ServerSettingsAction = {
   name: string;
+  title?: string;
   kind: "tool" | "app" | "unavailable";
 };
 export function createServerSettingsApi(
@@ -142,6 +143,7 @@ export function createServerSettingsApi(
           .array(
             z.object({
               name: z.string(),
+              title: z.string().min(1).optional(),
               kind: z.enum(["tool", "app", "unavailable"]),
             }),
           )

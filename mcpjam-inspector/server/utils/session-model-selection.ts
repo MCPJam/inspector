@@ -25,6 +25,8 @@ export function ranTurnSelection(args: {
   selection: RequestedModelSelection | undefined;
   model: RailModel;
   reasoningEffort: ModelReasoningEffort | undefined;
+  /** Applied sampling temperature, when the caller overrides the saved value. */
+  temperature?: number;
 }): RequestedModelSelection | undefined {
   const { selection, model, reasoningEffort } = args;
   if (selection?.source === "legacy") return selection;
@@ -42,6 +44,7 @@ export function ranTurnSelection(args: {
   void _requested;
   const settings = {
     ...rest,
+    ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
   };
   const { settings: _old, ...withoutSettings } = base;

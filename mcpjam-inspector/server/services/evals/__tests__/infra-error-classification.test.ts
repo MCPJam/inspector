@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  HARNESS_PROXY_REFUSAL_STATUS,
-  classifyEvalInfraError,
-} from "../infra-error-classification";
+import { HARNESS_PROXY_REFUSAL_STATUS } from "@/shared/harness-proxy-refusal-reasons";
+import { classifyEvalInfraError } from "../infra-error-classification";
 import { byokEndpointOwnership } from "../../../utils/infra-failure-evidence";
 import { resolveIterationInfraError } from "../../evals-runner";
 
@@ -33,6 +31,87 @@ describe("classifyEvalInfraError — our backend's codes are an allowlist", () =
       ).toEqual({ class: cls, layer, retryable, code, httpStatus });
     },
   );
+
+  it.each([
+    ["org_keys_required", 403, "platform"],
+    ["org_model_unconfigured", 422, "model"],
+    ["org_runtime_unsupported", 422, "model"],
+    ["ai_scope_unresolved", 403, "model"],
+    ["provider_auth_failed", 422, "model"],
+    ["credential_missing", 422, "model"],
+  ] as const)(
+    "the org-key policy's %s (HTTP %s) is configuration, never auth or an account limit",
+    (code, httpStatus, layer) => {
+      expect(
+        classifyEvalInfraError({
+          source: "backend_model",
+          endpoint: "platform",
+          code,
+          httpStatus,
+        }),
+      ).toEqual({
+        class: "configuration",
+        layer,
+        retryable: false,
+        code,
+        httpStatus,
+      });
+    },
+  );
+
+  it.each(["org_keys_required", "ai_key_policy_unavailable"] as const)(
+    "%s reads the same from the backend and from the harness proxy",
+    (code) => {
+      const fromBackend = classifyEvalInfraError({
+        source: "backend_model",
+        endpoint: "platform",
+        code,
+        httpStatus: code === "org_keys_required" ? 403 : 503,
+      });
+      const fromProxy = classifyEvalInfraError({
+        source: "harness_runtime",
+        endpoint: "platform",
+        code,
+        httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+      });
+      expect(fromProxy?.class).toBe(fromBackend?.class);
+      expect(fromProxy?.layer).toBe(fromBackend?.layer);
+      // The proxy never re-sends a call, so on its surface neither code is
+      // retryable, even the temporary one.
+      expect(fromProxy?.retryable).toBe(false);
+    },
+  );
+
+  it("the org-key policy's transient refusals are a retryable provider_unavailable", () => {
+    expect(
+      classifyEvalInfraError({
+        source: "backend_model",
+        endpoint: "platform",
+        code: "provider_unavailable",
+        httpStatus: 503,
+      }),
+    ).toEqual({
+      class: "provider_unavailable",
+      layer: "model",
+      retryable: true,
+      code: "provider_unavailable",
+      httpStatus: 503,
+    });
+    expect(
+      classifyEvalInfraError({
+        source: "backend_model",
+        endpoint: "platform",
+        code: "ai_key_policy_unavailable",
+        httpStatus: 503,
+      }),
+    ).toEqual({
+      class: "provider_unavailable",
+      layer: "platform",
+      retryable: true,
+      code: "ai_key_policy_unavailable",
+      httpStatus: 503,
+    });
+  });
 
   it("files the gateway's upstream 429 as rate_limited, not as an account limit", () => {
     // `mcpjam_rate_limit` is ALSO on the account-limit list; asking that list
@@ -536,6 +615,80 @@ describe("classifyEvalInfraError — the harness model proxy's own refusals", ()
         httpStatus: 400,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("classifyEvalInfraError — organization-key refusals", () => {
+  it("a refusal reason classifies by the shared vocabulary, configuration kept apart from an outage", () => {
+    const byReason = (code: string) =>
+      classifyEvalInfraError({
+        source: "harness_runtime",
+        endpoint: "byok_hosted",
+        code,
+        httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+      });
+    expect(byReason("org_keys_required")).toEqual({
+      class: "configuration",
+      layer: "platform",
+      retryable: false,
+      code: "org_keys_required",
+      httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+    });
+    expect(byReason("byok_credential_rejected")).toMatchObject({
+      class: "auth",
+      layer: "model",
+      retryable: false,
+    });
+    expect(byReason("byok_credential_unavailable")).toMatchObject({
+      class: "configuration",
+      layer: "model",
+    });
+    expect(byReason("byok_connection_changed")).toMatchObject({
+      class: "configuration",
+    });
+    // Retryable as the proxy says: a timeout may have run on the provider.
+    expect(byReason("upstream_timeout")).toMatchObject({
+      class: "provider_unavailable",
+      layer: "model",
+      retryable: false,
+    });
+    expect(byReason("upstream_unreachable")).toMatchObject({
+      class: "provider_unavailable",
+      retryable: true,
+    });
+    // Spend, lease caps and a transport limit are not infrastructure.
+    for (const code of [
+      "spend_budget_reached",
+      "lease_max_calls",
+      "transport_request_too_large",
+      "transport_response_too_large",
+    ]) {
+      expect(byReason(code)).toBeUndefined();
+    }
+  });
+
+  it("a customer-controlled endpoint still never classifies", () => {
+    expect(
+      classifyEvalInfraError({
+        source: "harness_runtime",
+        endpoint: "customer_hosted",
+        code: "byok_credential_rejected",
+        httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("a lease start refused for the org's key or provider is configuration, whatever its status", () => {
+    for (const [code, httpStatus] of [
+      ["org_keys_required", 403],
+      ["byok_credential_unavailable", 409],
+      ["byok_connection_changed", 409],
+      ["provider_mismatch", 400],
+    ] as const) {
+      expect(
+        classifyEvalInfraError({ source: "platform_setup", code, httpStatus }),
+      ).toMatchObject({ class: "configuration", retryable: false, code });
+    }
   });
 });
 

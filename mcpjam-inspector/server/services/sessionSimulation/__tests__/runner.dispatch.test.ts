@@ -1,7 +1,7 @@
 import { spendRefusalOf } from "../admission-retry";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ModelDefinition } from "@/shared/types";
+import { getCanonicalModelId, type ModelDefinition } from "@/shared/types";
 
 /**
  * PR 3a: `drainAssistantTurn` is now a thin wrapper over `resolveTurnRuntime`
@@ -75,6 +75,10 @@ import {
   turnReasoningEffortOf,
 } from "../../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../../utils/harness/registry.js";
+import {
+  __resetHostedModelCatalogForTests,
+  __setHostedCatalogForTests,
+} from "../../hosted-model-catalog.js";
 
 const TURN_TRACE = {
   turnId: "test-turn",
@@ -84,6 +88,14 @@ const TURN_TRACE = {
   spans: [],
   usage: { totalTokens: 7 },
   finishReason: "stop",
+};
+
+/** The fields the model-id tests read off the options the engine received. */
+type CapturedTurnOptions = {
+  endpointPath?: string;
+  harness?: string;
+  modelDefinition: ModelDefinition;
+  extraBodyFields?: Record<string, unknown>;
 };
 
 /**
@@ -208,6 +220,126 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(opts.extraBodyFields?.providerKey).toBeUndefined();
     // Hosted engines never post the local-usage writeback.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends the canonical id to /stream when a bare pinned id resolves to an MCPJam-hosted model", async () => {
+    // A swarm snapshot pinned before selections existed carries the bare
+    // `gpt-5.6-luna`. The hosted check canonicalizes it to
+    // `openai/gpt-5.6-luna` and routes the turn to `/stream`, whose catalog
+    // knows only the prefixed id and refuses the bare one as `invalid_model`.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "run-1",
+        hostId: "host-1",
+        modelId: "gpt-5.6-luna",
+        modelDefinition: {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          provider: "openai",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as CapturedTurnOptions;
+    expect(opts.endpointPath).toBe("/stream");
+    expect(opts.modelDefinition.id).toBe("openai/gpt-5.6-luna");
+    expect(opts.modelDefinition.provider).toBe("openai");
+  });
+
+  it("canonicalizes a bare id the live hosted catalog knows but the snapshot does not", async () => {
+    __setHostedCatalogForTests(["openai/gpt-live-only"]);
+    try {
+      const calls: unknown[] = [];
+      runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+      resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+      await drainAssistantTurn(
+        baseArgs({
+          modelId: "gpt-live-only",
+          modelDefinition: {
+            id: "gpt-live-only",
+            name: "Live only",
+            provider: "openai",
+          } as ModelDefinition,
+        }) as Parameters<typeof drainAssistantTurn>[0],
+      );
+
+      expect((calls[0] as CapturedTurnOptions).modelDefinition.id).toBe(
+        "openai/gpt-live-only",
+      );
+    } finally {
+      __resetHostedModelCatalogForTests();
+    }
+  });
+
+  it("keeps an already-prefixed hosted id unchanged on /stream", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect((calls[0] as CapturedTurnOptions).modelDefinition.id).toBe(
+      "openai/gpt-4o-mini",
+    );
+  });
+
+  it("keeps a bare id bare on the org-BYOK rail, where the provider expects its own id", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "openai" },
+    });
+
+    await drainAssistantTurn(
+      baseArgs({
+        modelId: "gpt-5.6-luna",
+        modelDefinition: {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          provider: "openai",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as CapturedTurnOptions;
+    expect(opts.endpointPath).toBe("/stream/org");
+    expect(opts.modelDefinition.id).toBe("gpt-5.6-luna");
+  });
+
+  it("hands a harness host the same canonical id it would derive itself", async () => {
+    // `runHarnessTurn` canonicalizes the id it receives; an id that already is
+    // canonical comes out unchanged, so the harness runs the model it did before.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        harness: "claude-code",
+        modelId: "gpt-5.6-luna",
+        modelDefinition: {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          provider: "openai",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as CapturedTurnOptions;
+    expect(opts.harness).toBe("claude-code");
+    expect(opts.modelDefinition.id).toBe("openai/gpt-5.6-luna");
+    expect(
+      getCanonicalModelId(opts.modelDefinition.id, opts.modelDefinition.provider),
+    ).toBe(opts.modelDefinition.id);
   });
 
   it("carries a swarm turn's effort to the harness checks on a harness host (refused, not dropped)", async () => {
@@ -1059,6 +1191,31 @@ describe("drainAssistantTurn — sponsored swarm claim", () => {
       hostId: "host-1",
       targetId: "target-1",
       sessionIdx: 2,
+    });
+  });
+
+  it("sends a sponsored step's bare pin to /stream under its canonical id, claim intact", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      sponsoredArgs({
+        modelId: "gpt-5.6-luna",
+        modelDefinition: {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          provider: "openai",
+        } as ModelDefinition,
+      }),
+    );
+
+    const opts = calls[0] as CapturedTurnOptions;
+    expect(opts.endpointPath).toBe("/stream");
+    expect(opts.modelDefinition.id).toBe("openai/gpt-5.6-luna");
+    expect(opts.extraBodyFields).toMatchObject({
+      billingFeature: "swarm_starter",
+      targetId: "target-1",
     });
   });
 

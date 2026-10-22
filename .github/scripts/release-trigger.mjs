@@ -3,8 +3,8 @@
  *
  * Release ships a commit only once Tests, Build and Test and Deploy Staging
  * have all passed on it. Every later commit on `main` carries the versions the
- * version PR committed, so when one commit cannot be released (its runs were
- * cancelled by the next push, or a check failed) the next green one is.
+ * version PR committed, so when one commit cannot be released (its staging run
+ * was cancelled by the next push, or a check failed) the next green one is.
  *
  * Unless the version PR ticked skip_verify: then the checks are not waited
  * for, and the version commit itself is released as soon as it lands.

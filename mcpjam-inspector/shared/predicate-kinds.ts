@@ -80,7 +80,7 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   // ── Response: what the server answered with ─────────────────────────────
   toolLatencyUnder: "Tool call under N ms",
   toolResultContains: "Tool result contains…",
-  toolResultMatches: "Tool output matches pattern(s)",
+  toolResultMatches: "Tool output matches regex",
   toolResultMatchesSchema: "Tool result matches schema…",
   toolResultSizeUnder: "Tool result under N bytes",
   // Labels say what was SEEN. None of the observations below may name what it
@@ -88,10 +88,10 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   // that more results exist, and an error that names no input may still be
   // the best error a server can write.
   toolErrorNamesInput: "Tool errors name an input",
-  fullPageHasContinuation: "Full pages carry continuation metadata",
+  fullPageHasContinuation: "Full pages include a next-page link",
   // ── Tool call: was the call itself well formed ──────────────────────────
   argumentsMatchToolSchema: "Arguments match the tool's schema",
-  toolInputMatches: "Tool input matches pattern(s)",
+  toolInputMatches: "Tool input matches regex",
   noRepeatedIdenticalCall: "No identical call repeated back-to-back",
   // ── Selection: which tools the run reached ──────────────────────────────
   toolCallCountUnder: "Fewer than N tool calls",

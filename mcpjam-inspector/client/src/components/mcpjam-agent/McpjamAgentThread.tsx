@@ -50,6 +50,7 @@ import {
 import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useMcpjamAgentSession } from "@/hooks/use-mcpjam-agent-session";
+import { rejectedInputTurn } from "@/lib/mcpjam-agent/rejected-input";
 import {
   appendRecentMcpjamAgentSession,
   loadRecentMcpjamAgentSessions,
@@ -59,6 +60,7 @@ import {
   describeAgentRefusalMessage,
   describeMCPJamLimitMessage,
 } from "@/lib/mcpjam-limit";
+import { orgKeysRefusalSentence } from "@/lib/org-keys-refusal";
 
 export interface McpjamAgentThreadProps {
   sessionId: string;
@@ -517,7 +519,7 @@ export function McpjamAgentThread({
               {describeFlow?.phase !== "reviewing" && composer}
             </div>
             {session.error && (
-              <p
+              <div
                 className={cn(
                   "text-xs text-destructive",
                   isFull && "mx-auto w-full max-w-4xl px-4",
@@ -529,9 +531,40 @@ export function McpjamAgentThread({
                     credits, and the credits copy would be wrong twice over.
                     The raw body is the last resort — it reads as a crash. */}
                 {describeAgentRefusalMessage(session.error.message) ??
+                  // The organization requires its own keys, which Ask MCPJam
+                  // can't run on yet (`org_runtime_unsupported`): the
+                  // backend's sentence, never its JSON envelope.
+                  orgKeysRefusalSentence(session.error.message) ??
                   describeMCPJamLimitMessage(session.error.message) ??
                   session.error.message ??
                   "Something went wrong."}
+                {rejectedInputTurn(session.messages, session.error.message) && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 block text-foreground"
+                    onClick={() => {
+                      const text = session.editRejectedMessage();
+                      if (text === null) return;
+                      setDraft(text);
+                      textareaRef.current?.focus();
+                    }}
+                  >
+                    Edit message
+                  </Button>
+                )}
+              </div>
+            )}
+            {!session.error && session.autoResumeNotice && (
+              <p
+                className={cn(
+                  "text-xs text-muted-foreground",
+                  isFull && "mx-auto w-full max-w-4xl px-4",
+                  isSidebar && "w-full px-3",
+                )}
+              >
+                {session.autoResumeNotice}
               </p>
             )}
           </div>

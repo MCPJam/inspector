@@ -158,7 +158,7 @@ describe("local mode", () => {
     render(
       <DirectoryReadinessSection publisher="claude" server={HTTP_SERVER} />,
     );
-    expect(screen.queryByText(/uses MCPJam credits/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Add AI observations/i)).not.toBeInTheDocument();
   });
 });
 
@@ -521,7 +521,7 @@ describe("muse", () => {
 
     // Muse has no observation catalogue, and the submission mode belongs to
     // OpenAI's plugin directory.
-    expect(screen.queryByText(/uses MCPJam credits/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Add AI observations/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Submission$/)).not.toBeInTheDocument();
     expect(
       screen.getByText(/Meta's published Muse connector guidelines/i),

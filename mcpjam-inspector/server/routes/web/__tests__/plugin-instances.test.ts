@@ -679,6 +679,66 @@ describe("authenticated thread adapter boundaries", () => {
       title: "Parts",
     });
   });
+  describe("openai/mentions capability", () => {
+    const search = {
+      name: "parts.search",
+      title: "Parts",
+      inputSchema: { type: "object" },
+      annotations: { readOnlyHint: true },
+      _meta: { ui: { visibility: ["app"] } },
+    };
+    const declared = (searchTool: typeof search) => ({
+      tools: [tool, searchTool],
+      transport: "mrtr",
+      serverCapabilities: {
+        extensions: { "openai/mentions": { searchTool: "parts.search" } },
+      },
+    });
+    it("reports the capability's search tool in discovery and opens it", async () => {
+      f.catalog.mockResolvedValue(declared(search));
+      expect((await (await post("discover", body)).json()).mentions).toEqual({
+        available: true,
+        toolName: "parts.search",
+        title: "Parts",
+      });
+      f.resolve.mockResolvedValue({
+        ...declared(search),
+        tool: search,
+        runtime: "chatgpt",
+        hostRevision: "host-revision",
+        bindingId: "binding",
+        serverIdentity: { kind: "saved" },
+        revision: "revision",
+      });
+      const opened = await (await post("mentions/open", body)).json();
+      expect(opened.mention).toMatchObject({
+        toolName: "parts.search",
+        title: "Parts",
+      });
+      expect(f.resolve).toHaveBeenCalledWith("parts.search", expect.anything());
+    });
+    it("explains an unusable search tool in Logs instead of offering @ search", async () => {
+      f.catalog.mockResolvedValue(declared({ ...search, annotations: {} }));
+      const discovered = await (await post("discover", body)).json();
+      expect(discovered.mentions).toEqual({ available: false });
+      expect(discovered.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "PLUGIN_MENTION_SEARCH_TOOL_NOT_READ_ONLY",
+          serverId: "saved-id",
+        }),
+      ]);
+      const opened = await (await post("mentions/open", body)).json();
+      expect(opened).toEqual({
+        mention: null,
+        diagnostics: [
+          expect.objectContaining({
+            code: "PLUGIN_MENTION_SEARCH_TOOL_NOT_READ_ONLY",
+          }),
+        ],
+      });
+      expect(f.resolve).not.toHaveBeenCalled();
+    });
+  });
   it("returns each entrypoint's tool icons and the server icon", async () => {
     const svg = "https://cdn.example.invalid/parts.svg";
     f.catalog.mockResolvedValue({

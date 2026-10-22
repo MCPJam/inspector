@@ -113,7 +113,10 @@ afterEach(() => {
 describe("createBrowserArtifactOutbox", () => {
   it("writes a taken batch without a scenario (the swarm auth branch)", async () => {
     const outbox = makeOutbox();
-    outbox.take(fakeBrowser([{ observations: [observation()], steps: [step()] }]), 0);
+    outbox.take(
+      fakeBrowser([{ observations: [observation()], steps: [step()] }]),
+      0,
+    );
 
     const result = await outbox.flush();
 
@@ -180,6 +183,148 @@ describe("createBrowserArtifactOutbox", () => {
     expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(1);
   });
 
+  it("splits a batch over the backend's per-call cap into writes it accepts", async () => {
+    const outbox = makeOutbox();
+    // One turn, 21 widget renders: `recordBrowserArtifacts` refuses more than
+    // 20 observations in a call, and a refused batch would otherwise be
+    // retried as-is on every flush, forever.
+    const observations = Array.from({ length: 21 }, (_, i) =>
+      observation({ toolCallId: `tc-${i}` }),
+    );
+    outbox.take(fakeBrowser([{ observations, steps: [] }]), 0);
+
+    const result = await outbox.flush();
+
+    expect(result).toMatchObject({ written: 1, pending: 0 });
+    expect(mutationMock).toHaveBeenCalledTimes(2);
+    const calls = mutationMock.mock.calls.map(([, args]) => args as any);
+    expect(calls[0].widgetRenderObservations).toHaveLength(20);
+    expect(calls[1].widgetRenderObservations).toHaveLength(1);
+    expect(calls[1].widgetRenderObservations[0].toolCallId).toBe("tc-20");
+    // Every chunk is stamped with the batch's own promptIndex.
+    expect(calls.map((c) => c.promptIndex)).toEqual([0, 0]);
+  });
+
+  it("splits a run of interaction steps the same way", async () => {
+    const outbox = makeOutbox();
+    const steps = Array.from({ length: 121 }, (_, i) => step({ stepIndex: i }));
+    outbox.enqueueSteps(steps as never, 0);
+
+    const result = await outbox.flush();
+
+    expect(result).toMatchObject({ written: 1, pending: 0 });
+    expect(mutationMock).toHaveBeenCalledTimes(2);
+    const calls = mutationMock.mock.calls.map(([, args]) => args as any);
+    expect(calls[0].browserInteractionSteps).toHaveLength(120);
+    expect(calls[1].browserInteractionSteps).toHaveLength(1);
+    expect(calls[1].browserInteractionSteps[0].stepIndex).toBe(120);
+  });
+
+  it("retries only the chunk that failed, not the rows that already landed", async () => {
+    const outbox = makeOutbox();
+    const observations = Array.from({ length: 21 }, (_, i) =>
+      observation({ toolCallId: `tc-${i}` }),
+    );
+    outbox.take(fakeBrowser([{ observations, steps: [] }]), 0);
+
+    mutationMock
+      .mockResolvedValueOnce({ observations: 20, steps: 0 })
+      .mockRejectedValueOnce(new Error("boom"));
+    expect(await outbox.flush()).toMatchObject({ written: 0, pending: 1 });
+
+    mutationMock.mockResolvedValueOnce({ observations: 1, steps: 0 });
+    expect(await outbox.flush()).toMatchObject({ written: 1, pending: 0 });
+
+    expect(mutationMock).toHaveBeenCalledTimes(3);
+    const retried = mutationMock.mock.calls[2]![1] as any;
+    expect(retried.widgetRenderObservations).toHaveLength(1);
+    expect(retried.widgetRenderObservations[0].toolCallId).toBe("tc-20");
+    expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(21);
+  });
+
+  it("serializes overlapping flushes and retries only the failed chunk", async () => {
+    const outbox = makeOutbox();
+    outbox.take(
+      fakeBrowser([
+        {
+          observations: Array.from({ length: 21 }, (_, i) =>
+            observation({ toolCallId: `tc-${i}` }),
+          ),
+          steps: [],
+        },
+      ]),
+      0,
+    );
+    let acknowledgeFirst!: (value: { observations: number; steps: number }) => void;
+    const firstWrite = new Promise<{ observations: number; steps: number }>(
+      (resolve) => {
+        acknowledgeFirst = resolve;
+      },
+    );
+    mutationMock
+      .mockReturnValueOnce(firstWrite)
+      .mockRejectedValueOnce(new Error("last chunk failed"));
+
+    const firstFlush = outbox.flush();
+    await vi.waitFor(() => expect(mutationMock).toHaveBeenCalledTimes(1));
+    const secondFlush = outbox.flush();
+    // Yield so an overlapping flush can reach its mutation before checking.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(mutationMock).toHaveBeenCalledTimes(1);
+
+    acknowledgeFirst({ observations: 20, steps: 0 });
+    expect(await firstFlush).toMatchObject({ written: 0, pending: 1 });
+    expect(await secondFlush).toMatchObject({ written: 1, pending: 0 });
+    expect(
+      mutationMock.mock.calls.map(([, args]) =>
+        args.widgetRenderObservations.map(
+          (row: { toolCallId: string }) => row.toolCallId,
+        ),
+      ),
+    ).toEqual([
+      Array.from({ length: 20 }, (_, i) => `tc-${i}`),
+      ["tc-20"],
+      ["tc-20"],
+    ]);
+    expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(21);
+  });
+
+  it("queues a flush during serialization without re-uploading or losing new steps", async () => {
+    const outbox = makeOutbox();
+    outbox.enqueueSteps([step({ stepIndex: 0 })] as never, 0);
+    let finishUpload!: (blobId: string) => void;
+    const firstUpload = new Promise<string>((resolve) => {
+      finishUpload = resolve;
+    });
+    uploadScreenshotBlobMock.mockReturnValueOnce(firstUpload);
+
+    const firstFlush = outbox.flush();
+    await vi.waitFor(() =>
+      expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(1),
+    );
+    const secondFlush = outbox.flush();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(1);
+
+    outbox.enqueueSteps([step({ stepIndex: 1, promptIndex: 1 })] as never, 1);
+    finishUpload("blob-0");
+    await Promise.all([firstFlush, secondFlush]);
+
+    expect(uploadScreenshotBlobMock).toHaveBeenCalledTimes(2);
+    expect(
+      mutationMock.mock.calls.map(([, args]) => ({
+        promptIndex: args.promptIndex,
+        stepIndexes: args.browserInteractionSteps.map(
+          (row: { stepIndex: number }) => row.stepIndex,
+        ),
+      })),
+    ).toEqual([
+      { promptIndex: 0, stepIndexes: [0] },
+      { promptIndex: 1, stepIndexes: [1] },
+    ]);
+    expect(outbox.pendingBatchCount).toBe(0);
+  });
+
   it("groups by each artifact's own promptIndex, not the draining turn", async () => {
     const outbox = makeOutbox();
     // A turn-3 drain that sweeps up a turn-0 artifact (the exact
@@ -230,6 +375,47 @@ describe("createBrowserArtifactOutbox", () => {
     expect(result.videoAttached).toBe(true);
     expect(mutationMock).toHaveBeenCalledTimes(1);
     expect((mutationMock.mock.calls[0]![1] as any).videoBlobId).toBe("video-1");
+  });
+
+  it("keeps the video staged when its chunk fails and attaches it on the next flush", async () => {
+    const outbox = makeOutbox();
+    const observations = Array.from({ length: 21 }, (_, i) =>
+      observation({ toolCallId: `tc-${i}` }),
+    );
+    outbox.take(fakeBrowser([{ observations, steps: [] }]), 0);
+    await outbox.stageVideo(Buffer.from("webm-bytes"));
+
+    // The backend is down for the whole first flush: the first chunk (which
+    // carries the video) and the video-only fallback both fail.
+    mutationMock
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockRejectedValueOnce(new Error("boom"));
+    // Pending counts the held batch and the still-unattached video.
+    expect(await outbox.flush()).toMatchObject({
+      written: 0,
+      pending: 2,
+      videoAttached: false,
+    });
+
+    mutationMock
+      .mockResolvedValueOnce({ observations: 20, steps: 0, videoAttached: true })
+      .mockResolvedValueOnce({ observations: 1, steps: 0 });
+    expect(await outbox.flush()).toMatchObject({
+      written: 1,
+      pending: 0,
+      videoAttached: true,
+    });
+
+    expect(mutationMock).toHaveBeenCalledTimes(4);
+    const calls = mutationMock.mock.calls.map(([, args]) => args as any);
+    // Still staged after the failure, so the retried first chunk carries it;
+    // once acknowledged, no later chunk repeats it.
+    expect(calls[2].videoBlobId).toBe("video-1");
+    expect(calls[2].widgetRenderObservations).toHaveLength(20);
+    expect(calls[3].videoBlobId).toBeUndefined();
+    expect(calls[3].widgetRenderObservations).toHaveLength(1);
+    // The replay uploaded once; a failed write never re-stages it.
+    expect(uploadVideoBlobMock).toHaveBeenCalledTimes(1);
   });
 
   it("attaches a video on its own when every batch already landed", async () => {
@@ -336,7 +522,11 @@ describe("createBrowserArtifactOutbox", () => {
     const result = await outbox.flush();
 
     // Screenshots are the fallback the Replay UI renders when there is no video.
-    expect(result).toMatchObject({ written: 1, pending: 0, videoAttached: false });
+    expect(result).toMatchObject({
+      written: 1,
+      pending: 0,
+      videoAttached: false,
+    });
   });
 
   it("keeps every row when one screenshot upload fails, just without its blob", async () => {
@@ -395,10 +585,12 @@ describe("createBrowserArtifactOutbox", () => {
     // the throw is already on the wire and the one after is still queued;
     // dropping the whole bucket here was the P1 this replaced.
     const real = serializeBrowserStepsMock.getMockImplementation()!;
-    serializeBrowserStepsMock.mockImplementation(async (steps: any, client: any) => {
-      if (steps?.[0]?.stepIndex === 1) throw new Error("systemic");
-      return real(steps, client);
-    });
+    serializeBrowserStepsMock.mockImplementation(
+      async (steps: any, client: any) => {
+        if (steps?.[0]?.stepIndex === 1) throw new Error("systemic");
+        return real(steps, client);
+      },
+    );
 
     await outbox.flush();
 

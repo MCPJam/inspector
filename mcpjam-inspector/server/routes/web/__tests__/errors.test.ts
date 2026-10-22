@@ -1,3 +1,5 @@
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
@@ -7,7 +9,7 @@ vi.mock("@sentry/node", () => ({
 }));
 import * as Sentry from "@sentry/node";
 const captureException = vi.mocked(Sentry.captureException);
-import { MCPAuthError, originOf } from "@mcpjam/sdk";
+import { MCPAuthError, MCPClientManager, originOf } from "@mcpjam/sdk";
 import {
   InsufficientScopeError,
   SdkErrorCode,
@@ -459,6 +461,38 @@ describe("mapTargetServerError", () => {
     expect(mapped.code).toBe(ErrorCode.TIMEOUT);
   });
 
+  it("downgrades a real refused connection to a named server", async () => {
+    // Built by the real manager, not by hand: the SDK rewrites a refused
+    // connect into its own sentence, and that sentence once dropped the
+    // server's name. The downgrade keys off the name, so a user's stopped
+    // server went out as a 502, Cloudflare swapped in its own error page, and
+    // the browser reported an MCPJam outage.
+    const listener: Server = createServer();
+    await new Promise<void>((resolve) =>
+      listener.listen(0, "127.0.0.1", resolve),
+    );
+    const address = listener.address() as AddressInfo;
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+
+    const manager = new MCPClientManager({});
+    let failure: unknown;
+    try {
+      await manager.connectToServer("waz-planner", {
+        url: `http://127.0.0.1:${address.port}/mcp`,
+      });
+    } catch (error) {
+      failure = error;
+    } finally {
+      await manager.disconnectAllServers();
+    }
+
+    const mapped = mapTargetServerError(failure);
+    expect(mapped.status).toBe(424);
+    expect(mapped.code).toBe(ErrorCode.SERVER_UNREACHABLE);
+    expect(mapped.message).toContain('MCP server "waz-planner"');
+    expect(mapped.message).toContain("ECONNREFUSED");
+  }, 20_000);
+
   it.each([
     // The wrapper the manager actually builds, with the timeout text buried in
     // one transport's leg. This is the realistic shape and the dangerous one:
@@ -524,9 +558,9 @@ describe("mapTargetServerError", () => {
     }
 
     /**
-     * The connect failure the SDK throws when both transports got a 404. Its
-     * message no longer names the server, so neither the shared mapper nor the
-     * 502/504 downgrade recognizes it.
+     * The connect failure the SDK throws when both transports got a 404, in
+     * the wording it had before it named the server again. Kept without the
+     * name on purpose: the transport status alone must be enough for a 424.
      */
     function connectFailure404(): Error {
       const error = new Error(

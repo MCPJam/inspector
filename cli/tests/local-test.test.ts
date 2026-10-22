@@ -3,8 +3,9 @@
  * binding discovery, SDK runner, report renderers and exit mapping — against
  * a real stdio MCP server spawned from a temporary `.mcp.json`. Only the
  * language model is replaced, through the internal test seam; there is no
- * credential and no paid inference anywhere in this file.
+ * paid inference. Run identity is verified against a local platform fixture.
  */
+import { evalIdentityFixture } from "./support/eval-identity.mjs";
 import assert from "node:assert/strict";
 import {
   existsSync,
@@ -228,7 +229,10 @@ async function runTest(
   } = {}
 ) {
   const script = options.script ?? byVerb;
-  return captureProcessOutput(() =>
+  const platform = await evalIdentityFixture();
+  const previousExitCode = process.exitCode;
+  try {
+  const output = await captureProcessOutput(() =>
     main(
       [
         "node",
@@ -248,6 +252,7 @@ async function runTest(
             CALLS_FILE: ws.callsFile,
             CWD_FILE: ws.cwdFile,
             ANTHROPIC_API_KEY: PROVIDER_KEY,
+            ...platform.env,
             ...options.env,
           },
           runtime: { createLanguageModel: () => scripted(script) as never },
@@ -255,12 +260,18 @@ async function runTest(
       }
     )
   );
+  return { ...output, starts: platform.starts };
+  } finally {
+    process.exitCode = previousExitCode;
+    await platform.close();
+  }
 }
 
 test("passes a case over a real stdio server and prints one JSON report", async () => {
   const ws = workspace(suite(CASES.read));
   const run = await runTest(ws, []);
   assert.equal(run.result.exitCode, 0, run.stderr);
+  assert.equal(run.starts.length, 1);
   const report = JSON.parse(run.stdout) as {
     kind: string;
     verdict: string;
@@ -429,7 +440,7 @@ test("no credential reaches stdout, stderr or the artifact", async () => {
   }
 });
 
-test("never uploads, even with MCPJAM_API_KEY set", async () => {
+test("records start and payment without uploading results or analytics", async () => {
   const ws = workspace(suite(CASES.read));
   const realFetch = globalThis.fetch;
   const outbound: string[] = [];
@@ -445,16 +456,17 @@ test("never uploads, even with MCPJAM_API_KEY set", async () => {
   }) as typeof fetch;
   try {
     const run = await runTest(ws, [], {
-      env: { MCPJAM_API_KEY: "sk_live_should_not_be_used" },
+      env: { MCPJAM_API_KEY: "sk_fixture" },
     });
     assert.equal(run.result.exitCode, 0, run.stderr);
   } finally {
     globalThis.fetch = realFetch;
   }
-  // A BYOK run with a stdio server makes no platform request at all — and
-  // no telemetry: the SDK's is suppressed for a local run, and the CLI's own
-  // is disabled for this test.
-  assert.deepEqual(outbound, []);
+  assert.deepEqual(outbound.map((url) => new URL(url).pathname), [
+    "/api/v1/projects",
+    "/api/v1/projects/project_fixture/eval-ingest/start-run",
+    "/api/v1/projects/project_fixture/eval-ingest/pay-iteration",
+  ]);
 });
 
 test("removes its signal handlers when the run ends", async () => {
@@ -487,4 +499,16 @@ test("test --help documents the local contract", async () => {
   ]) {
     assert.match(run.stdout, new RegExp(flag));
   }
+});
+
+
+test("missing MCPJam identity stops a BYOK run before connecting or calling the model", async () => {
+  const ws = workspace(suite(CASES.read));
+  let modelCalls = 0;
+  const run = await runTest(ws, [], { env: { MCPJAM_API_KEY: "" }, script: () => { modelCalls++; return { text: "unexpected" }; } });
+  assert.equal(run.result.exitCode, 3, run.stderr);
+  assert.equal(modelCalls, 0);
+  assert.equal(run.starts.length, 0);
+  assert.equal(existsSync(ws.callsFile), false);
+  assert.equal(existsSync(ws.cwdFile), false);
 });

@@ -4,8 +4,8 @@
  * `mcp-previewed-host-id` (an object keyed by `projectId` → `hostId`).
  *
  * Surfaces that read/write this value (Connect's `HostCanvasSelector`,
- * Playground's `PlaygroundHeader`) all go through these helpers so they
- * stay in sync. Same-tab updates are propagated via a custom
+ * Playground's chat-input `ClientSelector`) all go through these helpers
+ * so they stay in sync. Same-tab updates are propagated via a custom
  * `previewed-host-changed` window event; cross-tab updates come for free
  * through the browser `storage` event.
  */

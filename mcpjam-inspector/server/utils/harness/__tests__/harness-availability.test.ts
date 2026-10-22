@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   checkHarnessRuntimeAvailable,
   harnessModelEligibleForRuntime,
+  harnessModelRefusal,
+  orgHarnessSelection,
+  runsHarness,
   harnessReasoningEffortRefusalReason,
   harnessToolApprovalRefusalReason,
   readReasoningEffort,
@@ -90,7 +93,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     );
     expect(result.ok).toBe(false);
     expect((result as { reason: string }).reason).toContain(
-      "enterprise-managed host",
+      "authorization policy",
     );
   });
 
@@ -110,7 +113,7 @@ describe("checkHarnessRuntimeAvailable", () => {
       args({ harnessId: "codex", model: { id: "anthropic/claude-haiku-4.5" } }),
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/can't run this host's model/);
+    if (!r.ok) expect(r.reason).toMatch(/isn’t supported/);
   });
 
   // The gpt-5.6 line is hosted, Codex-mappable by the OLD `gpt-5` prefix rule,
@@ -124,15 +127,15 @@ describe("checkHarnessRuntimeAvailable", () => {
     ["openai/gpt-5.6-terra"],
     ["openai/gpt-5.6-sol"],
     ["openai/gpt-5.6-luna"],
-  ])("refuses %s on Codex as model-unsupported", (modelId) => {
+  ])("refuses %s on Codex as model-unverified", (modelId) => {
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
       args({ harnessId: "codex", model: { id: modelId, provider: "openai" } }),
     );
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.kind).toBe("model-unsupported");
-      expect(r.reason).toMatch(/can't run this host's model/);
+      expect(r.kind).toBe("model-unverified");
+      expect(r.reason).toMatch(/not.*verified/);
     }
   });
 
@@ -155,7 +158,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     delete process.env.E2B_API_KEY;
     const r = checkHarnessRuntimeAvailable(args());
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/computers data plane/);
+    if (!r.ok) expect(r.reason).toMatch(/cloud computer/);
   });
 
   it("allows an approval host on Claude Code (WS3: native tool approval)", () => {
@@ -203,7 +206,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     delete process.env.E2B_API_KEY;
     const r = checkHarnessRuntimeAvailable(args({ harnessId: "codex" }));
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/Codex harness/);
+    if (!r.ok) expect(r.reason).toMatch(/Codex client/);
   });
 
   it("allows a Codex host with selected MCP servers (host-executed delivery)", () => {
@@ -254,7 +257,7 @@ describe("checkHarnessRuntimeAvailable", () => {
       args({ model: { id: "acme/private-llm", provider: "custom" } }),
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/MCPJam-provided models/);
+    if (!r.ok) expect(r.reason).toMatch(/supported model and an eligible Anthropic connection/);
   });
 
   // The gate derives eligibility itself precisely so this cannot be got wrong
@@ -282,7 +285,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
     const r = checkHarnessRuntimeAvailable(args());
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/MCPJAM_HARNESS_BROKER_DELIVERY/);
+    if (!r.ok) expect(r.reason).toMatch(/can’t access the credentials/);
   });
 
   it.each(["unset", "true"] as const)(
@@ -601,7 +604,7 @@ describe("harnessToolApprovalRefusalReason", () => {
             hasSelectedMcpServers,
             unattended: true,
           }),
-        ).toMatch(/can't pause for tool approval in an unattended run/);
+        ).toMatch(/cannot wait for tool approval in evals or swarms/);
       }
     },
   );
@@ -637,7 +640,7 @@ describe("harnessToolApprovalRefusalReason", () => {
         requireToolApproval: true,
         hasSelectedMcpServers: false,
       }),
-    ).toMatch(/doesn't support interactive tool approval/);
+    ).toMatch(/does not support interactive tool approval/);
   });
 
   it("allows Codex under approval, servers or not", () => {
@@ -668,7 +671,7 @@ describe("harnessToolApprovalRefusalReason", () => {
   // "allow-reads"), so attaching a server no longer makes the combination
   // unsound. This used to be the refusal case.
   it("allows Claude Code under approval once a server is attached", () => {
-    expect(claudeCode.mcpDelivery).toBe("native");
+    expect(claudeCode.mcpDelivery).toBe("harness");
     expect(claudeCode.supportsMcpToolApproval).toBe(true);
     expect(
       harnessToolApprovalRefusalReason({
@@ -693,7 +696,7 @@ describe("harnessToolApprovalRefusalReason", () => {
         requireToolApproval: true,
         hasSelectedMcpServers: true,
       }),
-    ).toMatch(/MCP-server tools/);
+    ).toMatch(/MCP server tools/);
     // …and only once a server is actually attached.
     expect(
       harnessToolApprovalRefusalReason({
@@ -708,7 +711,7 @@ describe("harnessToolApprovalRefusalReason", () => {
   // host-executed, so reading `supportsMcpToolApproval` (irrelevant here, and
   // now TRUE on the other adapter) would have looked like the right check.
   it("reads the capability for the surface each adapter's MCP tools run on", () => {
-    expect(codex.mcpDelivery).toBe("host-executed");
+    expect(codex.mcpDelivery).toBe("mcpjam");
     // The MCP flag is the WRONG one for host-executed delivery: claiming it
     // must not make up for a host-executed surface that cannot pause.
     const cannotGateHostTools = {
@@ -722,7 +725,7 @@ describe("harnessToolApprovalRefusalReason", () => {
         requireToolApproval: true,
         hasSelectedMcpServers: true,
       }),
-    ).toMatch(/MCP-server tools/);
+    ).toMatch(/MCP server tools/);
     expect(codex.supportsMcpToolApproval).toBe(false);
     expect(
       harnessToolApprovalRefusalReason({
@@ -744,8 +747,7 @@ describe("version-keyed model support (evidence table)", () => {
       ok: false,
       kind: "model-unsupported",
       reason:
-        "the Claude Code harness can't run this host's model — pick a " +
-        "Claude Code-compatible model to run the real runtime",
+        "This model isn’t supported by Claude Code. Choose a supported model or switch clients.",
     });
   });
 
@@ -761,7 +763,7 @@ describe("version-keyed model support (evidence table)", () => {
       expect(r.ok).toBe(false);
       if (!r.ok) {
         expect(r.kind).toBe("model-unverified");
-        expect(r.reason).toMatch(/^not verified for claude-code \d+\.\d+\.\d+$/);
+        expect(r.reason).toMatch(/has not been verified for the Claude Code client/);
       }
     }
   });
@@ -776,7 +778,7 @@ describe("version-keyed model support (evidence table)", () => {
     );
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.warning).toMatch(/^not verified for claude-code /);
+      expect(r.warning).toMatch(/has not been verified for the Claude Code client/);
     }
   });
 
@@ -785,7 +787,7 @@ describe("version-keyed model support (evidence table)", () => {
     const r = checkHarnessRuntimeAvailable(
       args({
         harnessId: "codex",
-        model: { id: "openai/gpt-5.6-luna", provider: "openai" },
+        model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
         purpose: "chat",
       }),
     );
@@ -903,7 +905,9 @@ describe("reasoning effort on a harness (refuse, never drop)", () => {
       adapter,
       reasoningEffort: "high",
     });
-    expect(reason).toContain('"low", "medium"');
+    expect(reason).toBe(
+      'The Codex client does not support the "high" reasoning effort. Choose "low" or "medium".',
+    );
   });
 });
 
@@ -916,7 +920,9 @@ describe("an effort the adapter applies but the model does not list", () => {
         reasoningEffort: "xhigh",
         modelEfforts: ["minimal", "low", "medium", "high"],
       }),
-    ).toContain('doesn\'t accept the "xhigh"');
+    ).toBe(
+      'This model does not support the "xhigh" reasoning effort. Choose "minimal" or "low" or "medium" or "high".',
+    );
     expect(
       harnessReasoningEffortRefusalReason({
         adapter,
@@ -990,5 +996,208 @@ describe("every harness adapter either applies an effort or declares none", () =
         } as never),
       ).not.toThrow();
     }
+  });
+});
+
+describe("organization-key selections", () => {
+  const orgSel = (modelId: string, id = "conn_1") => ({
+    source: "org" as const,
+    modelId,
+    connectionRef: { kind: "orgProvider" as const, id },
+    fallback: { provider: "none" as const, model: "none" as const },
+  });
+
+  it.each([
+    // [harness, row model, row provider, selection id, expected]
+    [
+      "claude-code",
+      "claude-sonnet-4-5",
+      "anthropic",
+      "anthropic/claude-sonnet-4.5",
+      "ok",
+    ],
+    ["codex", "gpt-5", "openai", "openai/gpt-5", "ok"],
+    [
+      "claude-code",
+      "gpt-5",
+      "openai",
+      "openai/gpt-5",
+      "model-provider-unsupported",
+    ],
+    [
+      "codex",
+      "claude-sonnet-4-5",
+      "anthropic",
+      "anthropic/claude-sonnet-4.5",
+      "model-provider-unsupported",
+    ],
+    [
+      "claude-code",
+      "gemini-2.5-pro",
+      "google",
+      "google/gemini-2.5-pro",
+      "model-provider-unsupported",
+    ],
+  ] as const)(
+    "%s on an org %s row (%s) → %s",
+    (harnessId, id, provider, selectionId, expected) => {
+      setFullyAvailable();
+      const r = checkHarnessRuntimeAvailable(
+        args({
+          harnessId,
+          model: { id, provider },
+          selection: orgSel(selectionId),
+          purpose: "chat",
+        }),
+      );
+      if (expected === "ok") expect(r).toEqual({ ok: true });
+      else expect(r).toMatchObject({ ok: false, kind: expected });
+    },
+  );
+
+  it("an org row still answers to the evidence table: unverified is refused for evals", () => {
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          model: { id: "claude-fable-5", provider: "anthropic" },
+          selection: orgSel("anthropic/claude-fable-5"),
+          purpose: "eval",
+        }),
+      ),
+    ).toMatchObject({ ok: false, kind: "model-unverified" });
+  });
+
+  it("names the provider the harness runs on when the org connection serves another", () => {
+    const r = harnessModelRefusal({
+      adapter: getHarnessAdapter("codex"),
+      model: { id: "claude-sonnet-4-5", provider: "anthropic" },
+      purpose: "chat",
+      selection: orgSel("anthropic/claude-sonnet-4.5"),
+    });
+    expect(r.refusal?.kind).toBe("model-provider-unsupported");
+    expect(r.refusal?.reason).toMatch(/OpenAI/);
+    expect(r.refusal?.reason).not.toMatch(/MCPJam/);
+  });
+  it("uses the shared organization-only refusal when its policy is available", () => {
+    const r = harnessModelRefusal({
+      adapter: getHarnessAdapter("codex"),
+      model: { id: "claude-sonnet-4-5", provider: "anthropic" },
+      purpose: "chat",
+      selection: orgSel("anthropic/claude-sonnet-4.5"),
+      keyPolicy: { requireOrgKeys: true },
+    });
+    expect(r.refusal?.reason).toBe("The Codex client requires your organization's OpenAI key. Choose an organization model or contact your organization admin.");
+  });
+
+  it("reads evidence on the CANONICAL id, not the org row's native one", () => {
+    // The native `claude-sonnet-4-5` is unknown to the table; the canonical id
+    // is supported, so an eval admits it.
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          model: { id: "claude-sonnet-4-5", provider: "anthropic" },
+          selection: orgSel("anthropic/claude-sonnet-4.5"),
+          purpose: "eval",
+        }),
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it("refuses a row whose provider disagrees with its saved selection", () => {
+    expect(
+      runsHarness({
+        harness: "claude-code",
+        model: { id: "claude-sonnet-4-5", provider: "anthropic" },
+        selection: orgSel("openai/gpt-5"),
+      }),
+    ).toBe(false);
+    expect(
+      harnessModelRefusal({
+        adapter: getHarnessAdapter("claude-code"),
+        model: { id: "claude-sonnet-4-5", provider: "anthropic" },
+        purpose: "chat",
+        selection: orgSel("openai/gpt-5"),
+      }).refusal?.kind,
+    ).toBe("model-provider-unsupported");
+  });
+
+  it("infers the provider from the canonical id when the row carries none", () => {
+    expect(
+      runsHarness({
+        harness: "claude-code",
+        model: { id: "claude-sonnet-4-5" },
+        selection: orgSel("anthropic/claude-sonnet-4.5"),
+      }),
+    ).toBe(true);
+    expect(
+      runsHarness({
+        harness: "claude-code",
+        model: { id: "gpt-5" },
+        selection: orgSel("openai/gpt-5"),
+      }),
+    ).toBe(false);
+  });
+
+  it("a non-hosted model WITHOUT an org selection is still model-not-hosted", () => {
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({ model: { id: "claude-sonnet-4-5", provider: "anthropic" } }),
+      ),
+    ).toMatchObject({ ok: false, kind: "model-not-hosted" });
+  });
+
+  it("a local-provider or hosted selection never runs on an org key", () => {
+    expect(
+      orgHarnessSelection({
+        source: "local",
+        modelId: "anthropic/claude-sonnet-4.5",
+        connectionRef: { kind: "localProvider", providerKey: "anthropic" },
+      } as never),
+    ).toBeUndefined();
+    expect(
+      orgHarnessSelection({
+        source: "hosted",
+        modelId: "anthropic/claude-sonnet-4.5",
+      } as never),
+    ).toBeUndefined();
+    expect(
+      runsHarness({
+        harness: "claude-code",
+        model: { id: "claude-sonnet-4-5", provider: "anthropic" },
+        selection: {
+          source: "local",
+          modelId: "anthropic/claude-sonnet-4.5",
+          connectionRef: { kind: "localProvider", providerKey: "anthropic" },
+        } as never,
+      }),
+    ).toBe(false);
+  });
+
+  it("an external-account harness never runs an org selection", () => {
+    expect(
+      runsHarness({
+        harness: "cursor",
+        model: { id: "claude-sonnet-4-5", provider: "anthropic" },
+        selection: orgSel("anthropic/claude-sonnet-4.5"),
+      }),
+    ).toBe(false);
+  });
+
+  it("a hosted model still runs the harness with no selection", () => {
+    expect(
+      runsHarness({
+        harness: "claude-code",
+        model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+      }),
+    ).toBe(true);
+    expect(
+      runsHarness({
+        harness: undefined,
+        model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+      }),
+    ).toBe(false);
   });
 });

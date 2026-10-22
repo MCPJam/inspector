@@ -89,6 +89,22 @@ describe("normal chat identity transition", () => {
       vi.useRealTimers();
     }
   });
+  it("hands the reset the action's own check, for a reset that waits on the person", async () => {
+    let live = true;
+    const reset = vi.fn(async (_isCurrent: () => boolean) => false);
+    const { result } = renderHook(() =>
+      useChatThreadTransition({
+        threadId: "old",
+        ownerScope: "owner",
+        begin: reset,
+      }),
+    );
+    await result.current.begin(() => live);
+    const isCurrent = reset.mock.calls[0]![0];
+    expect(isCurrent()).toBe(true);
+    live = false;
+    expect(isCurrent()).toBe(false);
+  });
 });
 
 describe("prepared App message destination readiness", () => {

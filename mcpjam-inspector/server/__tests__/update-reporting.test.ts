@@ -135,3 +135,32 @@ it("does not claim a completed download for a relaunch-to-retry timeout", () => 
   reportUpdateFailure(attempt, "shutdown_stuck");
   expect(mocks.capture.mock.calls[0][0].message).toBe("Desktop update failed");
 });
+
+it("keeps the diagnostic timeline readable through Sentry normalization and removes host identity", async () => {
+  const { normalize } = await import("@sentry/core");
+  const { recordUpdateDiagnostic } = await import(
+    "../../src/ipc/update/update-diagnostics.js"
+  );
+  const a = newAttempt("3.14.0");
+  recordUpdateDiagnostic(a.id, "attempt_started", { trigger: "startup" });
+  recordUpdateDiagnostic(a.id, "native_error", {
+    code: "ETIMEDOUT",
+    category: "network",
+  });
+  reportUpdateFailure(a, "updater_error");
+  const event = mocks.processors.at(-1)!({
+    ...mocks.capture.mock.calls.at(-1)![0],
+    server_name: "private-host",
+  });
+  const normalized = normalize(event.contexts, 3) as any;
+  expect(
+    normalized.update_diagnostics.timeline.map((line: string) =>
+      JSON.parse(line),
+    ),
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ step: "native_error", code: "ETIMEDOUT" }),
+    ]),
+  );
+  expect(JSON.stringify(event)).not.toContain("private-host");
+});

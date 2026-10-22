@@ -22,6 +22,9 @@ beforeEach(() => {
     hasPendingLimit: false,
     outOfCreditsHit: false,
     outOfCreditsOrganizationId: null,
+    outOfCreditsDismissed: false,
+    outOfCreditsDismissedOrganizationId: null,
+    balanceOutByOrganization: {},
     isOpen: false,
     intent: null,
     organizationId: null,
@@ -620,6 +623,96 @@ describe("credits held by in-flight requests", () => {
       }),
     ).toBe(true);
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+});
+
+describe("a dismissed out-of-credits dialog", () => {
+  const EXHAUSTED =
+    "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
+  const exhausted = (organizationId?: string) =>
+    notifyMCPJamLimitError({
+      code: "user_rate_limit",
+      message: EXHAUSTED,
+      ...(organizationId ? { organizationId } : {}),
+    });
+  const store = useMCPJamLimitDialogStore;
+  const dismissFirst = (organizationId?: string) => {
+    store.getState().setAuthStatus("signedIn");
+    exhausted(organizationId);
+    expect(store.getState().isOpen).toBe(true);
+    store.getState().dismiss();
+  };
+
+  it("stays closed for the next blocked send, but still locks the models", () => {
+    dismissFirst();
+    store.getState().clearOutOfCreditsHit();
+
+    exhausted();
+    expect(store.getState().isOpen).toBe(false);
+    expect(store.getState().outOfCreditsHit).toBe(true);
+  });
+
+  it("does not hold a notice while auth loads, to open it at sign-in", () => {
+    dismissFirst();
+    store.getState().setAuthStatus("loading");
+
+    exhausted();
+    store.getState().setAuthStatus("signedIn");
+    expect(store.getState().isOpen).toBe(false);
+  });
+
+  it("still opens for a shortfall, which is about one request", () => {
+    dismissFirst();
+
+    notifyMCPJamLimitError({ message: INSUFFICIENT_BODY });
+    expect(store.getState().isOpen).toBe(true);
+    expect(store.getState().shortfall).toEqual({
+      creditsRemaining: 23,
+      creditsRequired: 30,
+    });
+  });
+
+  it("still opens when the user asks for it", () => {
+    dismissFirst();
+
+    store.getState().notifyLimitHit({ userInitiated: true });
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("opens again once a purchase begins", () => {
+    dismissFirst("org-a");
+    store.getState().forgetNotifiedWaves("org-a");
+
+    exhausted("org-a");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("opens again once credits come back", () => {
+    dismissFirst("org-a");
+    store.getState().observeBalance("org-a", true);
+    store.getState().observeBalance("org-a", false);
+
+    exhausted("org-a");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("still opens for another organization", () => {
+    dismissFirst("org-a");
+
+    exhausted("org-b");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("is not set by closing a shortfall, or by a close the user did not make", () => {
+    store.getState().setAuthStatus("signedIn");
+    notifyMCPJamLimitError({ message: INSUFFICIENT_BODY });
+    store.getState().dismiss();
+    exhausted();
+    expect(store.getState().isOpen).toBe(true);
+
+    store.getState().close();
+    exhausted();
+    expect(store.getState().isOpen).toBe(true);
   });
 });
 
@@ -1850,6 +1943,25 @@ describe("Ask MCPJam refusals", () => {
       );
     },
   );
+
+  it("reads the loop guard's own sentence out of its refusal envelope", () => {
+    // The 409 body the AI SDK folds into the error message. The raw JSON
+    // reads as a crash; the sentence says what happened and what to do.
+    const body = JSON.stringify({
+      code: "AGENT_STEP_LIMIT",
+      message:
+        "The model kept sending a tool call that could not run, so this reply was stopped. Send a message to continue.",
+      details: { reason: "repeated_tool_input_error", steps: 2, maxSteps: 16 },
+    });
+    expect(describeAgentRefusalMessage(body)).toBe(
+      "The model kept sending a tool call that could not run, so this reply was stopped. Send a message to continue.",
+    );
+    expect(
+      describeAgentRefusalMessage(JSON.stringify({ code: "AGENT_STEP_LIMIT" })),
+    ).toBe(
+      "This reply reached its step limit, so it was stopped. Send a message to continue.",
+    );
+  });
 
   it("finds a refusal nested as plain text under another code", () => {
     // `collectCodes` only records a `code` PROPERTY, so this payload yields

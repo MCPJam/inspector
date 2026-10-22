@@ -1,5 +1,5 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
-import { ArrowUpRight, Globe, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, FileText, Globe, Lock, ShieldCheck } from "lucide-react";
 import { GitHubStarButton } from "../ui/github-star-button";
 
 const links = [
@@ -14,6 +14,18 @@ const links = [
     description: "Security, compliance, and supporting documents.",
     href: "https://trust.mcpjam.com",
     icon: ShieldCheck,
+  },
+  {
+    label: "Privacy Policy",
+    description: "What data MCPJam collects and how it is used.",
+    href: "https://www.mcpjam.com/privacy-policy",
+    icon: Lock,
+  },
+  {
+    label: "Terms of Use",
+    description: "The terms that govern your use of MCPJam.",
+    href: "https://www.mcpjam.com/terms-of-use",
+    icon: FileText,
   },
 ];
 

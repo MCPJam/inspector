@@ -1,0 +1,13 @@
+{
+  "updated": "2026-10-13",
+  "docs": "https://docs.mcpjam.com/hosted/network",
+  "mcp_servers": {
+    "ipv4": ["162.220.234.241/32", "152.55.180.241/32", "152.55.180.243/32"],
+    "ipv6": []
+  },
+  "authorization_servers": {
+    "ipv4": ["216.235.222.0/24"],
+    "ipv6": ["2600:1f18:77e:2300::/56", "2600:1f10:4a09:7c00::/56"],
+    "source": "https://docs.convex.dev/production/networking"
+  }
+}

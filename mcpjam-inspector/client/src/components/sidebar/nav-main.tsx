@@ -43,11 +43,12 @@ interface NavMainProps {
 }
 
 export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) {
-  const { open: sidebarOpen } = useSidebar();
+  const { open: sidebarOpen, isMobile, setOpenMobile } = useSidebar();
 
   const handleClick = (url: string) => {
     if (onItemClick) {
       onItemClick(url);
+      if (isMobile) setOpenMobile(false);
     }
   };
 

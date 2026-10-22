@@ -22,7 +22,11 @@ import { EVAL_AGENT_TOOL_NAMES } from "@/shared/eval-agent-scope";
 import { Chat } from "@ai-sdk/react";
 import type { UIMessage } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { shouldAutoResumeTurn } from "@/lib/chat-auto-resume";
+import {
+  decideAutoResume,
+  describeAutoResumeStop,
+} from "@/lib/chat-auto-resume";
+import { AGENT_MAX_STEPS } from "@/shared/mcpjam-agent-model";
 import { track } from "@/lib/analytics";
 import { authFetch } from "@/lib/session-token";
 import {
@@ -130,6 +134,25 @@ export interface AgentChatEntry {
     id: string;
     approved: boolean;
   }) => void;
+  /**
+   * The line to show when this instance's last auto-resume decision held a
+   * resume back (the reply was cut off, or the turn spent its step budget),
+   * or `null`. Recorded by `sendAutomaticallyWhen` itself — which the SDK
+   * runs before a settled response renders — so readers need no predicate
+   * of their own; only meaningful while the chat is `ready`.
+   */
+  autoResumeNotice: () => string | null;
+}
+
+/**
+ * The Describe flow parks the turn on purpose while the user clarifies,
+ * reviews or accepts a proposal. Not a withheld resume, so no notice either.
+ */
+function describePhaseHoldsTurn(chatSessionId: string): boolean {
+  const phase = useDescribeFlow.getState().sessions[chatSessionId]?.phase;
+  return (
+    phase === "clarifying" || phase === "proposed" || phase === "reviewing"
+  );
 }
 
 const instances = new Map<string, AgentChatEntry>();
@@ -295,6 +318,15 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
    */
   let turnRequireToolApproval = config.requireToolApproval;
 
+  /**
+   * How the last response ended, as the SDK reports it to `onFinish` — the
+   * only place a finish reason reaches the browser. The SDK calls `onFinish`
+   * before it asks `sendAutomaticallyWhen`, so the gate below always sees the
+   * response it is deciding about.
+   */
+  let lastFinishReason: string | undefined;
+  /** What the latest auto-resume decision held back, for the notice. */
+  let heldBackNotice: string | null = null;
   // One capture decision per request; see `agent-failure-reporting.ts`.
   const failures = createAgentFailureTracker();
 
@@ -374,6 +406,7 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     // the capture decision is made here, once.
     onFinish: (flags) => {
       failures.onFinish(flags);
+      lastFinishReason = flags.finishReason;
     },
     // WebMCP UI tools are no-execute server-side; the stream pauses until
     // the client supplies the result via `addToolOutput`. Non-UI names fall
@@ -401,17 +434,20 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     // without this, `addToolOutput` would sit unsent until the next user
     // message — or once every approval request has an answer (the MCP/
     // skill-tool deny/approve path), but never while an approval pill is still
-    // pending (BUG-4). Shared with the Playground surface so the two can't
-    // drift; see `shouldAutoResumeTurn` for the full rationale.
+    // pending (BUG-4). Bounded by the reply's finish reason and the turn's
+    // step budget — the same `AGENT_MAX_STEPS` the server refuses at — so a
+    // turn that cannot continue stops here instead of re-posting forever.
+    // See `shouldAutoResumeTurn` for the full rationale.
     sendAutomaticallyWhen: (input) => {
-      const phase = useDescribeFlow.getState().sessions[chatSessionId]?.phase;
-      if (
-        phase === "clarifying" ||
-        phase === "proposed" ||
-        phase === "reviewing"
-      )
-        return false;
-      return shouldAutoResumeTurn(input);
+      heldBackNotice = null;
+      if (describePhaseHoldsTurn(chatSessionId)) return false;
+      const { resume, heldBack } = decideAutoResume({
+        ...input,
+        finishReason: lastFinishReason,
+        maxSteps: AGENT_MAX_STEPS,
+      });
+      heldBackNotice = heldBack ? describeAutoResumeStop(heldBack) : null;
+      return resume;
     },
   });
 
@@ -434,6 +470,7 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     chat,
     config,
     handleToolApprovalResponse,
+    autoResumeNotice: () => heldBackNotice,
     turn: {
       startedAt: null,
       seq: 0,

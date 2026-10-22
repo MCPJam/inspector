@@ -122,7 +122,7 @@ export function SystemPromptSelector({
     }
 
     onSystemPromptChange(draftPrompt);
-    onTemperatureChange(draftTemperature);
+    if (temperatureChanged) onTemperatureChange(draftTemperature);
     if (promptChanged || temperatureChanged) {
       onResetChat();
     }

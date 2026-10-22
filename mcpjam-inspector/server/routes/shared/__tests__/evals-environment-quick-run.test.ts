@@ -37,6 +37,13 @@ vi.mock("../../../services/evals-runner", async () => {
   };
 });
 
+vi.mock("../../../utils/org-model-config", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../utils/org-model-config")>(),
+  resolveOrgModelConfig: vi.fn(async () => ({
+    aiKeyPolicy: { requireOrgKeys: false }, providers: [],
+  })),
+}));
+
 import {
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
@@ -128,6 +135,8 @@ function actionCalls(name: string) {
 describe("environment quick runs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clientManager.listTools.mockReset().mockResolvedValue({ tools: [] });
+    clientManager.getConnectionStatus.mockReset().mockReturnValue("connected");
     process.env.CONVEX_URL = "https://example.convex.cloud";
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
     queryMock.mockImplementation(async (name: string) => {

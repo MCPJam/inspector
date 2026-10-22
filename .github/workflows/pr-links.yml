@@ -1,0 +1,246 @@
+name: PR Links
+
+# Advisory only. Reads the PR body for the three "Task, spec and plan" lines and
+# leaves one comment naming any that are empty or still a placeholder. It never
+# fails, is never a required check, and nothing here blocks a merge. Promote it
+# to a gate only once the fill rate justifies one — the same ratchet logic the
+# rest of the repo uses.
+#
+# `pull_request`, not `pull_request_target`: a fork's token is read-only, so a
+# fork PR gets no comment. That is the accepted trade. `pull_request_target`
+# would run with this repo's write token against a PR we do not control, and no
+# advisory nudge is worth that. Dependabot runs get the same read-only token, so
+# the job skips both: a comment write there would 403 and turn the check red.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-links-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  links:
+    name: PR Links
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            // One marker so the job edits its own comment instead of adding a
+            // new one on every push. Keep the string stable.
+            const MARKER = '<!-- pr-links-advisory -->';
+            const FIELDS = ['Kestral task', 'Spec', 'Plan'];
+            // The label tracks the TASK only, not Spec or Plan. A task is the
+            // one field with no legitimate "None:" answer, so it is the only
+            // one worth seeing from the PR list without opening anything.
+            const LABEL = 'needs-task';
+            const LABEL_COLOR = 'e3a21a';
+            const LABEL_DESC =
+              'PR description does not name a Kestral task. Advisory; edit the description to clear it.';
+            const body = context.payload.pull_request.body || '';
+            const lines = body.split(/\r?\n/);
+
+            const labelRe = (name) =>
+              new RegExp(`^[-*]\\s*\\*\\*${name}:\\*\\*(.*)$`, 'i');
+            // Any of the three labels, so one field's value stops at the next.
+            const anyLabelRe = new RegExp(
+              `^[-*]\\s*\\*\\*(?:${FIELDS.join('|')}):\\*\\*`,
+              'i',
+            );
+
+            // A value may continue onto the lines below its label — the
+            // template asks for the plan as "3 to 6 bullets", and bullets go on
+            // their own lines. Read until the next field or the next heading,
+            // then strip the template's own HTML comment.
+            function valueOf(name) {
+              const re = labelRe(name);
+              const i = lines.findIndex((l) => re.test(l));
+              if (i === -1) return null;
+              const parts = [lines[i].match(re)[1]];
+              for (let j = i + 1; j < lines.length; j++) {
+                if (anyLabelRe.test(lines[j]) || /^#{1,6}\s/.test(lines[j])) {
+                  break;
+                }
+                parts.push(lines[j]);
+              }
+              return parts
+                .join('\n')
+                .replace(/<!--[\s\S]*?-->/g, '')
+                .trim();
+            }
+
+            // A Kestral task URL, or a bare task id like PP-96 / MSI-26.
+            const TASK_REF = /app\.kestral\.ai\/\S*\/task\/\S+|\b[A-Z]{2,6}-\d+\b/;
+
+            const missing = [];
+            // Tracked separately from `missing` because only this one drives
+            // the label; a blank Spec or Plan is a legitimate state.
+            let taskMissing = false;
+            for (const name of FIELDS) {
+              const value = valueOf(name);
+              const isTask = name === 'Kestral task';
+
+              if (value === null) {
+                missing.push(`\`${name}\` — line is not in the description`);
+                if (isTask) taskMissing = true;
+                continue;
+              }
+              if (!value) {
+                missing.push(`\`${name}\` — empty, or still the placeholder`);
+                if (isTask) taskMissing = true;
+                continue;
+              }
+
+              // Task and the other two are held to different standards on
+              // purpose. Every change gets a task, a one-line fix included —
+              // "None: small fix" is the opt-out this is meant to close, so it
+              // does not pass here even though it passes for Spec and Plan.
+              if (isTask) {
+                if (!TASK_REF.test(value)) {
+                  taskMissing = true;
+                  missing.push(
+                    `\`${name}\` — needs a task id or link (e.g. \`PP-96\`). ` +
+                      `Every change gets a task, including a one-line fix; ` +
+                      `make one if it does not exist yet.`,
+                  );
+                }
+                continue;
+              }
+
+              // Spec and Plan: plenty of changes genuinely need neither, so
+              // "None: <reason>" is a real answer. Only a non-answer is not —
+              // a bare "None", "None:" with nothing after it, or the
+              // template's literal "<reason>" copied over.
+              if (/^none\s*:?\s*(?:<reason>)?$/i.test(value)) {
+                missing.push(`\`${name}\` — says "None" with no reason after it`);
+              }
+            }
+
+            const { owner, repo } = context.repo;
+
+            // Add or remove the label. Wrapped so a labels failure can never
+            // fail the job — this check is advisory and must stay green.
+            async function syncLabel(issue_number) {
+              try {
+                if (taskMissing) {
+                  try {
+                    await github.rest.issues.getLabel({
+                      owner,
+                      repo,
+                      name: LABEL,
+                    });
+                  } catch (e) {
+                    if (e.status !== 404) throw e;
+                    // First PR to need it creates it, so the label does not
+                    // have to be set up by hand in either repo.
+                    await github.rest.issues.createLabel({
+                      owner,
+                      repo,
+                      name: LABEL,
+                      color: LABEL_COLOR,
+                      description: LABEL_DESC,
+                    });
+                  }
+                  await github.rest.issues.addLabels({
+                    owner,
+                    repo,
+                    issue_number,
+                    labels: [LABEL],
+                  });
+                  return;
+                }
+                await github.rest.issues.removeLabel({
+                  owner,
+                  repo,
+                  issue_number,
+                  name: LABEL,
+                });
+              } catch (e) {
+                // 404 on removal just means it was not there.
+                if (e.status !== 404) {
+                  core.warning(`label sync skipped: ${e.message}`);
+                }
+              }
+            }
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 },
+            );
+            // The marker alone is not enough: a review bot quoting this file,
+            // or anyone pasting the string, would otherwise get its comment
+            // overwritten.
+            const existing = comments.find(
+              (c) =>
+                c.user?.login === 'github-actions[bot]' &&
+                c.body?.startsWith(MARKER),
+            );
+
+            if (!missing.length) {
+              // Collapse to a one-liner rather than deleting, so the history of
+              // "this was flagged and then fixed" stays on the PR.
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body: `${MARKER}\n✅ Task, spec and plan are all filled in.`,
+                });
+              }
+              await syncLabel(issue_number);
+              core.info('All three fields are filled.');
+              return;
+            }
+
+            const text = [
+              MARKER,
+              '**Task, spec and plan**',
+              '',
+              'This is advisory — it does not block the merge.',
+              '',
+              ...missing.map((m) => `- ${m}`),
+              '',
+              'Edit the description to add them. Where one genuinely does not ' +
+                'apply — a one-line fix, a revert, a dependency bump — write ' +
+                '`None: <reason>` and this comment will clear.',
+              ...(taskMissing
+                ? [
+                    '',
+                    `The \`${LABEL}\` label is on this PR so it is visible from ` +
+                      'the PR list. It comes off by itself once the description ' +
+                      'names a task — no need to remove it by hand.',
+                  ]
+                : []),
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body: text,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body: text,
+              });
+            }
+            await syncLabel(issue_number);
+            core.info(
+              `Flagged ${missing.length} field(s); task ${
+                taskMissing ? 'missing' : 'present'
+              }.`,
+            );

@@ -55,14 +55,17 @@ export function PluginServerCard({
   status,
   canManage,
   onOpenSettings,
+  signIn,
 }: {
   plugin: PluginSummary;
-  /** Omitted for the plugin's own card (no active version, so no servers). */
+  /** Omitted for the plugin's own card (a plugin with no server to show). */
   server?: PluginServerCardServer;
   status: PluginStatusPresentation;
   /** Project admin: lifecycle actions are refused for anyone else. */
   canManage: boolean;
   onOpenSettings: (serverId: string | null) => void;
+  /** Present while this member has to sign in before chats can use it. */
+  signIn?: { pending: boolean; onSignIn: () => void };
 }) {
   const management = usePluginManagementActions();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -95,9 +98,21 @@ export function PluginServerCard({
           SERVER_CARD_INTERACTIVE_CLASS_NAME,
         )}
         data-testid={server ? "plugin-server-card" : "plugin-card"}
+        // The whole card opens Settings; the ⋮ menu inside is its own button,
+        // and a real <button> cannot wrap another, hence the ARIA affordance.
+        role="button"
+        tabIndex={0}
+        aria-label={`Open settings for ${title}`}
         onClick={() => {
           if (menuOpen) return;
           onOpenSettings(server?.serverId ?? null);
+        }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onOpenSettings(server?.serverId ?? null);
+          }
         }}
       >
         <div className="p-4">
@@ -151,6 +166,22 @@ export function PluginServerCard({
                   )}
                   <span>{status.label}</span>
                 </span>
+                {signIn ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    disabled={signIn.pending}
+                    onClick={signIn.onSignIn}
+                    data-testid="plugin-server-sign-in"
+                  >
+                    {signIn.pending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      "Sign in"
+                    )}
+                  </Button>
+                ) : null}
                 <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
                   <DropdownMenuTrigger asChild>
                     <Button

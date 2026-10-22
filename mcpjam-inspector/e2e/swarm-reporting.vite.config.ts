@@ -1,11 +1,12 @@
 import { defineConfig } from "vite";
+import { telemetrySourceCatalogsPlugin } from "../client/vite-telemetry-catalog";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 import { realpathSync } from "node:fs";
 export default defineConfig({
   root: path.resolve(__dirname, "fixtures/swarm-reporting"),
-  plugins: [react(), tailwindcss()],
+  plugins: [telemetrySourceCatalogsPlugin(), react(), tailwindcss()],
   resolve: {
     alias: {
       "@/shared": path.resolve(__dirname, "../shared"),

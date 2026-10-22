@@ -1,3 +1,5 @@
+import { GuestTabRecoveryBoundary } from "@/components/GuestTabRecoveryBoundary";
+import { guestTabRecovery } from "../auth/guest-tab-recovery";
 import { useEffect } from "react";
 import { SignOutBoundary } from "@/components/SignOutBoundary";
 import { showSignOutScreen, useSignOutStore } from "@/stores/sign-out-store";
@@ -35,6 +37,11 @@ vi.mock("@/lib/guest-session", () => ({
   forceRefreshGuestSessionOrThrow: guest.refresh,
   markGuestActivated: vi.fn(),
   getGuestSessionRefusal: () => null,
+  subscribeGuestSessionChanges: () => () => {},
+}));
+
+vi.mock("@/hooks/use-actor-key", () => ({
+  useActorKey: () => guest.cached?.guestId ?? null,
 }));
 
 vi.mock("@sentry/react", () => ({ captureMessage: vi.fn() }));
@@ -227,7 +234,7 @@ function UngatedQueries() {
   useQuery(makeFunctionReference<"query">("unguarded:query"), {});
   return <div>App content</div>;
 }
-function setup() {
+function setup(withGuestRecovery = false) {
   const peer = protocolPeer();
   const client = new ConvexReactClient("https://test.convex.cloud", {
     webSocketConstructor: peer.Socket as unknown as typeof WebSocket,
@@ -239,7 +246,13 @@ function setup() {
     <ConvexProviderWithAuth client={client} useAuth={useUnifiedConvexAuth}>
       <SignOutBoundary>
         <AuthRecoveryBoundary>
-          <Shell />
+          {withGuestRecovery ? (
+            <GuestTabRecoveryBoundary>
+              <Shell />
+            </GuestTabRecoveryBoundary>
+          ) : (
+            <Shell />
+          )}
         </AuthRecoveryBoundary>
       </SignOutBoundary>
     </ConvexProviderWithAuth>
@@ -355,7 +368,9 @@ it("renews an expiring token when the page comes back, without a rejection", asy
     await waitFor(() =>
       expect(useSessionRefreshStore.getState().authConfirmed).toBe(true),
     );
-    const before = peer.messages.filter((m) => m === "Authenticate:User").length;
+    const before = peer.messages.filter(
+      (m) => m === "Authenticate:User",
+    ).length;
     auth.getAccessToken.mockResolvedValue(jwt(2));
     // jwt(1) expired long ago: the page was away longer than its lifetime.
     await act(async () => {
@@ -402,6 +417,35 @@ it("keeps the spinner until replacement confirmation; Retry recovers after an un
     await close();
   }
 });
+
+it("recovers failed guest startup without unauthenticated subscriptions", async () => {
+  const recoveryClock = vi.spyOn(performance, "now");
+  auth.user = null;
+  guest.mint.mockRejectedValue(new TypeError("network unavailable"));
+  const { peer, view, close } = setup();
+  try {
+    await waitFor(
+      () => expect(useSessionRefreshStore.getState().status).toBe("failed"),
+      { timeout: 10000 },
+    );
+    expect(peer.active.size).toBe(0);
+    expect(view.queryByText("Retry")).not.toBeNull();
+    await act(async () => window.dispatchEvent(new Event("online")));
+    expect(guest.mint).toHaveBeenCalledTimes(4);
+    recoveryClock.mockReturnValue(performance.now() + 75_000);
+    guest.cached = { token: jwt(2), guestId: "guest-test" };
+    guest.mint.mockImplementation(async () => guest.cached);
+    guest.refresh.mockResolvedValue(jwt(2));
+    await act(async () => window.dispatchEvent(new Event("online")));
+    await waitFor(() => expect(peer.active.size).toBe(9));
+    expect(useSessionRefreshStore.getState().status).toBe("idle");
+    expect(view.queryByText("App content")).not.toBeNull();
+    expect(peer.unauthenticatedAdds).toEqual([]);
+  } finally {
+    await close();
+    recoveryClock.mockRestore();
+  }
+}, 15000);
 
 it("guest refresh forces renewal even while the cache still has the rejected token", async () => {
   auth.user = null;
@@ -657,5 +701,31 @@ it("upstream logout cancels ungated queries before clearing authentication", asy
     expect(peer.unauthenticatedAdds).toEqual([]);
   } finally {
     await close();
+  }
+});
+
+it("a sibling guest promotion removes every SDK subscription before identity loss", async () => {
+  auth.user = null;
+  guest.cached = { token: jwt(1), guestId: "protocol-guest" };
+  guest.mint.mockResolvedValue(guest.cached);
+  guestTabRecovery.setGuest(null);
+  const { peer, client, close } = setup(true);
+  try {
+    await waitFor(() => expect(peer.active.size).toBe(9));
+    await act(async () =>
+      guestTabRecovery.receive({
+        guestId: "protocol-guest",
+        attempt: "promotion",
+        startedAt: Date.now(),
+        phase: "started",
+      }),
+    );
+    await waitFor(() => expect(peer.active.size).toBe(0));
+    await act(async () => client.clearAuth());
+    expect(peer.clearCounts.every((count) => count === 0)).toBe(true);
+    expect(peer.unauthenticatedAdds).toEqual([]);
+  } finally {
+    await close();
+    guestTabRecovery.setGuest(null);
   }
 });

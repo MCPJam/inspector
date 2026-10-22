@@ -3,6 +3,9 @@ import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuiteRunReview, selectReviewTargets } from "../suite-run-review";
 import type { EvalSuite, EvalCase } from "../../evals/types";
+import { toast } from "sonner";
+import { useCaseLaunches } from "../case-workspace/pending-case-launches";
+vi.mock("sonner", () => ({ toast: { loading: vi.fn(), error: vi.fn() } }));
 const suite = {
   _id: "suite",
   name: "Checkout",
@@ -23,7 +26,11 @@ const environments = [
 const names = new Map([["claude", "Claude"]]);
 
 describe("suite run review", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    useCaseLaunches.setState({ launches: [] });
+    vi.clearAllMocks();
+  });
 
   it.each([
     [undefined, undefined, 5],
@@ -54,6 +61,110 @@ describe("suite run review", () => {
       );
     },
   );
+
+  it.each(["Find my account", ""])("keeps case scope and saved suite count with title %s", async (caseTitle) => {
+    const user = userEvent.setup();
+    localStorage.setItem("mcpjam:suite-run-iterations:suite", "9");
+    const onStart = vi.fn();
+    render(<SuiteRunReview suite={suite}
+      cases={[cases[0]]} caseTitle={caseTitle} initialIterations={2}
+      environments={environments} hostNamesById={names} onStart={onStart} onClose={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    expect(screen.getByText(caseTitle || "Untitled test case")).toBeVisible();
+    expect(screen.getByText("Each client/model combination runs this test case.")).toBeVisible();
+    expect(screen.queryByText(/runs the whole suite/)).toBeNull();
+    expect(screen.getByRole("spinbutton")).toHaveValue(2);
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    expect(onStart).toHaveBeenCalledWith(expect.objectContaining({ _id: suite._id }), { iterationOverride: 2, throwOnFailure: true, caseLaunchId: expect.any(String) });
+    expect(localStorage.getItem("mcpjam:suite-run-iterations:suite")).toBe("9");
+  });
+
+  it.each([
+    [1, undefined, 1],
+    [2, 9, 2],
+    [undefined, 2, 2],
+    [0, undefined, 1],
+    [11, undefined, 10],
+  ])(
+    "bounds the case count %s with remembered %s at %s independently of the suite minimum",
+    (initial, remembered, expected) => {
+      if (remembered !== undefined)
+        localStorage.setItem(
+          "mcpjam:suite-run-iterations:suite",
+          String(remembered),
+        );
+      render(
+        <SuiteRunReview
+          suite={suite}
+          cases={[cases[0]]}
+          caseTitle="Find my account"
+          initialIterations={initial}
+          environments={environments}
+          hostNamesById={names}
+          onStart={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      );
+      expect(screen.getByRole("spinbutton")).toHaveValue(expected);
+    },
+  );
+
+  it.each(["Eval iteration limit reached.", "Cloud sandboxes are unavailable."])(
+    "blocks the case sheet for %s", async (disabledReason) => {
+      const onStart = vi.fn();
+      const onClose = vi.fn();
+      render(<SuiteRunReview suite={suite} cases={[cases[0]]} caseTitle=""
+        environments={environments} hostNamesById={names} disabledReason={disabledReason}
+        onStart={onStart} onClose={onClose} />);
+      expect(screen.getByRole("alert")).toHaveTextContent(disabledReason);
+      const button = screen.getByRole("button", { name: "Run test case" });
+      expect(button).toBeDisabled();
+      await userEvent.setup().click(button);
+      expect(onStart).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+    },
+  );
+
+  it("blocks the case sheet when every model it launches is out of credits", async () => {
+    const onStart = vi.fn();
+    const reason = "Out of MCPJam credits · resets in 3h";
+    render(<SuiteRunReview suite={suite} cases={[cases[0]]} caseTitle=""
+      environments={environments} hostNamesById={names}
+      preflight={{ disconnected: [], removed: [], refused: [], disabledProviders: [],
+        outOfCreditsReason: reason, serverName: (ref) => ref }}
+      onStart={onStart} onClose={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(reason);
+    const button = screen.getByRole("button", { name: "Run test case" });
+    expect(button).toBeDisabled();
+    await userEvent.setup().click(button);
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it("reports a case launch refusal after closing setup", async () => {
+    const onClose = vi.fn();
+    render(<SuiteRunReview suite={suite} cases={[cases[0]]} caseTitle=""
+      environments={environments} hostNamesById={names}
+      onStart={vi.fn().mockRejectedValue(new Error("Eval iteration limit reached."))}
+      onClose={onClose} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Run test case" }));
+    expect(toast.error).toHaveBeenCalledWith("Eval iteration limit reached.", { id: expect.any(String) });
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(useCaseLaunches.getState().launches).toEqual([]);
+  });
+
+  it("closes case setup and shows pending rows before startup completes", async () => {
+    let finish!: () => void;
+    const onStart = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const onClose = vi.fn();
+    render(<SuiteRunReview suite={suite} cases={[cases[0]]} caseTitle="Case" initialIterations={2}
+      environments={environments} hostNamesById={names} onStart={onStart} onClose={onClose} />);
+    await userEvent.click(screen.getByRole("button", { name: "Run test case" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(onStart.mock.invocationCallOrder[0]);
+    expect(useCaseLaunches.getState().launches[0].rows).toHaveLength(4);
+    expect(toast.loading).toHaveBeenCalledOnce();
+    await act(async () => finish());
+  });
 
   it("requires a target and never mutates suite defaults", () => {
     expect(() => selectReviewTargets(suite, [])).toThrow("Select at least one");

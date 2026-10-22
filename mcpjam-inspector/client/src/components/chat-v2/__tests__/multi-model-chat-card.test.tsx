@@ -29,6 +29,7 @@ vi.mock("use-stick-to-bottom", () => {
 const startChatWithMessages = vi.fn();
 const mockTraceViewer = vi.fn();
 const mockModelCompareCardHeader = vi.fn();
+const mockChatOptions = vi.fn();
 
 const mockUseChatSession = {
   // Elicitation surface (hosted). These suites never elicit, but the shape
@@ -59,7 +60,7 @@ const mockUseChatSession = {
 };
 
 vi.mock("@/hooks/use-chat-session", () => ({
-  useChatSession: () => mockUseChatSession,
+  useChatSession: (options: unknown) => { mockChatOptions(options); return mockUseChatSession; },
 }));
 
 vi.mock("@/components/chat-v2/thread", () => ({
@@ -204,6 +205,14 @@ function renderCard(
 }
 
 describe("MultiModelChatCard", () => {
+  it("passes its saved selection and organization config to the shared hook", () => {
+    const selection = { source: "hosted" as const, modelId: String(model.id), fallback: { provider: "none", model: "none" } as const };
+    const hostedOrgModelConfig = { providers: [] };
+    renderCard({ selection, hostedOrgModelConfig });
+    expect(mockChatOptions).toHaveBeenCalledWith(expect.objectContaining({
+      pickedModelSelection: selection, hostedOrgModelConfig, selectionIntent: "picked",
+    }));
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseChatSession.messages = [];

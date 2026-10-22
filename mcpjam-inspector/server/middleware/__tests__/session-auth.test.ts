@@ -335,22 +335,25 @@ describe("sessionAuthMiddleware", () => {
 });
 
 describe("scrubTokenFromUrl", () => {
+  // The secret values become the credential registry's placeholder: this
+  // function delegates to `shared/credential-urls.ts` rather than keeping a
+  // list of its own.
   it("scrubs token from URL with single query param", () => {
     const url = "/api/test?_token=abc123secret";
-    expect(scrubTokenFromUrl(url)).toBe("/api/test?_token=[REDACTED]");
+    expect(scrubTokenFromUrl(url)).toBe("/api/test?_token=[redacted]");
   });
 
   it("scrubs token from URL with multiple query params", () => {
     const url = "/api/test?serverId=foo&_token=abc123secret&other=value";
     expect(scrubTokenFromUrl(url)).toBe(
-      "/api/test?serverId=foo&_token=[REDACTED]&other=value",
+      "/api/test?serverId=foo&_token=[redacted]&other=value",
     );
   });
 
   it("scrubs token when it's the last param", () => {
     const url = "/api/test?serverId=foo&_token=abc123secret";
     expect(scrubTokenFromUrl(url)).toBe(
-      "/api/test?serverId=foo&_token=[REDACTED]",
+      "/api/test?serverId=foo&_token=[redacted]",
     );
   });
 
@@ -367,14 +370,54 @@ describe("scrubTokenFromUrl", () => {
   it("scrubs a bare token= param (e.g. a stray computer terminal token)", () => {
     const url = "/api/web/computers/terminal?token=eyJhbGciOi.abc.def&cols=80";
     expect(scrubTokenFromUrl(url)).toBe(
-      "/api/web/computers/terminal?token=[REDACTED]&cols=80",
+      "/api/web/computers/terminal?token=[redacted]&cols=80",
     );
   });
 
   it("scrubs token= without clobbering _token= in the same URL", () => {
     const url = "/api/test?_token=session123&token=terminal456";
     expect(scrubTokenFromUrl(url)).toBe(
-      "/api/test?_token=[REDACTED]&token=[REDACTED]",
+      "/api/test?_token=[redacted]&token=[redacted]",
     );
+  });
+
+  it("scrubs the tunnel k= and retired t= params", () => {
+    expect(scrubTokenFromUrl("/api/x?k=tunnelsecret&t=proxytok")).toBe(
+      "/api/x?k=[redacted]&t=[redacted]",
+    );
+  });
+
+  // What the old four-key list missed: query keys outside it, and secrets
+  // that sit in the path with no query key at all.
+  it.each([
+    [
+      "<-- GET /oauth/callback?code=SENTINEL_code&state=SENTINEL_state",
+      "<-- GET /oauth/callback?code=[redacted]&state=[redacted]",
+    ],
+    [
+      "--> GET /results/SENTINEL_tok_123 200 4ms",
+      "--> GET /results/[redacted] 200 4ms",
+    ],
+    [
+      "--> GET /api/web/score/runs/SENTINEL_tok_123 404 2ms",
+      "--> GET /api/web/score/runs/[redacted] 404 2ms",
+    ],
+    [
+      "<-- GET /bench/results/SENTINEL_hex?x=1",
+      "<-- GET /bench/results/[redacted]?x=1",
+    ],
+    [
+      "<-- GET /files/a.png?X-Amz-Signature=SENTINEL_sig&X-Amz-Credential=SENTINEL_cred",
+      "<-- GET /files/a.png?X-Amz-Signature=[redacted]&X-Amz-Credential=[redacted]",
+    ],
+  ])("scrubs a hono/logger line: %s", (line, expected) => {
+    const scrubbed = scrubTokenFromUrl(line);
+    expect(scrubbed).toBe(expected);
+    expect(scrubbed).not.toContain("SENTINEL");
+  });
+
+  it("leaves a request line without credentials alone", () => {
+    const line = "--> GET /api/mcp/servers?serverId=foo 200 3ms";
+    expect(scrubTokenFromUrl(line)).toBe(line);
   });
 });

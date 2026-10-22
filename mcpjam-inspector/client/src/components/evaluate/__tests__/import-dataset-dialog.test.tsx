@@ -295,7 +295,7 @@ describe("document case import", () => {
     expect(
       screen.getByRole("button", { name: `Add ${draft.case.title} to suite` }),
     ).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Expected Outcome"), {
+    fireEvent.change(screen.getByLabelText("Expected outcome"), {
       target: { value: "Projects appear" },
     });
     expect(

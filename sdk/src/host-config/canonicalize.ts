@@ -1199,6 +1199,20 @@ function canonicalizeMcpProfile(
         }
       }
 
+      const sameOriginAppIframe = (sandboxIn as { sameOriginAppIframe?: unknown })
+        .sameOriginAppIframe;
+      if (sameOriginAppIframe !== undefined) {
+        if (typeof sameOriginAppIframe !== "boolean") {
+          throw new Error(
+            "hostConfigV2: mcpProfile.apps.sandbox.sameOriginAppIframe must be a boolean"
+          );
+        }
+        // An explicit `true` is kept: it is a measured fact, distinct from
+        // "not yet probed" (absent).
+        (sandboxOut as { sameOriginAppIframe?: boolean }).sameOriginAppIframe =
+          sameOriginAppIframe;
+      }
+
       if (
         (sandboxIn as { sandboxAttrs?: unknown }).sandboxAttrs !== undefined
       ) {
@@ -2600,6 +2614,17 @@ export function canonicalizeHostConfigV2(
       ).join(", ")} when set`
     );
   }
+  if (input.agentLoop !== undefined) {
+    if (!isHarness(input.agentLoop)) {
+      throw new Error("hostConfigV2: agentLoop must be a known harness id");
+    }
+    if (input.harness !== undefined) {
+      throw new Error("hostConfigV2: agentLoop and harness cannot both be set");
+    }
+    if (input.computer == null) {
+      throw new Error("hostConfigV2: agentLoop requires a computer attachment");
+    }
+  }
   const serverIds = sortUniqueServerIds(input.serverIds);
   const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);
   const hostContext = requireRecord(input.hostContext, "hostContext");
@@ -2631,6 +2656,7 @@ export function canonicalizeHostConfigV2(
     // Validated pass-through (value checked above). Absent ⇒ emulated;
     // JSON.stringify drops undefined so pre-feature rows hash byte-identically.
     harness: input.harness,
+    ...(input.agentLoop !== undefined ? { agentLoop: input.agentLoop } : {}),
     // Absent/null ⇒ key omitted, hashing byte-identically to pre-feature rows.
     computer: canonicalizeComputer(input.computer),
     // Normalize undefined → [] and dedupe before sort so canonical/hash output
@@ -2685,5 +2711,24 @@ export function canonicalizeHostConfigV2(
       optionalServerIds,
       input.serverConnectionOverrides
     ),
+    ...(input.systemPromptDefault === undefined
+      ? {}
+      : {
+          systemPromptDefault: input.systemPromptDefault.source
+            ? {
+                source: {
+                  catalogEntryId:
+                    input.systemPromptDefault.source.catalogEntryId,
+                  revision: input.systemPromptDefault.source.revision,
+                  sourceUrl: input.systemPromptDefault.source.sourceUrl,
+                  ...(input.systemPromptDefault.source.publisher === undefined
+                    ? {}
+                    : {
+                        publisher: input.systemPromptDefault.source.publisher,
+                      }),
+                },
+              }
+            : {},
+        }),
   };
 }

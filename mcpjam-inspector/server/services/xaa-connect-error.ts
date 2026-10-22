@@ -19,6 +19,94 @@
 // The debugger keeps the original messages: it IS the surface they name.
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import { XaaConnectFailureReason } from "../../shared/xaa-connect-failure.js";
+import type { CapturePolicy } from "../utils/error-origin-capture.js";
+import { reportRouteFailure } from "../utils/route-error-report.js";
+import { isXaaMintErrorReported } from "./xaa-mint.js";
+
+/**
+ * What the mint ran into on the customer's side, when that is what failed:
+ * their authorization server answered the jwt-bearer grant with a refusal,
+ * or no authorization server could be discovered for the issuer they set.
+ */
+type XaaMintRefusal =
+  | { kind: "authorization_rejected"; status: number; oauthError?: string }
+  | { kind: "authorization_server_unknown" };
+
+// Keyed on the marker the mint sets, never on code or status alone: the
+// secret-reveal leg maps any backend 404/502 onto the same NOT_FOUND and
+// SERVER_UNREACHABLE codes, and those are MCPJam's own failures.
+function xaaMintRefusal(error: unknown): XaaMintRefusal | null {
+  if (!(error instanceof WebRouteError)) return null;
+  const verdict = error.details?.authorizationServer;
+  if (verdict === "undiscovered") {
+    return { kind: "authorization_server_unknown" };
+  }
+  if (verdict !== "rejected") return null;
+  const status = error.details?.status;
+  if (typeof status !== "number") return null;
+  const oauthError = error.details?.oauthError;
+  return {
+    kind: "authorization_rejected",
+    status,
+    ...(typeof oauthError === "string" && oauthError ? { oauthError } : {}),
+  };
+}
+
+/**
+ * Sentry policy for a mint failure the customer's authorization server (or
+ * their issuer setting) caused: still captured, so the issue exists and can be
+ * searched, but as a `routine` warning the generic new-issue paging rule
+ * skips, with the AS status and RFC 6749 error code as tags because Sentry
+ * scrubs the message they used to live in.
+ *
+ * Every other mint failure returns `undefined`: the remaining legs (secret
+ * reveal, ID-JAG signing, CIMD) are MCPJam's own, and keep the default policy.
+ */
+export function xaaMintCapturePolicy(
+  error: unknown
+): CapturePolicy | undefined {
+  const refusal = xaaMintRefusal(error);
+  if (!refusal) return undefined;
+  const tags: Record<string, string> = {
+    page_class: "routine",
+    xaa_failure: refusal.kind,
+  };
+  if (refusal.kind === "authorization_rejected") {
+    tags.xaa_as_status = String(refusal.status);
+    if (refusal.oauthError) tags.xaa_as_error = refusal.oauthError;
+  }
+  return { always: true, level: "warning", tags };
+}
+
+/**
+ * Report a mint failure from a connect surface, once. Shared by the hosted
+ * and the local connect paths so both classify the same way. Call it BEFORE
+ * `toXaaConnectFailure`, so the debugger-worded original is what reaches
+ * Sentry and the Axiom row.
+ */
+export function reportXaaMintFailure(
+  error: unknown,
+  context: {
+    serverId: string;
+    serverName: string;
+    resource?: string;
+    connectionId?: string;
+  }
+): void {
+  if (isXaaMintErrorReported(error)) return;
+  const refusal = xaaMintCapturePolicy(error);
+  reportRouteFailure("[XAA connect] mint failed", error, {
+    source: "xaa.connect.mint",
+    // A refusal crossed into the customer's authorization server. Anything
+    // else failed inside MCPJam's own mint legs, so an unclassified error
+    // there is ours by default, and it is captured whatever the catalog says
+    // about it: the bare `logger.error` this replaces captured every mint
+    // failure, and nothing but the refusals is meant to page less.
+    hop: refusal ? "user_server_hop" : "mcpjam_internal",
+    context,
+    capture: refusal ?? { always: true },
+  });
+}
 
 /** Trailing punctuation off, so a stored sentence can be embedded in ours. */
 function asClause(message: string): string {
@@ -38,7 +126,7 @@ function extractRejectionDetail(message: string): string | undefined {
     status ? `HTTP ${status}` : undefined,
     detail ? asClause(detail) : undefined,
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join(" — ") : undefined;
+  return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
 const CREDENTIAL_REFUSAL_KEYS = [
@@ -87,6 +175,8 @@ export function toXaaConnectFailure(
   let code: ErrorCode = ErrorCode.INTERNAL_ERROR;
   let reason: XaaConnectFailureReason =
     XaaConnectFailureReason.HANDSHAKE_FAILED;
+  // The authorization server's own HTTP status, when it answered at all.
+  let authorizationServerStatus: number | undefined;
   let message =
     `Server "${name}" couldn't complete its enterprise authorization handshake` +
     ` — try again, and check the server's auth settings if it keeps failing.`;
@@ -137,11 +227,19 @@ export function toXaaConnectFailure(
     status = routeError.status;
     code = routeError.code;
     reason = XaaConnectFailureReason.AUTHORIZATION_REJECTED;
+    const answered = routeError.details?.status;
+    if (
+      typeof answered === "number" &&
+      Number.isInteger(answered) &&
+      answered >= 100 &&
+      answered <= 599
+    ) {
+      authorizationServerStatus = answered;
+    }
     const detail = extractRejectionDetail(raw);
     message =
       `The authorization server for "${name}" rejected MCPJam's access request` +
-      `${detail ? ` (${detail})` : ""} — check the server's XAA client` +
-      ` credentials and issuer in its auth settings.`;
+      `${detail ? ` (${detail})` : ""}. Check the server's auth settings.`;
   } else if (routeError?.code === ErrorCode.VALIDATION_ERROR) {
     status = 400;
     code = ErrorCode.VALIDATION_ERROR;
@@ -154,6 +252,12 @@ export function toXaaConnectFailure(
   const framed = new WebRouteError(status, code, message, {
     ...(refusal ?? {}),
     reason,
+    // Structured, so a caller deciding "will this fail again?" never has to
+    // read the status back out of the sentence (which carries the server's
+    // name, and is capped when stored).
+    ...(authorizationServerStatus !== undefined
+      ? { authorizationServerStatus }
+      : {}),
     serverId: target.serverId,
     serverName: target.serverName,
     ...(target.serverUrl ? { serverUrl: target.serverUrl } : {}),

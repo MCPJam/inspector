@@ -144,6 +144,49 @@ describe("requestManagedObservations", () => {
     },
   );
 
+  it("preserves a stored policy refusal returned with HTTP 200", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          status: "ai-unavailable",
+          reason: "ai_unavailable",
+          refusalCode: "org_runtime_unsupported",
+          detail: "Unavailable on organization keys.",
+        }),
+      ),
+    );
+    expect(await requestManagedObservations(LEASE, "evidence")).toMatchObject({
+      status: "ai-unavailable",
+      reason: "ai_unavailable",
+      refusalCode: "org_runtime_unsupported",
+    });
+  });
+
+  it("reads the organization's AI-key policy refusal as ai_unavailable, not a provider failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          {
+            ok: false,
+            code: "org_model_unconfigured",
+            error: "No organization model is set for this role.",
+            isRetryable: false,
+            remediation: "configure_org_model_role",
+          },
+          422,
+        ),
+      ),
+    );
+    const answer = await requestManagedObservations(LEASE, "evidence");
+    expect(answer.status).toBe("ai-unavailable");
+    expect(answer.reason).toBe("ai_unavailable");
+    expect(answer.refusalCode).toBe("org_model_unconfigured");
+    expect(answer.detail).toContain("org_model_unconfigured");
+    expect(answer.envelope).toBeUndefined();
+  });
+
   it("names the observation pass and carries the evidence", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({ ok: true, status: "completed", envelope: {} }),

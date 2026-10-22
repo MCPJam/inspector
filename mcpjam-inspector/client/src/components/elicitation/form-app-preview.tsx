@@ -25,6 +25,7 @@ import {
 } from "./form-resource-preview";
 import type { PluginFormParent } from "@/shared/plugin-form-services";
 import type { PluginFormPorts } from "../schema-form/PluginFormFields";
+import { PLUGIN_APP_REPLY_MAX_BYTES } from "@/shared/plugin-app-ui-limits";
 
 type Services = {
   ports: PluginFormPorts;
@@ -120,7 +121,7 @@ function Controller(props: Props) {
       );
     }
     const text = await reply.text();
-    if (new TextEncoder().encode(text).length > 2 * 1024 * 1024)
+    if (new TextEncoder().encode(text).length > PLUGIN_APP_REPLY_MAX_BYTES)
       throw new Error("App preview response is too large");
     let data;
     try {

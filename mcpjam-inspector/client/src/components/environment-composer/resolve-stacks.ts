@@ -250,14 +250,10 @@ export async function resolveComposerEnvironments(args: {
    * must not send `modelId` — an older validator would reject the arg.
    */
   modelMatrixEnabled?: boolean;
-  /**
-   * EVAL surfaces only. An eval run takes its servers from the environment's
-   * server group alone, so a target without one (and without a plugin pin
-   * contributing servers) would run with no tools; refuse it here instead of
-   * minting it. Journeys, scenarios and swarms fall back to the client's own
-   * servers and leave this off.
-   */
+  /** Require a selected group or pinned plugin server source. */
   requireServerAttachment?: boolean;
+  /** Evals may explicitly select none/local; swarms require actual servers. */
+  allowEmptyServerSelection?: boolean;
   /**
    * The harness a client runs (`null` = emulated). Injected, like the
    * mutation, so this module stays pure. Only consulted for clients with
@@ -295,6 +291,7 @@ export async function resolveComposerEnvironments(args: {
     max,
     modelMatrixEnabled = false,
     requireServerAttachment = false,
+    allowEmptyServerSelection = true,
     loadHostHarness,
     modelSelectionsEnabled = false,
     projectSecrets,
@@ -322,12 +319,15 @@ export async function resolveComposerEnvironments(args: {
           "One of the selected environments is no longer available. Remove it and pick another.",
         );
       }
-      if (requireServerAttachment && lacksEvalServerSource(env)) {
+      if (
+        requireServerAttachment &&
+        lacksServerSource(env, allowEmptyServerSelection)
+      ) {
         throw new ComposerResolveError(
           "NO_SERVER_GROUP",
           `"${environmentLabel(
             env,
-          )}" has no server group, so an eval run on it would connect no servers. Pick a server group for it first.`,
+          )}" has no selected servers. Pick a server or group before continuing.`,
         );
       }
       environments.push(env);
@@ -395,7 +395,7 @@ export async function resolveComposerEnvironments(args: {
   if (requireServerAttachment && !fields.serverAttachmentId) {
     throw new ComposerResolveError(
       "NO_SERVER_GROUP",
-      "Pick a server or group. An eval run takes its servers from the group alone, so without one it would connect no servers.",
+      "Pick a server or group before continuing.",
     );
   }
 
@@ -635,37 +635,37 @@ export function describeSkippedModelCells(
 }
 
 /**
- * An environment an EVAL run would launch with no servers: no server group,
- * and no plugin pin contributing one. The backend refuses to launch these
- * (`ENV_NO_SERVERS`); eval surfaces refuse to create them first.
+ * Selection guard shared by evals and swarms. Swarms cannot select none/local.
  */
-export function lacksEvalServerSource(
+export function lacksServerSource(
   env: Pick<
     ProjectEnvironmentView,
     "serverAttachmentId" | "pluginVersionIds" | "serverSelection"
   >,
+  allowEmptyServerSelection = true,
 ): boolean {
   if (env.serverSelection?.mode === "unresolved") return true;
   if (
-    env.serverSelection?.mode === "none" ||
-    env.serverSelection?.mode === "local"
+    allowEmptyServerSelection &&
+    (env.serverSelection?.mode === "none" ||
+      env.serverSelection?.mode === "local")
   )
     return false;
   return !env.serverAttachmentId && !(env.pluginVersionIds?.length ?? 0);
 }
 
 /**
- * Whether a composer state names an eval target that would run with no
- * servers — the check an eval form gates submit on, before resolution.
+ * Whether any composer target lacks the server source required by its surface.
  */
 export function composerMissingServerGroup(
   state: EnvironmentComposerState,
   liveEnvironments: readonly ProjectEnvironmentView[],
+  allowEmptyServerSelection = true,
 ): boolean {
   if (isComposeMode(state)) return !state.stack.serverAttachmentId;
   return state.environmentIds.some((id) => {
     const env = liveEnvironments.find((e) => e.environmentId === id);
-    return env ? lacksEvalServerSource(env) : false;
+    return env ? lacksServerSource(env, allowEmptyServerSelection) : false;
   });
 }
 

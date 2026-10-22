@@ -5,7 +5,7 @@ import type { UIMessage } from "ai";
 import {
   pluginMessageIntentSchema,
   pluginMessageParts,
-  pluginMessageTarget,
+  pluginMessageSendMode,
 } from "../../../shared/plugin-message.js";
 import type { PluginWorkspaceAdmission } from "./admission.js";
 import { pluginInstances } from "./instances.js";
@@ -57,7 +57,7 @@ export async function preparePluginMessageTurn(
   if (preparationToken) {
     if (
       options.prepareOnly ||
-      pluginMessageTarget(intent.params) !== "new" ||
+      pluginMessageSendMode(intent.params).target !== "new" ||
       options.threadId === intent.sourceThreadId
     )
       throw deny();
@@ -126,7 +126,7 @@ export async function preparePluginMessageTurn(
         actor,
         c.req.raw.signal,
       );
-  const target = pluginMessageTarget(intent.params);
+  const target = pluginMessageSendMode(intent.params).target;
   const message = options.messages.at(-1);
   const parts = pluginMessageParts(intent.params);
   if (

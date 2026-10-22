@@ -624,6 +624,146 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
   });
 
+  it("a refused server sign-in (XAA) stops that host's remaining sessions with the same reason, but not other hosts", async () => {
+    const message =
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.';
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+        return {
+          outcome: "failed",
+          errorMessage: message,
+          errorReason: "xaa_authorization_rejected",
+          authorizationServerStatus: 429,
+        };
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 }),
+    );
+
+    // host-1: only session 0 signed in (and was refused); 1 and 2 never ran.
+    expect(executedForHost("host-1")).toHaveLength(1);
+    expect(executedForHost("host-2")).toHaveLength(3);
+    const host1 = terminals().filter((t) => t.hostId === "host-1");
+    expect(host1.map((t) => t.sessionIdx).sort()).toEqual([0, 1, 2]);
+    for (const terminal of host1) {
+      expect(terminal).toMatchObject({
+        status: "failed",
+        errorCode: "xaa_authorization_rejected",
+        errorMessage: message,
+      });
+    }
+    // Never read as the provider throttling the key.
+    expect(
+      reportAttemptMock.mock.calls.some(
+        (c) => (c[2] as any).status === "rate_limited",
+      ),
+    ).toBe(false);
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "an unclassified handshake failure",
+      "xaa_handshake_failed",
+      "Couldn't complete the handshake.",
+      undefined,
+    ],
+    [
+      "a timeout at the authorization server",
+      "xaa_authorization_rejected",
+      'The authorization server for "Asana" rejected MCPJam\'s access request. Check the server\'s auth settings.',
+      undefined,
+    ],
+    [
+      "a 5xx from the authorization server",
+      "xaa_authorization_rejected",
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 503). Check the server\'s auth settings.',
+      503,
+    ],
+    [
+      "a 408 from the authorization server",
+      "xaa_authorization_rejected",
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 408). Check the server\'s auth settings.',
+      408,
+    ],
+    // The decision is the structured status, never the sentence: a server
+    // whose NAME reads like a 4xx must not turn a 503 into a standing refusal.
+    [
+      "a 5xx for a server named like a 4xx",
+      "xaa_authorization_rejected",
+      'The authorization server for "A (HTTP 400)" rejected MCPJam\'s access request (HTTP 503). Check the server\'s auth settings.',
+      503,
+    ],
+  ])(
+    "%s may clear on the next try, so it does not stop the host",
+    async (_name, errorReason, errorMessage, authorizationServerStatus) => {
+      runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+        adapter.chatSessionId === "synth_run-1_host-1_0"
+          ? {
+              outcome: "failed",
+              errorMessage,
+              errorReason,
+              ...(authorizationServerStatus !== undefined
+                ? { authorizationServerStatus }
+                : {}),
+            }
+          : { outcome: "succeeded" },
+      );
+
+      await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerTarget: 3 }));
+
+      expect(executedForHost("host-1")).toHaveLength(3);
+    },
+  );
+
+  it("does not fail a remaining session another runner already claimed", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.chatSessionId === "synth_run-1_host-1_0"
+        ? {
+            outcome: "failed",
+            errorMessage:
+              'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.',
+            errorReason: "xaa_authorization_rejected",
+            authorizationServerStatus: 429,
+          }
+        : { outcome: "succeeded" },
+    );
+    reportAttemptMock.mockImplementation(async (_u, _b, args: any) =>
+      args.sessionIdx === 1 && args.status === "running"
+        ? { ok: true, applied: false }
+        : { ok: true, applied: true },
+    );
+
+    await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerTarget: 3 }));
+
+    const failedIdx = terminals()
+      .filter((t) => t.status === "failed")
+      .map((t) => t.sessionIdx)
+      .sort();
+    // 0 failed itself; 2 was swept; 1 belongs to the runner that claimed it.
+    expect(failedIdx).toEqual([0, 2]);
+  });
+
+  it("a sign-in that only needs re-running does not stop the host's other sessions", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+        return {
+          outcome: "failed",
+          errorMessage: "Your sign-in expired.",
+          errorReason: "xaa_reauth_required",
+        };
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerTarget: 2 }));
+
+    expect(executedForHost("host-1")).toHaveLength(2);
+  });
+
   it("an ORG spend-cap stops the whole run and finalizes pending attempts", async () => {
     runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
       if (adapter.chatSessionId === "synth_run-1_host-1_0") {
@@ -1914,6 +2054,51 @@ describe("target setup before claims", () => {
       }),
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
+  });
+  it("stores a setup that could not sign in to the server as that sign-in failure, and does not retry it", async () => {
+    const { SwarmSetupError } = await import("../swarm-setup-turn");
+    const message =
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.';
+    setupTurnMock.mockImplementation(async ({ target }) => {
+      if (target.targetId !== "bad") return record;
+      throw new SwarmSetupError(
+        { ...record, status: "failed", readiness: "unavailable", reason: "transport_failed" },
+        undefined,
+        Object.assign(new Error(message), {
+          details: {
+            reason: "xaa_authorization_rejected",
+            authorizationServerStatus: 429,
+          },
+        }),
+      );
+    });
+    await startJourneyRun(
+      baseOpts({
+        hosts: [
+          { ...HOST, targetId: "bad" },
+          { ...HOST_2, targetId: "good" },
+        ],
+        setupWrites: true,
+        sessionsPerTarget: 2,
+      }),
+    );
+    // One setup turn for the refused target: a retry would sign in again.
+    expect(
+      setupTurnMock.mock.calls.filter((c) => c[0].target.targetId === "bad"),
+    ).toHaveLength(1);
+    const bad = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.targetId === "bad" && a.status !== "running");
+    expect(bad).toHaveLength(2);
+    for (const terminal of bad) {
+      expect(terminal).toMatchObject({
+        status: "failed",
+        errorCode: "xaa_authorization_rejected",
+        errorMessage: message,
+      });
+    }
+    // The sibling target still ran.
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -197,6 +197,39 @@ describe("owned app message dispatch", () => {
     expect(f.send).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledOnce();
   });
+  it("stops counting a prepared new-chat message as current once it lapses", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      const f = fixture();
+      const newChat = {
+        ownerScope: "owner",
+        threadId: "old",
+        begin: vi.fn(
+          (_owned: () => boolean) => new Promise<string | null>(() => {}),
+        ),
+      };
+      const view = renderHook((props) => usePluginMessage(props), {
+        initialProps: { ...f, newChat, preparedForMs: 500 },
+      });
+      const input = {
+        ...intent(),
+        params: {
+          ...intent().params,
+          _meta: { "openai/message": { target: "new" as const } },
+        },
+      };
+      await act(async () => {
+        void view.result.current.send(input, () => true);
+      });
+      await waitFor(() => expect(newChat.begin).toHaveBeenCalledOnce());
+      const owned = newChat.begin.mock.calls[0]![0];
+      expect(owned()).toBe(true);
+      now.mockReturnValue(1_500);
+      expect(owned()).toBe(false);
+    } finally {
+      now.mockRestore();
+    }
+  });
   it("shares one dispatch lock across App sources and prevents concurrent preparation", async () => {
     const f = fixture();
     const lock = { current: false };
@@ -267,7 +300,7 @@ describe("owned app message dispatch", () => {
     expect(await pending).toBe(false);
     expect(f.send).not.toHaveBeenCalled();
   });
-  it("refuses draft send:false without sending or beginning a new chat", async () => {
+  it("refuses a draft where the host places none, without sending or beginning a new chat", async () => {
     const f = fixture();
     const view = renderHook(() => usePluginMessage(f));
     const value = {
@@ -277,9 +310,9 @@ describe("owned app message dispatch", () => {
         _meta: { "openai/message": { send: false } },
       },
     };
-    await expect(
-      view.result.current.send(value as never, () => true),
-    ).rejects.toThrow();
+    await act(async () =>
+      expect(await view.result.current.send(value, () => true)).toBe(false),
+    );
     expect(f.send).not.toHaveBeenCalled();
     expect(f.prepareNew).not.toHaveBeenCalled();
   });

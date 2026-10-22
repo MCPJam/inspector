@@ -29,7 +29,8 @@ import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { applyWidgetStateUpdates } from "@/shared/user-context-message";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { ModelReasoningEffort, RequestedModelSelection } from "@mcpjam/sdk/browser";
+import type { OrgVisibleConfig } from "./shared/model-helpers";
 import {
   CompareCardEffort,
   type CompareCardEffortProps,
@@ -52,6 +53,8 @@ export interface BroadcastChatTurnRequest {
 
 interface MultiModelChatCardProps {
   model: ModelDefinition;
+  selection?: RequestedModelSelection;
+  hostedOrgModelConfig?: OrgVisibleConfig;
   /**
    * The card's identity (`comparisonKey` of its selection): keys summaries,
    * `hasMessages` and transcripts so two cards of one model at different
@@ -91,6 +94,8 @@ interface MultiModelChatCardProps {
 
 export function MultiModelChatCard({
   model,
+  selection,
+  hostedOrgModelConfig,
   compareId: compareIdProp,
   compareLabel,
   reasoningEffort,
@@ -163,6 +168,9 @@ export function MultiModelChatCard({
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
+    pickedModelSelection: selection,
+    selectionIntent: "picked",
+    hostedOrgModelConfig,
     // A comparison column never shares the member's one personal computer.
     comparePane: true,
     selectedServers,

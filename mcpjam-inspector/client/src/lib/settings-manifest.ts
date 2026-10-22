@@ -107,7 +107,11 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
     group: "App",
   },
   {
-    ...personal("about", "About MCPJam", "/about", ["version"]),
+    ...personal("about", "About MCPJam", "/about", [
+      "version",
+      "privacy policy",
+      "terms of use",
+    ]),
     group: "App",
   },
   org("general", "General", "", [

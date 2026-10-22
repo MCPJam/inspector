@@ -23,7 +23,10 @@ env:
 jobs:
   checks:
     name: Typecheck and auth smoke tests
-    runs-on: ubuntu-latest
+    # Blacksmith, not GitHub's shared 60-job pool; this job holds no secret or
+    # write token. TEST_RUNNER=ubuntu-latest moves it back during an outage.
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:

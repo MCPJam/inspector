@@ -32,6 +32,9 @@ permissions:
 
 jobs:
   notify:
+    # Only main's commits: a dispatch from another branch would name a commit
+    # the backend refuses to build anyway.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Ask the backend to build and stage this commit's template

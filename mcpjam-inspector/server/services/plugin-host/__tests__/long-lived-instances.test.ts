@@ -181,7 +181,7 @@ describe("long-lived App limits", () => {
     expect(cold.snapshot(instanceId, 1).sequence).toBe(2050);
   });
 
-  it("compacts removal receipts so removals never permanently stop context", () => {
+  it("compacts removal receipts, and a retry after eviction is decided by its basis", () => {
     const ws = new PluginContextWorkspace("w");
     const instanceId = "22222222-2222-4222-8222-222222222222";
     const identityFor = {
@@ -193,7 +193,7 @@ describe("long-lived App limits", () => {
       origin: { kind: "global" as const, id: "app" },
     };
     ws.attach(instanceId, 1, identityFor);
-    let firstRemoval: { operationId: string; updateId: string } | undefined;
+    let first: { operationId: string; basis: number } | undefined;
     for (let round = 1; round <= PLUGIN_CONTEXT_REMOVAL_WINDOW + 44; round++) {
       // After a removal only the person re-attaching brings context back.
       ws.update(instanceId, 1, {
@@ -202,30 +202,40 @@ describe("long-lived App limits", () => {
         params: { content: [{ type: "text", text: `r${round}` }] },
         attach: "user",
       });
-      const updateId = ws.snapshot(instanceId, 1).state!.updateId;
-      const request = { operationId: `rm-${round}`, updateId, index: 0 };
-      firstRemoval ??= request;
-      expect(ws.remove(instanceId, 1, request).state).toBeNull();
+      const request = {
+        operationId: `rm-${round}`,
+        basis: ws.snapshot(instanceId, 1).cursor ?? 0,
+      };
+      first ??= request;
+      const removed = ws.removeAll(instanceId, 1, request);
+      expect(removed.outcome).toBe("applied");
+      expect(removed.snapshot.state).toBeNull();
     }
     const saved = JSON.parse(ws.export(instanceId, 1));
     expect(saved.removals.length).toBe(PLUGIN_CONTEXT_REMOVAL_WINDOW);
-    // A compacted receipt cannot repeat its effect: the retry is stale.
+    expect(saved.removals.some(([id]: [string]) => id === "rm-1")).toBe(false);
+    // Its receipt is gone, yet a removal after its basis still holds.
+    expect(ws.removeAll(instanceId, 1, first!).outcome).toBe("in-effect");
+    // The person attaches again; the evicted retry never erases that.
     ws.update(instanceId, 1, {
       operationId: "after",
       sequence: PLUGIN_CONTEXT_REMOVAL_WINDOW + 45,
       params: { content: [{ type: "text", text: "kept" }] },
       attach: "user",
     });
-    expect(() =>
-      ws.remove(instanceId, 1, { ...firstRemoval!, index: 0 }),
-    ).toThrow("INSTANCE_CONTEXT_REMOVAL_STALE");
-    expect(ws.snapshot(instanceId, 1).state?.content).toEqual([
-      { type: "text", text: "kept" },
-    ]);
-    // Recent receipts stay idempotent, and the saved state round-trips.
+    const revision = ws.snapshot(instanceId, 1).revision;
+    expect(ws.removeAll(instanceId, 1, first!).outcome).toBe("superseded");
+    expect(ws.snapshot(instanceId, 1)).toMatchObject({
+      revision,
+      state: { content: [{ type: "text", text: "kept" }] },
+    });
+    // The saved state round-trips with its cursor, so a restart decides the
+    // same way.
     const cold = new PluginContextWorkspace("w");
     cold.attach(instanceId, 1, identityFor);
     cold.restore(instanceId, 1, ws.export(instanceId, 1));
+    expect(cold.snapshot(instanceId, 1)).toEqual(ws.snapshot(instanceId, 1));
+    expect(cold.removeAll(instanceId, 1, first!).outcome).toBe("superseded");
     expect(cold.snapshot(instanceId, 1).state?.content).toEqual([
       { type: "text", text: "kept" },
     ]);
@@ -304,17 +314,17 @@ describe("long-lived App limits", () => {
         opened.token,
         identity,
         {
-          kind: "remove",
+          kind: "remove-all",
           request: {
             operationId: `remove-${before.sequence + 1}`,
-            updateId: updated.snapshot.state!.updateId,
-            index: 0,
+            basis: updated.snapshot.cursor ?? 0,
           },
         },
         signal(),
         contextAuthorize,
         s.port,
       );
+      expect(removed.result).toMatchObject({ outcome: "applied" });
       expect(removed.snapshot.state).toBeNull();
     }
     const read = vi

@@ -1679,6 +1679,8 @@ async function startFileRunFixture(options?: {
     servers?: string[];
   }>;
   environmentName?: string;
+  /** Environments already attached to the suite, readable by id. */
+  existingEnvironments?: Array<{ id: string; hostId: string }>;
   /**
    * Batch-create indexes to put in `failed` instead of `created`. Used to
    * assert CASE_SYNC_FAILED reports landed writes, not attempted totals.
@@ -1720,7 +1722,9 @@ async function startFileRunFixture(options?: {
   const suitePatches: unknown[] = [];
   const suitePatchQueries: Record<string, string>[] = [];
   const runBodies: unknown[] = [];
-  let environmentIds: string[] = [];
+  let environmentIds: string[] = (options?.existingEnvironments ?? []).map(
+    (environment) => environment.id
+  );
   let hosts: Array<{ id: string; name: string; servers?: string[] }> = [
     ...(options?.existingHosts ?? []),
   ];
@@ -2007,6 +2011,23 @@ async function startFileRunFixture(options?: {
       return;
     }
 
+    const attachedEnvironment = (options?.existingEnvironments ?? []).find(
+      (environment) =>
+        url.pathname ===
+        `/api/v1/projects/proj-alpha/environments/${environment.id}`
+    );
+    if (attachedEnvironment && method === "GET") {
+      res.end(
+        JSON.stringify({
+          id: attachedEnvironment.id,
+          name: null,
+          adhoc: true,
+          hostId: attachedEnvironment.hostId,
+        })
+      );
+      return;
+    }
+
     if (
       url.pathname === "/api/v1/projects/proj-alpha/environments" &&
       method === "GET"
@@ -2160,10 +2181,10 @@ describe("eval export — which policy owns the threshold", () => {
     verdictPolicyDefaults: { repetitions: 5, passThreshold: 0.9 },
   };
 
-  test("writes the legacy fallback (1) for a legacy suite with no minimum accuracy", async () => {
-    // Every legacy producer grades an unset threshold at
-    // LEGACY_SUITE_WIDE_THRESHOLD_PERCENT (100, "every unit must pass"), so
-    // this is the threshold the suite already runs at, not an invented one.
+  test("writes the default (0.7) for a legacy suite with no minimum accuracy", async () => {
+    // Every new run of a suite with no threshold is stamped with
+    // DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT (70), so this is the threshold the
+    // suite already runs at, not an invented one.
     await withTempDir(async () => {
       const run = await runExport(
         {
@@ -2185,7 +2206,7 @@ describe("eval export — which policy owns the threshold", () => {
       );
       assert.equal(reloaded.ok, true);
       if (!reloaded.ok) return;
-      assert.equal(reloaded.authored.defaults.passThreshold, 1);
+      assert.equal(reloaded.authored.defaults.passThreshold, 0.7);
     });
   });
 
@@ -2515,6 +2536,39 @@ describe("eval run --file", () => {
           (fixture.runBodies[0] as { namedHostId?: string }).namedHostId,
           "h1"
         );
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a client attached through an unnamed environment launches on its first run", async () => {
+    const fixture = await startFileRunFixture({
+      existingEnvironments: [{ id: "env-unnamed", hostId: "client-codex" }],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--client",
+              "client-codex"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.doesNotMatch(run.stderr, /no attached hosts/);
+        const body = fixture.runBodies[0] as Record<string, unknown>;
+        assert.equal(body.environmentId, "env-unnamed");
+        assert.equal(body.namedHostId, undefined);
       });
     } finally {
       await fixture.close();

@@ -32,6 +32,16 @@ export type CaseRunControls = {
   models: string[];
   modelLabelByValue?: Record<string, string>;
   availableModels?: ModelDefinition[];
+  /**
+   * The organization requires its own provider keys for AI features: a saved
+   * model the list no longer offers shows on its trigger as not allowed.
+   */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
   onModelChange?: (next: string) => void;
   trials: number;
   onTrialsChange?: (next: number) => void;
@@ -178,6 +188,8 @@ export function CaseRunSetup({
                 effortEditable={effortEditable}
                 value={selection}
                 availableModels={availableModels}
+                requireOrgKeys={controls.requireOrgKeys}
+                onManageOrgProviders={controls.onManageOrgProviders}
                 disabled={Boolean(controls.disabled)}
                 testId="case-run-models"
                 onChange={(next) => {

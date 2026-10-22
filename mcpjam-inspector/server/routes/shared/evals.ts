@@ -87,6 +87,7 @@ import {
   resolveOrgModelConfig,
   type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config";
+import { prepareClientKeyRun } from "../../services/evals/org-policy-client-keys.js";
 import {
   flattenServerToolSnapshotTools,
   type ServerToolSnapshot,
@@ -2396,16 +2397,6 @@ export async function fetchRunPinnedSkillsWithRetry(
 }
 
 /**
- * Titles of the run's cases that assert `widgetRendered`.
- *
- * Only relevant to a harness run, where the inspector's widget manager never
- * sees the tool call — the harness reaches MCP through the signed proxy — so
- * the assertion has nothing to observe. Collected here rather than inside the
- * gate because the gate is deliberately shape-agnostic about cases; this is the
- * one place that already knows the run's own step model.
- */
-
-/**
  * Whether a keyed launch that failed the server preflight was already started
  * by an earlier attempt with the same key.
  *
@@ -2633,9 +2624,8 @@ export async function prepareEvalRun(
         : await resolveEnvironmentForLaunch(convexClient, {
             serverSource: EVAL_LAUNCH_SERVER_SOURCE,
             runtimeVenue: requestedVenue,
-            ...(environmentLocalHarness
-              ? { runnerCapabilities: localHarnessCapabilities([environmentLocalHarness]) }
-              : {}),
+            ...(environmentLocalHarness ? { runnerCapabilities: localHarnessCapabilities([environmentLocalHarness]) } : {}),
+            ...(provenance.source === "github_check" ? { serversReplaced: true } : {}),
             projectId,
             environmentId,
           }).catch((error) => {
@@ -2715,6 +2705,12 @@ export async function prepareEvalRun(
       preflightRefusal = refusal;
     }
   }
+
+  const clientKeyRun = await prepareClientKeyRun(
+    request,
+    venueProjectId ? String(venueProjectId) : undefined,
+    resolvedServerIds,
+  );
 
   // Persist suite + cases (create or upsert). The suite/case persistence is
   // shared with the author-only public surface; `prepareEvalRun` then starts
@@ -3005,10 +3001,13 @@ export async function prepareEvalRun(
     // The run's OWN snapshotted cases (`config.tests`), not the request's
     // inline tests: a bare rerun has none of the latter, and the snapshot is
     // what actually executes.
+    // `selection` rides through: it decides whether a case runs on MCPJam's
+    // key or an organization connection's, and admission must see it.
     cases: config.tests as Array<{
       title?: string;
       model?: string;
       provider?: string;
+      selection?: unknown;
     }>,
     widgetAssertingCaseTitles: casesAssertingWidgetRender(config.tests),
     // Explicitly `null` when the suite is org-level. `runHarnessTurn` needs a
@@ -3108,12 +3107,11 @@ export async function prepareEvalRun(
 
   // Resolve org model config: prefer client-sent keys, fall back to org config.
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
-  const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
-  const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
+  const resolvedModelApiKeys = clientKeyRun.modelApiKeys;
   let resolvedOrgModelConfig =
     githubCredentialPolicy === "no_customer_credentials"
       ? { providers: [] }
-      : orgModelConfig;
+      : clientKeyRun.orgModelConfig;
   let resolvedOrgModelConfigTarget: { projectId: string } | undefined;
   // `projectIdForOrgConfig` is resolved ABOVE, before the admission gates —
   // the harness gate needs it to refuse an org-level suite before a box is
@@ -3216,7 +3214,7 @@ export async function prepareEvalRun(
       // The shared pin → skill-channel conversion (environment quick runs use
       // the same one): unreachable supporting files fail HERE, before the
       // model runs, and an empty pin set stays empty on both channels.
-      const pinServerNames = environmentLaunch
+      const pinServerNames = environmentLaunch && !githubCheckEnvironmentLaunch
         ? environmentServerNames(environmentLaunch)
         : serverNames;
       const built = await buildPinnedSkillSource({
@@ -3544,8 +3542,6 @@ export async function prepareSingleCaseExecution(
     serverIds,
     scenarioId,
     accessVersion,
-    modelApiKeys,
-    orgModelConfig,
     convexAuthToken,
     testCaseOverrides,
     matchOptionsOverride,
@@ -3766,17 +3762,15 @@ export async function prepareSingleCaseExecution(
     }
   }
 
-  // Resolve org model config: prefer client-sent keys, fall back to org config.
-  // Treat an empty client-provided map as "no keys".
-  const hasClientKeysForCase =
-    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
-  const resolvedModelApiKeys = hasClientKeysForCase ? modelApiKeys : undefined;
-  let resolvedOrgModelConfig = orgModelConfig;
-  const testCaseProjectId =
-    typeof testCase.projectId === "string" ? testCase.projectId : undefined;
-  const orgModelConfigTarget = testCaseProjectId
-    ? { projectId: testCaseProjectId }
-    : undefined;
+  const orgModelConfigTarget =
+    typeof testCase.projectId === "string"
+      ? { projectId: testCase.projectId }
+      : undefined;
+  const clientKeyRun = await prepareClientKeyRun(
+    request, orgModelConfigTarget?.projectId, resolvedServerIds,
+  );
+  const resolvedModelApiKeys = clientKeyRun.modelApiKeys;
+  let resolvedOrgModelConfig = clientKeyRun.orgModelConfig;
   if (
     !resolvedModelApiKeys &&
     !resolvedOrgModelConfig &&

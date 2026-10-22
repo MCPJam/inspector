@@ -106,12 +106,14 @@ import {
 } from "../../utils/server-secrets.js";
 import {
   buildXaaMintArgs,
-  isXaaMintErrorReported,
   mintXaaAccessToken,
   resolveXaaConnectRegistrationMode,
   resolveXaaIssuer,
 } from "../../services/xaa-mint.js";
-import { toXaaConnectFailure } from "../../services/xaa-connect-error.js";
+import {
+  reportXaaMintFailure,
+  toXaaConnectFailure,
+} from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
@@ -416,6 +418,21 @@ export function buildSingleServerOAuthTokens(serverId: string, token?: string) {
   return token ? { [serverId]: token } : undefined;
 }
 
+/**
+ * The name to show the user for a server: the one the caller passed, else the
+ * one the backend stored, else its id. A swarm run pins only server ids, so
+ * without the stored name its sign-in failures named the server by its id.
+ */
+function displayNameForServer(
+  serverId: string,
+  serverNamesById: Record<string, string> | undefined,
+  serverConfig: { name?: unknown } | undefined,
+): string {
+  const stored =
+    typeof serverConfig?.name === "string" ? serverConfig.name.trim() : "";
+  return serverNamesById?.[serverId] ?? (stored || serverId);
+}
+
 export function buildServerNamesById(
   serverIds: string[],
   serverNames?: readonly string[],
@@ -456,6 +473,9 @@ export type ConvexAuthorizeResponse = {
   };
   serverConfig: {
     credentialConfigurationId?: string;
+    // The server's stored display name. Absent on older backends; a caller's
+    // own `serverNames` still win (see `displayNameForServer`).
+    name?: string;
     transportType: "stdio" | "http";
     url?: string;
     // Declared wire transport from a plugin manifest (parser `httpVariant`),
@@ -1271,6 +1291,7 @@ function resolveEffectiveInitializePinsForServer(
   return Object.keys(resolved).length > 0 ? resolved : undefined;
 }
 
+type Tolerate = boolean | readonly string[] | undefined;
 /**
  * Whether `tolerateServerRefusals` may keep `error` for its server: a
  * `WebRouteError` that answers for that server. An `INTERNAL_ERROR` (a
@@ -1288,7 +1309,8 @@ function resolveEffectiveInitializePinsForServer(
  * while its 4xx (export denied, origin mismatch) is still the backend's
  * answer for that server.
  */
-function isServerRefusal(error: unknown): boolean {
+function isServerRefusal(error: unknown, id: string, tolerate: Tolerate) {
+  if (tolerate !== true && !(tolerate || []).includes(id)) return false;
   if (!(error instanceof WebRouteError)) return false;
   if (error.setupFailureSource === "secret_reveal" && error.status >= 500) {
     return false;
@@ -1481,12 +1503,14 @@ export async function createAuthorizedManager(
      * passes 1 and 1b, out of pass 2). An internal fault still fails the
      * batch: see `isServerRefusal`. The batch-level ordering stands: every
      * remaining server still clears validation before any of them mints or
-     * connects.
+     * connects. A list keeps only those servers' refusals: a chat turn names
+     * its plugins' servers, so a server the member chose still fails it.
      */
-    tolerateServerRefusals?: boolean;
+    tolerateServerRefusals?: boolean | readonly string[];
   },
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
+  const tolerate = options?.tolerateServerRefusals;
   const uniqueServerIds = Array.from(new Set(serverIds));
   if (uniqueServerIds.length === 0) {
     return {
@@ -1611,7 +1635,11 @@ export async function createAuthorizedManager(
           { serverId, serverName: serverNamesById?.[serverId] ?? null },
         );
       }
-      const displayServerName = serverNamesById?.[serverId] ?? serverId;
+      const displayServerName = displayNameForServer(
+        serverId,
+        serverNamesById,
+        auth.serverConfig,
+      );
       const effectiveAuth = resolveEffectiveAuthMethod(
         auth.serverConfig,
         options?.xaaPolicy,
@@ -1829,9 +1857,7 @@ export async function createAuthorizedManager(
         }
       }
     } catch (error) {
-      if (!options?.tolerateServerRefusals || !isServerRefusal(error)) {
-        throw error;
-      }
+      if (!isServerRefusal(error, serverId, tolerate)) throw error;
       refusedServers[serverId] = error;
     }
   }
@@ -1877,7 +1903,7 @@ export async function createAuthorizedManager(
         );
         continue;
       }
-      if (options?.tolerateServerRefusals && isServerRefusal(error)) {
+      if (isServerRefusal(error, recovery.serverId, tolerate)) {
         refusedServers[recovery.serverId] = error;
         continue;
       }
@@ -1924,7 +1950,11 @@ export async function createAuthorizedManager(
           recoveredOAuthTokens[serverId] ??
           auth.oauthAccessToken ??
           oauthTokens?.[serverId];
-        const displayServerName = serverNamesById?.[serverId] ?? serverId;
+        const displayServerName = displayNameForServer(
+          serverId,
+          serverNamesById,
+          auth.serverConfig,
+        );
         // Resolved in PASS 1 (canonical authMethod wins; "auto" selects XAA
         // when configured or when the host policy forces it, "discover"
         // otherwise; legacy rows fall back to the boolean pair). Reused rather
@@ -2179,17 +2209,15 @@ export async function createAuthorizedManager(
           try {
             connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
           } catch (error) {
-            if (!isXaaMintErrorReported(error)) {
-              logger.error("[XAA connect] mint failed", error, {
-                serverId,
-                connectionId: options?.connectionIds?.[serverId],
-                serverName: displayServerName,
-                resource: auth.serverConfig.url,
-              });
-            }
-            // Re-framed AFTER the log above, so the debugger-worded original is
-            // what reaches Sentry/Axiom (as `cause`) while the caller gets the
-            // connect-context sentence.
+            reportXaaMintFailure(error, {
+              serverId,
+              connectionId: options?.connectionIds?.[serverId],
+              serverName: displayServerName,
+              resource: auth.serverConfig.url,
+            });
+            // Re-framed AFTER the report above, so the debugger-worded
+            // original is what reaches Sentry/Axiom (as `cause`) while the
+            // caller gets the connect-context sentence.
             throw toXaaConnectFailure(error, xaaFailureTarget);
           }
           // Bounded re-mint: the SDK invokes this once on a 401 and retries; a
@@ -2318,9 +2346,7 @@ export async function createAuthorizedManager(
           ),
         ] as const;
       } catch (error) {
-        if (!options?.tolerateServerRefusals || !isServerRefusal(error)) {
-          throw error;
-        }
+        if (!isServerRefusal(error, serverId, tolerate)) throw error;
         refusedServers[serverId] = error;
         return undefined;
       }

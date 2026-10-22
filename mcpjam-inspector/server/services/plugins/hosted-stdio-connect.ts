@@ -97,12 +97,13 @@ export async function resolvePluginStdioHttpTarget(args: {
         : {}),
     });
 
-    // ORDINARY stdio servers stay refused. Only a plugin component — a config
-    // still carrying the SDK's root placeholders — is a thing MCPJam knows how
-    // to place inside a box: it comes with verified, content-addressed bytes
-    // and a backend pin. An arbitrary user-authored command has neither, and
-    // colocating it would turn "run a plugin" into "run anything in my VM".
-    if (!needsPluginRoot(spec)) return null;
+    // ORDINARY stdio servers stay refused. Only a plugin component — one the
+    // backend marks as such, or a config still carrying the SDK's root
+    // placeholders — is a thing MCPJam knows how to place inside a box: it
+    // comes with verified, content-addressed bytes and a backend pin. An
+    // arbitrary user-authored command has neither, and colocating it would
+    // turn "run a plugin" into "run anything in my VM".
+    if (!spec.pluginComponent && !needsPluginRoot(spec)) return null;
 
     const box = await resolveColocatedPluginBox({
       bearer: args.bearerToken,

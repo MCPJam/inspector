@@ -102,10 +102,11 @@ describe("canonicalSelectionModelId", () => {
       { id: "mistral-small-2603", provider: "mistral" },
       "mistralai/mistral-small-2603",
     ],
+    [{ id: "claude-opus-5", provider: "anthropic" }, "anthropic/claude-opus-5"],
     // No known canonical id: no selection, the legacy id stays.
     [{ id: "grok-3", provider: "xai" }, null],
     [{ id: "mistral-large-latest", provider: "mistral" }, null],
-    [{ id: "claude-opus-5", provider: "anthropic" }, null],
+    [{ id: "claude-unknown-test-model", provider: "anthropic" }, null],
     [{ id: "deepseek-chat", provider: "deepseek" }, null],
     [{ id: "llama3.2:latest", provider: "ollama" }, "ollama/llama3.2:latest"],
     [{ id: "openai/gpt-4o", provider: "openrouter" }, "openai/gpt-4o"],
@@ -538,6 +539,88 @@ describe("stored choices", () => {
     ).toBe(true);
   });
 
+  it("a stored legacy selection resolves to an own-key row, never the hosted twin", () => {
+    const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
+    const byok = models.find(
+      (m) =>
+        String(m.id) === "anthropic/claude-haiku-4.5" && m.hosted === false,
+    )!;
+    const modelId = "anthropic/claude-haiku-4.5";
+    const legacy = { source: "legacy" as const, modelId };
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        models,
+        orgConfig,
+      ),
+    ).toBe(byok);
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: { ...legacy, provider: String(byok.provider) } },
+        models,
+        orgConfig,
+      ),
+    ).toBe(byok);
+    // Only the hosted row listed: "own key only" never lands on MCPJam credits.
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        [hostedHaiku],
+        orgConfig,
+      ),
+    ).toBeUndefined();
+    // Two own-key rows with that id: the legacy fields cannot tell which
+    // connection ran it, so neither is picked.
+    const twin = { ...byok, name: `${byok.name} (second)` };
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        [byok, twin],
+        orgConfig,
+      ),
+    ).toBeUndefined();
+    // The provider hint separates two rows with the same id, and names no
+    // row when it matches none.
+    const otherProvider = { ...twin, provider: "custom:other" };
+    expect(
+      findModelForStoredChoice(
+        {
+          modelId,
+          selection: { ...legacy, provider: String(byok.provider) },
+        },
+        [byok, otherProvider],
+        orgConfig,
+      ),
+    ).toBe(byok);
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: { ...legacy, provider: "nobody" } },
+        [byok],
+        orgConfig,
+      ),
+    ).toBeUndefined();
+    // A locked twin does not make the runnable row ambiguous.
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        [byok, { ...twin, disabled: true }],
+        orgConfig,
+      ),
+    ).toBe(byok);
+    // A strict lookup (the organization requires its own keys) needs a
+    // saved connection, which a legacy selection does not name.
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        models,
+        orgConfig,
+        {
+          exactSelection: true,
+        },
+      ),
+    ).toBeUndefined();
+  });
+
   it("bare BYOK ids round-trip through the canonical stored id", () => {
     const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
     const bare = models.find(
@@ -550,6 +633,48 @@ describe("stored choices", () => {
       selection: { nativeModelId: String(bare.id), source: "org" },
     });
     expect(findModelForStoredChoice(stored, models, orgConfig)).toBe(bare);
+  });
+
+  it("resolve only their own source and connection with exactSelection", () => {
+    // While the organization requires its own keys the list holds only org
+    // rows, and its OpenRouter connection lists the hosted catalog's id.
+    const orgRows = buildAvailableModelsFromOrgConfig(orgConfig, [
+      hostedHaiku,
+    ]).filter((m) => m.orgProvider);
+    const byok = orgRows.find(
+      (m) => String(m.id) === "anthropic/claude-haiku-4.5",
+    )!;
+    const hosted = storedModelChoice(hostedHaiku, undefined, "evalTarget");
+    expect(hosted.selection?.source).toBe("hosted");
+    // The id fallback alone would call the saved hosted model the org row.
+    expect(findModelForStoredChoice(hosted, orgRows, orgConfig)).toBe(byok);
+    expect(
+      findModelForStoredChoice(hosted, orgRows, orgConfig, {
+        exactSelection: true,
+      }),
+    ).toBeUndefined();
+    const org = storedModelChoice(byok, orgConfig, "evalTarget");
+    expect(
+      findModelForStoredChoice(org, orgRows, orgConfig, {
+        exactSelection: true,
+      }),
+    ).toBe(byok);
+    // A strict choice without a selection cannot borrow an org row by id.
+    expect(
+      findModelForStoredChoice(
+        { modelId: "anthropic/claude-haiku-4.5" },
+        orgRows,
+        orgConfig,
+        { exactSelection: true },
+      ),
+    ).toBeUndefined();
+    expect(
+      findModelForStoredChoice(
+        { modelId: "anthropic/claude-haiku-4.5" },
+        orgRows,
+        orgConfig,
+      ),
+    ).toBe(byok);
   });
 });
 

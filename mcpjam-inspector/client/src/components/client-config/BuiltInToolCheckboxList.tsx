@@ -14,6 +14,9 @@ import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
  * a personal computer is attached (or are wholly disallowed on eval suites).
  * A tool that is already selected but currently blocked stays togglable so
  * the user can always REMOVE a stale invalid id — only adding is blocked.
+ *
+ * `notes` are different: they say something about a tool (web search under
+ * an organization's own-key policy) and never block a toggle.
  */
 export function BuiltInToolCheckboxList({
   label,
@@ -25,6 +28,7 @@ export function BuiltInToolCheckboxList({
   readOnly = false,
   computerAttachHint = "attach it above",
   variant = "default",
+  notes,
 }: {
   label?: string;
   selected: string[];
@@ -54,6 +58,8 @@ export function BuiltInToolCheckboxList({
    * descriptions for ClientConfigEditor and eval surfaces.
    */
   variant?: "default" | "minimal";
+  /** A non-blocking note per tool id, shown under the tool's name. */
+  notes?: Readonly<Record<string, string>>;
 }) {
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const toggle = useCallback(
@@ -112,6 +118,13 @@ export function BuiltInToolCheckboxList({
                     {blockReason}
                     {isSelected ? " Turn off to remove." : ""}
                   </p>
+                ) : notes?.[tool.id] ? (
+                  <p
+                    data-testid={`built-in-tool-note-${tool.id}`}
+                    className="mt-0.5 text-[11px] text-muted-foreground"
+                  >
+                    {notes[tool.id]}
+                  </p>
                 ) : null}
               </div>
               <Switch
@@ -168,6 +181,13 @@ export function BuiltInToolCheckboxList({
                   <span className="text-xs text-amber-600 dark:text-amber-500">
                     {blockReason}
                     {isSelected ? " Uncheck to remove." : ""}
+                  </span>
+                ) : notes?.[tool.id] ? (
+                  <span
+                    data-testid={`built-in-tool-note-${tool.id}`}
+                    className="text-xs text-muted-foreground"
+                  >
+                    {notes[tool.id]}
                   </span>
                 ) : null}
               </span>

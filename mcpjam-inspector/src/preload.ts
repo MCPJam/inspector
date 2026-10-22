@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   SENTRY_ACTOR_CHANNEL,
   SENTRY_INSTALLATION_ARGUMENT,
+  SENTRY_DISABLED_CHANNEL,
   type SentryActor,
 } from "../shared/sentry-identity";
 
@@ -15,6 +16,7 @@ import type {
 interface ElectronAPI {
   sentry?: {
     installationId: string;
+    isDisabled: () => Promise<boolean>;
     setActor: (actor: SentryActor | null) => void;
   };
   diagnostics?: { record: (activity: DesktopActivity) => void };
@@ -116,6 +118,7 @@ interface ElectronAPI {
 // Expose protected methods that allow the renderer process to use
 const electronAPI: ElectronAPI = {
   sentry: {
+    isDisabled: () => ipcRenderer.invoke(SENTRY_DISABLED_CHANNEL),
     installationId:
       process.argv
         .find((arg) => arg.startsWith(SENTRY_INSTALLATION_ARGUMENT))

@@ -665,6 +665,34 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     expect(result.outcome).toBe("rate_limited");
   });
 
+  // The server's authorization server throttling MCPJam's sign-in is not the
+  // user's AI provider throttling their key: the "(HTTP 429)" in its sentence
+  // must not fold it into `rate_limited` ("switch models").
+  it("keeps a throttled server sign-in (XAA, HTTP 429) a failed sign-in, not a rate limit", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+    const message =
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.';
+    runAssistantTurnMock.mockRejectedValue(
+      Object.assign(new Error(message), {
+        details: {
+          reason: "xaa_authorization_rejected",
+          authorizationServerStatus: 429,
+        },
+      }),
+    );
+
+    const result = await runSyntheticHostSession(baseAdapter() as never);
+
+    expect(result).toMatchObject({
+      outcome: "failed",
+      errorReason: "xaa_authorization_rejected",
+      authorizationServerStatus: 429,
+      errorMessage: message,
+    });
+  });
+
   // A started sponsored conversation keeps its unit even when it produced
   // nothing, so the platform being unable to serve it must end the target's
   // sponsored run (the swarm runner stops on `platform_capacity`) rather than
@@ -942,6 +970,16 @@ describe("runSyntheticHostSession — execution budgets", () => {
         }),
     );
 
+  it("exposes the remaining turn budget to model-step admission", async () => {
+    const adapter = baseAdapter();
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 5000 });
+    await runSyntheticHostSession(adapter);
+    const remaining = runAssistantTurnMock.mock.calls[0][0].remainingTurnMs;
+    expect(remaining).toEqual(expect.any(Function));
+    expect(remaining()).toBeGreaterThan(0);
+    expect(remaining()).toBeLessThanOrEqual(5000);
+  });
+
   it("ends the session when a turn outlives its budget", async () => {
     hangUntilAborted();
     const adapter = baseAdapter() as any;
@@ -1041,4 +1079,21 @@ describe("captureAndPersistWidgetSnapshotsForSession — upload scope", () => {
       accessVersion: 3,
     });
   });
+});
+
+
+it("forwards frozen agent-loop tool policies through the swarm drain", async () => {
+  createBrowserSessionContextMock.mockReturnValue(buildFakeBrowserContext({ computerUse: false }));
+  const adapter = baseAdapter();
+  const tasks = { mode: "await" as const };
+  const result = await runSyntheticHostSession({
+    ...adapter,
+    runtime: { ...adapter.runtime, agentLoop: "codex", respectToolVisibility: false,
+      modelVisibleMcpToolResults: { directContent: { text: true } }, tasks },
+  } as never);
+  expect(result).toEqual({ outcome: "succeeded" });
+  expect(runAssistantTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+    agentLoop: "codex", respectToolVisibility: false,
+    modelVisibleMcpToolResults: { directContent: { text: true } }, tasks,
+  }));
 });

@@ -332,6 +332,13 @@ jobs:
           node mcpjam-inspector/scripts/bundle-codex-appserver-bridge.mjs
           node mcpjam-inspector/scripts/bundle-local-harness-layer.mjs
 
+      # The installer logs through `shared/strict-log.ts`, which imports
+      # `@mcpjam/sdk` subpaths that resolve from the SDK's dist. Without this
+      # build every leg fails the verify step with ERR_MODULE_NOT_FOUND.
+      - name: Build the SDK the installer imports
+        shell: bash
+        run: npm run build:sdk -w @mcpjam/inspector
+
       # Proves the pack the installer would download actually verifies, before
       # it is published. A pack that fails here never reaches a release.
       - name: Verify the pack installs from its own archive

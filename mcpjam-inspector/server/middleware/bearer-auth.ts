@@ -14,7 +14,9 @@ import {
   isSlackServiceToken,
 } from "./slack-service-auth.js";
 import { logger } from "../utils/logger.js";
+import { scrubCredentialUrl } from "../../shared/credential-urls.js";
 import { setRequestLogContext } from "../utils/request-logger.js";
+import { logConvexId } from "../utils/log-convex-id.js";
 import {
   handleSurfaceServiceAuth,
   isDiscordServiceToken,
@@ -357,7 +359,9 @@ export async function bearerAuthMiddleware(
     // the entire public API — the rule cannot fire on a field that is never
     // populated, so a v1 error class spiking across every customer counted as
     // one org forever. This is the only place the API-key path knows the org.
-    setRequestLogContext(c, { orgId: binding.mcpjamOrganizationId });
+    setRequestLogContext(c, {
+      orgId: logConvexId(binding.mcpjamOrganizationId),
+    });
 
     logger.info("WorkOS API key request", {
       event: "auth.workos_api_key",
@@ -413,7 +417,9 @@ export async function bearerAuthMiddleware(
     logger.info("Rejected an AuthKit bearer that failed verification", {
       event: "auth.authkit_jwt_rejected",
       reason: verdict.reason,
-      path: c.req.path,
+      // Scrubbed: a credential route carries its secret in the path, and
+      // this row ships to Axiom.
+      path: scrubCredentialUrl(c.req.path),
     });
     return c.json(
       {

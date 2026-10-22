@@ -14,7 +14,7 @@
  */
 
 import { useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { Button } from "@mcpjam/design-system/button";
 import { FeatureSignUpNudgeDialog } from "@/components/auth/FeatureSignUpNudgeDialog";
 import { track } from "@/lib/analytics";
@@ -27,7 +27,7 @@ import {
 
 export function GuestPreviewCta({ feature }: { feature: GatedFeatureId }) {
   const [nudgeOpen, setNudgeOpen] = useState(false);
-  const { signIn } = useAuth();
+  const { signIn } = useInspectorAuth();
   const location = GATED_FEATURE_COPY[feature].analyticsLocation;
 
   const handleSignIn = () => {

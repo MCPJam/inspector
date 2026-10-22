@@ -37,6 +37,7 @@ const persona = {
 };
 
 let viewerId = "creator";
+let canManageBilling = false;
 let journeyRubric: Array<{ id: string; predicate: Predicate }> | null = [
   { id: "crit-existing", predicate: EXISTING },
 ];
@@ -54,7 +55,7 @@ vi.mock("convex/react", () => ({
       case "projects:getMyProjects":
         return [{ _id: "proj-1", organizationId: "org-1" }];
       case "billing:getOrganizationBillingStatus":
-        return { effectivePlan: "free" };
+        return { effectivePlan: "free", pricingVersion: "v2", canManageBilling };
       case "personas:listPersonas":
         return [persona];
       case "journeys:listJourneysByPersona":
@@ -139,6 +140,7 @@ import { openPersonasTab } from "./swarms-tab-test-helpers";
 beforeEach(() => {
   vi.clearAllMocks();
   viewerId = "creator";
+  canManageBilling = false;
   journeyRubric = [{ id: "crit-existing", predicate: EXISTING }];
   updateJourneyMutation.mockResolvedValue(undefined);
 });
@@ -151,12 +153,26 @@ function openGradingEditor() {
 }
 
 describe("SwarmsTab — journey grading editor", () => {
-  it("offers Team instead of editing another creator's settings on Free", () => {
+  it("asks the owner to upgrade instead of linking a Free collaborator to plans", () => {
     viewerId = "collaborator";
     openGradingEditor();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "requires Team or Enterprise",
     );
+    expect(
+      screen.getByText("Ask your organization owner to upgrade to Team."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "View Team plans" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
+    expect(updateJourneyMutation).not.toHaveBeenCalled();
+  });
+
+  it("keeps the plans link for a billing owner editing another creator's settings", () => {
+    viewerId = "billing-owner";
+    canManageBilling = true;
+    openGradingEditor();
     expect(
       screen.getByRole("link", { name: "View Team plans" }),
     ).toHaveAttribute("href", "/organizations/org-1/plans");

@@ -4,7 +4,7 @@ const sdk = vi.hoisted(() => ({ setUser: vi.fn(), setTag: vi.fn() }));
 vi.mock("@sentry/electron/main", () => sdk);
 vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
-  return { ipcMain: new EventEmitter() };
+  return { ipcMain: Object.assign(new EventEmitter(), { handle: vi.fn() }) };
 });
 import { ipcMain } from "electron";
 import { installDesktopSentryIdentity } from "../sentry-identity-electron";
@@ -12,13 +12,13 @@ import {
   initializeDesktopSentryIdentity,
   getDesktopSentryIdentity,
 } from "../../shared/desktop-sentry-state";
-import { SENTRY_ACTOR_CHANNEL } from "../../shared/sentry-identity";
+import { SENTRY_ACTOR_CHANNEL, SENTRY_DISABLED_CHANNEL } from "../../shared/sentry-identity";
 
 beforeEach(() => {
   initializeDesktopSentryIdentity("installation:test-install");
   vi.clearAllMocks();
 });
-afterEach(() => ipcMain.removeAllListeners());
+afterEach(() => { ipcMain.removeAllListeners(); vi.unstubAllEnvs(); });
 function setup(integration = installDesktopSentryIdentity()) {
   const frame = { url: "http://localhost:6274/" };
   const contents = Object.assign(new EventEmitter(), { mainFrame: frame });
@@ -77,4 +77,16 @@ it("resets on reload and window replacement, but keeps identity on SPA navigatio
   expect(getDesktopSentryIdentity()?.id).toBe("user_B");
   second.window.emit("closed");
   expect(getDesktopSentryIdentity()?.kind).toBe("installation");
+});
+
+it("reads late process opt-outs only for the trusted renderer", () => {
+  const { contents, frame } = setup();
+  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === SENTRY_DISABLED_CHANNEL)?.[1];
+  if (!handler) throw new Error("missing opt-out handler");
+  const event = { sender: contents, senderFrame: frame };
+  expect(handler(event as never)).toBe(false);
+  vi.stubEnv("DO_NOT_TRACK", "1");
+  expect(handler(event as never)).toBe(true);
+  vi.stubEnv("DO_NOT_TRACK", "");
+  expect(handler({ sender: {}, senderFrame: frame } as never)).toBe(true);
 });

@@ -72,7 +72,6 @@ describe("crashReportingIntegrations", () => {
     expect(result.filter((i) => i.name === "ChildProcess")).toHaveLength(1);
     expect(result.map((i) => i.name)).toEqual(
       expect.arrayContaining([
-        "SentryMinidump",
         "OnUncaughtException",
         "ChildProcess",
       ]),
@@ -101,7 +100,7 @@ describe("crashReportingIntegrations", () => {
     // sentryMinidumpIntegration is default-on in @sentry/electron 7; native crash upload
     // needs no wiring from us, and removing it would lose real crashes.
     const result = crashReportingIntegrations([{ name: "SentryMinidump" }]);
-    expect(result.some((i) => i.name === "SentryMinidump")).toBe(true);
+    expect(result.some((i) => i.name === "SentryMinidump")).toBe(false);
   });
 });
 

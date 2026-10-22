@@ -12,6 +12,7 @@ import {
 } from "@/shared/http-tool-calls";
 import { runAssistantTurn } from "../assistant-turn";
 import type { ModelDefinition } from "@/shared/types";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 
 let lastExecution: Promise<void> | null = null;
 let writtenChunks: any[] = [];
@@ -409,7 +410,7 @@ describe("runAssistantTurn", () => {
           } as ModelDefinition,
           "cursor"
         )
-      ).rejects.toThrow(/chooses its own model on your own account/);
+      ).rejects.toThrow(/chooses its own model/);
 
       // The load-bearing half: NEITHER engine ran. A resolved turn here is a
       // completed run that never touched Cursor — the emulated engine's only
@@ -460,9 +461,85 @@ describe("runAssistantTurn", () => {
           "claude-code"
         )
       ).rejects.toThrow(
-        /This host runs the claude-code harness, which isn't available: the Claude Code harness only runs MCPJam-provided models/
+        /Claude Code client needs a supported model and an eligible Anthropic connection/
       );
       expect(global.fetch).not.toHaveBeenCalled();
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a brokered harness on the organization's own key", () => {
+    const ORG_ANTHROPIC: ModelSelection = {
+      source: "org",
+      modelId: "anthropic/claude-sonnet-4.5",
+      connectionRef: { kind: "orgProvider", id: "orgprov_anthropic_1" },
+      fallback: { provider: "none", model: "none" },
+    };
+    // The org row's own id is the native, BARE one; the selection names the
+    // canonical id.
+    const ORG_ROW = {
+      id: "claude-sonnet-4-5",
+      provider: "anthropic",
+      name: "Claude Sonnet 4.5",
+    } as ModelDefinition;
+    const turn = (extra: Partial<Parameters<typeof runAssistantTurn>[0]>) =>
+      runAssistantTurn({
+        messages: [{ role: "user", content: "Hi." }],
+        modelDefinition: ORG_ROW,
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as never,
+        authContext: { kind: "user_bearer", token: "Bearer test-token" },
+        sourceType: "eval",
+        origin: "scenario",
+        approvalMode: "auto-deny",
+        streamSink: "none",
+        persistMode: "caller",
+        harness: "claude-code",
+        ...extra,
+      });
+
+    it("hands the turn's org selection to the harness turn", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockClear();
+      runHarnessTurnMock.mockResolvedValue({
+        messageHistory: [],
+        aborted: false,
+      });
+      await turn({ modelSelection: ORG_ANTHROPIC });
+      expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+      expect(runHarnessTurnMock.mock.lastCall?.[0]).toMatchObject({
+        modelSelection: ORG_ANTHROPIC,
+      });
+      // The emulated engine never ran on the org key.
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("refuses an org connection on another vendor, naming the provider rule", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockClear();
+      await expect(
+        turn({
+          modelDefinition: {
+            id: "gpt-5",
+            provider: "openai",
+            name: "GPT-5",
+          } as ModelDefinition,
+          modelSelection: { ...ORG_ANTHROPIC, modelId: "openai/gpt-5" },
+        }),
+      ).rejects.toThrow(/eligible Anthropic connection/);
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("the same bare row WITHOUT an org selection is still refused as not hosted", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockClear();
+      await expect(turn({})).rejects.toThrow(
+        /needs a supported model and an eligible Anthropic connection/,
+      );
       expect(runHarnessTurnMock).not.toHaveBeenCalled();
     });
   });
@@ -521,7 +598,7 @@ describe("runAssistantTurn", () => {
         global.fetch = vi.fn();
         runHarnessTurnMock.mockClear();
         await expect(withEffort({ reasoningEffort: "high" })).rejects.toThrow(
-          /which isn't available: the Claude Code harness can't apply a reasoning effort yet \("high"\)/
+          /Claude Code client does not support the "high" reasoning effort/
         );
         expect(runHarnessTurnMock).not.toHaveBeenCalled();
         expect(global.fetch).not.toHaveBeenCalled();
@@ -578,9 +655,7 @@ describe("runAssistantTurn", () => {
           "codex"
         )
       ).rejects.toThrow(
-        "This host runs the codex harness, which isn't available: the Codex " +
-          "harness can't run this host's model — pick a Codex-compatible " +
-          "model to run the real runtime."
+        /not.*verified/
       );
       expect(global.fetch).not.toHaveBeenCalled();
       expect(runHarnessTurnMock).not.toHaveBeenCalled();
@@ -600,7 +675,7 @@ describe("runAssistantTurn", () => {
             "claude-code",
             sourceType
           )
-        ).rejects.toThrow(/not verified for claude-code \d+\.\d+\.\d+/);
+        ).rejects.toThrow(/has not been verified for the Claude Code client/);
         expect(global.fetch).not.toHaveBeenCalled();
         expect(runHarnessTurnMock).not.toHaveBeenCalled();
       }

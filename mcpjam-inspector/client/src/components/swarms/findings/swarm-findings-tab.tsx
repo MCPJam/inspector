@@ -26,6 +26,7 @@
 import { useQuery } from "convex/react";
 import { useEffect, useCallback } from "react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { notAnalyzedLine } from "@/lib/org-keys-refusal";
 import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
 import type {
   SwarmJourneyFindings,
@@ -53,6 +54,7 @@ import {
   clampNarration,
   composeFindingsSummary,
   composeWireFindingsSummary,
+  wireFindingsFootnotes,
   type SwarmNarration,
 } from "./findings-headline";
 import type { JourneyStageId } from "./journey-stages";
@@ -230,9 +232,12 @@ export function SwarmFindingsTab({
       <p className="mb-3 text-sm text-muted-foreground">
         {journeyFindingsJob.status === "pending"
           ? "Reading session evidence…"
-          : journeyFindingsJob.status === "failed"
-          ? "Session analysis did not complete."
-          : "Session analysis was skipped."}
+          : // The organization's AI key policy kept it from running: "Not
+            // analyzed", never a failure, and never a retry it can't use.
+            (notAnalyzedLine(journeyFindingsJob.errorCode) ??
+            (journeyFindingsJob.status === "failed"
+              ? "Session analysis did not complete."
+              : "Session analysis was skipped."))}
       </p>
     );
 
@@ -261,6 +266,7 @@ export function SwarmFindingsTab({
           recommendation={recommendation}
           narration={waveProse}
           launchReason={launchReason}
+          footnotes={wireFindingsFootnotes(journeyFindings)}
         />
       </div>
     );
@@ -286,6 +292,9 @@ export function SwarmFindingsTab({
         recommendation={recommendation}
         narration={waveProse}
         launchReason={launchReason}
+        footnotes={
+          journeyFindings ? wireFindingsFootnotes(journeyFindings) : []
+        }
       />
       <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
       <div className="mb-3">

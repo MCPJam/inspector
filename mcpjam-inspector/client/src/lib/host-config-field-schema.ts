@@ -685,6 +685,19 @@ const BROWSER_STORAGE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
     })
   );
 
+/** Whether the app iframe shares the sandbox page's origin (probe-measured). */
+const SAME_ORIGIN_APP_IFRAME_FIELD: HostConfigFieldDef = {
+  id: "sandbox.sameOriginAppIframe",
+  section: "apps",
+  subsection: "Sandbox",
+  label: "Same-origin app iframe",
+  path: "mcpProfile.apps.sandbox.sameOriginAppIframe",
+  description:
+    "The app iframe shares the sandbox page's origin, so storage, cookies and same-origin fetches work. When not, the app runs in an opaque origin (probe-measured browser behavior, not MCP).",
+  kind: { kind: "boolean" },
+  read: (cfg) => mcpProfile(cfg)?.apps?.sandbox?.sameOriginAppIframe,
+};
+
 /**
  * How the client handles `notifications/tools/list_changed`. Two
  * independently-measured facts: whether it opens the server→client channel at
@@ -1179,6 +1192,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
   ...SANDBOX_PERMISSION_FIELDS,
   ...BROWSER_STORAGE_FIELDS,
+  SAME_ORIGIN_APP_IFRAME_FIELD,
 
   // ============================================================
   // Apps · Widget tool results

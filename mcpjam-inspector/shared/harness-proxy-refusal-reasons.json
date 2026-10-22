@@ -1,0 +1,34 @@
+{
+  "$comment": [
+    "Every reason the harness model proxy stamps on x-mcpjam-proxy-refusal, with",
+    "the status it answers its own refusals with. Mirrored by the Inspector",
+    "(shared/harness-proxy-refusal-reasons.json); pinned in convex/lib/mirrors.json.",
+    "retry: the x-should-retry the proxy sends. How the Inspector classifies a",
+    "refusal lives in the Inspector, not here."
+  ],
+  "status": 409,
+  "reasons": {
+    "spend_budget_reached": { "retry": false },
+    "spending_limit_reached": { "retry": false },
+    "spend_admission": { "retry": false },
+    "pricing_unavailable": { "retry": false },
+    "gateway_not_configured": { "retry": false },
+    "lease_budget_exhausted": { "retry": false },
+    "lease_max_calls": { "retry": false },
+    "lease_daily_harness_spend": { "retry": false },
+    "lease_daily_harness_calls": { "retry": false },
+    "no_billable_usage": { "retry": true },
+    "proxy_error": { "retry": true },
+    "org_keys_required": { "retry": false },
+    "ai_key_policy_unavailable": { "retry": false },
+    "byok_credential_rejected": { "retry": false },
+    "byok_credential_unavailable": { "retry": false },
+    "byok_connection_changed": { "retry": false },
+    "transport_request_too_large": { "retry": false },
+    "transport_response_too_large": { "retry": false },
+    "upstream_timeout": { "retry": false },
+    "upstream_interrupted": { "retry": false },
+    "upstream_unreachable": { "retry": true },
+    "upstream_redirect": { "retry": false }
+  }
+}

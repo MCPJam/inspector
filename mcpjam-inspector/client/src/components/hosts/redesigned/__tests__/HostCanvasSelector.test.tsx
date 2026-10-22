@@ -13,6 +13,7 @@ const mockDeleteHost = vi.fn().mockResolvedValue(undefined);
 const mockUseHostList = vi.fn();
 const mockNavigate = vi.fn();
 const mockSetPreviewedHostId = vi.fn();
+const mockInitStatus = vi.fn();
 
 vi.mock("react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-router")>()),
@@ -44,6 +45,10 @@ vi.mock("@/hooks/useClients", () => ({
 
 vi.mock("@/hooks/use-previewed-client-id", () => ({
   usePreviewedHostId: () => [null, mockSetPreviewedHostId],
+}));
+
+vi.mock("@/hooks/use-project-client-initialization", () => ({
+  useProjectClientInitStatus: (...args: unknown[]) => mockInitStatus(...args),
 }));
 
 vi.mock("@/lib/host-compat/use-host-catalog", () => ({
@@ -96,6 +101,19 @@ describe("HostCanvasSelector", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseHostList.mockReturnValue({ hosts: oneHost, isLoading: false });
+    mockInitStatus.mockReturnValue(null);
+  });
+
+  it("says an empty project's first client is on the way", () => {
+    mockUseHostList.mockReturnValue({ hosts: [], isLoading: false });
+    mockInitStatus.mockReturnValue({
+      state: { status: "pending" },
+      retry: vi.fn(),
+    });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId={null} />);
+
+    expect(mockInitStatus).toHaveBeenCalledWith("proj-1", "default");
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing a client");
   });
 
   it("shows the active client with its position chip and a labeled Add client button", () => {

@@ -182,6 +182,7 @@ async function renderHidden(extra: Record<string, unknown> = {}) {
     useChatSession({
       selectedServers: ["server-1"],
       hostedContext: hiddenContext,
+      selectionIntent: "inherit",
       ...extra,
     } as never),
   );
@@ -226,7 +227,7 @@ describe("useChatSession — hidden environment on this machine", () => {
 
   it("keeps a model keyed on this machine on the local route, without plugins", async () => {
     vi.mocked(isMCPJamProvidedModelMenuItem).mockReturnValue(false);
-    const { result } = await renderHidden();
+    const { result } = await renderHidden({ selectionIntent: "picked" });
     expect(result.current.hiddenEnvironmentActive).toBe(false);
     expect(result.current.hiddenEnvironmentOffReason).toBe("local_model");
     const { api, body } = lastTransport();
@@ -260,6 +261,52 @@ describe("useChatSession — hidden environment on this machine", () => {
     expect(lastTransport().body).not.toHaveProperty("executionTarget");
   });
 
+  it("keeps plugins composed for a client run here on the environment", async () => {
+    const { result } = await renderHidden({
+      hostedContext: {
+        ...hiddenContext,
+        hiddenEnvironment: {
+          ...hiddenContext.hiddenEnvironment,
+          venue: "local",
+        },
+      },
+      localHarnessExecution: {
+        requested: true,
+        resolveSendTarget: () => null,
+      },
+    });
+    expect(result.current.hiddenEnvironmentOffReason).toBeNull();
+    const { api, body } = lastTransport();
+    expect(api).toBe("/api/web/chat-v2");
+    expect(body).toMatchObject({
+      executionTarget: { kind: "environment", environmentId: "env_hidden" },
+    });
+  });
+
+  it("still runs a client here without plugins when a selected server is local-only", async () => {
+    mockState.appState = {
+      projects: {},
+      servers: {
+        "server-1": { config: { command: "node", args: ["server.js"] } },
+      },
+    };
+    const { result } = await renderHidden({
+      hostedContext: {
+        ...hiddenContext,
+        hiddenEnvironment: {
+          ...hiddenContext.hiddenEnvironment,
+          venue: "local",
+        },
+      },
+      localHarnessExecution: {
+        requested: true,
+        resolveSendTarget: () => null,
+      },
+    });
+    expect(result.current.hiddenEnvironmentOffReason).toBe("local_server");
+    expect(lastTransport().body).not.toHaveProperty("executionTarget");
+  });
+
   it("keeps a turn using this machine's shell local", async () => {
     const { result } = await renderHidden({
       personalComputerEngine: { engine: "local", consentToken: "consent" },
@@ -273,6 +320,7 @@ describe("useChatSession — hidden environment on this machine", () => {
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: { ...hiddenContext, hiddenEnvironment: undefined },
+        selectionIntent: "inherit",
       } as never),
     );
     await waitFor(() =>

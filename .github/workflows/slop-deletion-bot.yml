@@ -1,0 +1,218 @@
+name: Slop Deletion Bot
+
+# Each weekday night, Claude (claude-opus-5-5 on the Claude API) takes the
+# candidate list from scripts/slop/deletion-candidates.mjs, proves one
+# candidate is dead, and deletes it. scripts/slop/deletion-bot-check.mjs then
+# decides whether that change may become a PR: only whole-file deletions, or
+# only comment lines, at most 400 lines, and no ratchet rule going up.
+#
+# The bot never merges. Every PR waits for a person, and a PR closed without
+# merging keeps its paths out of every later run.
+on:
+  schedule:
+    # Weekdays 09:23 UTC, about 2am Pacific.
+    - cron: "23 9 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "dead-files or history-comments. Empty alternates by day."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slop-deletion-bot
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "24.14.0"
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  # Unreviewed bot PRs are a backlog, not progress. Stop opening at this many.
+  MAX_OPEN: "3"
+
+jobs:
+  delete:
+    name: Open one deletion PR
+    if: github.repository == 'MCPJam/inspector'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: read # list open and rejected bot PRs
+      id-token: write # claude-code-action auth
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Same cache as lint.yml's bare-runner job; see test.yml for why.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+      - name: Pick a lane and its candidates
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LANE_INPUT: ${{ inputs.lane }}
+        run: |
+          set -euo pipefail
+          open="$(gh pr list --label slop-bot --state open --json number --jq length)"
+          if [ "$open" -ge "$MAX_OPEN" ]; then
+            echo "$open slop-bot PRs are waiting for review; not opening another." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Paths in open bot PRs, and in bot PRs a reviewer closed unmerged.
+          # --limit is a cap, not a page size; set it far above any real count.
+          gh pr list --label slop-bot --state all --limit 10000 --json state,files \
+            --jq '.[] | select(.state != "MERGED") | .files[].path' \
+            | sort -u > "$RUNNER_TEMP/exclude.txt"
+          node scripts/slop/deletion-candidates.mjs --limit 10 \
+            --exclude "$RUNNER_TEMP/exclude.txt" > "$RUNNER_TEMP/candidates.json"
+
+          lane="$LANE_INPUT"
+          if [ -z "$lane" ]; then
+            if [ $(( 10#$(date -u +%j) % 2 )) -eq 0 ]; then lane=dead-files; else lane=history-comments; fi
+          fi
+          count() {
+            if [ "$1" = dead-files ]; then key=deadFiles; else key=historyComments; fi
+            jq ".$key | length" "$RUNNER_TEMP/candidates.json"
+          }
+          if [ "$(count "$lane")" -eq 0 ]; then
+            if [ "$lane" = dead-files ]; then lane=history-comments; else lane=dead-files; fi
+          fi
+          if [ "$(count "$lane")" -eq 0 ]; then
+            echo "No candidates in either lane." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "lane=$lane" >> "$GITHUB_OUTPUT"
+          echo "Lane: \`$lane\`, $(count "$lane") candidates." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete one candidate
+        if: steps.plan.outputs.skip != 'true'
+        uses: anthropics/claude-code-action@12dd8d74c712f5f3669365b2369b558c495b1104 # v1.0.238
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: >-
+            --model claude-opus-5-5
+            --max-turns 80
+            --add-dir ${{ runner.temp }}
+            --allowed-tools "Read,Grep,Glob,Edit,Write,Bash(git rm:*),Bash(git grep:*),Bash(git diff:*),Bash(git status:*),Bash(git restore:*),Bash(git log:*),Bash(npm run typecheck:*),Bash(npx vitest run:*)"
+          prompt: |
+            You are the nightly deletion bot for MCPJam/inspector. Your job is one small, safe change that removes slop, or no change at all. A person reviews every PR you cause, so a wrong deletion costs their time; when unsure, skip.
+
+            Lane: ${{ steps.plan.outputs.lane }}
+            Candidates: ${{ runner.temp }}/candidates.json (`deadFiles` and `historyComments`, already filtered to paths no open or rejected bot PR has touched).
+
+            ## Lane dead-files
+
+            Work through `deadFiles` in order and stop at the first one you can prove is unused. Try at most five.
+
+            1. Prove nothing uses it. `git grep` for the file's stem, its path without extension, and each name it exports. Look for dynamic `import(`, `import.meta.glob`, lazy routes, string-keyed registries, `package.json` `exports`, and Vite or Vitest config. A reference from anything other than the file's own `*.test.*` / `*.spec.*` / `*.stories.*` means skip it.
+            2. Delete it and its own tests with `git rm`. Never edit another file to make a deletion work.
+            3. Typecheck the package: `npm run typecheck:client -w @mcpjam/inspector` under `mcpjam-inspector/client`, `npm run typecheck:server -w @mcpjam/inspector` under `mcpjam-inspector/server` (if `mcpjam-inspector/package.json` has no `typecheck:server` script, skip server candidates), otherwise `npm run typecheck -w <workspace>`. If it fails, `git restore --staged --worktree` the paths and move on.
+            4. Skip any candidate whose `totalLines` is over 400.
+
+            ## Lane history-comments
+
+            Take the first file in `historyComments`. Edit comments only. For each comment that cites a PR number, issue or ticket ID, date, phase, or "used to": keep the reason the code is this way now and remove how it got here. If no durable reason is left, delete the comment. Never invent a reason you cannot read from the code. Do not touch code, string literals, or comments that are not history. Stay under 400 changed lines; stop partway through the file if needed.
+
+            ## Both lanes
+
+            - Do not commit, push, or open a PR. Do not edit any file except as described above.
+            - Do not edit anything under `scripts/slop/` or `.github/`. After you finish, the workflow checks the change with its own copy of `scripts/slop/deletion-bot-check.mjs`: only whole-file deletions in the dead-files lane, only comment changes in the history-comments lane, at most 400 lines, and no slop rule going up. A change that fails that check is discarded.
+            - If you made a change, write `${{ runner.temp }}/pr.md`. Line 1 is the PR title: imperative, under 70 characters, naming what went (for example "Delete unused PricingEstimator component"). Line 2 is blank. Then the body, following `.github/pull_request_template.md`:
+              - User story: as a maintainer of the package, I want this unused code (or history narration) removed, so that the next reader has less to read and nothing stale to trust.
+              - Acceptance criteria: ticked checkboxes for what you actually verified, each naming the command you ran (the greps that came back empty, the typecheck that passed).
+              - Deleted: each path with its line count. Reused: "Nothing applicable". Architecture: "None: no new component or flow". Screenshots and recordings: "None: no UI change". Production signal: "None: not user-facing".
+              - Plain prose, no em dashes.
+            - If you verified nothing, leave the tree clean and do not write `pr.md`.
+
+      - name: Check the change
+        id: check
+        if: steps.plan.outputs.skip != 'true'
+        env:
+          LANE: ${{ steps.plan.outputs.lane }}
+        # The gate must not be code Claude could have edited: refuse any change
+        # under scripts/slop, then run the scripts as committed at HEAD, which
+        # Claude cannot change (it has no git commit). The copy is made only
+        # now, because Claude could write anywhere under RUNNER_TEMP earlier.
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain --untracked-files=all -- scripts/slop .github)" ]; then
+            echo "scripts/slop or .github was modified; refusing." >&2
+            exit 1
+          fi
+          gate="$(cd "$(mktemp -d)" && pwd -P)"
+          git archive HEAD scripts/slop | tar -x -C "$gate"
+          node "$gate/scripts/slop/deletion-bot-check.mjs" --lane "$LANE" > "$RUNNER_TEMP/paths.txt"
+          echo "changed=$(wc -l < "$RUNNER_TEMP/paths.txt" | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      # Pushes made with GITHUB_TOKEN start no workflows, and a PR without its
+      # required checks can never merge. A GitHub App token does start them, and
+      # unlike a personal token it authors the PR as the bot, so any maintainer
+      # can approve it. It is minted only after the check passes, scoped to this
+      # repository, and revoked when the job ends.
+      - name: Get a bot token
+        id: app-token
+        if: steps.plan.outputs.skip != 'true' && steps.check.outputs.changed != '0'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MCPJAM_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.MCPJAM_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open the PR
+        if: steps.plan.outputs.skip != 'true' && steps.check.outputs.changed != '0'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          LANE: ${{ steps.plan.outputs.lane }}
+          REVIEWERS: ${{ vars.SLOP_BOT_REVIEWERS }}
+        run: |
+          set -euo pipefail
+          pr="$RUNNER_TEMP/pr.md"
+          if [ -s "$pr" ]; then
+            title="$(head -n 1 "$pr")"
+            tail -n +3 "$pr" > "$RUNNER_TEMP/body.md"
+          else
+            title="Remove slop: $LANE"
+            sed 's/^/- `/; s/$/`/' "$RUNNER_TEMP/paths.txt" > "$RUNNER_TEMP/body.md"
+          fi
+          printf '\n\nOpened by the nightly slop deletion bot (claude-opus-5-5), run %s.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n' \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$RUNNER_TEMP/body.md"
+
+          branch="bot/slop-$LANE-$GITHUB_RUN_ID"
+          bot_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add -A
+          git commit -q -m "$title"
+          gh auth setup-git
+          git push -q origin "$branch"
+          gh pr create --base main --head "$branch" --title "$title" \
+            --body-file "$RUNNER_TEMP/body.md" --label slop-bot \
+            ${REVIEWERS:+--reviewer "$REVIEWERS"} >> "$GITHUB_STEP_SUMMARY"

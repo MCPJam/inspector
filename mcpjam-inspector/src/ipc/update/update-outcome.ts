@@ -1,3 +1,7 @@
+import {
+  recordUpdateDiagnostic,
+  updateDiagnosticSnapshot,
+} from "./update-diagnostics.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -129,6 +133,9 @@ export async function reportPendingInstallResults(
       version: current ?? "unknown",
       at: Date.now(),
     };
+    recordUpdateDiagnostic(row.id, "launch_verification", {
+      result: row.observed.outcome,
+    });
   }
   // Freeze the FIRST launch result before network I/O; an offline launch must
   // not later be reported as a different version after another update.
@@ -142,10 +149,12 @@ export async function reportPendingInstallResults(
         update_reason: "install_outcome",
         update_attempt_id: row.id,
       };
+      const diagnostics = updateDiagnosticSnapshot(row.id);
       Sentry.withScope((scope) => {
         scope.addEventProcessor((event) => ({
           ...event,
           user: sentryUserId(event.user),
+          server_name: undefined,
           request: undefined,
           extra: undefined,
           breadcrumbs: [],
@@ -155,7 +164,10 @@ export async function reportPendingInstallResults(
               ? { actor_kind: event.tags.actor_kind }
               : {}),
           },
-          contexts: { update: event.contexts?.update },
+          contexts: {
+            update: event.contexts?.update,
+            update_diagnostics: diagnostics,
+          },
         }));
         Sentry.captureEvent({
           event_id: row.outcomeEventId,
@@ -169,6 +181,7 @@ export async function reportPendingInstallResults(
           fingerprint: ["desktop-update-install-outcome"],
           tags,
           contexts: {
+            update_diagnostics: diagnostics,
             update: {
               attempt_id: row.id,
               failure_event_id: row.failureEventId,

@@ -107,16 +107,44 @@ describe("getBillingErrorMessage", () => {
     ).toBe("Pick an element target.");
   });
 
+  it("keeps the request id a JSON-encoded message was wrapped in", () => {
+    // `tryParseJsonPayload` lifts a TRAILING JSON object out of a prefixed
+    // message, so the id and the payload arrive together and decoding drops
+    // the id with the wrapper. Without this, a JSON-encoded failure would be
+    // the one kind nobody can quote to support.
+    expect(
+      getBillingErrorMessage(
+        new Error('[Request ID: abc] {"message":"Pick an element target."}'),
+        "fallback",
+      ),
+    ).toBe("Pick an element target. (ref abc)");
+  });
+
+  it("gives a JSON-encoded ConvexError payload no reference", () => {
+    // Still a refusal the backend worded, so it reads as a sentence and
+    // nothing else, even though the masked message carries an id.
+    const error = new ConvexError(
+      JSON.stringify({ message: "Pick an element target." }) as never,
+    );
+    error.message = "[Request ID: abc] Uncaught ConvexError: ...";
+
+    expect(getBillingErrorMessage(error, "fallback")).toBe(
+      "Pick an element target.",
+    );
+  });
+
   it("surfaces the message of a raw string error", () => {
     expect(getBillingErrorMessage("Pick an element target.", "fallback")).toBe(
       "Pick an element target.",
     );
   });
 
-  it("strips the request-id prefix off a plain Error", () => {
+  it("strips the request-id prefix off a plain Error, keeping the reference", () => {
+    // The prefix is noise; the id inside it is the one thing support can look
+    // the failure up by, so it comes back as a reference rather than a prefix.
     expect(
       getBillingErrorMessage(new Error("[Request ID: abc] boom"), "fallback"),
-    ).toBe("boom");
+    ).toBe("boom (ref abc)");
   });
 
   it("falls back when the error carries nothing readable", () => {

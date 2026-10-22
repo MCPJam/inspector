@@ -4,6 +4,10 @@ description: "Run MCP health checks, conformance suites, and evals in GitHub Act
 icon: "circle-check"
 ---
 
+<Note>
+The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+</Note>
+
 Run `mcpjam` in CI to catch MCP server regressions on every push. The examples below cover GitHub Actions and GitLab CI, but the same commands work in any CI environment.
 
 ## GitHub Actions
@@ -705,3 +709,7 @@ steps:
 The comment carries the client/model table, the failed cases, and links into MCPJam. The checks summary carries the full report. Without `pull-requests: write` the action warns and leaves the eval verdict alone.
 
 Runs uploaded together — `runWithClient` given several clients — read as one report: one row per client and model in the same table, with a link to each client's run.
+
+## Eval authentication
+
+For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

@@ -159,8 +159,12 @@ jobs:
           dest="$RUNNER_TEMP/packs"
           mkdir -p "$dest"
           tarballs=""
+          pack_args=()
+          if [ "$SOURCE" = "artifact" ]; then
+            pack_args+=(--ignore-scripts)
+          fi
           for ws in @mcpjam/evaluators @mcpjam/sdk @mcpjam/inspector; do
-            file=$(npm pack --json --pack-destination "$dest" -w "$ws" | jq -r '.[0].filename')
+            file=$(npm pack --json "${pack_args[@]}" --pack-destination "$dest" -w "$ws" | jq -r '.[0].filename')
             case "$file" in /*) ;; *) file="$dest/$file" ;; esac
             tarballs="$tarballs $file"
           done

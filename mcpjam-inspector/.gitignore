@@ -52,6 +52,7 @@ pnpm-lock.yaml
 !scripts/local-harness-pack-recipes/claude-code-vendor/pnpm-lock.yaml
 
 # debug
+build-archive.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

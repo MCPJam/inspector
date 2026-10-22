@@ -597,6 +597,8 @@ describe("form previews in the composer card", () => {
           "execute",
         ]);
         // On the server that asked for the form; no arguments means {}.
+        // The App registers from an effect after it renders, so wait for it.
+        await waitFor(() => expect(services.register).toHaveBeenCalled());
         expect(services.register.mock.calls[0][2]).toMatchObject({
           serverId: "server-one",
           toolName: "part.preview",

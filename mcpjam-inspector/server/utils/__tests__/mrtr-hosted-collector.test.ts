@@ -48,6 +48,34 @@ function makeState(
 }
 
 describe("buildInputRequestDisplays", () => {
+  it("shows the schema the injected selector picks, and lets it refuse", () => {
+    const extended = { type: "object", properties: { n: { type: "string" } } };
+    const requests = {
+      form: {
+        method: "elicitation/create",
+        params: {
+          mode: "form",
+          message: "Pick",
+          requestedSchema: { type: "object", properties: {} },
+          _meta: { "openai/elicitation": { requestedSchema: extended } },
+        },
+      },
+    };
+    const pick = (params?: Record<string, unknown>) =>
+      (params?._meta as { "openai/elicitation": { requestedSchema: unknown } })[
+        "openai/elicitation"
+      ].requestedSchema;
+    expect(
+      buildInputRequestDisplays(requests, undefined, undefined, pick),
+    ).toEqual([
+      { key: "form", mode: "form", message: "Pick", requestedSchema: extended },
+    ]);
+    expect(() =>
+      buildInputRequestDisplays(requests, undefined, undefined, () => {
+        throw new Error("PLUGIN_FORM_SCHEMA_MISSING");
+      }),
+    ).toThrow("PLUGIN_FORM_SCHEMA_MISSING");
+  });
   it("scrubs to a safe display and drops non-elicitation methods", () => {
     const displays = buildInputRequestDisplays({
       q1: {

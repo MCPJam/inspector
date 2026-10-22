@@ -38,6 +38,7 @@ import {
 
 import { isAbortError } from "../../../shared/abort-errors.js";
 import { isAccountLimit } from "../../../shared/swarm-attempt-error.js";
+import { isAiConfigurationRefusalCode } from "../../../shared/ai-execution-refusal.js";
 import { classifyTurnFailure } from "../turn-failure-classification.js";
 import { abortableSleep, backoffDelayMs, type Jitter } from "./backoff.js";
 import {
@@ -223,7 +224,10 @@ export function retryAfterMsOf(
  *     the worst outcome in the set.
  *  2. Account limits before rate limits. An org spend cap and a provider
  *     throttle are both "429-shaped" and need opposite handling: waiting does
- *     not refill a wallet, so a spend cap is `terminal`.
+ *     not refill a wallet, so a spend cap is `terminal`. An organization
+ *     AI-key policy configuration refusal (`org_keys_required`, …) is
+ *     `terminal` at the same point, for the same reason: waiting changes no
+ *     configuration.
  *  3. Capacity before transient. A 503 satisfies the SDK's transient test, but
  *     capacity waits in minutes against a shared pool; treating it as an
  *     ordinary 5xx retries it far too fast and makes the queue worse.
@@ -254,6 +258,11 @@ export function classifyRetry(error: unknown): RetryClassification {
   const message = messageOf(error);
 
   if (isAccountLimit(message, code)) return { class: "terminal" };
+  // The organization's AI-key policy refused on its configuration (it
+  // requires its own keys, has no model for the role, its key was rejected):
+  // permanent until someone changes that configuration, whatever status it
+  // rode. Its two transient refusals fall through to the status rules.
+  if (isAiConfigurationRefusalCode(code)) return { class: "terminal" };
 
   const status = httpStatusOf(error);
   if (status === 503 && code !== undefined && CAPACITY_CODES.has(code)) {

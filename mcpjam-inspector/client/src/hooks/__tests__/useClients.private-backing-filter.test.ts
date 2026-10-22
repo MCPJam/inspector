@@ -3,7 +3,7 @@
  *
  * The default is the whole mechanism. An earlier version of this change
  * filtered at the five call sites that looked like pickers, which did nothing:
- * `HostPicker`, `MultiHostPicker` and `ClientAttachmentsEditor` each call this
+ * `HostPicker` and `ClientAttachmentsEditor` each call this
  * hook themselves, so the visible dropdowns still offered backing clients while
  * the surrounding code believed they were hidden. Filtering at the source is
  * what makes the rule reach every picker, including ones not written yet — so

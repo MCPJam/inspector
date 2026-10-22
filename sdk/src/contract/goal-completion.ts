@@ -301,6 +301,49 @@ export function buildGoalJudgeRequest(
   };
 }
 
+/**
+ * The fewest UTF-8 bytes one text token of a judge request spans.
+ *
+ * The request is the recorded evidence as JSON: escaped strings, short keys,
+ * tool-call ids, widget HTML, source and prose. Measured through
+ * `buildGoalJudgeRequest` on o200k and Claude tokenizers, those shapes span
+ * 2.5 to 3.8 bytes per token and English prose over 4, so 2 keeps a margin
+ * under every text shape the evidence records. Raw base64 is the one shape
+ * below it (about 1.5), and inline media stays in the recorded trace text even
+ * after it is copied into an artifact, so `estimateGoalJudgeTextTokens` counts
+ * base64 runs one token per byte instead.
+ *
+ * One token per byte over-counts this content three to four times and refuses
+ * a session the judge can read. A real tokenizer is not an option here: this
+ * file runs in the browser and in the V8 runtime, where an encoding table
+ * does not fit in memory.
+ */
+export const GOAL_JUDGE_MIN_BYTES_PER_TEXT_TOKEN = 2;
+
+/**
+ * A run this long of the base64 alphabet is media, not text: hashes and ids
+ * are far shorter, and JSON, code and prose break runs with spaces and
+ * punctuation.
+ */
+const GOAL_JUDGE_BASE64_RUN = /[A-Za-z0-9+/]{256,}={0,2}/g;
+
+/**
+ * Conservative text-token estimate for one request: base64 runs one token per
+ * byte, the rest of the UTF-8 length at the text floor, plus framing.
+ */
+export function estimateGoalJudgeTextTokens(text: string): number {
+  let base64Bytes = 0;
+  for (const run of text.matchAll(GOAL_JUDGE_BASE64_RUN)) {
+    base64Bytes += run[0].length;
+  }
+  const textBytes = new TextEncoder().encode(text).length - base64Bytes;
+  return (
+    base64Bytes +
+    Math.ceil(textBytes / GOAL_JUDGE_MIN_BYTES_PER_TEXT_TOKEN) +
+    64
+  );
+}
+
 export function assertGoalJudgeRequestFits(
   request: ReturnType<typeof buildGoalJudgeRequest>,
   limits: JudgeModelLimits
@@ -332,9 +375,9 @@ export function assertGoalJudgeRequestFits(
       "Artifact token accounting is unavailable."
     );
   }
-  // UTF-8 bytes bound text tokens conservatively; no optimistic chars/4 guess.
-  const textTokenBound =
-    new TextEncoder().encode(request.system + request.prompt).length + 64;
+  const textTokenBound = estimateGoalJudgeTextTokens(
+    request.system + request.prompt
+  );
   if (
     textTokenBound + (limits.artifactInputTokens ?? 0) + limits.outputTokens >
       limits.contextWindowTokens ||

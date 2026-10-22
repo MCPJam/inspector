@@ -17,6 +17,7 @@ export const SCOPE_STEP_UP_SUSPEND_CODE =
   "MCPJAM_SCOPE_STEP_UP_SUSPEND" as const;
 
 export type StepUpOperationMethod =
+  | "tools/list"
   | "tools/call"
   | "resources/read"
   | "prompts/get";

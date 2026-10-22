@@ -15,7 +15,16 @@ export type OwnedChatActionOptions<Payload> = {
     payload: Payload,
     isCurrent: () => boolean,
   ) => Promise<Payload | null>;
+  /** How long a `prepareNew` result stays usable; no new chat starts after. */
+  preparedForMs?: number;
   lock?: { current: boolean };
+  /** Readiness for a draft, which only edits the composer: ownership,
+   * read-only and transition state, never whether a send could run. */
+  draftBlocked?: boolean;
+  /** A draft in a new chat also waits for any running turn to finish. */
+  newDraftBlocked?: boolean;
+  /** Places the payload in the composer. Nothing executes. */
+  draft?: (payload: Payload, isCurrent: () => boolean) => Promise<boolean>;
   newChat?: {
     ownerScope: string;
     threadId: string;
@@ -43,14 +52,21 @@ export function useOwnedChatAction<Payload>(
       payload: Payload,
       target: "active" | "new",
       requireLive: () => boolean = () => true,
+      mode: "send" | "draft" = "send",
     ): Promise<boolean> => {
       const start = current.current;
+      const blocked = (options: OwnedChatActionOptions<Payload>) =>
+        mode === "draft"
+          ? !options.draft ||
+            options.draftBlocked === true ||
+            (target === "new" && options.newDraftBlocked === true)
+          : (options.liveBlocked ?? options.disabled);
       if (
         !mounted.current ||
         inFlight.current ||
         start.lock?.current ||
-        start.disabled ||
-        start.liveBlocked === true ||
+        (mode === "send" && start.disabled) ||
+        blocked(start) ||
         !requireLive() ||
         !start.accepts(payload) ||
         (target === "new" && !start.newChat)
@@ -61,24 +77,35 @@ export function useOwnedChatAction<Payload>(
       setPending(true);
       let expectedScope = start.scope;
       let transferred = false;
+      let usableUntil = Infinity;
       const stillOwned = () =>
         mounted.current &&
         (transferred || requireLive()) &&
         current.current.scope === expectedScope &&
-        !(current.current.liveBlocked ?? current.current.disabled) &&
+        !blocked(current.current) &&
         current.current.accepts(payload);
       try {
-        for (const gate of start.gates) {
+        // Gates prepare execution; a draft executes nothing.
+        for (const gate of mode === "send" ? start.gates : []) {
           if (!stillOwned() || !(await gate()) || !stillOwned()) return false;
         }
         if (target === "new") {
-          if (start.prepareNew) {
+          if (mode === "draft") {
+            // The payload was fully checked before dispatch and needs no
+            // server receipt; holding it here lets it outlive the source
+            // App, which the new-chat reset disposes.
+            if (!stillOwned()) return false;
+            transferred = true;
+          } else if (start.prepareNew) {
             const prepared = await start.prepareNew(payload, stillOwned);
             if (!prepared || !stillOwned()) return false;
             payload = prepared;
             transferred = true;
+            usableUntil = Date.now() + (start.preparedForMs ?? Infinity);
           }
-          const created = await start.newChat!.begin(stillOwned);
+          const created = await start.newChat!.begin(
+            () => stillOwned() && Date.now() < usableUntil,
+          );
           const live = current.current;
           if (
             !mounted.current ||
@@ -87,12 +114,14 @@ export function useOwnedChatAction<Payload>(
             created === start.newChat!.threadId ||
             live.newChat?.ownerScope !== start.newChat!.ownerScope ||
             live.newChat?.threadId !== created ||
-            (live.liveBlocked ?? live.disabled)
+            blocked(live)
           )
             return false;
           expectedScope = live.scope;
         }
         if (!stillOwned()) return false;
+        if (mode === "draft")
+          return await current.current.draft!(payload, stillOwned);
         const sent = await current.current.send(payload, stillOwned);
         if (sent && stillOwned()) current.current.onSent?.();
         return sent;

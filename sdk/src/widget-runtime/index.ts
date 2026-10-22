@@ -63,5 +63,7 @@ export { mcpAppToolResultSchema } from "./tool-result-schema.js";
 export {
   readResourceDisplayHints,
   negotiateResourceDisplayModes,
+  openAIDisplayModes,
+  pickOpenAIDisplayMode,
 } from "./resource-display.js";
 export type { ResourceDisplayHints } from "./resource-display.js";

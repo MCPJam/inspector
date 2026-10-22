@@ -1,4 +1,5 @@
 import {
+  buildProjectPath,
   isProjectIdShape,
   readProjectPathSegment,
   replaceProjectInPath,
@@ -7,6 +8,7 @@ import {
 export interface ProjectSignInReturnRecoveryIntent {
   path: string;
   requestedProjectId: string;
+  fallback?: "preserve" | "home" | "none";
 }
 
 export type ProjectSignInReturnRecoveryDecision =
@@ -40,18 +42,27 @@ export function resolveProjectSignInReturnRecovery(args: {
   if (!isProjectIdShape(intent.requestedProjectId)) {
     return { kind: "open", path: intent.path };
   }
+  if (intent.fallback === "none") return { kind: "open", path: intent.path };
   if (membershipProjectIds === undefined) return { kind: "wait" };
   if (membershipProjectIds.has(intent.requestedProjectId)) {
     return { kind: "open", path: intent.path };
   }
+  const selectedProjectId =
+    intent.fallback === "home" &&
+    (!fallbackProjectId || !membershipProjectIds.has(fallbackProjectId))
+      ? ([...membershipProjectIds].find(isProjectIdShape) ?? null)
+      : fallbackProjectId;
   if (
-    fallbackProjectId &&
-    isProjectIdShape(fallbackProjectId) &&
-    membershipProjectIds.has(fallbackProjectId)
+    selectedProjectId &&
+    isProjectIdShape(selectedProjectId) &&
+    membershipProjectIds.has(selectedProjectId)
   ) {
     return {
       kind: "switch",
-      path: replaceProjectInPath(intent.path, fallbackProjectId),
+      path:
+        intent.fallback === "home"
+          ? buildProjectPath(selectedProjectId, "/home")
+          : replaceProjectInPath(intent.path, selectedProjectId),
     };
   }
   return { kind: "home" };

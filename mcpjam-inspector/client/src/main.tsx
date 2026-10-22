@@ -1,14 +1,29 @@
-// Must stay the first import; OAuth modules retain window.fetch at load time.
-import "./lib/install-failed-request-tracker";
+// Must stay first; OAuth modules and SDKs retain window.fetch at load time.
+import "./lib/install-telemetry-transport";
+import { capturePromoIntent, watchPromoIntent } from "./lib/promo-intent";
 import {
   consumeAccessLinkFromUrl,
   watchForAccessLinks,
 } from "./lib/access-link";
+import { captureOAuthCallbackFromUrl } from "./lib/oauth-callback-inbox";
 import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { appRoot } from "./app-root";
 import LoadingScreen from "./components/LoadingScreen";
 import { Button } from "@mcpjam/design-system/button";
+// Bundled rather than fetched from Google Fonts, which would send every
+// visitor's IP address to Google before any consent.
+import "@fontsource/caveat/400.css";
+import "@fontsource/caveat/500.css";
+import "@fontsource/caveat/600.css";
+import "@fontsource/caveat/700.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
+import "@fontsource/ibm-plex-mono/700.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
+import "@fontsource/jetbrains-mono/600.css";
 import "./index.css";
 import { buildElectronMcpCallbackUrl } from "./lib/electron-mcp-callback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
@@ -71,8 +86,18 @@ function FirstRunOAuthReturnBootScreen({ serverName }: { serverName: string }) {
 }
 
 consumeAccessLinkFromUrl();
+capturePromoIntent();
+watchPromoIntent();
 watchForAccessLinks();
+// After the access link, whose `#token=` it would otherwise drop wholesale
+// along with any other fragment it cannot vouch for; before anything that
+// reads the callback (the desktop hand-off just below) and before
+// `app-bootstrap` starts Sentry and PostHog, so the one-time code never
+// reaches either. See `oauth-callback-inbox.ts`.
+captureOAuthCallbackFromUrl();
 
+// Reads the answer from the inbox, so the browser tab's URL is already
+// scrubbed whether or not this load hands off to the desktop app.
 const electronMcpReturnUrl = buildElectronMcpCallbackUrl();
 if (electronMcpReturnUrl) {
   // The browser owns no app session here. Do not initialize auth, Convex,

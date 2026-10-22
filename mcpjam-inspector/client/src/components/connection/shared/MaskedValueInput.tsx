@@ -76,7 +76,7 @@ export function MaskedValueInput({
         aria-label={inputLabel}
         className={cn(
           "h-8 w-full pr-8 font-mono text-xs",
-          hidden && "select-none tracking-[0.2em] text-muted-foreground"
+          hidden && "select-none tracking-[0.2em] text-muted-foreground",
         )}
       />
       <button

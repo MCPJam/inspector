@@ -27,6 +27,12 @@ export interface PluginFileEntry {
    * the parser can reject them; omitted means `file`.
    */
   kind?: "file" | "directory" | "symlink" | "hardlink";
+  /**
+   * POSIX permission bits, when the source has them (a ZIP made on a POSIX
+   * system, a directory on disk). Only the executable bits are read; a browser
+   * folder selection has none, so its files are never executable.
+   */
+  mode?: number;
 }
 
 /**
@@ -105,16 +111,54 @@ export type PluginSetupRequirement =
       serverKey: string;
       name: string;
       secret: boolean;
+      /** An API key's header: how the credential the user supplies is sent. */
+      scheme?: "bearer" | "basic" | "custom_header";
     }
   | {
       kind: "oauth";
       componentKey: string;
       serverKey: string;
       timing?: "on_install" | "on_use";
+      /**
+       * From OpenAI's declared auth: `true` for `oauth`, `false` for `mixed`,
+       * which also serves public access. Absent for MCPJam's own hints.
+       */
+      required?: boolean;
     };
+
+/** `strict` is Agent Plugins 1.0; `openai-compatible` adds `layout.ts`'s rules. */
+export type PluginParserProfile = "strict" | "openai-compatible";
+
+/** Where the manifest came from. Only `agent-plugins` exists under `strict`. */
+export type PluginBundleLayout =
+  | "agent-plugins"
+  | "codex"
+  | "agent-legacy"
+  | "claude";
+
+/**
+ * Parser revision per profile. Bumped whenever the same bytes can normalize
+ * differently, so a stored version records which rules produced it.
+ */
+export const PLUGIN_PARSER_REVISIONS: Readonly<
+  Record<PluginParserProfile, number>
+> = Object.freeze({ strict: 2, "openai-compatible": 1 });
+
+/** How a bundle was read: the same files under another profile read differently. */
+export interface PluginBundleInterpretation {
+  profile: PluginParserProfile;
+  /** `PLUGIN_PARSER_REVISIONS[profile]` at parse time. */
+  revision: number;
+  layout: PluginBundleLayout;
+  /** Bundle path the manifest was read from. */
+  manifestPath: string;
+  /** Set when `.codex-plugin/plugin.json` supplied OpenAI data to a root manifest. */
+  overlayPath?: string;
+}
 
 export interface ParsedPluginBundle {
   manifest: NormalizedPluginManifest;
+  interpretation: PluginBundleInterpretation;
   /**
    * Agent Plugins version both documents target (resolved locally from
    * `$schema`). Mirrors `manifest.schemaVersion` for consumers that never
@@ -123,7 +167,18 @@ export interface ParsedPluginBundle {
   schemaVersion: string;
   /** Deterministic content hash over every file (canonical path + bytes). */
   bundleHash: string;
-  /** SHA-256 hex of the raw `plugin.json` bytes. */
+  /** Canonical paths of files carrying an executable bit, sorted. */
+  executableFiles: string[];
+  /**
+   * Identity of what a runtime materializes and runs: the bundle hash, the
+   * executable files, and the interpretation's profile and revision. Two
+   * parses that agree on all of these may share a version and a cache entry;
+   * ZIP timestamps and compression take no part. A source that can't see
+   * modes, such as a browser folder selection, lists no executable files, so
+   * its digest matches only another such source's.
+   */
+  executionDigest: string;
+  /** SHA-256 hex of the raw bytes of the manifest file (`interpretation.manifestPath`). */
   manifestHash: string;
   skills: ParsedPluginSkill[];
   mcpServers: ParsedPluginServer[];
@@ -144,4 +199,6 @@ export interface ParsedPluginBundle {
 export interface ParsePluginBundleOptions {
   /** Override individual archive/component limits (tests, paid plans). */
   limits?: Partial<PluginBundleLimits>;
+  /** Defaults to `strict`. */
+  profile?: PluginParserProfile;
 }

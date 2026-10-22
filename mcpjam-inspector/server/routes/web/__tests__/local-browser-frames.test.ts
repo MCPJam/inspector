@@ -228,7 +228,10 @@ describe("the agent browser's frame socket", () => {
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
 
     const received = new Promise<Record<string, unknown>>((resolve) => {
-      ws.on("message", (data) => resolve(JSON.parse(String(data))));
+      ws.on("message", (data) => {
+        const message = JSON.parse(String(data));
+        if (message.type === "frame") resolve(message);
+      });
     });
     sessionState.subscriptions[0]?.listener({ seq: 1, data: "Zm9v" });
 
@@ -248,7 +251,10 @@ describe("the agent browser's frame socket", () => {
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
 
     const received = new Promise<Record<string, never>>((resolve) => {
-      ws.on("message", (data) => resolve(JSON.parse(String(data))));
+      ws.on("message", (data) => {
+        const message = JSON.parse(String(data));
+        if (message.type === "frame") resolve(message);
+      });
     });
     sessionState.subscriptions[0]?.listener({ seq: 1, data: "Zm9v", ts: 1 });
 

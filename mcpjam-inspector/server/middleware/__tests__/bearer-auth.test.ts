@@ -234,8 +234,9 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     resolveUserByExternalIdMock.mockResolvedValueOnce({
       _id: "mcpjam_user_log",
     });
+    const orgId = "orglog".padEnd(32, "0");
     lookupWorkosKeyBindingMock.mockResolvedValueOnce({
-      mcpjamOrganizationId: "org_log",
+      mcpjamOrganizationId: orgId,
     });
 
     const app = new Hono();
@@ -269,7 +270,7 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { orgId: unknown }).orgId).toBe("org_log");
+    expect(((await res.json()) as { orgId: unknown }).orgId).toBe(orgId);
   });
 
   it("returns 401 UNAUTHORIZED with details.reason ORPHANED_KEY when the key has no org binding", async () => {

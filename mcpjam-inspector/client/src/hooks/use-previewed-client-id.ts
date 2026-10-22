@@ -7,9 +7,10 @@ import {
 
 /**
  * React subscription to the "previewed host" for a project. Multiple
- * surfaces (Connect's `HostCanvasSelector`, Playground's `PlaygroundHeader`,
- * future tabs) call this — when any one calls the setter, the others
- * update through the same-tab `previewed-host-changed` event.
+ * surfaces (Connect's `HostCanvasSelector`, the Playground via
+ * `PlaygroundMain`, future tabs) call this — when any one calls the
+ * setter, the others update through the same-tab `previewed-host-changed`
+ * event.
  *
  * The returned id is SCOPED to the `projectId` it was read for, the same way
  * {@link import("./use-previewed-environment-id").usePreviewedEnvironmentId}

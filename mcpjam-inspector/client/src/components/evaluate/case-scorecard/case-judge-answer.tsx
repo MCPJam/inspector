@@ -1,11 +1,12 @@
 /** The selected trial’s judge answer and explicit retry control. */
 
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
 import type { EvalSuiteRun } from "@/components/evals/types";
+import { resolveIterationJudge } from "@/components/evals/goal-completion-presentation";
 import {
-  resolveIterationJudge,
-  JudgeVerdictPanel,
-} from "@/components/evals/goal-completion-presentation";
+  ModelDisplayNamesContext,
+  modelDisplayName,
+} from "@/lib/model-display-name";
 import { useGoalCompletion } from "@/components/evals/use-goal-completion";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 import { JudgeAnswerRow, judgeAnswerState } from "./judge-answer-row";
@@ -44,6 +45,7 @@ export function CaseJudgeAnswer({
   children?: ReactNode;
 }) {
   const { requestGoalCompletion, canRequest } = useGoalCompletion(run);
+  const models = useContext(ModelDisplayNamesContext);
 
   const judgeConfig = run?.configSnapshot?.judgeConfig?.goalCompletion;
   const enabled = judgeConfig?.enabled !== false;
@@ -68,18 +70,18 @@ export function CaseJudgeAnswer({
     gating,
   });
 
+  const modelUsed = run?.goalCompletion?.modelUsed;
   return (
     <JudgeAnswerRow
+      inline
       state={state}
+      {...(modelUsed ? { model: modelDisplayName(modelUsed, models) } : {})}
       onRetry={
         canRequest ? () => requestGoalCompletion(undefined, true) : undefined
       }
       onOpenSuiteSettings={onOpenSuiteSettings}
     >
-      {children ??
-        (judgeCase && !hidden ? (
-          <JudgeVerdictPanel judgeCase={judgeCase} />
-        ) : null)}
+      {children}
     </JudgeAnswerRow>
   );
 }

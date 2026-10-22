@@ -387,6 +387,49 @@ describe("supportsMrtr: false — a client that never implemented MRTR", () => {
     expect(caps.elicitation).toBeUndefined();
   });
 
+  describe.each([
+    ["an exact set", "clientCapabilities"],
+    ["a merged set", "capabilities"],
+  ] as const)("a collector's extension claims in %s", (_, field) => {
+    const extensions = {
+      "fixture/elicitation": { form: {} },
+      "fixture/other": {},
+    };
+    const connect = (supportsMrtr?: false) => {
+      manager.setMrtrInputCollector("fixture", acceptAllCollector(), {
+        extensionClaims: ["fixture/elicitation"],
+      });
+      return manager.connectToServer("fixture", {
+        url: served.url,
+        mcpProtocolVersion: "2026-07-28",
+        supportsMrtr,
+        [field]: { extensions },
+        timeout: 10_000,
+      });
+    };
+    // A merged set also carries the default MCP Apps claim; only the
+    // fixture keys are under test.
+    const advertised = () => {
+      const caps = (manager.getInitializationInfo("fixture")
+        ?.clientCapabilities ?? {}) as {
+        extensions?: Record<string, unknown>;
+      };
+      return Object.keys(caps.extensions ?? {}).filter((key) =>
+        key.startsWith("fixture/")
+      );
+    };
+
+    it("are withheld: only a collector that drives rounds answers them", async () => {
+      await connect(false);
+      expect(advertised()).toEqual(["fixture/other"]);
+    });
+
+    it("are kept when the knob is absent (control)", async () => {
+      await connect();
+      expect(advertised()).toEqual(Object.keys(extensions));
+    });
+  });
+
   it("suppresses a PINNED exact clientCapabilities set's elicitation", async () => {
     // An exact set is advertised verbatim MINUS the fulfiller gate, so the
     // knob reaches it too — otherwise pinning would be a way to advertise a

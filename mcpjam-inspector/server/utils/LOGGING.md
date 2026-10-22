@@ -24,7 +24,6 @@ import { classifyError } from "../../utils/error-classify.js";
 // inside a Hono handler that has `c: Context`
 getRequestLogger(c, "routes.web.tools").event("mcp.tool.execution.failed", {
   toolName: body.toolName,
-  serverId: body.serverId,
   errorCode: classifyError(error),
 });
 ```
@@ -33,6 +32,15 @@ The request context (`projectId`, `orgId`, `projectRole`, etc.) is automatically
 picked up from `c.var.requestLogContext`, which is populated by:
 1. `requestLogContextMiddleware` at request start (sets `requestId`, `route`, `method`)
 2. `authorizeServer` / `createAuthorizedManager` after Convex auth succeeds (sets project + user fields)
+3. the API-key, Slack and Discord credential checks in `server/middleware/` (set `orgId`)
+
+`orgId`, `projectId` and `serverId` are `LogConvexId`s. Rows copy them from
+this context alone, never from an event payload or a `logger.warn/info/error`
+context, so `serverId: body.serverId` in a payload logs nothing. Brand one with
+`logConvexId()` from `log-convex-id.ts` only when a Convex authorization
+response or a verified credential's stored binding produced it; a value from a
+request body, path or header is not one, whatever its shape. Other IDs,
+`sessionId` among them, are not logged.
 
 ---
 
@@ -52,6 +60,7 @@ picked up from `c.var.requestLogContext`, which is populated by:
 | `chat.secrets.undelivered` | `routes/web/chat-v2.ts` | `secretCount`, `isScenarioSession` |
 | `chat.builtin_tools.withheld` | `routes/web/chat-v2.ts` | `toolIds`, `unknownCount`, `reasons`, `targetKind` |
 | `chat.harness_model_unverified` | `routes/web/chat-v2.ts`, `routes/mcp/chat-v2.ts` | `harness`, `modelId`, `reason` |
+| `agent.loop_guard.tripped` | `utils/agent-loop-guard.ts` (from `routes/web/mcpjam-agent.ts`, `routes/web/chat-v2.ts`) | `surface`, `reason`, `steps`, `maxSteps`, `toolName?` |
 | `widget.resource.served` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri`, `cspMode`, `mimeTypeValid?` |
 | `widget.resource.failed` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri?`, `errorCode` |
 | `plugin.instance.request.timing` | `routes/web/plugin-instances.ts` | `action`, `statusCode`, `totalMs`, `spans` (per-step `count`/`totalMs`/`maxMs`) |
@@ -79,12 +88,23 @@ All events live in `server/utils/log-events.ts`. Add new events there before emi
 
 ## Scrubbing
 
-All payloads are scrubbed by `scrubLogPayload` before reaching Axiom. Forbidden key substrings
-(token, secret, email, authorization, cookie, apikey, stripe\*, pkce\*) are replaced with `"[redacted]"`.
-String values are scanned for Bearer tokens, JWTs, email addresses, and `sk-` keys.
+Every row — `logger.event`, `logger.info/warn/error/debug` — and the context `logger.error`
+attaches to Sentry goes through `scrubLogPayload` (`shared/log-scrubber.ts`). The Sentry SDK's own
+attachments (request body, headers, breadcrumbs, exception text) go through the same module via
+`beforeSend` / `beforeBreadcrumb` (`shared/sentry-config.ts`).
 
-Never put raw error messages containing user input directly into event payloads without first
-verifying they don't carry secrets.
+- **Credentials.** Forbidden key substrings (token, secret, email, authorization, cookie, apikey,
+  stripe\*, pkce\*) are replaced with `"[redacted]"` — unless the value is just a URL
+  (`tokenEndpoint`), which keeps its origin. String values lose Bearer tokens, JWTs, email
+  addresses, `sk-` keys and `key=value` secrets.
+- **Customer content.** A key whose last word names a prompt, message, content, input/output,
+  args/params, result, body, payload, headers, text, snapshot or title — or a typed label such as
+  `serverName` — keeps its shape (`{city: string(6), nights: number}`) and loses its values.
+- **Free text.** Every web URL is cut to its origin (`https://mcp.acme.com/…`). Strings are capped
+  at 1000 characters; error text (`error`, `message`, `cause`, `stderr`, `*Error`…) at 500.
+
+Ids, codes, statuses, counts, model ids and tool names pass through. If a field you need is being
+shaped, rename it to say what it is (`client`, not `body`) rather than widening the scrubber.
 
 ---
 

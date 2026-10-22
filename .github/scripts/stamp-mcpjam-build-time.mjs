@@ -11,6 +11,7 @@
  *   - release.yml          → the `@mcpjam/inspector` tarball behind `npx`
  *   - mac-release.yml      → the macOS desktop app
  *   - windows-release.yml  → the Windows desktop app
+ *   - docker-release.yml   → the mcpjam/mcp-inspector image on Docker Hub
  *
  * Writing a tracked input also invalidates Docker's client-build layer when the
  * same SHA is deliberately redeployed.

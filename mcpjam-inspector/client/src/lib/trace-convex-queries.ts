@@ -1,7 +1,13 @@
+import {
+  guestTabRecovery,
+  recoverRevokedGuest,
+} from "./auth/guest-tab-recovery";
+import { authRefusalDiagnostics } from "./auth/auth-refusal-diagnostics";
 import type { ConvexReactClient } from "convex/react";
 import { getFunctionName } from "convex/server";
 import { ConvexError } from "convex/values";
 import { reportCaught } from "./error-reporting";
+import { isEnvironmentErrorPayload } from "./environment-error";
 import {
   isAuthorizationRefusal,
   isSessionRevokedError,
@@ -28,6 +34,18 @@ function isParentDeletedRefusal(error: unknown): boolean {
   );
 }
 
+/** Environment preflight renders these refusals; they are not query faults. */
+function isEnvironmentRefusal(error: unknown): boolean {
+  if (!(error instanceof ConvexError)) return false;
+  const data: unknown = error.data;
+  return (
+    isEnvironmentErrorPayload(data) &&
+    data.message.length > 0 &&
+    typeof data.code === "string" &&
+    data.code.startsWith("ENV_")
+  );
+}
+
 /** Observe only existing watches and cached results, never issue another query. */
 export function traceConvexQueries(
   client: ConvexReactClient,
@@ -43,22 +61,33 @@ export function traceConvexQueries(
   }
   const watchQuery = client.watchQuery.bind(client);
   client.watchQuery = (query, ...args) => {
+    let observedGuest = guestTabRecovery.getGuest();
     const watch = watchQuery(query, ...args);
     let lastReportedMessage: string | undefined;
     const report = (error: unknown) => {
       try {
+        const revoked = isSessionRevokedError(error);
+        if (revoked || isUnauthenticatedError(error)) {
+          try {
+            authRefusalDiagnostics.record(
+              revoked ? "session_revoked" : "unauthenticated",
+              error instanceof Error ? error.message : "",
+              getFunctionName(query),
+              queryBackend,
+            );
+          } catch {
+            /* Recovery must continue even if diagnostics fail. */
+          }
+          if (revoked && !recoverRevokedGuest(observedGuest))
+            notifySessionRevoked();
+          return;
+        }
         if (
           isAuthorizationRefusal(error) ||
           isParentDeletedRefusal(error) ||
-          isUnauthenticatedError(error)
+          isEnvironmentRefusal(error)
         )
           return;
-        // Signed out elsewhere: not a fault, and this tab should follow.
-        // `notifySessionRevoked` acts once per page load.
-        if (isSessionRevokedError(error)) {
-          notifySessionRevoked();
-          return;
-        }
         const original =
           error instanceof Error
             ? error
@@ -82,6 +111,7 @@ export function traceConvexQueries(
     const inspect = () => {
       try {
         watch.localQueryResult();
+        observedGuest = guestTabRecovery.getGuest();
         lastReportedMessage = undefined;
       } catch (error) {
         report(error);
@@ -92,6 +122,7 @@ export function traceConvexQueries(
       localQueryResult: () => {
         try {
           const result = watch.localQueryResult();
+          observedGuest = guestTabRecovery.getGuest();
           lastReportedMessage = undefined;
           return result;
         } catch (error) {

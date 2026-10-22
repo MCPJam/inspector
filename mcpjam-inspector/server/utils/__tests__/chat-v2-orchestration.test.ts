@@ -2102,3 +2102,57 @@ describe("prepareChatV2 tool-listing budget", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+describe("prepareChatV2 isolated plugin servers", () => {
+  const down = new TypeError("fetch failed");
+
+  /** `chosen` and `plugin` each list one tool; `failing` refuse to. */
+  function managerWith(failing: string[]) {
+    const manager = mockManager({});
+    const list = async (keys: string[]) => {
+      const dead = keys.find((key) => failing.includes(key));
+      if (dead) throw down;
+      return Object.fromEntries(
+        keys.map((key) => [
+          key,
+          { [`${key}_tool`]: { description: key, _serverId: key } },
+        ]),
+      );
+    };
+    manager.getToolsForAiSdkByServer = vi.fn(list);
+    manager.getToolsForAiSdk = vi.fn(async (keys: string[]) =>
+      Object.assign({}, ...Object.values(await list(keys))),
+    );
+    return manager;
+  }
+
+  const turn = (failing: string[], isolatedServers?: string[]) =>
+    prepareChatV2({
+      mcpClientManager: managerWith(failing),
+      selectedServers: ["chosen", "plugin"],
+      ...(isolatedServers ? { isolatedServers } : {}),
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+    });
+
+  it("runs the turn without a plugin server that cannot list its tools", async () => {
+    const result = await turn(["plugin"], ["plugin"]);
+    expect(Object.keys(result.allTools)).toContain("chosen_tool");
+    expect(Object.keys(result.allTools)).not.toContain("plugin_tool");
+    expect([...(result.unavailableServers ?? new Map())]).toEqual([
+      ["plugin", down],
+    ]);
+  });
+
+  it("still fails the turn for a server it does not isolate", async () => {
+    await expect(turn(["plugin"])).rejects.toThrow("fetch failed");
+    await expect(turn(["chosen"], ["plugin"])).rejects.toThrow("fetch failed");
+  });
+
+  it("reports nothing when every isolated server listed", async () => {
+    const result = await turn([], ["plugin"]);
+    expect(Object.keys(result.allTools)).toEqual(
+      expect.arrayContaining(["chosen_tool", "plugin_tool"]),
+    );
+    expect(result.unavailableServers?.size).toBe(0);
+  });
+});

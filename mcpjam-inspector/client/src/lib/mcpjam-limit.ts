@@ -1,5 +1,9 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { isCreditExhaustion, isHoldRefusal } from "@/shared/credit-exhaustion";
+import {
+  AGENT_STEP_LIMIT_CODE,
+  STEP_LIMIT_REFUSAL_MESSAGE,
+} from "@/shared/turn-step-budget";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
@@ -63,6 +67,8 @@ type MCPJamLimitErrorInput = {
   /** Which screen hit the wall; see `MCPJamLimitSurface`. Only affects which
    * actions the dialog offers, never whether it opens. */
   surface?: MCPJamLimitSurface;
+  /** A button the user pressed to see the dialog; see `MCPJamLimitNotifyInput`. */
+  userInitiated?: boolean;
 };
 
 const getStringProperty = (value: unknown, key: string): string | undefined => {
@@ -296,6 +302,7 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     ...(args.surface ? { surface: args.surface } : {}),
     ...(period ? { period } : {}),
     ...(shortfall ? { shortfall } : {}),
+    ...(args.userInitiated ? { userInitiated: true } : {}),
   });
   return true;
 }
@@ -415,21 +422,34 @@ const describeBurstRetry = (retryAfterMs: number | undefined): string => {
   return `Too many Ask MCPJam turns in a row. Try again in ${seconds}s.`;
 };
 
-/**
- * One plain sentence for an Ask MCPJam refusal, or `null` when the error is
- * something else.
- *
- * The agent is free, so none of these is a wallet the reader can top up, and
- * the raw body they arrive as reads as a crash. The two sentences say the only
- * two things worth saying: come back after the reset, or this is ours and it is
- * temporary.
- */
+export function isGuestInputTooLargeMessage(
+  message: string | null | undefined,
+): boolean {
+  if (!message) return false;
+  const codes = new Set<string>();
+  collectCodes(message, codes);
+  return codes.has("guest_input_too_large");
+}
+
+/** Plain copy for an Ask MCPJam refusal, not its transport envelope. */
 export function describeAgentRefusalMessage(
   message: string | null | undefined,
 ): string | null {
   if (!message) return null;
+  if (isGuestInputTooLargeMessage(message)) {
+    return "This conversation is too large to send. Shorten your message, start a new chat, or disconnect servers and try again.";
+  }
   const codes = new Set<string>();
   collectCodes(message, codes);
+  if (codes.has(AGENT_STEP_LIMIT_CODE)) {
+    // The loop guard's refusal carries its own user-facing sentence (which of
+    // the two stops it was); the envelope around it is not for reading.
+    for (const parsed of collectJsonCandidates(message)) {
+      const text = getStringProperty(parsed, "message");
+      if (text) return text;
+    }
+    return STEP_LIMIT_REFUSAL_MESSAGE;
+  }
   // Unconditional, not a fallback for an unparseable body. `collectCodes` only
   // records a `code` PROPERTY, so a refusal nested as plain text under some
   // other envelope — `{"code":"RATE_LIMITED","details":"agent_turn_limit"}` —

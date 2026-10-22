@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -12,6 +12,7 @@ import {
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { track } from "@/lib/analytics";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 
 /** Only the structured backend gate is actionable as signup. */
 function isGuestSharingSignInRequired(error: unknown): boolean {
@@ -26,7 +27,7 @@ function isGuestSharingSignInRequired(error: unknown): boolean {
 }
 
 function GuestSharingSignUpDialog({ onClose }: { onClose: () => void }) {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp } = useInspectorAuth();
   const authenticate = (signup: boolean) => {
     track(signup ? "sign_up_button_clicked" : "login_button_clicked", {
       location: "guest_sharing_signup",
@@ -64,6 +65,7 @@ function GuestSharingSignUpDialog({ onClose }: { onClose: () => void }) {
           </Button>
           <Button onClick={() => authenticate(true)}>Sign up to share</Button>
         </DialogFooter>
+        <LegalConsentNotice />
       </DialogContent>
     </Dialog>
   );

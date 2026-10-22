@@ -7,7 +7,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APICallError } from "ai";
 import { EvalTest } from "../src/EvalTest.js";
-import { posthog } from "../src/telemetry.js";
+import {
+  payEvalIteration,
+  EvalBillingError,
+} from "../src/eval-iteration-payment.js";
+import * as telemetry from "../src/telemetry.js";
 import { createSuiteFileRunner } from "../src/suite-file-run/run-suite-file.js";
 import { SuiteFileRunError } from "../src/suite-file-run/errors.js";
 import type { RunSuiteFileOptions } from "../src/suite-file-run/types.js";
@@ -222,7 +226,9 @@ describe("runSuiteFile — passing and failing cases", () => {
 
 describe("runSuiteFile — telemetry", () => {
   it("never emits SDK telemetry: the caller owns that decision", async () => {
-    const capture = vi.spyOn(posthog, "capture").mockImplementation(() => {});
+    const capture = vi
+      .spyOn(telemetry, "captureSdkRun")
+      .mockImplementation(() => {});
     try {
       // The control: a plain EvalTest run sends its anonymous ping.
       const stub = {
@@ -425,6 +431,11 @@ describe("runSuiteFile — conversations, iterations and models", () => {
     });
     const result = await run(suite(twoPrompts), options());
     expect(result.verdict).toBe("passed");
+    expect(
+      result.cases[0]?.iterations.every(
+        (row) => row.billingPaymentId === "test-payment"
+      )
+    ).toBe(true);
     expect(seen).toEqual([
       ["Read note 7"],
       ["Read note 7", "Now summarize it"],
@@ -697,4 +708,33 @@ describe("runSuiteFile — cleanup", () => {
     expect(result.verdict).toBe("passed");
     expect(result.warnings.join(" ")).toContain("onProgress observer failed");
   });
+});
+
+it("stops later suite-file cases on payment refusal while preserving paid evidence", async () => {
+  const payment = vi.mocked(payEvalIteration);
+  payment
+    .mockResolvedValueOnce("paid-first")
+    .mockRejectedValueOnce(
+      new EvalBillingError("Add credits.", "PLATFORM_FEE_REQUIRED")
+    );
+  const { run } = runner();
+  const result = await run(
+    suite(readCase + readCase.replaceAll("c_read", "c_later"), {
+      iterations: 3,
+    }),
+    options()
+  );
+  expect(result.termination).toBe("stopped");
+  expect(result.cases[0]?.iterations[0]?.billingPaymentId).toBe("paid-first");
+  expect(result.cases[0]?.state).toBe("interrupted");
+  expect(result.cases[0]?.iterations.map((row) => row.status)).toEqual([
+    "completed",
+    "skipped",
+    "skipped",
+  ]);
+  expect(result.cases[1]?.state).toBe("notStarted");
+  expect(fixture.calls.read_note).toBe(1);
+  expect(result.issues.some((issue) => issue.category === "billing")).toBe(
+    true
+  );
 });

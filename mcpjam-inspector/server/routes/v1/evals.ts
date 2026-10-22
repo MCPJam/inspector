@@ -61,45 +61,18 @@ import {
 } from "./eval-compare-projection.js";
 import { ConvexHttpClient } from "convex/browser";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
-import {
-  selectionConfigKey,
-  type ModelSelection,
-  type RequestedModelSelection,
-} from "@mcpjam/sdk";
+import { type RequestedModelSelection } from "@mcpjam/sdk";
 import {
   ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE,
   computedModelId,
   modelSelectionSchema,
   requestedModelSelectionSchema,
+  requestedSelectionIfMatches,
+  sameRequestedSelection,
   selectionModelMismatch,
   selectionOriginField,
 } from "./model-selection-schema.js";
 
-/**
- * The selection, only if it is for `modelId` (verbatim, after a trim). Same
- * rule as the SDK's `selectionIfMatches`, widened to a STORED legacy
- * selection, which a store-once row may hold.
- */
-function requestedSelectionIfMatches(
-  selection: RequestedModelSelection | undefined,
-  modelId: string | undefined,
-): RequestedModelSelection | undefined {
-  if (selection === undefined || modelId === undefined) return undefined;
-  return selection.modelId === modelId.trim() ? selection : undefined;
-}
-
-/** Two selections say the same thing (by value, not object identity). */
-function sameRequestedSelection(
-  a: RequestedModelSelection,
-  b: RequestedModelSelection,
-): boolean {
-  if (a.source === "legacy" || b.source === "legacy")
-    return a.source === b.source && a.modelId === b.modelId;
-  return (
-    selectionConfigKey(a as ModelSelection) ===
-    selectionConfigKey(b as ModelSelection)
-  );
-}
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
 import { upstreamRetryAfter } from "../../services/swarm-agent.js";
@@ -277,7 +250,11 @@ import {
 } from "@/shared/types";
 import { classifyModelIdProvider } from "@/shared/model-provider";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
-import { judgeModelIdSchema } from "./judge-model-id.js";
+import {
+  judgeModelIdInputSchema,
+  judgeModelIdSchema,
+  judgeRunOverride,
+} from "./judge-model-id.js";
 import {
   hostedCatalogModelDefinitions,
   isHostedCatalogModel,
@@ -3840,12 +3817,17 @@ const requestRunJudgeSchema = z
     /** Re-grade a run that already has a result. */
     force: z.boolean().optional(),
     enable: z.boolean().optional(),
-    /** Judge model for THIS run only. */
-    model: judgeModelIdSchema.optional(),
+    /**
+     * Judge model for THIS run only. Normalized beside the selection by
+     * `judgeRunOverride`: only a hosted judge's `mcpjam/` spelling changes.
+     */
+    model: judgeModelIdInputSchema.optional(),
     /**
      * The judge's full selection for THIS run only (source, connection,
      * reasoning effort). Must name `model` when both are sent; sent alone it
-     * names the judge model. Judges run on MCPJam-hosted models only.
+     * names the judge model. A hosted or an organization (BYOK) selection;
+     * the backend refuses local and stored-legacy judges, and a picked hosted
+     * judge when the organization requires its own provider keys.
      */
     modelSelection: modelSelectionSchema.optional(),
     /** Pass threshold for THIS run only, 0–1. */
@@ -6079,20 +6061,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   // re-stating an override returns to suite-config grading on its own.
   const override: Record<string, unknown> = {};
   if (parsed.enable !== undefined) override.enabled = parsed.enable;
-  if (parsed.model !== undefined) override.judgeModel = parsed.model;
-  if (parsed.modelSelection !== undefined) {
-    if (
-      parsed.model !== undefined &&
-      parsed.model.trim() !== parsed.modelSelection.modelId
-    ) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        `modelSelection.modelId (${parsed.modelSelection.modelId}) does not match model (${parsed.model}).`,
-      );
-    }
-    override.judgeSelection = parsed.modelSelection;
-  }
+  Object.assign(
+    override,
+    judgeRunOverride(parsed.model, parsed.modelSelection),
+  );
   if (parsed.threshold !== undefined) override.threshold = parsed.threshold;
 
   try {

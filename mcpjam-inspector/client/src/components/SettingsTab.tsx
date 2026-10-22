@@ -3,7 +3,7 @@ import { ThemePreview } from "./settings/ThemePreview";
 import { useCurrentPathname } from "@/lib/app-navigation";
 import { useByokAllowed } from "@/hooks/use-byok-allowed";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { SettingsSection } from "./setting/SettingsSection";
 import { AboutSettings } from "./settings/AboutSettings";
 import { EmptyState } from "./ui/empty-state";
@@ -30,7 +30,7 @@ export function SettingsTab({
   const themePreference = usePreferencesStore((s) => s.themePreference);
   const setThemePreference = usePreferencesStore((s) => s.setThemePreference);
   const byokAllowed = useByokAllowed();
-  const { signIn } = useAuth();
+  const { signIn } = useInspectorAuth();
 
   // Model providers are tied to organizations. The Settings tab only points
   // users at the right place to configure them — it does not store keys

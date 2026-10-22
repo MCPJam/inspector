@@ -217,6 +217,7 @@ export function HostCompatContent({
         projectId,
         name: label,
         input: { ...seed, serverIds: [serverId] },
+        applyDefaultSystemPrompt: true,
       });
       // Same event the create dialog fires, so host creation stays one
       // unified number — filter on `via`/`location` to isolate CTA-driven

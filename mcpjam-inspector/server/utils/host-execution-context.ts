@@ -1,3 +1,5 @@
+import { resolveAgentLoop } from './harness/agent-loop-dispatch.js';
+import { readRuntimeModelChoice } from "./runtime-model-choice.js";
 /**
  * Shared resolver: hostConfig record + per-call overrides → resolved execution fields.
  *
@@ -48,7 +50,6 @@ import {
   type TasksPolicy,
 } from "@mcpjam/sdk";
 import {
-  readRoutingSelection,
   readStoredModelSelection,
 } from "./model-resolution-local.js";
 
@@ -126,6 +127,8 @@ export interface ResolvedExecutionContext {
   modelId: string | undefined;
   /** Which real agent harness runs the turn (host-level). Absent ⇒ emulated. */
   harness: Harness | undefined;
+  agentLoop?: Harness;
+  executionBindingVersion?: 1;
   /**
    * The host's saved model selection (`hostConfig.modelSelection`), carrying
    * its saved `settings` (reasoning effort).
@@ -146,6 +149,7 @@ export interface ResolvedExecutionContext {
    * ONE MODEL like `modelSelection`: narrow it with `routingSelectionForModel`.
    */
   routingSelection: RequestedModelSelection | undefined;
+  modelSelectionOrigin?: "backfill";
   /**
    * MCPJam's Tasks product policy, read HOST-ONLY — exactly like `harness`,
    * and for a stronger reason.
@@ -309,7 +313,7 @@ function pickField<T>(
  *  surfaced (membership via the SDK's `isHarness`, the persistence-contract
  *  source of truth); anything else (or absent) ⇒ undefined (emulated). */
 function readHarness(hostConfig: Record<string, unknown>): Harness | undefined {
-  return isHarness(hostConfig.harness) ? hostConfig.harness : undefined;
+  return resolveAgentLoop(hostConfig).harnessId;
 }
 
 /**
@@ -320,7 +324,7 @@ function readHarness(hostConfig: Record<string, unknown>): Harness | undefined {
 function readModelSelection(
   hostConfig: Record<string, unknown>,
 ): ModelSelection | undefined {
-  return readStoredModelSelection(hostConfig.modelSelection);
+  return readStoredModelSelection(readRuntimeModelChoice(hostConfig).selection);
 }
 
 export function resolveExecutionContext(args: {
@@ -513,8 +517,10 @@ export function resolveExecutionContext(args: {
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
     harness: readHarness(hostConfig),
+    executionBindingVersion: hostConfig.executionBindingVersion === 1 ? 1 : undefined,
+    ...(isHarness(hostConfig.agentLoop) ? { agentLoop: hostConfig.agentLoop } : {}),
     modelSelection: readModelSelection(hostConfig),
-    routingSelection: readRoutingSelection(hostConfig.modelSelection),
+    routingSelection: readRuntimeModelChoice(hostConfig).selection, modelSelectionOrigin: readRuntimeModelChoice(hostConfig).origin,
     tasksPolicy: readTasksPolicy(
       hostConfig as Parameters<typeof readTasksPolicy>[0],
     ),

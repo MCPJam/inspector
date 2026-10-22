@@ -312,7 +312,10 @@ export function DirectoryReadinessSection({
                     disabled={running}
                     className="h-3 w-3"
                   />
-                  Add AI observations (uses MCPJam credits)
+                  {/* No credits claim: an organization that requires its
+                      own provider keys runs these on its providers, and the
+                      run is not tied to one this page can read. */}
+                  Add AI observations
                 </label>
               )}
             </div>

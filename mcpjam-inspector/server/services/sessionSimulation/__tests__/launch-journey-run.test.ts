@@ -191,6 +191,58 @@ describe("launchJourneyRun", () => {
     expect(startRunMock).not.toHaveBeenCalled();
   });
 
+  it("answers the AI key policy's launch refusal with every problem, before any runner starts", async () => {
+    // The backend's create route wraps the ConvexError data under `error`.
+    const problems = [
+      {
+        dependency: "persona",
+        label: "The simulated user",
+        code: "org_runtime_unsupported",
+        reason:
+          "The simulated user can't run on this organization's providers yet.",
+      },
+      {
+        dependency: "judge",
+        label: "The judge",
+        code: "org_keys_required",
+        reason:
+          "The judge has no model chosen. Choose a judge model from an organization provider.",
+      },
+    ];
+    createRunMock.mockRejectedValue(
+      new SwarmAgentError(
+        400,
+        JSON.stringify({
+          ok: false,
+          code: "invalid_request",
+          error: {
+            code: "org_keys_required",
+            message: `This organization requires its own provider keys for AI features, and this launch has 2 dependencies that can't run on them: ${problems
+              .map((problem) => problem.reason)
+              .join(" ")} ${"x".repeat(300)}`,
+            problems,
+          },
+        }),
+        "swarm-agent failed (400)",
+      ),
+    );
+
+    const error = await launchJourneyRun(DEPS, INPUT).catch((e) => e);
+
+    expect(error).toMatchObject({
+      status: 403,
+      message:
+        "This organization requires its own provider keys for AI features, and this launch has dependencies that can't run on them.",
+      details: {
+        code: "org_keys_required",
+        remediation: "choose_org_model",
+        problems,
+      },
+    });
+    await settle();
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
   it("hands the runner a THUNK, not a captured token", async () => {
     // The run outlives the JWT that authorized it — a delegated token lives
     // about two hours and a wide fan-out runs longer. A captured string here

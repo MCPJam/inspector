@@ -42,6 +42,9 @@ vi.mock("ai", () => ({
     aiPredicateMocks.toolCallsComplete,
   lastAssistantMessageIsCompleteWithApprovalResponses:
     aiPredicateMocks.approvalsComplete,
+  isToolUIPart: (part: { type?: unknown }) =>
+    typeof part?.type === "string" &&
+    (part.type.startsWith("tool-") || part.type === "dynamic-tool"),
 }));
 
 vi.mock("@/lib/session-token", () => ({
@@ -84,6 +87,7 @@ import {
   type UiToolDefinition,
 } from "@/lib/webmcp/ui-tools-registry";
 import { authFetch } from "@/lib/session-token";
+import { AGENT_MAX_STEPS } from "@/shared/mcpjam-agent-model";
 
 function registerTool(extra?: Partial<UiToolDefinition>): UiToolDefinition {
   const def: UiToolDefinition = {
@@ -437,6 +441,87 @@ describe("agent-chat-instances", () => {
 
       aiPredicateMocks.approvalsComplete.mockReturnValue(false);
       expect(predicate({ messages: [] })).toBe(false);
+    });
+  });
+
+  describe("auto-resume bound", () => {
+    /** The prompt, then `steps` resumed steps each ending on a settled
+     *  browser-fulfilled call — every one of them "complete" to the SDK. */
+    function settledSteps(steps: number) {
+      return [
+        { id: "u", role: "user", parts: [{ type: "text", text: "go" }] },
+        {
+          id: "a",
+          role: "assistant",
+          parts: Array.from({ length: steps }).flatMap((_, index) => [
+            { type: "step-start" },
+            {
+              type: "tool-ui_snapshot_app",
+              toolCallId: `call-${index}`,
+              state: "output-available",
+              output: { ok: true },
+            },
+          ]),
+        },
+      ];
+    }
+
+    it("does not resume a reply the output-token limit cut off, and says so", () => {
+      const entry = getOrCreateAgentChat("s1");
+      const predicate = entry.chat.init.sendAutomaticallyWhen;
+      const messages = settledSteps(2);
+      aiPredicateMocks.toolCallsComplete.mockReturnValue(true);
+
+      entry.chat.init.onFinish({ finishReason: "tool-calls" });
+      expect(predicate({ messages })).toBe(true);
+      expect(entry.autoResumeNotice()).toBeNull();
+
+      entry.chat.init.onFinish({ finishReason: "length" });
+      expect(predicate({ messages })).toBe(false);
+      // Recorded by the decision itself, for the thread to show.
+      expect(entry.autoResumeNotice()).toBe(
+        "The reply was cut off. Send a message to continue.",
+      );
+    });
+
+    it("stops at AGENT_MAX_STEPS — the ceiling the server refuses at", () => {
+      const entry = getOrCreateAgentChat("s1");
+      const predicate = entry.chat.init.sendAutomaticallyWhen;
+      aiPredicateMocks.toolCallsComplete.mockReturnValue(true);
+      entry.chat.init.onFinish({ finishReason: "tool-calls" });
+
+      expect(predicate({ messages: settledSteps(AGENT_MAX_STEPS - 1) })).toBe(
+        true,
+      );
+      const spent = settledSteps(AGENT_MAX_STEPS);
+      expect(predicate({ messages: spent })).toBe(false);
+      expect(entry.autoResumeNotice()).toBe(
+        "This reply reached its step limit. Send a message to continue.",
+      );
+    });
+
+    it("clears the notice once the next decision resumes", () => {
+      const entry = getOrCreateAgentChat("s1");
+      const predicate = entry.chat.init.sendAutomaticallyWhen;
+      aiPredicateMocks.toolCallsComplete.mockReturnValue(true);
+      entry.chat.init.onFinish({ finishReason: "length" });
+      predicate({ messages: settledSteps(1) });
+      expect(entry.autoResumeNotice()).not.toBeNull();
+
+      entry.chat.init.onFinish({ finishReason: "tool-calls" });
+      expect(predicate({ messages: settledSteps(1) })).toBe(true);
+      expect(entry.autoResumeNotice()).toBeNull();
+    });
+
+    it("keeps each session's finish reason to itself", () => {
+      const cutOff = getOrCreateAgentChat("s1");
+      const fresh = getOrCreateAgentChat("s2");
+      aiPredicateMocks.toolCallsComplete.mockReturnValue(true);
+      cutOff.chat.init.onFinish({ finishReason: "length" });
+
+      expect(
+        fresh.chat.init.sendAutomaticallyWhen({ messages: settledSteps(1) }),
+      ).toBe(true);
     });
   });
 

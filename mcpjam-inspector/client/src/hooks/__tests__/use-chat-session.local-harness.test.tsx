@@ -1,7 +1,9 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { LOCAL_HARNESS_GRANT_HEADER } from "@/lib/local-harness-consent";
+import { getDefaultModel } from "@/components/chat-v2/shared/model-helpers";
+import { composeAvailableModels } from "@/components/chat-v2/shared/available-models";
 
 /**
  * Local Claude Code execution, as the TRANSPORT sees it.
@@ -55,6 +57,11 @@ const mockState = vi.hoisted(() => ({
   })),
   countTextTokens: vi.fn(async () => null),
   convexAuth: { isAuthenticated: true, isLoading: false },
+  workOsUser: null as { id: string } | null,
+  currentUser: { isAnonymous: true } as
+    | { isAnonymous: boolean }
+    | null
+    | undefined,
   detectOllamaModels: vi.fn(async () => ({
     isRunning: false,
     availableModels: [],
@@ -146,15 +153,24 @@ vi.mock("@/lib/session-token", () => ({
   getAuthHeaders: vi.fn(() => ({})),
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ getAccessToken: mockState.getAccessToken }),
+  useAuth: () => ({
+    getAccessToken: mockState.getAccessToken,
+    user: mockState.workOsUser,
+  }),
 }));
 // Soft reads (billing, credits, quota, notifications) go through useQueries;
 // withUseQueries answers them from this mock's useQuery.
 vi.mock("convex/react", async () =>
   (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useConvexAuth: () => mockState.convexAuth,
-  useQuery: () => undefined,
+  useQuery: (name: string, args: unknown) =>
+    name === "users:getCurrentUser" && args !== "skip"
+      ? mockState.currentUser
+      : undefined,
   useConvex: () => ({ mutation: mockState.convexMutation }),
+}));
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
 }));
 vi.mock("@ai-sdk/react", () => ({
   useChat: vi.fn((options: {
@@ -316,6 +332,41 @@ describe("useChatSession — local Claude Code transmission", () => {
     mockState.chatStatus = "ready";
     mockState.idCounter = 0;
     mockState.messages = [];
+    mockState.workOsUser = null;
+    mockState.currentUser = { isAnonymous: true };
+  });
+
+  it("applies guest model locks even with a valid Convex guest session", async () => {
+    await renderWithHarness(grantedController());
+    expect(composeAvailableModels).toHaveBeenCalledWith(
+      expect.objectContaining({ isAuthenticated: false }),
+    );
+  });
+
+  it.each([
+    ["guest", { isAnonymous: true }],
+    ["unresolved", undefined],
+    ["without a readable user row", null],
+  ] as const)(
+    "keeps frontier locked with a WorkOS user and a %s Convex actor",
+    async (_name, currentUser) => {
+      mockState.workOsUser = { id: "workos-user-1" };
+      mockState.currentUser = currentUser;
+      await renderWithHarness(grantedController());
+      expect(composeAvailableModels).toHaveBeenCalledWith(
+        expect.objectContaining({ isAuthenticated: false }),
+      );
+    },
+  );
+
+  it("allows confirmed member actors through the guest model locks", async () => {
+    mockState.workOsUser = { id: "workos-user-1" };
+    mockState.currentUser = { isAnonymous: false };
+    await renderWithHarness(grantedController());
+    expect(composeAvailableModels).toHaveBeenCalledWith(
+      expect.objectContaining({ isAuthenticated: true }),
+    );
+    mockState.workOsUser = null;
   });
 
   it("carries the ids in the body and the capability in the header", async () => {
@@ -355,7 +406,7 @@ describe("useChatSession — local Claude Code transmission", () => {
     // target and hand the user a cloud sandbox they never asked for.
     await renderWithHarness({ requested: true, resolveSendTarget: () => null });
     expect(() => sendRequest()).toThrow(
-      "Local execution is not authorized for this turn",
+      "Local execution is not authorized. Set up this client on your machine and try again.",
     );
   });
 
@@ -414,9 +465,8 @@ describe("useChatSession — local Claude Code transmission", () => {
       projectId: "proj-1",
       requiresWebChatApi: true,
     });
-    const { body, headers } = sendRequest();
-    expect(body.harnessTarget).toBeUndefined();
-    expect(headers[LOCAL_HARNESS_GRANT_HEADER]).toBeUndefined();
+    expect(() => sendRequest()).toThrow("Choose a model available in this workspace");
+    expect(latestTransport().headers ?? {}).not.toHaveProperty(LOCAL_HARNESS_GRANT_HEADER);
   });
 });
 
@@ -438,13 +488,14 @@ describe("useChatSession — routing an org-runtime model that asks for local", 
     providers: [{ providerKey: "openai", enabled: true, hasSecret: true }],
   } as never;
 
-  it("routes an org-runtime model to the web API when nothing asks for local", async () => {
-    // The control. Without this the assertion below would pass whether or not
-    // the carve-out exists.
+  it("keeps an org-runtime model on the local route, with no local runtime ask, when nothing asks for local", async () => {
+    // The control. Without this the `localMcpRuntimeRequired` assertions below
+    // would pass whether or not a local ask is what sets the flag.
     await renderWithHarness(undefined, { projectId: "proj-1" }, {
       hostedOrgModelConfig: ORG_CONFIG,
     });
-    expect(chatApi()).toBe("/api/web/chat-v2");
+    expect(chatApi()).toBe("/api/mcp/chat-v2");
+    expect(sendRequest().body.localMcpRuntimeRequired).toBeUndefined();
   });
 
   it("keeps a requested local turn on the route that can run it", async () => {
@@ -492,5 +543,39 @@ describe("useChatSession — routing an org-runtime model that asks for local", 
     // resolution. A BYOK model never routed away in the first place.
     await renderWithHarness(grantedController(), { projectId: "proj-1" });
     expect(sendRequest().body.localMcpRuntimeRequired).toBeUndefined();
+  });
+});
+
+describe("useChatSession — a harness client with no model it can run", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    mockState.chatOnData = null;
+    mockState.transportOptions = [];
+    mockState.chatStatus = "ready";
+    mockState.messages = [];
+    // The real fallback: the first listed row, `undefined` for an empty list.
+    vi.mocked(getDefaultModel).mockImplementation(
+      (models: unknown[]) => models[0] as never,
+    );
+  });
+  afterEach(() => {
+    vi.mocked(getDefaultModel).mockImplementation(() => byokModel as never);
+  });
+
+  it("does not crash: it shows a disabled stand-in and refuses to send", async () => {
+    // The only row is a key on this machine, which a brokered harness never
+    // runs: the picker list is empty.
+    const { result } = await renderWithHarness(undefined, undefined, {
+      harnessModelTarget: { harnessId: "claude-code" },
+    });
+    const session = result.current;
+    expect(session.availableModels).toEqual([]);
+    expect(session.selectedModel).toMatchObject({
+      disabled: true,
+      disabledReason:
+        "Claude Code runs MCPJam models or your organization's Anthropic key. Add one in Organization models.",
+    });
+    expect(session.submitBlocked).toBe(true);
   });
 });

@@ -246,11 +246,10 @@ describe("durable thread App ownership", () => {
         opened.token,
         identity,
         {
-          kind: "remove",
+          kind: "remove-all",
           request: {
             operationId: "file-remove",
-            updateId: updated.snapshot.state!.updateId,
-            index: 0,
+            basis: updated.snapshot.cursor ?? 0,
           },
         },
         signal(),
@@ -318,21 +317,38 @@ describe("durable thread App ownership", () => {
       open.token,
       identity,
       {
-        kind: "remove",
-        request: {
-          operationId: "remove",
-          updateId: first.snapshot.state!.updateId,
-          index: 0,
-        },
+        kind: "remove-all",
+        request: { operationId: "remove", basis: first.snapshot.cursor ?? 0 },
       },
       signal(),
       authorize,
       s.port,
     );
-    expect(removed.snapshot.state).toBeNull();
+    expect(removed.result).toMatchObject({ outcome: "applied" });
+    expect(removed.snapshot).toMatchObject({
+      state: null,
+      held: true,
+      cursor: 1,
+      removedAt: 1,
+    });
     await registry.getPersistent(open.token, identity, signal(), s.port);
-    expect(registry.contextSnapshot(open.token, identity).state).toBeNull();
+    expect(registry.contextSnapshot(open.token, identity)).toEqual(
+      removed.snapshot,
+    );
     expect(authorize).toHaveBeenCalledTimes(4);
+    // A lost acknowledgement retried from a third process is decided by the
+    // persisted cursor and writes nothing.
+    const version = s.rows.get(open.token)?.contextVersion;
+    const retried = await new PluginInstanceRegistry().changeContextPersistent(
+      open.token,
+      identity,
+      { kind: "remove-all", request: { operationId: "retry", basis: 0 } },
+      signal(),
+      authorize,
+      s.port,
+    );
+    expect(retried.result).toMatchObject({ outcome: "in-effect" });
+    expect(s.rows.get(open.token)?.contextVersion).toBe(version);
     await cold.closePersistent(open.token, identity, signal(), s.port);
     expect(() => cold.contextSnapshot(open.token, identity)).toThrow();
   });

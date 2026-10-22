@@ -54,7 +54,7 @@ export function computerBackedToolIds(
 
 /**
  * The catalog rows an editor should actually RENDER, honoring the
- * `computers-enabled` rollout flag: when the flag is off for this user,
+ * machine rollout flag: when the flag is off for this user,
  * computer-backed rows are hidden — the backend `bash` row can be enabled
  * deployment-wide without leaking a dead "requires a computer" checkbox to
  * users who can't see the (flag-gated) computer toggle it points at. A row
@@ -147,14 +147,18 @@ export function setComputerWorkdirPatch(
  * the catalog exposes a computer-backed tool (so the `bash` row stays hidden
  * until launch) OR when a computer is already attached — so an existing
  * attachment is always DETACHABLE even if no computer-backed tool is currently
- * in the catalog. Never on surfaces that disallow computers (eval suites).
+ * in the catalog. Never on surfaces that disallow computers (eval suites), and
+ * never for a HARNESS client (Claude Code / Codex / Cursor): it runs on a
+ * throwaway box and has no computer settings, attached or not.
  */
 export function shouldShowComputerToggle(opts: {
   catalogHasComputerBackedTool: boolean;
   computerAttached: boolean;
   disallowed?: boolean;
+  /** The client runs a harness. */
+  hasHarness?: boolean;
 }): boolean {
-  if (opts.disallowed) return false;
+  if (opts.disallowed || opts.hasHarness) return false;
   return opts.catalogHasComputerBackedTool || opts.computerAttached;
 }
 
@@ -165,9 +169,9 @@ export function shouldShowComputerToggle(opts: {
  * in instead of offering that save.
  */
 export function hostConfigNeedsAccount(
-  input: Pick<HostConfigInputV2, "harness" | "computer"> | undefined,
+  input: Pick<HostConfigInputV2, "harness" | "agentLoop" | "computer"> | undefined,
 ): boolean {
-  return Boolean(input?.harness || input?.computer);
+  return Boolean(input?.agentLoop || input?.harness || input?.computer);
 }
 
 /**
@@ -187,6 +191,7 @@ export function detachComputerPatch(
   return {
     computer: undefined,
     harness: undefined,
+    agentLoop: undefined,
     builtInToolIds: value.builtInToolIds.filter((id) => !backed.has(id)),
   };
 }
@@ -214,7 +219,7 @@ export function sanitizeHostConfigForEvalSuite(
   // harness left set with no computer violates the backend `harness ⇒ computer`
   // invariant and would route an eval run toward the real harness path. Mirrors
   // detachComputerPatch — dropping the computer takes its dependent runtime.
-  const harnessChanged = value.harness !== undefined;
+  const harnessChanged = value.harness !== undefined || value.agentLoop !== undefined;
   if (value.computer === undefined && !idsChanged && !harnessChanged) {
     return value;
   }
@@ -222,6 +227,7 @@ export function sanitizeHostConfigForEvalSuite(
     ...value,
     computer: undefined,
     harness: undefined,
+    agentLoop: undefined,
     builtInToolIds: cleanedIds,
   };
 }

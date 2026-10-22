@@ -131,6 +131,8 @@ function InvokingIndicator({
 }
 
 interface MultiModelPlaygroundCardProps {
+  /** Extra classes on the card root, e.g. hiding it while another card is shown. */
+  className?: string;
   /**
    * This lane's client has plugin extensions on (flag, backend access and the
    * client's own setting all passed). The lane then owns its own Apps.
@@ -161,6 +163,7 @@ interface MultiModelPlaygroundCardProps {
    */
   compareSubLabel?: string;
   model: ModelDefinition;
+  selection?: import("@mcpjam/sdk/browser").RequestedModelSelection;
   /** This column's own effort, sent on its requests (undefined = Default). */
   reasoningEffort?: ModelReasoningEffort;
   /** Harness the column's host runs (gates the levels the turn may send). */
@@ -276,6 +279,7 @@ interface MultiModelPlaygroundCardProps {
 }
 
 export function MultiModelPlaygroundCard({
+  className,
   extensionBinding = null,
   browserWorkspace,
   compareId,
@@ -283,6 +287,7 @@ export function MultiModelPlaygroundCard({
   compareKind,
   compareSubLabel,
   model,
+  selection,
   reasoningEffort,
   reasoningEffortHarness,
   effort,
@@ -444,6 +449,8 @@ export function MultiModelPlaygroundCard({
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
+    pickedModelSelection: selection,
+    selectionIntent: compareKind === "host" ? "inherit" : "picked",
     // The lane's own extension owner: its turns carry its workspace and
     // its Apps' context, never another lane's or the single chat's.
     pluginWorkspace: laneWorkspaceForSession,
@@ -929,7 +936,10 @@ export function MultiModelPlaygroundCard({
   const cardBody = (
     <div
       data-testid="multi-model-playground-card-root"
-      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40"
+      className={cn(
+        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40",
+        className,
+      )}
     >
       <ModelCompareCardHeader
         model={model}

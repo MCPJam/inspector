@@ -13,6 +13,8 @@
  * browser's is the agent mode of `client/src/lib/chat-error-reporting.ts`.
  */
 
+import type { AiRefusalCode } from "./ai-execution-refusal.js";
+
 export const AGENT_SURFACE = "mcpjam_agent";
 
 export type PageClass = "incident" | "routine";
@@ -56,6 +58,25 @@ export type FailureFacts = {
  * can be ours: a retired pinned model (`model_retired`), or MCPJam's own
  * provider key revoked (`mcpjam_api_error`), fails every turn.
  */
+/**
+ * The organization's own AI configuration ("Use your keys for all AI
+ * features"): it requires its own provider keys, has no model for the
+ * feature, the feature has no org-credential adapter (Ask MCPJam is
+ * unsupported under the policy), the org's connection is gone, its key was
+ * rejected, or its own provider is throttling. The product working on the
+ * org's own account. `ai_key_policy_unavailable` is deliberately NOT here: it
+ * is the backend failing closed on its own policy read, which is ours.
+ */
+const ORG_POLICY_ROUTINE_CODES = [
+  "org_keys_required",
+  "org_model_unconfigured",
+  "org_runtime_unsupported",
+  "ai_scope_unresolved",
+  "provider_auth_failed",
+  "provider_unavailable",
+  "credential_missing",
+] as const satisfies readonly AiRefusalCode[];
+
 const ROUTINE_CODES: ReadonlySet<string> = new Set([
   // Sign-in.
   "auth_required",
@@ -84,6 +105,7 @@ const ROUTINE_CODES: ReadonlySet<string> = new Set([
   "billing_feature_not_included",
   "spend_budget_reached",
   "free_tier_model_restricted",
+  ...ORG_POLICY_ROUTINE_CODES,
 ]);
 
 /** Lane scopes that are one caller at their own share of the budget. */

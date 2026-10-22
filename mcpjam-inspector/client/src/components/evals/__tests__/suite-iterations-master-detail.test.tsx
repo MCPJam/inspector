@@ -4,6 +4,12 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
+import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
+
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
 
 const mocks = vi.hoisted(() => ({
   useMutation: vi.fn(() => vi.fn()),
@@ -12,10 +18,20 @@ const mocks = vi.hoisted(() => ({
   runOverview: vi.fn(),
   evaluateRunContent: vi.fn(),
   runDetailView: vi.fn(),
+  suiteDashboard: vi.fn(),
+  testCasesOverview: vi.fn(),
   useQueries: vi.fn(
     (_queries: Record<string, { args: { runId: string } }>) =>
       ({}) as Record<string, unknown>,
   ),
+}));
+
+const creditsState = vi.hoisted(() => ({
+  reason: null as string | null,
+}));
+vi.mock("@/hooks/useCreditBalance", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useCreditBalance")>()),
+  useOutOfCreditsReason: () => creditsState.reason,
 }));
 
 const cloudState = vi.hoisted(() => ({
@@ -25,6 +41,10 @@ const cloudState = vi.hoisted(() => ({
     computerEnvironmentId?: string;
   }>,
 }));
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHostList: () => ({ hosts: [{ hostId: "client-a1b2c3", name: "Claude", config: {} }], isLoading: false }),
+}));
 vi.mock("@/hooks/useProjectComputer", () => ({
   useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
 }));
@@ -33,7 +53,14 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 
 vi.mock("../test-template-editor", () => ({
-  TestTemplateEditor: ({ readOnly, openCompareIterationId }: {readOnly?: boolean; openCompareIterationId?: string}) => <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId} />,
+  TestTemplateEditor: ({ readOnly, openCompareIterationId, onRunCase, launchReview }: any) => (
+    <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId} data-run-block={launchReview?.disabledReason} data-run-clients={JSON.stringify(Array.from(launchReview?.hostNamesById ?? []))} data-run-environments={JSON.stringify(launchReview?.environments)}>
+      <button onClick={() => onRunCase("case-1", {
+        suiteOverride: { _id: "suite-1", environmentIds: ["one-run"] },
+        iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+      })}>Launch case overrides</button>
+    </div>
+  ),
 }));
 
 vi.mock("convex/react", () => ({
@@ -131,15 +158,14 @@ vi.mock("../suite-hero-stats", () => ({
 }));
 
 vi.mock("../suite-dashboard", () => ({
-  SuiteDashboard: ({
-    onTestCaseClick,
-    onOpenLastRun,
-    selectedRunId,
-  }: {
+  SuiteDashboard: (props: {
     onTestCaseClick: (testCaseId: string) => void;
     onOpenLastRun?: (testCaseId: string, iterationId: string) => void;
     selectedRunId?: string | null;
-  }) => (
+  }) => {
+    mocks.suiteDashboard(props);
+    const { onTestCaseClick, onOpenLastRun, selectedRunId } = props;
+    return (
     <div data-testid="suite-dashboard">
       All runs latest + trends per client
       {selectedRunId ? null : (
@@ -161,7 +187,8 @@ vi.mock("../suite-dashboard", () => ({
         </>
       )}
     </div>
-  ),
+    );
+  },
 }));
 
 vi.mock("../../evaluate/evaluate-run-content", () => ({
@@ -176,13 +203,13 @@ vi.mock("../run-detail-view", () => ({
 }));
 
 vi.mock("../test-cases-overview", () => ({
-  TestCasesOverview: ({
-    onTestCaseClick,
-    onOpenLastRun,
-  }: {
+  TestCasesOverview: (props: {
     onTestCaseClick: (testCaseId: string) => void;
     onOpenLastRun?: (testCaseId: string, iterationId: string) => void;
-  }) => (
+  }) => {
+    mocks.testCasesOverview(props);
+    const { onTestCaseClick, onOpenLastRun } = props;
+    return (
     <div>
       <button
         type="button"
@@ -199,7 +226,8 @@ vi.mock("../test-cases-overview", () => ({
         Open last run
       </button>
     </div>
-  ),
+    );
+  },
 }));
 
 const noopNav = {
@@ -706,6 +734,110 @@ describe("SuiteIterationsView cloud-sandbox gate", () => {
   });
 });
 
+describe("SuiteIterationsView out-of-credits gate", () => {
+  const REASON = "Out of MCPJam credits · resets in 3h";
+  const LOCKED = "anthropic/claude-haiku-4.5";
+  const BYOK = "custom:acme:acme-large";
+  const lockedCase = {
+    _id: "case-locked",
+    title: "Locked",
+    models: [{ model: LOCKED, provider: "anthropic" }],
+  } as any;
+  const byokCase = {
+    _id: "case-byok",
+    title: "Own key",
+    models: [{ model: BYOK, provider: "custom" }],
+  } as any;
+  const availableModels = [
+    {
+      id: LOCKED,
+      name: "Haiku",
+      provider: "anthropic",
+      disabled: true,
+      disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+    },
+    { id: BYOK, name: "Acme", provider: "custom" },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cloudState.ephemeralAvailable = true;
+    cloudState.environments = [];
+    creditsState.reason = REASON;
+    mocks.useMutation.mockReturnValue(vi.fn());
+    mocks.useQuery.mockReturnValue(undefined);
+  });
+
+  function renderView(cases: unknown[]) {
+    render(
+      withDataRouter(
+        <SuiteIterationsView
+          suite={baseSuite}
+          cases={cases as any}
+          iterations={[]}
+          allIterations={[]}
+          runs={[]}
+          runsLoading={false}
+          aggregate={null}
+          onRerun={vi.fn()}
+          onCancelRun={vi.fn()}
+          onDelete={vi.fn()}
+          onDeleteRun={vi.fn()}
+          onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+          connectedServerNames={new Set()}
+          canDeleteSuite={false}
+          rerunningSuiteId={null}
+          cancellingRunId={null}
+          deletingSuiteId={null}
+          deletingRunId={null}
+          availableModels={availableModels}
+          route={{
+            type: "suite-overview",
+            suiteId: "suite-1",
+            view: "test-cases",
+          }}
+          navigation={noopNav}
+        />,
+      ),
+    );
+  }
+
+  const caseReason = () => {
+    const props = [
+      ...mocks.suiteDashboard.mock.calls,
+      ...mocks.testCasesOverview.mock.calls,
+    ].at(-1)?.[0] as {
+      runTestCaseOutOfCreditsReason?: (testCase: unknown) => string | null;
+      runTestCaseDisabledReason?: string | null;
+    };
+    return props;
+  };
+
+  it("turns Run all off, with the reset text, when every case's model is locked", () => {
+    renderView([lockedCase]);
+
+    expect(mocks.suiteHeader).toHaveBeenLastCalledWith(
+      expect.objectContaining({ evalRunsDisabledReason: REASON }),
+    );
+    expect(caseReason().runTestCaseOutOfCreditsReason?.(lockedCase)).toBe(
+      REASON,
+    );
+  });
+
+  it("gates each case's Run on its own models, and keeps Run all for a suite that can still run", () => {
+    renderView([lockedCase, byokCase]);
+
+    expect(mocks.suiteHeader).toHaveBeenLastCalledWith(
+      expect.objectContaining({ evalRunsDisabledReason: null }),
+    );
+    const props = caseReason();
+    // The suite-wide reason never reaches a case row.
+    expect(props.runTestCaseDisabledReason ?? null).toBeNull();
+    expect(props.runTestCaseOutOfCreditsReason?.(lockedCase)).toBe(REASON);
+    expect(props.runTestCaseOutOfCreditsReason?.(byokCase)).toBeNull();
+  });
+});
+
 /**
  * `suiteDetailOverview` is the one opt-in the shipped Evaluate tab does NOT
  * pass. These assert both halves of that: off is exactly the behaviour every
@@ -892,6 +1024,48 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
       "checkout-flow",
     );
     expect(screen.queryByTestId("suite-header")).toBeNull();
+  });
+
+  it("passes resolved client names and ad-hoc environments into case launch review", () => {
+    cloudState.environments = [{ environmentId: "env-1", hostId: "client-a1b2c3", modelId: "sonnet" } as any];
+    renderOverview({
+      evaluateCaseEditor: true,
+      suite: { ...baseSuite, environmentIds: ["env-1"], hostAttachments: [] },
+      route: { type: "test-edit", suiteId: "suite-1", testId: "case-1" },
+    });
+    expect(screen.getByTestId("case-workspace")).toHaveAttribute("data-run-clients", '[["client-a1b2c3","Claude"]]');
+    expect(screen.getByTestId("case-workspace").getAttribute("data-run-environments")).toContain("env-1");
+    cloudState.environments = [];
+  });
+
+  it.each(["quota", "sandbox", "pending"])("passes the %s block to the case editor", (block) => {
+    const reason = block === "quota" ? "Eval iteration limit reached." :
+      block === "sandbox" ? "Cloud sandboxes are unavailable." : "A run is already starting.";
+    if (block === "sandbox") cloudState.ephemeralAvailable = false;
+    renderOverview({
+      evaluateCaseEditor: true,
+      ...(block === "quota" ? { evalRunsDisabledReason: reason } : {}),
+      ...(block === "sandbox" ? { suite: { ...baseSuite, environment: { servers: [], computerEnvironmentId: "img-1" } } } : {}),
+      ...(block === "pending" ? { rerunningSuiteId: "suite-1" } : {}),
+      route: { type: "test-edit", suiteId: "suite-1", testId: "case-1" },
+    });
+    expect(screen.getByTestId("case-workspace").getAttribute("data-run-block")).toMatch(
+      block === "sandbox" ? /can't run MCPJam cloud sandboxes/ : reason,
+    );
+  });
+
+  it("forwards ephemeral case setup to the suite runner with only that case", async () => {
+    const user = userEvent.setup();
+    const onRerun = vi.fn();
+    renderOverview({
+      suiteDetailOverview: true, evaluateCaseEditor: true, onRerun,
+      route: { type: "test-edit", suiteId: "suite-1", testId: "case-1" },
+    });
+    await user.click(screen.getByRole("button", { name: "Launch case overrides" }));
+    expect(onRerun).toHaveBeenCalledWith({ _id: "suite-1", environmentIds: ["one-run"] }, {
+      caseIds: ["case-1"], iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+    });
+    expect(baseSuite.environmentIds).not.toEqual(["one-run"]);
   });
 
   it("opens test edit from the opted-in suite-detail case list", async () => {

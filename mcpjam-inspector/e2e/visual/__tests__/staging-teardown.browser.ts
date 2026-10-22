@@ -1,0 +1,48 @@
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { test } from "../staging-test";
+import { fulfillWithoutForwardingCredentials } from "../staging-network";
+
+let origin: string;
+let hungRequestStarted: () => void;
+const server = createServer((request, response) => {
+  if (request.url === "/hung") {
+    hungRequestStarted();
+    return;
+  }
+  response.end("Background read");
+});
+
+test.beforeAll(async () => {
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing server port");
+  origin = `http://127.0.0.1:${address.port}`;
+});
+
+test.afterAll(async () => {
+  server.closeAllConnections();
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
+});
+
+test("staging teardown cancels a hung proxy read", async ({
+  context,
+  page,
+}) => {
+  test.setTimeout(3_000);
+  const pending = new Promise<void>((resolve) => {
+    hungRequestStarted = resolve;
+  });
+  await context.route(`${origin}/hung`, (route) =>
+    fulfillWithoutForwardingCredentials(route, route.request().headers()),
+  );
+  await page.goto(origin);
+  await page.evaluate(() => {
+    void fetch("/hung");
+  });
+  await pending;
+});

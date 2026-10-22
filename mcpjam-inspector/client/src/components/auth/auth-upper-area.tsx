@@ -1,4 +1,4 @@
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -22,7 +22,7 @@ export function AuthUpperArea({
   activeServerSelectorProps,
   clientBootstrapProps,
 }: AuthUpperAreaProps) {
-  const { user, signIn, signUp } = useAuth();
+  const { user, signIn, signUp } = useInspectorAuth();
   const { isLoading } = useConvexAuth();
 
   return (

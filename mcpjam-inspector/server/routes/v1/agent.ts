@@ -55,8 +55,7 @@
  * but BOTH the engine's Convex `/stream` calls and the self-dispatched
  * platform-op calls need a JWT — so the delegated org-scoped JWT minted by
  * `getConvexBearerForRequest` is used for both. Routing the ops through the
- * delegated JWT (not the raw `sk_` key) also keeps the agent's own tool
- * calls out of the caller's per-key rate bucket.
+ * delegated JWT (not the raw `sk_` key) also keeps the agent's own tool calls out of the caller's per-key rate bucket.
  */
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
@@ -115,6 +114,7 @@ import {
   AGENT_MAX_STEPS,
   MCPJAM_AGENT_BILLING_FEATURE,
   MCPJAM_AGENT_MODEL_DEFINITION,
+  MCPJAM_AGENT_MODEL_SELECTION,
 } from "../../../shared/mcpjam-agent-model.js";
 import type { ModelDefinition } from "@/shared/types";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -1515,6 +1515,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
 
     const chatSessionId = randomUUID();
     const rt = await resolveTurnRuntime({
+      modelSelection: MCPJAM_AGENT_MODEL_SELECTION,
       modelDefinition: AGENT_API_MODEL,
       projectId,
       authHeader,
@@ -1750,7 +1751,6 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // spend-precheck denial (issue #3708) returns 200 OK with a JSON body,
     // so the engine's error path fires onEngineError but runSucceeded still
     // flips to true (the per-step error exits the loop, the safety epilogue
-    // runs, and onConversationComplete sets capturedTurnTrace). Without this
     // second check the agent route would return a silent empty-reply 200.
     const rateLimitCodes = new Set(["user_rate_limit", "org_rate_limit"]);
     if (!result.turnTrace || lastEngineError) {

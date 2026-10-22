@@ -2,6 +2,7 @@ import { defineConfig } from "tsup";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
+import { resolveClientBuildSurface } from "../shared/sentry-config";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(serverDir, "..");
@@ -21,8 +22,16 @@ export default defineConfig({
   entry: ["server/index.ts", "server/harness-install-cli.ts"],
   define: {
     "process.env.MCPJAM_INSPECTOR_VERSION": JSON.stringify(packageVersion),
+    // Sentry `dist`, from the same variable `scripts/server-sourcemaps.mjs`
+    // uploads this build's maps under.
+    "process.env.MCPJAM_BUILD_SURFACE": JSON.stringify(
+      resolveClientBuildSurface(process.env.MCPJAM_BUILD_SURFACE),
+    ),
   },
   format: ["esm"],
+  // One file per entry: Sentry owns and maps frames only in these fixed
+  // outputs, and shared chunks get hashed names that no catalog can list.
+  splitting: false,
   target: "node22",
   outDir: join(rootDir, "dist/server"),
   clean: true,
@@ -110,6 +119,7 @@ export default defineConfig({
     "@mcpjam/sdk/oauth/node",
     "@mcpjam/sdk/widget-runtime",
     "@mcpjam/sdk/internal/plugin-host",
+    "@mcpjam/sdk/internal/telemetry",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -132,6 +142,10 @@ export default defineConfig({
       "@mcpjam/sdk/internal/plugin-host": join(
         rootDir,
         "../sdk/dist/internal/plugin-host.js",
+      ),
+      "@mcpjam/sdk/internal/telemetry": join(
+        rootDir,
+        "../sdk/dist/internal/telemetry.js",
       ),
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.js"),
       "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),

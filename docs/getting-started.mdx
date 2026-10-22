@@ -4,6 +4,10 @@ description: "Start testing your MCP server in minutes"
 icon: "rocket"
 ---
 
+<Note>
+The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+</Note>
+
 ## 1. Choose how to open Inspector
 
 Every option below opens the MCPJam Inspector. Pick one based on where your MCP server runs.
@@ -22,7 +26,7 @@ Every option below opens the MCPJam Inspector. Pick one based on where your MCP 
     Desktop app (`.exe` installer). No Node.js. HTTP/S and local STDIO.
   </Card>
   <Card title="Docker" icon="container" href="/installation#docker">
-    Built from source. HTTP/S, plus STDIO servers that run inside the container.
+    Pull from Docker Hub. HTTP/S, plus STDIO servers that run inside the container.
   </Card>
 </CardGroup>
 
@@ -116,3 +120,7 @@ You should see your server show **Connected** with a green dot in the **Connect*
     Open the **account menu** at the bottom of the sidebar and pick **Sign out**. You'll be returned to the public app as a guest. See [Hosted App → Signing out](/hosted/overview#signing-out).
   </Accordion>
 </AccordionGroup>
+
+## Eval authentication
+
+For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import posthogSourcemaps from "@posthog/rollup-plugin";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, loadEnv } from "vite";
@@ -7,6 +8,10 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import { resolveClientBuildSurface } from "../shared/sentry-config";
+import {
+  telemetryCatalogPlugin,
+  telemetrySourceCatalogsPlugin,
+} from "./vite-telemetry-catalog";
 import { lexerSafeMinify } from "./vite-lexer-safe-minify";
 import { warnOnPosthogFailure } from "./vite-posthog-warn-only";
 
@@ -163,6 +168,8 @@ export default defineConfig(({ mode }) => {
       env.CLIENT_CACHE_DIR || "node_modules/.vite",
     ),
     plugins: [
+      telemetrySourceCatalogsPlugin(),
+      telemetryCatalogPlugin(),
       react(),
       tailwindcss(),
       lexerSafeMinify(),
@@ -212,6 +219,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/chat-ui/trace": chatUiTraceEntry,
         "@mcpjam/chat-ui": chatUiEntry,
         "@mcpjam/widget-react": widgetReactEntry,
+        "@mcpjam/sdk/internal/telemetry": path.resolve(rootDir, "../sdk/src/internal/telemetry.ts"),
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/contract": sdkContractEntry,
         "@mcpjam/sdk/predicates": sdkPredicatesEntry,
@@ -329,6 +337,19 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      __BUILD_SHA__: JSON.stringify(
+        (() => {
+          try {
+            return execFileSync("git", ["rev-parse", "HEAD"], {
+              cwd: fileURLToPath(new URL(".", import.meta.url)),
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "ignore"],
+            }).trim();
+          } catch {
+            return "unknown";
+          }
+        })(),
+      ),
       __BUILD_SURFACE__: JSON.stringify(buildSurface),
       __MCPJAM_SDK_VERSION__: JSON.stringify(sdkVersion),
     },

@@ -43,6 +43,7 @@ const environments = [
     projectId: "proj-1",
     name: "Prod-like",
     hostId: "host-1",
+    serverAttachmentId: "att-1",
     revision: 1,
   },
   {
@@ -50,6 +51,7 @@ const environments = [
     projectId: "proj-1",
     name: "Staging-like",
     hostId: "host-2",
+    serverAttachmentId: "att-2",
     revision: 1,
   },
 ];
@@ -77,6 +79,7 @@ const {
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: vi.fn().mockResolvedValue({}) }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     switch (name) {

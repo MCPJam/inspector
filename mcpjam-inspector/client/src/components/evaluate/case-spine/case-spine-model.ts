@@ -318,3 +318,61 @@ export function replaceActionTools(
   }
   return out;
 }
+
+/** Dragging an action carries its checks; dragging a check moves just that check. */
+export function reorderSpineSteps(
+  steps: TestStep[],
+  activeId: string,
+  overId: string,
+): TestStep[] {
+  if (activeId === overId) return steps;
+  const from = steps.findIndex((step) => step.id === activeId);
+  const to = steps.findIndex((step) => step.id === overId);
+  if (from < 0 || to < 0) return steps;
+  const active = steps[from]!;
+  const over = steps[to]!;
+  if (active.kind === "assert" && over.kind === "assert") {
+    const next = [...steps];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved!);
+    return next;
+  }
+  if (
+    active.kind === "prompt" ||
+    active.kind === "assert" ||
+    over.kind === "assert" ||
+    over.kind === "prompt"
+  )
+    return steps;
+  const { leading, actions } = actionRows(steps);
+  const blocks = actions.map((action) => [
+    action.step,
+    ...action.checks.map((child) => child.step),
+  ]);
+  const activeBlock = actions.findIndex(
+    (action) => action.step.id === activeId,
+  );
+  const overBlock = actions.findIndex((action) => action.step.id === overId);
+  if (activeBlock < 0 || overBlock < 0) return steps;
+  const [moved] = blocks.splice(activeBlock, 1);
+  blocks.splice(overBlock, 0, moved!);
+  return [...leading.map((child) => child.step), ...blocks.flat()];
+}
+
+/** Move expected tool calls among their existing slots, preserving all other steps. */
+export function reorderRouteToolChecks(
+  steps: TestStep[],
+  fromId: string,
+  toId: string,
+): TestStep[] {
+  const tools = steps.filter(isToolCalledWithAssert);
+  const from = tools.findIndex((tool) => tool.id === fromId);
+  const to = tools.findIndex((tool) => tool.id === toId);
+  if (from < 0 || to < 0 || from === to) return steps;
+  const [moved] = tools.splice(from, 1);
+  tools.splice(to, 0, moved!);
+  let index = 0;
+  return steps.map((step) =>
+    isToolCalledWithAssert(step) ? tools[index++]! : step,
+  );
+}

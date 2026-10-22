@@ -106,7 +106,8 @@ export async function reportingRequest<T>(
   init: RequestInit,
   validate: (body: Record<string, unknown>) => T,
   shouldRetryHttp: (error: ReportingHttpError) => boolean,
-  onAttempt?: (attempt: number) => void
+  onAttempt?: (attempt: number) => void,
+  prepareRequest?: () => Promise<RequestInit>
 ): Promise<T> {
   const configuredBudget = options.operationTimeoutMs ?? 60_000;
   const budget =
@@ -135,6 +136,19 @@ export async function reportingRequest<T>(
   )
     throw new ReportingProtocolError("Invalid reporting retry delays");
   const operation = new AbortController();
+  // A timeout stops waiting, but cannot cancel an arbitrary auth callback.
+  // Retry the same pending credential work until it settles, so rotating
+  // refresh tokens cannot be consumed concurrently by this operation.
+  let pendingPreparation: Promise<RequestInit> | undefined;
+  const prepare = () => {
+    if (!prepareRequest) return undefined;
+    if (!pendingPreparation) {
+      pendingPreparation = prepareRequest().finally(() => {
+        pendingPreparation = undefined;
+      });
+    }
+    return pendingPreparation;
+  };
   const cancel = () => operation.abort(options.signal?.reason);
   if (options.signal?.aborted) cancel();
   options.signal?.addEventListener("abort", cancel, { once: true });
@@ -170,8 +184,11 @@ export async function reportingRequest<T>(
       try {
         return await abortable(
           (async () => {
+            const prepared = await prepare();
+            if (controller.signal.aborted) throw controller.signal.reason;
             const response = await fetch(url, {
               ...init,
+              ...prepared,
               signal: controller.signal,
             });
             let body: Record<string, unknown>;

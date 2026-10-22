@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ServerCheckQueue } from "../server-check-queue";
+import {
+  isServerCheckQueueError,
+  ServerCheckQueue,
+} from "../server-check-queue";
 import * as abortSignals from "../compose-abort-signals";
 const tick = async () => {
   for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -299,6 +302,32 @@ describe.each(["native", "fallback"])("server check scheduler (%s)", (support) =
       throw { status: 429, details: { reason: "other" } };
     });
     const rejected = expect(other).rejects.toMatchObject({ status: 429 });
+    await vi.advanceTimersByTimeAsync(0);
+    await rejected;
+  });
+  it("requeues a temporarily unavailable queue but not other 503s", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const queue = new ServerCheckQueue();
+    const unavailable = {
+      status: 503,
+      details: { reason: "SERVER_CHECK_QUEUE_UNAVAILABLE" },
+    };
+    expect(isServerCheckQueueError(unavailable)).toBe(true);
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(unavailable)
+      .mockResolvedValue("ok");
+    const result = queue.run(options("one"), run);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(queue.state("project", "one")).toBe("queued");
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(result).resolves.toBe("ok");
+    expect(run).toHaveBeenCalledTimes(2);
+    const other = queue.run(options("two"), async () => {
+      throw { status: 503, details: { reason: "SERVER_UNREACHABLE" } };
+    });
+    const rejected = expect(other).rejects.toMatchObject({ status: 503 });
     await vi.advanceTimersByTimeAsync(0);
     await rejected;
   });

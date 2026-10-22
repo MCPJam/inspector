@@ -35,7 +35,7 @@ export interface ContextAttachment {
     icons?: PluginIcons;
     /** The server's icons (`server/discover`, else `initialize`). */
     serverIcons?: readonly unknown[];
-    /** Removes every block this App supplied. */
+    /** Removes all of this App's context, including blocks not shown here. */
     removeAll?: () => void;
   };
   block?: ContextAttachmentBlock;
@@ -97,8 +97,8 @@ function Thumbnail({ src }: { src: string }) {
 /**
  * One chip per App: its plugin icon and "Context". Opening it lists each
  * block by type (text: title and text; resource link and embedded resource:
- * title and URI; image: title, format and thumbnail). Each row is removable,
- * and × on the chip removes all of that App's context.
+ * title and URI; image: title, format and thumbnail). An App's context is
+ * removed as a group: × on the chip removes all of it, and rows have no ×.
  */
 export function ContextGroupChip({
   group,
@@ -178,19 +178,6 @@ export function ContextGroupChip({
                   )}
                 </div>
                 {block?.thumbnail && <Thumbnail src={block.thumbnail} />}
-                {item.remove && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-5 shrink-0"
-                    disabled={item.removing}
-                    aria-label={`Remove ${item.title}`}
-                    onClick={item.remove}
-                  >
-                    <X className="size-3" />
-                  </Button>
-                )}
               </li>
             );
           })}

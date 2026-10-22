@@ -22,8 +22,7 @@ describe("a removed App context stays removed", () => {
     const ws = workspace();
     const first = { operationId: "u-1", sequence: 1, params: view("camera A") };
     ws.update(instanceId, 1, first);
-    const updateId = ws.snapshot(instanceId, 1).state!.updateId;
-    ws.remove(instanceId, 1, { operationId: "rm-1", updateId, index: 0 });
+    ws.removeAll(instanceId, 1, { operationId: "rm-1", basis: 0 });
     // A retried pre-removal update acknowledges without resurrecting it.
     ws.update(instanceId, 1, first);
     expect(ws.snapshot(instanceId, 1).state).toBeNull();
@@ -39,6 +38,7 @@ describe("a removed App context stays removed", () => {
     expect(ws.snapshot(instanceId, 1)).toMatchObject({
       sequence: 1,
       state: null,
+      held: true,
     });
     // The hold is part of the saved state, so another process holds it too.
     const saved = ws.export(instanceId, 1);

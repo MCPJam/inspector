@@ -13,8 +13,12 @@ import {
   appendPluginDiagnostics,
   describePluginError,
 } from "@/lib/plugin-diagnostics";
+import { PLUGIN_APP_REPLY_MAX_BYTES } from "@/shared/plugin-app-ui-limits";
 
 export type ThreadAppToolResult = z.infer<typeof mcpAppToolResultSchema>;
+
+/** A plugin server's id, or a plugin that has no server and onboards by itself. */
+export type PluginOnboardingTarget = string | { pluginId: string };
 
 export interface ThreadAppScope {
   projectId: string;
@@ -106,7 +110,7 @@ async function post(
   }
   signal.throwIfAborted();
   const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > 2 * 1024 * 1024)
+  if (new TextEncoder().encode(text).byteLength > PLUGIN_APP_REPLY_MAX_BYTES)
     throw new ThreadAppError("INSTANCE_RESPONSE_TOO_LARGE");
   let value: Record<string, unknown>;
   try {
@@ -201,7 +205,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
   }
   return {
     onboarding: async (
-      serverId: string,
+      target: PluginOnboardingTarget,
       content: boolean,
       signal: AbortSignal,
     ) => {
@@ -210,8 +214,9 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
         {
           projectId: scope.projectId,
           pluginWorkspace: scope.pluginWorkspace,
-          hostId: scope.hostId,
-          serverId,
+          ...(typeof target === "string"
+            ? { hostId: scope.hostId, serverId: target }
+            : { pluginId: target.pluginId }),
           content,
         },
         signal,
@@ -226,7 +231,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
     },
     context: async (
       instanceToken: string,
-      action: "update" | "read" | "remove",
+      action: "update" | "read" | "remove-all",
       request: Record<string, unknown>,
       signal: AbortSignal,
     ) => {

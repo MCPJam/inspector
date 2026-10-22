@@ -30,6 +30,7 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
+import { createTurnToolLister } from "./plugin-server-isolation.js";
 import { withinToolListingBudget } from "./within-budget.js";
 import { mcpToolOptionsFor } from "./mcp-tool-options.js";
 import {
@@ -679,6 +680,8 @@ export interface PrepareChatV2Options {
   connectionsByServerId?: ConnectionsByServerId;
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
+  /** Plugin servers whose failure leaves the turn running without them. */
+  isolatedServers?: readonly string[];
   /**
    * serverId → the user-assigned label from OUR server registry, used to
    * namespace SEP-2640 server-skill refs (`<serverSlug>/<skill>`).
@@ -1304,6 +1307,8 @@ export interface PrepareChatV2Result {
    * being re-derived from a partial view. See `guardPageToolRefresh`.
    */
   reservedAgainstPageTools: ReadonlySet<string>;
+  /** The `isolatedServers` this turn runs without, with their errors. */
+  unavailableServers?: ReadonlyMap<string, unknown>;
 }
 
 /**
@@ -1416,41 +1421,33 @@ export async function prepareChatV2(
         serverLabels,
       ),
     );
+  const lister = createTurnToolLister({
+    manager: mcpClientManager,
+    serverIds: knownSelectedServers,
+    isolatedServers: options.isolatedServers ?? [],
+    keysOf: (id) => selectedGroups?.[id]?.map((c) => c.key) ?? [id],
+    toolOptions,
+    within: listToolsWithinBudget,
+  });
+  const listByServer = async () =>
+    wrapModelToolsets(await lister.byServer(), options.modelToolExecutor);
   let mcpTools;
   try {
     mcpTools =
       selectedGroups && Object.keys(selectedGroups).length
-        ? mergeConnectionToolsets(
-            await listToolsWithinBudget(
-              mcpClientManager.getToolsForAiSdkByServer(
-                knownSelectedServers,
-                toolOptions,
-              ).then((groups) => wrapModelToolsets(groups, options.modelToolExecutor)),
-            ),
-            selectedGroups,
-            {
-              snapshot,
-              onRoute: (id, connection) => {
-                toolConnections.set(id, connection);
-              },
+        ? mergeConnectionToolsets(await listByServer(), selectedGroups, {
+            snapshot,
+            onRoute: (id, connection) => {
+              toolConnections.set(id, connection);
             },
-          )
+          })
         : options.modelToolExecutor
-          ? Object.assign({}, ...Object.values(wrapModelToolsets(await listToolsWithinBudget(
-              mcpClientManager.getToolsForAiSdkByServer(knownSelectedServers, toolOptions)
-            ), options.modelToolExecutor)))
-          : await listToolsWithinBudget(
-            mcpClientManager.getToolsForAiSdk(
-              knownSelectedServers,
-              toolOptions,
-            ),
-          );
+          ? Object.assign({}, ...Object.values(await listByServer()))
+          : await lister.flat();
   } catch (error) {
-    // The ONE hop in this function that leaves MCPJam: listing tools reaches
-    // into the user's own MCP servers, so a dead or slow server lands here.
-    // The chat route's outer catch declares `mcpjam_internal` — correct for
-    // everything else it wraps — and without this mark that declaration would
-    // promote every one of those to a page.
+    // The ONE hop here that leaves MCPJam: a dead or slow user server the turn
+    // did not isolate lands here, and without this mark the route's outer catch
+    // (`mcpjam_internal`, right for all else it wraps) would page on each one.
     //
     // Scoped to this await on purpose. Marking the whole of `prepareChatV2`
     // would silence a genuine bug in the preparation work that follows, which
@@ -2017,6 +2014,9 @@ export async function prepareChatV2(
         (name) => !advertisedPageToolNames.includes(name),
       ),
     ) as ReadonlySet<string>,
+    ...(options.isolatedServers?.length
+      ? { unavailableServers: lister.unavailable() }
+      : {}),
   };
 }
 

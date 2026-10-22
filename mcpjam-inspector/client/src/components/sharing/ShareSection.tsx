@@ -263,9 +263,12 @@ export function ShareSection<TEnvelope>({
           {copy.linkLabel}
         </label>
         <div className="flex gap-2">
+          {/* The link IS the credential: kept out of autocapture and both
+              replays (the repo's secret-surface convention). */}
           <output
             id={testIds.linkOutput}
-            className="flex min-w-0 flex-1 items-center rounded-md border border-input bg-muted/30 px-3 py-2"
+            className="ph-no-capture rr-block flex min-w-0 flex-1 items-center rounded-md border border-input bg-muted/30 px-3 py-2"
+            data-ph-no-capture
             title={shareUrl ?? undefined}
           >
             <span className="truncate text-sm text-muted-foreground">

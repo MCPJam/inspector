@@ -39,6 +39,7 @@ export type {
 export type PluginExtensionsHostConfig = {
   hostStyle?: string | null;
   harness?: string | null;
+  agentLoop?: string | null;
   mcpProfile?: HostConfigMcpProfileV1 | Record<string, unknown> | null;
 };
 
@@ -51,6 +52,13 @@ export function pluginExtensionsForHost(
   hostConfig: PluginExtensionsHostConfig | null | undefined,
 ): ResolvedPluginExtensions {
   return resolvePluginExtensions(hostConfig ?? undefined);
+}
+
+/** App behavior follows the MCP client profile, independently of its agent loop. */
+export function pluginExtensionProfileForHost(
+  hostConfig: PluginExtensionsHostConfig | null | undefined,
+): "codex" | "chatgpt" {
+  return hostConfig?.harness === "codex" ? "codex" : "chatgpt";
 }
 
 /** Everything off — used while a gate can't be resolved (loading, error). */

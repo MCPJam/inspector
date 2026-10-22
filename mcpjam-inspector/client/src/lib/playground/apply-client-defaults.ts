@@ -8,7 +8,7 @@ import {
 } from "@mcpjam/sdk/host-compat";
 import type { ChatUiOverride } from "@/lib/client-styles";
 import { replaceLeadModelId } from "@/lib/selected-model-storage";
-import { harnessModelRefusalReason } from "@/lib/harness-model-locks";
+import { harnessChoiceRefusalReason } from "@/lib/harness-model-locks";
 import { getCanonicalModelId, isModelSupported } from "@/shared/types";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
@@ -55,8 +55,8 @@ export function resolvePlaygroundModelId(
 ): string | undefined {
   const runnable = (modelId: string) =>
     isModelSupported(modelId) &&
-    harnessModelRefusalReason(
-      modelId,
+    harnessChoiceRefusalReason(
+      { modelId },
       harnessId ? { harnessId } : null,
       "chat"
     ) === undefined;

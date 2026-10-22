@@ -1,5 +1,10 @@
 import { ConvexError } from "convex/values";
-import { convexErrMessage } from "@/lib/convex-error";
+import {
+  convexErrMessage,
+  describeConvexFailure,
+  formatSupportReference,
+  getConvexRequestId,
+} from "@/lib/convex-error";
 import type {
   BillingFeatureName,
   BillingInterval,
@@ -536,11 +541,35 @@ export function getBillingErrorMessage(
   // A payload carrying only a message is not a billing rejection at all —
   // `extractBillingErrorPayload` wraps every thrown `Error` that way. Shape it
   // like any other Convex failure so the redacted "[Request ID: …] Server
-  // Error" prefix never reaches the toast. Shape the PARSED message rather than
-  // re-reading the error: for a JSON-encoded `Error.message`, `convexErrMessage`
-  // hands back the raw JSON blob instead of the sentence inside it.
+  // Error" prefix never reaches the toast.
   const parsed =
     typeof payload.message === "string" ? payload.message.trim() : "";
   if (!parsed) return convexErrMessage(error, fallback);
-  return parsed.replace(/^\[.*?\]\s*/, "").slice(0, 400) || fallback;
+  // Only a JSON-ENCODED message needs shaping here: `convexErrMessage` reads
+  // the error itself and would hand back the raw JSON blob instead of the
+  // sentence inside it. Every other payload IS the error's own text, so defer
+  // to the shared path — it is the one that knows about `ConvexError` payloads
+  // and about the support reference, neither of which this file should
+  // reimplement.
+  const raw = typeof error === "string" ? error : rawErrorMessage(error);
+  if (raw === null || raw.trim() === parsed) {
+    return convexErrMessage(error, fallback);
+  }
+  const shaped = describeConvexFailure(new Error(parsed), fallback).message;
+  // Decoding threw away the `[Request ID: …]` prefix along with the blob that
+  // was wrapped in it — `tryParseJsonPayload` lifts a TRAILING JSON object out
+  // of a prefixed message, so the id and the payload arrive together. Put the
+  // reference back, or a JSON-encoded failure is the one kind nobody can quote
+  // to support. A `ConvexError` still gets none: its payload is a refusal the
+  // backend worded, not an incident.
+  const requestId =
+    error instanceof ConvexError ? null : getConvexRequestId(error);
+  return requestId ? `${shaped} ${formatSupportReference(requestId)}` : shaped;
+}
+
+/** The text a thrown `Error` carries, for telling a decoded payload from a raw one. */
+function rawErrorMessage(error: unknown): string | null {
+  return error instanceof Error && typeof error.message === "string"
+    ? error.message
+    : null;
 }

@@ -189,6 +189,26 @@ export function suiteOf(EvalSuite, EvalTest, cases) {
 }
 `;
   writeFileSync(path.join(fixtureDir, "support.mjs"), support);
+  // Exercise the installed SDK's real auth gate without contacting a service.
+  writeFileSync(
+    path.join(fixtureDir, "identity.mjs"),
+    `
+globalThis.fetch = async (url, init) => {
+  if (!["start-run", "pay-iteration"].some(suffix => String(url) === "https://packaging.invalid/api/v1/projects/project_fixture/eval-ingest/" + suffix))
+    throw new Error("Unexpected fixture request: " + url);
+  if (new Headers(init.headers).get("authorization") !== "Bearer sk_packaging_fixture")
+    throw new Error("Missing packaging fixture credential");
+  const request = JSON.parse(init.body);
+  if (String(url).endsWith("/pay-iteration"))
+    return Response.json({ok:true,...request,paymentId:request.iterationKey});
+  return Response.json({ok:true,runStartId:request.runStartId,organizationId:"org_fixture",projectId:"project_fixture"});
+};
+`
+  );
+  writeFileSync(
+    path.join(fixtureDir, "vitest.config.mjs"),
+    'export default { test: { setupFiles: ["./identity.mjs"] } };\n'
+  );
 
   const FAILING_CASE_TITLE = "a case that fails [case_red]";
 
@@ -314,10 +334,18 @@ testEval.only(new EvalTest({id:"only",name:"focused",execute:()=>{}}),{executor:
 import { EvalTest } from "@mcpjam/sdk";
 import { testEval } from "@mcpjam/vitest";
 import { StubExecutor } from "./support.mjs";
-globalThis.fetch=async()=>({ok:false,status:400,json:async()=>({error:"rejected"})});
+const startFetch = globalThis.fetch;
+let reportingRequests = 0;
+globalThis.fetch = async (url, init) => {
+  if (["/eval-ingest/start-run", "/eval-ingest/pay-iteration"].some(suffix => String(url).endsWith(suffix))) return startFetch(url, init);
+  if (!String(url).startsWith("https://packaging.invalid/api/v1/projects/project_fixture/eval-ingest/"))
+    throw new Error("Unexpected reporting request: " + url);
+  reportingRequests++;
+  return Response.json({error:"rejected"}, {status:400});
+};
 const test=new EvalTest({id:"cleanup",name:"strict persistence",execute:async executor=>{await executor.run("go")}});
-testEval(test,{executor:new StubExecutor(),run:{iterations:1,mcpjam:{apiKey:"test-key",strict:true,baseUrl:"https://example.invalid"}},
-dispose:()=>{if(test.getResults()?.successes===1 && test.getReportingReceipt().state==="failed") console.log("DISPOSED_WITH_LOCAL_EVIDENCE")}});
+testEval(test,{executor:new StubExecutor(),run:{iterations:1,mcpjam:{apiKey:"sk_packaging_fixture",strict:true,baseUrl:"https://packaging.invalid"}},
+dispose:()=>{if(reportingRequests>0 && test.getResults()?.successes===1 && test.getReportingReceipt().state==="failed") console.log("DISPOSED_WITH_LOCAL_EVIDENCE")}});
 `,
     }
   );
@@ -383,7 +411,10 @@ void testEval; void describeEvalSuite; void runVariants;
         env: {
           ...process.env,
           CI: "true",
-          MCPJAM_API_KEY: "",
+          MCPJAM_API_KEY: "sk_packaging_fixture",
+          MCPJAM_BASE_URL: "https://packaging.invalid",
+          MCPJAM_PROJECT_ID: "project_fixture",
+          DO_NOT_TRACK: "1",
           MCPJAM_RUN_METADATA: "",
           MCPJAM_RUN_NAME: "",
           MCPJAM_RUN_TAGS: "",

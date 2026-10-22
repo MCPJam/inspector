@@ -168,6 +168,8 @@ export function PersistConformanceRun({
   const runIdRef = useRef<string | null>(null);
   const uploadedRef = useRef<Set<string>>(new Set());
   const pendingUploadsRef = useRef<Map<string, Promise<unknown>>>(new Map());
+  /** Each suite's last queued upload, so the next one waits for it. */
+  const suiteUploadsRef = useRef<Map<string, Promise<unknown>>>(new Map());
   /**
    * The `runVersion` a run was already created for. Keyed by the run attempt
    * itself rather than by "a start is in flight", so neither a StrictMode
@@ -207,6 +209,7 @@ export function PersistConformanceRun({
     setRunId(null);
     uploadedRef.current = new Set();
     pendingUploadsRef.current = new Map();
+    suiteUploadsRef.current = new Map();
     finalizedRef.current = false;
     finalizationScheduledRef.current = false;
     const suites = [...requestedSuitesFor(server, snapshotRef.current)];
@@ -249,13 +252,19 @@ export function PersistConformanceRun({
     if (!runId) return;
 
     const queueUpload = (key: string, payload: Record<string, unknown>) => {
-      const operation = Promise.resolve()
+      // One suite's uploads go out in order. Each is a separate action with
+      // no ordering between them, and the backend applies a "running" that
+      // lands after "completed" by moving the saved suite back to running.
+      const suite = String(payload.suiteKind);
+      const previous = suiteUploadsRef.current.get(suite) ?? Promise.resolve();
+      const operation = previous
         .then(() => upsertReport(payload))
         .catch(() => undefined)
         .finally(() => {
           pendingUploadsRef.current.delete(key);
         });
       pendingUploadsRef.current.set(key, operation);
+      suiteUploadsRef.current.set(suite, operation);
     };
 
     const maybeUpload = (
@@ -294,6 +303,20 @@ export function PersistConformanceRun({
             status: "awaiting_authorization",
           });
         }
+        return;
+      }
+      // A suite that ran and found nothing to test (OAuth against a server
+      // that needs no auth) settles as "unavailable" WITH a result. It was
+      // already uploaded as running, so it must be closed out here too, or
+      // the saved report stays "running" forever.
+      if (state.status === "unavailable" && state.result) {
+        uploadedRef.current.add(`${kind}:done`);
+        queueUpload(`${kind}:done`, {
+          runId,
+          suiteKind: kind,
+          status: "completed",
+          report: suiteReport(kind, state),
+        });
         return;
       }
       if (state.status === "done" || state.status === "error") {

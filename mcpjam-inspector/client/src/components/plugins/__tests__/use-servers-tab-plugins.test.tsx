@@ -3,7 +3,7 @@
  * it opens the plugin's first server's Settings, or a skills-only plugin's
  * skill on the Skills tab, and says so when the plugin is not available.
  */
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -31,7 +31,7 @@ vi.mock("@/hooks/useActivePlugins", () => ({
   }),
 }));
 vi.mock("@/hooks/useProjects", () => ({
-  useProjectMembers: () => ({ canManageMembers: true, isLoading: false }),
+  useCanManageProjectClients: () => ({ canManage: true, isLoading: false }),
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
@@ -143,13 +143,47 @@ describe("useServersTabPlugins permalinks", () => {
 
   it("knows whether any installed plugin adds a card", () => {
     h.activeRows.value = [
-      { pluginId: "pl_bits", status: "active", servers: [], skills: [] },
+      {
+        pluginId: "pl_bits",
+        status: "active",
+        servers: [],
+        skills: [{ skillId: "sk_triage", name: "triage" }],
+      },
     ];
     const { result } = renderHook(() =>
       useServersTabPlugins({ projectId: "p_1", routePluginId: null }),
     );
     // Skills only: its skills are on the Skills tab, not a card here.
     expect(result.current.hasPluginCards).toBe(false);
+  });
+
+  it("counts an active plugin with no servers or skills, which has its own card", () => {
+    h.activeRows.value = [
+      { pluginId: "pl_bits", status: "active", servers: [], skills: [] },
+    ];
+    const { result } = renderHook(() =>
+      useServersTabPlugins({ projectId: "p_1", routePluginId: null }),
+    );
+    expect(result.current.hasPluginCards).toBe(true);
+  });
+
+  it("closes an open plugin's Settings when the project changes", () => {
+    const { result, rerender } = renderHook(
+      ({ projectId }) =>
+        useServersTabPlugins({ projectId, routePluginId: null }),
+      { initialProps: { projectId: "p_1" } },
+    );
+    act(() => {
+      result.current.setDetail({
+        pluginId: "pl_bits",
+        pluginLabel: "Bits & Bolts",
+        serverId: "s_cad",
+        serverName: "cad",
+      });
+    });
+    expect(result.current.detail?.pluginId).toBe("pl_bits");
+    rerender({ projectId: "p_2" });
+    expect(result.current.detail).toBeNull();
   });
 
   it("counts an installed plugin with no active version, which has its own card", () => {

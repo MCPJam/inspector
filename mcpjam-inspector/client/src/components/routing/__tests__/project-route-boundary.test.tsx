@@ -9,13 +9,13 @@ vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 const A = "k5700000000000000000000000a";
 
-function renderBoundary(projectRouteState: ProjectRouteState | undefined) {
+function renderBoundary(projectRouteState: ProjectRouteState | undefined, projectTransitionPending = false) {
   const router = createMemoryRouter(
     [
       {
         path: "/p/:projectId",
         element: (
-          <AppRouteReactContext.Provider value={{ projectRouteState }}>
+          <AppRouteReactContext.Provider value={{ projectRouteState, projectTransitionPending }}>
             <ProjectRouteBoundary />
           </AppRouteReactContext.Provider>
         ),
@@ -53,6 +53,14 @@ describe("ProjectRouteBoundary", () => {
     // project's address for as long as the switch takes.
     renderBoundary({ status: "resolving", requestedProjectId: A });
     expect(screen.queryByTestId("project-screen")).toBeNull();
+  });
+
+  it("shows the MCPJam spinner instead of an unavailable page during sign-in recovery", () => {
+    renderBoundary({status: "inaccessible", requestedProjectId: A, reason: "not-a-member"}, true);
+    expect(screen.queryByTestId("project-route-inaccessible")).toBeNull();
+    expect(screen.queryByTestId("project-screen")).toBeNull();
+    expect(screen.getByRole("img", { name: "MCPJam" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("shows one generic message for an unavailable project", () => {

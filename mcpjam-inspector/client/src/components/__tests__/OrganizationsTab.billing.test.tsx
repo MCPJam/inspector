@@ -3580,6 +3580,78 @@ describe("OrganizationsTab billing", () => {
     expect(window.location.hash).toBe("");
   });
 
+  describe("delete confirmation toast", () => {
+    async function confirmDelete(action: string) {
+      render(
+        <OrganizationsTab
+          organizationId="org-1"
+          onOrganizationDeleted={vi.fn()}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Delete Organization" }),
+      );
+      const dialog = await screen.findByRole("alertdialog");
+      fireEvent.change(
+        within(dialog).getByPlaceholderText("Organization name"),
+        { target: { value: "Org One" } },
+      );
+      within(dialog)
+        .getAllByRole("checkbox")
+        .forEach((checkbox) => fireEvent.click(checkbox));
+      fireEvent.click(within(dialog).getByRole("button", { name: action }));
+    }
+
+    beforeEach(() => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({ plan: "free" }),
+        }),
+      );
+    });
+
+    it("says the organization is deleted when there is no cancellation window", async () => {
+      // Even a deadline a little ahead of a slow client clock is not a hold.
+      deleteOrganizationMock.mockResolvedValue({
+        success: true,
+        purgeAfter: Date.now() + 5_000,
+      });
+      await confirmDelete("Permanently delete organization");
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith("Organization deleted"),
+      );
+    });
+
+    it("says until when an enterprise owner can cancel", async () => {
+      mockUseOrganizationQueries.mockReturnValue({
+        sortedOrganizations: [
+          {
+            _id: "org-1",
+            name: "Org One",
+            createdBy: "user_1",
+            createdAt: 1,
+            updatedAt: 1,
+            myRole: "owner",
+            deletionCancellationWindowHours: 48,
+          },
+        ],
+        isLoading: false,
+      });
+      deleteOrganizationMock.mockResolvedValue({
+        success: true,
+        purgeAfter: Date.now() + 48 * 3600_000,
+      });
+      await confirmDelete("Delete organization");
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /^Deletion scheduled\. You can cancel until .+\.$/,
+          ),
+        ),
+      );
+    });
+  });
+
   describe("delete subscriptions", () => {
     async function confirmDelete() {
       fireEvent.click(

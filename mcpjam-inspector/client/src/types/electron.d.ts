@@ -12,6 +12,7 @@ export type {
 export interface ElectronAPI {
   sentry?: {
     installationId: string;
+    isDisabled?: () => Promise<boolean>;
     setActor: (actor: SentryActor | null) => void;
   };
   diagnostics?: { record: (activity: DesktopActivity) => void };

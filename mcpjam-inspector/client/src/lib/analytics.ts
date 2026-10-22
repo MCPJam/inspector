@@ -1,4 +1,4 @@
-import posthog from "posthog-js";
+import posthog, { type PostHog } from "posthog-js";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import { standardEventProps } from "./PosthogUtils";
 
@@ -116,4 +116,21 @@ export function track(
     // contain sensitive product data.
     console.warn(`[analytics] Failed to capture ${event}`, error);
   }
+}
+
+export interface PersonProfileProperties {
+  deployment: "hosted" | "self_hosted";
+  email?: string | null;
+  name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  occupation?: string | null;
+}
+
+/** Profile recovery shares the capture boundary without posing as a product event. */
+export function retryPersonProfile(
+  client: Pick<PostHog, "capture">,
+  properties: PersonProfileProperties,
+): void {
+  client.capture("$set", {}, { $set: properties });
 }

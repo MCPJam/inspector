@@ -63,6 +63,38 @@ describe("runUnifiedAssistantTurn", () => {
     expect(res.aborted).toBe(false);
   });
 
+  it("hosted: hands the runtime's harness selection to the turn, typed", async () => {
+    runAssistantTurnMock.mockResolvedValue({
+      messages: [userMsg, asstMsg],
+      assistantMessages: [asstMsg],
+      toolCalls: [],
+      toolResults: [],
+      turnTrace: { spans: [] },
+      usage: { totalTokens: 3 },
+      finishReason: "stop",
+    });
+    const selection = {
+      source: "org",
+      modelId: "anthropic/claude-sonnet-4.5",
+      connectionRef: { kind: "orgProvider", id: "orgprov_1" },
+      fallback: { provider: "none", model: "none" },
+    };
+    await runUnifiedAssistantTurn({
+      runtime: {
+        kind: "hosted",
+        endpointPath: "/stream/org",
+        harness: "claude-code",
+        modelSelection: selection,
+      },
+      streamSink: "none",
+      messages: [userMsg],
+    } as never);
+    expect(runAssistantTurnMock.mock.calls[0][0]).toMatchObject({
+      harness: "claude-code",
+      modelSelection: selection,
+    });
+  });
+
   it("hosted + ui: does NOT eagerly slice newMessages (transcript drains async)", async () => {
     // ui returns before the stream drains, so result.messages is not rolled
     // forward yet — newMessages must not be a stale slice.

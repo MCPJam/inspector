@@ -36,6 +36,7 @@ export function JudgeBlock({
   onExpectedOutputChange,
   onSkippedChange,
   onOpenSuiteSettings,
+  showGoalInput = true,
 }: {
   row: ScorecardRow;
   readOnly: boolean;
@@ -43,6 +44,7 @@ export function JudgeBlock({
   /** Absent on a surface that cannot write the case's judge override. */
   onSkippedChange?: (skipped: boolean) => void;
   onOpenSuiteSettings?: () => void;
+  showGoalInput?: boolean;
 }) {
   const judge = row.judge;
   if (!judge) return null;
@@ -65,20 +67,24 @@ export function JudgeBlock({
       </div>
 
       <div className="space-y-1.5">
-        <Label
-          htmlFor="simple-case-rubric"
-          className="text-[11px] font-medium text-foreground"
-        >
-          What does a good answer accomplish?
-        </Label>
-        <Input
-          id="simple-case-rubric"
-          value={judge.goal}
-          onChange={(event) => onExpectedOutputChange(event.target.value)}
-          placeholder="One sentence the judge scores against"
-          className="h-8 font-mono text-xs"
-          readOnly={readOnly}
-        />
+        {showGoalInput ? (
+          <>
+            <Label
+              htmlFor="simple-case-rubric"
+              className="text-[11px] font-medium text-foreground"
+            >
+              What does a good answer accomplish?
+            </Label>
+            <Input
+              id="simple-case-rubric"
+              value={judge.goal}
+              onChange={(event) => onExpectedOutputChange(event.target.value)}
+              placeholder="One sentence the judge scores against"
+              className="h-8 font-mono text-xs"
+              readOnly={readOnly}
+            />
+          </>
+        ) : null}
         <p
           className="text-[11px] leading-snug text-muted-foreground"
           data-testid="case-judge-rubric-hint"

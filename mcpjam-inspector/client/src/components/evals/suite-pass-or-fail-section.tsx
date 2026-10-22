@@ -48,6 +48,8 @@ export function SuitePassOrFailSection({
   judgeConfig,
   onJudgeConfigChange,
   availableModels,
+  requireOrgKeys,
+  onManageOrgProviders,
   scenarioMigrationNotice,
   judgeAccessory,
   rubricEditor,
@@ -66,6 +68,13 @@ export function SuitePassOrFailSection({
   judgeConfig: EvalJudgeConfig | undefined;
   onJudgeConfigChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
   /** The "migrate scenario assertions per case" warning, when the suite has any. */
   scenarioMigrationNotice?: React.ReactNode;
   /** S6 mounts the agreement line, the gate switch and its acknowledgement. */
@@ -93,6 +102,8 @@ export function SuitePassOrFailSection({
       judgeConfig={judgeConfig}
       onJudgeConfigChange={onJudgeConfigChange}
       availableModels={availableModels}
+      requireOrgKeys={requireOrgKeys}
+      onManageOrgProviders={onManageOrgProviders}
       scenarioMigrationNotice={scenarioMigrationNotice}
       judgeAccessory={judgeAccessory}
       rubricEditor={rubricEditor}

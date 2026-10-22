@@ -2,7 +2,7 @@
  * Global test setup for client-side tests.
  * This file is automatically loaded before all tests run.
  */
-import { vi, afterEach } from "vitest";
+import { vi, afterAll, afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 import { transferableAbortController } from "node:util";
 import "@testing-library/jest-dom/vitest";
@@ -66,6 +66,13 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
+
+// Radix's FocusScope dispatches a focus event from a setTimeout after it
+// unmounts. When a file's last test unmounts one, that timer can fire after the
+// file's jsdom is torn down, and jsdom then rejects Node's CustomEvent with an
+// unhandled "parameter 1 is not of type 'Event'". One macrotask at the end of
+// the file lets it run while jsdom is still there.
+afterAll(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 
 // Mock window.matchMedia (required for responsive components)
 Object.defineProperty(window, "matchMedia", {

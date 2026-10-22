@@ -1,0 +1,26 @@
+#!/bin/sh
+# The slop ratchet over each pushed branch, measured against its merge-base
+# with origin/main: the same check the Slop Ratchet workflow runs on the PR.
+#
+# Skip once with `git push --no-verify`. SLOP_WAIVER=true reports and passes.
+
+command -v node >/dev/null 2>&1 || exit 0
+root="$(git rev-parse --show-toplevel)" || exit 0
+cd "$root" || exit 0
+[ -f scripts/slop/ratchet.mjs ] || exit 0
+git rev-parse --verify --quiet origin/main >/dev/null || exit 0
+
+zero=0000000000000000000000000000000000000000
+status=0
+# git passes "<local ref> <local sha> <remote ref> <remote sha>" per ref.
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # a branch deletion
+  if ! out="$(node scripts/slop/ratchet.mjs --head "$local_sha" 2>&1)"; then
+    printf '%s:\n%s\n\n' "$local_ref" "$out" >&2
+    status=1
+  fi
+done
+if [ "$status" -ne 0 ]; then
+  echo "pre-push: fix the above, or skip once with git push --no-verify." >&2
+fi
+exit "$status"

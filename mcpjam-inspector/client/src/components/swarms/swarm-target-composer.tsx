@@ -158,6 +158,8 @@ export function SwarmTargetComposer({
 
       <EnvironmentComposer
         slots={SWARM_COMPOSER_SLOTS}
+        emptyServerLabel="Pick a server or group"
+        serverOptional={false}
         projectId={projectId}
         environments={environments}
         value={value}

@@ -7,7 +7,10 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
+import {
+  harnessOrgUpstream,
+  HARNESS_PINNED_VERSIONS,
+} from "@/shared/harness-model-support";
 import { PINNED_CODEX_VERSION } from "../codex-appserver/bridge/app-server-protocol";
 import {
   buildBrokerDummyAuth,
@@ -32,6 +35,10 @@ vi.mock("../codex-appserver/index.js", async (original) => {
   return { ...actual, createCodexAppServer: vi.fn(actual.createCodexAppServer) };
 });
 import { createCodexAppServer } from "../codex-appserver/index.js";
+
+/** The settings the Claude Code adapter last built its harness with. */
+const lastClaudeCodeSettings = () =>
+  vi.mocked(createClaudeCodeHarness).mock.lastCall?.[0];
 import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../codex-appserver/shared/sandbox-policy.js";
 
 describe("harness registry", () => {
@@ -48,7 +55,7 @@ describe("harness registry", () => {
     // the app-server adapter — and skills ARE delivered (INS-8), under its own
     // root.
     expect(a.transport).toBe("app-server");
-    expect(a.mcpDelivery).toBe("host-executed");
+    expect(a.mcpDelivery).toBe("mcpjam");
     expect(a.supportsSkills).toBe(true);
     expect(a.skillsBaseDir).toBe("/home/user/.agents/skills");
     expect(a.supportsPluginBundles).toBe(false);
@@ -68,7 +75,7 @@ describe("harness registry", () => {
       // all), so this asserts the runtime shape matches the declared mode — the
       // check the compiler makes for real adapters, made again for a
       // hand-edited one.
-      if (adapter.mcpDelivery === "native") {
+      if (adapter.mcpDelivery === "harness") {
         if (adapter.mcpNativeDelivery === "sandbox-files") {
           // Writes runtime config into the box before the process starts.
           expect(adapter.deliverMcpServers).toBeTypeOf("function");
@@ -80,7 +87,7 @@ describe("harness registry", () => {
           expect(adapter.deliverMcpServers).toBeUndefined();
         }
       } else {
-        expect(adapter.mcpDelivery).toBe("host-executed");
+        expect(adapter.mcpDelivery).toBe("mcpjam");
         expect(adapter.mcpNativeDelivery).toBeUndefined();
         expect(adapter.deliverMcpServers).toBeUndefined();
       }
@@ -178,7 +185,7 @@ describe("harness registry", () => {
     // unknown, which only Playground chat may run.
     expect(cc.modelSupport("anthropic/claude-fable-5")).toMatchObject({
       status: "unknown",
-      reason: `not verified for claude-code ${HARNESS_PINNED_VERSIONS["claude-code"]}`,
+      reason: `This model has not been verified for the Claude Code client (${HARNESS_PINNED_VERSIONS["claude-code"]}). Choose a verified model or another client.`,
     });
     expect(cc.supportsModel("anthropic/claude-fable-5")).toBe(false);
     expect(
@@ -190,18 +197,8 @@ describe("harness registry", () => {
     expect(codex.supportsModel("openai/o1")).toBe(false);
   });
 
-  // ── Tool-less model lines ────────────────────────────────────────────────
-  //
-  // These cases are VERSION-KEYED to the pinned Codex CLI and were measured,
-  // not guessed: `.spike-codex-appserver` gate P5 drove the pinned binary
-  // through every gpt-5-family id in the hosted catalog and recorded how many
-  // tools each was given. The whole gpt-5.6 line got zero. Re-measure and
-  // update `CODEX_TOOL_LESS_MODEL_LINES` when the pinned CLI moves.
-  //
-  // Why this matters more than an ordinary unsupported model: the CLI RESOLVES
-  // these ids, so there is no unknown-model warning and the turn completes
-  // normally — the user just silently gets a Codex host that cannot act. All
-  // three are in MCPJam's hosted catalog today.
+  // GPT-5.6 is unverified on this pinned runtime. Only Playground's explicit
+  // allowUnknown path may try it; eval and swarm admission stay closed.
   it.each([
     ["openai/gpt-5.6-terra"],
     ["openai/gpt-5.6-sol"],
@@ -209,14 +206,11 @@ describe("harness registry", () => {
     // The bare line id, and case-insensitively.
     ["openai/gpt-5.6"],
     ["openai/GPT-5.6-Terra"],
-  ])("refuses the tool-less %s rather than running it chat-only", (modelId) => {
-    // Refused by the evidence table at the pinned 0.149.x CLI, not by the id
-    // mapping: `toNativeModel` still maps the gpt-5 family, and an unverified
-    // newer CLI reads the pair as `unknown` rather than inheriting the refusal.
+  ])("keeps %s unverified on the pinned runtime", (modelId) => {
     const codex = getHarnessAdapter("codex");
     expect(codex.supportsModel(modelId)).toBe(false);
-    expect(codex.supportsModel(modelId, { allowUnknown: true })).toBe(false);
-    expect(codex.modelSupport(modelId).status).toBe("unsupported");
+    expect(codex.supportsModel(modelId, { allowUnknown: true })).toBe(true);
+    expect(codex.modelSupport(modelId).status).toBe("unknown");
     expect(codex.toNativeModel?.(modelId)).toBe(
       modelId.slice("openai/".length),
     );
@@ -300,6 +294,35 @@ describe("harness registry", () => {
     // …and still nothing for a non-Anthropic or malformed id.
     expect(overridesFor("gpt-5")).toBeUndefined();
     expect(overridesFor("claude-$(id)")).toBeUndefined();
+    // On the organization's own Anthropic key there is no Gateway: the turn's
+    // env (delivered on the bridge `start` message) switches the overrides
+    // off, and the CLI's native id goes on the wire.
+    const withEnv = overridesFor as (
+      model: unknown,
+      env?: Record<string, string>,
+    ) => unknown;
+    expect(
+      withEnv("claude-sonnet-4-5", {
+        MCPJAM_HARNESS_UPSTREAM_PROFILE: "anthropic-native",
+      }),
+    ).toBeUndefined();
+    expect(
+      withEnv("haiku", { MCPJAM_HARNESS_UPSTREAM_PROFILE: "gateway" }),
+    ).toEqual({
+      modelOverrides: expect.objectContaining({
+        haiku: "anthropic/claude-haiku-4.5",
+      }),
+    });
+    expect(withEnv("haiku", { ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-5-5" })).toEqual({
+      modelOverrides: expect.objectContaining({
+        haiku: "anthropic/claude-haiku-5.5",
+        "claude-haiku-5-5": "anthropic/claude-haiku-5.5",
+      }),
+    });
+    // The query reads the profile from `start.env`, never the bridge process.
+    expect(content).toContain(
+      "gatewayModelOverrideSettingsFor(start.model, start.env)",
+    );
   });
 
   it("the HOSTED bridge carries TYPED terminal errors for provider failures", async () => {
@@ -1002,7 +1025,7 @@ function addUsage(total, usage) {
       // cleanly and is still a silent no-op (the model never gets a callable
       // tool). Writing it anyway would be the trap; the relay is the mechanism.
       const codex = getHarnessAdapter("codex");
-      expect(codex.mcpDelivery).toBe("host-executed");
+      expect(codex.mcpDelivery).toBe("mcpjam");
       expect(codex.deliverMcpServers).toBeUndefined();
     });
 
@@ -1011,7 +1034,7 @@ function addUsage(total, usage) {
       // adapter must stay on the `.mcp.json` path, so `runHarnessTurn` never
       // adds MCP tools to its host-executed tool set and the model never sees
       // the same tool twice.
-      expect(getHarnessAdapter("claude-code").mcpDelivery).toBe("native");
+      expect(getHarnessAdapter("claude-code").mcpDelivery).toBe("harness");
     });
 
     it("every adapter's delivery mode IS the shared declaration the client reads", () => {
@@ -1140,7 +1163,7 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     // proxy?) and must match the shared declaration the client reads; the
     // MECHANISM decides how it is handed over. Both are asserted because they
     // are separate facts that happen to travel together here.
-    expect(cursor.mcpDelivery).toBe("native");
+    expect(cursor.mcpDelivery).toBe("harness");
     expect(cursor.mcpDelivery).toBe(HARNESS_MCP_DELIVERY.cursor);
     expect(cursor.mcpNativeDelivery).toBe("session-config");
     expect(cursor.deliverMcpServers).toBeUndefined();
@@ -1347,7 +1370,7 @@ describe("bootstrap recipes are auth-independent", () => {
     adapter: ReturnType<typeof getHarnessAdapter>,
     args: { modelId: string; auth: ReturnType<typeof auth> },
   ) =>
-    adapter.mcpDelivery === "native" &&
+    adapter.mcpDelivery === "harness" &&
     adapter.mcpNativeDelivery === "session-config"
       ? adapter.createHarness({ ...args, mcpJson: { mcpServers: {} } })
       : adapter.createHarness(args);
@@ -1425,5 +1448,139 @@ describe("bootstrap recipes are auth-independent", () => {
       }) => r.files.find((f) => f.path.endsWith("/bridge.mjs"))!.content;
       expect(bridgeOf(p)).not.toBe(bridgeOf(bare));
     });
+  });
+});
+
+describe("the organization's own key (native upstream profiles)", () => {
+  const anthropicNative = {
+    profile: "anthropic-native" as const,
+    nativeModelId: "claude-sonnet-4-5",
+  };
+  const mcpJson = { mcpServers: {} };
+
+  it("each brokered adapter has an org upstream; an external-account one has none", () => {
+    for (const id of registeredHarnessIds()) {
+      const adapter = getHarnessAdapter(id);
+      expect(harnessOrgUpstream(id) !== null).toBe(
+        adapter.modelAccess === "broker",
+      );
+    }
+    expect(harnessOrgUpstream("claude-code")).toEqual({
+      provider: "anthropic",
+      profile: "anthropic-native",
+    });
+    expect(harnessOrgUpstream("codex")).toEqual({
+      provider: "openai",
+      profile: "openai-native",
+    });
+  });
+
+  it("Claude Code runs the leased native id on the native profile, the alias on the Gateway", () => {
+    const { toNativeModel } = getHarnessAdapter("claude-code");
+    // The Gateway spelling of the canonical id…
+    expect(toNativeModel?.("anthropic/claude-sonnet-4.5")).toBe(
+      "claude-sonnet-4-5",
+    );
+    // …versus exactly the id the org lease admitted, dated or not.
+    expect(
+      toNativeModel?.("anthropic/claude-sonnet-4.5", {
+        profile: "anthropic-native",
+        nativeModelId: "claude-sonnet-4-5-20250929",
+      }),
+    ).toBe("claude-sonnet-4-5-20250929");
+    // A Gateway-profile upstream (or none) never takes the native path.
+    expect(
+      toNativeModel?.("anthropic/claude-sonnet-4.5", {
+        profile: "gateway",
+        nativeModelId: "claude-sonnet-4-5-20250929",
+      }),
+    ).toBe("claude-sonnet-4-5");
+    // Haiku stays the alias (pinned to the leased id by the turn env).
+    expect(
+      toNativeModel?.("anthropic/claude-haiku-4.5", {
+        profile: "anthropic-native",
+        nativeModelId: "claude-haiku-4-5",
+      }),
+    ).toBe("haiku");
+  });
+
+  it("Codex runs the leased native id on the native profile", () => {
+    const { toNativeModel } = getHarnessAdapter("codex");
+    expect(
+      toNativeModel?.("openai/gpt-5", {
+        profile: "openai-native",
+        nativeModelId: "gpt-5-2025-08-07",
+      }),
+    ).toBe("gpt-5-2025-08-07");
+    expect(toNativeModel?.("openai/gpt-5")).toBe("gpt-5");
+    vi.mocked(createCodexAppServer).mockClear();
+    getHarnessAdapter("codex").createHarness({
+      modelId: "openai/gpt-5",
+      auth: buildBrokerDummyAuth("codex", "https://broker.example/openai/v1"),
+      upstream: { profile: "openai-native", nativeModelId: "gpt-5-2025-08-07" },
+    } as never);
+    expect(vi.mocked(createCodexAppServer).mock.lastCall?.[0]).toMatchObject({
+      model: "gpt-5-2025-08-07",
+    });
+  });
+
+  it("the native profile drops the Gateway workarounds and pins every self-chosen model", () => {
+    vi.mocked(createClaudeCodeHarness).mockClear();
+    getHarnessAdapter("claude-code").createHarness({
+      modelId: "anthropic/claude-sonnet-4.5",
+      auth: {},
+      mcpJson,
+      upstream: anthropicNative,
+    } as never);
+    const settings = lastClaudeCodeSettings();
+    // No disabled-thinking pin, no "unset" effort: those are Gateway shims.
+    expect(settings?.thinking).toBeUndefined();
+    expect(settings?.env?.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined();
+    expect(settings?.env).toMatchObject({
+      MCPJAM_HARNESS_UPSTREAM_PROFILE: "anthropic-native",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-4-5",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-5",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-sonnet-4-5",
+      ANTHROPIC_SMALL_FAST_MODEL: "claude-sonnet-4-5",
+      CLAUDE_CODE_SUBAGENT_MODEL: "claude-sonnet-4-5",
+    });
+  });
+
+  it("a requested effort applies the same way on either profile", () => {
+    vi.mocked(createClaudeCodeHarness).mockClear();
+    const adapter = getHarnessAdapter("claude-code");
+    adapter.createHarness({
+      modelId: "anthropic/claude-sonnet-4.5",
+      auth: {},
+      mcpJson,
+      reasoningEffort: "high",
+      upstream: anthropicNative,
+    } as never);
+    const native = lastClaudeCodeSettings();
+    adapter.createHarness({
+      modelId: "anthropic/claude-sonnet-4.5",
+      auth: {},
+      mcpJson,
+      reasoningEffort: "high",
+    } as never);
+    const gateway = lastClaudeCodeSettings();
+    for (const settings of [native, gateway]) {
+      expect(settings?.effort).toBe("high");
+      expect(settings?.thinking).toEqual({ type: "adaptive" });
+      expect(settings?.env?.CLAUDE_CODE_EFFORT_LEVEL).toBe("high");
+    }
+  });
+
+  it("the Gateway profile is unchanged: no native pins, no profile marker", () => {
+    vi.mocked(createClaudeCodeHarness).mockClear();
+    getHarnessAdapter("claude-code").createHarness({
+      modelId: "anthropic/claude-sonnet-4.5",
+      auth: {},
+      mcpJson,
+    } as never);
+    const settings = lastClaudeCodeSettings();
+    expect(settings?.thinking).toEqual({ type: "disabled" });
+    expect(settings?.env?.MCPJAM_HARNESS_UPSTREAM_PROFILE).toBeUndefined();
+    expect(settings?.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
   });
 });

@@ -1,6 +1,6 @@
 /**
  * The BUILT CLI, run as a user runs it: `node cli/dist/index.js test …` in a
- * fresh directory with no login, discovering its server from `./.mcp.json`,
+ * fresh directory with a local identity fixture, discovering its server from `./.mcp.json`,
  * reaching a loopback Anthropic-compatible stub through the standard
  * `ANTHROPIC_BASE_URL`, and spawning a real stdio MCP server — the production
  * model factory, not an injected double. The packed-package release smoke
@@ -20,7 +20,7 @@ const FIXTURE = fileURLToPath(
   new URL("./fixtures/policy-target-server.mjs", import.meta.url)
 );
 
-test("built CLI: account-free local run, config discovery, single-case rerun, process cleanup", async (t) => {
+test("built CLI: authenticated local run, missing-identity refusal, rerun, and cleanup", async (t) => {
   if (!existsSync(CLI_ENTRY)) {
     t.skip(
       "cli/dist is not built; run through `npm run test:fast`, which builds it first"

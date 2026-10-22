@@ -439,8 +439,16 @@ export type HostConfigMcpProfileV1 = {
         sessionStorage?: boolean;
         indexedDB?: boolean;
       };
+      // Whether the MCP App's iframe shares the sandbox page's origin
+      // (probe-measured). `false`: the App mounts via `srcdoc` without
+      // `allow-same-origin`, so its origin is opaque (`"null"`) — storage
+      // and cookies throw, and its fetches send `Origin: null`. This holds
+      // for every App, `ui.domain` or not. Absent -> same-origin.
+      sameOriginAppIframe?: boolean;
       // Extra outer/inner iframe `sandbox=` tokens unioned with the
-      // mandatory `allow-scripts allow-same-origin`. Inspector-only.
+      // mandatory `allow-scripts allow-same-origin` (`allow-same-origin` is
+      // left off the inner iframe when `sameOriginAppIframe` is false).
+      // Inspector-only.
       sandboxAttrs?: string[];
       // Extra Permissions Policy entries appended to outer/inner iframe
       // `allow=`. Keys are RAW kebab Permissions Policy tokens
@@ -987,6 +995,7 @@ export type HostConfigInputV2 = {
   // byte-identically. Never carries a secret (unknown keys are rejected).
   modelSelection?: ModelSelection;
   systemPrompt: string;
+  systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
   // Host-level opt-in for progressive MCP tool discovery. Optional + defaults
@@ -1013,6 +1022,8 @@ export type HostConfigInputV2 = {
   // form (the key absent), so all emulated hosts dedupe together. The
   // canonicalizer rejects any value other than the known harness ids.
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
   // Optional during the rollout of project-scoped server config: named hosts
   // pass `undefined` (server set lives on `projects.serverIds`); scenario/eval
   // forks still pass real arrays. Normalized to `[]` BEFORE hashing so the
@@ -1095,6 +1106,7 @@ export type CanonicalHostConfigV2 = {
   // byte-identically.
   modelSelection?: ModelSelection;
   systemPrompt: string;
+  systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
   // Mirrors HostConfigInputV2.progressiveToolDiscovery. Optional so absent
@@ -1110,6 +1122,8 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.harness (validated pass-through). Optional so
   // absent rows hash byte-identically to pre-feature rows.
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
   serverIds: Array<ServerId>;
   optionalServerIds: Array<ServerId>;
   // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or
@@ -1149,4 +1163,9 @@ export type CanonicalHostConfigV2 = {
       mcpProtocolVersionOverride?: McpProtocolVersion;
     }
   >;
+};
+
+/** Saved automatic eligibility and the source of the applied text. */
+export type SystemPromptDefault = {
+  source?: { catalogEntryId: string; revision: string; sourceUrl: string; publisher?: string };
 };

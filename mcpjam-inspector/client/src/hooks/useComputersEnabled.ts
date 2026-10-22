@@ -3,7 +3,12 @@ import { HOSTED_MODE } from "@/lib/config";
 
 /**
  * PostHog rollout gate for ALL Project Computers UI (the host-editor computer
- * toggle, the Computer nav tab, and the Computer view/terminal). Flag off ⇒
+ * toggle, the Computer nav tab, and the Computer view/terminal). It is the ONE
+ * machine flag, `sandbox-images-enabled`, which the backend also enforces on
+ * every machine write; the hook names are unchanged so the many components and
+ * mocks that read them are untouched. Cloud Claude Code / Codex / Cursor need
+ * none of this: they run on throwaway boxes behind their own harness flags and
+ * show no computer settings. Flag off ⇒
  * the feature is invisible, so we can roll it out per-user / by percentage
  * without a deploy. This is the visibility gate; a deployment still needs the
  * backend computer config (E2B creds + the data-plane secrets) for the
@@ -13,7 +18,7 @@ import { HOSTED_MODE } from "@/lib/config";
  * off (`=== true`) so the UI never flickers the feature on before PostHog
  * resolves.
  */
-export const COMPUTERS_FEATURE_FLAG = "computers-enabled";
+export const COMPUTERS_FEATURE_FLAG = "sandbox-images-enabled";
 
 /**
  * Tri-state flag: `true` enabled, `false` explicitly disabled, `undefined`
@@ -32,8 +37,8 @@ export function useComputersEnabled(): boolean {
 
 /**
  * Dark-launch gate for the LOCAL computer engine ("This machine")
- * specifically — a second, narrower flag inside the `computers-enabled`
- * surface. It gates local-engine CANDIDACY in `useComputerEngine` (which
+ * specifically — a second, narrower flag inside the machine
+ * (`sandbox-images-enabled`) surface. It gates local-engine CANDIDACY in `useComputerEngine` (which
  * hides the Computer tab's Local⇄Cloud toggle and local face, the playground
  * rail's local shell body, the consent gate, and the local chat
  * transmission in one place) plus the bash run-location pill. Flag off ⇒ a
@@ -80,7 +85,7 @@ export function useLocalHarnessEnabled(): boolean {
  * The Codex-style browser WORKSPACE — the panel beside chat, the tab strip,
  * automatic takeover, and the responsive viewport.
  *
- * A SECOND, NARROWER FLAG inside the `computers-enabled` surface, like the
+ * A SECOND, NARROWER FLAG inside the machine-flag surface, like the
  * local-engine one above, and it exists because the feature is not one thing
  * that can be true on one engine: the same shell drives a local Chromium, a
  * hosted one behind an H.264 stream, and Electron's native `WebContentsView`,
