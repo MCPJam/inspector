@@ -247,19 +247,20 @@ export function useJourneyRunStream(
 
     const open = () => {
       let remote = false;
-      // Whether this stream delivered any of the runner's events.
-      let delivered = false;
+      // Whether this stream answered with anything but run_remote: one of the
+      // runner's events, or run_complete.
+      let answered = false;
       let failure: string | null = null;
       void streamJourneyRun(
         runId,
         (event) => {
           if (genRef.current !== gen) return;
           if (event.type === "run_remote") remote = true;
+          else answered = true;
           // A server without the runner answers only run_remote or
           // run_complete, so neither one means the stream is live.
           const live =
             event.type !== "run_remote" && event.type !== "run_complete";
-          if (live) delivered = true;
           const wave = swarmRunGroupIdRef.current;
           const organization = organizationIdRef.current;
           if (
@@ -297,14 +298,15 @@ export function useJourneyRunStream(
         })
         .finally(() => {
           if (genRef.current !== gen || controller.signal.aborted) return;
-          // Once a server has answered run_remote, a reopen that fails before
-          // it delivers any runner events (a 502 mid-deploy, a transient 404)
-          // spends a retry instead of ending the chain. One that fails after
-          // is not reopened: the owner replays its buffer to a new subscriber,
-          // and the reducer would append those events a second time. Only a
-          // failure with no retry left is shown as an error.
+          // Once a server has answered run_remote, a reopen that ends before it
+          // answers anything, whether it fails (a 502 mid-deploy, a transient
+          // 404) or closes empty, spends a retry instead of ending the chain.
+          // One that delivered runner events is not reopened: the owner
+          // replays its buffer to a new subscriber, and the reducer would
+          // append those events a second time. Only a failure with no retry
+          // left is shown as an error.
           const delay =
-            remote || (failure !== null && reconnects > 0 && !delivered)
+            remote || (reconnects > 0 && !answered)
               ? REMOTE_RECONNECT_DELAYS_MS[reconnects]
               : undefined;
           setState((prev) => ({
