@@ -30,6 +30,7 @@ import {
   OPTION_KIND_LABEL,
   optionPromptLabel,
   optionTargetLabel,
+  plural,
 } from "./problem-prompts";
 
 const KIND_BADGE: Record<FindingOption["kind"], string> = {
@@ -38,11 +39,10 @@ const KIND_BADGE: Record<FindingOption["kind"], string> = {
   investigation: "Investigation",
 };
 
-const plural = (count: number, word: string) =>
-  `${count} ${word}${count === 1 ? "" : "s"}`;
-
 /** Why an analysis that ran left this problem without a checked cause. */
-const OUTCOME_LINE: Record<string, string> = {
+const OUTCOME_LINE: Partial<
+  Record<NonNullable<FindingProblem["outcome"]>["state"], string>
+> = {
   no_proposal: "Analysis ran and proposed nothing for this problem.",
   rejected: "Analysis ran; its proposals did not hold up against the evidence.",
   withheld: "Analysis ran but could not confirm a cause from the evidence.",
@@ -84,7 +84,6 @@ export function CopyOptionPrompt({
       size="sm"
       className="h-9 shadow-none"
       data-testid="problem-copy-prompt"
-      data-option-kind={option.kind}
       onClick={() => {
         void copyToClipboard(buildOptionPrompt(problem, option, context)).then(
           (ok) => {
@@ -142,10 +141,7 @@ export function ProblemDetailsContent({
   const unresolved = new Set(problem.coverage.unresolvedIterationIds);
   const target = option ? optionTargetLabel(option) : null;
   return (
-    <div
-      className="space-y-6 px-6 pb-8 text-sm leading-relaxed"
-      data-testid="problem-detail"
-    >
+    <div className="space-y-6 px-6 pb-8 text-sm leading-relaxed">
       <section>
         <h5 className="mb-3 font-semibold">What happened</h5>
         <p className="break-words text-[15px] leading-7">
@@ -197,9 +193,7 @@ export function ProblemDetailsContent({
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <h5 className="font-semibold">{OPTION_KIND_LABEL[option.kind]}</h5>
-            <Badge variant="outline" data-testid="problem-option-kind">
-              {KIND_BADGE[option.kind]}
-            </Badge>
+            <Badge variant="outline">{KIND_BADGE[option.kind]}</Badge>
           </div>
           <p className="break-words text-[15px] leading-7">
             <FindingText text={option.change} />
@@ -225,7 +219,7 @@ export function ProblemDetailsContent({
             </p>
           </div>
           {option.hypothesis ? (
-            <dl className="space-y-2" data-testid="problem-experiment">
+            <dl className="space-y-2">
               {[
                 ["Hypothesis", option.hypothesis],
                 ["Supports it if", option.supportsIf],

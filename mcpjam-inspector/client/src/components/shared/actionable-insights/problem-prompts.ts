@@ -16,9 +16,12 @@ import {
   evidenceLabel,
   fence,
   sanitizeIdentifier,
+  SURFACES,
   type FindingPromptContext,
 } from "./finding-prompts";
-import { SURFACES } from "./finding-summary";
+
+export const plural = (count: number, word: string) =>
+  `${count} ${word}${count === 1 ? "" : "s"}`;
 
 export const OPTION_KIND_LABEL: Record<FindingOption["kind"], string> = {
   fix: "Suggested fix",
@@ -89,7 +92,7 @@ export function buildOptionPrompt(
     "",
     "## Observed",
     problem.observed,
-    `This applies to ${option.iterationIds.length} of the ${problem.coverage.observed} affected iterations: ${option.iterationIds.map((id) => sanitizeIdentifier(id, 60)).join(", ")}.`,
+    `This applies to ${option.iterationIds.length} of the ${plural(problem.coverage.observed, "affected iteration")}: ${option.iterationIds.map((id) => sanitizeIdentifier(id, 60)).join(", ")}.`,
     ...(causes.length
       ? [
           "",
