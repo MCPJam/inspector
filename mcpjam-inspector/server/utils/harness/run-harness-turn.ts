@@ -223,6 +223,7 @@ import {
   type HarnessOwnerRef,
   type HarnessSessionCommitPayload,
 } from "./harness-session-state.js";
+import { createHarnessTurnShutdownHandle } from "./harness-turn-shutdown.js";
 import {
   buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
@@ -778,7 +779,7 @@ export async function runHarnessTurn(
     projectId,
     mcpClientManager,
     selectedServers,
-    abortSignal,
+    abortSignal: callerAbortSignal,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
@@ -822,6 +823,13 @@ export async function runHarnessTurn(
     onSecretEnvDelivered,
     createHarnessScopeStepUpContinuation,
   } = options;
+  // A server shutdown (a deploy) ends the turn the way a Stop does, so its
+  // teardown frees the chat's lane, box and broker lease before the process
+  // exits. See `harness-turn-shutdown.ts`.
+  const shutdownHandle = createHarnessTurnShutdownHandle();
+  const abortSignal: AbortSignal = callerAbortSignal
+    ? AbortSignal.any([callerAbortSignal, shutdownHandle.signal])
+    : shutdownHandle.signal;
   // One typed route.operation.failed per turn; the system fallback covers
   // callers with no request context (evals/swarms).
   const failureReporter = oncePerTurn(
@@ -4805,12 +4813,14 @@ export async function runHarnessTurn(
               },
             }
           : context.writer;
-        try {
-          await executeEngine({ writer });
-        } finally {
-          await onFinishEngine(context.writer);
-          releaseStopAfterPark?.();
-        }
+        await shutdownHandle.track(async () => {
+          try {
+            await executeEngine({ writer });
+          } finally {
+            await onFinishEngine(context.writer);
+            releaseStopAfterPark?.();
+          }
+        });
       },
     });
     const response = createUIMessageStreamResponse({ stream });
@@ -4820,13 +4830,15 @@ export async function runHarnessTurn(
   // streamSink === "none": run inline against a no-op writer; trace +
   // onConversationComplete still fire via closures.
   const noopWriter: ChunkWriter = { write: () => {} };
-  try {
-    await executeEngine({ writer: noopWriter });
-  } finally {
-    // onFinishEngine runs the broker teardown for this path too (see above).
-    await onFinishEngine();
-    releaseStopAfterPark?.();
-  }
+  await shutdownHandle.track(async () => {
+    try {
+      await executeEngine({ writer: noopWriter });
+    } finally {
+      // onFinishEngine runs the broker teardown for this path too (see above).
+      await onFinishEngine();
+      releaseStopAfterPark?.();
+    }
+  });
   return {
     messageHistory,
     aborted,
