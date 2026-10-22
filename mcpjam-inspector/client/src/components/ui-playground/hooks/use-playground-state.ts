@@ -57,9 +57,10 @@ import { registerSurfaceSnapshotProvider } from "@/lib/webmcp/surface-snapshot-r
 import type { AppSurfaceId } from "@/shared/app-surfaces";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import {
-  getApiContextRevision,
+  getServerRequestKey,
   subscribeApiContext,
 } from "@/lib/apis/web/context";
+import { HOSTED_MODE } from "@/lib/config";
 import type {
   ExecuteToolInspectorCommand,
   RenderToolResultInspectorCommand,
@@ -315,10 +316,21 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   });
 
   const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);
-  const apiContextRevision = useSyncExternalStore(
+  // What this server's tools/list would send right now, or `null` while the
+  // context cannot build it. The list is refetched when the request changes,
+  // not on every context revision: most revisions (a connect re-injecting a
+  // mapping it had, a new token getter) leave it exactly as it was (PLB-118).
+  // A local build's listing reads nothing from the context.
+  const readToolsRequestKey = () =>
+    !serverName
+      ? null
+      : HOSTED_MODE
+        ? getServerRequestKey(serverName)
+        : `local:${serverName}`;
+  const toolsRequestKey = useSyncExternalStore(
     subscribeApiContext,
-    getApiContextRevision,
-    getApiContextRevision
+    readToolsRequestKey,
+    readToolsRequestKey
   );
 
   const waitForExecutionInjection = useCallback(
@@ -420,14 +432,25 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     setFormFields,
   });
 
+  // Each listing gets a number, and only the newest may write: an older one
+  // answering late would show tools for a request since replaced. The keys
+  // record which request is being listed and which one last settled, so the
+  // effect below sends each request once.
+  const toolsRequestSeqRef = useRef(0);
+  const toolsInFlightKeyRef = useRef<string | null>(null);
+  const toolsSettledKeyRef = useRef<string | null>(null);
+
   const fetchTools = useCallback(async () => {
     if (!serverName) return;
 
+    const seq = ++toolsRequestSeqRef.current;
+    toolsInFlightKeyRef.current = toolsRequestKey;
     reset();
     setToolsMetadata({});
     setFetchingTools(true);
     try {
       const data = await listTools({ serverId: serverName });
+      if (seq !== toolsRequestSeqRef.current) return;
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
         toolArray.map((tool: Tool) => [tool.name, tool])
@@ -435,14 +458,19 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       setTools(dictionary);
       setToolsMetadata(data.toolsMetadata ?? {});
     } catch (err) {
+      if (seq !== toolsRequestSeqRef.current) return;
       console.error("Failed to fetch tools:", err);
       setExecutionError(
         err instanceof Error ? err.message : "Failed to fetch tools"
       );
     } finally {
-      setFetchingTools(false);
+      if (seq === toolsRequestSeqRef.current) {
+        toolsInFlightKeyRef.current = null;
+        toolsSettledKeyRef.current = toolsRequestKey;
+        setFetchingTools(false);
+      }
     }
-  }, [serverName, reset, setTools, setExecutionError, apiContextRevision]);
+  }, [serverName, reset, setTools, setExecutionError, toolsRequestKey]);
 
   const loadToolsUntilMatch = useCallback(
     async (toolName?: string) => {
@@ -579,11 +607,27 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     };
 
     if (serverConfig && serverName && serverConnectionStatus === "connected") {
-      if (!serverChanged && !statusChanged && Object.keys(tools).length > 0) {
+      // Wait for a context that can build the request rather than send one
+      // the route would refuse.
+      if (toolsRequestKey === null) return;
+      // This exact request is already being listed, or has been. Keyed on the
+      // request, not on whether the list is empty: `fetchTools` empties it
+      // first, and that used to look like "not loaded" and send it again.
+      if (
+        !serverChanged &&
+        !statusChanged &&
+        (toolsInFlightKeyRef.current === toolsRequestKey ||
+          toolsSettledKeyRef.current === toolsRequestKey)
+      ) {
         return;
       }
       fetchTools();
     } else {
+      // A listing still in flight belongs to a server that is gone.
+      toolsRequestSeqRef.current += 1;
+      toolsInFlightKeyRef.current = null;
+      toolsSettledKeyRef.current = null;
+      setFetchingTools(false);
       reset();
       setToolsMetadata({});
     }
@@ -591,10 +635,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     serverConfig,
     serverName,
     serverConnectionStatus,
-    apiContextRevision,
+    toolsRequestKey,
     fetchTools,
     reset,
-    tools,
   ]);
 
   // Subscribe to the app-tools registry so form fields regenerate when an

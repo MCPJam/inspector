@@ -180,6 +180,42 @@ export function getApiContextRevision(): number {
   return apiContextRevision;
 }
 
+let serverRequestKeyCache: {
+  revision: number;
+  serverNameOrId: string;
+  key: string | null;
+} | null = null;
+
+/**
+ * What a single-server request for `serverNameOrId` would carry right now, as
+ * a string, or `null` while the context cannot build one (no project yet, the
+ * server not mapped, client config still syncing). Equal keys mean the same
+ * request, so a caller can refetch when the request would change instead of
+ * on every revision: most revisions leave a given server's request exactly as
+ * it was (PLB-118). The bearer kind is part of it; the token itself is not.
+ */
+export function getServerRequestKey(serverNameOrId: string): string | null {
+  const cached = serverRequestKeyCache;
+  if (
+    cached &&
+    cached.revision === apiContextRevision &&
+    cached.serverNameOrId === serverNameOrId
+  ) {
+    return cached.key;
+  }
+  let key: string | null;
+  try {
+    key = JSON.stringify([
+      shouldPreferGuestBearer(),
+      buildServerRequest(serverNameOrId),
+    ]);
+  } catch {
+    key = null;
+  }
+  serverRequestKeyCache = { revision: apiContextRevision, serverNameOrId, key };
+  return key;
+}
+
 function assertHostedMode() {
   if (!HOSTED_MODE) {
     throw new Error("Hosted API context is only available in hosted mode");
@@ -276,6 +312,9 @@ export function injectHostedServerMapping(
   serverName: string,
   serverId: string
 ): void {
+  // Every connect re-injects the mapping it already has. Announcing that as a
+  // change made every subscriber refetch for a context that had not moved.
+  if (apiContext.serverIdsByName[serverName] === serverId) return;
   apiContext = {
     ...apiContext,
     serverIdsByName: {
