@@ -114,6 +114,22 @@ describe("stream answered by a server without the run's runner", () => {
     expect(result.current.error).toBe("Run not found");
   });
 
+  it("spends a retry on a reopen that closes before answering", async () => {
+    // Every reopen closes with no event, as an empty 200 from a server that
+    // is shutting down would.
+    streams.mockResolvedValue(undefined);
+    streams.mockImplementationOnce(async (_id, onEvent) => {
+      onEvent({ ...runLevel, type: "run_remote" } as SwarmStreamEvent);
+    });
+    const { result } = renderHook(() => useJourneyRunStream("run-1", true));
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(streams).toHaveBeenCalledTimes(7);
+    expect(result.current.error).toBeNull();
+  });
+
   it("does not reopen a stream that fails after delivering the runner's events", async () => {
     streams.mockResolvedValue(undefined);
     streams.mockImplementationOnce(async (_id, onEvent) => {
