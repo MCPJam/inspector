@@ -561,7 +561,7 @@ async function createAndStartJourneyRun(
         surface: "tools",
       });
     });
-    await startJourneyRun({
+    const runner = startJourneyRun({
       runId,
       projectId,
       hosts: runHosts,
@@ -708,11 +708,10 @@ async function createAndStartJourneyRun(
           },
         };
       },
-    })
-      .catch((err) => {
-        logger.error("[swarm-runs] startJourneyRun failed", err, { runId });
-      })
-      .finally(runnerSettled);
+    }).catch((err) => {
+      logger.error("[swarm-runs] startJourneyRun failed", err, { runId });
+    });
+    void runner.finally(runnerSettled);
   });
 
   return { runId, ...(created.funding ? { funding: created.funding } : {}) };
