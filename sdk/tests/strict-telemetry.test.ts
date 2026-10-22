@@ -164,3 +164,49 @@ describe("strict telemetry reconstruction", () => {
     expect(rebuildSentryBreadcrumb({ message: secret })).toBeNull();
   });
 });
+
+describe("XAA mint refusal tags", () => {
+  // The inspector tags a mint the customer's authorization server refused so
+  // triage can read the AS's verdict without the scrubbed message. The kind is
+  // a finite vocabulary; the status and the RFC 6749 code are open but bounded.
+  it("keeps the kind, the AS status and the RFC 6749 error code", () => {
+    const event = rebuildSentryEvent({
+      level: "warning",
+      tags: {
+        page_class: "routine",
+        xaa_failure: "authorization_rejected",
+        xaa_as_status: "400",
+        xaa_as_error: "invalid_grant",
+      },
+    });
+
+    expect(event.tags).toEqual({
+      page_class: "routine",
+      xaa_failure: "authorization_rejected",
+      xaa_as_status: "400",
+      xaa_as_error: "invalid_grant",
+    });
+  });
+
+  it("drops an unknown kind, a non-HTTP status and a code outside the RFC charset or length", () => {
+    const event = rebuildSentryEvent({
+      tags: {
+        xaa_failure: "signing_failed",
+        xaa_as_status: "abc",
+        xaa_as_error: 'bad "code"',
+      },
+    });
+    expect(event.tags).toEqual({});
+
+    expect(rebuildSentryEvent({ tags: { xaa_as_status: "999" } }).tags).toEqual({});
+    expect(rebuildSentryEvent({ tags: { xaa_as_status: "40" } }).tags).toEqual({});
+    expect(
+      rebuildSentryEvent({ tags: { xaa_as_error: "x".repeat(65) } }).tags
+    ).toEqual({});
+    expect(rebuildSentryEvent({ tags: { xaa_as_error: "" } }).tags).toEqual({});
+    expect(
+      rebuildSentryEvent({ tags: { xaa_failure: "authorization_server_unknown" } })
+        .tags
+    ).toEqual({ xaa_failure: "authorization_server_unknown" });
+  });
+});

@@ -78,6 +78,6 @@ flowchart LR
 ## Checklist
 
 - [ ] I can explain every line of this diff without the agent that wrote it.
-- [ ] Under 400 hand-written changed lines, or labelled `large-pr` / `mechanical`.
+- [ ] Under 800 changed lines of hand-written source, not counting tests (`npm run slop:size`), or labelled `large-pr` / `mechanical`.
 - [ ] No new `as any`, empty `catch`, `.catch(() => {})` or raw `console` on the server.
 - [ ] Comments say why the code is this way, not how it got here.

@@ -2002,3 +2002,6 @@ export type {
 } from "./mcp-client-manager/multi-connection-tools.js";
 
 export { aiRequestHeaders } from "./ai-request-headers.js";
+
+export { EvalRunStartError } from "./eval-run-start.js";
+export type { EvalIdentityOptions } from "./eval-run-start.js";

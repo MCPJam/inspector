@@ -80,6 +80,7 @@ describe("Sentry protocol reconstruction", () => {
       chunkType: "tool-*",
       httpStatus: 502,
       fieldCount: 8,
+      port: 6275,
       contentType: "application/json",
       requestId: "bd2cfb5e-a428-4bad-91f5-4656d832cf73",
       unknown: "PRIVATE_SENTINEL",
@@ -95,6 +96,7 @@ describe("Sentry protocol reconstruction", () => {
           chunkType: "tool-PRIVATE_SENTINEL",
           fieldCount: 1001,
           httpStatus: 700,
+          port: 70000,
         },
       },
       catalog

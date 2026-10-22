@@ -106,6 +106,7 @@ function hostJsonToStrippedInput(json: HostJson): HostConfigInputV2 {
     hostStyle: json.style,
     modelId: json.model,
     systemPrompt: json.systemPrompt,
+    systemPromptDefault: json.systemPromptDefault,
     temperature: json.temperature,
     requireToolApproval: json.requireToolApproval,
     connectionDefaults: json.connectionDefaults,

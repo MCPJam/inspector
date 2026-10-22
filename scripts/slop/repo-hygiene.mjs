@@ -5,9 +5,10 @@
  *
  *   fails:  a new root file, `NOTES-*.md` or `.spike-*` path;
  *           a source file that crosses FILE_BUDGET lines (new or grown).
- *   warns:  a source file already over FILE_BUDGET that grows. Hundreds of
- *           files are there today, so failing on growth would fail about half
- *           of all PRs; the burn-down shrinks them instead.
+ *   warns:  a source file already over FILE_BUDGET that grows by more than
+ *           GROWTH_ALLOWANCE lines. Hundreds of files are there today, so
+ *           failing on growth would fail about half of all PRs; the burn-down
+ *           shrinks them instead.
  *
  *   node scripts/slop/repo-hygiene.mjs --base HEAD^1
  *   node scripts/slop/repo-hygiene.mjs --staged      # git pre-commit
@@ -17,7 +18,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { FILE_BUDGET, checkNewPath } from "./hook.mjs";
+import { FILE_BUDGET, GROWTH_ALLOWANCE, checkNewPath } from "./hook.mjs";
 import { isMeasuredFile } from "./rules.mjs";
 
 function git(args) {
@@ -63,9 +64,9 @@ export function checkChange(entries, linesBefore, linesAfter) {
       failures.push(
         `${path}: ${before} -> ${after} lines, over the ${FILE_BUDGET}-line budget. Put the new code in its own module.`,
       );
-    } else {
+    } else if (after - before > GROWTH_ALLOWANCE) {
       warnings.push(
-        `${path}: already over ${FILE_BUDGET} lines and grew ${before} -> ${after}.`,
+        `${path}: already over ${FILE_BUDGET} lines and grew ${before} -> ${after}, more than the ${GROWTH_ALLOWANCE} lines of wiring it may take. Put the new logic in its own module.`,
       );
     }
   }
