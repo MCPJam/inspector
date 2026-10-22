@@ -34,6 +34,7 @@ const TAGS: Record<string, readonly string[]> = {
   severity: ["error", "warning", "info"],
   error_origin: ["user_server", "user_config", "mcpjam", "ambiguous"],
   page_class: ["incident", "routine"],
+  xaa_failure: ["authorization_rejected", "authorization_server_unknown"],
   surface: ["mcpjam_agent", "action", "api", "desktop", "sdk"],
   entrypoint: [
     "uploadEvalArtifact",
@@ -149,11 +150,27 @@ function exceptions(input: unknown, catalog: TelemetryCatalog) {
   return { values: kept, dropped };
 }
 
+// Open-domain tags with a bounded shape instead of a finite vocabulary: the
+// HTTP status an XAA authorization server answered with, and its RFC 6749
+// `error` code (section 5.2 charset, kept short).
+const SHAPED_TAGS: Record<string, (value: unknown) => string | undefined> = {
+  xaa_as_status: (value) =>
+    typeof value === "string" && /^[1-5]\d{2}$/.test(value) ? value : undefined,
+  xaa_as_error: (value) =>
+    typeof value === "string" && /^[\x20-\x21\x23-\x5B\x5D-\x7E]{1,64}$/.test(value)
+      ? value
+      : undefined,
+};
+
 function tags(input: unknown): Fields {
   const source = telemetryRecord(input);
   const output: Fields = {};
   for (const [key, values] of Object.entries(TAGS)) {
     const value = member(source[key], values);
+    if (value) output[key] = value;
+  }
+  for (const [key, shaped] of Object.entries(SHAPED_TAGS)) {
+    const value = shaped(source[key]);
     if (value) output[key] = value;
   }
   return output;

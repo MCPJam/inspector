@@ -671,10 +671,7 @@ export async function launchJourneyRun(
         };
       },
     }).catch((err) => {
-      logger.error("[swarm-runs] startJourneyRun failed", {
-        runId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logger.error("[swarm-runs] startJourneyRun failed", err, { runId });
     });
   });
 

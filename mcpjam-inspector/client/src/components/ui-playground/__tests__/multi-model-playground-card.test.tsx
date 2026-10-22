@@ -541,6 +541,35 @@ describe("MultiModelPlaygroundCard", () => {
       expect(root.className).toContain("min-h-0");
     });
 
+    it("puts a caller's class on the card root (the phone switcher hides a lane with it)", () => {
+      render(
+        <MultiModelPlaygroundCard
+          className="hidden"
+          compareId={String(model.id)}
+          compareLabel={model.name}
+          compareKind="model"
+          model={model}
+          comparisonSummaries={[]}
+          selectedServers={[]}
+          broadcastRequest={null}
+          deterministicExecutionRequest={null}
+          stopRequestId={0}
+          executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+          displayMode="inline"
+          onDisplayModeChange={vi.fn()}
+          hostStyle="chatgpt"
+          effectiveThreadTheme="light"
+          deviceType="desktop"
+          onSummaryChange={vi.fn()}
+        />,
+      );
+
+      // A class token, not a substring: the root also carries overflow-hidden.
+      expect(screen.getByTestId("multi-model-playground-card-root")).toHaveClass(
+        "hidden",
+      );
+    });
+
     it("shell drops its min-height in default desktop inline compare", () => {
       mockUseChatSession.messages = [
         { id: "m-1", role: "user", parts: [{ type: "text", text: "hi" }] },

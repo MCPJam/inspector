@@ -46,7 +46,7 @@ describe("an explicit ask that cannot be honoured is REFUSED, not degraded", () 
     });
     expect(result.kind).toBe("refused");
     expect((result as { reason: string }).reason).toMatch(
-      /MCPJAM_LOCAL_HARNESS_ENABLED/,
+      /Choose cloud execution/,
     );
   });
 
@@ -57,7 +57,7 @@ describe("an explicit ask that cannot be honoured is REFUSED, not degraded", () 
       actorEligible: false,
     });
     expect(result.kind).toBe("refused");
-    expect((result as { reason: string }).reason).toMatch(/attended/);
+    expect((result as { reason: string }).reason).toMatch(/their own chat/);
   });
 
   it("refuses a request with no resolved user", () => {
@@ -172,7 +172,7 @@ describe("a call site that forgets the acting user refuses rather than throws", 
       actingUserId: actingUserId as never,
     });
     expect(result.kind).toBe("refused");
-    expect((result as { reason: string }).reason).toMatch(/signed-in member/);
+    expect((result as { reason: string }).reason).toMatch(/Sign in/);
   });
 
   it("says 'sign in', not 'incomplete target', when only the user is missing", () => {
@@ -184,7 +184,7 @@ describe("a call site that forgets the acting user refuses rather than throws", 
       actingUserId: null,
     });
     expect((result as { reason: string }).reason).toMatch(
-      /carries no resolved user/,
+      /Sign in/,
     );
   });
 });

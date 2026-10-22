@@ -1,12 +1,7 @@
-// An account-free `mcpjam test` smoke, shared by the built-CLI test
-// (`tests/local-test-smoke.test.ts`) and the packed-package release smoke
-// (`.github/scripts/smoke-packed-npm-packages.mjs`).
-//
-// It exercises the PRODUCTION path end to end — the CLI binary, local config
-// discovery, the SDK runner and the real provider factory — against a
-// loopback Anthropic-compatible stub (reached through the standard
-// ANTHROPIC_BASE_URL variable) and a real stdio MCP server. No account, no
-// login, no paid inference, and no test-only flag.
+// The production CLI, provider factory, and stdio MCP path, with a local
+// authenticated platform fixture and an Anthropic-compatible HTTP stub.
+// Shared by the built-CLI test and packed-package release smoke.
+import { evalIdentityFixture } from "./eval-identity.mjs";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -164,6 +159,7 @@ export async function runLocalTestSmoke({
   env = process.env,
 }) {
   const stub = await startAnthropicStub();
+  const platform = await evalIdentityFixture();
   try {
     mkdirSync(path.join(workDir, ".mcpjam", "evals"), { recursive: true });
     mkdirSync(path.join(workDir, "home"), { recursive: true });
@@ -186,13 +182,22 @@ export async function runLocalTestSmoke({
     );
     const childEnv = {
       PATH: env.PATH ?? "",
-      // A fresh HOME: no stored login exists, so the run is account-free.
+      // No saved login can affect the explicit fixture credential.
       HOME: path.join(workDir, "home"),
       USERPROFILE: path.join(workDir, "home"),
       MCPJAM_TELEMETRY_DISABLED: "1",
       ANTHROPIC_API_KEY: "sk-ant-smoke-not-a-real-key",
       ANTHROPIC_BASE_URL: stub.baseUrl,
+      ...platform.env,
     };
+
+    const unauthenticated = await runCli(
+      cliEntry, ["--format", "json", "test", ".mcpjam/evals/example.yaml"],
+      { cwd: workDir, env: { ...childEnv, MCPJAM_API_KEY: "", MCPJAM_AUTH_FILE: path.join(workDir, "missing-auth.json") } }
+    );
+    assert(unauthenticated.exitCode === 3, "missing identity must refuse the eval");
+    assert(!existsSync(pidFile), "missing identity connected an MCP server");
+    assert(stub.requests.length === 0, "missing identity called the model");
 
     // The whole suite: one pass, one measured failure → exit 1.
     const full = await runCli(
@@ -248,7 +253,7 @@ export async function runLocalTestSmoke({
     );
 
     // The production factory reached the stub with the BYOK key, and nothing
-    // else left the process.
+    // result content was sent to MCPJam.
     const messages = stub.requests.filter((request) =>
       request.url?.endsWith("/v1/messages")
     );
@@ -267,8 +272,11 @@ export async function runLocalTestSmoke({
       await waitForExit(pid, 5000),
       `the MCP server process ${pid} outlived the run`
     );
-    return { full, rerun, requests: stub.requests };
+    assert(platform.starts.length === 2, "expected one start for each logical run");
+    assert(platform.starts[0].runStartId !== platform.starts[1].runStartId, "rerun reused a start ID");
+    return { full, rerun, requests: stub.requests, starts: platform.starts };
   } finally {
     await stub.close();
+    await platform.close();
   }
 }

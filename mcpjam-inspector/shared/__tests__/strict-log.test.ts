@@ -187,6 +187,38 @@ describe("strict log boundary", () => {
     expect(row).not.toHaveProperty("durationMs");
     expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
   });
+  it("copies Convex IDs from the server's context and never from a payload", () => {
+    const [org, project, server, forged] = ["org", "project", "server", "forged"]
+      .map((seed) => seed.padEnd(32, "0"));
+    const payload = { orgId: forged, projectId: forged, serverId: forged };
+    expect(
+      buildStrictLogRow(
+        "mcp.tool.execution.failed",
+        { orgId: org, projectId: project, serverId: server, sessionId: server },
+        payload,
+      ),
+    ).toMatchObject({ orgId: org, projectId: project, serverId: server });
+    for (const context of [
+      {},
+      { orgId: null, projectId: null, serverId: null },
+      { orgId: forged.toUpperCase(), projectId: `${project}0`, serverId: 7 },
+      { orgId: `PRIVATE_SENTINEL ${org}` },
+    ]) {
+      const row = buildStrictLogRow("mcp.tool.execution.failed", context, payload);
+      for (const key of ["orgId", "projectId", "serverId", "sessionId"])
+        expect(row).not.toHaveProperty(key);
+      expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
+    }
+  });
+  it("takes no ID from a legacy row's context, harness rows included", () => {
+    const ids = { orgId: "org".padEnd(32, "0"), projectId: "p".padEnd(32, "0") };
+    for (const message of ["[harness][timing] claim=1ms", "[harness] turn failed"]) {
+      const row = buildLegacyLogRow(message, { ...ids, harnessId: "codex" });
+      expect(row).toMatchObject({ harnessId: "codex" });
+      expect(row).not.toHaveProperty("orgId");
+      expect(row).not.toHaveProperty("projectId");
+    }
+  });
   it("drops fields named after Object.prototype members instead of throwing", () => {
     const fields = JSON.parse(
       '{"toString":"x","constructor":"ok","hasOwnProperty":1,"valueOf":true,"__proto__":"x"}',

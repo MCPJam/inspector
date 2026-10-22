@@ -50,13 +50,16 @@ function mockBatchResponse(body: unknown, status = 200) {
   } as Response;
 }
 
+// Convex document IDs: a log context keeps no other shape.
+const PROJECT_ID = "project1".padEnd(32, "0");
+const ALPHA_ID = "srvalpha".padEnd(32, "0");
 const projectCtx = {
   authType: "signedIn" as const,
   userId: "user-1",
-  projectId: "ws-1",
+  projectId: PROJECT_ID,
   projectRole: "member" as const,
   accessLevel: "project_member" as const,
-  orgId: "org-1",
+  orgId: "org1".padEnd(32, "0"),
   orgPlan: "team",
   emailDomain: "example.com",
 };
@@ -85,7 +88,7 @@ describe("authorizeBatch — request log context attribution", () => {
               serverConfig: { transportType: "http", url: "https://a" },
               internalLogContext: {
                 ...projectCtx,
-                serverId: "srv-alpha",
+                serverId: ALPHA_ID,
                 serverTransport: "http",
                 scenarioId: "cb-1",
               },
@@ -99,10 +102,10 @@ describe("authorizeBatch — request log context attribution", () => {
     await authorizeBatch(callerContextFromHono(c), "bearer", "ws-1", ["srv-alpha"]);
 
     const merged = vars.requestLogContext as RequestLogContext;
-    expect(merged.serverId).toBe("srv-alpha");
+    expect(merged.serverId).toBe(ALPHA_ID);
     expect(merged.serverTransport).toBe("http");
     expect(merged.scenarioId).toBe("cb-1");
-    expect(merged.projectId).toBe("ws-1");
+    expect(merged.projectId).toBe(PROJECT_ID);
     expect(merged.userId).toBe("user-1");
     expect(merged.authType).toBe("signedIn");
   });
@@ -152,7 +155,7 @@ describe("authorizeBatch — request log context attribution", () => {
     expect(merged.serverTransport).toBeNull();
     expect(merged.scenarioId).toBeNull();
     // Project-level fields still attributed.
-    expect(merged.projectId).toBe("ws-1");
+    expect(merged.projectId).toBe(PROJECT_ID);
     expect(merged.userId).toBe("user-1");
     expect(merged.authType).toBe("signedIn");
     expect(merged.accessLevel).toBe("project_member");
