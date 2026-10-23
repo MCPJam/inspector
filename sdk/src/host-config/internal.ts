@@ -35,6 +35,7 @@ export {
 } from "./types.js";
 export type {
   Harness,
+  HostConfigModelContextPolicyV1,
   HostConfigPluginExtensionsV1,
   PluginExtensionCapabilityKey,
 } from "./types.js";
@@ -88,6 +89,20 @@ export type {
   PluginExtensionsHostInput,
   ResolvedPluginExtensions,
 } from "./plugin-extensions.js";
+
+// Per-client plugin App context budgets (mcpProfile.apps.modelContextPolicy).
+export {
+  isModelContextBudget,
+  MODEL_CONTEXT_POLICY_CEILINGS,
+  MODEL_CONTEXT_POLICY_DEFAULTS,
+  MODEL_CONTEXT_POLICY_KEYS,
+  resolveModelContextPolicy,
+} from "./model-context-policy.js";
+export type {
+  ModelContextPolicyHostInput,
+  ModelContextPolicyKey,
+  ResolvedModelContextPolicy,
+} from "./model-context-policy.js";
 
 // Stage 3: host-execution policy + visibility filter + OpenAI compat.
 // Stays browser-safe — `tool-visibility.ts` is structurally typed
