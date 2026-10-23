@@ -15,7 +15,7 @@ on:
         type: string
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
 
 permissions:
   contents: read
