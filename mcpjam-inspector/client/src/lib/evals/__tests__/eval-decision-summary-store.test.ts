@@ -18,7 +18,6 @@ import {
   DECISION_SUMMARY_BADGE_LIMIT,
   DECISION_SUMMARY_DETAIL_LIMIT,
   decisionSummaryKey,
-  isTerminalEvalRunStatus,
 } from "../eval-decision-summary-store";
 import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import { readDecisionSummaryFixture } from "@/test/eval-decision-summary-fixtures";
@@ -72,24 +71,6 @@ function detailRequest(runId: string, extra: { revision?: string } = {}) {
     ...extra,
   };
 }
-
-describe("isTerminalEvalRunStatus", () => {
-  it.each(["completed", "failed", "cancelled", "timed_out"])(
-    "treats %s as terminal",
-    (status) => {
-      expect(isTerminalEvalRunStatus(status)).toBe(true);
-    },
-  );
-
-  it.each(["pending", "running", undefined, null, ""])(
-    "leaves %s lifecycle-only",
-    (status) => {
-      expect(isTerminalEvalRunStatus(status as string | null | undefined)).toBe(
-        false,
-      );
-    },
-  );
-});
 
 describe("EvalDecisionSummaryStore", () => {
   let now = 1_000;

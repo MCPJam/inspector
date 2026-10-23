@@ -1457,10 +1457,10 @@ export type PreparedEvalRun = {
   serverUnreachable?: boolean;
   /**
    * Execute the prepared run to completion. `runEvalSuiteWithAiSdk` owns
-   * terminal run status (completed/failed/cancelled); callers that detach
-   * this (the async /api/v1 route) should still catch and defensively
-   * finalize via `recorder` for errors thrown outside the runner's own
-   * try.
+   * terminal run status (completed/failed/cancelled/timed_out); callers
+   * that detach this (the async /api/v1 route) should still catch and
+   * defensively finalize via `recorder` for errors thrown outside the
+   * runner's own try.
    *
    * DO NOT call this unconditionally on a prepared run — see
    * {@link shouldSkipExecution}. A replay of a finished run must not execute:

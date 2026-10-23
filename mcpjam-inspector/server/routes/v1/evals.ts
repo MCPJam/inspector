@@ -5708,7 +5708,7 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
 
 // GET /v1/projects/:projectId/eval-runs/:runId
 // Run status + summary. Poll this until status is terminal
-// (completed | failed | cancelled).
+// (completed | failed | cancelled | timed_out).
 evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");

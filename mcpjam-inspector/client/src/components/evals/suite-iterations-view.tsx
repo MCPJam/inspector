@@ -190,6 +190,7 @@ import {
   type EvalExportDraftInput,
 } from "@/lib/evals/eval-export";
 import { sameRunTarget } from "@/lib/eval-target-key";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: SuiteOverviewView) => void;
@@ -376,13 +377,6 @@ export function sortRunsNewestFirst(
   return [...runs].sort((a, b) => compareRunsBySequence(b, a));
 }
 
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
 /**
  * S6 — the run a rubric edit can be backtested against.
  *
@@ -397,7 +391,7 @@ export function pickBacktestableRun(
   return (
     sortRunsNewestFirst(runs).find(
       (run) =>
-        TERMINAL_RUN_STATUSES.has(run.status ?? "") &&
+        isEvalRunTerminalStatus(run.status) &&
         (run.judgeScore != null ||
           ("goalCompletion" in run && run.goalCompletion != null)),
     ) ?? null
