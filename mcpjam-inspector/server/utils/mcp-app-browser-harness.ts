@@ -415,7 +415,7 @@ export interface McpAppBrowserHarnessOptions {
     args: Record<string, unknown>,
   ) => Promise<unknown>;
   /** Read through the authenticated connection that produced the widget. */
-  readResource?: (
+  readResource: (
     serverId: string,
     params: ResourceReadParams,
   ) => Promise<MCPReadResourceResult>;
@@ -950,7 +950,6 @@ export class McpAppBrowserHarness {
         if (!capabilities.serverResources)
           return { error: RESOURCE_READS_DISABLED_MESSAGE };
         const readResource = this.opts.readResource;
-        if (!readResource) return { error: "Resource read service unavailable" };
         this.pendingRpcCount += 1;
         try {
           return { result: await readResource(widget.serverId, payload.params) };
