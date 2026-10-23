@@ -1,9 +1,8 @@
+import { mcpAppsCapabilitiesSchema } from "@mcpjam/sdk/host-compat";
 import {
-  bundledHostCompatCatalog,
-  getCatalogHost,
-  getTemplateMcpAppsCapabilities,
-  mcpAppsCapabilitiesSchema,
-} from "@mcpjam/sdk/host-compat";
+  findBuiltInStyleCapabilities,
+  resolveBuiltInHostCapabilities,
+} from "@/shared/host-style-capabilities";
 import { z } from "zod";
 import { logger } from "./logger";
 
@@ -23,56 +22,32 @@ const configSchema = z.object({
   mcpProfile: browserMcpProfileSchema.optional(),
 });
 
-/** Resolve saved profile switches before handing capabilities to the browser. */
+/** Resolve saved profile switches the way chat does, for the browser harness. */
 export function resolveBrowserHostCapabilities(
   base?: unknown,
   override?: unknown,
 ): Record<string, unknown> | undefined {
   const config = { ...parseConfig(base), ...parseConfig(override) };
-  const overrides = config.mcpProfile?.apps?.mcpAppsOverrides;
-  if (
-    overrides === undefined &&
-    config.hostCapabilitiesOverride !== undefined
-  ) {
-    const { sandbox: _sandbox, ...capabilities } =
-      config.hostCapabilitiesOverride;
-    return capabilities;
-  }
   // Legacy callers with no saved profile retain the harness's existing defaults.
-  if (!config.hostStyle && overrides === undefined) return undefined;
-  const catalog = bundledHostCompatCatalog();
-  const host = config.hostStyle
-    ? getCatalogHost(catalog, config.hostStyle)
-    : undefined;
-  if (config.hostStyle && !host) {
+  if (
+    !config.hostStyle &&
+    config.mcpProfile?.apps?.mcpAppsOverrides === undefined &&
+    config.hostCapabilitiesOverride === undefined
+  ) {
+    return undefined;
+  }
+  if (config.hostStyle && !findBuiltInStyleCapabilities(config.hostStyle)) {
     // No preset applies, like the client; say so, or a typo or a style newer
-    // than the bundled catalog looks like a deliberate profile.
+    // than this build looks like a deliberate profile.
     logger.warn(`Unknown host style "${config.hostStyle}"; no preset applied`, {
       hostStyle: config.hostStyle,
     });
   }
-  const preset = config.hostStyle
-    ? getTemplateMcpAppsCapabilities(catalog, config.hostStyle)
-    : undefined;
-  const matrix = { ...preset, ...overrides };
-  const details = host?.hostCapabilitiesOverride;
-  const capabilities: Record<string, unknown> = {};
-  for (const key of [
-    "openLinks",
-    "serverTools",
-    "serverResources",
-    "logging",
-    "updateModelContext",
-    "message",
-    "downloadFile",
-  ] as const) {
-    if (matrix[key] === true) {
-      capabilities[key] =
-        details?.[key] ??
-        (key === "message" || key === "updateModelContext" ? { text: {} } : {});
-    }
-  }
-  return capabilities;
+  return resolveBuiltInHostCapabilities({
+    hostStyle: config.hostStyle,
+    profile: config.mcpProfile,
+    hostCapabilitiesOverride: config.hostCapabilitiesOverride,
+  });
 }
 
 function parseConfig(input: unknown): z.infer<typeof configSchema> {
