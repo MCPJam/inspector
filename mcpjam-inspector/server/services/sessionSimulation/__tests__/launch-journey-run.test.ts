@@ -17,15 +17,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * a replayed launch key must acknowledge the original and start NOTHING.
  */
 
-const { createRunMock, startRunMock, rolloutMock, queryMock, localMock, ensureMock } = vi.hoisted(() => ({
+const { createRunMock, startRunMock, rolloutMock, queryMock, localMock, ensureMock, finalizeMock } = vi.hoisted(() => ({
   createRunMock: vi.fn(),
   startRunMock: vi.fn(),
-  rolloutMock: vi.fn(), queryMock: vi.fn(), localMock: vi.fn(), ensureMock: vi.fn(),
+  rolloutMock: vi.fn(), queryMock: vi.fn(), localMock: vi.fn(), ensureMock: vi.fn(), finalizeMock: vi.fn(),
 }));
 
 vi.mock("../../swarm-agent.js", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  return { ...actual, createJourneyRun: createRunMock };
+  return { ...actual, createJourneyRun: createRunMock, finalizePendingAttempts: finalizeMock };
 });
 vi.mock("../swarm-runner.js", () => ({ startJourneyRun: startRunMock }));
 vi.mock("../../../routes/web/auth.js", () => ({
@@ -758,4 +758,79 @@ it("keeps a harness this runner cannot run unattended out of the local set", asy
   expect(createRunMock.mock.calls[0][2]).toMatchObject({ runtimeVenue: "local", localHarnessIds: ["claude-code"] });
   localMock.mockResolvedValue(true);
   await settle();
+});
+
+describe("frozen execution budgets", () => {
+  const FROZEN = {
+    turnTimeoutMs: 360_000,
+    unitTimeoutMs: 300_000,
+    runTimeoutMs: 7_200_000,
+    turnRetries: 2,
+    sources: {
+      turnTimeoutMs: "default",
+      unitTimeoutMs: "authored",
+      runTimeoutMs: "default",
+      turnRetries: "default",
+    },
+  };
+  const withBudgets = (executionBudgets: unknown) =>
+    created({
+      snapshot: { ...created().snapshot, executionBudgets },
+    });
+
+  it("hands the runner the budgets the backend froze, captured once", async () => {
+    const launched = withBudgets({ ...FROZEN });
+    createRunMock.mockResolvedValue(launched);
+
+    await launchJourneyRun(DEPS, INPUT);
+    await settle();
+    // Nothing after launch reaches a running run's clocks: the runner holds
+    // its own copy, and claims and heartbeats carry no budgets at all.
+    (launched.snapshot as { executionBudgets: { runTimeoutMs: number } })
+      .executionBudgets.runTimeoutMs = 1;
+
+    expect(startRunMock.mock.calls[0]![0].budgets).toEqual(FROZEN);
+  });
+
+  it("starts the runner on its own defaults when the backend froze none", async () => {
+    createRunMock.mockResolvedValue(created());
+
+    await launchJourneyRun(DEPS, INPUT);
+    await settle();
+
+    expect(startRunMock.mock.calls[0]![0]).not.toHaveProperty("budgets");
+  });
+
+  it("refuses unreadable budgets, closes the created run, and starts no runner", async () => {
+    createRunMock.mockResolvedValue(withBudgets({ ...FROZEN, unitTimeoutMs: 0 }));
+    finalizeMock.mockResolvedValue(undefined);
+
+    const error = await launchJourneyRun(DEPS, INPUT).catch((e) => e);
+    await settle();
+
+    expect(error).toMatchObject({ status: 409, code: "CONFLICT" });
+    expect(finalizeMock).toHaveBeenCalledWith("https://convex.test", "run-jwt", {
+      projectId: "proj_1",
+      runId: "run_1",
+      terminalStatus: "failed",
+      errorCode: "invalid_execution_budgets",
+      errorMessage: error.message,
+    });
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["closing the run fails", DEPS, 1],
+    ["no run bearer can be minted", { ...DEPS, getRunBearer: () => Promise.reject(new Error("mint failed")) }, 0],
+  ])("still refuses when %s", async (_label, deps, closes) => {
+    createRunMock.mockResolvedValue(withBudgets({ ...FROZEN, extraClockMs: 1 }));
+    finalizeMock.mockRejectedValue(new Error("backend unavailable"));
+
+    await expect(launchJourneyRun(deps, INPUT)).rejects.toMatchObject({
+      status: 409,
+    });
+    await settle();
+    expect(finalizeMock).toHaveBeenCalledTimes(closes);
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
 });

@@ -37,8 +37,16 @@ import {
 } from "../../routes/web/auth.js";
 import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
-import { createJourneyRun, SwarmAgentError } from "../swarm-agent.js";
+import {
+  createJourneyRun,
+  finalizePendingAttempts,
+  SwarmAgentError,
+} from "../swarm-agent.js";
 import { startJourneyRun } from "./swarm-runner.js";
+import {
+  readFrozenSwarmBudgets,
+  UNREADABLE_SWARM_BUDGETS_CODE,
+} from "./frozen-swarm-budgets.js";
 import { resolveTargetPluginServerIds } from "../journeys/plugin-servers.js";
 import { createConvexClient } from "../evals/route-helpers.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
@@ -504,6 +512,37 @@ export async function launchJourneyRun(
   const hosts = snapshot.hosts;
   const localHarnessActor = localActorResult?.ok ? localActorResult.actor : undefined;
 
+  // The run's clocks, frozen by the backend at launch and captured here once:
+  // claims and heartbeats never carry them, so no later edit reaches a running
+  // run. Unreadable budgets refuse the launch rather than default, and the run
+  // row that already exists is closed now instead of waiting for the stale
+  // sweep.
+  const frozenBudgets = readFrozenSwarmBudgets(snapshot);
+  if (!frozenBudgets.ok) {
+    logger.warn("[swarm-runs] refused a launch with unreadable budgets", {
+      runId,
+      issues: frozenBudgets.issues,
+    });
+    // The bearer is minted inside the guard too: closing the run is best
+    // effort, and nothing that fails here may replace the refusal.
+    try {
+      await finalizePendingAttempts(convexHttpUrl, await deps.getRunBearer(), {
+        projectId,
+        runId,
+        terminalStatus: "failed",
+        errorCode: UNREADABLE_SWARM_BUDGETS_CODE,
+        errorMessage: frozenBudgets.message,
+      });
+    } catch (error) {
+      // The backend's stale-run cron still ends the run.
+      logger.warn("[swarm-runs] could not close the refused run", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    throw new WebRouteError(409, ErrorCode.CONFLICT, frozenBudgets.message);
+  }
+
   // Client for the run's D2 re-gates. Constructed PER CALL and deliberately
   // not memoized: a client bakes its auth token in at construction, so a
   // whole-run singleton would carry the launch-time bearer for hours and start
@@ -530,6 +569,7 @@ export async function launchJourneyRun(
       personaSnapshot: snapshot.personaSnapshot,
       sessionsPerTarget: snapshot.sessionsPerTarget,
       maxTurns: snapshot.maxTurns,
+      ...(frozenBudgets.budgets ? { budgets: frozenBudgets.budgets } : {}),
       ...(created.sessions?.length ? { sessionFunding: created.sessions } : {}),
       setupWrites: snapshot.setupWrites,
       goal: snapshot.goal,
