@@ -71,6 +71,7 @@ import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js
 import { classifyTurnFailure } from "../../../utils/turn-failure-classification.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
+import { logger } from "../../../utils/logger.js";
 
 const HOST = {
   hostId: "host-1",
@@ -1001,6 +1002,27 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       .map((a) => a.sessionIdx)
       .sort();
     expect(host1Failed).toEqual([0, 1]);
+  });
+
+  it("hands the worker's thrown Error to logger.error, not the context object", async () => {
+    // Sentry captures logger.error's second argument. Passing the context
+    // there captured a plain object as "Error: Error" with no throw-site stack
+    // (INSPECTOR-HONO-29).
+    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const thrown = new Error("model-less host: cannot resolve modelId");
+    runSyntheticHostSessionMock.mockRejectedValue(thrown);
+
+    try {
+      await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+      expect(errorLog).toHaveBeenCalledWith(
+        "[swarm.runner] target worker failed; finalizing its attempts",
+        thrown,
+        expect.objectContaining({ runId: "run-1", hostId: "host-1" }),
+      );
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });
 

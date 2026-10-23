@@ -1353,6 +1353,7 @@ export async function runSyntheticHostSession(
             projectId,
             authHeader,
             abortSignal: turnDeadline!.signal,
+            remainingTurnMs: () => turnDeadline!.remainingMs(),
             // Threaded into the per-step /stream (or /stream/org) body and the
             // /stream/org/local-usage writeback so the backend BYOK and JAM-paid
             // writers can stamp the run id onto llmUsageRecord for per-run spend
@@ -2389,6 +2390,7 @@ export async function drainAssistantTurn(
     ...(args.progressivePlan ? { progressivePlan: args.progressivePlan } : {}),
     ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
     ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
+    ...(args.remainingTurnMs ? { remainingTurnMs: args.remainingTurnMs } : {}),
     ...(hooks?.onToolCall ? { onToolCall: hooks.onToolCall } : {}),
     ...(hooks?.onToolResult ? { onToolResult: hooks.onToolResult } : {}),
     ...(hooks?.onLiveTextDelta
