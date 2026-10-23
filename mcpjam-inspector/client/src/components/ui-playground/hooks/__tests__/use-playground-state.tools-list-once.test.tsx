@@ -145,7 +145,7 @@ describe("usePlaygroundState — one tools/list per request it would send", () =
 
   function renderPlayground(
     initial: {
-      serverName?: string;
+      serverName?: typeof SERVER | typeof UNMAPPED;
       status?: keyof typeof SERVERS;
     } = {},
   ) {
@@ -154,7 +154,7 @@ describe("usePlaygroundState — one tools/list per request it would send", () =
         serverName,
         status,
       }: {
-        serverName: string;
+        serverName: typeof SERVER | typeof UNMAPPED;
         status: keyof typeof SERVERS;
       }) => {
         const servers = SERVERS[status];
@@ -243,6 +243,50 @@ describe("usePlaygroundState — one tools/list per request it would send", () =
     await waitFor(() =>
       expect(Object.keys(result.current.tools)).toEqual(["draw"]),
     );
+  });
+
+  it("lists again after a refresh of a listed request fails", async () => {
+    const { result } = renderPlayground();
+    await waitFor(() => expect(listed).toHaveLength(1));
+    await act(async () => answers[0]("draw"));
+    await waitFor(() =>
+      expect(Object.keys(result.current.tools)).toEqual(["draw"]),
+    );
+
+    // The left rail's refresh, on the request that already listed.
+    act(() => {
+      void result.current.fetchTools();
+    });
+    await waitFor(() => expect(listed).toEqual(["srv-1", "srv-1"]));
+    await act(async () => answers[1](new Error("token expired")));
+    await waitFor(() => expect(result.current.fetchingTools).toBe(false));
+
+    act(() => {
+      setApiContext({ ...BASE_CONTEXT, getAccessToken: async () => "t" });
+    });
+    await waitFor(() => expect(listed).toEqual(["srv-1", "srv-1", "srv-1"]));
+    await act(async () => answers[2]("draw"));
+    await waitFor(() =>
+      expect(Object.keys(result.current.tools)).toEqual(["draw"]),
+    );
+  });
+
+  it("retries once when the revision that fixes it lands mid-request", async () => {
+    const { result } = renderPlayground();
+    await waitFor(() => expect(listed).toHaveLength(1));
+
+    // The new token getter arrives while the request is still out.
+    act(() => {
+      setApiContext({ ...BASE_CONTEXT, getAccessToken: async () => "t" });
+    });
+    await act(async () => answers[0](new Error("token expired")));
+
+    await waitFor(() => expect(listed).toEqual(["srv-1", "srv-1"]));
+    await act(async () => answers[1](new Error("still refused")));
+    await waitFor(() => expect(result.current.fetchingTools).toBe(false));
+    // A second failure with no newer revision does not loop.
+    await act(async () => {});
+    expect(listed).toEqual(["srv-1", "srv-1"]);
   });
 
   it("lists again when the server reconnects", async () => {
