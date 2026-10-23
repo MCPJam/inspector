@@ -10,6 +10,11 @@ import type {
   HostConfigInputV2,
   HostConfigMcpProfileV1,
 } from "../src/host-config/internal";
+import { seedHostTemplate } from "../src/host-config/templates/index.js";
+import {
+  bundledHostCompatCatalog,
+  getCatalogTemplate,
+} from "../src/host-compat/index";
 
 const base = (mcpProfile?: HostConfigMcpProfileV1): HostConfigInputV2 =>
   ({
@@ -100,6 +105,34 @@ describe("resolveModelContextPolicy", () => {
     });
     expect(resolveModelContextPolicy(base())).toEqual(
       MODEL_CONTEXT_POLICY_DEFAULTS
+    );
+  });
+
+  it("gives a ChatGPT client ChatGPT's budgets, from the seed and the bundled catalog alike", () => {
+    const chatgpt = {
+      maxBlocks: 256,
+      turnMaxBytes: 8 * 1024 * 1024,
+      updateMaxBytes: 2_548_000,
+    };
+    expect(resolveModelContextPolicy(seedHostTemplate("chatgpt"))).toEqual(
+      chatgpt
+    );
+    expect(
+      resolveModelContextPolicy(
+        getCatalogTemplate(bundledHostCompatCatalog(), "chatgpt")
+      )
+    ).toEqual(chatgpt);
+    expect(resolveModelContextPolicy(seedHostTemplate("codex"))).toEqual(
+      MODEL_CONTEXT_POLICY_DEFAULTS
+    );
+    // Each seed gets its own budgets: editing one leaves the next as it was.
+    const profile = seedHostTemplate("chatgpt")
+      .mcpProfile as HostConfigMcpProfileV1;
+    const policy = profile.apps?.modelContextPolicy;
+    if (!policy) throw new Error("The ChatGPT seed has no budgets");
+    policy.maxBlocks = 1;
+    expect(resolveModelContextPolicy(seedHostTemplate("chatgpt"))).toEqual(
+      chatgpt
     );
   });
 
