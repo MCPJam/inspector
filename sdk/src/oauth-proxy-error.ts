@@ -7,8 +7,6 @@
  * `import { OAuthProxyError } from "./oauth-proxy.js"` keeps working and
  * `instanceof` keeps meaning one class.
  */
-import { extractNodeErrno } from "./error-describer/node-errno.js";
-
 export class OAuthProxyError extends Error {
   status: number;
 
@@ -66,17 +64,25 @@ const TLS_TRUST_CODES: ReadonlySet<string> = new Set([
  * describer keys off the sentence and never off the code.
  */
 export function tlsTrustFailure(error: unknown): OAuthProxyError | undefined {
-  const code = extractNodeErrno(error);
-  if (!(error instanceof Error) || !code || !TLS_TRUST_CODES.has(code)) {
-    return undefined;
-  }
-  const reason =
-    error.cause instanceof Error && extractNodeErrno(error.cause) === code
-      ? error.cause.message
-      : error.message;
-  return new OAuthProxyError(502, `${TLS_TRUST_FAILURE}: ${reason}`, {
-    cause: error,
-  });
+  const certificateError = findCertificateError(error);
+  if (!certificateError) return undefined;
+  return new OAuthProxyError(
+    502,
+    `${TLS_TRUST_FAILURE}: ${certificateError.message}`,
+    { cause: error }
+  );
+}
+
+/**
+ * The error in the `cause` chain that carries the certificate code, so its
+ * message (Node's, with the hint) survives the wrappers above it. Bounded at
+ * the same depth as `extractNodeErrno`, against cyclic chains.
+ */
+function findCertificateError(error: unknown, depth = 0): Error | undefined {
+  if (!(error instanceof Error) || depth > 3) return undefined;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && TLS_TRUST_CODES.has(code)) return error;
+  return findCertificateError(error.cause, depth + 1);
 }
 
 /**

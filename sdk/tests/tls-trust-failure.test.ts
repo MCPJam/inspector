@@ -40,13 +40,25 @@ describe("tlsTrustFailure", () => {
     }
   );
 
-  it("finds the code on a wrapped cause", () => {
-    const wrapped = new TypeError("fetch failed", {
-      cause: nodeTlsError(
+  it.each([
+    [
+      "one wrapper",
+      (inner: Error) => new TypeError("fetch failed", { cause: inner }),
+    ],
+    [
+      "two wrappers",
+      (inner: Error) =>
+        new Error("request failed", {
+          cause: new Error("connection failed", { cause: inner }),
+        }),
+    ],
+  ])("keeps Node's message through %s", (_label, wrap) => {
+    const wrapped = wrap(
+      nodeTlsError(
         "SELF_SIGNED_CERT_IN_CHAIN",
         "self-signed certificate in certificate chain"
-      ),
-    });
+      )
+    );
 
     expect(tlsTrustFailure(wrapped)?.message).toBe(
       `${TLS_TRUST_FAILURE}: self-signed certificate in certificate chain`
