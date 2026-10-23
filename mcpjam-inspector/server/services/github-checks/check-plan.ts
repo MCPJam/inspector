@@ -73,10 +73,12 @@ import { logger } from "../../utils/logger.js";
 import type { CheckRecipe } from "./recipes.js";
 import type { OwnershipProof, RecipeRung } from "./resolver/index.js";
 import {
-  GITHUB_CHECKS_SERVICE_BASE,
   postServiceRoute,
   type PostServiceRoute,
-} from "./service-route.js";
+} from "../internal-backend.js";
+
+/** Every `/internal/v1/github-checks/*` route sits under this base. */
+export const GITHUB_CHECKS_SERVICE_BASE = "/internal/v1/github-checks";
 
 // ---------------------------------------------------------------------------
 // The wire vocabulary, hand-mirrored from `convex/github/checkPlans.ts`
