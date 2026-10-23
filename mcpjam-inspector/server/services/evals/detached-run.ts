@@ -2,6 +2,7 @@ import { logger } from "../../utils/logger.js";
 import { createConvexClient } from "./route-helpers.js";
 import { TERMINAL_RUN_STATUSES } from "./run-status.js";
 import { shouldSkipExecution } from "../../routes/shared/evals.js";
+import { serverDrain } from "../lifecycle/drain.js";
 
 type DetachableEvalRun = {
   suiteId: string;
@@ -71,7 +72,7 @@ export function detachPreparedEvalRun(args: {
     return;
   }
 
-  void Promise.resolve()
+  const background = Promise.resolve()
     .then(() => prepared.execute())
     .catch(async (error) => {
       logger.error(`${logPrefix} background eval run failed`, error, {
@@ -120,4 +121,6 @@ export function detachPreparedEvalRun(args: {
           });
         });
     });
+  // A shutdown drains the run before it closes the connections it runs on.
+  void serverDrain.track("eval_run", background);
 }
