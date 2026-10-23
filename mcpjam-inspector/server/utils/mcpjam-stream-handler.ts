@@ -1,5 +1,7 @@
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
+import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
+import { withSwarmStepAdmissionRetry } from "./swarm-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 /**
@@ -1459,6 +1461,8 @@ export interface MCPJamHandlerOptions {
    * release per-request resources (e.g. MCPClientManager teardown).
    */
   abortSignal?: AbortSignal;
+  /** Remaining execution time; admission waits must leave room to report. */
+  remainingTurnMs?: () => number;
   /**
    * Idle heartbeat interval. While the stream has been silent for at least
    * this many ms, the handler writes a transient `heartbeat` trace event so
@@ -1484,6 +1488,7 @@ export interface MCPJamHandlerOptions {
 }
 
 interface StepContext {
+  admissionBudget: AdmissionWaitBudget;
   durableCheckpoint?: MCPJamHandlerOptions["durableCheckpoint"];
   writer: {
     write: (chunk: UIMessageChunk) => void;
@@ -1564,6 +1569,7 @@ interface StepContext {
   // Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing.
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   abortSignal?: AbortSignal;
+  remainingTurnMs?: () => number;
 }
 
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
@@ -3808,8 +3814,8 @@ async function processOneStep(ctx: StepContext): Promise<{
   // back: a provider that rejects the request outright still failed as the
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
-  try {
-    res = await fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
+  res = await withSwarmStepAdmissionRetry(
+    () => fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
       method: "POST",
       headers: convexHeaders,
       body: JSON.stringify({
@@ -3836,17 +3842,15 @@ async function processOneStep(ctx: StepContext): Promise<{
         ...(extraBodyFields ?? {}),
       }),
       ...(abortSignal ? { signal: abortSignal } : {}),
-    });
-  } catch (error) {
-    // AbortError on fetch is the standard cancellation signal — propagate
-    // it without writing a fail span. Real network errors fall through to
-    // the existing failure path via the !res.ok branch (we synthesize a
-    // 500-shaped error below for parity).
-    if (isAbortError(error)) {
-      throw error;
-    }
-    throw error;
-  }
+    }),
+    {
+      sourceType,
+      stepIndex,
+      budget: ctx.admissionBudget,
+      signal: abortSignal,
+      remainingTurnMs: ctx.remainingTurnMs,
+    },
+  );
 
   // A 200 OK with Content-Type: application/json is a non-stream denial
   // (e.g. spend-precheck: `{ok:false, code:"user_rate_limit", ...}`).
@@ -5069,6 +5073,7 @@ export async function runChatEngineLoop(
   // / auto-deny re-scans re-walk the whole history on later ones, and all
   // three must reach the same answer about the same call — once.
   const approvalDecisions = createApprovalDecisionCache();
+  const admissionBudget = new AdmissionWaitBudget();
   const traceTurn: LiveTraceTurnContext = {
     recordedRequestPayloads: [],
     turnId: generateLiveTraceTurnId(),
@@ -5421,6 +5426,7 @@ export async function runChatEngineLoop(
         });
         const { shouldContinue, didEmitFinish, modelFinishReason } =
           await processOneStep({
+            admissionBudget,
             durableCheckpoint: options.durableCheckpoint,
             writer: safeWriter,
             messageHistory,
@@ -5474,6 +5480,7 @@ export async function runChatEngineLoop(
             // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
             prepareAdvertisedTools,
             abortSignal,
+            remainingTurnMs: options.remainingTurnMs,
           });
 
         steps++;

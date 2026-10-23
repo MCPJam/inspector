@@ -974,6 +974,16 @@ describe("runSyntheticHostSession — execution budgets", () => {
         }),
     );
 
+  it("exposes the remaining turn budget to model-step admission", async () => {
+    const adapter = baseAdapter();
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 5000 });
+    await runSyntheticHostSession(adapter);
+    const remaining = runAssistantTurnMock.mock.calls[0][0].remainingTurnMs;
+    expect(remaining).toEqual(expect.any(Function));
+    expect(remaining()).toBeGreaterThan(0);
+    expect(remaining()).toBeLessThanOrEqual(5000);
+  });
+
   it("ends the session when a turn outlives its budget", async () => {
     hangUntilAborted();
     const adapter = baseAdapter() as any;
