@@ -312,6 +312,11 @@ export interface RegisterHostBridgeHandlersOptions {
  * matrix-gated `sendToolCancelled`, and the app-tool invocation lifecycle —
  * lifted out of the React renderer so the eval harness shares it verbatim.
  */
+/** Error a widget gets for `resources/read` when the host advertises no
+ * `serverResources`. Shared with the eval harness's direct-binding guard. */
+export const RESOURCE_READS_DISABLED_MESSAGE =
+  "This host does not allow resource reads.";
+
 export function registerHostBridgeHandlers(
   bridge: AppBridge,
   options: RegisterHostBridgeHandlersOptions
@@ -521,6 +526,15 @@ export function registerHostBridgeHandlers(
         return { resourceTemplates: [] } as ListResourceTemplatesReturn;
       }
       return callbacks.onListResourceTemplates(params);
+    };
+  } else {
+    // Unhandled, the read would still get -32601 but as "Method not found",
+    // which reads like a broken host. Keep the code and name the cause.
+    bridge.onreadresource = async () => {
+      throw Object.assign(
+        new Error(RESOURCE_READS_DISABLED_MESSAGE),
+        { code: -32601 }
+      );
     };
   }
 
