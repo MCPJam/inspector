@@ -204,6 +204,7 @@ import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
 import { startBackgroundWorkers } from "./services/background-workers";
+import { drainBeforeTeardown } from "./services/lifecycle/shutdown-drain.js";
 import {
   SERVER_PORT,
   CORS_OPTIONS,
@@ -1024,13 +1025,10 @@ async function shutdown() {
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
     await localServerCheckQueue.shutdown();
-    await backgroundWorkers.stop();
+    await drainBeforeTeardown(backgroundWorkers, shutdownSettings);
     stopRevokedSessionCache();
-    // Abort active synthetic-session runs and write a terminal "failed"
-    // status so the dialog/UI doesn't see a stuck "running" run. Bounded
-    // by an internal timeout; the outer `forceExitTimer` still wins.
-    // Abort active swarm (journey-execution) runs — stops each run's heartbeat
-    // and lets in-flight sessions report a terminal attempt. Bounded internally.
+    // Abort the swarm runs still going after the drain: each stops its
+    // heartbeat and reports a terminal attempt. Bounded internally.
     await shutdownRunningJourneyRuns();
     await tunnelManager.closeAll();
     // Kill local PTYs BEFORE server.close(): close() stops new connections but
