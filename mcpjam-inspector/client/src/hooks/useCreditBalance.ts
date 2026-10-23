@@ -33,6 +33,12 @@ export interface CreditBalanceState {
   freeDailyCreditsRemaining: number;
   /** Total free daily credit allowance for the day (e.g. 300 signed-in, 20 guest). */
   freeDailyCreditsTotal: number;
+  /**
+   * The fewest credits a hosted model call is admitted for on the daily
+   * bucket: the free bucket or the paid wallet must each cover it alone.
+   * Absent for monthly plans and guests, which pay no floor.
+   */
+  perCallMinimumCredits?: number;
   /** Whether org credit spending is paused for manual review. */
   walletLocked: boolean;
   /**
@@ -99,6 +105,7 @@ export const normalizeBalance = (
     freeDailyResetAt: optionalNumber(r.freeDailyResetAt),
     freeDailyCreditsRemaining: optionalNumber(r.freeDailyCreditsRemaining),
     freeDailyCreditsTotal: optionalNumber(r.freeDailyCreditsTotal),
+    perCallMinimumCredits: optionalNumberOrUndefined(r.perCallMinimumCredits),
     walletLocked: r.walletLocked === true,
     // Discriminant: only the explicit "monthly_per_seat" opts into the monthly
     // view; anything else (including absent) falls back to daily.
@@ -190,8 +197,17 @@ export function isOutOfCredits(
   ) {
     return (balance.monthlyAllowanceRemaining ?? 0) <= 0 && paidRemaining <= 0;
   }
-  return balance.freeDailyCreditsRemaining <= 0 && paidRemaining <= 0;
+  // Below the per-call minimum every hosted call is refused, so an org with a
+  // few credits left is as unable to run an MCPJam model as one with none.
+  const minimum = dailyCallMinimum(balance);
+  return (
+    balance.freeDailyCreditsRemaining < minimum && paidRemaining < minimum
+  );
 }
+
+/** An older backend reports no minimum; 1 keeps its "nothing left" rule. */
+const dailyCallMinimum = (balance: CreditBalanceState): number =>
+  Math.max(1, balance.perCallMinimumCredits ?? 1);
 
 /**
  * Convenience hook over useCreditBalance that returns just the "out of
@@ -277,6 +293,13 @@ export function useOutOfCreditsReason(
   const resetText = monthly
     ? formatMonthlyResetText(balance.monthlyResetAt, { withDate: false })
     : formatCreditResetText(balance.freeDailyResetAt);
+  const hasSome =
+    balance.freeDailyCreditsRemaining > 0 || balance.paidCreditsRemaining > 0;
+  // A latched refusal can lock while the balance still reads spendable; only
+  // a balance that is itself short gets the per-call minimum in its copy.
+  if (!monthly && hasSome && isOutOfCredits(balance)) {
+    return `Not enough MCPJam credits · a model call needs at least ${dailyCallMinimum(balance)} · ${resetText}`;
+  }
   return `Out of MCPJam credits · ${resetText}`;
 }
 

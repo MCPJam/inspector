@@ -1,6 +1,12 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useCreditBalance, useOutOfCredits } from "@/hooks/useCreditBalance";
+import {
+  isOutOfCredits,
+  normalizeBalance,
+  useCreditBalance,
+  useOutOfCredits,
+  useOutOfCreditsReason,
+} from "@/hooks/useCreditBalance";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const mocks = vi.hoisted(() => ({
@@ -345,6 +351,120 @@ describe("useCreditBalance", () => {
     expect(useMCPJamLimitDialogStore.getState()).toMatchObject({
       outOfCreditsDismissed: true,
       balanceOutByOrganization: { "org-1": true, "org-2": false },
+    });
+  });
+});
+
+describe("per-call credit minimum", () => {
+  const daily = (fields: Record<string, unknown>) =>
+    normalizeBalance({
+      billingModel: "daily",
+      freeDailyCreditsRemaining: 0,
+      paidCreditsRemaining: 0,
+      freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+      ...fields,
+    });
+
+  it.each([
+    [0, 0, true],
+    [4, 0, true],
+    [24, 24, true],
+    [25, 0, false],
+    [0, 25, false],
+  ])(
+    "daily bucket %i and wallet %i below a 25 minimum is out: %s",
+    (free, paid, out) => {
+      expect(
+        isOutOfCredits(
+          daily({
+            freeDailyCreditsRemaining: free,
+            paidCreditsRemaining: paid,
+            perCallMinimumCredits: 25,
+          }),
+        ),
+      ).toBe(out);
+    },
+  );
+
+  it("keeps the nothing-left rule when the backend reports no minimum", () => {
+    expect(isOutOfCredits(daily({ freeDailyCreditsRemaining: 4 }))).toBe(
+      false,
+    );
+    expect(isOutOfCredits(daily({}))).toBe(true);
+  });
+
+  it("does not apply the minimum to monthly plans", () => {
+    expect(
+      isOutOfCredits(
+        normalizeBalance({
+          billingModel: "monthly_per_seat",
+          monthlyAllowanceRemaining: 4,
+          paidCreditsRemaining: 0,
+          perCallMinimumCredits: 25,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  describe("tooltip", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mocks.convexAuth.isAuthenticated = true;
+      mocks.workosAuth.user = { id: "user_123" };
+      localStorage.clear();
+      localStorage.setItem("active-organization-id:user_123", "org-1");
+      useMCPJamLimitDialogStore.setState({
+        outOfCreditsHit: false,
+        outOfCreditsOrganizationId: null,
+        balanceOutByOrganization: {},
+      });
+      mocks.useQuery.mockImplementation((_name: unknown, args: unknown) =>
+        args === "skip" ? undefined : mocks.queryResult,
+      );
+    });
+
+    it("names the per-call minimum when a few credits are left", () => {
+      mocks.queryResult = {
+        billingModel: "daily",
+        freeDailyCreditsRemaining: 4,
+        paidCreditsRemaining: 0,
+        freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+        perCallMinimumCredits: 25,
+      };
+      const { result } = renderHook(() => useOutOfCreditsReason());
+      expect(result.current).toMatch(
+        /^Not enough MCPJam credits · a model call needs at least 25 · /,
+      );
+    });
+
+    it("keeps the out-of-credits copy at zero", () => {
+      mocks.queryResult = {
+        billingModel: "daily",
+        freeDailyCreditsRemaining: 0,
+        paidCreditsRemaining: 0,
+        freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+        perCallMinimumCredits: 25,
+      };
+      const { result } = renderHook(() => useOutOfCreditsReason());
+      expect(result.current).toMatch(/^Out of MCPJam credits · /);
+    });
+
+    it("unlocks once the bucket resets above the minimum", () => {
+      mocks.queryResult = {
+        billingModel: "daily",
+        freeDailyCreditsRemaining: 4,
+        paidCreditsRemaining: 0,
+        freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+        perCallMinimumCredits: 25,
+      };
+      const { result, rerender } = renderHook(() => useOutOfCreditsReason());
+      expect(result.current).not.toBeNull();
+      mocks.queryResult = {
+        ...(mocks.queryResult as Record<string, unknown>),
+        freeDailyCreditsRemaining: 200,
+      };
+      rerender();
+      expect(result.current).toBeNull();
     });
   });
 });
