@@ -6,6 +6,7 @@ import {
   type PluginContextUpdate,
   type PluginContextRemoveAll,
 } from "./context.js";
+import type { PluginContextLimits } from "../../../shared/plugin-model-context.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { pluginBindingDigest, pluginServerIdentitySchema } from "./bindings.js";
@@ -608,7 +609,12 @@ export class PluginInstanceRegistry {
     token: string,
     identity: PluginInstanceIdentity,
     command:
-      | { kind: "update"; request: PluginContextUpdate }
+      | {
+          kind: "update";
+          request: PluginContextUpdate;
+          /** The client's policy, resolved for this request. */
+          limits?: PluginContextLimits;
+        }
       | { kind: "remove-all"; request: PluginContextRemoveAll },
     signal: AbortSignal,
     authorize: () => Promise<void>,
@@ -635,6 +641,7 @@ export class PluginInstanceRegistry {
               instance.owner.instanceId,
               instance.owner.generation,
               command.request,
+              command.limits,
             )
           : candidate.removeAll(
               instance.owner.instanceId,

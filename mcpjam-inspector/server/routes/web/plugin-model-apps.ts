@@ -187,12 +187,17 @@ export function pluginModelAppRoutes(ports: {
                 basis: raw.basis,
               }),
             );
-          const result = modelApps.updateContext(body.instanceToken, actor, {
-            operationId: raw.operationId,
-            sequence: raw.sequence,
-            params: raw.params,
-            ...(raw.attach === "user" ? { attach: "user" as const } : {}),
-          });
+          const result = modelApps.updateContext(
+            body.instanceToken,
+            actor,
+            {
+              operationId: raw.operationId,
+              sequence: raw.sequence,
+              params: raw.params,
+              ...(raw.attach === "user" ? { attach: "user" as const } : {}),
+            },
+            fresh.modelContextPolicy,
+          );
           return c.json({
             ...result,
             snapshot: record.context.snapshot(id, generation),
