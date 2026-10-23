@@ -298,7 +298,7 @@ describe("eval runner reads saved model selections", () => {
     const refusal = warnSpy.mock.calls.find(
       ([message]) =>
         message ===
-        "[evals] Test case refused by the organization AI-key policy:",
+        "[evals] Test case refused by the organization's AI configuration:",
     )?.[1] as { code?: string; message?: string } | undefined;
     errorSpy.mockRestore();
     warnSpy.mockRestore();
@@ -521,6 +521,113 @@ describe("eval runner reads saved model selections", () => {
       );
       expect(JSON.stringify(finished)).not.toContain("sk-org");
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("an Azure OpenAI selection with no deployment", () => {
+    const AZURE_CATALOG: ModelSelection = {
+      modelId: "azure/gpt-5.1-codex-mini",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_azure" },
+      fallback: { provider: "none", model: "none" },
+    };
+
+    it("refuses the case once, before any /stream/org call, and does not page", async () => {
+      await expectPolicyRefused(
+        run(
+          {
+            model: AZURE_CATALOG.modelId,
+            provider: "azure",
+            selection: AZURE_CATALOG,
+            promptTurns: [
+              { id: "turn-1", prompt: "One", expectedToolCalls: [] },
+              { id: "turn-2", prompt: "Two", expectedToolCalls: [] },
+            ],
+          },
+          {
+            orgModelConfigTarget: { projectId: "project-1" },
+            orgModelConfig: {
+              providers: [{ providerKey: "azure", apiKey: "sk-azure" }],
+            },
+          },
+        ),
+        "invalid_model",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(streamTextMock).not.toHaveBeenCalled();
+    });
+
+    it("runs a named deployment on /stream/org with that deployment", async () => {
+      await run(
+        {
+          model: "azure/prod-codex-mini",
+          provider: "azure",
+          selection: {
+            ...AZURE_CATALOG,
+            modelId: "azure/prod-codex-mini",
+            nativeModelId: "prod-codex-mini",
+          },
+        },
+        {
+          orgModelConfigTarget: { projectId: "project-1" },
+          orgModelConfig: {
+            providers: [{ providerKey: "azure", apiKey: "sk-azure" }],
+          },
+        },
+      );
+      expect(requestTo("/stream/org")).toMatchObject({
+        providerKey: "azure",
+        modelSelection: { nativeModelId: "prod-codex-mini" },
+      });
+    });
+
+    const AZURE_ORG = {
+      orgModelConfigTarget: { projectId: "project-1" },
+      orgModelConfig: {
+        providers: [{ providerKey: "azure", apiKey: "sk-azure" }],
+      },
+    };
+
+    it("refuses an unlabelled case once, before any /stream/org call", async () => {
+      await expectPolicyRefused(
+        run(
+          {
+            model: AZURE_CATALOG.modelId,
+            provider: "azure",
+            promptTurns: [
+              { id: "turn-1", prompt: "One", expectedToolCalls: [] },
+              { id: "turn-2", prompt: "Two", expectedToolCalls: [] },
+            ],
+          },
+          AZURE_ORG,
+        ),
+        "invalid_model",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a case with a legacy selection once, before any /stream/org call", async () => {
+      await expectPolicyRefused(
+        run(
+          {
+            model: AZURE_CATALOG.modelId,
+            provider: "azure",
+            legacySelection: {
+              source: "legacy",
+              modelId: AZURE_CATALOG.modelId,
+              provider: "azure",
+            },
+          },
+          AZURE_ORG,
+        ),
+        "invalid_model",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("runs an unlabelled deployment name on /stream/org", async () => {
+      await run({ model: "prod-codex-mini", provider: "azure" }, AZURE_ORG);
+      expect(requestTo("/stream/org")).toMatchObject({ providerKey: "azure" });
     });
   });
 
