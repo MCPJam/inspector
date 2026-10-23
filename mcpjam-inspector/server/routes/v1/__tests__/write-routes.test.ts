@@ -1777,6 +1777,37 @@ describe("v1 write routes", () => {
       expect(disconnectAllServers).toHaveBeenCalledTimes(1);
     });
 
+    it("authors a mcpjam/<vendor>/<model> test as the hosted pick", async () => {
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: {
+          listServers: () => ["s1"],
+          disconnectAllServers: vi.fn().mockResolvedValue(undefined),
+        },
+      });
+      authorEvalSuiteMock.mockResolvedValue({
+        suiteId: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteName: "Fresh suite",
+        caseUpsert: { committed: [{ name: "echo works" }], failed: [] },
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "mcpjam/anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+        }
+      );
+
+      expect(res.status).toBe(201);
+      const authoredTest = authorEvalSuiteMock.mock.calls[0][0].tests[0];
+      expect(authoredTest.model).toBe("anthropic/claude-haiku-4.5");
+      expect(authoredTest.provider).toBe("anthropic");
+    });
+
     it("attaches the named clients after authoring the suite", async () => {
       // A suite authored over the API had no way to name its client, so every
       // CLI/MCP/SDK-created suite read back with an empty Client — and the
