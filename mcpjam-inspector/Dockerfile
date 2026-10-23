@@ -263,4 +263,8 @@ COPY --from=build /usr/src/app/sdk/dist /usr/src/app/sdk/dist
 
 EXPOSE 6274
 
-ENTRYPOINT ["npm", "start"]
+# The launcher is the container's main process rather than `npm start`: npm
+# runs scripts under `sh -c`, and that shell dies on the platform's SIGTERM
+# without passing it on, so npm exits and the server is SIGKILLed with it
+# instead of shutting down gracefully. NODE_ENV is set above.
+ENTRYPOINT ["node", "bin/start.js"]
