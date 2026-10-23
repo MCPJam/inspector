@@ -5,12 +5,25 @@ import {
   pluginResourceLink,
   pluginResourceLinkModelText,
 } from "./plugin-resource-link.js";
+import type { PluginContextExcess } from "./plugin-diagnostics.js";
 
 export const PLUGIN_CONTEXT_MAX_BYTES = 256 * 1024;
 export const PLUGIN_CONTEXT_TURN_MAX_BYTES = 1024 * 1024;
 const byteSize = (value: unknown) =>
   new TextEncoder().encode(JSON.stringify(value)).length;
-export class PluginModelContextError extends Error {}
+/** ChatGPT's own JSON-RPC -32000 message for a context update it did not
+ * store. Apps get the same text here as there, so it stays verbatim. */
+export const PLUGIN_CONTEXT_NOT_PERSISTED_MESSAGE =
+  "The host could not persist the model context update";
+/** `message` is the refusal code; `excess` is set when a budget was crossed. */
+export class PluginModelContextError extends Error {
+  constructor(
+    code: string,
+    readonly excess?: PluginContextExcess,
+  ) {
+    super(code);
+  }
+}
 
 export const pluginModelContextParamsSchema = z.strictObject({
   content: z.array(ContentBlockSchema).max(64).optional(),
@@ -92,7 +105,11 @@ export function assertPluginResourceRepresentations(value: unknown): void {
       : undefined;
   if (!Array.isArray(content)) return;
   if (content.length > 64)
-    throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE");
+    throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE", {
+      budget: "maxBlocks",
+      actual: content.length,
+      allowed: 64,
+    });
   for (const block of content) {
     if (block?.type !== "resource") continue;
     const resource = block.resource;
@@ -196,8 +213,13 @@ export function parsePluginModelContext(
 ): PluginModelContextParams {
   assertPluginResourceRepresentations(value);
   const params = pluginModelContextParamsSchema.parse(value);
-  if (byteSize(params) > PLUGIN_CONTEXT_MAX_BYTES)
-    throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE");
+  const size = byteSize(params);
+  if (size > PLUGIN_CONTEXT_MAX_BYTES)
+    throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE", {
+      budget: "updateMaxBytes",
+      actual: size,
+      allowed: PLUGIN_CONTEXT_MAX_BYTES,
+    });
   for (const block of params.content ?? []) {
     pluginInlineContentBlock(block);
   }
@@ -209,15 +231,18 @@ export function pluginModelContextMessage(
   contexts: readonly PluginModelContext[],
 ): ModelMessage | undefined {
   if (!contexts.length) return;
-  if (
-    byteSize(
-      contexts.map(({ content, structuredContent }) => ({
-        content,
-        structuredContent,
-      })),
-    ) > PLUGIN_CONTEXT_TURN_MAX_BYTES
-  )
-    throw new PluginModelContextError("PLUGIN_CONTEXT_TURN_TOO_LARGE");
+  const turnSize = byteSize(
+    contexts.map(({ content, structuredContent }) => ({
+      content,
+      structuredContent,
+    })),
+  );
+  if (turnSize > PLUGIN_CONTEXT_TURN_MAX_BYTES)
+    throw new PluginModelContextError("PLUGIN_CONTEXT_TURN_TOO_LARGE", {
+      budget: "turnMaxBytes",
+      actual: turnSize,
+      allowed: PLUGIN_CONTEXT_TURN_MAX_BYTES,
+    });
   const parts: UserContent = [];
   for (const context of contexts) {
     const params = parsePluginModelContext({

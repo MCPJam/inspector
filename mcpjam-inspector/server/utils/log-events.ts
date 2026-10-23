@@ -423,6 +423,17 @@ export type RequestEventMap = {
     spans: Record<string, { count: number; totalMs: number; maxMs: number }>;
   };
   /**
+   * An App context update refused before anything was stored: a size, rate
+   * or memory budget, with the sizes it was judged on. Never the context.
+   */
+  "plugin.instance.context.refused": {
+    code: string;
+    statusCode: number;
+    budget?: string;
+    actual?: number;
+    allowed?: number;
+  };
+  /**
    * One plugin onboarding turn (the Playground's Run onboarding or Set up),
    * from its request to its terminal result. `phases` holds the ms since the
    * request at which each phase was first reached. IDs, codes, counts and
