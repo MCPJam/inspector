@@ -3732,13 +3732,14 @@ export function MCPAppsRendererSurface({
             ctxToolCallId,
             { content, structuredContent }
           ) => {
-            // Store in debug store for UI display.
-            setWidgetModelContextRef.current(ctxToolCallId, {
+            // Notify parent component to queue for next model turn. It may
+            // refuse the update, and the App gets that error.
+            onModelContextUpdateRef.current?.(ctxToolCallId, {
               content,
               structuredContent,
             });
-            // Notify parent component to queue for next model turn.
-            onModelContextUpdateRef.current?.(ctxToolCallId, {
+            // Store in debug store for UI display, once it is accepted.
+            setWidgetModelContextRef.current(ctxToolCallId, {
               content,
               structuredContent,
             });

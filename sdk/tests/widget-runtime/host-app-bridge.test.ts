@@ -203,42 +203,58 @@ describe("owned model context refusal", () => {
   // budget) with this error, as ChatGPT does. The App must see -32000 and the
   // host's message, not -32603: the code is what tells it the update was
   // refused rather than lost.
-  it("reaches the App with its integer code and message", async () => {
-    const refusal = Object.assign(
-      new Error("The host could not persist the model context update"),
-      { code: -32000 }
-    );
-    const bridge = createHostAppBridge({
-      hostInfo: { name: "host", version: "1" },
-      hostCapabilities: { updateModelContext: {} },
-    });
-    registerHostBridgeHandlers(bridge, {
-      effectiveHostCapabilities: { updateModelContext: {} },
-      callbacks: { onUpdateModelContextV2: vi.fn().mockRejectedValue(refusal) },
-    });
-    const app = new App(
-      { name: "app", version: "1" },
-      {},
-      { autoResize: false }
-    );
-    const [hostTransport, guestTransport] =
-      InMemoryTransport.createLinkedPair();
-    await bridge.connect(hostTransport);
-    await app.connect(guestTransport);
-    try {
-      const error = await app
-        .updateModelContext({ content: [{ type: "text", text: "state" }] })
-        .catch((reason: unknown) => reason);
-      expect(error).toMatchObject({
-        code: -32000,
-        message:
-          "MCP error -32000: The host could not persist the model context update",
+  const refusal = Object.assign(
+    new Error("The host could not persist the model context update"),
+    { code: -32000 }
+  );
+  it.each([
+    [
+      "an owned App's",
+      { onUpdateModelContextV2: vi.fn().mockRejectedValue(refusal) },
+    ],
+    [
+      "an ordinary App's",
+      {
+        onUpdateModelContext: vi.fn(() => {
+          throw refusal;
+        }),
+      },
+    ],
+  ])(
+    "reaches %s App with its integer code and message",
+    async (_, callbacks) => {
+      const bridge = createHostAppBridge({
+        hostInfo: { name: "host", version: "1" },
+        hostCapabilities: { updateModelContext: {} },
       });
-    } finally {
-      await app.close();
-      await bridge.close();
+      registerHostBridgeHandlers(bridge, {
+        effectiveHostCapabilities: { updateModelContext: {} },
+        callbacks,
+      });
+      const app = new App(
+        { name: "app", version: "1" },
+        {},
+        { autoResize: false }
+      );
+      const [hostTransport, guestTransport] =
+        InMemoryTransport.createLinkedPair();
+      await bridge.connect(hostTransport);
+      await app.connect(guestTransport);
+      try {
+        const error = await app
+          .updateModelContext({ content: [{ type: "text", text: "state" }] })
+          .catch((reason: unknown) => reason);
+        expect(error).toMatchObject({
+          code: -32000,
+          message:
+            "MCP error -32000: The host could not persist the model context update",
+        });
+      } finally {
+        await app.close();
+        await bridge.close();
+      }
     }
-  });
+  );
 });
 
 describe("owned complete message", () => {

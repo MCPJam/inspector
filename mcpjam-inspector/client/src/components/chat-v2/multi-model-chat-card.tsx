@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { Thread } from "@/components/chat-v2/thread";
@@ -28,7 +27,8 @@ import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { applyWidgetStateUpdates } from "@/shared/user-context-message";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
+import { fitWidgetModelContext } from "@/lib/widget-model-context";
 import type { ModelReasoningEffort, RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { OrgVisibleConfig } from "./shared/model-helpers";
 import {
@@ -127,9 +127,8 @@ export function MultiModelChatCard({
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [, setIsWidgetFullscreen] = useState(false);
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
@@ -380,10 +379,10 @@ export function MultiModelChatCard({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
       metadata: outgoingSenderMetadata,
-      widgetModelContext: [
+      widgetModelContext: fitWidgetModelContext([
         ...(broadcastRequest.widgetModelContext ?? []),
         ...modelContextQueue,
-      ],
+      ]),
     });
     setModelContextQueue([]);
   }, [
@@ -412,21 +411,6 @@ export function MultiModelChatCard({
       setModelContextQueue([]);
     },
     [modelContextQueue, sendMessage, outgoingSenderMetadata]
-  );
-
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      }
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context)
-      );
-    },
-    []
   );
 
   useEffect(() => {
