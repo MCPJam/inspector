@@ -1,8 +1,9 @@
 /**
  * `runUnifiedAssistantTurn` — the single front door for executing one assistant
  * turn. The eval drivers, the agent and chat-session routes and the swarm runner
- * call this; chat and playground still reach the engines directly. It
- * dispatches to one of two existing engines and returns a normalized result.
+ * call this; chat and playground still reach the engines directly (the
+ * exceptions in `scripts/check-turn-entry-point.mjs`). It dispatches to one of
+ * two existing engines and returns a normalized result.
  *
  * Design: ONE public turn API, TWO engine adapters, MULTIPLE sinks. It does NOT
  * merge the engine internals.
