@@ -18,6 +18,7 @@ import { registerServerCommands } from "./commands/server.js";
 import { registerSubscriptionsCommands } from "./commands/subscriptions.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerTasksCommands } from "./commands/tasks.js";
+import { registerEventsCommands } from "./commands/events.js";
 import { registerToolsCommands } from "./commands/tools.js";
 import {
   registerTestCommand,
@@ -102,6 +103,7 @@ export async function main(
   registerPromptCommands(program);
   registerAppsCommands(program);
   registerTasksCommands(program);
+  registerEventsCommands(program);
   registerOAuthCommands(program);
   registerXaaCommands(program);
   registerProtocolCommands(program);

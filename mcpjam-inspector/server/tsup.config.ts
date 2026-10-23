@@ -118,6 +118,7 @@ export default defineConfig({
     "@mcpjam/sdk/plugin-bundle",
     "@mcpjam/sdk/oauth/node",
     "@mcpjam/sdk/widget-runtime",
+    "@mcpjam/sdk/events",
     "@mcpjam/sdk/internal/plugin-host",
     "@mcpjam/sdk/internal/telemetry",
   ],
@@ -184,6 +185,8 @@ export default defineConfig({
         rootDir,
         "../sdk/dist/widget-runtime/index.js",
       ),
+      // MCP Events: keeper, executor, local runtime, rpc-log redaction.
+      "@mcpjam/sdk/events": join(rootDir, "../sdk/dist/events/index.js"),
     };
   },
 });

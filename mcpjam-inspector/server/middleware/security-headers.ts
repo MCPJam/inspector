@@ -35,6 +35,7 @@ import type { Context, Next } from "hono";
 import { HOSTED_MODE, SANDBOX_HOSTS } from "../config.js";
 import { getInspectorClientRuntimeConfig } from "../env.js";
 import { SENTRY_DSN } from "../../shared/sentry-config.js";
+import { getEventsInboxUrl } from "../services/events/config.js";
 
 /** Enforced on every HTML document that does not set its own policy. */
 export const DOCUMENT_CONTENT_SECURITY_POLICY =
@@ -135,6 +136,9 @@ function reportOnlyDirectives(
   sentryDsn: string,
 ): Directive[] {
   const sentry = originOf(sentryDsn);
+  // The hosted events feed: an EventSource (and its JSON-poll fallback) to
+  // the inbox Worker.
+  const eventsInbox = originOf(getEventsInboxUrl());
   const workosHost =
     runtimeConfig.workosApiHostname ?? DEFAULT_WORKOS_API_HOSTNAME;
   const connectSources = new Set<string>([
@@ -143,6 +147,7 @@ function reportOnlyDirectives(
     ...convexSources(runtimeConfig.convexSiteUrl),
     `https://${workosHost}`,
     ...(sentry ? [sentry.origin] : []),
+    ...(eventsInbox ? [eventsInbox.origin] : []),
     ...STRIPE_CONNECT_SOURCES,
   ]);
   const frameSources = new Set<string>(["'self'"]);
