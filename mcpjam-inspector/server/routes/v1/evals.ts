@@ -117,6 +117,7 @@ import {
 } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { SCHEDULED_EVALS_WRITE_ENABLED } from "../../config.js";
+import { sharedEvalCapacityEnabled } from "../../services/evals/trial-slots.js";
 import {
   deriveItemIdempotencyKey,
   deriveOperationIdempotencyKey,
@@ -1134,7 +1135,13 @@ function orgConcurrencyKey(c: any): string {
     : "anonymous";
 }
 
+/**
+ * Hosted runs skip this gate: their cases queue for the org's shared slots
+ * (`services/evals/trial-slots.ts`), so a busy org's launch waits as
+ * `pending` instead of being refused here.
+ */
 function tryAcquireRunSlot(key: string): boolean {
+  if (sharedEvalCapacityEnabled()) return true;
   const active = activeRunsByOrg.get(key) ?? 0;
   if (active >= MAX_CONCURRENT_RUNS) {
     return false;
@@ -1144,6 +1151,7 @@ function tryAcquireRunSlot(key: string): boolean {
 }
 
 function releaseRunSlot(key: string): void {
+  if (sharedEvalCapacityEnabled()) return;
   const active = activeRunsByOrg.get(key) ?? 0;
   if (active <= 1) {
     activeRunsByOrg.delete(key);
