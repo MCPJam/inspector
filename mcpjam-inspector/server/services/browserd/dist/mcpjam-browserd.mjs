@@ -11118,8 +11118,63 @@ var EXCLUDED_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
   "singletoncookie",
   "singletonsock"
 ]);
+var PRIVATE_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
+  "login data",
+  "login data for account",
+  "affiliation database",
+  "web data",
+  "account web data",
+  "autofillstrikedatabase",
+  "autofillaimodelcache",
+  "history",
+  "media history",
+  "visited links",
+  "top sites",
+  "shortcuts",
+  "favicons",
+  "network action predictor",
+  "dips",
+  "bookmarks",
+  "accountbookmarks",
+  "encryptedbookmarks2",
+  "encryptedaccountbookmarks2",
+  "network persistent state",
+  "transportsecurity",
+  "reporting and nel",
+  "site characteristics database",
+  "download service",
+  "platform notifications",
+  "segmentation platform",
+  "segmentation_platform",
+  "feature engagement tracker",
+  "trust tokens",
+  "conversions",
+  "shared dictionary",
+  "accounts",
+  "gcm store",
+  "sessions",
+  "current session",
+  "last session",
+  "current tabs",
+  "last tabs",
+  "sync data",
+  "extensions",
+  "extension state",
+  "extension activity",
+  "extension rules",
+  "extension scripts",
+  "extension cookies",
+  "local extension settings",
+  "sync extension settings",
+  "managed extension settings"
+]);
+var STORE_COPY_SUFFIX = /(?:-journal|-wal|-shm|\.bak|\.tmp|\.old|~)+$/;
+function isExcludedProfileSegment(segment) {
+  const base = segment.toLowerCase().replace(STORE_COPY_SUFFIX, "");
+  return EXCLUDED_PROFILE_SEGMENTS.has(base) || PRIVATE_PROFILE_SEGMENTS.has(base);
+}
 function isExcludedProfilePath(path) {
-  return path.split(/[\\/]+/).some((segment) => EXCLUDED_PROFILE_SEGMENTS.has(segment.toLowerCase()));
+  return path.split(/[\\/]+/).some(isExcludedProfileSegment);
 }
 function assertSafeArchivePath(path) {
   const normalized = path.replaceAll("\\", "/");
@@ -11206,7 +11261,9 @@ async function collectProfileEntries(profileDir, currentDir, entries, uncompress
     }
     if (!stat2.isFile()) continue;
     if (uncompressedBytes.value + stat2.size > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
-      throw new Error("browser profile archive exceeds the expanded size limit");
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
     }
     const contents = await readFile(absolutePath);
     const header = makeTarHeader(
