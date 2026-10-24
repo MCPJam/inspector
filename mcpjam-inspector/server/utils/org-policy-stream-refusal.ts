@@ -34,7 +34,8 @@ export type BackendStreamFailureContext = {
  *
  * `credential_missing` is the org connection's refusal (deleted, disabled, no
  * key) only when it arrives on `/stream/org`; elsewhere the code is left to
- * the ordinary rules.
+ * the ordinary rules. `provider_not_configured` (the model's provider isn't
+ * turned on for the organization) has the same fix and the same slug.
  */
 export function orgPolicyRefusalSlug(
   code: string | undefined,
@@ -42,7 +43,10 @@ export function orgPolicyRefusalSlug(
 ): string | undefined {
   const slug = orgPolicySlugForCode(code);
   if (slug) return slug;
-  if (code === "credential_missing" && context?.endpointPath === ORG_STREAM_PATH)
+  if (
+    (code === "credential_missing" || code === "provider_not_configured") &&
+    context?.endpointPath === ORG_STREAM_PATH
+  )
     return "org/credential_missing";
   return undefined;
 }
@@ -72,7 +76,8 @@ const AI_POLICY_RECOGNIZED_DENIAL_CODES: ReadonlySet<string> = new Set([
   "provider_auth_failed",
   "provider_unavailable",
   "credential_missing",
-] satisfies readonly AiRefusalCode[]);
+  "provider_not_configured",
+] satisfies readonly (AiRefusalCode | "provider_not_configured")[]);
 
 /** See {@link AI_POLICY_RECOGNIZED_DENIAL_CODES}. */
 export function isAiPolicyRecognizedDenialCode(

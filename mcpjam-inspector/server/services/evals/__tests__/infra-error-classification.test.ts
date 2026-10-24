@@ -39,6 +39,7 @@ describe("classifyEvalInfraError — our backend's codes are an allowlist", () =
     ["ai_scope_unresolved", 403, "model"],
     ["provider_auth_failed", 422, "model"],
     ["credential_missing", 422, "model"],
+    ["provider_not_configured", 422, "model"],
   ] as const)(
     "the org-key policy's %s (HTTP %s) is configuration, never auth or an account limit",
     (code, httpStatus, layer) => {

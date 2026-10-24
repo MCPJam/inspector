@@ -168,6 +168,102 @@ describe("classifyIterationError", () => {
   });
 });
 
+// A BYOK run whose provider isn't turned on for the organization: the
+// iteration keeps the backend's sentence, and the code only in its diagnostics.
+const notTurnedOn =
+  'The "anthropic" provider isn\'t turned on for your organization. An organization admin can add it under AI providers in organization settings, or you can pick a model from another provider.';
+const orgProviderRefusal = (code = "provider_not_configured") => ({
+  error: notTurnedOn,
+  errorDetails: JSON.stringify({ ok: false, code, error: notTurnedOn }),
+  metadata: { evalErrors: [{ message: notTurnedOn, reason: "providerError" }] },
+});
+
+describe("organization AI provider refusals", () => {
+  it("sends them to the organization's AI provider settings, not to MCPJam", () => {
+    for (const chain of [providerErrorChain, null]) {
+      expect(
+        classifyIterationError(
+          iteration("a", orgProviderRefusal() as Partial<EvalIteration>),
+          chain,
+        ),
+      ).toBe("orgProviders");
+    }
+  });
+
+  it("reads the runner's refused-selection row", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", {
+          status: "setup_failed",
+          error:
+            "Model selection refused — credential_missing: the saved org connection is gone.",
+        }),
+        null,
+      ),
+    ).toBe("orgProviders");
+  });
+
+  it("leaves a tool error that looks like a refusal with the MCP server", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", { error: "credential_missing: set GITHUB_TOKEN" }),
+        toolErrorChain,
+      ),
+    ).toBe("serverError");
+  });
+
+  it("reads the typed code on a refused turn recorded as a configuration error", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", {
+          status: "failed",
+          error: notTurnedOn,
+          errorDetails: JSON.stringify({ ok: false, error: notTurnedOn }),
+          infraError: {
+            class: "configuration",
+            layer: "model",
+            retryable: false,
+            code: "provider_not_configured",
+          },
+        } as Partial<EvalIteration>),
+        providerErrorChain,
+      ),
+    ).toBe("orgProviders");
+  });
+
+  it("groups the run under one titled cause with the backend's reason", () => {
+    expect(
+      buildRunErrorBreakdown({
+        iterations: [
+          iteration("a", orgProviderRefusal() as Partial<EvalIteration>),
+        ],
+        chains: new Map([["a", providerErrorChain]]),
+      })?.groups,
+    ).toEqual([
+      {
+        cause: "orgProviders",
+        title:
+          "Your organization's AI provider settings stopped the run. An organization admin can add or reconnect the provider.",
+        count: 1,
+        errors: [{ message: notTurnedOn, count: 1 }],
+      },
+    ]);
+  });
+
+  it.each([
+    "provider_unavailable",
+    "org_runtime_unsupported",
+    "org_keys_required",
+  ])("keeps %s, which provider settings don't fix, where it was", (code) => {
+    expect(
+      classifyIterationError(
+        iteration("a", orgProviderRefusal(code) as Partial<EvalIteration>),
+        providerErrorChain,
+      ),
+    ).toBe("platform");
+  });
+});
+
 describe("buildRunErrorBreakdown", () => {
   it("explains a run where every result hit a server tool error", () => {
     const iterations = ["a", "b", "c"].map((id) => iteration(id));

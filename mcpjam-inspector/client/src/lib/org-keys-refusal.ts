@@ -117,10 +117,15 @@ export function orgKeysRefusalCodeFromError(
   return orgKeysRefusalCodeOf(prefix);
 }
 
+/** The eval runner's refused-selection row (`describeModelRefusalForIteration`). */
+const MODEL_SELECTION_REFUSED_ROW =
+  /^Model selection refused\s*—\s*([a-z_]+)\s*:/i;
+
 /**
  * The org-key refusal code anywhere in a stored failure: its own code field,
- * a `"<code>: …"` prefix, or a policy code named inside the text (a run row
- * such as "Model selection refused — org_keys_required: …").
+ * a `"<code>: …"` prefix, the code leading a run row such as
+ * "Model selection refused — credential_missing: …", or a policy code named
+ * inside the text.
  */
 export function orgKeysRefusalCodeInText(
   ...texts: Array<string | null | undefined>
@@ -128,10 +133,54 @@ export function orgKeysRefusalCodeInText(
   for (const text of texts) {
     if (!text) continue;
     const code =
-      orgKeysRefusalCodeFromError(text) ?? findOrgKeyPolicyRefusalCode(text);
+      orgKeysRefusalCodeFromError(text) ??
+      orgKeysRefusalCodeOf(
+        MODEL_SELECTION_REFUSED_ROW.exec(text.trim())?.[1],
+      ) ??
+      findOrgKeyPolicyRefusalCode(text);
     if (code) return code;
   }
   return undefined;
+}
+
+/**
+ * The code a stored failure states where the backend writes one: a bare code
+ * (`infraError.code`), a JSON envelope's `code`, or a `"<code>:"` lead. Prose
+ * that merely names a code is never read.
+ */
+function statedCode(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const code = (JSON.parse(trimmed) as { code?: unknown })?.code;
+      return typeof code === "string" ? code.trim().toLowerCase() : undefined;
+    } catch {
+      // Not JSON: the lead below still reads a code. The text is not logged;
+      // it can carry a provider's message.
+      console.debug("[org-keys-refusal] Error text is not JSON");
+    }
+  }
+  return /^([a-z_]+)\s*(?::|$)/i.exec(trimmed)?.[1]?.toLowerCase();
+}
+
+/**
+ * {@link orgKeysRefusalCodeInText} for a run's stored failure, which also
+ * reads a stated `provider_not_configured` (`/stream/org`, the org resolver,
+ * the infra error a refused turn records) as `credential_missing`: the same
+ * missing org provider, with the same fix. Chat still shows that code as the
+ * backend's own sentence.
+ */
+export function runRefusalCodeInText(
+  ...texts: Array<string | null | undefined>
+): string | undefined {
+  return (
+    orgKeysRefusalCodeInText(...texts) ??
+    (texts.some(
+      (text) => text && statedCode(text) === "provider_not_configured",
+    )
+      ? "credential_missing"
+      : undefined)
+  );
 }
 
 /**
