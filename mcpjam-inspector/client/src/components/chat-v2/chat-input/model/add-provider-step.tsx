@@ -1,5 +1,8 @@
 import { ArrowUpRight } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
+import { findProjectByAnyId } from "@/state/app-types";
 
 /**
  * The next step when the model someone wants isn't in the picker: "Add a
@@ -13,7 +16,7 @@ export function AddProviderStep({ onAdd }: { onAdd?: () => void }) {
       variant="outline"
       size="sm"
       className="h-7 text-xs"
-      onClick={onAdd}
+      onClick={() => onAdd()}
     >
       Add a provider
     </Button>
@@ -24,29 +27,62 @@ export function AddProviderStep({ onAdd }: { onAdd?: () => void }) {
   );
 }
 
+/** Add a provider through the active project's organization, if the viewer may. */
+function ActiveOrgAddProvider({
+  organizationId,
+  leaveTo,
+}: {
+  organizationId: string;
+  leaveTo: (handoff: () => void) => void;
+}) {
+  const handoff = useOrgModelsHandoff(organizationId);
+  return handoff ? <AddProviderStep onAdd={() => leaveTo(handoff)} /> : null;
+}
+
 /**
  * A search that matched no model: says why it isn't listed and, when known,
- * what to do. Off the key policy a missing `onAdd` says nothing about who the
- * viewer is, so no admin pointer is shown then.
+ * what to do. A picker that passes no `onAdd` falls back to the active
+ * project's organization, so every picker can offer "Add a provider" without
+ * its callers threading a handoff through. `null` comes from a picker scoped
+ * to its own project whose organization offers this viewer none, and gets no
+ * fallback: another organization's providers can't fill its list. Off the key
+ * policy, nothing known about the viewer means no admin pointer either.
  */
 export function ModelSearchEmpty({
   query,
   requireOrgKeys,
   onAdd,
+  leaveTo,
 }: {
   query: string;
   requireOrgKeys?: boolean;
-  onAdd?: () => void;
+  onAdd?: (() => void) | null;
+  /** Closes the picker, then runs the handoff. */
+  leaveTo: (handoff?: () => void) => void;
 }) {
+  const appState = useOptionalSharedAppState();
+  const organizationId = findProjectByAnyId(
+    appState?.projects ?? {},
+    appState?.activeProjectId ?? null,
+  )?.organizationId;
   return (
     <div className="space-y-2 px-3">
       <p>No models match "{query.trim()}".</p>
       <p className="text-[11px] text-muted-foreground">
         {requireOrgKeys
           ? "Only models from your organization's providers are listed."
-          : "Only models MCPJam runs and models from your organization's providers are listed."}
+          : "Only models MCPJam runs and models from your providers are listed."}
       </p>
-      {onAdd || requireOrgKeys ? <AddProviderStep onAdd={onAdd} /> : null}
+      {onAdd ? (
+        <AddProviderStep onAdd={() => leaveTo(onAdd)} />
+      ) : requireOrgKeys ? (
+        <AddProviderStep />
+      ) : onAdd === undefined && organizationId ? (
+        <ActiveOrgAddProvider
+          organizationId={organizationId}
+          leaveTo={leaveTo}
+        />
+      ) : null}
     </div>
   );
 }
@@ -57,7 +93,7 @@ export function ManageOrgModelsLink({ onClick }: { onClick: () => void }) {
     <div className="border-t px-2 py-1.5">
       <button
         type="button"
-        onClick={onClick}
+        onClick={() => onClick()}
         className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         Manage organization models
