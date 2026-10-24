@@ -92,7 +92,7 @@ export const HARNESS_BAKED_MARKER_AUTHOR = "mcpjam-harness-bake";
  * the unpinned templates already ran. Local packs build on machines without
  * that limit and keep the toolchain file's pnpm.
  */
-export const HARNESS_TEMPLATE_NODE_VERSION = "24.20.0";
+export const HARNESS_TEMPLATE_NODE_VERSION = "24.22.1";
 export const HARNESS_TEMPLATE_PNPM_VERSION = "12.8.1";
 
 /**
