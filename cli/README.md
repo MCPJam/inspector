@@ -225,7 +225,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: OAuth login (headless)
         run: |
