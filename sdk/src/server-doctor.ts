@@ -50,6 +50,8 @@ export type {
   ServerDoctorConnection,
   ServerDoctorError,
   ServerDoctorResult,
+  ServerDoctorSkillsCheck,
+  ServerDoctorSkillsFindings,
 } from "./server-doctor-core.js";
 
 export interface RunServerDoctorInput<TTarget = unknown> {
@@ -274,6 +276,27 @@ function inactiveSkillsDetail(
 }
 
 /**
+ * The cache attributes a result omitted, by name.
+ *
+ * The stable spec requires `ttlMs` and `cacheScope` on every `skills/list`
+ * and `skills/get` result. The SDK parses both leniently so a server built
+ * against the draft still loads; the doctor is where the omission is named.
+ */
+function missingCacheAttributes(result: {
+  ttlMs?: number;
+  cacheScope?: string;
+}): string[] {
+  const missing: string[] = [];
+  if (result.ttlMs === undefined) missing.push("`ttlMs`");
+  if (result.cacheScope === undefined) missing.push("`cacheScope`");
+  return missing;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
  * Skills over MCP (SEP-2640), verified rather than counted.
  *
  * Three outcomes, deliberately distinct:
@@ -288,6 +311,12 @@ function inactiveSkillsDetail(
  * A skill the server itself marks unloadable (`dynamic`, no manifest, over the
  * SEP's per-skill limits) is reported but is NOT an error: the server is
  * telling the truth about what it serves.
+ *
+ * Spec requirements the SDK accepts leniently are also `error` here: a
+ * missing `ttlMs` / `cacheScope` on `skills/list` or `skills/get`, a file
+ * entry without `size`, and an extension declaration without the `resources`
+ * capability it depends on. The host loads such a server anyway, and this
+ * check is the one place the author is told their server is not conformant.
  */
 async function collectSkills(
   manager: MCPClientManager,
@@ -311,13 +340,52 @@ async function collectSkills(
       .filter((skill) => !skill.unloadable)
       .slice(0, DOCTOR_SKILL_VERIFY_SAMPLE);
 
+    const conformance: string[] = [];
+    const capabilities = manager.getServerCapabilities(serverId) as
+      | { resources?: unknown }
+      | undefined;
+    if (!isRecord(capabilities?.resources)) {
+      conformance.push(
+        "the extension is declared without the `resources` capability it depends on"
+      );
+    }
+    // Per page, since the listing's own `ttlMs` / `cacheScope` come from
+    // whichever page carried them.
+    const listMissing = listing.omittedCacheAttributes.map(
+      (field) => `\`${field}\``
+    );
+    if (listMissing.length > 0) {
+      conformance.push(
+        `\`skills/list\` omitted required ${listMissing.join(" and ")}`
+      );
+    }
+    // `verifySize` reports an unchecked size rather than refusing, so a
+    // server that predates the field still loads; this is where it hears
+    // about it. Checked on the listing AND on every sampled `skills/get`
+    // entry, since the spec requires it on both.
+    const lacksSize = (skill: {
+      resources: ReadonlyArray<{ size?: number }>;
+    }): boolean => skill.resources.some((resource) => resource.size === undefined);
+    let sizeMissing = listing.skills.some(lacksSize);
+
     const failures: string[] = [];
+    // Collected across the sample and reported once, without URIs: the
+    // omission is a property of the server's handler, not of one skill, and
+    // the hosted doctor passes this sentence through only because it carries
+    // no server text. One result may omit `ttlMs` and another `cacheScope`.
+    const getMissing = new Set<string>();
     for (const skill of sample) {
       try {
-        await getVerifiedServerSkill(manager, {
+        // No `entry` passed, so this is the `skills/get` path and the result
+        // carries that method's cache attributes.
+        const verified = await getVerifiedServerSkill(manager, {
           serverId,
           uri: skill.skillUri,
         });
+        for (const field of missingCacheAttributes(verified)) {
+          getMissing.add(field);
+        }
+        if (lacksSize(verified)) sizeMissing = true;
       } catch (error) {
         if (isServerSkillRefusalError(error)) {
           failures.push(`${skill.skillUri} (${error.refusal.kind})`);
@@ -325,6 +393,17 @@ async function collectSkills(
           throw error;
         }
       }
+    }
+
+    if (getMissing.size > 0) {
+      conformance.push(
+        `\`skills/get\` omitted required ${["`ttlMs`", "`cacheScope`"]
+          .filter((field) => getMissing.has(field))
+          .join(" and ")}`
+      );
+    }
+    if (sizeMissing) {
+      conformance.push("listed skills omitted required `size` on their files");
     }
 
     const unloadable = listing.skills.filter((skill) => skill.unloadable).length;
@@ -356,6 +435,15 @@ async function collectSkills(
     // to verify would tell an author their skills serving is fine while a
     // conforming host is dropping entries on the floor.
     const problems: string[] = [];
+    // Conformance first. Its clauses are fixed phrases with no server text.
+    // The sentence is for a reader; `findings` below carries the same facts
+    // as data for the hosted doctor, which must not repeat the URIs and
+    // reasons the other two findings name.
+    if (conformance.length > 0) {
+      problems.push(
+        `not conformant to the stable Skills extension spec: ${conformance.join("; ")}`
+      );
+    }
     if (failures.length > 0) {
       problems.push(
         `${failures.length} of ${sample.length} sampled skills failed verification: ${failures.join(", ")}`
@@ -371,7 +459,23 @@ async function collectSkills(
     if (problems.length > 0) {
       return {
         skills: listing.skills,
-        check: errorCheck(`${problems.join("; ")}.`),
+        check: {
+          ...errorCheck(`${problems.join("; ")}.`),
+          findings: {
+            conformance,
+            ...(failures.length > 0
+              ? {
+                  verification: {
+                    failed: failures.length,
+                    sampled: sample.length,
+                  },
+                }
+              : {}),
+            ...(listing.rejected.length > 0
+              ? { rejected: listing.rejected.length }
+              : {}),
+          },
+        },
       };
     }
     return { skills: listing.skills, check: okCheck(parts.join(" ")) };
