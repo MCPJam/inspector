@@ -1,7 +1,7 @@
 /**
  * Skills over MCP (SEP-2640) — the live chat wrapper.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  *
  * The wrapper's contract has three load-bearing properties, and each gets a
  * test that would fail loudly if it regressed:
@@ -191,6 +191,13 @@ async function makeManager(
       throw new Error(`Resource not found: ${params.uri}`);
     }),
   };
+  // The verified load path asks for the `skills/get` ENVELOPE; the double
+  // answers it from the same entry `getServerSkill` returns.
+  Object.assign(manager, {
+    getServerSkillResult: vi.fn(async (serverId: string, uri: string) => ({
+      skill: await manager.getServerSkill(serverId, uri),
+    })),
+  });
   return manager as unknown as Parameters<
     typeof withServerSkills
   >[1]["manager"] & {
