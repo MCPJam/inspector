@@ -1,5 +1,6 @@
 // Must stay first; OAuth modules and SDKs retain window.fetch at load time.
 import "./lib/install-telemetry-transport";
+import { capturePromoIntent, watchPromoIntent } from "./lib/promo-intent";
 import {
   consumeAccessLinkFromUrl,
   watchForAccessLinks,
@@ -85,6 +86,8 @@ function FirstRunOAuthReturnBootScreen({ serverName }: { serverName: string }) {
 }
 
 consumeAccessLinkFromUrl();
+capturePromoIntent();
+watchPromoIntent();
 watchForAccessLinks();
 // After the access link, whose `#token=` it would otherwise drop wholesale
 // along with any other fragment it cannot vouch for; before anything that

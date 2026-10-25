@@ -73,12 +73,14 @@ import {
 } from "./server-secrets.js";
 import {
   buildXaaMintArgs,
-  isXaaMintErrorReported,
   mintXaaAccessToken,
   resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
-import { toXaaConnectFailure } from "../services/xaa-connect-error.js";
+import {
+  reportXaaMintFailure,
+  toXaaConnectFailure,
+} from "../services/xaa-connect-error.js";
 import {
   getLocalConfidentialCimdProvider,
   withSkillsExtensionCapability,
@@ -1495,14 +1497,12 @@ export async function resolveLocalServerForConnect(
       const minted = await mintXaaAccessToken(mintArgs);
       resolvedOauthAccessToken = minted.accessToken;
     } catch (error) {
-      if (!isXaaMintErrorReported(error)) {
-        logger.error("[XAA connect] mint failed", error, {
-          serverId,
-          serverName: options?.serverDisplayName ?? serverId,
-          resource: sc.url,
-        });
-      }
-      // Re-framed AFTER the log above: the debugger-worded original still
+      reportXaaMintFailure(error, {
+        serverId,
+        serverName: options?.serverDisplayName ?? serverId,
+        resource: sc.url,
+      });
+      // Re-framed AFTER the report above: the debugger-worded original still
       // reaches Sentry/Axiom (as `cause`), the caller gets one sentence that
       // names this server and the action that fixes it.
       throw toXaaConnectFailure(error, xaaFailureTarget);
