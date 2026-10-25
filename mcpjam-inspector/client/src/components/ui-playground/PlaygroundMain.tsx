@@ -222,7 +222,6 @@ import {
   useHost,
   useHostList,
   type HostListItem,
-  type HostDetail,
 } from "@/hooks/useClients";
 import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
@@ -2307,14 +2306,6 @@ export function PlaygroundMain({
     isConvexAuthenticated,
     selectedHostIds,
   );
-  const resolvedSelectedHosts = useMemo<HostDetail[]>(
-    () =>
-      hostSlots
-        .slice(0, selectedHostIds.length)
-        .map((slot) => slot.host)
-        .filter((host): host is HostDetail => host !== null),
-    [hostSlots, selectedHostIds.length],
-  );
   // `!isEnvironmentMode`: comparison and environment mode are mutually
   // exclusive in v1 (see the effect above). Withdrawing the affordance also
   // drives the existing "reset a stale persisted multiHostEnabled" effect
@@ -2339,7 +2330,8 @@ export function PlaygroundMain({
   // host list caught up, since the ref doesn't survive a remount).
   // Deriving this fresh from already-correct persisted data has no state
   // to fall out of sync in the first place, including across a remount.
-  const isComparingHosts = canEnableMultiHost && selectedHostIds.length > 1;
+  const isComparingHosts =
+    !isSharedSession && !isEnvironmentMode && selectedHostIds.length > 1;
 
   const isMultiHostMode = isComparingHosts && !viewingHistoryReplay;
   const leadHost = hostSlots[0].host;
@@ -2442,17 +2434,6 @@ export function PlaygroundMain({
     }
   }, [isMultiModelMode, modelCompareCards]);
 
-  // Mirror of the multi-model lead tracker for host mode. The transition
-  // effect reads `lastCompareLeadIdRef` to harvest the outgoing lead's
-  // transcript on exit/swap; since `compareTranscriptsRef` is keyed by
-  // `compareId` (hostId in host mode, modelId in model mode), one ref is
-  // enough — but only the in-mode tracker should write to it.
-  useEffect(() => {
-    if (isMultiHostMode && resolvedSelectedHosts[0]) {
-      lastCompareLeadIdRef.current = resolvedSelectedHosts[0].hostId;
-    }
-  }, [isMultiHostMode, resolvedSelectedHosts]);
-
   // On a phone the compare columns stack into slivers too thin to read, so
   // one client shows at a time behind a switcher. The others stay mounted
   // (hidden): each card owns its own stream and transcript.
@@ -2553,6 +2534,16 @@ export function PlaygroundMain({
     [],
   );
 
+  const clientTranscriptKey = (id: string) =>
+    `host:${activeProjectId}:${multiModelSessionGeneration}:${id}`;
+  const handleClientTranscriptSync = useCallback(
+    (id: string, transcript: UIMessage[]) => {
+      compareTranscriptsRef.current[`host:${activeProjectId}:${multiModelSessionGeneration}:${id}`] =
+        cloneUiMessages(transcript);
+    },
+    [activeProjectId, multiModelSessionGeneration],
+  );
+
   const clearMultiModelUiState = useCallback(() => {
     // The lead transcript is replayed into the thread by the same transitions
     // that call this, so the thread becomes the single source again.
@@ -2566,20 +2557,7 @@ export function PlaygroundMain({
     prevCompareIdsRef.current = new Set();
   }, []);
 
-  // Three-mode transition machinery (Phase 6 core). Handles every direction:
-  //
-  //   none → model   : seed each column with current single-pane messages.
-  //   none → host    : same — seed columns with single-pane messages.
-  //   model → none   : harvest lead column's transcript, replay into single.
-  //   host  → none   : same — harvest lead, replay into single.
-  //   model ↔ host   : harvest outgoing lead, seed incoming columns with it
-  //                    (the mutual-exclusion writes batch into one render,
-  //                    so we observe a direct cross-mode transition here).
-  //
-  // Without this, toggling the picker drops the conversation on the floor —
-  // either the single-pane transcript vanishes when entering compare, or
-  // the lead column's transcript vanishes when exiting. That's the
-  // "dead-on-arrival" UX the multi-host plan warned about.
+  // Only model comparison explicitly branches the single-pane conversation.
   const currentCompareMode: CompareMode = isMultiHostMode
     ? "host"
     : isMultiModelMode
@@ -2599,28 +2577,14 @@ export function PlaygroundMain({
       return hasConversation && transcript ? cloneUiMessages(transcript) : null;
     };
 
-    if (prev === "none" && currentCompareMode !== "none") {
-      // Enter compare from single-pane: seed every column with the
-      // current single-pane transcript so the conversation continues
-      // visibly in each card.
+    if (currentCompareMode === "model") {
       setMultiCompareEnterVersion((v) => v + 1);
       setMultiCompareEnterMessages(cloneUiMessages(messages));
-    } else if (prev !== "none" && currentCompareMode === "none") {
-      // Exit compare to single-pane: replay the lead column's transcript
-      // into the single chat so the user doesn't lose work.
+    } else if (prev === "model" && currentCompareMode === "none") {
       const harvested = harvestLeadTranscript();
       if (harvested) startChatWithMessages(harvested);
-      clearMultiModelUiState();
-    } else if (prev !== "none" && currentCompareMode !== "none") {
-      // Direct model ↔ host swap (mutual exclusion fires both writes in
-      // one batched render). Harvest the outgoing lead and seed the
-      // incoming columns with the same transcript. Reset the in-flight
-      // per-column UI state so the new mode starts clean.
-      const harvested = harvestLeadTranscript();
-      clearMultiModelUiState();
-      setMultiCompareEnterVersion((v) => v + 1);
-      setMultiCompareEnterMessages(harvested ?? cloneUiMessages(messages));
     }
+    clearMultiModelUiState();
 
     prevCompareModeRef.current = currentCompareMode;
   }, [
@@ -2664,42 +2628,6 @@ export function PlaygroundMain({
     for (const id of added) delete compareSeedSourceRef.current[id];
     prevCompareIdsRef.current = current;
   }, [isMultiModelMode, modelCompareCards]);
-
-  // Host-mode sibling of the multi-model added-column effect above.
-  // Without this, adding a host after the conversation has continued
-  // in compare mode would seed the new column from the original
-  // `compareEnterMessages` snapshot (the transcript at the moment
-  // compare was first entered) instead of the lead's current state.
-  // Mirrors the model branch: diff `prev` vs current host column ids,
-  // and for any newly-added id, seed it from the lead's live
-  // `compareTranscriptsRef` entry. `prevCompareIdsRef` is shared with
-  // the model effect; that's safe because `isMultiHostMode` and
-  // `isMultiModelMode` are mutually exclusive — whichever mode is off
-  // clears the ref on its first run, so the active mode never sees a
-  // foreign-id `prev` set.
-  useEffect(() => {
-    if (!isMultiHostMode) {
-      prevCompareIdsRef.current = new Set();
-      return;
-    }
-    const current = new Set(multiHostColumns.map((c) => c.compareId));
-    const prev = prevCompareIdsRef.current;
-    const added = [...current].filter((id) => !prev.has(id));
-    const leadId = multiHostColumns[0]?.compareId ?? null;
-    if (prev.size > 0 && added.length > 0 && leadId) {
-      const src = compareTranscriptsRef.current[leadId] ?? [];
-      multiAddColumnSeqRef.current += 1;
-      const v = multiAddColumnSeqRef.current;
-      setCompareAddColumnSeeds((s) => {
-        const next = { ...s };
-        for (const id of added) {
-          next[id] = { version: v, messages: cloneUiMessages(src) };
-        }
-        return next;
-      });
-    }
-    prevCompareIdsRef.current = current;
-  }, [isMultiHostMode, multiHostColumns]);
 
   const effectiveHasMessages = isMultiModelLayoutMode
     ? Object.values(compareHasMessages).some(Boolean)
@@ -3872,6 +3800,7 @@ export function PlaygroundMain({
 
   const resetMultiModelSessions = useCallback(() => {
     clearMultiModelUiState();
+    compareTranscriptsRef.current = {};
     setMultiModelSessionGeneration((previous) => previous + 1);
   }, [clearMultiModelUiState]);
 
@@ -5877,6 +5806,8 @@ export function PlaygroundMain({
         };
 
   const sharedChatInputProps = {
+    hideExecutionControls: isMultiHostMode,
+    showContextPopover: !isMultiHostMode,
     mentions: composerMentions.mentions,
     // Forms take the composer's place whether or not mentions are on.
     formWorkspaceId: extensionScope?.pluginWorkspace.workspaceId,
@@ -6651,6 +6582,7 @@ export function PlaygroundMain({
             onSaveHostContext={onSaveHostContext}
             protocol={selectedProtocol}
             isMultiModelLayoutMode={isMultiModelLayoutMode}
+            hideClientSettings={isMultiHostMode}
             leadHostInMultiHost={
               isMultiHostMode && leadHost
                 ? clientDisplayName(
@@ -6773,7 +6705,7 @@ export function PlaygroundMain({
                 />
               ) : null}
 
-              {!effectiveHasMessages && !showMultiModelTraceEmptyPanel ? (
+              {!isMultiHostMode && !effectiveHasMessages && !showMultiModelTraceEmptyPanel ? (
                 <MultiModelStartersEmptyLayout
                   isAuthLoading={isAuthLoading}
                   showStarterPrompts={showMultiModelStarterPrompts}
@@ -6806,9 +6738,9 @@ export function PlaygroundMain({
                 }
                 className={cn(
                   "flex flex-1 min-h-0 flex-col overflow-hidden",
-                  !effectiveHasMessages && "hidden",
+                  !effectiveHasMessages && !isMultiHostMode && "hidden",
                 )}
-                aria-hidden={!effectiveHasMessages}
+                aria-hidden={!effectiveHasMessages && !isMultiHostMode}
               >
                 <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
                   {singleCompareLane ? (
@@ -6844,24 +6776,23 @@ export function PlaygroundMain({
                       data-testid="playground-multi-host-grid"
                       className={cn(
                         "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
-                        multiHostColumns.length <= 1 && "grid-cols-1",
-                        multiHostColumns.length === 2 &&
+                        selectedHostIds.length <= 1 && "grid-cols-1",
+                        selectedHostIds.length === 2 &&
                           "grid-cols-1 xl:grid-cols-2",
-                        multiHostColumns.length >= 3 &&
+                        selectedHostIds.length >= 3 &&
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
-                      {unavailableClients.map((client) => (
-                        <div
-                          key={client.compareId}
-                          role="status"
-                          className="rounded-lg border p-4 text-sm"
-                        >
-                          <strong>{client.compareLabel}</strong>
-                          <p>{client.reason}</p>
-                        </div>
-                      ))}
-                      {multiHostColumns.map((column, columnIndex) => (
+                      {clientResolutions.map((resolution, columnIndex) => {
+                        if (resolution.status !== "ready") return (
+                          <div key={resolution.compareId} role="status" className="rounded-lg border p-4 text-sm">
+                            <strong>{resolution.compareLabel}</strong>
+                            <p>{resolution.reason}</p>
+                          </div>
+                        );
+                        const column = resolution.column;
+                        const columnTheme = extractHostTheme(column.hostConfig.hostContext) ?? globalThemeMode;
+                        return (
                         <MultiModelPlaygroundCard
                           className={compareLaneHidden(`host:${column.compareId}`)}
                           extensionBinding={compareLaneBinding(
@@ -6904,7 +6835,7 @@ export function PlaygroundMain({
                             // host's own config. Exactly what the single pane
                             // sends, rather than substituting the raw host
                             // list and pre-empting the loading guard.
-                            builtInToolIds: columnBuiltInToolIds[columnIndex],
+                            builtInToolIds: columnBuiltInToolIds[selectedHostIds.indexOf(column.compareId)],
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
@@ -6923,7 +6854,7 @@ export function PlaygroundMain({
                           displayMode={displayMode}
                           onDisplayModeChange={handleDisplayModeChange}
                           hostStyle={column.hostSnapshot.hostStyle}
-                          effectiveThreadTheme={effectiveThreadTheme}
+                          effectiveThreadTheme={columnTheme}
                           deviceType={storeDeviceType}
                           hideInlineEdit={hideInlineEdit}
                           onWidgetStateChange={onWidgetStateChange}
@@ -6935,33 +6866,25 @@ export function PlaygroundMain({
                           onHasMessagesChange={
                             handleMultiModelHasMessagesChange
                           }
-                          // Multi-host mode varies only the host; per-card
-                          // model title + Latency/Tokens chrome is redundant
-                          // (same model in every column) and noisy. Keep the
-                          // Trace/Chat/Raw tab strip — that comes from
-                          // `showTraceTabs` inside the header. Show the host
-                          // identity row so columns are immediately branded.
                           showComparisonChrome={false}
                           showIdentityHeader
                           logoSrc={getScenarioHostLogo(
                             column.hostSnapshot.hostStyle,
                             column.hostSnapshot.chatUiOverride,
-                            effectiveThreadTheme,
+                            columnTheme,
                           )}
                           suppressThreadEmptyHint={false}
-                          compareEnterVersion={multiCompareEnterVersion}
-                          compareEnterMessages={multiCompareEnterMessages}
-                          addColumnSeed={
-                            compareAddColumnSeeds[column.compareId] ?? null
-                          }
-                          onTranscriptSync={handleMultiModelTranscriptSync}
+                          compareEnterVersion={1}
+                          compareEnterMessages={compareTranscriptsRef.current[clientTranscriptKey(column.compareId)] ?? []}
+                          onTranscriptSync={handleClientTranscriptSync}
                           showSenderAvatars={showSenderAvatars}
                           resolveSenderAvatar={resolveSenderAvatar}
                           outgoingSenderMetadata={outgoingSenderMetadata}
                           hostSnapshot={column.hostSnapshot}
                           hostCapsResolver={column.hostConfig}
                         />
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div
