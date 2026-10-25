@@ -103,7 +103,7 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
-import { ownKeyTurnRefusal, withOwnKeyTurnPolicy, type OwnKeyTurn } from "../../utils/own-key-turn-policy.js";
+import { ownKeyTurnCheck, withOwnKeyTurnPolicy, type OwnKeyTurn } from "../../utils/own-key-turn-policy.js";
 import {
   createEmptyTurnWatcher,
   hasSettledToolCallThisPrompt,
@@ -2926,10 +2926,11 @@ chatV2.post("/", async (c) => {
         serverIds: hostConfigServerIds,
       },
     };
-    const ownKeyCheckedAt = performance.now();
-    const ownKeyRefusal = await ownKeyTurnRefusal(ownKeyTurn);
-    if (ownKeyRefusal) {
-      return webErrorFromRoute(c, mapRuntimeError(ownKeyRefusal));
+    // The answer may be shared with other turns, so the wrapped model trusts
+    // it from when ITS read started (`readAt`), not from this call.
+    const ownKeyCheck = await ownKeyTurnCheck(ownKeyTurn);
+    if (ownKeyCheck.refusal) {
+      return webErrorFromRoute(c, mapRuntimeError(ownKeyCheck.refusal));
     }
 
     // User-provided models: direct streamText
@@ -2939,7 +2940,7 @@ chatV2.post("/", async (c) => {
         azure: body.azureBaseUrl,
       }, body.customProviders),
       ownKeyTurn,
-      { allowedAt: ownKeyCheckedAt },
+      { allowedAt: ownKeyCheck.readAt },
     );
 
     const modelMessages = await convertToMcpjamModelMessages(

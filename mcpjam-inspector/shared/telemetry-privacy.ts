@@ -440,6 +440,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "profile",
   "project-settings",
   "prompts",
+  "redeem",
   "registry",
   "resources",
   "results",
