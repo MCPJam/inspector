@@ -197,6 +197,11 @@ export function isOutOfCredits(
   ) {
     return (balance.monthlyAllowanceRemaining ?? 0) <= 0 && paidRemaining <= 0;
   }
+  // An older backend reports no minimum; its "nothing left" rule keeps a
+  // fractional balance such as 0.5 spendable.
+  if (balance.perCallMinimumCredits === undefined) {
+    return balance.freeDailyCreditsRemaining <= 0 && paidRemaining <= 0;
+  }
   // Below the per-call minimum every hosted call is refused, so an org with a
   // few credits left is as unable to run an MCPJam model as one with none.
   const minimum = dailyCallMinimum(balance);
@@ -205,7 +210,7 @@ export function isOutOfCredits(
   );
 }
 
-/** An older backend reports no minimum; 1 keeps its "nothing left" rule. */
+/** The reported per-call minimum, never below one credit. */
 const dailyCallMinimum = (balance: CreditBalanceState): number =>
   Math.max(1, balance.perCallMinimumCredits ?? 1);
 

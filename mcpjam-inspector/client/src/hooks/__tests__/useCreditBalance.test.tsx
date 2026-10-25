@@ -391,6 +391,10 @@ describe("per-call credit minimum", () => {
       false,
     );
     expect(isOutOfCredits(daily({}))).toBe(true);
+    expect(isOutOfCredits(daily({ freeDailyCreditsRemaining: 0.5 }))).toBe(
+      false,
+    );
+    expect(isOutOfCredits(daily({ paidCreditsRemaining: 0.5 }))).toBe(false);
   });
 
   it("does not apply the minimum to monthly plans", () => {
