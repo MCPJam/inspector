@@ -35,10 +35,6 @@ function resolve(client = host, models = [hosted, own]) {
     slot: { host: client, isLoading: false },
     hosts: [],
     models,
-    serversById: new Map([
-      ["server-a", "Server A"],
-      ["server-b", "Server B"],
-    ]),
   });
 }
 
@@ -52,19 +48,17 @@ describe("saved-client comparison resolution", () => {
       temperature: 0,
       requireToolApproval: false,
     });
-    expect(result.column.selectedServers).toEqual([]);
-    expect(result.column.selectedServerIds).toEqual([]);
   });
 
   it("keeps each client's configuration after reorder and a saved edit", () => {
     const a = {
       ...host,
-      config: { ...config, systemPrompt: "UPPERCASE", serverIds: ["server-a"] },
+      config: { ...config, systemPrompt: "UPPERCASE" },
     };
     const b = {
       ...host,
       hostId: "b",
-      config: { ...config, systemPrompt: "lowercase", serverIds: ["server-b"] },
+      config: { ...config, systemPrompt: "lowercase" },
     };
     const before = [a, b].map((client) => resolve(client));
     expect([b, a].map((client) => resolve(client))).toEqual([
@@ -75,18 +69,6 @@ describe("saved-client comparison resolution", () => {
       resolve({ ...a, config: { ...a.config, systemPrompt: "Changed" } }),
     ).not.toEqual(before[0]);
     expect(resolve(b)).toEqual(before[1]);
-    expect(before[0]).toMatchObject({
-      column: {
-        selectedServers: ["Server A"],
-        selectedServerIds: ["server-a"],
-      },
-    });
-    expect(before[1]).toMatchObject({
-      column: {
-        selectedServers: ["Server B"],
-        selectedServerIds: ["server-b"],
-      },
-    });
   });
 
   it("does not substitute hosted credits for an unavailable saved connection", () => {
@@ -114,7 +96,6 @@ describe("saved-client comparison resolution", () => {
       hostId: "a",
       hosts: [],
       models: [hosted],
-      serversById: new Map<string, string>(),
     };
     expect(
       resolvePlaygroundClientColumn({
@@ -141,9 +122,5 @@ describe("saved-client comparison resolution", () => {
         },
       }).status,
     ).toBe("invalid");
-    expect(
-      resolve({ ...host, config: { ...config, serverIds: ["missing-server"] } })
-        .status,
-    ).toBe("unavailable");
   });
 });

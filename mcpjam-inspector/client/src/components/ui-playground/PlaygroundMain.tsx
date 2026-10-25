@@ -2354,7 +2354,6 @@ export function PlaygroundMain({
               hosts: hostList,
               models: availableModels,
               orgConfig: hostedOrgModelConfig,
-              serversById,
             }),
           ),
     [
@@ -2363,7 +2362,6 @@ export function PlaygroundMain({
       hostList,
       availableModels,
       hostedOrgModelConfig,
-      serversById,
       hostSlots[0].host,
       hostSlots[0].isLoading,
       hostSlots[1].host,
@@ -6893,7 +6891,7 @@ export function PlaygroundMain({
                           model={column.model}
                           selection={column.hostConfig.modelSelection}
                           comparisonSummaries={Object.values(compareSummaries)}
-                          selectedServers={column.selectedServers}
+                          selectedServers={selectedServers}
                           broadcastRequest={broadcastRequest}
                           deterministicExecutionRequest={
                             deterministicExecutionRequest
@@ -6910,7 +6908,7 @@ export function PlaygroundMain({
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
-                            selectedServerIds: column.selectedServerIds,
+                            selectedServerIds: hostedSelectedServerIds,
                             oauthTokens: hostedOAuthTokens,
                             hostId: column.compareId,
                           }}

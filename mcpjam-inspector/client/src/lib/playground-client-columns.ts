@@ -17,8 +17,6 @@ export interface PlaygroundClientColumn {
   executionConfig: ExecutionConfig;
   hostSnapshot: HostSnapshot;
   hostConfig: HostDetail["config"];
-  selectedServers: string[];
-  selectedServerIds: string[];
 }
 
 export type PlaygroundClientResolution =
@@ -37,14 +35,12 @@ export function resolvePlaygroundClientColumn({
   hosts,
   models,
   orgConfig,
-  serversById,
 }: {
   hostId: string;
   slot: HostSlot | undefined;
   hosts: readonly HostListItem[];
   models: readonly ModelDefinition[];
   orgConfig?: OrgVisibleConfig;
-  serversById: ReadonlyMap<string, string>;
 }): PlaygroundClientResolution {
   const host = slot?.host?.hostId === hostId ? slot.host : null;
   const listed = hosts.find((item) => item.hostId === hostId);
@@ -88,29 +84,6 @@ export function resolvePlaygroundClientColumn({
       reason:
         "The saved model or connection is unavailable. Edit this client in Connect.",
     };
-  return resolveClientServers(identity, config, model, serversById);
-}
-
-function resolveClientServers(
-  identity: Pick<PlaygroundClientColumn, "compareId" | "compareLabel">,
-  config: HostDetail["config"],
-  model: ModelDefinition,
-  serversById: ReadonlyMap<string, string>,
-): PlaygroundClientResolution {
-  const selectedServerIds = [
-    ...new Set([...config.serverIds, ...config.optionalServerIds]),
-  ];
-  const selectedServers = selectedServerIds.flatMap((id) => {
-    const name = serversById.get(id);
-    return name ? [name] : [];
-  });
-  if (selectedServers.length !== selectedServerIds.length) {
-    return {
-      ...identity,
-      status: "unavailable",
-      reason: "A saved server is unavailable. Check this client in Connect.",
-    };
-  }
   return {
     status: "ready",
     column: {
@@ -125,8 +98,6 @@ function resolveClientServers(
       },
       hostSnapshot: snapshotFromHostConfig(config),
       hostConfig: config,
-      selectedServers,
-      selectedServerIds,
     },
   };
 }

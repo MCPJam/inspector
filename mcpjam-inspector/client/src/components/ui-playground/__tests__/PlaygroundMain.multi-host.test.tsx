@@ -1127,9 +1127,8 @@ describe("PlaygroundMain — multi-host render path", () => {
     const calls = mockMultiModelPlaygroundCard.mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(2);
     const serversPerCard = calls.map((call) => call[0].selectedServers);
-    // Every card got the same array (by value).
-    for (const servers of serversPerCard.slice(1)) {
-      expect(servers).toEqual(serversPerCard[0]);
+    for (const servers of serversPerCard) {
+      expect(servers).toEqual(["test-server"]);
     }
   });
 
