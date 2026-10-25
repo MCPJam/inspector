@@ -12,6 +12,8 @@ export type AnalyticsConsent = "granted" | "denied";
 export interface AnalyticsConsentClient {
   opt_in_capturing: (options?: { captureEventName?: false }) => void;
   opt_out_capturing: () => void;
+  sessionRecording?: { startIfEnabledOrStop: () => void };
+  conversations?: { reset: () => void };
 }
 
 const STORAGE_KEY = "mcpjam-analytics-consent";
@@ -67,6 +69,11 @@ export function setAnalyticsConsent(
     client.opt_in_capturing({ captureEventName: false });
   } else {
     client.opt_out_capturing();
+    // Outside cookieless mode, opting out leaves a running recorder and a
+    // loaded Conversations widget in place. Re-checking stops the recorder
+    // now that capture is off; reset removes the widget and its stored session.
+    client.sessionRecording?.startIfEnabledOrStop();
+    client.conversations?.reset();
   }
   for (const listener of listeners) listener();
 }

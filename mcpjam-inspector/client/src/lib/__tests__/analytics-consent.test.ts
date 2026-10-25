@@ -51,6 +51,24 @@ describe("analytics consent", () => {
     expect(hasAnalyticsConsent()).toBe(false);
   });
 
+  it("stops replay and Conversations that started before a withdrawal", () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    window.localStorage.setItem("mcpjam-analytics-consent", "granted");
+    const posthog = {
+      ...client(),
+      sessionRecording: { startIfEnabledOrStop: vi.fn() },
+      conversations: { reset: vi.fn() },
+    };
+    setAnalyticsConsent(posthog, "denied");
+    expect(posthog.sessionRecording.startIfEnabledOrStop).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(posthog.conversations.reset).toHaveBeenCalledTimes(1);
+    expect(posthog.opt_out_capturing.mock.invocationCallOrder[0]).toBeLessThan(
+      posthog.sessionRecording.startIfEnabledOrStop.mock.invocationCallOrder[0],
+    );
+  });
+
   it("keeps a stored refusal where the server would not ask", () => {
     window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = false;
     window.localStorage.setItem("mcpjam-analytics-consent", "denied");
