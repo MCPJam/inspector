@@ -286,8 +286,7 @@ import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
-import { snapshotFromHostConfig, type HostSnapshot } from "@/lib/host-snapshot";
-import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import { resolvePlaygroundClientColumn } from "@/lib/playground-client-columns";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useHostContextStore } from "@/stores/client-context-store";
 import {
@@ -581,26 +580,6 @@ interface PlaygroundMainProps {
 }
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
-
-/**
- * Per-column data for the Phase 4 multi-host compare grid. Mirrors the
- * shape `MultiModelPlaygroundCard` consumes; one entry per resolved host.
- *
- * `hostConfig` is the full DTO (used for the `hostCapsResolver` scope
- * prop, which evaluates per-server capability resolution at render
- * time). `hostSnapshot` is the projected subset used for the value-
- * provider shadows (style, caps, chat UI, MCP profile).
- */
-interface MultiHostColumn {
-  compareId: string;
-  compareLabel: string;
-  compareKind: "host";
-  compareSubLabel: string;
-  model: ModelDefinition;
-  executionConfig: ExecutionConfig;
-  hostSnapshot: HostSnapshot;
-  hostConfig: HostConfigDtoV2;
-}
 
 // Invoking indicator component (ChatGPT-style "Invoking [toolName]")
 function InvokingIndicator({
@@ -2362,40 +2341,43 @@ export function PlaygroundMain({
   // to fall out of sync in the first place, including across a remount.
   const isComparingHosts = canEnableMultiHost && selectedHostIds.length > 1;
 
-  // Lead identity check — we cannot compact away the lead slot. If
-  // `selectedHostIds[0]` is still loading from Convex, the resolved
-  // list would collapse so `resolvedSelectedHosts[0]` would no longer
-  // be the lead — secondary slot 1 would be misidentified as lead.
-  // Gate `isMultiHostMode` on the lead host being resolved AND the
-  // chat-input model being selected; fall through to single-pane
-  // otherwise. Secondaries are still allowed to be missing — those
-  // just render fewer columns until their data arrives.
-  //
-  // Note: the column model is the chat-input picker's `selectedModel`,
-  // NOT the lead host's persisted modelId. Multi-host varies the host
-  // axis only — the input model applies to every column.
-  const leadHostId = selectedHostIds[0] ?? null;
-  const leadHost = leadHostId
-    ? (resolvedSelectedHosts.find((host) => host.hostId === leadHostId) ?? null)
-    : null;
-  const sharedHostColumnModel = selectedModel ?? null;
-
-  // Same gating as multi-model: history mode wins (transcript replay lives
-  // on the single session). When `isComparingHosts` is true but the lead
-  // host or its model isn't resolved yet (loading, deleted, missing from
-  // `availableModels`), fall through to single-pane — don't render a
-  // degraded grid where the lead identity is wrong.
-  // Multi-host compare requires at least 2 resolved columns. Without
-  // this guard a stale persisted `selectedHostIds` paired with a single
-  // selected host (or only the lead resolving) would render the compare
-  // grid as a one-column variant of single-pane — visually confusing and
-  // routed through the compare submit/stop/state path unnecessarily.
-  const isMultiHostMode =
-    isComparingHosts &&
-    !viewingHistoryReplay &&
-    resolvedSelectedHosts.length > 1 &&
-    !!leadHost &&
-    !!sharedHostColumnModel;
+  const isMultiHostMode = isComparingHosts && !viewingHistoryReplay;
+  const leadHost = hostSlots[0].host;
+  const clientResolutions = useMemo(
+    () =>
+      !isMultiHostMode
+        ? []
+        : selectedHostIds.map((hostId, index) =>
+            resolvePlaygroundClientColumn({
+              hostId,
+              slot: hostSlots[index],
+              hosts: hostList,
+              models: availableModels,
+              orgConfig: hostedOrgModelConfig,
+              serversById,
+            }),
+          ),
+    [
+      isMultiHostMode,
+      selectedHostIds,
+      hostList,
+      availableModels,
+      hostedOrgModelConfig,
+      serversById,
+      hostSlots[0].host,
+      hostSlots[0].isLoading,
+      hostSlots[1].host,
+      hostSlots[1].isLoading,
+      hostSlots[2].host,
+      hostSlots[2].isLoading,
+    ],
+  );
+  const multiHostColumns = clientResolutions.flatMap((result) =>
+    result.status === "ready" ? [result.column] : [],
+  );
+  const unavailableClients = clientResolutions.filter(
+    (result) => result.status !== "ready",
+  );
 
   // When viewing a history session the transcript lives on the single chat
   // session; compare layout would override that render. Matches ChatTabV2.
@@ -2411,6 +2393,7 @@ export function PlaygroundMain({
   // key in local mode has no server-side check to refuse it.
   const submitBlocked =
     baseSubmitBlocked ||
+    (isMultiHostMode && unavailableClients.length > 0) ||
     (isMultiModelMode &&
       modelCompareCards.some((entry) => isOrgKeysDisallowedRow(entry.model)));
   // Unified "the compare grid is live" flag. Submit/stop/deterministic-
@@ -2471,53 +2454,6 @@ export function PlaygroundMain({
       lastCompareLeadIdRef.current = resolvedSelectedHosts[0].hostId;
     }
   }, [isMultiHostMode, resolvedSelectedHosts]);
-
-  // Multi-host axis is HOST only: every column shares the lead's model
-  // and the global chip-edited `executionConfig`. The host axis varies
-  // via `hostSnapshot`/`hostConfig` (capabilities, chat UI, MCP profile,
-  // style). This mirrors multi-model mode's inverse: there model varies
-  // with host pinned; here host varies with model + chat input pinned.
-  const multiHostColumns = useMemo<MultiHostColumn[]>(() => {
-    if (!isMultiHostMode || !sharedHostColumnModel) return [];
-    const sharedExecutionConfig: ExecutionConfig = {
-      systemPrompt,
-      temperature,
-      requireToolApproval,
-    };
-    const columns: MultiHostColumn[] = [];
-    // Iterate `selectedHostIds` (not the compacted `resolvedSelectedHosts`)
-    // so the lead is determined by the SLOT INDEX in the canonical
-    // line-up. If slot 1 is missing while slot 0 + slot 2 are present,
-    // the output is `[leadCol, /* nothing */, slot2Col]` → grid renders
-    // 2 columns where the lead is still `selectedHostIds[0]`.
-    for (let slotIndex = 0; slotIndex < selectedHostIds.length; slotIndex++) {
-      const hostId = selectedHostIds[slotIndex];
-      const host = resolvedSelectedHosts.find((h) => h.hostId === hostId);
-      if (!host) continue;
-      columns.push({
-        compareId: host.hostId,
-        compareLabel: clientDisplayName(
-          hostList.find((item) => item.hostId === host.hostId) ?? host,
-        ),
-        compareKind: "host",
-        compareSubLabel: sharedHostColumnModel.name,
-        model: sharedHostColumnModel,
-        executionConfig: sharedExecutionConfig,
-        hostSnapshot: snapshotFromHostConfig(host.config),
-        hostConfig: host.config,
-      });
-    }
-    return columns;
-  }, [
-    isMultiHostMode,
-    sharedHostColumnModel,
-    selectedHostIds,
-    resolvedSelectedHosts,
-    hostList,
-    systemPrompt,
-    temperature,
-    requireToolApproval,
-  ]);
 
   // On a phone the compare columns stack into slivers too thin to read, so
   // one client shows at a time behind a switcher. The others stay mounted
@@ -6906,18 +6842,6 @@ export function PlaygroundMain({
                     </div>
                   ) : null}
                   {isMultiHostMode ? (
-                    // Phase 4 multi-host compare grid. Project-scoped
-                    // server config means `selectedServers`,
-                    // `hostedSelectedServerIds`, and `hostedOAuthTokens`
-                    // are SHARED across all columns — there is no
-                    // per-host server set in v1 (see plan §"What v1 does
-                    // NOT compare"). Each column gets its own
-                    // `hostSnapshot` (style, caps, chat UI, MCP profile)
-                    // and its own `hostCapsResolver` so per-server
-                    // capability gating evaluates under the right host
-                    // identity. Every column shares the lead's model and
-                    // the global chip `executionConfig` — host is the only
-                    // varying axis. See `multiHostColumns` memo above.
                     <div
                       data-testid="playground-multi-host-grid"
                       className={cn(
@@ -6929,6 +6853,16 @@ export function PlaygroundMain({
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
+                      {unavailableClients.map((client) => (
+                        <div
+                          key={client.compareId}
+                          role="status"
+                          className="rounded-lg border p-4 text-sm"
+                        >
+                          <strong>{client.compareLabel}</strong>
+                          <p>{client.reason}</p>
+                        </div>
+                      ))}
                       {multiHostColumns.map((column, columnIndex) => (
                         <MultiModelPlaygroundCard
                           className={compareLaneHidden(`host:${column.compareId}`)}
@@ -6957,11 +6891,9 @@ export function PlaygroundMain({
                           compareKind="host"
                           compareSubLabel={column.compareSubLabel}
                           model={column.model}
-                          // No `reasoningEffort`: a host column states none,
-                          // so the server runs each host's own saved
-                          // selection (effort included) for its `hostId`.
+                          selection={column.hostConfig.modelSelection}
                           comparisonSummaries={Object.values(compareSummaries)}
-                          selectedServers={selectedServers}
+                          selectedServers={column.selectedServers}
                           broadcastRequest={broadcastRequest}
                           deterministicExecutionRequest={
                             deterministicExecutionRequest
@@ -6978,7 +6910,7 @@ export function PlaygroundMain({
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
-                            selectedServerIds: hostedSelectedServerIds,
+                            selectedServerIds: column.selectedServerIds,
                             oauthTokens: hostedOAuthTokens,
                             hostId: column.compareId,
                           }}
