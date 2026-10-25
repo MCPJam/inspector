@@ -40,8 +40,12 @@ const KIND_BADGE: Record<FindingOption["kind"], string> = {
 };
 
 /** Why an analysis that ran left this problem without a checked cause. */
-const OUTCOME_LINE: Partial<
-  Record<NonNullable<FindingProblem["outcome"]>["state"], string>
+const OUTCOME_LINE: Record<
+  Exclude<
+    NonNullable<FindingProblem["outcome"]>["state"],
+    "explained" | "addressed"
+  >,
+  string
 > = {
   no_proposal: "Analysis ran and proposed nothing for this problem.",
   rejected: "Analysis ran; its proposals did not hold up against the evidence.",
@@ -52,11 +56,13 @@ const OUTCOME_LINE: Partial<
 /** What the analysis established about this problem's iterations. */
 export function coverageLine(problem: FindingProblem): string {
   const { observed, explained, unresolved } = problem.coverage;
+  const state = problem.outcome?.state;
   const parts = [
     explained > 0
       ? `Cause checked for ${explained} of ${plural(observed, "iteration")}.`
-      : ((problem.outcome && OUTCOME_LINE[problem.outcome.state]) ??
-        "Cause not established."),
+      : ((state && state !== "explained" && state !== "addressed"
+          ? OUTCOME_LINE[state]
+          : undefined) ?? "Cause not established."),
   ];
   if (unresolved > 0 && unresolved < observed)
     parts.push(
