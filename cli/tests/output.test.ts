@@ -86,3 +86,37 @@ test("routeConsoleToStderr keeps console.log/info/debug off stdout until restore
     process.stderr.write = originalStderrWrite;
   }
 });
+
+test("routeConsoleToStderr keeps routing until the last overlapping caller releases", () => {
+  const originalConsole = {
+    log: console.log,
+    info: console.info,
+    debug: console.debug,
+  };
+
+  try {
+    const releaseFirst = routeConsoleToStderr();
+    const routed = console.log;
+    const releaseSecond = routeConsoleToStderr();
+
+    // Finishing out of order: the first release must not unguard stdout
+    // while the second command is still running.
+    releaseFirst();
+    assert.equal(console.log, routed);
+    assert.notEqual(console.log, originalConsole.log);
+
+    releaseSecond();
+    assert.equal(console.log, originalConsole.log);
+    assert.equal(console.info, originalConsole.info);
+    assert.equal(console.debug, originalConsole.debug);
+
+    // A second release is a no-op, not a second decrement.
+    releaseSecond();
+    const releaseThird = routeConsoleToStderr();
+    assert.notEqual(console.log, originalConsole.log);
+    releaseThird();
+    assert.equal(console.log, originalConsole.log);
+  } finally {
+    Object.assign(console, originalConsole);
+  }
+});

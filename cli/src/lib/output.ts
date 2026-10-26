@@ -132,19 +132,41 @@ export function writeError(
  * sends those three methods to STDOUT, so `--format json` printed prose ahead
  * of the document and no longer parsed. On STDERR they stay visible without
  * corrupting the result. Returns a function that restores the originals.
+ *
+ * Counted, because in-process callers can overlap `main()` calls: each call
+ * saving "the current methods" would let the second save the first's routing
+ * as its originals, so finishing out of order left stdout unguarded mid-run
+ * and stderr routing installed after both returned. The originals are saved
+ * once and restored when the last active route releases.
  */
+let activeConsoleRoutes = 0;
+let savedConsoleMethods:
+  | Pick<Console, "log" | "info" | "debug">
+  | undefined;
+
 export function routeConsoleToStderr(): () => void {
-  const original = {
-    log: console.log,
-    info: console.info,
-    debug: console.debug,
-  };
-  const toStderr = (...args: unknown[]) => console.error(...args);
-  console.log = toStderr;
-  console.info = toStderr;
-  console.debug = toStderr;
+  if (activeConsoleRoutes === 0) {
+    savedConsoleMethods = {
+      log: console.log,
+      info: console.info,
+      debug: console.debug,
+    };
+    const toStderr = (...args: unknown[]) => console.error(...args);
+    console.log = toStderr;
+    console.info = toStderr;
+    console.debug = toStderr;
+  }
+  activeConsoleRoutes += 1;
+
+  let released = false;
   return () => {
-    Object.assign(console, original);
+    if (released) return;
+    released = true;
+    activeConsoleRoutes -= 1;
+    if (activeConsoleRoutes === 0 && savedConsoleMethods) {
+      Object.assign(console, savedConsoleMethods);
+      savedConsoleMethods = undefined;
+    }
   };
 }
 
