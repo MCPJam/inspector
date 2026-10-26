@@ -143,6 +143,7 @@ vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
     typeof import("../../../utils/harness/playground-box.js")
   >()),
   playgroundHarnessBoxUnavailableReason: () => null,
+  playgroundCredentialRefusal: async () => null,
   acquirePlaygroundHarnessBox: async () => ({
     ok: true as const,
     box: {
@@ -671,7 +672,7 @@ describe("web chat-v2 — environment execution target", () => {
       expect(prepareChatV2Mock).toHaveBeenCalledWith(
         expect.objectContaining({
           selectedServers: ["env-server-1", "env-server-2"],
-          isolatedServers: ["env-server-2"],
+          isolatedServers: ["env-server-1", "env-server-2"],
         })
       );
       expect(written).toContainEqual({
@@ -684,13 +685,26 @@ describe("web chat-v2 — environment execution target", () => {
       });
     });
 
-    it("still fails the turn for a server the environment itself selected", async () => {
+    it.each(["claude-code", "codex", "cursor"])("%s omits an authorization refusal from harness delivery", async (harness) => {
+      convexQueryMock.mockResolvedValue({ ...ENV_SPEC, host: {
+        ...ENV_SPEC.host, runtimeConfig: { ...ENV_SPEC.host.runtimeConfig, harness, ...(harness === "cursor" ? { modelId: "cursor/auto" } : {}) },
+      } });
+      needsSignIn("env-server-1");
+      const response = await environmentTurn();
+      expect(response.status, await response.clone().text()).toBe(200);
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(expect.objectContaining({
+        selectedServers: ["env-server-1", "env-server-2"],
+        unavailableServerIds: ["env-server-1"],
+      }));
+    });
+
+    it("runs without an unavailable server selected by the environment", async () => {
       needsSignIn("env-server-1");
 
       const response = await environmentTurn();
 
-      expect(response.status).toBe(401);
-      expect(prepareChatV2Mock).not.toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(prepareChatV2Mock).toHaveBeenCalled();
     });
   });
 

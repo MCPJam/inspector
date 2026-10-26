@@ -1696,6 +1696,10 @@ export async function streamWebChatTurn(
       : {}),
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
+    unavailableServerIds: [
+      ...Object.keys(prepare.isolatedServers?.refused ?? {}),
+      ...Array.from(unavailableServers?.keys() ?? []),
+    ],
     requireToolApproval: persist.requireToolApproval,
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only
