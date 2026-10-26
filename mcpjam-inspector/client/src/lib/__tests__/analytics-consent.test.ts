@@ -8,7 +8,11 @@ import {
 import { options } from "../PosthogUtils";
 
 function client() {
-  return { opt_in_capturing: vi.fn(), opt_out_capturing: vi.fn() };
+  return {
+    opt_in_capturing: vi.fn(),
+    opt_out_capturing: vi.fn(),
+    set_config: vi.fn(),
+  };
 }
 
 afterEach(() => {
@@ -66,6 +70,19 @@ describe("analytics consent", () => {
     expect(posthog.conversations.reset).toHaveBeenCalledTimes(1);
     expect(posthog.opt_out_capturing.mock.invocationCallOrder[0]).toBeLessThan(
       posthog.sessionRecording.startIfEnabledOrStop.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps Conversations off in the live config after a withdrawal", () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    window.localStorage.setItem("mcpjam-analytics-consent", "granted");
+    const posthog = { ...client(), conversations: { reset: vi.fn() } };
+    setAnalyticsConsent(posthog, "denied");
+    expect(posthog.set_config).toHaveBeenCalledWith({
+      disable_conversations: true,
+    });
+    expect(posthog.set_config.mock.invocationCallOrder[0]).toBeLessThan(
+      posthog.conversations.reset.mock.invocationCallOrder[0],
     );
   });
 
