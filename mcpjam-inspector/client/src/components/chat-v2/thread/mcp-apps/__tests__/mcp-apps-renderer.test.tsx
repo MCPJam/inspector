@@ -4573,7 +4573,11 @@ describe("MCPAppsRenderer host capability enforcement", () => {
     expect(mockBridge.onmessage).toBeNull();
     expect(mockBridge.onopenlink).toBeNull();
     expect(mockBridge.oncalltool).toBeNull();
-    expect(mockBridge.onreadresource).toBeNull();
+    // Reads are refused explicitly so a widget can tell a disabled capability
+    // from a broken host; the list handlers stay unassigned.
+    await expect(
+      mockBridge.onreadresource({ uri: "x" }, {}),
+    ).rejects.toMatchObject({ code: -32601 });
     expect(mockBridge.onlistresources).toBeNull();
     expect(mockBridge.onlistresourcetemplates).toBeNull();
     expect(mockBridge.onloggingmessage).toBeNull();
@@ -4705,10 +4709,15 @@ describe("MCPAppsRenderer host capability enforcement", () => {
       expect(mockBridge.connect).toHaveBeenCalled();
     });
 
-    // Adjacent cap advertised, but serverResources is not — the three
-    // resource handlers must stay unassigned so the SDK rejects callers.
+    // Adjacent cap advertised, but serverResources is not: reads are refused
+    // with a clear message, and the list handlers stay unassigned.
     expect(mockBridge.onopenlink).not.toBeNull();
-    expect(mockBridge.onreadresource).toBeNull();
+    await expect(
+      mockBridge.onreadresource({ uri: "x" }, {}),
+    ).rejects.toMatchObject({
+      code: -32601,
+      message: "This host does not allow resource reads.",
+    });
     expect(mockBridge.onlistresources).toBeNull();
     expect(mockBridge.onlistresourcetemplates).toBeNull();
   });

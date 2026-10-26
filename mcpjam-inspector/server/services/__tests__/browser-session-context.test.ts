@@ -74,6 +74,8 @@ import {
   createBrowserSessionContext,
   boundFollowUpsForArtifact,
 } from "../browser-session-context";
+import { MCPClientManager } from "@mcpjam/sdk";
+import { McpAppBrowserHarness } from "../../utils/mcp-app-browser-harness";
 import type { LiveBrowserFrame } from "@/shared/browser-live-frame";
 
 const CLAUDE_MODEL = "claude-haiku-4-5";
@@ -98,6 +100,23 @@ beforeEach(() => {
     followUps: [],
     elapsedMs: 1,
   });
+});
+
+it("forwards profile capabilities and reads through the session manager", async () => {
+  const manager = new MCPClientManager();
+  const read = vi.spyOn(manager, "readResource").mockResolvedValue({ contents: [] });
+  const caps = { serverResources: {}, serverTools: {} };
+  const ctx = await createBrowserSessionContext({
+    model: CLAUDE_MODEL,
+    enableComputerUse: true,
+    mcpClientManager: manager,
+    hostCapabilities: caps,
+  });
+  const options = vi.mocked(McpAppBrowserHarness).mock.calls[0][0];
+  expect(options.hostCapabilities).toBe(caps);
+  await options.readResource?.("box-origin", { uri: "box://fixture/document" });
+  expect(read).toHaveBeenCalledWith("box-origin", { uri: "box://fixture/document" });
+  await ctx.dispose();
 });
 
 describe("boundFollowUpsForArtifact (R1 durable-artifact bounds)", () => {

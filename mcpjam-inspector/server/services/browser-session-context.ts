@@ -266,6 +266,8 @@ export interface CreateBrowserSessionContextParams {
   enableComputerUse?: boolean;
   mcpClientManager: MCPClientManager;
   injectOpenAiCompat?: boolean;
+  /** Effective capabilities pinned by the selected client profile. */
+  hostCapabilities?: Record<string, unknown>;
   /** Log prefix so each surface stays greppable. Defaults to `"evals"`. */
   logScope?: "evals" | "sessionSimulation";
   /** Iteration-level render budget (ms). Applied to the harness when first
@@ -499,6 +501,8 @@ export async function createBrowserSessionContext(
     if (!widgetHarnessRef.current) {
       widgetHarnessRef.current = new McpAppBrowserHarness({
         getWorkspacePresentation: () => readWorkspacePresentation?.() ?? {},
+        hostCapabilities: params.hostCapabilities,
+        readResource: (sid, resource) => mcpClientManager.readResource(sid, resource),
         callTool: (sid, name, args) =>
           mcpClientManager.executeTool(sid, name, args),
         resolveToolVisibility: (sid, name) =>
