@@ -57,6 +57,7 @@ import { createEffectiveSkillTools } from "../computers/effective-skill-tools";
 import { handleLocalOrgChatModel } from "../org-model-stream-handler";
 import { applyActingServerSkillGate } from "../server-skill-acting-gate";
 import { buildServerSkillBanner } from "../../../shared/server-skill-banner";
+import { convertToMcpjamModelMessages } from "../mcp-tool-result-model-output";
 import type { BrowserSessionHandle } from "../../services/browserd/browser-session";
 
 // ── engine harness ─────────────────────────────────────────────────────────
@@ -1230,6 +1231,60 @@ describe("toolCallNeedsApproval — the MCPJam gate", () => {
     expect(
       await ask("search_mcp_tools", {
         search_mcp_tools: { needsApproval: true, execute: async () => ({}) },
+      }),
+    ).toBe(true);
+  });
+});
+
+/**
+ * The hosted loop decides approval with `toolCallNeedsApproval` over the raw
+ * converted history. QA-1 (HARN-15): it streams a `loadSkill` result as an
+ * object, so the next request sees it json-wrapped, and a skill loaded one
+ * request earlier must still make `bash` ask.
+ */
+describe("hosted loop — a server skill loaded in an earlier request", () => {
+  it("asks for a gated bash through the json-wrapped result", async () => {
+    const history = await convertToMcpjamModelMessages([
+      { id: "u1", role: "user", parts: [{ type: "text", text: "load it" }] },
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "loadSkill",
+            toolCallId: "call_load",
+            state: "output-available",
+            input: { name: "acme/refunds" },
+            output: {
+              type: "text",
+              value: `${buildServerSkillBanner({
+                ref: "acme/refunds",
+                serverLabel: "Acme",
+                skillUri: "skill://acme/refunds/SKILL.md",
+              })}body`,
+              _meta: {},
+            },
+          },
+        ],
+      },
+      { id: "u2", role: "user", parts: [{ type: "text", text: "run ls" }] },
+    ] as never);
+    const tools = applyActingServerSkillGate({
+      bash: {
+        description: "shell",
+        needsApproval: false,
+        execute: async () => ({}),
+      },
+    });
+    expect(
+      await toolCallNeedsApproval({
+        name: "bash",
+        input: { command: "ls" },
+        toolCallId: "call_bash",
+        tools: tools as never,
+        messages: history,
+        decisions: createApprovalDecisionCache(),
       }),
     ).toBe(true);
   });
