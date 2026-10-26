@@ -226,6 +226,37 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
+/**
+ * Gemini Enterprise — captured 2026-10-26. Mirrors the catalog's
+ * `gemini-enterprise` row.
+ *
+ * The notable shape here: the host enforces CSP against the widget's
+ * declaration (every connect and resource subtype and the frame directive
+ * honored it; only `base-uri` refused) while advertising NO `sandbox`
+ * capability at all, which is why `sandboxPermissions` is false beside true
+ * CSP values. `serverTools`, `updateModelContext` and `downloadFile` are
+ * absent from `hostCapabilities`, which is a positive signal rather than an
+ * unasked question.
+ */
+export const MCP_APPS_GEMINI_ENTERPRISE: McpAppsCapabilities = frozen({
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  toolInfo: true,
+  openLinks: true,
+  logging: true,
+  message: true,
+  serverResources: true,
+  serverTools: false,
+  updateModelContext: false,
+  downloadFile: false,
+  sandboxPermissions: false,
+  cspFrameDomains: true,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: true,
+  // Absent from `hostContext` entirely.
+  safeAreaInsets: false,
+  widgetDisplayModeRequests: "accept",
+});
+
 /** VS Code 1.130.0 — captured from a live VS Code MCP Apps host probe on
  * 2026-07-23. Advertises inline-only display, typed updateModelContext,
  * downloadFile, and host-context changes. Unexercised behavior deliberately

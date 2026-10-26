@@ -248,6 +248,7 @@ export const HOST_TEMPLATE_IDS = [
   "vscode",
   "agentcore",
   "n8n",
+  "gemini-enterprise",
   "perplexity",
   "cline",
   "notion",
@@ -2685,6 +2686,98 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             version: "1.3",
           },
         },
+      };
+      return base;
+    },
+  },
+  {
+    id: "gemini-enterprise",
+    label: "Gemini Enterprise",
+    description:
+      "Gemini Enterprise. Renders MCP Apps views, but advertises no sandbox capability.",
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "gemini-enterprise",
+        modelId: "google/gemini-3-pro",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // The 2026-10-26 capture negotiated over the legacy `initialize`
+      // handshake and sent no clientCapabilities of its own.
+      base.clientCapabilities = {};
+      base.hostContext = {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        // Only `maxHeight` is declared; no width, no safeAreaInsets. The
+        // sandbox measured 3132px against the declared 600px cap, so the cap
+        // is advisory — captured as declared, not as observed.
+        containerDimensions: { maxHeight: 600 },
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // ONE observed negotiation, not a ladder probe.
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "google-adk", version: "2.12.0" },
+        },
+        apps: {
+          // `ui/initialize` answers the widget runtime name; the product name
+          // `Gemini Enterprise` arrives separately on `hostContext.hostInfo`.
+          uiInitialize: {
+            hostInfo: { name: "UCS Widget", version: "1.0" },
+          },
+          compatRuntime: { openaiApps: false },
+          sandbox: {
+            csp: { mode: "declared" },
+            // `hostCapabilities` carries no `sandbox` block at all, so the
+            // host advertises no permission delegation. The permission pair
+            // in that run is half-missing, so the empty allow list follows
+            // from the absent capability, not from a paired measurement.
+            permissions: { mode: "custom", allow: {} },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
+            sandboxAttrs: ["allow-forms", "allow-popups"],
+            // Served from `about:srcdoc`, so `location.origin` reads `null`
+            // while `self.origin` is `https://www.gstatic.com`.
+            sameOriginAppIframe: true,
+          },
+          mcpAppsOverrides: {
+            openLinks: true,
+            logging: true,
+            message: true,
+            serverResources: true,
+            // Absent from `hostCapabilities` — a positive signal.
+            serverTools: false,
+            updateModelContext: false,
+            downloadFile: false,
+            sandboxPermissions: false,
+            toolInfo: true,
+            // Paired CSP probe: every connect and resource subtype and the
+            // frame directive honored the declaration; `base-uri` refused it.
+            // The host enforces all of this while advertising no sandbox.
+            cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            cspFrameDomains: true,
+            cspBaseUriDomains: false,
+            toolResult: { structuredContent: true },
+            resourcePrefersBorder: true,
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            safeAreaInsets: false,
+          },
+        },
+        // `paginationTraversal` and `toolListChanged` stay unwritten: the
+        // capture never saw a `tools/list` and probe-list-changed was never
+        // run, so neither question was asked.
       };
       return base;
     },

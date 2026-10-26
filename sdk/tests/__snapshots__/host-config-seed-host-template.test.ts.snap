@@ -3102,6 +3102,230 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "systemPrompt": "",
     "temperature": 0.7,
   },
+  "gemini-enterprise/dark": {
+    "browserProfileId": undefined,
+    "builtInToolIds": [],
+    "chatUiOverride": undefined,
+    "clientCapabilities": {},
+    "computer": undefined,
+    "connectionDefaults": {
+      "headers": {},
+      "requestTimeout": 10000,
+    },
+    "harness": undefined,
+    "hostCapabilitiesOverride": undefined,
+    "hostContext": {
+      "availableDisplayModes": [
+        "inline",
+        "fullscreen",
+        "pip",
+      ],
+      "containerDimensions": {
+        "maxHeight": 600,
+      },
+      "displayMode": "inline",
+      "theme": "dark",
+    },
+    "hostStyle": "gemini-enterprise",
+    "mcpProfile": {
+      "apps": {
+        "compatRuntime": {
+          "openaiApps": false,
+        },
+        "mcpAppsOverrides": {
+          "availableDisplayModes": [
+            "inline",
+            "fullscreen",
+            "pip",
+          ],
+          "cspBaseUriDomains": false,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
+          "downloadFile": false,
+          "logging": true,
+          "message": true,
+          "openLinks": true,
+          "resourcePrefersBorder": true,
+          "safeAreaInsets": false,
+          "sandboxPermissions": false,
+          "serverResources": true,
+          "serverTools": false,
+          "toolInfo": true,
+          "toolResult": {
+            "structuredContent": true,
+          },
+          "updateModelContext": false,
+        },
+        "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
+          "csp": {
+            "mode": "declared",
+          },
+          "permissions": {
+            "allow": {},
+            "mode": "custom",
+          },
+          "sameOriginAppIframe": true,
+          "sandboxAttrs": [
+            "allow-forms",
+            "allow-popups",
+          ],
+        },
+        "uiInitialize": {
+          "hostInfo": {
+            "name": "UCS Widget",
+            "version": "1.0",
+          },
+        },
+      },
+      "initialize": {
+        "clientInfo": {
+          "name": "google-adk",
+          "version": "2.12.0",
+        },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
+      },
+      "profileVersion": 1,
+    },
+    "modelId": "google/gemini-3-pro",
+    "optionalServerIds": [],
+    "progressiveToolDiscovery": false,
+    "requireToolApproval": false,
+    "respectToolVisibility": true,
+    "serverConnectionOverrides": undefined,
+    "serverIds": [],
+    "systemPrompt": "",
+    "temperature": 0.7,
+  },
+  "gemini-enterprise/light": {
+    "browserProfileId": undefined,
+    "builtInToolIds": [],
+    "chatUiOverride": undefined,
+    "clientCapabilities": {},
+    "computer": undefined,
+    "connectionDefaults": {
+      "headers": {},
+      "requestTimeout": 10000,
+    },
+    "harness": undefined,
+    "hostCapabilitiesOverride": undefined,
+    "hostContext": {
+      "availableDisplayModes": [
+        "inline",
+        "fullscreen",
+        "pip",
+      ],
+      "containerDimensions": {
+        "maxHeight": 600,
+      },
+      "displayMode": "inline",
+      "theme": "dark",
+    },
+    "hostStyle": "gemini-enterprise",
+    "mcpProfile": {
+      "apps": {
+        "compatRuntime": {
+          "openaiApps": false,
+        },
+        "mcpAppsOverrides": {
+          "availableDisplayModes": [
+            "inline",
+            "fullscreen",
+            "pip",
+          ],
+          "cspBaseUriDomains": false,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
+          "downloadFile": false,
+          "logging": true,
+          "message": true,
+          "openLinks": true,
+          "resourcePrefersBorder": true,
+          "safeAreaInsets": false,
+          "sandboxPermissions": false,
+          "serverResources": true,
+          "serverTools": false,
+          "toolInfo": true,
+          "toolResult": {
+            "structuredContent": true,
+          },
+          "updateModelContext": false,
+        },
+        "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
+          "csp": {
+            "mode": "declared",
+          },
+          "permissions": {
+            "allow": {},
+            "mode": "custom",
+          },
+          "sameOriginAppIframe": true,
+          "sandboxAttrs": [
+            "allow-forms",
+            "allow-popups",
+          ],
+        },
+        "uiInitialize": {
+          "hostInfo": {
+            "name": "UCS Widget",
+            "version": "1.0",
+          },
+        },
+      },
+      "initialize": {
+        "clientInfo": {
+          "name": "google-adk",
+          "version": "2.12.0",
+        },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
+      },
+      "profileVersion": 1,
+    },
+    "modelId": "google/gemini-3-pro",
+    "optionalServerIds": [],
+    "progressiveToolDiscovery": false,
+    "requireToolApproval": false,
+    "respectToolVisibility": true,
+    "serverConnectionOverrides": undefined,
+    "serverIds": [],
+    "systemPrompt": "",
+    "temperature": 0.7,
+  },
   "goose/dark": {
     "browserProfileId": undefined,
     "builtInToolIds": [],

@@ -4288,6 +4288,107 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
     },
+    "gemini-enterprise": {
+      id: "gemini-enterprise",
+      label: "Gemini Enterprise",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1792972800000,
+      modelVisibleMcpToolResults: {},
+      mcpToolResultImageRendering: {},
+      hostStyle: "gemini-enterprise",
+      modelId: "google/gemini-3-pro",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {},
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        containerDimensions: {
+          maxHeight: 600,
+        },
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "google-adk",
+            version: "2.12.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "UCS Widget",
+              version: "1.0",
+            },
+          },
+          compatRuntime: {
+            openaiApps: false,
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+            },
+            permissions: {
+              mode: "custom",
+              allow: {},
+            },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
+            sandboxAttrs: ["allow-forms", "allow-popups"],
+            sameOriginAppIframe: true,
+          },
+          mcpAppsOverrides: {
+            openLinks: true,
+            logging: true,
+            message: true,
+            serverResources: true,
+            serverTools: false,
+            updateModelContext: false,
+            downloadFile: false,
+            sandboxPermissions: false,
+            toolInfo: true,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            cspFrameDomains: true,
+            cspBaseUriDomains: false,
+            toolResult: {
+              structuredContent: true,
+            },
+            resourcePrefersBorder: true,
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            safeAreaInsets: false,
+          },
+        },
+      },
+    },
     perplexity: {
       id: "perplexity",
       label: "Perplexity",

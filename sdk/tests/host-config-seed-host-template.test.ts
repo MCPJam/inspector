@@ -27,6 +27,7 @@ const ALL_IDS: HostTemplateId[] = [
   "vscode",
   "agentcore",
   "n8n",
+  "gemini-enterprise",
   "perplexity",
   "cline",
   "notion",
