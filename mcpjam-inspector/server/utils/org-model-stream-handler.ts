@@ -57,6 +57,7 @@ import type { LocalExecutionRecord } from "./local-execution-record.js";
 import { UNVERIFIED_APPROVAL_RESULT } from "./tool-approval-token.js";
 import {
   actingServerSkillGateCanFire,
+  replaceActingServerSkillGateWithRefusal,
   unwrapActingServerSkillGate,
 } from "./server-skill-acting-gate.js";
 import {
@@ -425,7 +426,10 @@ export interface OrgLocalModelHandlerOptions {
  * `read_server_resource` in a function on every turn. The guard reads the
  * declaration under that wrapper, so a `true` the gate wrapped still refuses
  * here. The case where the gate itself would answer `true`, a server skill in
- * context, is refused separately by {@link actingServerSkillGateCanFire}.
+ * context, is refused separately: up front by
+ * {@link actingServerSkillGateCanFire} when the skill was loaded in an earlier
+ * request, and by the gated tool's own `execute` when it was loaded during the
+ * turn ({@link replaceActingServerSkillGateWithRefusal}).
  *
  * Client-fulfilled tools (`ui_*`, `app_*`, `page_*`) don't need the resume even
  * when they DO ask. Their approval is emitted natively by `streamText` from the
@@ -473,8 +477,9 @@ function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
  * client-fulfilled tools, which the browser runs; and tools this turn does
  * not advertise, which `streamText` cannot run at all. The acting-skill
  * gate's wrapper is read through: a `bash` the gate wrapped over `false` is
- * still a tool this runtime never asked about, since a turn on which the
- * gate could fire is refused before `streamText` runs.
+ * still a tool this runtime never asked about, since this runtime hands
+ * `streamText` the declaration under the wrapper and refuses in `execute`
+ * instead ({@link replaceActingServerSkillGateWithRefusal}).
  */
 export function denyApprovalsLocalRuntimeNeverIssued(
   messages: ModelMessage[],
@@ -591,10 +596,12 @@ export function handleLocalOrgChatModel(
   // tool declared `true`, and the acting-skill gate, which answers `true` on
   // `bash` and `read_server_resource` while a server-served skill is in the
   // conversation. The second names what the user can do about it.
+  const actingSkillRefusal =
+    "A server-provided skill is loaded in this conversation, so running a shell command or reading a saved server's resource would ask for approval, and tool approval is not supported for local-runtime org providers yet. Start a new conversation, or switch this provider to cloud runtime.";
   const unsupportedApproval = hasUnsupportedLocalApprovalGate(tools)
     ? "Tool approval is not supported for local-runtime org providers yet. Disable tool approval or switch this provider to cloud runtime."
     : actingServerSkillGateCanFire(tools, messages)
-      ? "A server-provided skill is loaded in this conversation, so running a shell command or reading a saved server's resource would ask for approval, and tool approval is not supported for local-runtime org providers yet. Start a new conversation, or switch this provider to cloud runtime."
+      ? actingSkillRefusal
       : undefined;
   if (unsupportedApproval !== undefined) {
     const stream = createUIMessageStream({
@@ -615,6 +622,12 @@ export function handleLocalOrgChatModel(
     });
     return createUIMessageStreamResponse({ stream });
   }
+  // A skill loaded during the turn: the gated tools refuse in `execute`
+  // rather than raise an approval this runtime cannot resume.
+  const turnTools = replaceActingServerSkillGateWithRefusal(
+    tools,
+    actingSkillRefusal,
+  );
 
   // Validate and build the AI SDK model before opening the stream.
   // If config/allowlist checks fail, return a formatted error stream rather
@@ -735,7 +748,7 @@ export function handleLocalOrgChatModel(
         ...(options.providerOptions
           ? { providerOptions: options.providerOptions }
           : {}),
-        tools,
+        tools: turnTools,
         progressivePlan: options.progressivePlan,
         discoveryState: options.discoveryState,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
@@ -748,7 +761,7 @@ export function handleLocalOrgChatModel(
               transformStepMessages: (stepMessages: ModelMessage[]) =>
                 presentHistoryForModel(
                   stepMessages,
-                  tools,
+                  turnTools,
                   historyPresentation,
                 ),
             }

@@ -62,6 +62,8 @@ export function unwrapActingServerSkillGate(declared: unknown): unknown {
  * server-served skill is in context and a gated tool is advertised. A
  * runtime that cannot resume after an approval refuses such a turn up front
  * rather than letting the first gated call reach a resume it cannot serve.
+ * This sees only the request's messages, so a skill loaded during the turn
+ * is left to {@link replaceActingServerSkillGateWithRefusal}.
  */
 export function actingServerSkillGateCanFire(
   tools: Record<string, unknown>,
@@ -105,6 +107,40 @@ export function applyActingServerSkillGate<T extends Record<string, unknown>>(
     out[name] = {
       ...current,
       needsApproval: Object.assign(gated, { [WRAPPED_BASE]: original }),
+    };
+  }
+  return out as T;
+}
+
+/**
+ * The gate for a runtime that cannot resume after an approval (the local org
+ * runtime): each tool this gate wrapped gets its own declaration back, so the
+ * gate raises no approval, and its `execute` returns `refusal` instead of
+ * running while a server-served skill is in context. The AI SDK hands
+ * `execute` the same step messages it hands `needsApproval`, so this covers a
+ * skill loaded earlier in the same turn.
+ */
+export function replaceActingServerSkillGateWithRefusal<
+  T extends Record<string, unknown>,
+>(tools: T, refusal: string): T {
+  const out: Record<string, unknown> = { ...tools };
+  for (const [name, current] of Object.entries(tools)) {
+    if (!current || typeof current !== "object") continue;
+    const { needsApproval, execute } = current as {
+      needsApproval?: unknown;
+      execute?: unknown;
+    };
+    if (!isGated(needsApproval) || typeof execute !== "function") continue;
+    out[name] = {
+      ...current,
+      needsApproval: needsApproval[WRAPPED_BASE],
+      execute: (
+        input: unknown,
+        options: { messages?: ReadonlyArray<ModelMessage> } | undefined,
+      ): unknown =>
+        mentionsServerSkill(options?.messages)
+          ? { error: refusal }
+          : execute(input, options),
     };
   }
   return out as T;

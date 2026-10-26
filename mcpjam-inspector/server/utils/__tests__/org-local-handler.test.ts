@@ -512,6 +512,47 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     expect(streamTextMock).toHaveBeenCalled();
   });
 
+  it("refuses a gated call in `execute` when the skill is loaded during the turn", async () => {
+    // The model calls `loadSkill`, then `bash`. The request carried no
+    // banner, so the turn is not refused up front, but the AI SDK hands the
+    // `bash` call the step's messages, which now carry one. This runtime
+    // gives `bash` its own declaration back, so no approval is raised that
+    // could not resume, and `execute` refuses instead of running.
+    streamTextMock.mockReturnValue(defaultStreamTextReturn());
+    const run = vi.fn(async () => ({ stdout: "ran" }));
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      admission: ADMISSION,
+      projectId: "proj",
+      modelId: "gpt-4-turbo",
+      messages: [{ role: "user", content: "hi" } as any],
+      systemPrompt: "s",
+      tools: applyActingServerSkillGate({
+        bash: { description: "shell", needsApproval: false, execute: run },
+      }) as any,
+      requireToolApproval: false,
+    });
+    await readSseBody(response);
+
+    const bash = streamTextMock.mock.calls[0]![0].tools.bash;
+    expect(bash.needsApproval).toBe(false);
+    const refused = await bash.execute(
+      { command: "ls" },
+      { toolCallId: "call-bash", messages: ACTING_SKILL_MESSAGES },
+    );
+    expect(refused.error).toMatch(/server-provided skill/);
+    expect(run).not.toHaveBeenCalled();
+    // Without a banner in the step, the call runs as declared.
+    const ran = await bash.execute(
+      { command: "ls" },
+      {
+        toolCallId: "call-bash-2",
+        messages: [{ role: "user", content: "hi" }],
+      },
+    );
+    expect(ran).toEqual({ stdout: "ran" });
+  });
+
   it("still refuses a switch-on turn: the gate leaves `true` as it is", async () => {
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),

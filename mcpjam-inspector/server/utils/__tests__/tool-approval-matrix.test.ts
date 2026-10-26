@@ -897,7 +897,8 @@ describe("one mechanism", () => {
  * Route 3, the local org runtime, cannot resume a turn after an approval, so
  * its answer to "gate" is a refusal of the whole turn before the model runs.
  * These rows pin that for the two tools the acting-skill gate raises: with
- * the switch, and with a server-served skill in the conversation.
+ * the switch, and with a server-served skill in the conversation. A skill
+ * loaded during the turn is refused by the gated call's own `execute`.
  */
 describe("tool approval matrix — route 3 (local org runtime)", () => {
   type Route3Verdict = "refused" | "ran";
@@ -1084,6 +1085,34 @@ describe("tool approval matrix — route 3 (local org runtime)", () => {
         expect(verdict, row.family).toBe(row.expected[label]);
       });
     }
+  }
+
+  // The banner arrives within the turn: the model calls `loadSkill`, then the
+  // gated tool. The request had none, so the turn runs; the call then sees
+  // the step's messages, which carry one. It must neither ask (no resume
+  // here) nor run.
+  for (const [family, name] of [
+    ["local bash", "bash"],
+    ["workspace read_server_resource", "read_server_resource"],
+  ] as const) {
+    it(`${family} · route 3 · switch off · skill loaded in the same call → refused in execute`, async () => {
+      const row = ROWS.find((candidate) => candidate.family === family)!;
+      const verdict = await route3Verdict({
+        tools: row.tools(false),
+        messages: NOT_ACTING,
+        requireToolApproval: false,
+      });
+      expect(verdict).toBe("ran");
+      const tool = streamTextMock.mock.calls[0]![0].tools[name];
+      const options = { toolCallId: "c2", messages: ACTING };
+      const asks =
+        typeof tool.needsApproval === "function"
+          ? await tool.needsApproval({}, options)
+          : tool.needsApproval === true;
+      expect(asks, family).toBe(false);
+      const output = await tool.execute({}, options);
+      expect(output.error, family).toMatch(/server-provided skill/);
+    });
   }
 });
 
