@@ -227,8 +227,8 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
 });
 
 /**
- * Gemini Enterprise, from its first capture. Mirrors the catalog's
- * `gemini-enterprise` row.
+ * Gemini, from its first capture. Mirrors the catalog's
+ * `gemini` row.
  *
  * The notable shape here: the host enforces CSP against the widget's
  * declaration (every connect and resource subtype and the frame directive
@@ -238,7 +238,7 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
  * absent from `hostCapabilities`, which is a positive signal rather than an
  * unasked question.
  */
-export const MCP_APPS_GEMINI_ENTERPRISE: McpAppsCapabilities = frozen({
+export const MCP_APPS_GEMINI: McpAppsCapabilities = frozen({
   availableDisplayModes: ["inline", "fullscreen", "pip"],
   toolInfo: true,
   openLinks: true,

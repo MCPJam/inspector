@@ -4288,16 +4288,16 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
     },
-    "gemini-enterprise": {
-      id: "gemini-enterprise",
-      label: "Gemini Enterprise",
+    gemini: {
+      id: "gemini",
+      label: "Gemini",
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25"],
       verifiedAt: 1792972800000,
       modelVisibleMcpToolResults: {},
       mcpToolResultImageRendering: {},
-      hostStyle: "gemini-enterprise",
+      hostStyle: "gemini",
       modelId: "google/gemini-3-pro",
       systemPrompt: "",
       temperature: 0.7,
@@ -4311,7 +4311,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         headers: {},
         requestTimeout: 10000,
       },
-      clientCapabilities: {},
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      },
       hostContext: {
         theme: "dark",
         displayMode: "inline",

@@ -17,7 +17,7 @@ import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
 import slackLogo from "/slack_logo.png";
 import mcpjamLogo from "/mcp_jam.svg";
-import geminiEnterpriseLogo from "/google_logo.png";
+import geminiLogo from "/google_logo.png";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   CHATGPT_CHAT_BACKGROUND,
@@ -266,8 +266,8 @@ export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
 };
 
 /**
- * Gemini Enterprise, from its first capture. Mirrors the catalog's
- * `gemini-enterprise` row and the SDK's `MCP_APPS_GEMINI_ENTERPRISE`.
+ * Gemini, from its first capture. Mirrors the catalog's
+ * `gemini` row and the SDK's `MCP_APPS_GEMINI`.
  *
  * The host enforces CSP against the widget's declaration while advertising no
  * `sandbox` capability at all, which is why `sandboxPermissions` is false
@@ -275,7 +275,7 @@ export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
  * `downloadFile` are absent from `hostCapabilities` — a positive signal, not
  * an unasked question.
  */
-export const MCP_APPS_GEMINI_ENTERPRISE_SURFACE: ResolvedMcpAppsCapabilities = {
+export const MCP_APPS_GEMINI_SURFACE: ResolvedMcpAppsCapabilities = {
   availableDisplayModes: ["inline", "fullscreen", "pip"],
   toolInputPartial: false,
   toolCancelled: false,
@@ -836,32 +836,32 @@ export const N8N_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
- * Gemini Enterprise host style. Its first capture shows it DOES render MCP Apps
+ * Gemini host style. Its first capture shows it DOES render MCP Apps
  * views (a real `ui/initialize`, a host context, and an enforced CSP), so this
  * is not a tools-only preset — but it advertises no `sandbox` capability and
  * sends no style variables at all (`provided: false`, zero keys), so the
  * chrome falls back to MCPJam's neutral stand-in with Gemini identity.
  *
  * `ui/initialize` answers `UCS Widget`; the product name users see arrives
- * separately on `hostContext.hostInfo` as `Gemini Enterprise`.
+ * separately on `hostContext.hostInfo` as `Gemini`.
  *
  * No captured Gemini thinking animation, so the busy state reuses MCPJam's
  * mark, the same fallback Cline and Goose take.
  */
-export const GEMINI_ENTERPRISE_HOST_STYLE: HostStyleDefinition = {
-  id: "gemini-enterprise",
+export const GEMINI_HOST_STYLE: HostStyleDefinition = {
+  id: "gemini",
   mcp: {
     protocolOverride: UIType.MCP_APPS,
     platform: MCPJAM_PLATFORM,
     fontCss: MCPJAM_FONT_CSS,
-    mcpAppsCapabilities: MCP_APPS_GEMINI_ENTERPRISE_SURFACE,
+    mcpAppsCapabilities: MCP_APPS_GEMINI_SURFACE,
     resolveStyleVariables: getMcpJamStyleVariables,
   },
   chatUi: {
-    label: "Gemini Enterprise",
-    shortLabel: "Gemini Enterprise-style host",
-    pickerDescription: "Gemini Enterprise (MCP Apps, no sandbox capability)",
-    logoSrc: geminiEnterpriseLogo,
+    label: "Gemini",
+    shortLabel: "Gemini-style host",
+    pickerDescription: "Gemini (MCP Apps, no sandbox capability)",
+    logoSrc: geminiLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
     loadingIndicator: MCPJamMarkIndicator,
@@ -1016,7 +1016,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   VSCODE_HOST_STYLE,
   AGENTCORE_HOST_STYLE,
   N8N_HOST_STYLE,
-  GEMINI_ENTERPRISE_HOST_STYLE,
+  GEMINI_HOST_STYLE,
   PERPLEXITY_HOST_STYLE,
   CLINE_HOST_STYLE,
   NOTION_HOST_STYLE,

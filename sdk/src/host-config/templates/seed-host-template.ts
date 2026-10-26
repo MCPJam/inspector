@@ -248,7 +248,7 @@ export const HOST_TEMPLATE_IDS = [
   "vscode",
   "agentcore",
   "n8n",
-  "gemini-enterprise",
+  "gemini",
   "perplexity",
   "cline",
   "notion",
@@ -2690,20 +2690,35 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     },
   },
   {
-    id: "gemini-enterprise",
-    label: "Gemini Enterprise",
+    id: "gemini",
+    label: "Gemini",
     description:
-      "Gemini Enterprise. Renders MCP Apps views, but advertises no sandbox capability.",
+      "Gemini. Renders MCP Apps views, but advertises no sandbox capability.",
     seed: () => {
       const base = emptyHostConfigInputV2({
-        hostStyle: "gemini-enterprise",
+        hostStyle: "gemini",
         modelId: "google/gemini-3-pro",
         temperature: 0.7,
         requireToolApproval: false,
       });
-      // Its first capture negotiated over the legacy `initialize` handshake
-      // and sent no clientCapabilities of its own.
-      base.clientCapabilities = {};
+      // NOT what the capture shows, and deliberately so. On the wire Gemini
+      // sends `clientCapabilities: {}` — no `io.modelcontextprotocol/ui`
+      // extension — yet it demonstrably renders MCP Apps: the same run
+      // returned a real `ui/initialize`, a populated `hostContext`, and a CSP
+      // the host enforced against the widget's declaration. It renders
+      // without advertising.
+      //
+      // The emulator keys View rendering off this extension, so mirroring the
+      // empty object would seed a template that renders nothing while the
+      // real product renders fine. Declared here to reproduce observed
+      // behavior.
+      base.clientCapabilities = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+          },
+        },
+      };
       base.hostContext = {
         theme: "dark",
         displayMode: "inline",
@@ -2722,7 +2737,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         },
         apps: {
           // `ui/initialize` answers the widget runtime name; the product name
-          // `Gemini Enterprise` arrives separately on `hostContext.hostInfo`.
+          // `Gemini` arrives separately on `hostContext.hostInfo`.
           uiInitialize: {
             hostInfo: { name: "UCS Widget", version: "1.0" },
           },
