@@ -1204,6 +1204,7 @@ export type {
 export type {
   SkillEntry,
   SkillResourceRef,
+  SkillsExtGetResult,
   SkillsExtListResult,
   SkillIdentityFrontmatter,
 } from "./mcp-client-manager/skills-ext-types.js";

@@ -1,3 +1,4 @@
+import { SavedClientProvider } from "@/contexts/saved-client-context";
 import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
 import {
   useThreadAppWorkspace,
@@ -450,9 +451,9 @@ export function MultiModelPlaygroundCard({
     startChatWithMessages,
   } = useChatSession({
     pickedModelSelection: selection,
+    savedClientConfig: compareKind === "host" ? hostCapsResolver ?? undefined : undefined,
     selectionIntent: compareKind === "host" ? "inherit" : "picked",
-    // The lane's own extension owner: its turns carry its workspace and
-    // its Apps' context, never another lane's or the single chat's.
+    // Bind extension ownership to this lane.
     pluginWorkspace: laneWorkspaceForSession,
     pluginContextReferences: currentLaneContext,
     // A comparison column never shares the member's one personal computer.
@@ -474,13 +475,7 @@ export function MultiModelPlaygroundCard({
     reasoningEffortEnabled: true,
     reasoningEffortHarness,
     fixedReasoningEffort: reasoningEffort ?? null,
-    // Source the host-level toggle from the active host's resolved DTO
-    // so flipping it in the host's Agent → Behavior tab takes effect on
-    // the next send without remounting. `hostCapsResolver` carries the
-    // full HostConfigDtoV2 for this column (per-host multi-host mode)
-    // or null when the column inherits from the tab-root scope; we let
-    // `undefined` pass through to fall back to the orchestrator's auto
-    // policy in that case.
+    // Undefined preserves the orchestrator's automatic policy.
     progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
     respectToolVisibility: hostCapsResolver?.respectToolVisibility,
     modelVisibleMcpToolResults: resolvedModelVisibleMcpToolResults,
@@ -555,10 +550,17 @@ export function MultiModelPlaygroundCard({
     });
 
   useEffect(() => {
+    if (compareKind === "host" && !messages.length && compareEnterMessages.length) return;
     onTranscriptSync?.(compareId, messages);
-  }, [messages, compareId, onTranscriptSync]);
+  }, [messages, compareId, compareKind, compareEnterMessages, onTranscriptSync]);
 
   useEffect(() => {
+    if (compareKind === "host") {
+      if (lastCompareEnterVersionRef.current > 0) return;
+      lastCompareEnterVersionRef.current = 1;
+      if (compareEnterMessages.length) void startChatWithMessages(cloneUiMessages(compareEnterMessages));
+      return;
+    }
     if (
       addColumnSeed &&
       addColumnSeed.version > lastAddColumnVersionRef.current
@@ -580,6 +582,7 @@ export function MultiModelPlaygroundCard({
       void startChatWithMessages(cloneUiMessages(compareEnterMessages));
     }
   }, [
+    compareKind,
     addColumnSeed,
     compareEnterMessages,
     compareEnterVersion,
@@ -1125,10 +1128,7 @@ export function MultiModelPlaygroundCard({
     </div>
   );
 
-  // Always-on value providers — wrap the whole card body. The values
-  // are the resolved `effective*` (prop with fall-back to tab-root
-  // context), so model-mode is byte-equivalent to today (tab-root flows
-  // through), host-mode shadows.
+  // Each card shadows only the configuration it owns.
   let wrapped: ReactNode = (
     <ScenarioHostStyleProvider value={hostStyle}>
       <ScenarioHostCapabilitiesOverrideProvider
@@ -1143,13 +1143,10 @@ export function MultiModelPlaygroundCard({
     </ScenarioHostStyleProvider>
   );
 
-  // Optional shadow providers — only wrap when the caller explicitly
-  // passed the corresponding prop. Without the prop, the tab-root
-  // scope's value flows through, preserving today's behavior.
   if (hostSnapshot) {
     wrapped = (
       <ActiveMcpProfileProvider value={effectiveMcpProfile}>
-        {wrapped}
+        <SavedClientProvider value={compareKind === "host" ? hostSnapshot : null}>{wrapped}</SavedClientProvider>
       </ActiveMcpProfileProvider>
     );
   }

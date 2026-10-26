@@ -17,6 +17,7 @@ import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
 import slackLogo from "/slack_logo.png";
 import mcpjamLogo from "/mcp_jam.svg";
+import geminiLogo from "/google_logo.png";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   CHATGPT_CHAT_BACKGROUND,
@@ -260,6 +261,40 @@ export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
   requestTeardown: false,
   // Slackbot omits `hostContext.safeAreaInsets` entirely — the
   // 2026-09-03 captures carry no such key in either theme.
+  safeAreaInsets: false,
+  widgetDisplayModeRequests: "accept",
+};
+
+/**
+ * Gemini, from its first capture. Mirrors the catalog's
+ * `gemini` row and the SDK's `MCP_APPS_GEMINI`.
+ *
+ * The host enforces CSP against the widget's declaration while advertising no
+ * `sandbox` capability at all, which is why `sandboxPermissions` is false
+ * beside true CSP values. `serverTools`, `updateModelContext` and
+ * `downloadFile` are absent from `hostCapabilities` — a positive signal, not
+ * an unasked question.
+ */
+export const MCP_APPS_GEMINI_SURFACE: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  toolInputPartial: false,
+  toolCancelled: false,
+  hostContextChanged: false,
+  resourceTeardown: false,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: false,
+  serverResources: true,
+  logging: true,
+  updateModelContext: false,
+  message: true,
+  sandboxPermissions: false,
+  cspFrameDomains: true,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: true,
+  downloadFile: false,
+  requestTeardown: false,
+  // Absent from `hostContext` entirely.
   safeAreaInsets: false,
   widgetDisplayModeRequests: "accept",
 };
@@ -801,6 +836,39 @@ export const N8N_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Gemini host style. Its first capture shows it DOES render MCP Apps
+ * views (a real `ui/initialize`, a host context, and an enforced CSP), so this
+ * is not a tools-only preset — but it advertises no `sandbox` capability and
+ * sends no style variables at all (`provided: false`, zero keys), so the
+ * chrome falls back to MCPJam's neutral stand-in with Gemini identity.
+ *
+ * `ui/initialize` answers `UCS Widget`; the product name users see arrives
+ * separately on `hostContext.hostInfo` as `Gemini`.
+ *
+ * No captured Gemini thinking animation, so the busy state reuses MCPJam's
+ * mark, the same fallback Cline and Goose take.
+ */
+export const GEMINI_HOST_STYLE: HostStyleDefinition = {
+  id: "gemini",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_GEMINI_SURFACE,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "Gemini",
+    shortLabel: "Gemini-style host",
+    pickerDescription: "Gemini (MCP Apps, no sandbox capability)",
+    logoSrc: geminiLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    loadingIndicator: MCPJamMarkIndicator,
+  },
+};
+
+/**
  * Perplexity MCP client host style. The captured Perplexity probe exposes
  * only the base MCP initialize layer (`mcp@0.1.0`) with no capabilities and
  * no snapshot, so this preset mirrors a headless tool-calling client.
@@ -948,6 +1016,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   VSCODE_HOST_STYLE,
   AGENTCORE_HOST_STYLE,
   N8N_HOST_STYLE,
+  GEMINI_HOST_STYLE,
   PERPLEXITY_HOST_STYLE,
   CLINE_HOST_STYLE,
   NOTION_HOST_STYLE,
