@@ -227,7 +227,7 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
 });
 
 /**
- * Gemini Enterprise — captured 2026-10-26. Mirrors the catalog's
+ * Gemini Enterprise, from its first capture. Mirrors the catalog's
  * `gemini-enterprise` row.
  *
  * The notable shape here: the host enforces CSP against the widget's

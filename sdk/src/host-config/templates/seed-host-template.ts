@@ -821,8 +821,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.hostContext = {
         theme,
         displayMode: "inline",
-        // Correction (2026-10-26): Desktop now advertises fullscreen too,
-        // same as the web app.
+        // Correction from the latest sweep: Desktop now advertises
+        // fullscreen too, same as the web app.
         availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { width: 768, maxHeight: 5000 },
         locale: "en-US",
@@ -956,7 +956,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           mcpAppsOverrides: {
             // Both Desktop captures send `hostContext.safeAreaInsets`, all 0.
             safeAreaInsets: true,
-            // Correction (2026-10-26): fullscreen is now advertised too.
+            // Correction from the latest sweep: fullscreen is advertised too.
             availableDisplayModes: ["inline", "fullscreen"],
             // `toolInputPartial` is deliberately absent, not false: the
             // capture carried no `tool-input-partial`, but that notification
@@ -1039,7 +1039,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         computer: { kind: "personal" },
       });
       // From a live `start-host-probe` against Claude Code CLI v2.1.310
-      // (2026-10-26): elicitation declaring the `form` and `url` modes, and
+      // in the latest sweep: elicitation declaring the `form` and `url` modes, and
       // `extensions["io.modelcontextprotocol/tasks"]`. That capture also
       // reported `roots.listChanged`, but `roots` is deliberately held at
       // the older bare `{}` reading pending a cleaner capture. Still NO
@@ -1697,10 +1697,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
 
       base.mcpProfile = {
         profileVersion: 1,
-        // The 2026-10-26 capture is the first to see a `tools/list` from
-        // Slack: it fetched page one and stopped without following
-        // `nextCursor`. The 2026-08-26 run saw none at all, which is why this
-        // was unwritten. `toolListChanged` stays unwritten — probe-list-changed
+        // The latest capture is the first to see a `tools/list` from Slack:
+        // it fetched page one and stopped without following `nextCursor`.
+        // Earlier runs saw none at all, which is why this was unwritten. `toolListChanged` stays unwritten — probe-list-changed
         // has still never been run against Slack.
         paginationTraversal: "firstPageOnly",
         initialize: {
@@ -1883,7 +1882,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // MCP Apps extension: hostInfo sent to the View iframe in
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
             // need this to take that path. The version is identity metadata
-            // only; bumped with the 2026-10-26 re-probe (was 3.21.16), which
+            // only; bumped with the latest re-probe (was 3.21.16), which
             // re-confirmed every capability note above.
             hostInfo: { name: "Cursor", version: "3.27.14" },
           },
@@ -2014,7 +2013,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
         },
         apps: {
-          // Both name and version are now probed: the 2026-10-26 capture
+          // Both name and version are now probed: the latest capture
           // reported `chatgpt` 26.1021.31345 (the backend catalog's `codex`
           // row). That replaces the ASSUMED 26.928.20710, a deliberate bump
           // past the then-latest capture to OpenAI's documented minimum
@@ -2070,10 +2069,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
                 "base-uri": ["'none'"],
               },
             },
-            // Correction (2026-10-26): clipboard write is refused again
+            // Correction from the latest sweep: clipboard write is refused again
             // (`declared-denied`), and that capture's `hostCapabilities`
             // carries no `sandbox.permissions` block at all. It had briefly
-            // worked on 2026-10-12 after being refused on 2026-09-29.
+            // worked in only one earlier run, between two that refused it.
             // Microphone is `declared-denied` too; camera and geolocation
             // were only undeclared canaries. Nothing is granted.
             permissions: { mode: "custom", allow: {} },
@@ -2498,7 +2497,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         },
         apps: {
           uiInitialize: {
-            // 2026-10-26 capture: `ui/initialize` reported 1.143.1. The
+            // Latest capture: `ui/initialize` reported 1.143.1. The
             // `clientInfo` above is deliberately NOT bumped with it — that
             // run's wire `clientInfo` was `copilot-cli` 1.0.100-1.
             hostInfo: { name: "Visual Studio Code", version: "1.143.1" },
@@ -2702,8 +2701,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 0.7,
         requireToolApproval: false,
       });
-      // The 2026-10-26 capture negotiated over the legacy `initialize`
-      // handshake and sent no clientCapabilities of its own.
+      // Its first capture negotiated over the legacy `initialize` handshake
+      // and sent no clientCapabilities of its own.
       base.clientCapabilities = {};
       base.hostContext = {
         theme: "dark",

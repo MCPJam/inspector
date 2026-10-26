@@ -266,7 +266,7 @@ export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
 };
 
 /**
- * Gemini Enterprise, captured 2026-10-26. Mirrors the catalog's
+ * Gemini Enterprise, from its first capture. Mirrors the catalog's
  * `gemini-enterprise` row and the SDK's `MCP_APPS_GEMINI_ENTERPRISE`.
  *
  * The host enforces CSP against the widget's declaration while advertising no
@@ -836,7 +836,7 @@ export const N8N_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
- * Gemini Enterprise host style. Captured 2026-10-26: it DOES render MCP Apps
+ * Gemini Enterprise host style. Its first capture shows it DOES render MCP Apps
  * views (a real `ui/initialize`, a host context, and an enforced CSP), so this
  * is not a tools-only preset — but it advertises no `sandbox` capability and
  * sends no style variables at all (`provided: false`, zero keys), so the
