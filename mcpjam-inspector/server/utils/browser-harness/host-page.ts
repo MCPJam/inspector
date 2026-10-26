@@ -32,8 +32,11 @@ import {
   createHostAppBridge,
   registerHostBridgeHandlers,
   resolveIframeSandboxPolicy,
+  type HostBridgeCallbacks,
 } from "@/components/chat-v2/thread/mcp-apps/host-app-bridge";
 import { PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
+
+type ReadResourceHandler = NonNullable<HostBridgeCallbacks["onReadResourceV2"]>;
 
 const WIDGET_ROOT_ID = "mcpjam-widget-root";
 
@@ -89,6 +92,12 @@ declare global {
       widgetId: string;
       text: string;
     }) => Promise<void>;
+    __mcpjamHostReadResource?: (payload: {
+      widgetId: string;
+      params: Parameters<ReadResourceHandler>[0];
+    }) => Promise<
+      { result: Awaited<ReturnType<ReadResourceHandler>> } | { error: string }
+    >;
     __mcpjamHostContext?: (payload: {
       widgetId: string;
       params: unknown;
@@ -222,6 +231,13 @@ async function renderWidget(
         if (opts.toolOutput !== undefined) {
           void b.sendToolResult(opts.toolOutput as never).catch(() => {});
         }
+      },
+      onReadResourceV2: async (params) => {
+        const readResource = window.__mcpjamHostReadResource;
+        if (!readResource) throw new Error("Resource read binding unavailable");
+        const out = await readResource({ widgetId: opts.widgetId, params });
+        if ("error" in out) throw new Error(out.error);
+        return out.result;
       },
       onCallTool: async (name, args) => {
         const rpc = window.__mcpjamHostRpc;

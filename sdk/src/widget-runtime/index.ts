@@ -44,6 +44,7 @@ export type { IframeSandboxPermissions } from "./iframe-sandbox-policy.js";
 export {
   createHostAppBridge,
   registerHostBridgeHandlers,
+  RESOURCE_READS_DISABLED_MESSAGE,
 } from "./host-app-bridge.js";
 export type {
   WidgetDebugDirection,
