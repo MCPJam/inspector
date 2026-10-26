@@ -112,28 +112,22 @@ export function skillsHashWithPlugins(
   return plugins ? `${skillsHash}+plugins:${plugins}` : skillsHash;
 }
 
-/**
- * Which selected servers can actually be delivered into the sandbox's
- * `.mcp.json`, failing CLOSED on a plugin-contributed one that cannot.
- *
- * A selected server with no live config in the manager is skipped (that is the
- * long-standing behavior for host-selected servers, which the user can see and
- * reconnect). A PLUGIN-contributed server is different: hosts are plugin-blind,
- * the environment pinned that version precisely to get those tools, and the
- * silently reduced tool set would surface only as the agent "not doing the
- * thing". Name the plugin and refuse the turn instead — the same all-or-nothing
- * rule the hosted proxy-token mint already applies.
- */
+/** Refused servers are omitted; an unexplained missing plugin config still fails. */
 export function selectDeliverableServerIds(args: {
   selectedServerIds: string[];
   /** True when the manager holds a live config for this id. */
   hasLiveConfig: (serverId: string) => boolean;
+  unavailableServerIds?: readonly string[];
   /** Plugin origin per server id (`pluginOriginByServerId`); may be empty. */
   pluginOrigins?: Record<string, RuntimePluginVersion>;
   onSkipped?: (serverId: string) => void;
 }): string[] {
   const deliverable: string[] = [];
   for (const serverId of args.selectedServerIds) {
+    if (args.unavailableServerIds?.includes(serverId)) {
+      args.onSkipped?.(serverId);
+      continue;
+    }
     if (args.hasLiveConfig(serverId)) {
       deliverable.push(serverId);
       continue;

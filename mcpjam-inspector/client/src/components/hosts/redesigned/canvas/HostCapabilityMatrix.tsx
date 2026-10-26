@@ -19,6 +19,7 @@ import clineLogoDark from "/cline_logo_dark.svg";
 import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
 import slackLogo from "/slack_logo.png";
+import geminiLogo from "/google_logo.png";
 import mcpjamLogo from "/mcp_jam_2row.png";
 import {
   APPS_HUB_NODE_ID,
@@ -77,6 +78,10 @@ function getClientLogo(
   if (haystack.includes("perplexity")) return perplexityLogo;
   if (haystack.includes("cline"))
     return themeMode === "dark" ? clineLogoDark : clineLogoLight;
+  // Gemini's clientInfo.name is "google-adk" and its host name is "Gemini",
+  // so neither spelling alone covers both call sites.
+  if (haystack.includes("gemini") || haystack.includes("google-adk"))
+    return geminiLogo;
   if (haystack.includes("notion")) return notionLogo;
   if (haystack.includes("slack")) return slackLogo;
   if (

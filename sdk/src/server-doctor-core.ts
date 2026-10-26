@@ -16,6 +16,30 @@ export interface ServerDoctorCheck {
   detail: string;
 }
 
+/**
+ * The skills check's findings as data.
+ *
+ * The check's `detail` names skill URIs and refusal reasons, which come from
+ * the server. A consumer that must not repeat server text, such as the hosted
+ * doctor, rebuilds its sentence from these fields instead of parsing `detail`.
+ */
+export interface ServerDoctorSkillsFindings {
+  /**
+   * Stable-spec requirements the server misses, each a fixed phrase the SDK
+   * composes from constants. Empty when the server is conformant.
+   */
+  conformance: string[];
+  /** Sampled skills that failed verification, when any did. */
+  verification?: { failed: number; sampled: number };
+  /** Listed entries rejected as malformed, when any were. */
+  rejected?: number;
+}
+
+export interface ServerDoctorSkillsCheck extends ServerDoctorCheck {
+  /** Present on an `error` whose detail was composed from findings. */
+  findings?: ServerDoctorSkillsFindings;
+}
+
 export interface ServerDoctorConnection {
   status: "connected" | "error" | "skipped";
   detail: string;
@@ -40,7 +64,7 @@ export interface ServerDoctorChecks {
    * reported as broken here rather than discovered later by a host that
    * refuses to load anything.
    */
-  skills: ServerDoctorCheck;
+  skills: ServerDoctorSkillsCheck;
 }
 
 export interface ServerDoctorResult<TTarget = unknown> {
@@ -110,7 +134,7 @@ export interface DoctorResourceTemplatesCollectionResult {
 
 export interface DoctorSkillsCollectionResult {
   skills: unknown[];
-  check: ServerDoctorCheck;
+  check: ServerDoctorSkillsCheck;
   /**
    * Absent when skills are simply not served. A verification failure is a
    * finding about the SERVER, so unlike the other collectors this one reports
