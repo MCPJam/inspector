@@ -294,6 +294,7 @@ export const HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT =
 export async function buildHarnessProxyMcpJsonFromManager(args: {
   manager: MCPJamHandlerOptions["mcpClientManager"];
   selectedServerIds: string[];
+  unavailableServerIds?: readonly string[];
   authHeader: string;
   projectId: string;
   strategy: HarnessMcpProxyStrategy;
@@ -335,6 +336,7 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
   } = args;
   const configured = selectDeliverableServerIds({
     selectedServerIds,
+    unavailableServerIds: args.unavailableServerIds,
     hasLiveConfig: (id) => Boolean(manager.getServerConfig(id)),
     ...(pluginOrigins ? { pluginOrigins } : {}),
     onSkipped: (id) =>
@@ -367,11 +369,8 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
       );
     }
     mintedHarnessEvidence = minted.harnessEvidence;
-    // Hard-fail, never skip: the harness must run with every selected server or
-    // none — a silently-dropped server means the agent runs with missing MCP
-    // tools, which is far worse to debug than a clear up-front failure. (The
-    // mint endpoint is already all-or-nothing — 422 on any malformed/unauthorized
-    // id — so this guards an unexpected partial response.)
+    // Every admitted server needs a token. Refused servers were removed before
+    // minting; a partial mint response is an unexpected authorization failure.
     for (const id of configured) {
       const token = minted.tokens[id];
       if (!token) {
@@ -1559,6 +1558,7 @@ export async function runHarnessTurn(
       const buildNativeProxyConfig = () => buildHarnessProxyMcpJsonFromManager({
         manager: mcpClientManager,
         selectedServerIds: selectedServers ?? [],
+        unavailableServerIds: options.unavailableServerIds,
         authHeader,
         projectId,
         strategy: localMcpPlane?.strategy ?? harnessMcpProxy ?? { plane: "local-mcp" },
@@ -1611,6 +1611,7 @@ export async function runHarnessTurn(
           ? await projectSelectedMcpServersAsHostTools({
               manager: mcpClientManager,
               selectedServerIds: selectedServers ?? [],
+              unavailableServerIds: options.unavailableServerIds,
               connectionsByServerId: accountGroups,
               ...(pluginServerOrigins
                 ? { pluginOrigins: pluginServerOrigins }

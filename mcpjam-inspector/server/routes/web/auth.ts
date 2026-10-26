@@ -1,3 +1,4 @@
+import { nameServerRefusal } from "../../utils/server-refusal.js";
 import {
   serverCheckScope,
   withServerCheckSignal,
@@ -527,6 +528,7 @@ export type ConvexBatchAuthorizeFailure = {
   status: number;
   code: string;
   message: string;
+  refusalReason?: string;
 };
 
 /**
@@ -778,7 +780,10 @@ export async function authorizeServer(
       typeof body?.message === "string"
         ? body.message
         : `Authorization failed (${response.status})`;
-    throw new WebRouteError(response.status, code as ErrorCode, message);
+    throw new WebRouteError(response.status, code as ErrorCode, message, {
+      serverId,
+      ...(typeof body?.refusalReason === "string" ? { refusalReason: body.refusalReason } : {}),
+    });
   }
 
   if (!body?.authorized || !body?.serverConfig) {
@@ -1632,7 +1637,7 @@ export async function createAuthorizedManager(
           auth.status,
           auth.code as ErrorCode,
           auth.message,
-          { serverId, serverName: serverNamesById?.[serverId] ?? null },
+          { serverId, serverName: serverNamesById?.[serverId] ?? null, refusalReason: auth.refusalReason },
         );
       }
       const displayServerName = displayNameForServer(
@@ -1793,8 +1798,9 @@ export async function createAuthorizedManager(
         !(auth.oauthAccessToken ?? oauthTokens?.[serverId])
       ) {
         const errorDetails = {
+          oauthUnavailableReason: auth.oauthUnavailableReason,
           serverId,
-          serverName: serverNamesById?.[serverId] ?? null,
+          serverName: displayServerName,
           serverUrl: auth.serverConfig.url,
         };
         switch (auth.oauthUnavailableReason) {
@@ -1857,6 +1863,7 @@ export async function createAuthorizedManager(
         }
       }
     } catch (error) {
+      nameServerRefusal(error, serverId, serverNamesById?.[serverId] ?? serverId);
       if (!isServerRefusal(error, serverId, tolerate)) throw error;
       refusedServers[serverId] = error;
     }
@@ -1903,6 +1910,7 @@ export async function createAuthorizedManager(
         );
         continue;
       }
+      nameServerRefusal(error, recovery.serverId, recovery.displayServerName);
       if (isServerRefusal(error, recovery.serverId, tolerate)) {
         refusedServers[recovery.serverId] = error;
         continue;
@@ -2346,6 +2354,7 @@ export async function createAuthorizedManager(
           ),
         ] as const;
       } catch (error) {
+        nameServerRefusal(error, serverId, serverNamesById?.[serverId] ?? serverId);
         if (!isServerRefusal(error, serverId, tolerate)) throw error;
         refusedServers[serverId] = error;
         return undefined;
