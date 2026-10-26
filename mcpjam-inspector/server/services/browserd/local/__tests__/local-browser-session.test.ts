@@ -263,9 +263,22 @@ describe("local browser session", () => {
     await expect(refusal).rejects.toBeInstanceOf(LocalBrowserUnavailableError);
     await expect(refusal).rejects.toMatchObject({
       code: "chromium_sandbox_unavailable",
-      message: expect.stringMatching(
-        /AppArmor user namespaces for Playwright's Chromium in ~\/\.cache\/ms-playwright \(https:\/\/chromium\.googlesource\.com\/.*apparmor-userns-restrictions\.md\)/,
-      ),
+      message:
+        "Chromium can't start its sandbox on this machine. Allow user namespaces for Playwright's Chromium, then try again. On Ubuntu 23.10 or later that is an AppArmor setting (https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md); in a container, its seccomp profile (https://playwright.dev/docs/docker).",
+    });
+    expect(dispose).toHaveBeenCalled();
+  });
+
+  it("keeps a profile taken during the launch as profile_in_use", async () => {
+    // The pre-launch probe and the launcher's own lock check report the same
+    // condition; one condition gets one code.
+    const { dispose, refusal } = launchFailingWith(
+      "profile_in_use: another browser (pid 4242) holds this profile; close it and try again",
+    );
+    await expect(refusal).rejects.toMatchObject({
+      code: "profile_in_use",
+      message:
+        "profile_in_use: another browser (pid 4242) holds this profile; close it and try again",
     });
     expect(dispose).toHaveBeenCalled();
   });
