@@ -1926,11 +1926,49 @@ function normalizePreservedReasoning(messages: ModelMessage[]): ModelMessage[] {
 }
 
 /**
+ * Org provider keys the backend builds with `provider(modelId)` on
+ * `@ai-sdk/openai` / `@ai-sdk/azure` — i.e. the OpenAI RESPONSES API
+ * (`convex/stream/buildOrgModel.ts`, `call: "model"`).
+ */
+const OPENAI_RESPONSES_PROVIDER_KEYS = new Set(["openai", "azure"]);
+
+/**
+ * Whether this turn's backend call lands on the OpenAI Responses API, where
+ * reasoning must NOT be pruned.
+ *
+ * With `store` on — the provider's default — that API replays an earlier reply
+ * by item id: the reply's text goes back as
+ * `{ type: "item_reference", id: "msg_…" }`, and OpenAI refuses a message item
+ * whose reasoning item is missing ("Item 'msg_…' of type 'message' was
+ * provided without its required 'reasoning' item: 'rs_…'"), which ends the
+ * conversation on the next turn. Dropping old reasoning saves real tokens on
+ * every other provider, which resends it as full text; here it saves none,
+ * because the reasoning rides back as an id too.
+ *
+ * `/stream` never qualifies: MCPJam's own models go through the gateway or
+ * OpenRouter, neither of which carries OpenAI item ids.
+ */
+function usesOpenAiResponsesApi(
+  endpointPath: string,
+  extraBodyFields: Record<string, unknown> | undefined,
+): boolean {
+  if (endpointPath !== "/stream/org") return false;
+  const providerKey = extraBodyFields?.providerKey;
+  return (
+    typeof providerKey === "string" &&
+    OPENAI_RESPONSES_PROVIDER_KEYS.has(providerKey)
+  );
+}
+
+/**
  * Scrub messages for sending to the backend LLM.
  * Removes UI-specific metadata that shouldn't be sent to the model.
  *
  * `preserveReasoningFromIndex` starts the current user turn. Reasoning from
- * that index survives tool steps; reasoning from earlier turns is pruned.
+ * that index survives tool steps; reasoning from earlier turns is pruned —
+ * unless `keepAllReasoning` says the turn runs on the OpenAI Responses API
+ * ({@link usesOpenAiResponsesApi}), which rejects a reply whose reasoning item
+ * is gone.
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
@@ -1938,9 +1976,14 @@ function scrubMessagesForBackend(
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
   preserveReasoningFromIndex?: number,
+  keepAllReasoning?: boolean,
 ): ModelMessage[] {
   let pruned: ModelMessage[];
-  if (
+  if (keepAllReasoning) {
+    // Same UI-only `state` strip the current-turn slice gets below, applied to
+    // the whole history since all of it now reaches the provider.
+    pruned = normalizePreservedReasoning(messages);
+  } else if (
     typeof preserveReasoningFromIndex === "number" &&
     preserveReasoningFromIndex > 0 &&
     preserveReasoningFromIndex < messages.length
@@ -3719,6 +3762,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       mcpClientManager,
       selectedServers,
       traceTurn.promptMessageStartIndex,
+      usesOpenAiResponsesApi(ctx.endpointPath, ctx.extraBodyFields),
     ),
     modelId,
     provider,
