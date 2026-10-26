@@ -36,7 +36,7 @@
  * `listAllServerSkills` from `operations.ts`, which itself imports from
  * `mcp-client-manager/`, so living there would close an import cycle.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import type { MCPClientManager } from "./mcp-client-manager/index.js";
@@ -56,7 +56,10 @@ import {
   verifySkillMarkdown,
   type SkillEntry,
 } from "./mcp-client-manager/index.js";
-import { listAllServerSkills } from "./operations.js";
+import {
+  listAllServerSkills,
+  type SkillListingCacheAttributes,
+} from "./operations.js";
 
 /**
  * Optional sink for the one diagnostic this module emits.
@@ -108,16 +111,13 @@ export interface ServerSkillSummary {
   };
 }
 
-export interface ServerSkillListing {
+export interface ServerSkillListing extends SkillListingCacheAttributes {
   serverId: string;
   skills: ServerSkillSummary[];
   /** URIs the server listed twice — surfaced, never silently resolved. */
   duplicateUris: string[];
   /** Entries that failed the wire guard or identity checks, with reasons. */
   rejected: Array<{ skillUri: string; reason: string }>;
-  /** SEP-2549 caching attributes, when the server sent them. */
-  ttlMs?: number;
-  cacheScope?: string;
 }
 
 export interface VerifiedServerSkill {
@@ -130,6 +130,12 @@ export interface VerifiedServerSkill {
   contentSha256: string;
   frontmatter: unknown;
   resources: Array<{ uri: string; digest: string; size?: number }>;
+  /**
+   * SEP-2549 caching attributes of the `skills/get` result, when the entry
+   * came from one and the server sent them. Absent on the listing-entry path.
+   */
+  ttlMs?: number;
+  cacheScope?: string;
 }
 
 /**
@@ -520,10 +526,9 @@ export async function listServerSkillCatalog(
     skills,
     duplicateUris: [...duplicates],
     rejected,
+    omittedCacheAttributes: drained.omittedCacheAttributes,
     ...(drained.ttlMs !== undefined ? { ttlMs: drained.ttlMs } : {}),
-    ...(drained.cacheScope !== undefined
-      ? { cacheScope: drained.cacheScope }
-      : {}),
+    ...(drained.cacheScope !== undefined ? { cacheScope: drained.cacheScope } : {}),
   };
 }
 
@@ -581,8 +586,20 @@ export async function getVerifiedServerSkill(
 ): Promise<VerifiedServerSkill> {
   const { serverId, uri } = args;
   let entry: SkillEntry;
+  let cache: { ttlMs?: number; cacheScope?: string } = {};
   try {
-    entry = args.entry ?? (await manager.getServerSkill(serverId, uri));
+    if (args.entry) {
+      entry = args.entry;
+    } else {
+      const result = await manager.getServerSkillResult(serverId, uri);
+      entry = result.skill;
+      cache = {
+        ...(result.ttlMs !== undefined ? { ttlMs: result.ttlMs } : {}),
+        ...(result.cacheScope !== undefined
+          ? { cacheScope: result.cacheScope }
+          : {}),
+      };
+    }
   } catch (error) {
     throw new ServerSkillRefusalError(toRefusal(error, uri));
   }
@@ -659,6 +676,7 @@ export async function getVerifiedServerSkill(
     contentSha256: await sha256HexOfText(verified.body),
     frontmatter: entry.frontmatter,
     resources: manifest.resources,
+    ...cache,
   };
 }
 
