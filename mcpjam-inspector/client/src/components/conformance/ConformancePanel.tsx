@@ -358,7 +358,7 @@ function ConformanceContent({
                     This server requires sign-in, and this run had no valid
                     session, so {waitingOnAuthorization} check(s) could not
                     run. Reconnect the server with OAuth from the server menu,
-                    then run again.
+                    or update its access token, then run again.
                   </div>
                 )}
 

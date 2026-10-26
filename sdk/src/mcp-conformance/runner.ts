@@ -9,6 +9,7 @@ import {
   isAuthorizationRefusal,
   isUnauthorizedProbe,
 } from "../conformance-authorization.js";
+import { PROTOCOL_CHECK_CATALOG } from "../conformance-catalog.js";
 import {
   buildConformanceProfileStamp,
   conformanceProfile,
@@ -295,6 +296,12 @@ async function runClientChecks(
   config: NormalizedMCPConformanceConfig;
   surface?: MCPServerSurfaceSnapshot;
   readiness: MCPReadinessWarning[];
+  /**
+   * The era-detection connection of a raw-only Auto run was refused for
+   * credentials. `checks` then already holds every selected check as
+   * could-not-run, and the raw families must not run against a guessed era.
+   */
+  authorizationRefused?: true;
 }> {
   const selectedClientChecks = CLIENT_CHECKS.filter((check) =>
     selectedCheckIds.has(check.id),
@@ -444,6 +451,27 @@ async function runClientChecks(
     // failed negotiation. Reject the run instead of silently executing raw
     // checks with the legacy default after detection failed.
     if (selectedClientChecks.length === 0) {
+      // Refused for credentials is the one detection failure with a verdict
+      // to give: nothing selected could run, so the run is `incomplete`
+      // rather than rejected.
+      if (isAuthorizationRefusal(error)) {
+        return {
+          checks: [...selectedCheckIds].map((id) =>
+            couldNotRunResult(
+              {
+                id,
+                category: CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
+                ...PROTOCOL_CHECK_CATALOG[id],
+              },
+              AUTHORIZATION_REQUIRED_MESSAGE,
+              authorizationRequiredDetails(error),
+            ),
+          ),
+          config,
+          readiness: [],
+          authorizationRefused: true,
+        };
+      }
       throw error;
     }
 
@@ -590,6 +618,13 @@ export class MCPConformanceTest {
       recorder,
     };
 
+    // A refused raw-only Auto run already reported every selected check as
+    // could-not-run; the raw families get nothing to grade against an era the
+    // run never learned.
+    const rawSelection: Set<MCPCheckId> = clientRun.authorizationRefused
+      ? new Set()
+      : selectedCheckIds;
+
     const [
       protocolChecks,
       securityChecks,
@@ -597,10 +632,10 @@ export class MCPConformanceTest {
       modernChecks,
       rawReadiness,
     ] = await Promise.all([
-      runProtocolChecks(rawContext, selectedCheckIds),
-      runSecurityChecks(rawContext, selectedCheckIds),
-      runTransportChecks(rawContext, selectedCheckIds),
-      runModernChecks(rawContext, selectedCheckIds),
+      runProtocolChecks(rawContext, rawSelection),
+      runSecurityChecks(rawContext, rawSelection),
+      runTransportChecks(rawContext, rawSelection),
+      runModernChecks(rawContext, rawSelection),
       collectRawReadiness(rawContext),
     ]);
 
@@ -609,7 +644,7 @@ export class MCPConformanceTest {
     // all of them or it would grade a partial record and call it complete.
     const wireSchema = await runWireSchemaCheck(
       rawContext,
-      selectedCheckIds,
+      rawSelection,
       recorder,
     );
 

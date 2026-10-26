@@ -2346,22 +2346,27 @@ export class MCPTasksConformanceTest {
         }
       );
     } catch (error) {
-      // Refused for credentials: the wire was never reached, so it could not
-      // be resolved either way — `incomplete`, not `failed`.
-      const failure = isAuthorizationRefusal(error)
-        ? couldNotRun(
-            "tasks-wire-resolvable",
-            AUTHORIZATION_REQUIRED_MESSAGE,
-            authorizationRequiredDetails(error)
+      // Refused for credentials: nothing was reached, so every selected check
+      // could not run — `incomplete`, not `failed`. Each one is reported, so
+      // the run names what it was asked rather than one stand-in check.
+      const results: MCPTasksCheckResult[] = isAuthorizationRefusal(error)
+        ? [...selected].map((id) =>
+            couldNotRun(
+              id,
+              AUTHORIZATION_REQUIRED_MESSAGE,
+              authorizationRequiredDetails(error)
+            )
           )
-        : failed(
-            "tasks-wire-resolvable",
-            Date.now() - startedAt,
-            `Failed to connect to ${this.config.target}: ${errorMessage(error)}`,
-            undefined,
-            error
-          );
-      const verdict = decideOutcome([failure]);
+        : [
+            failed(
+              "tasks-wire-resolvable",
+              Date.now() - startedAt,
+              `Failed to connect to ${this.config.target}: ${errorMessage(error)}`,
+              undefined,
+              error
+            ),
+          ];
+      const verdict = decideOutcome(results);
       return {
         passed: verdict.outcome === "passed",
         outcome: verdict.outcome,
@@ -2369,11 +2374,11 @@ export class MCPTasksConformanceTest {
           ? { incompleteReason: verdict.incompleteReason }
           : {}),
         target: this.config.target,
-        checks: [failure],
-        summary: buildSummary([failure]),
+        checks: results,
+        summary: buildSummary(results),
         durationMs: Date.now() - startedAt,
-        categorySummary: summarizeChecks([failure]),
-        profile: buildConformanceProfileStamp({ profile, checks: [failure] }),
+        categorySummary: summarizeChecks(results),
+        profile: buildConformanceProfileStamp({ profile, checks: results }),
         discovery: {
           wire: "none",
           toolCount: 0,

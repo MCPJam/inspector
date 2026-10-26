@@ -25,9 +25,16 @@ export const AUTHORIZATION_REQUIRED_MESSAGE =
  */
 export const AUTHORIZATION_REQUIRED_DETAIL = "authorizationRequired";
 
-/** The connection itself was refused for credentials (401, expired or invalid token). */
+/**
+ * The connection itself was refused for credentials: a 401, or an expired or
+ * invalid token with no status. `MCPAuthError` also wraps a 403, which is a
+ * different answer (authenticated but forbidden) and stays a failure here.
+ */
 export function isAuthorizationRefusal(error: unknown): boolean {
-  return isMCPAuthError(error);
+  return (
+    isMCPAuthError(error) &&
+    (error.statusCode === undefined || error.statusCode === 401)
+  );
 }
 
 /** `details` carrying the authorization marker, plus the refusal's status when known. */

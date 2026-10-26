@@ -1101,7 +1101,9 @@ describe("ConformanceTab", () => {
     expect(
       screen.getByText(/This server requires sign-in.*1 check\(s\) could not\s+run/s),
     ).toBeDefined();
-    expect(screen.getByText(/Reconnect the server with OAuth/)).toBeDefined();
+    expect(
+      screen.getByText(/Reconnect the server with OAuth.*or update its access\s+token/s),
+    ).toBeDefined();
   });
 
   it("shows no reconnect notice when nothing waited on authorization", async () => {

@@ -14,7 +14,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { isAuthorizationRequiredCheck } from "../src/conformance-authorization.js";
 import { MCPConformanceTest } from "../src/mcp-conformance/index.js";
 import { MCPAppsConformanceTest } from "../src/apps-conformance/index.js";
-import { MCPTasksConformanceTest } from "../src/tasks-conformance/index.js";
+import {
+  MCP_TASKS_CHECK_IDS,
+  MCPTasksConformanceTest,
+} from "../src/tasks-conformance/index.js";
 
 const closers: Array<() => Promise<void>> = [];
 
@@ -99,6 +102,41 @@ describe("protocol conformance against a server that requires authorization", ()
     expect(result.outcome).toBe("incomplete");
   }, 60_000);
 
+  it("reports an unpinned raw-only run incomplete instead of rejecting it", async () => {
+    const serverUrl = await serveStatus(401);
+    // No pin: the runner connects only to learn the era, and that connection
+    // is the one refused.
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      checkIds: ["protocol-invalid-method-error"],
+      checkTimeout: 5_000,
+    }).run();
+
+    expect(result.outcome).toBe("incomplete");
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0]).toMatchObject({
+      id: "protocol-invalid-method-error",
+      category: "protocol",
+      status: "skipped",
+      skipReason: "could-not-run",
+    });
+    expect(isAuthorizationRequiredCheck(result.checks[0]!)).toBe(true);
+  }, 60_000);
+
+  it("still fails a server that answers 403: authenticated but forbidden is not a missing credential", async () => {
+    const serverUrl = await serveStatus(403);
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      checkIds: ["server-initialize"],
+      checkTimeout: 5_000,
+    }).run();
+
+    expect(result.outcome).toBe("failed");
+    expect(
+      result.checks.some((check) => isAuthorizationRequiredCheck(check)),
+    ).toBe(false);
+  }, 60_000);
+
   it("still fails a server that refuses the connection for any other reason", async () => {
     const serverUrl = await serveStatus(500);
     const result = await new MCPConformanceTest({
@@ -136,7 +174,24 @@ describe("apps and tasks conformance against a server that requires authorizatio
 
     expect(result.outcome).toBe("incomplete");
     expect(result.passed).toBe(false);
-    expect(result.checks).toHaveLength(1);
-    expect(isAuthorizationRequiredCheck(result.checks[0]!)).toBe(true);
+    // Every selected check is reported, not one stand-in.
+    expect(result.checks.map((check) => check.id)).toEqual([
+      ...MCP_TASKS_CHECK_IDS,
+    ]);
+    expect(result.checks.every(isAuthorizationRequiredCheck)).toBe(true);
+  }, 60_000);
+
+  it("reports exactly the selected task checks when the run narrows them", async () => {
+    const url = await serveStatus(401);
+    const result = await new MCPTasksConformanceTest({
+      url,
+      timeout: 5_000,
+      checkIds: ["tasks-inline-result"],
+    } as never).run();
+
+    expect(result.outcome).toBe("incomplete");
+    expect(result.checks.map((check) => check.id)).toEqual([
+      "tasks-inline-result",
+    ]);
   }, 60_000);
 });
