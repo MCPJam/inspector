@@ -9,6 +9,7 @@ import {
   isDynamicClientRegistrationHttpError,
   stepFailureFindingKey,
   isResourceMetadataNotImplemented,
+  isTlsTrustFailure,
   isUnexpectedProbeStatus,
   isLoopbackOAuthUrl,
   type OAuthFlowState,
@@ -195,6 +196,9 @@ export function createDebugRequestExecutor(
         requestMethod: request.method,
         proxyStatus: proxyResponse.status,
       });
+      // The proxy reached the server and its certificate failed. The reason
+      // already says so; "Backend debug proxy error: 502" would blame MCPJam.
+      if (reason && isTlsTrustFailure(reason)) throw new Error(reason);
       throw new Error(
         `Backend debug proxy error: ${proxyResponse.status} ${
           proxyResponse.statusText
@@ -330,6 +334,11 @@ function createHostedClientSecretResolver({
  * the fallback hint). A proxy failure there reads "Client registration
  * failed: …" and still reports.
  *
+ * A server certificate Node.js would not accept is one more (PLB-273). The
+ * local proxy answers 502 with a sentence the SDK owns (`isTlsTrustFailure`)
+ * followed by Node's own fix. A certificate failure on MCPJam's own hosts
+ * never gets that sentence, so it still reports.
+ *
  * The SDK owns all of these messages and exports them, so matching here cannot
  * drift out of sync with what the machines actually throw.
  */
@@ -345,7 +354,8 @@ function isUnreportedStepFailure(error: string): boolean {
     isAuthenticatedRequestFailure(error) ||
     isResourceMetadataNotImplemented(error) ||
     isUnexpectedProbeStatus(error) ||
-    isDynamicClientRegistrationHttpError(error)
+    isDynamicClientRegistrationHttpError(error) ||
+    isTlsTrustFailure(error)
   );
 }
 
