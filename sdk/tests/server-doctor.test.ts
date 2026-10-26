@@ -440,6 +440,23 @@ describe("the skills check", () => {
     });
   });
 
+  it("names the omitted listing fields in a fixed order across pages", async () => {
+    // Page 1 omits `cacheScope` before page 2 omits `ttlMs`. The clause still
+    // reads `ttlMs` first, the only order the hosted doctor passes through.
+    const manager = await skillsManager();
+    const entry = (await manager.getServerSkill()) as Record<string, unknown>;
+    manager.listServerSkills = jest
+      .fn()
+      .mockResolvedValueOnce({ skills: [entry], nextCursor: "1", ttlMs: 0 })
+      .mockResolvedValueOnce({ skills: [], cacheScope: "public" });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.findings).toEqual({
+      conformance: ["`skills/list` omitted required `ttlMs` and `cacheScope`"],
+    });
+  });
+
   it("reports an extension declared without the resources capability", async () => {
     // Skill files are read with `resources/read`, so the spec requires the
     // `resources` capability alongside the extension.
