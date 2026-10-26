@@ -304,9 +304,10 @@ for (const theme of ["light", "dark"])
           .getByRole("button", { name: /POST.*pending/ })
           .first();
         await expect(pending).toBeVisible();
+        // The request is in flight, so the button shows its pending label.
         await inside(
           page,
-          page.getByRole("button", { name: "Continue", exact: true }),
+          page.getByRole("button", { name: "Continuing...", exact: true }),
         );
         release();
         await requestFinished;

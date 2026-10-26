@@ -1,5 +1,11 @@
 # `@mcpjam/sdk` changelog
 
+## 10.1.0
+
+### Minor Changes
+
+- [#6788](https://github.com/MCPJam/inspector/pull/6788) [`5e5b326`](https://github.com/MCPJam/inspector/commit/5e5b32613bf19bdf4158f1ef4ae762b5ae5e7bf5) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add an agentLoop host setting to select a vendor harness while retaining the host's MCP client. Preserve existing config hashes when the setting is absent.
+
 ## 10.0.0
 
 ### Major Changes

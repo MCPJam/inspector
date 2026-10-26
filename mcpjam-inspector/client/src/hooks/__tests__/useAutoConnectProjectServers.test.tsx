@@ -101,7 +101,7 @@ describe("useAutoConnectProjectServers", () => {
   beforeEach(() => {
     mocks.hosted = false;
     resetAutoConnectAttempts();
-    localStorage.removeItem("mcpjam-auto-connect-servers");
+    localStorage.setItem("mcpjam-auto-connect-servers", "true");
     mocks.toastDismiss.mockClear();
     mocks.toastError.mockClear();
     mocks.toastLoading.mockClear();
@@ -193,28 +193,41 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).not.toHaveBeenCalled();
   });
 
-  it("does not call ensureServersReady when the toggle is disabled", async () => {
-    localStorage.setItem("mcpjam-auto-connect-servers", "false");
-    const ensureServersReady = vi.fn();
-    const appState = makeAppState(["alpha"]);
+  it.each([null, "false"])(
+    "does not connect or reconnect on client switches with preference %s",
+    async (stored) => {
+      if (stored === null) localStorage.removeItem("mcpjam-auto-connect-servers");
+      else localStorage.setItem("mcpjam-auto-connect-servers", stored);
+      const ensureServersReady = vi.fn();
+      const reconnectServer = vi.fn();
+      const appState = makeAppState(["alpha", "beta"]);
+      appState.servers.beta.connectionStatus = "connected";
 
-    const { result } = renderHook(
-      () =>
-        useAutoConnectProjectServers({
-          projectId: "proj-disabled",
-          hostScopeKey: "host-a",
-          serverNames: ["alpha"],
-        }),
-      {
-        wrapper: ({ children }) =>
-          wrapper({ children, ensureServersReady, appState }),
-      },
-    );
+      const { result, rerender } = renderHook(
+        ({ hostScopeKey }) =>
+          useAutoConnectProjectServers({
+            projectId: "proj-disabled",
+            hostScopeKey,
+            serverNames: ["alpha", "beta"],
+          }),
+        {
+          initialProps: { hostScopeKey: "host-a" },
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, reconnectServer, appState }),
+        },
+      );
 
-    await flushMicrotasks();
-    expect(result.current.enabled).toBe(false);
-    expect(ensureServersReady).not.toHaveBeenCalled();
-  });
+      await flushMicrotasks();
+      rerender({ hostScopeKey: "host-b" });
+      await flushMicrotasks();
+      rerender({ hostScopeKey: "host-a" });
+      await flushMicrotasks();
+      expect(result.current.enabled).toBe(false);
+      expect(ensureServersReady).not.toHaveBeenCalled();
+      expect(reconnectServer).not.toHaveBeenCalled();
+      expect(mocks.toastLoading).not.toHaveBeenCalled();
+    },
+  );
 
   it("skips servers already connected/connecting/oauth-flow", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
