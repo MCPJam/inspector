@@ -342,6 +342,19 @@ describe("host targeting dispatches the real harness", () => {
     expect(createManualHostedConnectionMock.mock.calls[0][3]).toMatchObject({ tolerateServerRefusals: true });
   });
 
+  it("uses authorized names when an ID-only target cannot connect", async () => {
+    createManualHostedConnectionMock.mockResolvedValue({
+      manager: { getTools: getToolsMock, disconnectAllServers: async () => {} },
+      serverNamesById: { srv_1: "Saved server" },
+      refusedServers: { srv_1: new WebRouteError(400, ErrorCode.FEATURE_NOT_SUPPORTED, "Hosted mode requires HTTPS server URLs", { refusalReason: "hosted_requires_https" }) },
+    });
+    const response = await turn(firstTurn({ serverIds: ["srv_1"] }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.skippedServers[0]).toMatchObject({ serverName: "Saved server", reason: "hosted_requires_https" });
+    expect(body.skippedServers[0].message).toContain('"Saved server"');
+  });
+
   it("binds the conversation's throwaway box to a harness turn and releases it", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({ harness: "claude-code", modelId: MODEL }),

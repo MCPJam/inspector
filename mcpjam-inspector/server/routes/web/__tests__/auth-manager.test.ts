@@ -241,7 +241,7 @@ describe("web auth manager batching", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a refused server out of the batch when asked to tolerate refusals", async () => {
+  it.each([true, false])("keeps refusals named with caller names present: %s", async (callerNames) => {
     global.fetch = vi.fn(async () =>
       Response.json({
         results: {
@@ -250,6 +250,7 @@ describe("web auth manager batching", () => {
             status: 403,
             code: "FORBIDDEN",
             message: "server-a failed",
+            serverName: "A",
           },
           "server-b": {
             ok: true,
@@ -259,6 +260,7 @@ describe("web auth manager batching", () => {
             serverConfig: {
               transportType: "http",
               url: "https://server-b.example.com/mcp",
+              name: "B",
             },
           },
           // An explicit-OAuth server with no token is refused in pass 1 too.
@@ -270,6 +272,7 @@ describe("web auth manager batching", () => {
             serverConfig: {
               transportType: "http",
               url: "https://server-c.example.com/mcp",
+              name: "C",
               useOAuth: true,
             },
           },
@@ -285,8 +288,9 @@ describe("web auth manager batching", () => {
       10_000,
       undefined,
       undefined,
-      { serverNames: ["A", "B", "C"], tolerateServerRefusals: true },
+      { ...(callerNames ? { serverNames: ["A", "B", "C"] } : {}), tolerateServerRefusals: true },
     );
+    expect(result.serverNamesById).toEqual({ "server-a": "A", "server-b": "B", "server-c": "C" });
 
     // Each refusal is the error the server's own request would have thrown.
     expect(result.refusedServers?.["server-a"]).toMatchObject({

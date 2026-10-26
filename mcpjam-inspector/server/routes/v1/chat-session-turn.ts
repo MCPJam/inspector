@@ -1899,7 +1899,12 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(engine.kind === "harness" ? { harness: engine.harness } : {}),
     });
     for (const [id, error] of prepared.unavailableServers ?? []) unavailable[id] = error;
-    const skippedServers = skippedServerDetails(unavailable, selectedServerIds, selectedServerNames);
+    const skippedServers = skippedServerDetails(
+      unavailable,
+      selectedServerIds,
+      selectedServerNames ??
+        selectedServerIds.map((id) => connection.serverNamesById?.[id] ?? id),
+    );
     emitPluginServersUnavailable(null, runtimeChatSessionId, { serverIds: selectedServerIds, refused: unavailable });
 
     // Never emulate a harness. `runAssistantTurn` would log-and-degrade, and a
