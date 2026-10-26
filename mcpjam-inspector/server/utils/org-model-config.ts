@@ -204,7 +204,13 @@ const resolveCache = new Map<
   { result: ResolvedOrgModelConfig; expiresAt: number }
 >();
 
-function buildCacheKey(
+/**
+ * The authorization scope of one org-model-config read: target, normalized
+ * bearer, guest scenario/access version and server ids. Also keys the chat
+ * turns' shared policy answers (`own-key-turn-policy.ts`), so both caches
+ * agree on what counts as the same caller.
+ */
+export function buildCacheKey(
   params: ResolveOrgModelConfigTarget,
   auth: ResolveOrgModelConfigAuth | undefined,
 ): string {

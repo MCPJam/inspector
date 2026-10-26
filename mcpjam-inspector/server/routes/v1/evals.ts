@@ -255,6 +255,11 @@ import {
   judgeRunOverride,
 } from "./judge-model-id.js";
 import {
+  canonicalTargetModelEntry,
+  canonicalTargetModelId,
+  isUnmappedHostedTarget,
+} from "./target-model-id.js";
+import {
   hostedCatalogModelDefinitions,
   isHostedCatalogModel,
 } from "../../services/hosted-model-catalog.js";
@@ -916,7 +921,8 @@ const syncFileOwnedSuiteSchema = z
       .optional(),
     defaultConfig: z
       .object({
-        modelId: z.string(),
+        // A suite file's `defaults.model`, in the file's vocabulary.
+        modelId: z.string().overwrite(canonicalTargetModelId),
         systemPrompt: z.string().optional(),
         temperature: z.number().optional(),
       })
@@ -976,13 +982,17 @@ function normalizeCreateTestsToRunTests(
     // `toPersistedModelEntry`: this id is what gets stored on the case and
     // handed to the provider, and an explicit `provider` would otherwise carry
     // a blank model past validation.
-    const model = requireNonBlankModelId(test.model ?? suite.model);
+    const target = canonicalTargetModelEntry({
+      model: test.model ?? suite.model,
+      provider: test.provider ?? suite.provider,
+    });
+    const model = requireNonBlankModelId(target.model);
     // The CANONICAL resolver, not a prefix split. Splitting derived
     // "meta-llama" and "mistralai" as providers (they are aliases for `meta`
     // and `mistral`) and refused every `custom:<slug>:<model>` id outright,
     // because it has no slash. It is total for a non-blank id, so there is no
     // "couldn't derive it" case left to raise here.
-    const provider = deriveProvider(model, test.provider ?? suite.provider);
+    const provider = deriveProvider(model, target.provider);
     const derived = stepsToInternalCaseFields(test.steps as TestStep[]);
     return {
       title: test.title,
@@ -2912,9 +2922,14 @@ function providerForModelId(modelId: string): string {
  * verbatim against environment and host model ids downstream, so keeping
  * `" gpt-4o "` would mint a model that resolves to the right provider and then
  * matches nothing. Same normalization as `withTrimmedModelId` on the host write
- * boundary and the backend's `normalizeModelId`; only ever a trim.
+ * boundary and the backend's `normalizeModelId`.
+ *
+ * A target written `mcpjam/<vendor>/<model>` is stored as the hosted pick it
+ * names (`canonicalTargetModelEntry`), and one whose prefixed id is not a
+ * hosted catalog id is refused here: stored, it would run as provider
+ * `mcpjam`, which no rail serves.
  */
-function toPersistedModelEntry(entry: {
+function toPersistedModelEntry(sent: {
   model: string;
   provider?: string;
   selection?: RequestedModelSelection | null;
@@ -2923,7 +2938,20 @@ function toPersistedModelEntry(entry: {
   provider: string;
   selection?: RequestedModelSelection;
 } {
+  const entry = canonicalTargetModelEntry(sent);
   const model = requireNonBlankModelId(entry.model);
+  // A non-hosted selection names its own model; the mismatch check below
+  // answers a prefixed id beside one.
+  if (
+    isUnmappedHostedTarget(model) &&
+    (!entry.selection || entry.selection.source === "hosted")
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `models[].model "${model}" is not a model MCPJam hosts. Use a hosted catalog id after "mcpjam/" (for example "mcpjam/anthropic/claude-haiku-4.5"), or drop the prefix to run on your own key.`,
+    );
+  }
   // A saved selection is FOR one model. Refuse a mismatch here rather than
   // persist a case whose chip and stored selection name different models.
   const mismatch = selectionModelMismatch(model, entry.selection);
