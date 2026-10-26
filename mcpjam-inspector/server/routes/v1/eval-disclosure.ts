@@ -40,6 +40,7 @@ import {
   classifyConvexReadError,
   translateConvexReadError,
 } from "./convex-read-errors.js";
+import { requireConvexIdShape } from "./convex-id-param.js";
 import { HOSTED_MODE } from "../../config.js";
 import { runnerCapabilities } from "../../services/evals/runner-capabilities.js";
 
@@ -194,6 +195,27 @@ function csvQuery(raw: string | undefined): string[] | undefined {
   return values.length > 0 ? values : undefined;
 }
 
+/**
+ * Every query id below reaches a `v.id(...)` validator. A malformed one —
+ * a case's `declaredId` where its platform `id` belongs, say — is rejected
+ * there, production redacts the rejection to "Server Error", the preflight
+ * passes because the caller CAN see the suite, and the request lands on the
+ * incident path: a 502 plus a Sentry capture (INSPECTOR-HONO-31). Checked
+ * before the call instead; see `convex-id-param.ts`.
+ */
+function requireQueryIdShapes(
+  ids: readonly string[] | undefined,
+  param: string,
+  notFoundMessage: string
+): void {
+  for (const id of ids ?? []) {
+    requireConvexIdShape(id, param, {
+      scope: "v1.evalDisclosure",
+      notFoundMessage,
+    });
+  }
+}
+
 // GET /v1/projects/:projectId/eval-suites/:suiteId/run-disclosure
 //
 // `caseIds` / `environmentId` / `environmentIds` / `host` — the SAME
@@ -243,6 +265,18 @@ evalDisclosure.get(
         "host and environmentId/environmentIds are mutually exclusive — a launch plan resolves on exactly one axis, and an environment already resolves a host."
       );
     }
+    requireQueryIdShapes(caseIds, "caseIds", "Eval case not found");
+    requireQueryIdShapes(
+      environmentId ? [environmentId] : undefined,
+      "environmentId",
+      "Environment not found"
+    );
+    requireQueryIdShapes(
+      environmentIds,
+      "environmentIds",
+      "Environment not found"
+    );
+    requireQueryIdShapes(host ? [host] : undefined, "host", "Host not found");
 
     const client = createConvexClient(await getConvexBearerForRequest(c));
 

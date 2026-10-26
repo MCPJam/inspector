@@ -50,6 +50,12 @@ import { runnerCapabilities } from "../../../services/evals/runner-capabilities.
 
 const PROJECT = "proj_a";
 const SUITE = "suite_a";
+// Query ids pass the route's Convex id shape check (`convex-id-param.ts`).
+const CASE_1 = "case1".padEnd(32, "x");
+const CASE_2 = "case2".padEnd(32, "x");
+const ENV_1 = "env1".padEnd(32, "x");
+const ENV_2 = "env2".padEnd(32, "x");
+const HOST_1 = "host1".padEnd(32, "x");
 
 function makeApp() {
   const app = new Hono();
@@ -365,15 +371,35 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
 
   it("forwards caseIds/environmentId/environmentIds as the destination-affecting subset", async () => {
     queryMock.mockResolvedValue(baseDisclosure());
-    await get("?caseIds=case_1,case_2&environmentIds=env_1,env_2");
+    await get(`?caseIds=${CASE_1},${CASE_2}&environmentIds=${ENV_1},${ENV_2}`);
     expect(queryMock).toHaveBeenCalledWith(
       "testSuites:getRunDisclosure",
       expect.objectContaining({
         suiteId: SUITE,
-        caseIds: ["case_1", "case_2"],
-        environmentIds: ["env_1", "env_2"],
+        caseIds: [CASE_1, CASE_2],
+        environmentIds: [ENV_1, ENV_2],
       })
     );
+  });
+
+  it("404s a query id Convex could not parse, before the query and off the incident path", async () => {
+    // Forwarded, any of these fails `v.id(...)`, redacts to "Server Error" in
+    // production, survives the preflight and answers 502 with a Sentry
+    // capture (INSPECTOR-HONO-31). `my-login-case` is a declared case id: the
+    // name a caller authors, not the platform `id` the validator takes.
+    for (const query of [
+      `?caseIds=${CASE_1},my-login-case`,
+      "?environmentId=staging",
+      `?environmentIds=${ENV_1},env_2`,
+      "?host=claude-desktop",
+    ]) {
+      vi.clearAllMocks();
+      const res = await get(query);
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as any;
+      expect(body.code).toBe("NOT_FOUND");
+      expect(queryMock).not.toHaveBeenCalled();
+    }
   });
 
   it("rejects environmentId and environmentIds together with a clear 400, not a confusing 404", async () => {
@@ -390,10 +416,10 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
 
   it("forwards ?host as namedHostId — the G4c host axis", async () => {
     queryMock.mockResolvedValue(baseDisclosure());
-    await get("?host=host_1");
+    await get(`?host=${HOST_1}`);
     expect(queryMock).toHaveBeenCalledWith(
       "testSuites:getRunDisclosure",
-      expect.objectContaining({ suiteId: SUITE, namedHostId: "host_1" })
+      expect.objectContaining({ suiteId: SUITE, namedHostId: HOST_1 })
     );
   });
 
@@ -403,7 +429,7 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     // it can run. A query-supplied capability would let a caller claim a
     // harness this runner cannot execute and have the disclosure believe it.
     queryMock.mockResolvedValue(baseDisclosure());
-    await get("?host=host_1&runnerCapabilities=totally-made-up");
+    await get(`?host=${HOST_1}&runnerCapabilities=totally-made-up`);
     const args = queryMock.mock.calls[0]![1] as Record<string, unknown>;
     expect(args.runnerCapabilities).toEqual(["harness-execution"]);
   });
@@ -429,7 +455,7 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
         'Uncaught ConvexError: {"code":"DISCLOSURE_HOST_NOT_ATTACHED","message":"That host is not attached to this suite, so it is not a plan this suite could launch."}'
       )
     );
-    const res = await get("?host=host_1");
+    const res = await get(`?host=${HOST_1}`);
     expect(res.status).toBe(404);
     const body = (await res.json()) as any;
     expect(body.code).toBe("NOT_FOUND");
@@ -443,7 +469,7 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
       data: { code: "DISCLOSURE_HOST_NOT_ATTACHED", message: "nope" },
     });
     queryMock.mockRejectedValue(structured);
-    const res = await get("?host=host_1");
+    const res = await get(`?host=${HOST_1}`);
     expect(res.status).toBe(404);
   });
 
