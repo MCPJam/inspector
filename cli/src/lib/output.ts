@@ -122,6 +122,32 @@ export function writeError(
   return payload;
 }
 
+/**
+ * Send `console.log`/`info`/`debug` to STDERR while a command runs.
+ *
+ * STDOUT is the result document: every command writes it with
+ * `process.stdout.write`, and nothing in the CLI prints through `console`.
+ * Dependencies do — the MCP client logs `console.debug("Client.listResources()
+ * called but server does not advertise resources capability …")` — and Node
+ * sends those three methods to STDOUT, so `--format json` printed prose ahead
+ * of the document and no longer parsed. On STDERR they stay visible without
+ * corrupting the result. Returns a function that restores the originals.
+ */
+export function routeConsoleToStderr(): () => void {
+  const original = {
+    log: console.log,
+    info: console.info,
+    debug: console.debug,
+  };
+  const toStderr = (...args: unknown[]) => console.error(...args);
+  console.log = toStderr;
+  console.info = toStderr;
+  console.debug = toStderr;
+  return () => {
+    Object.assign(console, original);
+  };
+}
+
 export function parseOutputFormat(value: string): OutputFormat {
   if (value === "json" || value === "human") {
     return value;
