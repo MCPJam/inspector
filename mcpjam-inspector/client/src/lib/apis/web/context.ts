@@ -180,6 +180,45 @@ export function getApiContextRevision(): number {
   return apiContextRevision;
 }
 
+let serverRequestKeyCache: {
+  revision: number;
+  serverNameOrId: string;
+  key: string | null;
+} | null = null;
+
+/**
+ * What a single-server request for `serverNameOrId` would carry right now, as
+ * a string, or `null` while the context cannot build one (no project yet, the
+ * server not mapped, client config still syncing). Equal keys mean the same
+ * request, so a caller can refetch when the request would change instead of
+ * on every revision: most revisions leave a given server's request exactly as
+ * it was (PLB-118). The bearer KIND (guest or session) is part of it, the
+ * bearer token is not; a server's OAuth access token is, because the request
+ * body carries it.
+ */
+export function getServerRequestKey(serverNameOrId: string): string | null {
+  const cached = serverRequestKeyCache;
+  if (
+    cached &&
+    cached.revision === apiContextRevision &&
+    cached.serverNameOrId === serverNameOrId
+  ) {
+    return cached.key;
+  }
+  // Only "not ready yet" reads as null. Anything else `buildServerRequest`
+  // throws is a bug and surfaces as one instead of silently stopping callers.
+  const key =
+    apiContext.clientConfigSyncPending ||
+    !tryResolveProjectServer(serverNameOrId)
+      ? null
+      : JSON.stringify([
+          shouldPreferGuestBearer(),
+          buildServerRequest(serverNameOrId),
+        ]);
+  serverRequestKeyCache = { revision: apiContextRevision, serverNameOrId, key };
+  return key;
+}
+
 function assertHostedMode() {
   if (!HOSTED_MODE) {
     throw new Error("Hosted API context is only available in hosted mode");
@@ -276,6 +315,9 @@ export function injectHostedServerMapping(
   serverName: string,
   serverId: string
 ): void {
+  // Every connect re-injects the mapping it already has. Announcing that as a
+  // change made every subscriber refetch for a context that had not moved.
+  if (apiContext.serverIdsByName[serverName] === serverId) return;
   apiContext = {
     ...apiContext,
     serverIdsByName: {
