@@ -580,6 +580,22 @@ describe("assertUnambiguousModelId", () => {
 
 describe("computeExcludedToolNames", () => {
   const { computeExcludedToolNames } = __testing;
+  it("applies policy to connected servers while reporting a failed server", async () => {
+    const failure = new Error("Server unreachable");
+    const getTools = vi.fn(async (ids: string[]) => {
+      if (ids.includes("dead")) throw failure;
+      return [{ name: "read", annotations: { readOnlyHint: true } }, { name: "write" }];
+    });
+    const onUnavailable = vi.fn();
+    const result = await computeExcludedToolNames(
+      Object.assign(manager([]), { getTools }),
+      ["live", "dead"],
+      { toolMode: "read_only", onUnavailable },
+    );
+    expect(result).toEqual({ excluded: ["write"], advertised: 1 });
+    expect(onUnavailable).toHaveBeenCalledWith("dead", failure);
+  });
+
   const manager = (tools: unknown[]) =>
     ({ getTools: async () => tools } as never);
 

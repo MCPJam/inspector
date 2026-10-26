@@ -48,7 +48,9 @@ import {
   selectAuthorizationServerFromResourceMetadata,
 } from "./shared/required-metadata.js";
 import {
+  classifyAuthorizationServerMetadataResponse,
   describeAuthorizationServerDiscoveryFailure,
+  isOAuthRequestGuardError,
   type AuthorizationServerMetadataAttempt,
 } from "./shared/authorization-server-discovery.js";
 import {
@@ -1139,19 +1141,22 @@ export const createDebugOAuthStateMachine = (
                   headers: mergeHeadersForAuthServer(customHeaders, {}),
                 });
 
-                if (response.ok) {
-                  authServerMetadata = response.body;
+                const outcome = classifyAuthorizationServerMetadataResponse(
+                  url,
+                  response
+                );
+                if (outcome.kind === "document") {
+                  authServerMetadata = outcome.document;
                   finalResponseHeaders = response.headers;
                   finalResponseData = response;
-                  if (!authServerMetadata) {
-                    discoveryAttempts.push({ url, status: response.status });
-                  }
-
                   break;
                 }
-                // Any non-2xx: record it and fall through to the next URL.
-                discoveryAttempts.push({ url, status: response.status });
+                // No usable document here: record why and try the next URL.
+                discoveryAttempts.push(outcome.attempt);
               } catch (error) {
+                // Our own SSRF / redaction guard refused the request: that is
+                // the failure to show, and every other URL would hit it too.
+                if (isOAuthRequestGuardError(error)) throw error;
                 discoveryAttempts.push({ url, error });
                 continue;
               }

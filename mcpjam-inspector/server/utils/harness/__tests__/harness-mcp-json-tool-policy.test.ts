@@ -73,6 +73,20 @@ beforeEach(() => {
 });
 
 describe("policied harness .mcp.json assembly", () => {
+  it("does not mint or deliver a refused plugin server even with a cached config", async () => {
+    const { fetchHarnessProxyTokens } = await import("../harness-proxy-token-client.js");
+    vi.mocked(fetchHarnessProxyTokens).mockClear();
+    const { mcpJson } = await buildHarnessProxyMcpJsonFromManager({
+      manager, selectedServerIds: ["srv-a", "refused"],
+      unavailableServerIds: ["refused"],
+      pluginOrigins: { refused: { pluginId: "p", pluginVersionId: "v", name: "Refused plugin", bundleHash: null } },
+      authHeader: "Bearer test", projectId: "proj-1", strategy: hosted,
+      scopeStepUpCorrelationId: "corr-1",
+    });
+    expect(Object.keys(mcpJson.mcpServers)).toEqual(["srv-a"]);
+    expect(fetchHarnessProxyTokens).toHaveBeenCalledWith(expect.objectContaining({ serverIds: ["srv-a"] }));
+  });
+
   it("carries a sealed token, and no bare one, for a policied server", async () => {
     const { mcpJson } = await build(hosted, { "srv-a": policy });
     const header = Object.values(mcpJson.mcpServers)[0]?.headers?.[

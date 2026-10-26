@@ -249,6 +249,7 @@ export const HOST_TEMPLATE_IDS = [
   "vscode",
   "agentcore",
   "n8n",
+  "gemini",
   "perplexity",
   "cline",
   "notion",
@@ -821,8 +822,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.hostContext = {
         theme,
         displayMode: "inline",
-        // Desktop advertises inline alone; the web app offers both.
-        availableDisplayModes: ["inline"],
+        // Correction from the latest sweep: Desktop now advertises
+        // fullscreen too, same as the web app.
+        availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { width: 768, maxHeight: 5000 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
@@ -955,7 +957,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           mcpAppsOverrides: {
             // Both Desktop captures send `hostContext.safeAreaInsets`, all 0.
             safeAreaInsets: true,
-            availableDisplayModes: ["inline"],
+            // Correction from the latest sweep: fullscreen is advertised too.
+            availableDisplayModes: ["inline", "fullscreen"],
             // `toolInputPartial` is deliberately absent, not false: the
             // capture carried no `tool-input-partial`, but that notification
             // only fires while arguments stream and the probe tool takes none.
@@ -1036,17 +1039,23 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         harness: "claude-code",
         computer: { kind: "personal" },
       });
-      // Verbatim from a live mcpjam-learn `start-host-probe` against
-      // Claude Code CLI v2.1.176: raw `initialize` capabilities are
-      // exactly `{ roots: {}, elicitation: {} }` — roots without
-      // `listChanged`, elicitation the SDK parses as form-mode, and NO
-      // `extensions["io.modelcontextprotocol/ui"]`. Replace the SDK
-      // default entirely rather than spreading on top — a spread would
+      // From a live `start-host-probe` against Claude Code CLI v2.1.310
+      // in the latest sweep: elicitation declaring the `form` and `url` modes, and
+      // `extensions["io.modelcontextprotocol/tasks"]`. That capture also
+      // reported `roots.listChanged`, but `roots` is deliberately held at
+      // the older bare `{}` reading pending a cleaner capture. Still NO
+      // `extensions["io.modelcontextprotocol/ui"]`, so keep replacing the
+      // SDK default entirely rather than spreading on top — a spread would
       // leak the UI extension back in and misrepresent Claude Code as a
       // UI-capable client (same move as the Codex template).
+      //
+      // This supersedes the v2.1.176 reading that used to sit here, which
+      // claimed bare `{ roots: {}, elicitation: {} }` — elicitation and the
+      // tasks extension have both grown since.
       base.clientCapabilities = {
         roots: {},
-        elicitation: {},
+        elicitation: { form: {}, url: {} },
+        extensions: { "io.modelcontextprotocol/tasks": {} },
       };
       // The real Claude Code owns native tool discovery from the generated
       // .mcp.json. Keep MCPJam's progressive meta-tools off for this template
@@ -1092,7 +1101,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.259",
+            version: "2.1.310",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -1690,9 +1699,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
 
       base.mcpProfile = {
         profileVersion: 1,
-        // Neither paginationTraversal nor toolListChanged is written here: the
-        // 2026-08-26 capture never saw a `tools/list` from Slack, and
-        // probe-list-changed was never run against it.
+        // The latest capture is the first to see a `tools/list` from Slack:
+        // it fetched page one and stopped without following `nextCursor`.
+        // Earlier runs saw none at all, which is why this was unwritten. `toolListChanged` stays unwritten — probe-list-changed
+        // has still never been run against Slack.
+        paginationTraversal: "firstPageOnly",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // "Slackbot" is the product name this catalog uses throughout. The
@@ -1873,9 +1884,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // MCP Apps extension: hostInfo sent to the View iframe in
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
             // need this to take that path. The version is identity metadata
-            // only; bumped with the 2026-09-29 re-probe (was 3.14.27), which
+            // only; bumped with the latest re-probe (was 3.21.16), which
             // re-confirmed every capability note above.
-            hostInfo: { name: "Cursor", version: "3.21.16" },
+            hostInfo: { name: "Cursor", version: "3.27.14" },
           },
           mcpAppsOverrides: {
             // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
@@ -2004,15 +2015,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
         },
         apps: {
-          // The name is probed: the last capture reported `chatgpt`
-          // 26.825.32147 (the backend catalog's `codex` row). The version is
-          // ASSUMED, a deliberate bump past that capture to OpenAI's
-          // documented minimum desktop build for the DevDay 2026 extensions
-          // (mcp-extensions patterns.md), which Apps such as Bits & Bolts
-          // check before enabling themselves. Replace it with a newer
-          // host-probe capture.
+          // Both name and version are now probed: the latest capture
+          // reported `chatgpt` 26.1021.31345 (the backend catalog's `codex`
+          // row). That replaces the ASSUMED 26.928.20710, a deliberate bump
+          // past the then-latest capture to OpenAI's documented minimum
+          // desktop build for the DevDay 2026 extensions (mcp-extensions
+          // patterns.md), which Apps such as Bits & Bolts check before
+          // enabling themselves. The probed build is past that minimum.
           uiInitialize: {
-            hostInfo: { name: "chatgpt", version: "26.928.20710" },
+            hostInfo: { name: "chatgpt", version: "26.1021.31345" },
           },
           // OpenAI plugin extensions are on by default for Codex; each one
           // can be switched off in the client's Apps tab.
@@ -2060,10 +2071,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
                 "base-uri": ["'none'"],
               },
             },
-            // 2026-10-12: clipboard write now works (refused on 2026-09-29).
-            // Microphone was refused on 2026-09-29; camera and geolocation
-            // were only undeclared canaries. All three stay off.
-            permissions: { mode: "custom", allow: { clipboardWrite: true } },
+            // Correction from the latest sweep: clipboard write is refused again
+            // (`declared-denied`), and that capture's `hostCapabilities`
+            // carries no `sandbox.permissions` block at all. It had briefly
+            // worked in only one earlier run, between two that refused it.
+            // Microphone is `declared-denied` too; camera and geolocation
+            // were only undeclared canaries. Nothing is granted.
+            permissions: { mode: "custom", allow: {} },
             // All three browser storage APIs were readable and writable from
             // inside the widget sandbox. Not an MCP concept — the MCP Apps
             // spec says nothing about storage.
@@ -2485,7 +2499,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         },
         apps: {
           uiInitialize: {
-            hostInfo: { name: "Visual Studio Code", version: "1.136.1" },
+            // Latest capture: `ui/initialize` reported 1.143.1. The
+            // `clientInfo` above is deliberately NOT bumped with it — that
+            // run's wire `clientInfo` was `copilot-cli` 1.0.100-1.
+            hostInfo: { name: "Visual Studio Code", version: "1.143.1" },
           },
           compatRuntime: { openaiApps: false },
           sandbox: {
@@ -2670,6 +2687,113 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             version: "1.3",
           },
         },
+      };
+      return base;
+    },
+  },
+  {
+    id: "gemini",
+    label: "Gemini",
+    description:
+      "Gemini. Renders MCP Apps views, but advertises no sandbox capability.",
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "gemini",
+        modelId: "google/gemini-3-pro",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // NOT what the capture shows, and deliberately so. On the wire Gemini
+      // sends `clientCapabilities: {}` — no `io.modelcontextprotocol/ui`
+      // extension — yet it demonstrably renders MCP Apps: the same run
+      // returned a real `ui/initialize`, a populated `hostContext`, and a CSP
+      // the host enforced against the widget's declaration. It renders
+      // without advertising.
+      //
+      // The emulator keys View rendering off this extension, so mirroring the
+      // empty object would seed a template that renders nothing while the
+      // real product renders fine. Declared here to reproduce observed
+      // behavior.
+      base.clientCapabilities = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+          },
+        },
+      };
+      base.hostContext = {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        // Only `maxHeight` is declared; no width, no safeAreaInsets. The
+        // sandbox measured 3132px against the declared 600px cap, so the cap
+        // is advisory — captured as declared, not as observed.
+        containerDimensions: { maxHeight: 600 },
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // ONE observed negotiation, not a ladder probe.
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "google-adk", version: "2.12.0" },
+        },
+        apps: {
+          // `ui/initialize` answers the widget runtime name; the product name
+          // `Gemini` arrives separately on `hostContext.hostInfo`.
+          uiInitialize: {
+            hostInfo: { name: "UCS Widget", version: "1.0" },
+          },
+          compatRuntime: { openaiApps: false },
+          sandbox: {
+            csp: { mode: "declared" },
+            // `hostCapabilities` carries no `sandbox` block at all, so the
+            // host advertises no permission delegation. The permission pair
+            // in that run is half-missing, so the empty allow list follows
+            // from the absent capability, not from a paired measurement.
+            permissions: { mode: "custom", allow: {} },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
+            sandboxAttrs: ["allow-forms", "allow-popups"],
+            // Served from `about:srcdoc`, so `location.origin` reads `null`
+            // while `self.origin` is `https://www.gstatic.com`.
+            sameOriginAppIframe: true,
+          },
+          mcpAppsOverrides: {
+            openLinks: true,
+            logging: true,
+            message: true,
+            serverResources: true,
+            // Absent from `hostCapabilities` — a positive signal.
+            serverTools: false,
+            updateModelContext: false,
+            downloadFile: false,
+            sandboxPermissions: false,
+            toolInfo: true,
+            // Paired CSP probe: every connect and resource subtype and the
+            // frame directive honored the declaration; `base-uri` refused it.
+            // The host enforces all of this while advertising no sandbox.
+            cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            cspFrameDomains: true,
+            cspBaseUriDomains: false,
+            toolResult: { structuredContent: true },
+            resourcePrefersBorder: true,
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            safeAreaInsets: false,
+          },
+        },
+        // `paginationTraversal` and `toolListChanged` stay unwritten: the
+        // capture never saw a `tools/list` and probe-list-changed was never
+        // run, so neither question was asked.
       };
       return base;
     },

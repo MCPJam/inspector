@@ -1,3 +1,4 @@
+import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
 import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
 import { hasServiceCredential } from "../../services/service-credential.js";
 import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
@@ -1614,13 +1615,7 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    // A Playground turn runs its plugins' servers isolated: one that is
-    // refused or fails is left out of the turn instead of failing it (see
-    // `plugin-server-isolation.ts`). Scenario and harness turns stay strict.
-    const isolatedServerIds =
-      isScenarioSession || resolvedExecution.harness
-        ? []
-        : (effectiveCapabilities?.pluginServerIds ?? []);
+    const isolatedServerIds = chatTurnIsolatedServerIds(effectiveServerIds, isScenarioSession);
     // Membership chat (no share/scenario token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / scenario)

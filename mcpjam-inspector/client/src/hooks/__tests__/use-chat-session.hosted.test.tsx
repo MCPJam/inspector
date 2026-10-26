@@ -1449,15 +1449,7 @@ describe("useChatSession hosted mode", () => {
     expect(body.selectedServerNames).toEqual(["server-a", "server-b"]);
   });
 
-  it("fails a send closed when the session changes mid-preflight", async () => {
-    // `useChat` runs on a stable `proxyTransport` that delegates at REQUEST
-    // time to the latest transport, so the POST body carries whatever
-    // `chatSessionId` is live when it fires — not the one the message was
-    // composed against. Without a guard, a session change during the async
-    // server-id preflight posts this turn into an unrelated transcript, and
-    // ingestion writes it there. Sibling of the target-key check above.
-    // `resetChat` mints through `generateId`, stubbed to a constant for this
-    // suite — so it must vary here or the session would never actually move.
+  it.each(["session", "saved config"])("fails closed when %s changes during preparation", async (change) => {
     vi.mocked(generateId)
       .mockImplementationOnce(() => "chat-session-id")
       .mockImplementation(() => "chat-session-id-2");
@@ -1470,41 +1462,42 @@ describe("useChatSession hosted mode", () => {
         }),
     );
 
-    const { result } = renderHook(() =>
+    const { result, rerender } = renderHook(({ systemPrompt }) =>
       useChatSession({
         selectedServers: ["server-a"],
+        savedClientConfig: {
+          id: "config-a", schemaVersion: 2, hostStyle: "claude",
+          modelId: guestModel.id, systemPrompt, temperature: 0.7,
+          requireToolApproval: false, serverIds: [], optionalServerIds: [],
+          connectionDefaults: {}, clientCapabilities: {}, hostContext: {},
+        },
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: [],
           ensureServerIds,
         },
       }),
+      { initialProps: { systemPrompt: "First prompt" } },
     );
 
-    // `authFetch`, not `mockState.sendMessage`: the mocked `useChat` returns
-    // its OWN inline `sendMessage` that drives the transport directly, so
-    // `mockState.sendMessage` is never wired in and asserting on it would be
-    // vacuously true. The transport's fetch is the only real post signal.
     mockState.authFetch.mockClear();
 
     let sendPromise: Promise<boolean> | undefined;
     act(() => {
-      sendPromise = result.current.sendMessage({ text: "hi" }) as unknown as
-        Promise<boolean> | undefined;
+      sendPromise = result.current.sendMessage({ text: "hi" });
     });
     expect(ensureServerIds).toHaveBeenCalledWith(["server-a"]);
 
-    // The thread moves under the in-flight preflight.
-    act(() => {
-      result.current.resetChat();
-    });
-    expect(result.current.chatSessionId).toBe("chat-session-id-2");
+    if (change === "session") {
+      act(() => result.current.resetChat());
+      expect(result.current.chatSessionId).toBe("chat-session-id-2");
+    } else {
+      rerender({ systemPrompt: "Changed prompt" });
+    }
 
     resolvePreflight([{ serverId: "id-a" }]);
     const dispatched = await act(async () => await sendPromise);
 
-    // Fails closed: resolves `false` and never posts, so the turn cannot land
-    // under the session that replaced the one it was composed against.
     expect(dispatched).toBe(false);
     expect(mockState.authFetch).not.toHaveBeenCalled();
   });

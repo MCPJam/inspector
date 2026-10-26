@@ -14,15 +14,10 @@ import { WebRouteError } from "../routes/web/errors.js";
 import { markOnboardingPhase } from "../services/plugin-host/onboarding-trace.js";
 import { logger } from "./logger.js";
 
-/**
- * Interactive chat runs a plugin's admitted servers ISOLATED: one that is
- * refused, fails to start, connect or authenticate, or does not list its
- * tools within the turn's budget contributes no tools, and the turn runs on
- * without it. Only the servers the backend labelled as a plugin's are
- * isolated (`EffectiveCapabilitySet.pluginServerIds`). A plugin's server can
- * never be selected as a standalone one, so every server the member chose
- * still fails the turn with the error it always did.
- */
+/** Recorded scenarios require every server; interactive turns isolate each one. */
+export function chatTurnIsolatedServerIds(serverIds: readonly string[], isScenario = false): string[] {
+  return isScenario ? [] : [...serverIds];
+}
 
 type ToolsByServer = Awaited<
   ReturnType<MCPClientManager["getToolsForAiSdkByServer"]>
@@ -45,6 +40,7 @@ export async function listToolsByServerIsolating(args: {
       .filter((key) => args.isolatedKeys.has(key))
       .map((key) =>
         args.list([key]).catch((error: unknown) => {
+          if (error instanceof WebRouteError && error.code === "INTERNAL_ERROR") throw error;
           failed.set(key, error);
           return {};
         }),
@@ -162,7 +158,7 @@ export function pluginServerUnavailableReason(
     : "unreachable";
 }
 
-/** A chat turn's isolated plugin servers, as the route hands them over. */
+/** A chat turn's isolated servers, as the route hands them over. */
 export interface IsolatedServers {
   serverIds: readonly string[];
   /** The ones `createAuthorizedManager` refused before connecting, by id. */
@@ -204,6 +200,8 @@ export function emitPluginServersUnavailable(
     chatSessionId,
     servers: servers.map(({ serverId, reason, error }) => ({
       serverId,
+      ...(error instanceof WebRouteError && typeof error.details?.serverName === "string"
+        ? { serverName: error.details.serverName } : {}),
       reason,
       slug: describeError(error).slug,
     })),
