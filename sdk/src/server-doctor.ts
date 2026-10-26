@@ -350,10 +350,11 @@ async function collectSkills(
       );
     }
     // Per page, since the listing's own `ttlMs` / `cacheScope` come from
-    // whichever page carried them.
-    const listMissing = listing.omittedCacheAttributes.map(
-      (field) => `\`${field}\``
-    );
+    // whichever page carried them. Named in a fixed order, not the order
+    // pages omitted them, so the clause matches the hosted doctor's allowlist.
+    const listMissing = (["ttlMs", "cacheScope"] as const)
+      .filter((field) => listing.omittedCacheAttributes.includes(field))
+      .map((field) => `\`${field}\``);
     if (listMissing.length > 0) {
       conformance.push(
         `\`skills/list\` omitted required ${listMissing.join(" and ")}`
