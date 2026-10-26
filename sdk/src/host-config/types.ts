@@ -558,9 +558,49 @@ export type OpenAiAppsCapabilities = {
   requestClose?: boolean;
 };
 
-// Per-dimension surface controlled by `mcpProfile.apps.mcpAppsOverrides`.
-// Sparse — every field optional. `availableDisplayModes` is the only
-// non-boolean: an array of spec-defined mode strings, replacement semantics.
+/**
+ * Per-dimension MCP Apps (SEP-1865 `app.*` bridge) surface controlled by
+ * `mcpProfile.apps.mcpAppsOverrides`. Sparse: every field is optional and an
+ * override merges field by field over the host style's preset.
+ * `availableDisplayModes` is the only non-boolean, an array of spec-defined
+ * modes with replacement semantics. Independent from the `window.openai`
+ * shim matrix: toggling a row here never changes that one.
+ *
+ * Each row is one of three lever types:
+ *   - **advertise**: folded into the `HostCapabilities` blob the host returns
+ *     in `ui/initialize` (e.g. `serverResources`, `logging`).
+ *   - **emit**: whether the host sends a notification to the View at runtime
+ *     (e.g. `toolInputPartial`, `hostContextChanged`).
+ *   - **behavior**: how the host interprets resource `_meta.ui.*` or other
+ *     inbound data (e.g. `resourcePrefersBorder`).
+ *
+ * Row meanings:
+ *   - `availableDisplayModes`: modes advertised in
+ *     `HostContext.availableDisplayModes`. Host side only; the View declares
+ *     its own `appCapabilities.availableDisplayModes` in `ui/initialize`.
+ *   - `toolInputPartial` / `toolCancelled` / `hostContextChanged` /
+ *     `resourceTeardown`: whether the host emits the matching
+ *     `ui/notifications/*` (or the `ui/resource-teardown` request).
+ *   - `toolInfo`: the `HostContext.toolInfo` field.
+ *   - `openLinks` / `serverTools`: advertised like the keys below. Every
+ *     built-in preset turns them on, but keeping them in the matrix lets a
+ *     legacy `hostCapabilitiesOverride: {}` ("advertise nothing") migrate
+ *     without widening the surface, and lets minimal hosts leave them out.
+ *   - `serverResources` / `logging` / `updateModelContext` / `message`: the
+ *     matching `HostCapabilities` keys. Turning off `logging` also blocks
+ *     `app.sendLog()`, since the spec gates `notifications/message` on it.
+ *   - `downloadFile`: support for `ui/download-file`. When true the host wires
+ *     the handler and advertises `hostCapabilities.downloadFile`.
+ *   - `requestTeardown`: the host answers a view-initiated
+ *     `ui/notifications/request-teardown` with a graceful
+ *     `ui/resource-teardown` before unmounting. SEP-1865 doesn't gate that
+ *     notification; the row keeps each preset honest about it.
+ *   - `sandboxPermissions` / `cspFrameDomains` / `cspBaseUriDomains`: whether
+ *     the host honors the matching resource `_meta.ui` sandbox sub-fields
+ *     when it composes the iframe sandbox.
+ *   - `resourcePrefersBorder`: whether the host honors
+ *     `_meta.ui.prefersBorder` when it draws the iframe chrome.
+ */
 export type McpAppsCapabilities = {
   availableDisplayModes?: ("inline" | "fullscreen" | "pip")[];
   toolInputPartial?: boolean;

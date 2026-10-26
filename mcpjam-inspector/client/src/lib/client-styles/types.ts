@@ -5,6 +5,7 @@ import type {
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import type { InjectedOpenAiCompatCapabilities } from "@/shared/widget-snapshot";
+import type { ResolvedMcpAppsCapabilities } from "@/shared/host-style-capabilities";
 
 /**
  * Persistable shape for a custom loading indicator. Built-in hosts ship
@@ -210,182 +211,13 @@ export type EffectiveCompatRuntime =
   | { injected: false }
   | { injected: true; capabilities: ResolvedOpenAiAppsCapabilities };
 
-/**
- * Sibling of {@link OpenAiAppsCapabilities} for the SEP-1865 `app.*` spec
- * bridge. Sparse here — presets supply the full resolved record via
- * {@link ResolvedMcpAppsCapabilities}; user overrides on
- * `mcpProfile.apps.mcpAppsOverrides` are sparse and merge field-by-field.
- *
- * Independent from the OpenAI shim matrix. `window.openai.callTool` and
- * `app.callTool` are different surfaces representing different APIs;
- * toggling a row here does not affect the OpenAI matrix and vice versa.
- *
- * Each row corresponds to one of three lever types:
- *
- *   - **advertise** — folded into the `HostCapabilities` blob the host
- *     returns in `ui/initialize` (e.g. `serverResources`, `logging`).
- *   - **emit** — gates whether the host actually sends a notification to
- *     the View at runtime (e.g. `toolInputPartial`, `hostContextChanged`).
- *   - **behavior** — gates how the host interprets resource `_meta.ui.*`
- *     or other inbound data (e.g. `resourcePrefersBorder`).
- *
- * Row meanings:
- *
- *   - `availableDisplayModes` — host-advertised display modes via
- *     `HostContext.availableDisplayModes`. The matrix only gates the
- *     host-advertised side; the View also declares its own
- *     `appCapabilities.availableDisplayModes` in `ui/initialize` (the
- *     widget's responsibility).
- *   - `toolInputPartial` / `toolCancelled` / `hostContextChanged` /
- *     `resourceTeardown` — gate whether the host emits the corresponding
- *     `ui/notifications/*` (or `ui/resource-teardown` request) to the View.
- *   - `toolInfo` — gate the `HostContext.toolInfo` field.
- *   - `serverResources` / `logging` — gate the matching `HostCapabilities`
- *     keys. Disabling `logging` also blocks `app.sendLog()` (the
- *     `notifications/message` View → Host channel is gated by this
- *     capability per the spec).
- *   - `sandboxPermissions` / `cspFrameDomains` / `cspBaseUriDomains` —
- *     gate whether the renderer honors the matching resource `_meta.ui`
- *     sandbox sub-fields when composing the iframe sandbox.
- *   - `resourcePrefersBorder` — gate whether the renderer honors
- *     `_meta.ui.prefersBorder` when rendering the iframe chrome.
- */
-export type McpAppsCspConnectDomains = {
-  fetch?: boolean;
-  xhr?: boolean;
-  websocket?: boolean;
-};
-
-export type McpAppsCspResourceDomains = {
-  script?: boolean;
-  stylesheet?: boolean;
-  image?: boolean;
-  font?: boolean;
-  media?: boolean;
-};
-
-/**
- * Which halves of an MCP Tool Result the host relays to a widget that called
- * a tool. Named (not inlined) because BOTH the authoring surface
- * (`McpAppsCapabilities`) and the resolved surface
- * (`ResolvedMcpAppsCapabilities`) carry it, and the merge function converts
- * one into the other — inlining it twice is how they drift apart.
- */
-export type McpAppsToolResultPolicy = {
-  structuredContent?: boolean;
-  content?: {
-    text?: boolean;
-    image?: boolean;
-    audio?: boolean;
-    resource?: boolean;
-    resourceLink?: boolean;
-  };
-};
-
-export type McpAppsCapabilities = {
-  /** Allow-list of display modes advertised in HostContext. */
-  availableDisplayModes?: ("inline" | "fullscreen" | "pip")[];
-  toolInputPartial?: boolean;
-  toolCancelled?: boolean;
-  hostContextChanged?: boolean;
-  resourceTeardown?: boolean;
-  toolInfo?: boolean;
-  openLinks?: boolean;
-  serverTools?: boolean;
-  serverResources?: boolean;
-  logging?: boolean;
-  updateModelContext?: boolean;
-  message?: boolean;
-  sandboxPermissions?: boolean;
-  cspFrameDomains?: boolean;
-  cspBaseUriDomains?: boolean;
-  cspConnectDomains?: McpAppsCspConnectDomains;
-  cspResourceDomains?: McpAppsCspResourceDomains;
-  resourcePrefersBorder?: boolean;
-  downloadFile?: boolean;
-  requestTeardown?: boolean;
-  /**
-   * Whether the host sends `hostContext.safeAreaInsets` at all. Optional
-   * under SEP-1865, and hosts split: Claude reports 12px on every edge,
-   * while Slackbot, Cursor, VS Code, Codex and Le Chat omit the key, so a
-   * widget reading `insets.top` gets `undefined` rather than a zero.
-   */
-  safeAreaInsets?: boolean;
-  /**
-   * Probe-measured MCP Tool Result relay behavior for widget-initiated tool
-   * calls. Shares storage with the app bridge overrides but is not an
-   * `app.*` capability — it shapes the VALUE a live handler returns rather
-   * than gating whether a handler exists.
-   */
-  toolResult?: McpAppsToolResultPolicy;
-  /**
-   * Host policy for `ui/request-display-mode` originating from the widget.
-   * SEP-1865 permits the host to decline these requests; this row exposes
-   * that decision as a knob.
-   *   - "accept": grant the requested mode (clamped to `availableDisplayModes`)
-   *   - "user-initiated-only": grant only after the user has explicitly
-   *     moved off `inline` via the host picker; otherwise return `inline`
-   *   - "decline": always return the current mode, ignoring the request
-   */
-  widgetDisplayModeRequests?: "accept" | "user-initiated-only" | "decline";
-};
-
-/**
- * Fully-resolved per-dimension matrix — preset merged with user overrides,
- * no undefineds except the optional probe-derived CSP subtype leaves.
- * Returned by `resolveEffectiveMcpAppsCapabilities`.
- * `availableDisplayModes` is non-empty (resolver coerces to `["inline"]`
- * if a user override would otherwise empty it).
- *
- * `openLinks` and `serverTools` are matrix-controlled even though every
- * built-in preset turns them on — keeping them in the matrix lets
- * legacy `hostCapabilitiesOverride: {}` ("advertise nothing") survive
- * migration without silently widening the advertised surface, and lets
- * future host presets that legitimately don't advertise them
- * (e.g. minimal SEP-1865-only hosts) sit in the same shape.
- *
- * `downloadFile` advertises the host's support for the spec's
- * `ui/download-file` request. When true the renderer wires
- * `bridge.ondownloadfile` and advertises `hostCapabilities.downloadFile`
- * in the ui/initialize blob.
- *
- * `requestTeardown` advertises that the host will honor a view-initiated
- * `ui/notifications/request-teardown` by attempting a graceful
- * `ui/resource-teardown` before unmounting the iframe. The notification
- * itself is not capability-gated by SEP-1865, but the matrix row keeps
- * the per-preset behavior honest (a host that ignores the request
- * should set this false).
- */
-export type ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ("inline" | "fullscreen" | "pip")[];
-  toolInputPartial: boolean;
-  toolCancelled: boolean;
-  hostContextChanged: boolean;
-  resourceTeardown: boolean;
-  toolInfo: boolean;
-  openLinks: boolean;
-  serverTools: boolean;
-  serverResources: boolean;
-  logging: boolean;
-  updateModelContext: boolean;
-  message: boolean;
-  sandboxPermissions: boolean;
-  cspFrameDomains: boolean;
-  cspBaseUriDomains: boolean;
-  cspConnectDomains?: McpAppsCspConnectDomains;
-  cspResourceDomains?: McpAppsCspResourceDomains;
-  resourcePrefersBorder: boolean;
-  downloadFile: boolean;
-  requestTeardown: boolean;
-  safeAreaInsets: boolean;
-  widgetDisplayModeRequests: "accept" | "user-initiated-only" | "decline";
-  /**
-   * Optional like the CSP subtype records above: absent means the host
-   * forwards the whole tool result. `mergeMcpAppsCapabilities` resolves it
-   * and `host-app-bridge` enforces it on every result relayed to a widget.
-   */
-  toolResult?: McpAppsToolResultPolicy;
-};
+export type {
+  McpAppsCspConnectDomains,
+  McpAppsCspResourceDomains,
+  McpAppsToolResultPolicy,
+  McpAppsCapabilities,
+  ResolvedMcpAppsCapabilities,
+} from "@/shared/host-style-capabilities";
 
 /**
  * Inspector-side chat chrome for a host style. None of this travels over
