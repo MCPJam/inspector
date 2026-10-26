@@ -40,7 +40,8 @@ export type FindStyleCapabilities = (
 /** The part of a saved profile these resolvers read. */
 type McpProfileWithApps = { apps?: { mcpAppsOverrides?: McpAppsCapabilities } };
 
-/** Inspector emulates the SDK matrix except resource-cache TTL behavior. */
+/** Inspector emulates the SDK matrix except resource-cache TTL behavior; the
+ * SDK type documents what each row gates. */
 export type McpAppsCapabilities = Omit<SdkMcpAppsCapabilities, "resourceCacheTtl">;
 export type McpAppsCspConnectDomains = NonNullable<
   McpAppsCapabilities["cspConnectDomains"]
