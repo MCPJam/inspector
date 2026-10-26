@@ -235,13 +235,13 @@ describe("web auth manager batching", () => {
     ).rejects.toMatchObject<WebRouteError>({
       status: 404,
       code: "NOT_FOUND",
-      message: "server-b failed",
+      message: '"server-b" couldn\'t connect: server-b failed. Check the server\'s settings on the Servers page.',
     });
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a refused server out of the batch when asked to tolerate refusals", async () => {
+  it.each([true, false])("keeps refusals named with caller names present: %s", async (callerNames) => {
     global.fetch = vi.fn(async () =>
       Response.json({
         results: {
@@ -250,6 +250,7 @@ describe("web auth manager batching", () => {
             status: 403,
             code: "FORBIDDEN",
             message: "server-a failed",
+            serverName: "A",
           },
           "server-b": {
             ok: true,
@@ -259,6 +260,7 @@ describe("web auth manager batching", () => {
             serverConfig: {
               transportType: "http",
               url: "https://server-b.example.com/mcp",
+              name: "B",
             },
           },
           // An explicit-OAuth server with no token is refused in pass 1 too.
@@ -270,6 +272,7 @@ describe("web auth manager batching", () => {
             serverConfig: {
               transportType: "http",
               url: "https://server-c.example.com/mcp",
+              name: "C",
               useOAuth: true,
             },
           },
@@ -285,14 +288,15 @@ describe("web auth manager batching", () => {
       10_000,
       undefined,
       undefined,
-      { serverNames: ["A", "B", "C"], tolerateServerRefusals: true },
+      { ...(callerNames ? { serverNames: ["A", "B", "C"] } : {}), tolerateServerRefusals: true },
     );
+    expect(result.serverNamesById).toEqual({ "server-a": "A", "server-b": "B", "server-c": "C" });
 
     // Each refusal is the error the server's own request would have thrown.
     expect(result.refusedServers?.["server-a"]).toMatchObject({
       status: 403,
       code: "FORBIDDEN",
-      message: "server-a failed",
+      message: '\"A\" couldn\'t connect: server-a failed. Check the server\'s settings on the Servers page.',
       details: { serverId: "server-a", serverName: "A" },
     });
     expect(result.refusedServers?.["server-c"]).toMatchObject({
@@ -374,7 +378,7 @@ describe("web auth manager batching", () => {
     global.fetch = batch(true);
     await expect(run()).rejects.toMatchObject({
       status: 403,
-      message: "srv-chosen failed",
+      message: '"srv-chosen" couldn\'t connect: srv-chosen failed. Check the server\'s settings on the Servers page.',
     });
   });
 
@@ -1375,7 +1379,7 @@ describe("web auth manager batching", () => {
       status: 401,
       code: "UNAUTHORIZED",
       message:
-        'Server "Asana" requires OAuth authentication. Please complete the OAuth flow first.',
+        '"Asana" needs you to sign in. Sign in from the Servers page, then try again.',
       details: {
         oauthRequired: true,
         serverId: "server-1",
