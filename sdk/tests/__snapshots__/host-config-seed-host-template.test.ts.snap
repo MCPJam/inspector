@@ -3102,11 +3102,19 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "systemPrompt": "",
     "temperature": 0.7,
   },
-  "gemini-enterprise/dark": {
+  "gemini/dark": {
     "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
-    "clientCapabilities": {},
+    "clientCapabilities": {
+      "extensions": {
+        "io.modelcontextprotocol/ui": {
+          "mimeTypes": [
+            "text/html;profile=mcp-app",
+          ],
+        },
+      },
+    },
     "computer": undefined,
     "connectionDefaults": {
       "headers": {},
@@ -3126,7 +3134,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "displayMode": "inline",
       "theme": "dark",
     },
-    "hostStyle": "gemini-enterprise",
+    "hostStyle": "gemini",
     "mcpProfile": {
       "apps": {
         "compatRuntime": {
@@ -3214,11 +3222,19 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "systemPrompt": "",
     "temperature": 0.7,
   },
-  "gemini-enterprise/light": {
+  "gemini/light": {
     "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
-    "clientCapabilities": {},
+    "clientCapabilities": {
+      "extensions": {
+        "io.modelcontextprotocol/ui": {
+          "mimeTypes": [
+            "text/html;profile=mcp-app",
+          ],
+        },
+      },
+    },
     "computer": undefined,
     "connectionDefaults": {
       "headers": {},
@@ -3238,7 +3254,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "displayMode": "inline",
       "theme": "dark",
     },
-    "hostStyle": "gemini-enterprise",
+    "hostStyle": "gemini",
     "mcpProfile": {
       "apps": {
         "compatRuntime": {
