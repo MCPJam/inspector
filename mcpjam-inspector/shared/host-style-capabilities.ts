@@ -21,6 +21,7 @@ export {
   MCP_APPS_COPILOT_SURFACE,
   MCP_APPS_GOOSE_SURFACE,
   MCP_APPS_SLACK_SURFACE,
+  MCP_APPS_GEMINI_SURFACE,
 } from "./host-style-presets";
 
 type HostCapabilitiesDetail = Partial<Omit<McpUiHostCapabilities, "sandbox">>;

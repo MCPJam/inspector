@@ -133,6 +133,40 @@ export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
 };
 
 /**
+ * Gemini, from its first capture. Mirrors the catalog's
+ * `gemini` row and the SDK's `MCP_APPS_GEMINI`.
+ *
+ * The host enforces CSP against the widget's declaration while advertising no
+ * `sandbox` capability at all, which is why `sandboxPermissions` is false
+ * beside true CSP values. `serverTools`, `updateModelContext` and
+ * `downloadFile` are absent from `hostCapabilities` — a positive signal, not
+ * an unasked question.
+ */
+export const MCP_APPS_GEMINI_SURFACE: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  toolInputPartial: false,
+  toolCancelled: false,
+  hostContextChanged: false,
+  resourceTeardown: false,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: false,
+  serverResources: true,
+  logging: true,
+  updateModelContext: false,
+  message: true,
+  sandboxPermissions: false,
+  cspFrameDomains: true,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: true,
+  downloadFile: false,
+  requestTeardown: false,
+  // Absent from `hostContext` entirely.
+  safeAreaInsets: false,
+  widgetDisplayModeRequests: "accept",
+};
+
+/**
  * Content types OpenAI's App hosts accept, per the plugin extensions spec's
  * Supported Content table: `ui/update-model-context` takes text, images,
  * resource links, embedded resources and structured content; `ui/message`
@@ -206,6 +240,9 @@ export const HOST_STYLE_CAPABILITIES = {
   },
   slack: {
     mcpAppsCapabilities: MCP_APPS_SLACK_SURFACE,
+  },
+  gemini: {
+    mcpAppsCapabilities: MCP_APPS_GEMINI_SURFACE,
   },
   cursor: {
     // Matrix captured verbatim from a Cursor 3.4.17 probe. Notably Cursor

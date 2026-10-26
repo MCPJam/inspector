@@ -150,41 +150,8 @@ export {
   MCP_APPS_COPILOT_SURFACE,
   MCP_APPS_GOOSE_SURFACE,
   MCP_APPS_SLACK_SURFACE,
+  MCP_APPS_GEMINI_SURFACE,
 } from "@/shared/host-style-capabilities";
-
-/**
- * Gemini, from its first capture. Mirrors the catalog's
- * `gemini` row and the SDK's `MCP_APPS_GEMINI`.
- *
- * The host enforces CSP against the widget's declaration while advertising no
- * `sandbox` capability at all, which is why `sandboxPermissions` is false
- * beside true CSP values. `serverTools`, `updateModelContext` and
- * `downloadFile` are absent from `hostCapabilities` — a positive signal, not
- * an unasked question.
- */
-export const MCP_APPS_GEMINI_SURFACE: ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ["inline", "fullscreen", "pip"],
-  toolInputPartial: false,
-  toolCancelled: false,
-  hostContextChanged: false,
-  resourceTeardown: false,
-  toolInfo: true,
-  openLinks: true,
-  serverTools: false,
-  serverResources: true,
-  logging: true,
-  updateModelContext: false,
-  message: true,
-  sandboxPermissions: false,
-  cspFrameDomains: true,
-  cspBaseUriDomains: false,
-  resourcePrefersBorder: true,
-  downloadFile: false,
-  requestTeardown: false,
-  // Absent from `hostContext` entirely.
-  safeAreaInsets: false,
-  widgetDisplayModeRequests: "accept",
-};
 
 // NOTE: capability presets are best-effort mocks of what each vendor publicly
 // supports today. Treat them as starting points — verify against vendor docs
@@ -644,7 +611,7 @@ export const GEMINI_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.MCP_APPS,
     platform: MCPJAM_PLATFORM,
     fontCss: MCPJAM_FONT_CSS,
-    mcpAppsCapabilities: MCP_APPS_GEMINI_SURFACE,
+    ...HOST_STYLE_CAPABILITIES.gemini,
     resolveStyleVariables: getMcpJamStyleVariables,
   },
   chatUi: {
