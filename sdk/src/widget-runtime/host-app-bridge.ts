@@ -305,6 +305,11 @@ export interface RegisterHostBridgeHandlersOptions {
   ) => void;
 }
 
+/** Error a widget gets for `resources/read` when the host advertises no
+ * `serverResources`. Shared with the eval harness's direct-binding guard. */
+export const RESOURCE_READS_DISABLED_MESSAGE =
+  "This host does not allow resource reads.";
+
 /**
  * Install the SEP-1865 host bridge handlers on `bridge`, gated by
  * `effectiveHostCapabilities` and the capabilities matrix. This is the
@@ -521,6 +526,15 @@ export function registerHostBridgeHandlers(
         return { resourceTemplates: [] } as ListResourceTemplatesReturn;
       }
       return callbacks.onListResourceTemplates(params);
+    };
+  } else {
+    // Unhandled, the read would still get -32601 but as "Method not found",
+    // which reads like a broken host. Keep the code and name the cause.
+    bridge.onreadresource = async () => {
+      throw Object.assign(
+        new Error(RESOURCE_READS_DISABLED_MESSAGE),
+        { code: -32601 }
+      );
     };
   }
 
