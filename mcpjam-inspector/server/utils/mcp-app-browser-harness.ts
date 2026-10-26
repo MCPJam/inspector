@@ -949,10 +949,14 @@ export class McpAppBrowserHarness {
           this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
         if (!capabilities.serverResources)
           return { error: RESOURCE_READS_DISABLED_MESSAGE };
-        const readResource = this.opts.readResource;
         this.pendingRpcCount += 1;
         try {
-          return { result: await readResource(widget.serverId, payload.params) };
+          return {
+            result: await this.opts.readResource(
+              widget.serverId,
+              payload.params,
+            ),
+          };
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
           // Unlike tool calls, reads leave no record in the run, and a widget
