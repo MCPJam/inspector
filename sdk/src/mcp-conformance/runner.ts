@@ -4,6 +4,12 @@ import {
   isUnrunCheck,
 } from "../conformance-outcome.js";
 import {
+  AUTHORIZATION_REQUIRED_MESSAGE,
+  authorizationRequiredDetails,
+  isAuthorizationRefusal,
+  isUnauthorizedProbe,
+} from "../conformance-authorization.js";
+import {
   buildConformanceProfileStamp,
   conformanceProfile,
   partitionByProfile,
@@ -454,6 +460,30 @@ async function runClientChecks(
       (check) => !eraGate(check, config.era, config.protocolVersion),
     );
 
+    // Refused for credentials: nothing below the auth layer was reached, so no
+    // check has a verdict — every applicable one could not run, and the run is
+    // `incomplete` rather than `failed`. The degenerate all-era-skipped
+    // selection still anchors one result on the first check, so the refusal
+    // can never vanish into a `passed` run.
+    if (isAuthorizationRefusal(error)) {
+      const refused = (check: MCPClientCheckDefinition) =>
+        couldNotRunResult(
+          check,
+          AUTHORIZATION_REQUIRED_MESSAGE,
+          authorizationRequiredDetails(error),
+        );
+      return {
+        checks: selectedClientChecks.map((check, index) =>
+          !firstApplicableCheck && index === 0
+            ? refused(check)
+            : (eraGate(check, config.era, config.protocolVersion) ??
+              refused(check)),
+        ),
+        config,
+        readiness: [],
+      };
+    }
+
     // Degenerate modern-era selection: EVERY selected client check is
     // legacy-only, so there is no era-applicable check to pin the connect
     // failure to (`firstApplicableCheck` is undefined). The normal loop below
@@ -511,6 +541,24 @@ async function runClientChecks(
 
     return { checks, config, readiness: [] };
   }
+}
+
+/**
+ * A raw probe that "failed" on a 401 graded the authorization layer, not the
+ * MCP behaviour it names (a missing JSON-RPC error object, an initialize that
+ * did not return a session). Same rule the transport checks already apply to
+ * a gateway's 401 page: the run establishes nothing there, so it could not
+ * run. The original failure message stays in `details` for the record.
+ */
+function reclassifyUnauthorizedProbe(check: MCPCheckResult): MCPCheckResult {
+  if (check.status !== "failed" || !isUnauthorizedProbe(check.details)) {
+    return check;
+  }
+  return couldNotRunResult(check, AUTHORIZATION_REQUIRED_MESSAGE, {
+    ...check.details,
+    ...authorizationRequiredDetails(),
+    probeFailure: check.error?.message,
+  });
 }
 
 export class MCPConformanceTest {
@@ -572,7 +620,7 @@ export class MCPConformanceTest {
       ...transportChecks,
       ...modernChecks,
       ...wireSchema.results,
-    ];
+    ].map(reclassifyUnauthorizedProbe);
     // The tally reports EVERYTHING that ran, pending checks included: a report
     // that hid them would misstate what the run did. Only the VERDICT is
     // narrowed to the scored set, below.

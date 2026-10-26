@@ -30,6 +30,11 @@ import { TASK_CREATED_META_KEY } from "../mcp-client-manager/transport-utils.js"
 import { deepJsonSafe } from "../json-safe.js";
 import { withEphemeralClient } from "../operations.js";
 import {
+  AUTHORIZATION_REQUIRED_MESSAGE,
+  authorizationRequiredDetails,
+  isAuthorizationRefusal,
+} from "../conformance-authorization.js";
+import {
   buildOutcomeSummary,
   decideConformanceOutcome,
   isUnrunCheck,
@@ -2341,16 +2346,28 @@ export class MCPTasksConformanceTest {
         }
       );
     } catch (error) {
-      const failure = failed(
-        "tasks-wire-resolvable",
-        Date.now() - startedAt,
-        `Failed to connect to ${this.config.target}: ${errorMessage(error)}`,
-        undefined,
-        error
-      );
+      // Refused for credentials: the wire was never reached, so it could not
+      // be resolved either way — `incomplete`, not `failed`.
+      const failure = isAuthorizationRefusal(error)
+        ? couldNotRun(
+            "tasks-wire-resolvable",
+            AUTHORIZATION_REQUIRED_MESSAGE,
+            authorizationRequiredDetails(error)
+          )
+        : failed(
+            "tasks-wire-resolvable",
+            Date.now() - startedAt,
+            `Failed to connect to ${this.config.target}: ${errorMessage(error)}`,
+            undefined,
+            error
+          );
+      const verdict = decideOutcome([failure]);
       return {
-        passed: false,
-        outcome: "failed",
+        passed: verdict.outcome === "passed",
+        outcome: verdict.outcome,
+        ...(verdict.incompleteReason
+          ? { incompleteReason: verdict.incompleteReason }
+          : {}),
         target: this.config.target,
         checks: [failure],
         summary: buildSummary([failure]),

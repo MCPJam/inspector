@@ -829,6 +829,7 @@ export {
   isInapplicableCheck,
   isUnrunCheck,
 } from "./conformance-outcome.js";
+export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,

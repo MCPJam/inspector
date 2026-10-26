@@ -1066,6 +1066,52 @@ describe("ConformanceTab", () => {
     expect(within(header).queryByText("FAILED")).toBeNull();
   });
 
+  it("turns checks a server refused for credentials into one reconnect notice", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        passed: false,
+        outcome: "incomplete",
+        checks: [
+          {
+            id: "server-initialize",
+            category: "core",
+            title: "Server Initialize",
+            description: "Server responds to initialize.",
+            status: "skipped",
+            skipReason: "could-not-run",
+            durationMs: 0,
+            error: {
+              message:
+                "The server requires authorization (HTTP 401) and this run had no accepted credentials, so this check could not run.",
+            },
+            details: { authorizationRequired: true, statusCode: 401 },
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    // A 401 is the server doing its job: INCOMPLETE and the next step, never
+    // a red FAILED.
+    const header = suiteHeader("protocol");
+    expect(within(header).getByText("INCOMPLETE")).toBeDefined();
+    expect(within(header).queryByText("FAILED")).toBeNull();
+    expect(
+      screen.getByText(/This server requires sign-in.*1 check\(s\) could not\s+run/s),
+    ).toBeDefined();
+    expect(screen.getByText(/Reconnect the server with OAuth/)).toBeDefined();
+  });
+
+  it("shows no reconnect notice when nothing waited on authorization", async () => {
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(screen.queryByText(/This server requires sign-in/)).toBeNull();
+  });
+
   it("badges a finished-but-failing suite as failed, not passed", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({ passed: false }),
