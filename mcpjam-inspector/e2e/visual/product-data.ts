@@ -109,6 +109,13 @@ export const memberFixture: AppFixture = {
       occupation: "Automated visual testing",
       isGuest: false,
     },
+    // Already accepted, so the Terms dialog stays out of every capture.
+    "legalAcceptance:getStatus": {
+      needsAcceptance: false,
+      termsVersion: "2026-01-29",
+      privacyVersion: "2026-01-31",
+      minimumAge: 18,
+    },
     "organizations:getMyOrganizations": [
       {
         _id: ORGANIZATION_ID,

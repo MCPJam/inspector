@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { MCPClientManager, MCPReadResourceResult } from "@mcpjam/sdk";
 import { MODEL_CONTEXT_POLICY_DEFAULTS } from "@mcpjam/sdk/host-config/internal";
 import {
   parsePluginModelContext,
@@ -57,6 +58,8 @@ import {
 } from "./browser-rendering-setup";
 import { HOSTED_MODE } from "../config";
 import { isBlockedEgressHost } from "./hosted-egress-guard";
+import { logger } from "./logger";
+import { RESOURCE_READS_DISABLED_MESSAGE } from "@mcpjam/sdk/widget-runtime";
 
 export { isChromiumInstalled };
 
@@ -401,6 +404,8 @@ export interface RenderWidgetInput {
   keepMounted?: boolean;
 }
 
+type ResourceReadParams = Parameters<MCPClientManager["readResource"]>[1];
+
 export interface McpAppBrowserHarnessOptions {
   /** Current host transcript/appearance. Pure data; never an execution callback. */
   getWorkspacePresentation?: () => HarnessPresentation;
@@ -410,6 +415,11 @@ export interface McpAppBrowserHarnessOptions {
     name: string,
     args: Record<string, unknown>,
   ) => Promise<unknown>;
+  /** Read through the authenticated connection that produced the widget. */
+  readResource: (
+    serverId: string,
+    params: ResourceReadParams,
+  ) => Promise<MCPReadResourceResult>;
   /**
    * Resolve the SEP-1865 `_meta.ui.visibility` for a tool at dispatch time, so
    * the runner can route model-visible calls into model context and keep
@@ -917,6 +927,47 @@ export class McpAppBrowserHarness {
             error,
             elapsedMs: Date.now() - startedAt,
             ...(visibility ? { visibility } : {}),
+          });
+          return { error };
+        } finally {
+          this.pendingRpcCount -= 1;
+        }
+      },
+    );
+
+    await this.page.exposeBinding(
+      "__mcpjamHostReadResource",
+      // Failures come back as `{ error }`, never a thrown Node Error: a widget
+      // can call this binding directly and would otherwise see the stack.
+      async (
+        _source,
+        payload: { widgetId: string; params: ResourceReadParams },
+      ): Promise<{ result: MCPReadResourceResult } | { error: string }> => {
+        if (typeof payload?.params?.uri !== "string")
+          return { error: "Invalid resource read request" };
+        const widget = this.mounted.get(payload.widgetId);
+        if (!widget || this.closing)
+          return { error: "Resource read owner is closed" };
+        const capabilities =
+          this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
+        if (!capabilities.serverResources)
+          return { error: RESOURCE_READS_DISABLED_MESSAGE };
+        this.pendingRpcCount += 1;
+        try {
+          return {
+            result: await this.opts.readResource(
+              widget.serverId,
+              payload.params,
+            ),
+          };
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err);
+          // Unlike tool calls, reads leave no record in the run, and a widget
+          // may swallow the rejection.
+          logger.warn("MCP App resource read failed", {
+            serverId: widget.serverId,
+            uri: payload.params.uri,
+            error,
           });
           return { error };
         } finally {
