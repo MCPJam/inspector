@@ -493,7 +493,6 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   billingUiEnabled?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
-  onBeforeSignOut?: () => void | Promise<void>;
 }
 
 export function MCPSidebar({
@@ -514,7 +513,6 @@ export function MCPSidebar({
   billingUiEnabled = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
-  onBeforeSignOut,
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
@@ -930,7 +928,7 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
-          <SidebarUser onBeforeSignOut={onBeforeSignOut} />
+          <SidebarUser />
         </SidebarFooter>
       </Sidebar>
       {!authResolving && (

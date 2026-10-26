@@ -53,9 +53,8 @@ import {
 } from "./chat-helpers.js";
 import { getPinnedSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
-import {
-  withServerSkills,
-} from "./server-skill-tools.js";
+import { withServerSkills } from "./server-skill-tools.js";
+import { applyActingServerSkillGate } from "./server-skill-acting-gate.js";
 import { skillMetadataBudgetChars } from "./computers/skill-metadata-budget.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
@@ -1229,7 +1228,9 @@ function approvalGuidance(
   const alwaysAsks =
     "Loading a skill that a connected MCP server provides always asks for " +
     "confirmation, in either setting — it brings that server's instructions " +
-    "into this conversation.";
+    "into this conversation. While such a skill is loaded, running a shell " +
+    "command or reading a resource from a saved server also asks, in either " +
+    "setting.";
   return requireToolApproval
     ? `Tool approval is ON for this conversation: every tool call that ACTS pauses for the user's explicit approval before it runs — MCP server tools, anything driving a browser or a third-party web page, anything running on the user's own machine, and mutating \`ui_*\` actions. ${free} ${alwaysAsks} A denial is final — explain what you wanted to do instead of retrying the call.`
     : `Tool approval is OFF for this conversation: tool calls apply immediately, including anything driving a browser or a third-party web page and anything running on the user's own machine. Be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for. ${free} ${alwaysAsks}`;
@@ -1811,14 +1812,20 @@ export async function prepareChatV2(
   }
   // Built-ins merge last so an explicit built-in wins; the policy above has
   // already resolved (or rejected) every collision by here.
-  const realTools = {
+  //
+  // Then the acting-skill gate: while a server-served skill's SKILL.md is in
+  // the conversation, the shell and the cross-server resource read ask
+  // whatever the switch says. The gate reads the messages the AI SDK hands
+  // each approval decision, so it covers a skill loaded earlier in the same
+  // step as well as one loaded requests ago.
+  const realTools = applyActingServerSkillGate({
     ...mcpTools,
     ...appToolEntries,
     ...uiToolEntries,
     ...pageToolEntries,
     ...finalSkillTools,
     ...builtInToolEntries,
-  } as ToolSet;
+  } as ToolSet);
 
   // 2. Decide whether progressive discovery applies, then mint meta-tools if
   // it does. The catalog is built from real tools only (meta-tools aren't
