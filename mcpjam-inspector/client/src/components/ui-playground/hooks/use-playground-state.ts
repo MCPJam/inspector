@@ -82,7 +82,8 @@ const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
 // the usable Playground instead of spinning forever. See issue #3352.
 const FIRST_RUN_SKELETON_TIMEOUT_MS = 12000;
 
-export const PLAYGROUND_FIRST_RUN_PROMPT = "What can this server do?";
+export const PLAYGROUND_FIRST_RUN_PROMPT =
+  "What can this server do?";
 
 type ExecutionInjectionWaiter = {
   expectedToolCallId?: string;
@@ -120,10 +121,10 @@ export interface UsePlaygroundStateOptions {
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
     projectId: string,
-    hostContext: ProjectHostContextDraft,
+    hostContext: ProjectHostContextDraft
   ) => Promise<void>;
   ensureServersReady?: (
-    serverNames: string[],
+    serverNames: string[]
   ) => Promise<EnsureServersReadyResult>;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
@@ -203,7 +204,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         serverName,
         servers,
       }),
-    [selectedServerNames, serverName, servers],
+    [selectedServerNames, serverName, servers]
   );
 
   const prefersReducedMotion = useReducedMotion();
@@ -345,7 +346,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         if (!waiter) return;
         executionInjectionWaitersRef.current =
           executionInjectionWaitersRef.current.filter(
-            (entry) => entry !== waiter,
+            (entry) => entry !== waiter
           );
       };
 
@@ -355,8 +356,8 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
           reject(
             createInspectorCommandClientError(
               "timeout",
-              `Tool result was not rendered in Playground within ${effectiveTimeoutMs}ms.`,
-            ),
+              `Tool result was not rendered in Playground within ${effectiveTimeoutMs}ms.`
+            )
           );
         }, effectiveTimeoutMs);
 
@@ -382,7 +383,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         promise,
       };
     },
-    [],
+    []
   );
 
   const handleExecutionInjected = useCallback(
@@ -405,7 +406,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         waiter.resolve(toolCallId);
       }
     },
-    [clearPendingExecution],
+    [clearPendingExecution]
   );
 
   useEffect(() => {
@@ -416,8 +417,8 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         waiter.reject(
           createInspectorCommandClientError(
             "unsupported_in_mode",
-            "Playground unmounted before the tool result rendered.",
-          ),
+            "Playground unmounted before the tool result rendered."
+          )
         );
       }
     };
@@ -520,7 +521,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       if (!serverName) {
         throw createInspectorCommandClientError(
           "disconnected_server",
-          "No server is selected in the Playground.",
+          "No server is selected in the Playground."
         );
       }
 
@@ -544,7 +545,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
           const data = await listTools({ serverId: serverName, cursor });
           const toolArray = data.tools ?? [];
           const dictionary = Object.fromEntries(
-            toolArray.map((tool: Tool) => [tool.name, tool]),
+            toolArray.map((tool: Tool) => [tool.name, tool])
           );
 
           Object.assign(aggregatedTools, dictionary);
@@ -572,7 +573,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
             setExecutionError(message);
             throw createInspectorCommandClientError(
               "execution_failed",
-              message,
+              message
             );
           }
 
@@ -594,7 +595,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         setFetchingTools(false);
       }
     },
-    [serverName, setExecutionError, setTools, tools, toolsMetadata],
+    [serverName, setExecutionError, setTools, tools, toolsMetadata]
   );
 
   const buildPlaygroundSnapshot = useCallback(() => {
@@ -711,13 +712,13 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
       setFormFields(
-        generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
+        generateFormFieldsFromSchema(tools[selectedTool].inputSchema)
       );
       return;
     }
     if (selectedAppToolDescriptor) {
       setFormFields(
-        generateFormFieldsFromSchema(selectedAppToolDescriptor.inputSchema),
+        generateFormFieldsFromSchema(selectedAppToolDescriptor.inputSchema)
       );
       return;
     }
@@ -729,14 +730,14 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       command:
         | SelectToolInspectorCommand
         | ExecuteToolInspectorCommand
-        | RenderToolResultInspectorCommand,
+        | RenderToolResultInspectorCommand
     ) => {
       // Only the Playground surface mounts this hook, so the inspector
       // command must target `"playground"`.
       if (command.payload.surface !== "playground") {
         throw createInspectorCommandClientError(
           "unsupported_in_mode",
-          `Playground cannot handle ${command.type} for ${command.payload.surface}.`,
+          `Playground cannot handle ${command.type} for ${command.payload.surface}.`
         );
       }
 
@@ -747,7 +748,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       ) {
         throw createInspectorCommandClientError(
           "disconnected_server",
-          "The Playground requires a connected server before tools can be selected.",
+          "The Playground requires a connected server before tools can be selected."
         );
       }
 
@@ -757,18 +758,18 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       ) {
         throw createInspectorCommandClientError(
           "unknown_server",
-          `Playground is focused on "${serverName}", not "${command.payload.serverName}".`,
+          `Playground is focused on "${serverName}", not "${command.payload.serverName}".`
         );
       }
 
       const { tools: availableTools } = await loadToolsUntilMatch(
-        command.payload.toolName,
+        command.payload.toolName
       );
       const tool = availableTools[command.payload.toolName];
       if (!tool) {
         throw createInspectorCommandClientError(
           "unknown_tool",
-          `Unknown tool "${command.payload.toolName}" on server "${serverName}".`,
+          `Unknown tool "${command.payload.toolName}" on server "${serverName}".`
         );
       }
 
@@ -793,7 +794,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       if (command.payload.parameters) {
         const latestFields = useUIPlaygroundStore.getState().formFields;
         setFormFields(
-          applyParamsToFields(latestFields, command.payload.parameters),
+          applyParamsToFields(latestFields, command.payload.parameters)
         );
         await waitForUiCommit();
       }
@@ -807,7 +808,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       serverName,
       setFormFields,
       setSelectedTool,
-    ],
+    ]
   );
 
   // useLayoutEffect so handlers update synchronously during commit — before
@@ -825,7 +826,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
           toolName: command.payload.toolName,
           parameterKeys: Object.keys(selection.parameters),
         };
-      },
+      }
     );
 
     const unregisterExecuteTool = registerInspectorCommandHandler(
@@ -843,7 +844,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
           throw createInspectorCommandClientError(
             "execution_failed",
             outcome.error,
-            outcome.response,
+            outcome.response
           );
         }
 
@@ -854,7 +855,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
           parameters: outcome.parameters,
           result: outcome.result,
         };
-      },
+      }
     );
 
     const unregisterRenderToolResult = registerInspectorCommandHandler(
@@ -864,7 +865,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         const selection = await selectToolForCommand(command);
         const injection = waitForExecutionInjection(
           command.id,
-          command.timeoutMs,
+          command.timeoutMs
         );
         let outcome: Awaited<ReturnType<typeof injectToolResult>>;
         try {
@@ -887,7 +888,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
           parameters: outcome.parameters,
           result: outcome.result,
         };
-      },
+      }
     );
 
     const unregisterSetAppContext = registerInspectorCommandHandler(
@@ -913,7 +914,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
         await waitForUiCommit();
         return buildPlaygroundSnapshot();
-      },
+      }
     );
 
     // Chat-composer command handlers (the global playground catalog's
@@ -1027,7 +1028,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     // instance mounted last own the `playground` id.
     const unregisterSnapshotApp = snapshotSurfaceId
       ? registerSurfaceSnapshotProvider(snapshotSurfaceId, () =>
-          buildPlaygroundSnapshot(),
+          buildPlaygroundSnapshot()
         )
       : undefined;
 
@@ -1131,10 +1132,10 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     wantsFirstRunSkeleton && !firstRunSkeletonTimedOut
       ? { kind: "skeleton" }
       : !serverConfig && isServerSyncing && syncTimedOut
-        ? { kind: "sync-timed-out" }
-        : !serverConfig
-          ? { kind: "no-server" }
-          : { kind: "ready" };
+      ? { kind: "sync-timed-out" }
+      : !serverConfig
+      ? { kind: "no-server" }
+      : { kind: "ready" };
 
   return {
     loadingState,
@@ -1193,7 +1194,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
  * double-register handlers).
  */
 const PlaygroundStateContext = createContext<UsePlaygroundStateReturn | null>(
-  null,
+  null
 );
 
 export function PlaygroundStateProvider({
@@ -1210,7 +1211,7 @@ export function usePlaygroundStateContext(): UsePlaygroundStateReturn {
   const ctx = useContext(PlaygroundStateContext);
   if (!ctx) {
     throw new Error(
-      "usePlaygroundStateContext must be used inside a PlaygroundStateProvider",
+      "usePlaygroundStateContext must be used inside a PlaygroundStateProvider"
     );
   }
   return ctx;
