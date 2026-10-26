@@ -83,6 +83,14 @@ describe("server refusal descriptions", () => {
     expect(error.details).toBeUndefined();
   });
 
+  it("preserves the organization policy remedy for exported credentials", () => {
+    const message = 'Your organization keeps saved credentials for "Calendar" inside MCPJam-hosted connections. Ask an organization admin to change the credential export policy.';
+    const error = new WebRouteError(403, ErrorCode.FORBIDDEN, message, { exportDenied: true });
+    nameServerRefusal(error, "calendar", "Calendar");
+    expect(error.message).toBe(message);
+    expect(error.details?.serverRefusalReason).toBe("other");
+  });
+
   it("does not blame a server for the credential service being unavailable", () => {
     const error = new WebRouteError(502, ErrorCode.SERVER_UNREACHABLE, "Credential service unavailable");
     error.setupFailureSource = "secret_reveal";

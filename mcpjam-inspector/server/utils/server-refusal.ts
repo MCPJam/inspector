@@ -72,8 +72,15 @@ export function nameServerRefusal(
         : undefined,
     oauthRequired: error.details?.oauthRequired === true,
   });
-  // Refresh and policy refusals already name the server and the specific remedy.
-  if (!error.details?.oauthUnavailableReason) error.message = described.message;
+  // OAuth and XAA refusals already name the server and the specific remedy.
+  if (
+    !error.details?.oauthUnavailableReason &&
+    !error.details?.exportDenied &&
+    !error.details?.secretOriginMismatch &&
+    error.setupFailureSource !== "xaa_mint"
+  ) {
+    error.message = described.message;
+  }
   error.details = {
     ...error.details,
     serverId,
