@@ -146,6 +146,7 @@ export {
   MCPSkillsWireError,
   isMCPSkillsWireError,
   assertSkillEntry,
+  assertSkillsGetEnvelope,
   assertSkillsGetResult,
   assertSkillsListResult,
   assertDirectoryReadResult,
@@ -177,6 +178,7 @@ export {
 export type {
   SkillEntry,
   SkillResourceRef,
+  SkillsExtGetResult,
   SkillsExtListResult,
   SkillsDirectoryEntry,
   SkillsDirectoryReadResult,
@@ -205,6 +207,7 @@ export {
   normalizeCatalogText,
   probeServerSkillMissing,
   readVerifiedServerSkillFile,
+  forgetVerifiedServerSkillReads,
   serverSkillsActive,
 } from "./server-skills.js";
 export type {
@@ -289,6 +292,8 @@ export type {
   ServerDoctorChecks,
   ServerDoctorConnection,
   ServerDoctorResult,
+  ServerDoctorSkillsCheck,
+  ServerDoctorSkillsFindings,
   ConnectedServerDoctorState,
   RunServerDoctorInput,
   ServerDoctorDependencies,

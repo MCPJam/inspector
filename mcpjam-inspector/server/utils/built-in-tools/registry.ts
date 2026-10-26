@@ -480,6 +480,14 @@ export function resolveHostTools(
 
   for (const id of ids) {
     if (id === WEB_SEARCH_TOOL_NAME) {
+      // The backend refuses guest searches outside a shared scenario, so the tool would only fail.
+      if (ctx.isGuest && !ctx.scenarioId) {
+        logger.debug(
+          "[built-in-tools] web_search not advertised to guest actor outside a scenario; skipping",
+          { projectId: ctx.projectId },
+        );
+        continue;
+      }
       out[WEB_SEARCH_TOOL_NAME] = buildExaWebSearchTool({
         authHeader,
         projectId: ctx.projectId,

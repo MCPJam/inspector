@@ -381,6 +381,13 @@ const inputs = [
   },
 ];
 
+for (const agentLoop of ["claude-code", "codex", "cursor"]) {
+  inputs.push({
+    label: `agent-loop-${agentLoop}`,
+    input: { ...base(), agentLoop, computer: { kind: "personal" } },
+  });
+}
+
 const rows = [];
 for (const { label, input } of inputs) {
   const canonicalJson = JSON.stringify(canonicalizeHostConfigV2(input));

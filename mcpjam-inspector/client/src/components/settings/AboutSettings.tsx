@@ -2,6 +2,7 @@ import { SettingsPageDescription } from "@/components/settings/SettingsPageDescr
 import { ArrowUpRight, FileText, Globe, Lock, ShieldCheck } from "lucide-react";
 import { GitHubStarButton } from "../ui/github-star-button";
 import { AnalyticsConsentSetting } from "../legal/AnalyticsConsent";
+import { PRIVACY_POLICY_URL, TERMS_OF_USE_URL } from "@/lib/legal-links";
 
 const links = [
   {
@@ -19,13 +20,13 @@ const links = [
   {
     label: "Privacy Policy",
     description: "What data MCPJam collects and how it is used.",
-    href: "https://www.mcpjam.com/privacy-policy",
+    href: PRIVACY_POLICY_URL,
     icon: Lock,
   },
   {
     label: "Terms of Use",
     description: "The terms that govern your use of MCPJam.",
-    href: "https://www.mcpjam.com/terms-of-use",
+    href: TERMS_OF_USE_URL,
     icon: FileText,
   },
 ];

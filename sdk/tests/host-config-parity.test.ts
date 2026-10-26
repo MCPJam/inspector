@@ -24,7 +24,7 @@ import type { HostConfigInputV2 } from "../src/host-config/internal";
  * directly, so the SDK-side constant is the single source of truth.
  */
 const EXPECTED_INPUT_HASH =
-  "a047a2dfb76819614b0787d079fe85a85048a61ad487ef2c5e0b1577b2eb354a";
+  "d263723bff40f40d43d805e4e0dfe40a390680f75426ad9860e4525dc79b6e2e";
 
 type FixtureRow = {
   label: string;

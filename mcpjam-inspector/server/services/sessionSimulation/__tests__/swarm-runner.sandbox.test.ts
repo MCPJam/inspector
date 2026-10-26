@@ -1576,3 +1576,15 @@ describe("swarm attempt box — the attempt's signal", () => {
     );
   });
 });
+
+
+it("runs an agent-loop target with its MCPJam client selection", async () => {
+  personaDrivesOneTurn();
+  await startJourneyRun(baseOpts({ agentLoop: "claude-code", computer: { kind: "personal" } }));
+  expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+  expect(turnOptions()).toMatchObject({ agentLoop: "claude-code" });
+  expect(turnOptions().harness).toBe("claude-code");
+  expect(terminalReports()).toEqual(expect.arrayContaining([
+    expect.objectContaining({ status: "succeeded" }),
+  ]));
+});

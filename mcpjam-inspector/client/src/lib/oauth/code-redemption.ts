@@ -4,8 +4,10 @@ import type {
   OAuthStateMachine,
 } from "@mcpjam/sdk/browser";
 
-// The steps between the authorization callback and the tokens.
-const CODE_REDEMPTION_STEPS = new Set<OAuthFlowStep>([
+// The steps between the authorization callback and the tokens, listed rather
+// than read off the SDK's order: only steps known to need no click may run on
+// their own. The test pins this list to that order.
+export const CODE_REDEMPTION_STEPS = new Set<OAuthFlowStep>([
   "authorization_request",
   "received_authorization_code",
   "token_request",

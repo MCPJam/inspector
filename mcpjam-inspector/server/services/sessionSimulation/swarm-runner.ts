@@ -1,3 +1,6 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
+import { resolveToolTaskSeam } from "../../utils/task-seam.js";
+import { readTasksPolicy } from "@mcpjam/sdk";
 import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
@@ -666,7 +669,7 @@ function describeSandboxConsumer(
   const parts: string[] = [];
   if (wantsBash) parts.push("the shell");
   if (wantsBrowser) parts.push("the browser");
-  if (target.harness) parts.push(`the ${target.harness} harness`);
+  if ((target.agentLoop ?? target.harness)) parts.push(`the ${(target.agentLoop ?? target.harness)} harness`);
   const label =
     parts.length === 0
       ? "the disposable computer"
@@ -889,8 +892,8 @@ async function runJourneyFanOut(
     // admission block and the per-attempt binding check can see it — and
     // outside the fail-closed guard below, which is only for things that can
     // throw.
-    const localHarness = runsLocally(opts, target.harness);
-    const harnessNeedsBox = target.harness !== undefined && !localHarness;
+    const localHarness = runsLocally(opts, (target.agentLoop ?? target.harness));
+    const harnessNeedsBox = (target.agentLoop ?? target.harness) !== undefined && !localHarness;
     // Assigned inside the try, once the model is RESOLVED — see the harness
     // admission block below.
     let harnessTargetBlockedReason: string | undefined;
@@ -945,7 +948,7 @@ async function runJourneyFanOut(
         return;
       }
       bearer = await getBearer();
-      if (localHarness) assertLocalHarnessCapabilities({ builtInToolIds: target.builtInToolIds, browserToolPolicy: target.browserToolPolicy, computerEnvironmentId: target.computerEnvironment ? "configured" : undefined, harnessId: target.harness });
+      if (localHarness) assertLocalHarnessCapabilities({ builtInToolIds: target.builtInToolIds, browserToolPolicy: target.browserToolPolicy, computerEnvironmentId: target.computerEnvironment ? "configured" : undefined, harnessId: (target.agentLoop ?? target.harness) });
 
       // Resolve the pinned target's modelId to a ModelDefinition once per target
       // (catalog hits pass through; BYOK shapes get a derived provider). NEVER
@@ -991,6 +994,7 @@ async function runJourneyFanOut(
       // reach for a generic handler, and never be more permissive than the
       // rule it failed to evaluate.
       try {
+        const dispatch = resolveAgentLoop(target);
         // The target asked for a harness but its configuration can never yield a
         // box — no computer attached, or the environment pins no usable image. That
         // is knowable before the first attempt, so say it once, precisely.
@@ -1026,10 +1030,10 @@ async function runJourneyFanOut(
         // preflight later must apply here too, and the only way to guarantee that
         // is to call the same function.
         const harnessAvailability =
-          target.harness === undefined
+          (target.agentLoop ?? target.harness) === undefined
             ? undefined
             : checkHarnessRuntimeAvailable({
-                harnessId: target.harness,
+                harnessId: dispatch.harnessId!,
                 localExecution: localHarness,
                 requireToolApproval: target.requireToolApproval,
                 // PLUGIN servers count. A target whose MCP servers come solely
@@ -1090,7 +1094,7 @@ async function runJourneyFanOut(
                 // harness's own vendor runs on the organization's key.
                 ...(modelSelection ? { selection: modelSelection } : {}),
               });
-        const harnessName = harnessDisplayName(target.harness ?? "");
+        const harnessName = harnessDisplayName((target.agentLoop ?? target.harness) ?? "");
         harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined
           : !targetWantsHarnessBox(target)
@@ -1120,12 +1124,8 @@ async function runJourneyFanOut(
           (err instanceof Error ? err.message : String(err));
         logger.error(
           "[swarm.runner] harness admission threw; refusing target",
-          {
-            runId,
-            hostId,
-            targetId,
-            error: err instanceof Error ? err.message : String(err),
-          },
+          err,
+          { runId, hostId, targetId },
         );
       }
 
@@ -1174,7 +1174,7 @@ async function runJourneyFanOut(
 
         // Queue before claiming an attempt or starting its deadline. Release
         // after each session so other runs share the machine fairly.
-        const releaseLocalSlot = runsLocally(opts, target.harness)
+        const releaseLocalSlot = runsLocally(opts, (target.agentLoop ?? target.harness))
           ? await acquireLocalHarnessSlot(attemptSignal)
           : undefined;
         try {
@@ -1243,13 +1243,8 @@ async function runJourneyFanOut(
         } catch (err) {
           logger.error(
             "[swarm.runner] attempt claim failed; skipping session",
-            {
-              runId,
-              hostId,
-              targetId,
-              sessionIdx,
-              error: err instanceof Error ? err.message : String(err),
-            },
+            err,
+            { runId, hostId, targetId, sessionIdx },
           );
           continue;
         }
@@ -1346,6 +1341,7 @@ async function runJourneyFanOut(
               `session cannot run ${sandboxConsumer.label} its target requires.`;
             logger.error(
               "[swarm.runner] a target needs a disposable sandbox but the data plane is unconfigured",
+              undefined,
               {
                 runId,
                 targetId,
@@ -1377,12 +1373,8 @@ async function runJourneyFanOut(
             }).catch((err) => {
               logger.error(
                 "[swarm.runner] failed to report sandbox-unavailable terminal",
-                {
-                  runId,
-                  targetId,
-                  sessionIdx,
-                  error: err instanceof Error ? err.message : String(err),
-                },
+                err,
+                { runId, targetId, sessionIdx },
               );
             });
             logEvent("attempt.finish", {
@@ -1476,12 +1468,8 @@ async function runJourneyFanOut(
               }).catch((err) => {
                 logger.error(
                   "[swarm.runner] failed to report sandbox-failure terminal",
-                  {
-                    runId,
-                    targetId,
-                    sessionIdx,
-                    error: err instanceof Error ? err.message : String(err),
-                  },
+                  err,
+                  { runId, targetId, sessionIdx },
                 );
               });
               // Same terminal accounting as every other exit, so attempts that
@@ -1513,7 +1501,7 @@ async function runJourneyFanOut(
             (attemptSandbox
               ? undefined
               : "This session could not get a disposable sandbox for its " +
-                `${target.harness} harness. A swarm harness never falls back ` +
+                `${(target.agentLoop ?? target.harness)} harness. A swarm harness never falls back ` +
                 "to the launcher's shared project computer, so this session " +
                   "cannot run."));
 
@@ -1527,7 +1515,7 @@ async function runJourneyFanOut(
           const runSession = async () => {
             // Prepared for THIS target's harness — a Codex target gets a Codex
             // runtime and grant, never the Claude Code one.
-            const localResources = localHarness ? await prepareLocalHarnessRun({ bearer: bearer!, projectId, trustedActor: opts.localHarnessActor, harnessId: localHarnessIdOf(target.harness) ?? "claude-code" }) : undefined;
+            const localResources = localHarness ? await prepareLocalHarnessRun({ bearer: bearer!, projectId, trustedActor: opts.localHarnessActor, harnessId: localHarnessIdOf((target.agentLoop ?? target.harness)) ?? "claude-code" }) : undefined;
             try { return await runSyntheticHostSession({
             runId,
             projectId,
@@ -1561,6 +1549,8 @@ async function runJourneyFanOut(
               mcpToolResultImageRendering: target.mcpToolResultImageRendering,
               computer: target.computer,
               harness: target.harness,
+              agentLoop: target.agentLoop,
+              tasks: resolveToolTaskSeam({ tasksPolicy: readTasksPolicy(target), surface: "eval", scope: projectId }),
               ...(localResources ? { harnessExecutionTarget: { ...localResources.target, targetId, sessionIdx } } : {}),
               // The trusted binding to THIS attempt's disposable box. It reaches
               // `resolveHostTools` on `ctx`, never on the host config, so nothing
@@ -1572,7 +1562,7 @@ async function runJourneyFanOut(
               // handler options rather than through `resolveHostTools`, because
               // `runHarnessTurn` does not use the tool resolver at all. Only
               // for a harness target: the emulated engine has no use for it.
-              ...(target.harness && attemptSandbox
+              ...((target.agentLoop ?? target.harness) && attemptSandbox
                 ? { harnessSandboxBinding: attemptSandbox.harnessBinding }
                 : {}),
               // F4: refuse the harness turn rather than let it reserve the
@@ -1786,14 +1776,17 @@ async function runJourneyFanOut(
               sessionIdx,
               status: terminal.status,
             });
-            logger.error("[swarm.runner] terminal attempt report failed", {
-              runId,
-              hostId,
-              targetId,
-              sessionIdx,
-              status: terminal.status,
-              error: err instanceof Error ? err.message : String(err),
-            });
+            logger.error(
+              "[swarm.runner] terminal attempt report failed",
+              err,
+              {
+                runId,
+                hostId,
+                targetId,
+                sessionIdx,
+                status: terminal.status,
+              },
+            );
           }
 
           // Deterministic rubric grading, AWAITED and non-fatal.
@@ -1844,12 +1837,11 @@ async function runJourneyFanOut(
                 targetId,
                 sessionIdx,
               });
-              logger.error("[swarm.runner] rubric grading threw", {
+              logger.error("[swarm.runner] rubric grading threw", err, {
                 runId,
                 hostId,
                 targetId,
                 sessionIdx,
-                error: err instanceof Error ? err.message : String(err),
               });
             }
           }
@@ -2165,13 +2157,8 @@ async function runJourneyFanOut(
       logEvent("target.worker_failed", { runId, hostId, targetId, sessionIdx });
       logger.error(
         "[swarm.runner] target worker failed; finalizing its attempts",
-        {
-          runId,
-          hostId,
-          targetId,
-          sessionIdx,
-          error: err instanceof Error ? err.message : String(err),
-        },
+        err,
+        { runId, hostId, targetId, sessionIdx },
       );
       // Finalize this target's not-yet-terminal attempts `[sessionIdx..N)`: the
       // sweep re-claims the in-flight attempt (if the throw landed after a
@@ -2189,6 +2176,7 @@ async function runJourneyFanOut(
       if (!cleanupBearer) {
         logger.error(
           "[swarm.runner] no credential to finalize this target's attempts; leaving them for the stale-run sweep",
+          undefined,
           { runId, hostId, targetId, sessionIdx },
         );
         return;
@@ -2377,11 +2365,8 @@ async function runJourneyFanOut(
       const finalizeBearer = await getBearer().catch((error: unknown) => {
         logger.error(
           "[swarm.runner] could not mint a credential for the run-level finalize; attempts stay pending for the stale-run sweep",
-          {
-            runId,
-            reason: finalizeCalls[0]!.terminal.errorCode,
-            error: error instanceof Error ? error.message : String(error),
-          },
+          error,
+          { runId, reason: finalizeCalls[0]!.terminal.errorCode },
         );
         return undefined;
       });
@@ -2400,10 +2385,7 @@ async function runJourneyFanOut(
   } catch (error) {
     // Defensive: per-host/per-session work is already guarded, so this only
     // catches unexpected pool/heartbeat-adjacent failures.
-    logger.error("[swarm.runner] journey run failed", {
-      runId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error("[swarm.runner] journey run failed", error, { runId });
   } finally {
     heartbeatActive = false;
     clearInterval(heartbeat);

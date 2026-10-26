@@ -1,3 +1,5 @@
+import { withHarnessTurnContext, unavailableAppToolsSpan } from "./harness-turn-input.js";
+import { resolveAgentLoop, hasAccountRouting } from "./agent-loop-dispatch.js";
 import { harnessToolOrigin, type ToolOrigin } from "@/shared/tool-origin";
 import {
   diskResumeState,
@@ -292,6 +294,7 @@ export const HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT =
 export async function buildHarnessProxyMcpJsonFromManager(args: {
   manager: MCPJamHandlerOptions["mcpClientManager"];
   selectedServerIds: string[];
+  unavailableServerIds?: readonly string[];
   authHeader: string;
   projectId: string;
   strategy: HarnessMcpProxyStrategy;
@@ -333,6 +336,7 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
   } = args;
   const configured = selectDeliverableServerIds({
     selectedServerIds,
+    unavailableServerIds: args.unavailableServerIds,
     hasLiveConfig: (id) => Boolean(manager.getServerConfig(id)),
     ...(pluginOrigins ? { pluginOrigins } : {}),
     onSkipped: (id) =>
@@ -365,11 +369,8 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
       );
     }
     mintedHarnessEvidence = minted.harnessEvidence;
-    // Hard-fail, never skip: the harness must run with every selected server or
-    // none — a silently-dropped server means the agent runs with missing MCP
-    // tools, which is far worse to debug than a clear up-front failure. (The
-    // mint endpoint is already all-or-nothing — 422 on any malformed/unauthorized
-    // id — so this guards an unexpected partial response.)
+    // Every admitted server needs a token. Refused servers were removed before
+    // minting; a partial mint response is an unexpected authorization failure.
     for (const id of configured) {
       const token = minted.tokens[id];
       if (!token) {
@@ -553,6 +554,7 @@ export function harnessRuntimeFingerprint(parts: {
   harnessId: string;
   modelId: string;
   selectedServers?: string[];
+  unavailableServerIds?: readonly string[];
   permissionMode: string;
   /**
    * INS-7: the plugin versions materialized for this turn. A resumed session
@@ -655,12 +657,17 @@ export function harnessRuntimeFingerprint(parts: {
    */
 }): string {
   const pluginDimension = pluginVersionsFingerprint(parts.pluginVersions ?? []);
+  const unavailable = [...new Set(parts.unavailableServerIds ?? [])]
+    .filter((id) => parts.selectedServers?.includes(id))
+    .sort();
   const s = [
     String(HARNESS_RUNTIME_COMPAT_VERSION),
     // Older Claude sessions have workspace .mcp.json files. Start a new lane
     // when moving to SDK config so stale servers cannot be loaded from disk.
     ...(parts.harnessId === "claude-code" ? ["session-mcp-v1"] : []),
     (parts.selectedServers ?? []).slice().sort().join(","),
+    // Resumed native sessions keep the MCP config they started with.
+    ...(unavailable.length ? [`unavailable:${unavailable.join(",")}`] : []),
     parts.permissionMode,
     ...(pluginDimension ? [pluginDimension] : []),
     ...(parts.secretsHash ? [parts.secretsHash] : []),
@@ -1025,7 +1032,7 @@ export async function runHarnessTurn(
   let sessionEstablished = false;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
-  const capturedSpans: EvalTraceSpan[] = [];
+  const capturedSpans: EvalTraceSpan[] = options.harnessUnavailableAppTools ? [unavailableAppToolsSpan()] : [];
   // Tool calls the MCP proxy refused on this run's sealed `toolPolicy`. The
   // block happens on whichever replica served the call; it is accounted for
   // HERE — from the proxy's own correlated report, and from the result the
@@ -1515,9 +1522,8 @@ export async function runHarnessTurn(
       // Account selectors and resource conversion must execute together in
       // the inspector; native sandbox MCP clients cannot own that dispatch.
       const accountGroups = evalIterationId ? {} : getManagerConnections(mcpClientManager) ?? {};
-      const hasAccountRouting = Object.entries(accountGroups).some(([serverId, group]) => group.length > 1 || group.some(connection => connection.key !== serverId));
       const nativeMcpDelivery =
-        harnessAdapter.mcpDelivery === "native" && !hasAccountRouting;
+        resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : harnessAdapter.id, defaultMcpClient: harnessAdapter.mcpDelivery === "harness" ? "harness" : "mcpjam", hasAccountRouting: hasAccountRouting(accountGroups) }).mcpClient === "harness";
       // Fail closed: with MCP servers selected but no plane strategy, a NATIVE
       // adapter would silently get zero MCP tools (the exact failure we hit).
       // Host-executed delivery needs no proxy at all — its tools run in THIS
@@ -1558,6 +1564,7 @@ export async function runHarnessTurn(
       const buildNativeProxyConfig = () => buildHarnessProxyMcpJsonFromManager({
         manager: mcpClientManager,
         selectedServerIds: selectedServers ?? [],
+        unavailableServerIds: options.unavailableServerIds,
         authHeader,
         projectId,
         strategy: localMcpPlane?.strategy ?? harnessMcpProxy ?? { plane: "local-mcp" },
@@ -1610,6 +1617,7 @@ export async function runHarnessTurn(
           ? await projectSelectedMcpServersAsHostTools({
               manager: mcpClientManager,
               selectedServerIds: selectedServers ?? [],
+              unavailableServerIds: options.unavailableServerIds,
               connectionsByServerId: accountGroups,
               ...(pluginServerOrigins
                 ? { pluginOrigins: pluginServerOrigins }
@@ -1925,6 +1933,7 @@ export async function runHarnessTurn(
         harnessId: harnessAdapter.id,
         modelId,
         selectedServers: selectedServers ?? [],
+        unavailableServerIds: options.unavailableServerIds,
         permissionMode,
         // INS-7: fold the plugin runtime in, so a version upgrade / bundle
         // change forks the session instead of resuming onto a sandbox that
@@ -2585,7 +2594,7 @@ export async function runHarnessTurn(
       // cannot be silently dropped at construction" a compile-time fact instead
       // of a convention.
       let harnessRuntime =
-        harnessAdapter.mcpDelivery === "native" &&
+        harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
           ? harnessAdapter.createHarness({
               modelId,
@@ -2753,7 +2762,7 @@ export async function runHarnessTurn(
           // write — its servers already went out as `tools` above — and the
           // adapter union forbids it from carrying `deliverMcpServers` at all.
           if (
-            harnessAdapter.mcpDelivery === "native" &&
+            harnessAdapter.mcpDelivery === "harness" &&
             harnessAdapter.mcpNativeDelivery === "sandbox-files"
           ) {
             // The "advertises MCP but has no delivery strategy" throw that used
@@ -3318,10 +3327,10 @@ export async function runHarnessTurn(
             } as unknown as Parameters<typeof agent.continueStream>[0])
           : await agent.stream({
               session,
-              messages: withHarnessAttachmentNote(
+              messages: withHarnessTurnContext(withHarnessAttachmentNote(
                 promptAttachments.messages,
                 buildHarnessAttachmentNote(attachmentOutcomes),
-              ),
+              ), options.harnessTurnContext),
               // Hand the harness the combined abort signal so a user cancel OR a
               // lost-lease liveness abort propagates into the in-sandbox run.
               abortSignal: effectiveAbortSignal,

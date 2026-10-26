@@ -1,3 +1,4 @@
+import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
 import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
 import { hasServiceCredential } from "../../services/service-credential.js";
 import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
@@ -1552,7 +1553,8 @@ chatV2.post("/", async (c) => {
       pluginPins?.mcpProtocolVersionsByServerId?.[id] ?? pluginPins?.initializePins?.mcpProtocolVersion;
     const pluginFormPlan = pluginPins
       ? chatPluginFormPlan({
-          harness: resolvedExecution.harness,
+          harness: resolvedExecution.agentLoop ? undefined : resolvedExecution.harness,
+          agentLoop: resolvedExecution.agentLoop,
           serverIds: effectiveServerIds,
           pinFor: pluginPinFor,
           mrtrEnabled,
@@ -1563,7 +1565,7 @@ chatV2.post("/", async (c) => {
     // connection negotiated.
     let pluginNegotiatedVersion: (serverId: string) => string | undefined = () => undefined;
     if (pluginWorkspace && hostRuntimeConfig && pluginFormPlan?.admitted) {
-      assertPluginWorkspaceRuntime({ harness: resolvedExecution.harness, hostPolicy: { hostStyle: hostRuntimeConfig.hostStyle as string | undefined } });
+      assertPluginWorkspaceRuntime({ harness: resolvedExecution.agentLoop ? undefined : resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop, hostPolicy: { hostStyle: hostRuntimeConfig.hostStyle as string | undefined } });
       modelPluginBearer = await getConvexBearerForRequest(c);
       modelPluginSubject = toolApprovalSubjectFromAuthHeader(c.req.header("authorization"));
       if (modelPluginSubject === "anonymous") throw new Error("Plugin model identity unavailable");
@@ -1612,13 +1614,7 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    // A Playground turn runs its plugins' servers isolated: one that is
-    // refused or fails is left out of the turn instead of failing it (see
-    // `plugin-server-isolation.ts`). Scenario and harness turns stay strict.
-    const isolatedServerIds =
-      isScenarioSession || resolvedExecution.harness
-        ? []
-        : (effectiveCapabilities?.pluginServerIds ?? []);
+    const isolatedServerIds = chatTurnIsolatedServerIds(effectiveServerIds, isScenarioSession);
     // Membership chat (no share/scenario token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / scenario)
@@ -2709,7 +2705,7 @@ chatV2.post("/", async (c) => {
           uiMessages: appMessages,
           ...(pluginContext ? { pluginContext } : {}),
           ...(resolvedExecution.harness
-            ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
+            ? { harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
           ...(tasksSeam ? { tasks: tasksSeam } : {}),
           ...(resolvedProgressiveToolDiscovery !== undefined
@@ -2791,6 +2787,7 @@ chatV2.post("/", async (c) => {
           },
         },
         persist: {
+          executionBindingVersion: resolvedExecution.executionBindingVersion,
           executionTarget: toResumeExecutionTarget(executionTarget),
           chatSessionId: body.chatSessionId,
           projectId: hostedBody.projectId,
@@ -2809,7 +2806,7 @@ chatV2.post("/", async (c) => {
           authenticatedUserId,
           originalMessages: messages,
           ...(resolvedExecution.harness
-            ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
+            ? { harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
           // Harness-engine delivery of the environment's resolved skills.
           // Presence (even empty) is what makes it authoritative downstream.

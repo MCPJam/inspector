@@ -1368,7 +1368,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     ]);
   });
 
-  it("returns server names in hosted oauth-required chat errors", async () => {
+  it("continues hosted chat when a named server needs sign-in", async () => {
     const { app, token } = createWebTestApp();
 
     global.fetch = vi.fn(async (input, init) => {
@@ -1427,19 +1427,13 @@ describe("web routes — chat-v2 hosted mode", () => {
       token
     );
 
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual(
-      expect.objectContaining({
-        code: "UNAUTHORIZED",
-        message:
-          'Server "Asana" requires OAuth authentication. Please complete the OAuth flow first.',
-        details: expect.objectContaining({
-          oauthRequired: true,
-          serverId: "server-1",
-          serverName: "Asana",
-          serverUrl: "https://server-1.example.com/mcp",
-        }),
-      })
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ isolatedServers: ["server-1"] }),
+    );
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({ unavailableServerIds: ["server-1"] }),
     );
   });
 

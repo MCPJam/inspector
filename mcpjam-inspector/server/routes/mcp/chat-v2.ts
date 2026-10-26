@@ -1,3 +1,5 @@
+import { assertAgentLoopResume } from '../../utils/harness/agent-loop-dispatch.js';
+import { assertConversationExecution } from '../../utils/harness/conversation-execution.js';
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { ensureLocalHarnessTarget, LOCAL_HARNESS_DISPLAY_NAMES, LocalAutoApproveConsentRequiredError } from "../../utils/harness/local/readiness.js";
 import { modelWorkloadFor } from "../../utils/model-workload.js";
@@ -101,7 +103,7 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
-import { ownKeyTurnRefusal, withOwnKeyTurnPolicy, type OwnKeyTurn } from "../../utils/own-key-turn-policy.js";
+import { ownKeyTurnCheck, withOwnKeyTurnPolicy, type OwnKeyTurn } from "../../utils/own-key-turn-policy.js";
 import {
   createEmptyTurnWatcher,
   hasSettledToolCallThisPrompt,
@@ -1344,6 +1346,7 @@ chatV2.post("/", async (c) => {
       mcpjamProvided: isMcpJamProvidedModel,
       stepUpResume: Boolean(scopeStepUpResumeRequest),
     });
+    assertAgentLoopResume(resolvedExecution.agentLoop, Boolean(scopeStepUpResumeRequest));
     const usesMcpjamFreePath = rail.usesFreePath;
     // Guests may use any hosted model — model curation for guests is gone;
     // the backend enforces spend caps (a soft postpaid guard), not an
@@ -2008,6 +2011,8 @@ chatV2.post("/", async (c) => {
             // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
             // only for a host-funded swarm executionScope.
             isGuest: requestIsGuest,
+            // A scenario visitor keeps web_search, billed to the scenario owner.
+            ...(bodyScenarioId ? { scenarioId: bodyScenarioId } : {}),
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
@@ -2420,7 +2425,7 @@ chatV2.post("/", async (c) => {
     );
     const effectiveEnhancedSystemPrompt = [
       enhancedSystemPrompt,
-      widgetModelContextSystemPrompt,
+      resolvedExecution.harness ? "" : widgetModelContextSystemPrompt,
     ]
       .filter((section) => section.trim().length > 0)
       .join("\n\n");
@@ -2483,6 +2488,15 @@ chatV2.post("/", async (c) => {
       const inboundAbortSignalMcp = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalMcp, "mcp/chat-v2");
 
+      await assertConversationExecution({
+        mcpClientManager,
+        origin: "mcpjam_agent",
+        projectId: body.projectId ?? '', chatSessionId,
+        executionBindingVersion: resolvedExecution.executionBindingVersion,
+        scenarioId: bodyScenarioId, executionScope,
+        harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop,
+        authHeader, signal: inboundAbortSignalMcp,
+      });
       const turnResponse = await handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
@@ -2508,6 +2522,8 @@ chatV2.post("/", async (c) => {
         sourceType: chatSessionSourceType,
         requireToolApproval,
         modelVisibleMcpToolResults,
+        harnessTurnContext: widgetModelContextSystemPrompt,
+        harnessUnavailableAppTools: Boolean(validatedAppTools.length || validatedPageTools.length),
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
         // step and the tools it needs exist only from the next.
         ...(pageToolRefresh ? { refreshTools: guardedRefreshTools } : {}),
@@ -2540,6 +2556,7 @@ chatV2.post("/", async (c) => {
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
+              agentLoop: resolvedExecution.agentLoop,
               // Harness MCP-server tools execute out of process through
               // `.mcp.json`, bypassing `allTools`. runHarnessTurn adds a
               // per-turn correlation header and bridges actionable challenges
@@ -2909,10 +2926,11 @@ chatV2.post("/", async (c) => {
         serverIds: hostConfigServerIds,
       },
     };
-    const ownKeyCheckedAt = performance.now();
-    const ownKeyRefusal = await ownKeyTurnRefusal(ownKeyTurn);
-    if (ownKeyRefusal) {
-      return webErrorFromRoute(c, mapRuntimeError(ownKeyRefusal));
+    // The answer may be shared with other turns, so the wrapped model trusts
+    // it from when ITS read started (`readAt`), not from this call.
+    const ownKeyCheck = await ownKeyTurnCheck(ownKeyTurn);
+    if (ownKeyCheck.refusal) {
+      return webErrorFromRoute(c, mapRuntimeError(ownKeyCheck.refusal));
     }
 
     // User-provided models: direct streamText
@@ -2922,7 +2940,7 @@ chatV2.post("/", async (c) => {
         azure: body.azureBaseUrl,
       }, body.customProviders),
       ownKeyTurn,
-      { allowedAt: ownKeyCheckedAt },
+      { allowedAt: ownKeyCheck.readAt },
     );
 
     const modelMessages = await convertToMcpjamModelMessages(

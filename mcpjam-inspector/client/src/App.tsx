@@ -30,6 +30,7 @@ import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
+import { useAuthExitCleanup } from "./hooks/use-sign-out";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
 import { UnavailableOrganizationDialog } from "./components/organization/UnavailableOrganizationDialog";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
@@ -1667,41 +1668,53 @@ function EvaluateRouteContent() {
 }
 
 export function ConformanceRoute() {
-  const { selectedServerEntry, convexProjectId, isAuthenticated } =
-    useAppRouteContext();
-  const { serversByName } = useProjectServers({
+  const {
+    appState,
+    selectedServerEntry,
+    setSelectedServer,
+    convexProjectId,
+    isAuthenticated,
+  } = useAppRouteContext();
+  const { serversByName, serversById } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
   const savedServerId = selectedServerEntry?.name
     ? (serversByName.get(selectedServerEntry.name) ?? null)
     : null;
+  // The page picks its server from its own select, not the header tabs.
+  const connectedServers = Object.values<ServerWithName>(
+    appState.servers,
+  ).filter((s) => s.connectionStatus === "connected");
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      {convexProjectId ? (
-        <div className="shrink-0 overflow-auto border-b border-border/40 px-4 pt-4 lg:px-6">
+    <ConformanceTab
+      server={selectedServerEntry ?? null}
+      servers={connectedServers}
+      onSelectServer={setSelectedServer}
+      persist={
+        convexProjectId
+          ? { projectId: convexProjectId, serverId: savedServerId }
+          : undefined
+      }
+      history={
+        convexProjectId ? (
           <ConformanceHistory
+            key={convexProjectId}
             projectId={convexProjectId}
-            serverId={savedServerId}
+            serverNames={serversById}
           />
-        </div>
-      ) : null}
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <ConformanceTab
-          server={selectedServerEntry ?? null}
-          persist={
-            convexProjectId
-              ? { projectId: convexProjectId, serverId: savedServerId }
-              : undefined
-          }
-        />
-      </div>
-    </div>
+        ) : undefined
+      }
+    />
   );
 }
 
 export function ConformanceRunDetailRoute() {
-  const { convexProjectId } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { serversById } = useProjectServers({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
   const params = useParams<{ runId?: string }>();
   const pathname = getRouteFallbackPathname();
   const raw =
@@ -1710,6 +1723,7 @@ export function ConformanceRunDetailRoute() {
     <ConformanceRunDetailPage
       runId={decodeParam(raw) ?? raw}
       projectId={convexProjectId}
+      serverNames={serversById}
     />
   );
 }
@@ -3568,9 +3582,8 @@ export default function App() {
       ),
     [serversById],
   );
-  // Keep this explicit sign-out cleanup even though useAppState also cleans up
-  // on auth-scope changes: WorkOS navigation can redirect before that effect
-  // gets a chance to run.
+  // Every sign-out runs this: WorkOS can redirect before useAppState's own
+  // auth-scope cleanup gets a chance to run.
   const disconnectRuntimeServersForAuthExit = useCallback(async () => {
     const inspection = useWebmcpInspectorStore.getState();
     if (
@@ -3602,6 +3615,7 @@ export default function App() {
       }
     }
   }, [appState.servers, handleDisconnect]);
+  useAuthExitCleanup(disconnectRuntimeServersForAuthExit);
   const handleInspectorScopeStepUp = useCallback(
     (event: {
       serverId: string;
@@ -6206,7 +6220,6 @@ export default function App() {
     activeTab === "resources" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
-    activeTab === "conformance" ||
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
@@ -6465,7 +6478,6 @@ export default function App() {
           billingGateEnforcementActive={billingGateEnforcementActive}
           isCreateProjectDisabled={isCreateProjectDisabled}
           createProjectDisabledReason={createProjectDisabledReason}
-          onBeforeSignOut={disconnectRuntimeServersForAuthExit}
         />
         <SettingsNavigation
           enabled={settingsShellActive}
