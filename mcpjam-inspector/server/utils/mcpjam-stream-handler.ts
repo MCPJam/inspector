@@ -1154,6 +1154,7 @@ export interface MCPJamHandlerOptions {
   scenarioParticipant?: boolean;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
+  unavailableServerIds?: readonly string[];
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
    *  When "claude-code", handleMCPJamFreeChatModel routes to runHarnessTurn. */
   harness?: Harness;

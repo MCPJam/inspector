@@ -31806,6 +31806,40 @@
             "type": "string",
             "description": "The saved host this turn executed as — the pointer the caller sent, or the host the targeted environment pins. Absent when the turn named no host."
           },
+          "skippedServers": {
+            "type": "array",
+            "description": "Servers omitted from this turn because they could not connect. The reply still runs when every selected server is skipped.",
+            "items": {
+              "type": "object",
+              "required": [
+                "serverId",
+                "serverName",
+                "reason",
+                "message"
+              ],
+              "properties": {
+                "serverId": {
+                  "type": "string"
+                },
+                "serverName": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "hosted_requires_https",
+                    "hosted_stdio_unsupported",
+                    "needs_sign_in",
+                    "unreachable",
+                    "other"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "advertisedToolCount": {
             "type": "integer",
             "description": "Tools the model could see this turn."

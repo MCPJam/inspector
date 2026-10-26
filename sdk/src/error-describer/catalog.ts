@@ -148,6 +148,11 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // The MCP server under test answered with an HTTP error status. Recognized
   // only from an MCP transport error, so the answer is the server's own.
   "server/http_error": "user_server",
+  // The server under test presented a certificate Node.js would not accept.
+  // Recognized only from the sentence a proxy route writes once it knows the
+  // request went to that server, never from the TLS code, which MCPJam's own
+  // hops produce too.
+  "transport/tls_untrusted": "user_server",
   // "Enable the required client capability in the connection's Client
   // settings" — a toggle the user owns.
   "jsonrpc/missing_required_client_capability": "user_config",
@@ -525,6 +530,23 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Check server-side logs for the crash.",
     ],
     "socket-hang-up",
+  ),
+  "transport/tls_untrusted": entry(
+    "transport/tls_untrusted",
+    "TLS certificate not trusted",
+    "The server presented a TLS certificate that Node.js could not verify, so no request reached it.",
+    [
+      "The certificate comes from a private or corporate CA that Node.js does not trust.",
+      "The server does not send its intermediate certificates.",
+      "The certificate is self-signed, expired, or issued for a different hostname.",
+      "A TLS-inspecting proxy or antivirus replaces the server's certificate.",
+    ],
+    [
+      "Fix the certificate on the server: renew it, send the full chain, and match the hostname.",
+      "If the error suggests `--use-system-ca`, start the inspector with `NODE_OPTIONS=--use-system-ca` so Node.js trusts your system's CAs.",
+      "Or point Node.js at the CA file with `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.",
+    ],
+    "tls-certificate-not-trusted"
   ),
 
   // --- Auth ---
