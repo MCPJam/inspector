@@ -239,6 +239,7 @@ export {
   SkillsExtRequestMethods,
   SKILL_NOT_FOUND_ERROR_CODE,
   getSkillExt,
+  getSkillResultExt,
   isSkillNotFoundError,
   listSkillsExt,
   readResourceDirectoryExt,
@@ -246,6 +247,7 @@ export {
 export type {
   SkillEntry,
   SkillResourceRef,
+  SkillsExtGetResult,
   SkillsExtListResult,
   SkillsDirectoryEntry,
   SkillsDirectoryReadResult,
@@ -264,6 +266,7 @@ export {
   isMCPSkillsWireError,
   assertSkillsListResult,
   assertSkillEntry,
+  assertSkillsGetEnvelope,
   assertSkillsGetResult,
   assertDirectoryReadResult,
 } from "./skills-ext-guards.js";

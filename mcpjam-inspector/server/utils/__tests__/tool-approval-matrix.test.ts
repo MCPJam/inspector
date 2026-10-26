@@ -54,6 +54,9 @@ import { buildExaWebSearchTool } from "../built-in-tools/exa-web-search";
 import { createProgressiveMetaTools } from "../progressive-tool-meta-tools";
 import { createPinnedSkillTools } from "../computers/cloud-skill-tools";
 import { createEffectiveSkillTools } from "../computers/effective-skill-tools";
+import { handleLocalOrgChatModel } from "../org-model-stream-handler";
+import { applyActingServerSkillGate } from "../server-skill-acting-gate";
+import { buildServerSkillBanner } from "../../../shared/server-skill-banner";
 import type { BrowserSessionHandle } from "../../services/browserd/browser-session";
 
 // ── engine harness ─────────────────────────────────────────────────────────
@@ -64,6 +67,20 @@ import type { BrowserSessionHandle } from "../../services/browserd/browser-sessi
 
 let lastExecution: Promise<void> | null = null;
 let writtenChunks: any[] = [];
+
+// Route 3 (local org runtime) builds its own model and calls `streamText`
+// directly; both are stubbed so its rows run without a provider.
+const streamTextMock = vi.hoisted(() => vi.fn());
+vi.mock("@mcpjam/sdk/model-factory", async () => {
+  const actual = await vi.importActual<
+    typeof import("@mcpjam/sdk/model-factory")
+  >("@mcpjam/sdk/model-factory");
+  return {
+    ...actual,
+    assertOrgModelAllowed: vi.fn(),
+    buildOrgModelFromResolvedConfig: vi.fn(() => ({ id: "mock-model" })),
+  };
+});
 
 const createSseResponse = (events: any[]) => {
   const payload = `${events
@@ -86,6 +103,8 @@ vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
     ...actual,
+    streamText: (...args: unknown[]) => streamTextMock(...args),
+    stepCountIs: vi.fn(() => undefined),
     createUIMessageStream: vi.fn(({ execute, onFinish }) => {
       const writer = {
         write: vi.fn((chunk) => {
@@ -874,6 +893,229 @@ describe("one mechanism", () => {
  * both means a change to the predicate that happens to leave one row's verdict
  * intact still shows up here.
  */
+/**
+ * Route 3, the local org runtime, cannot resume a turn after an approval, so
+ * its answer to "gate" is a refusal of the whole turn before the model runs.
+ * These rows pin that for the two tools the acting-skill gate raises: with
+ * the switch, and with a server-served skill in the conversation. A skill
+ * loaded during the turn is refused by the gated call's own `execute`.
+ */
+describe("tool approval matrix — route 3 (local org runtime)", () => {
+  type Route3Verdict = "refused" | "ran";
+
+  const ACTING = [
+    { role: "user", content: "hi" },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "loadSkill",
+          output: {
+            type: "text",
+            value: `${buildServerSkillBanner({
+              ref: "acme/refunds",
+              serverLabel: "Acme",
+              skillUri: "skill://acme/refunds/SKILL.md",
+            })}body`,
+          },
+        },
+      ],
+    },
+  ];
+  const NOT_ACTING = [{ role: "user", content: "hi" }];
+
+  async function route3Verdict(args: {
+    tools: ToolSet;
+    messages: unknown[];
+    requireToolApproval: boolean;
+  }): Promise<Route3Verdict> {
+    writtenChunks = [];
+    lastExecution = null;
+    streamTextMock.mockReset();
+    streamTextMock.mockReturnValue({
+      consumeStream: async () => {},
+      response: Promise.resolve({ modelId: "mock-model", messages: [] }),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1 }),
+      finishReason: Promise.resolve("stop"),
+      toUIMessageStream: () => ({
+        [Symbol.asyncIterator]() {
+          return { next: async () => ({ value: undefined, done: true }) };
+        },
+      }),
+    });
+    handleLocalOrgChatModel({
+      provider: {
+        providerKey: "openai",
+        provider: "openai",
+        runtime: "local",
+        apiKey: "sk-test",
+      } as never,
+      admission: {
+        target: { projectId: "proj_1" },
+        providerKey: "openai",
+        model: "gpt-4-turbo",
+      },
+      projectId: "proj_1",
+      modelId: "gpt-4-turbo",
+      messages: args.messages as never,
+      systemPrompt: "s",
+      tools: args.tools,
+      requireToolApproval: args.requireToolApproval,
+    });
+    try {
+      await lastExecution;
+    } catch {
+      // What happens after `streamText` is not this matrix's question.
+    }
+    const refused = writtenChunks.some(
+      (chunk) =>
+        chunk?.type === "error" &&
+        JSON.parse(chunk.errorText).code === "tool_approval_unsupported",
+    );
+    if (refused) {
+      expect(streamTextMock).not.toHaveBeenCalled();
+      return "refused";
+    }
+    expect(streamTextMock, "neither refused nor ran").toHaveBeenCalled();
+    return "ran";
+  }
+
+  const ROWS: Array<{
+    family: string;
+    tools: (flag: boolean) => ToolSet;
+    messages: unknown[];
+    expected: { on: Route3Verdict; off: Route3Verdict };
+  }> = [
+    {
+      family: "local bash",
+      tools: (flag) =>
+        applyActingServerSkillGate({
+          bash: buildBashTool(
+            {
+              authHeader: "Bearer u",
+              projectId: "proj_1",
+              engine: "local",
+              requireToolApproval: flag,
+            },
+            noopRunner,
+          ),
+        }) as ToolSet,
+      messages: NOT_ACTING,
+      expected: { on: "refused", off: "ran" },
+    },
+    {
+      family: "local bash while acting on a server skill",
+      tools: (flag) =>
+        applyActingServerSkillGate({
+          bash: buildBashTool(
+            {
+              authHeader: "Bearer u",
+              projectId: "proj_1",
+              engine: "local",
+              requireToolApproval: flag,
+            },
+            noopRunner,
+          ),
+        }) as ToolSet,
+      messages: ACTING,
+      expected: { on: "refused", off: "refused" },
+    },
+    {
+      family: "workspace read_server_resource",
+      tools: (flag) =>
+        applyActingServerSkillGate({
+          read_server_resource: buildMcpjamTool("read_server_resource", {
+            client: {} as never,
+            projectId: "proj_1",
+            requireToolApproval: flag,
+          })!,
+        }) as ToolSet,
+      messages: NOT_ACTING,
+      expected: { on: "refused", off: "ran" },
+    },
+    {
+      family: "workspace read_server_resource while acting on a server skill",
+      tools: (flag) =>
+        applyActingServerSkillGate({
+          read_server_resource: buildMcpjamTool("read_server_resource", {
+            client: {} as never,
+            projectId: "proj_1",
+            requireToolApproval: flag,
+          })!,
+        }) as ToolSet,
+      messages: ACTING,
+      expected: { on: "refused", off: "refused" },
+    },
+    {
+      // A tool the gate does not name runs whatever is in context.
+      family: "exa web search while acting on a server skill",
+      tools: () =>
+        applyActingServerSkillGate({
+          web_search: {
+            description: "search",
+            needsApproval: false,
+            execute: async () => ({}),
+          },
+        }) as unknown as ToolSet,
+      messages: ACTING,
+      expected: { on: "ran", off: "ran" },
+    },
+  ];
+
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+  });
+
+  afterEach(() => {
+    delete process.env.CONVEX_HTTP_URL;
+  });
+
+  for (const row of ROWS) {
+    for (const flag of [true, false]) {
+      const label = flag ? "on" : "off";
+      it(`${row.family} · route 3 · switch ${label} → ${row.expected[label]}`, async () => {
+        const verdict = await route3Verdict({
+          tools: row.tools(flag),
+          messages: row.messages,
+          requireToolApproval: flag,
+        });
+        expect(verdict, row.family).toBe(row.expected[label]);
+      });
+    }
+  }
+
+  // The banner arrives within the turn: the model calls `loadSkill`, then the
+  // gated tool. The request had none, so the turn runs; the call then sees
+  // the step's messages, which carry one. It must neither ask (no resume
+  // here) nor run.
+  for (const [family, name] of [
+    ["local bash", "bash"],
+    ["workspace read_server_resource", "read_server_resource"],
+  ] as const) {
+    it(`${family} · route 3 · switch off · skill loaded in the same call → refused in execute`, async () => {
+      const row = ROWS.find((candidate) => candidate.family === family)!;
+      const verdict = await route3Verdict({
+        tools: row.tools(false),
+        messages: NOT_ACTING,
+        requireToolApproval: false,
+      });
+      expect(verdict).toBe("ran");
+      const tool = streamTextMock.mock.calls[0]![0].tools[name];
+      const options = { toolCallId: "c2", messages: ACTING };
+      const asks =
+        typeof tool.needsApproval === "function"
+          ? await tool.needsApproval({}, options)
+          : tool.needsApproval === true;
+      expect(asks, family).toBe(false);
+      const output = await tool.execute({}, options);
+      expect(output.error, family).toMatch(/server-provided skill/);
+    });
+  }
+});
+
 describe("toolCallNeedsApproval — the MCPJam gate", () => {
   const ask = (
     name: string,
