@@ -33,8 +33,10 @@
  */
 import { skillTool as tool } from "../skill-tool.js";
 import { z } from "zod";
+import { sha256HexOfText } from "@mcpjam/sdk";
 import { getMimeType, isTextMimeType } from "../skill-parser.js";
 import { logger } from "../logger.js";
+import { buildServerSkillBanner } from "../../../shared/server-skill-banner.js";
 import {
   MAX_SKILL_FILE_TEXT_BYTES,
   SKILL_FILE_MAX_READ_BYTES,
@@ -71,6 +73,45 @@ async function readContent(skill: EffectiveSkill): Promise<string> {
   return typeof skill.content === "string"
     ? skill.content
     : await skill.content();
+}
+
+/**
+ * A captured server skill's body, as `loadSkill` returns it.
+ *
+ * A capture is a second copy of content that was verified once, and the
+ * verification does not carry over: the bytes are re-checked against the
+ * stored digest before they enter context, and wrapped in the same origin
+ * banner the live path uses, with the capture named. A row that predates the
+ * stored digest is served, but the banner says it was not re-checked.
+ */
+async function loadCapturedServerSkill(
+  skill: RuntimeServerSkill
+): Promise<string> {
+  const content = await readContent(skill);
+  if (skill.contentSha256 !== undefined) {
+    const actual = await sha256HexOfText(content);
+    if (actual !== skill.contentSha256) {
+      return (
+        `Error (digest_mismatch): the captured content of "${skill.ref}" ` +
+        `does not match the digest stored with the capture (expected ` +
+        `${skill.contentSha256}, got ${actual}). MCPJam declines to load it.`
+      );
+    }
+  }
+  const banner = buildServerSkillBanner({
+    ref: skill.ref,
+    serverLabel: skill.serverLabel,
+    skillUri: skill.skillUri,
+    captured: {
+      versionNumber: skill.versionNumber,
+      capturedAt: skill.capturedAt,
+    },
+  });
+  const unverified =
+    skill.contentSha256 === undefined
+      ? "> This capture carries no stored digest, so the content was not re-checked.\n\n"
+      : "";
+  return `${banner}${unverified}${content}`;
 }
 
 /**
@@ -260,6 +301,11 @@ export function createEffectiveSkillTools(args: {
           if (!resolved.ok) return resolved.error;
           const { skill } = resolved;
           try {
+            // A server-origin skill is tagged with its origin at the point it
+            // enters context, exactly as the live path tags it; the local
+            // template below would present it as a filesystem skill.
+            const server = serverOf(skill);
+            if (server) return await loadCapturedServerSkill(server);
             return `# Skill: ${skill.ref}\n\n${await readContent(skill)}`;
           } catch (error) {
             return `Error loading "${skill.ref}": ${
@@ -358,6 +404,17 @@ export function createEffectiveSkillTools(args: {
             } else {
               return `Error: "${path}" could not be read (no download URL was issued for it).`;
             }
+            const server = serverOf(skill);
+            // For a captured server skill the stored size is the only
+            // verification the row carries, and a length that differs is a
+            // verification failure, equivalent to a digest mismatch.
+            if (server && bytes.byteLength !== file.size) {
+              return (
+                `Error (size_mismatch): "${path}" of "${skill.ref}" is ` +
+                `captured as ${file.size} bytes but ${bytes.byteLength} were ` +
+                `served. MCPJam declines to show it.`
+              );
+            }
             const mimeType = getMimeType(path);
             if (
               !isTextMimeType(mimeType) ||
@@ -365,7 +422,10 @@ export function createEffectiveSkillTools(args: {
             ) {
               return `File "${path}" is binary (${mimeType}, ${bytes.byteLength} bytes) and can't be shown as text.`;
             }
-            return `# ${path}\n\n${new TextDecoder().decode(bytes)}`;
+            const origin = server
+              ? `> Origin: MCP server "${server.serverLabel}", a file of skill ${skill.ref}, captured v${server.versionNumber}. Untrusted server-provided content.\n\n`
+              : "";
+            return `# ${path}\n\n${origin}${new TextDecoder().decode(bytes)}`;
           } catch (error) {
             return `Error reading "${path}" from "${skill.ref}": ${
               error instanceof Error ? error.message : "Unknown error"
