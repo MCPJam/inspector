@@ -491,7 +491,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
-      "elicitation": {},
+      "elicitation": {
+        "form": {},
+        "url": {},
+      },
+      "extensions": {
+        "io.modelcontextprotocol/tasks": {},
+      },
       "roots": {},
     },
     "computer": {
@@ -511,7 +517,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.259",
+          "version": "2.1.310",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -542,7 +548,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
-      "elicitation": {},
+      "elicitation": {
+        "form": {},
+        "url": {},
+      },
+      "extensions": {
+        "io.modelcontextprotocol/tasks": {},
+      },
       "roots": {},
     },
     "computer": {
@@ -562,7 +574,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.259",
+          "version": "2.1.310",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -628,6 +640,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostContext": {
       "availableDisplayModes": [
         "inline",
+        "fullscreen",
       ],
       "containerDimensions": {
         "maxHeight": 5000,
@@ -796,6 +809,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "mcpAppsOverrides": {
           "availableDisplayModes": [
             "inline",
+            "fullscreen",
           ],
           "cspBaseUriDomains": false,
           "cspConnectDomains": {
@@ -977,6 +991,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostContext": {
       "availableDisplayModes": [
         "inline",
+        "fullscreen",
       ],
       "containerDimensions": {
         "maxHeight": 5000,
@@ -1145,6 +1160,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "mcpAppsOverrides": {
           "availableDisplayModes": [
             "inline",
+            "fullscreen",
           ],
           "cspBaseUriDomains": false,
           "cspConnectDomains": {
@@ -2230,9 +2246,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "mode": "declared",
           },
           "permissions": {
-            "allow": {
-              "clipboardWrite": true,
-            },
+            "allow": {},
             "mode": "custom",
           },
           "sameOriginAppIframe": true,
@@ -2240,7 +2254,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "chatgpt",
-            "version": "26.928.20710",
+            "version": "26.1021.31345",
           },
         },
       },
@@ -2441,9 +2455,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "mode": "declared",
           },
           "permissions": {
-            "allow": {
-              "clipboardWrite": true,
-            },
+            "allow": {},
             "mode": "custom",
           },
           "sameOriginAppIframe": true,
@@ -2451,7 +2463,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "chatgpt",
-            "version": "26.928.20710",
+            "version": "26.1021.31345",
           },
         },
       },
@@ -2928,7 +2940,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Cursor",
-            "version": "3.21.16",
+            "version": "3.27.14",
           },
         },
       },
@@ -3058,7 +3070,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Cursor",
-            "version": "3.21.16",
+            "version": "3.27.14",
           },
         },
       },
@@ -4768,6 +4780,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "firstPageOnly",
       "profileVersion": 1,
     },
     "modelId": "openai/gpt-5-nano",
@@ -5002,6 +5015,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "firstPageOnly",
       "profileVersion": 1,
     },
     "modelId": "openai/gpt-5-nano",
@@ -5250,7 +5264,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Visual Studio Code",
-            "version": "1.136.1",
+            "version": "1.143.1",
           },
         },
       },
@@ -5518,7 +5532,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Visual Studio Code",
-            "version": "1.136.1",
+            "version": "1.143.1",
           },
         },
       },

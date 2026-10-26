@@ -820,8 +820,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.hostContext = {
         theme,
         displayMode: "inline",
-        // Desktop advertises inline alone; the web app offers both.
-        availableDisplayModes: ["inline"],
+        // Correction (2026-10-26): Desktop now advertises fullscreen too,
+        // same as the web app.
+        availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { width: 768, maxHeight: 5000 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
@@ -954,7 +955,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           mcpAppsOverrides: {
             // Both Desktop captures send `hostContext.safeAreaInsets`, all 0.
             safeAreaInsets: true,
-            availableDisplayModes: ["inline"],
+            // Correction (2026-10-26): fullscreen is now advertised too.
+            availableDisplayModes: ["inline", "fullscreen"],
             // `toolInputPartial` is deliberately absent, not false: the
             // capture carried no `tool-input-partial`, but that notification
             // only fires while arguments stream and the probe tool takes none.
@@ -1035,17 +1037,23 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         harness: "claude-code",
         computer: { kind: "personal" },
       });
-      // Verbatim from a live mcpjam-learn `start-host-probe` against
-      // Claude Code CLI v2.1.176: raw `initialize` capabilities are
-      // exactly `{ roots: {}, elicitation: {} }` — roots without
-      // `listChanged`, elicitation the SDK parses as form-mode, and NO
-      // `extensions["io.modelcontextprotocol/ui"]`. Replace the SDK
-      // default entirely rather than spreading on top — a spread would
+      // From a live `start-host-probe` against Claude Code CLI v2.1.310
+      // (2026-10-26): elicitation declaring the `form` and `url` modes, and
+      // `extensions["io.modelcontextprotocol/tasks"]`. That capture also
+      // reported `roots.listChanged`, but `roots` is deliberately held at
+      // the older bare `{}` reading pending a cleaner capture. Still NO
+      // `extensions["io.modelcontextprotocol/ui"]`, so keep replacing the
+      // SDK default entirely rather than spreading on top — a spread would
       // leak the UI extension back in and misrepresent Claude Code as a
       // UI-capable client (same move as the Codex template).
+      //
+      // This supersedes the v2.1.176 reading that used to sit here, which
+      // claimed bare `{ roots: {}, elicitation: {} }` — elicitation and the
+      // tasks extension have both grown since.
       base.clientCapabilities = {
         roots: {},
-        elicitation: {},
+        elicitation: { form: {}, url: {} },
+        extensions: { "io.modelcontextprotocol/tasks": {} },
       };
       // The real Claude Code owns native tool discovery from the generated
       // .mcp.json. Keep MCPJam's progressive meta-tools off for this template
@@ -1091,7 +1099,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.259",
+            version: "2.1.310",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -1688,9 +1696,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
 
       base.mcpProfile = {
         profileVersion: 1,
-        // Neither paginationTraversal nor toolListChanged is written here: the
-        // 2026-08-26 capture never saw a `tools/list` from Slack, and
-        // probe-list-changed was never run against it.
+        // The 2026-10-26 capture is the first to see a `tools/list` from
+        // Slack: it fetched page one and stopped without following
+        // `nextCursor`. The 2026-08-26 run saw none at all, which is why this
+        // was unwritten. `toolListChanged` stays unwritten — probe-list-changed
+        // has still never been run against Slack.
+        paginationTraversal: "firstPageOnly",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // "Slackbot" is the product name this catalog uses throughout. The
@@ -1871,9 +1882,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // MCP Apps extension: hostInfo sent to the View iframe in
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
             // need this to take that path. The version is identity metadata
-            // only; bumped with the 2026-09-29 re-probe (was 3.14.27), which
+            // only; bumped with the 2026-10-26 re-probe (was 3.21.16), which
             // re-confirmed every capability note above.
-            hostInfo: { name: "Cursor", version: "3.21.16" },
+            hostInfo: { name: "Cursor", version: "3.27.14" },
           },
           mcpAppsOverrides: {
             // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
@@ -2002,15 +2013,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
         },
         apps: {
-          // The name is probed: the last capture reported `chatgpt`
-          // 26.825.32147 (the backend catalog's `codex` row). The version is
-          // ASSUMED, a deliberate bump past that capture to OpenAI's
-          // documented minimum desktop build for the DevDay 2026 extensions
-          // (mcp-extensions patterns.md), which Apps such as Bits & Bolts
-          // check before enabling themselves. Replace it with a newer
-          // host-probe capture.
+          // Both name and version are now probed: the 2026-10-26 capture
+          // reported `chatgpt` 26.1021.31345 (the backend catalog's `codex`
+          // row). That replaces the ASSUMED 26.928.20710, a deliberate bump
+          // past the then-latest capture to OpenAI's documented minimum
+          // desktop build for the DevDay 2026 extensions (mcp-extensions
+          // patterns.md), which Apps such as Bits & Bolts check before
+          // enabling themselves. The probed build is past that minimum.
           uiInitialize: {
-            hostInfo: { name: "chatgpt", version: "26.928.20710" },
+            hostInfo: { name: "chatgpt", version: "26.1021.31345" },
           },
           // OpenAI plugin extensions are on by default for Codex; each one
           // can be switched off in the client's Apps tab.
@@ -2058,10 +2069,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
                 "base-uri": ["'none'"],
               },
             },
-            // 2026-10-12: clipboard write now works (refused on 2026-09-29).
-            // Microphone was refused on 2026-09-29; camera and geolocation
-            // were only undeclared canaries. All three stay off.
-            permissions: { mode: "custom", allow: { clipboardWrite: true } },
+            // Correction (2026-10-26): clipboard write is refused again
+            // (`declared-denied`), and that capture's `hostCapabilities`
+            // carries no `sandbox.permissions` block at all. It had briefly
+            // worked on 2026-10-12 after being refused on 2026-09-29.
+            // Microphone is `declared-denied` too; camera and geolocation
+            // were only undeclared canaries. Nothing is granted.
+            permissions: { mode: "custom", allow: {} },
             // All three browser storage APIs were readable and writable from
             // inside the widget sandbox. Not an MCP concept — the MCP Apps
             // spec says nothing about storage.
@@ -2483,7 +2497,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         },
         apps: {
           uiInitialize: {
-            hostInfo: { name: "Visual Studio Code", version: "1.136.1" },
+            // 2026-10-26 capture: `ui/initialize` reported 1.143.1. The
+            // `clientInfo` above is deliberately NOT bumped with it — that
+            // run's wire `clientInfo` was `copilot-cli` 1.0.100-1.
+            hostInfo: { name: "Visual Studio Code", version: "1.143.1" },
           },
           compatRuntime: { openaiApps: false },
           sandbox: {
