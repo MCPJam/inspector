@@ -45,28 +45,34 @@ vi.mock("@mcpjam/sdk", async () => {
     ...actual,
     isMCPAuthError: vi.fn().mockReturnValue(false),
     MCPClientManager: vi.fn().mockImplementation(function () {
+      const getTools = vi.fn(
+        async (serverIds: string[], options?: { needsApproval?: boolean }) =>
+          serverIds.includes("server-1")
+            ? {
+                search_docs: {
+                  description: "Search the docs",
+                  inputSchema: jsonSchema({
+                    type: "object",
+                    properties: { q: { type: "string" } },
+                  }),
+                  execute: mcpToolExecuteMock,
+                  _serverId: "server-1",
+                  ...(options?.needsApproval ? { needsApproval: true } : {}),
+                },
+              }
+            : {},
+      );
       return {
         disconnectAllServers: vi.fn(),
         hasServer: (id: string) => id === "server-1",
         listTools: vi.fn().mockResolvedValue({ tools: [] }),
         readResource: vi.fn().mockResolvedValue({ contents: [] }),
         getAllToolsMetadata: vi.fn().mockReturnValue({}),
-        getToolsForAiSdk: vi.fn(
-          async (serverIds: string[], options?: { needsApproval?: boolean }) =>
-            serverIds.includes("server-1")
-              ? {
-                  search_docs: {
-                    description: "Search the docs",
-                    inputSchema: jsonSchema({
-                      type: "object",
-                      properties: { q: { type: "string" } },
-                    }),
-                    execute: mcpToolExecuteMock,
-                    _serverId: "server-1",
-                    ...(options?.needsApproval ? { needsApproval: true } : {}),
-                  },
-                }
-              : {},
+        getToolsForAiSdk: getTools,
+        getToolsForAiSdkByServer: vi.fn(
+          async (ids: string[], options?: { needsApproval?: boolean }) => ({
+            "server-1": await getTools(ids, options),
+          }),
         ),
       };
     }),

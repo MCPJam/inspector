@@ -58,8 +58,10 @@ import type { AppSurfaceId } from "@/shared/app-surfaces";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import {
   getApiContextRevision,
+  getServerRequestKey,
   subscribeApiContext,
 } from "@/lib/apis/web/context";
+import { HOSTED_MODE } from "@/lib/config";
 import type {
   ExecuteToolInspectorCommand,
   RenderToolResultInspectorCommand,
@@ -315,10 +317,21 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   });
 
   const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);
-  const apiContextRevision = useSyncExternalStore(
+  // What this server's tools/list would send right now, or `null` while the
+  // context cannot build it. The list is refetched when the request changes,
+  // not on every context revision: most revisions (a connect re-injecting a
+  // mapping it had, a new token getter) leave it exactly as it was (PLB-118).
+  // A local build's listing reads nothing from the context.
+  const readToolsRequestKey = () =>
+    !serverName
+      ? null
+      : HOSTED_MODE
+        ? getServerRequestKey(serverName)
+        : `local:${serverName}`;
+  const toolsRequestKey = useSyncExternalStore(
     subscribeApiContext,
-    getApiContextRevision,
-    getApiContextRevision
+    readToolsRequestKey,
+    readToolsRequestKey,
   );
 
   const waitForExecutionInjection = useCallback(
@@ -420,29 +433,88 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     setFormFields,
   });
 
-  const fetchTools = useCallback(async () => {
-    if (!serverName) return;
+  // Each listing gets a number, and only the newest may write: an older one
+  // answering late would show tools for a request since replaced. The keys
+  // record which request is being listed and which one last listed
+  // successfully, so the effect below sends each request once.
+  const toolsRequestSeqRef = useRef(0);
+  const toolsInFlightKeyRef = useRef<string | null>(null);
+  const toolsSettledKeyRef = useRef<string | null>(null);
+  // A failed listing is retried on the next context revision, even one that
+  // leaves the request as it was: a new token getter can be what fixes it.
+  // Holds the revision the failed request was sent at, `null` when nothing
+  // failed.
+  const toolsFailedAtRevisionRef = useRef<number | null>(null);
+  const readToolsRetryRevision = () => {
+    const failedAt = toolsFailedAtRevisionRef.current;
+    const revision = getApiContextRevision();
+    return failedAt !== null && revision > failedAt ? revision : 0;
+  };
+  const toolsRetryRevision = useSyncExternalStore(
+    subscribeApiContext,
+    readToolsRetryRevision,
+    readToolsRetryRevision,
+  );
+  // A listing still in flight when the Playground closes must not write, and
+  // must not count as in flight: StrictMode remounts at once, and the replayed
+  // effect would otherwise skip the request and leave `fetchingTools` set.
+  useEffect(
+    () => () => {
+      toolsRequestSeqRef.current += 1;
+      toolsInFlightKeyRef.current = null;
+    },
+    [],
+  );
 
-    reset();
-    setToolsMetadata({});
-    setFetchingTools(true);
-    try {
-      const data = await listTools({ serverId: serverName });
-      const toolArray = data.tools ?? [];
-      const dictionary = Object.fromEntries(
-        toolArray.map((tool: Tool) => [tool.name, tool])
-      );
-      setTools(dictionary);
-      setToolsMetadata(data.toolsMetadata ?? {});
-    } catch (err) {
-      console.error("Failed to fetch tools:", err);
-      setExecutionError(
-        err instanceof Error ? err.message : "Failed to fetch tools"
-      );
-    } finally {
-      setFetchingTools(false);
-    }
-  }, [serverName, reset, setTools, setExecutionError, apiContextRevision]);
+  /**
+   * `resetSelection: false` replaces only the list and its metadata, for a
+   * request that changed under the same server and status (a host switch, a
+   * new OAuth token): the selected tool, its form and its output stay.
+   */
+  const fetchTools = useCallback(
+    async ({ resetSelection = true }: { resetSelection?: boolean } = {}) => {
+      if (!serverName) return;
+
+      const seq = ++toolsRequestSeqRef.current;
+      toolsInFlightKeyRef.current = toolsRequestKey;
+      // A refresh of a request that already listed must not leave it marked
+      // as listed: if this one fails, the next revision has to retry it.
+      toolsSettledKeyRef.current = null;
+      toolsFailedAtRevisionRef.current = null;
+      // A revision landing while this request is in flight may be the one
+      // that fixes it, so a failure counts from when the request was sent.
+      const requestRevision = getApiContextRevision();
+      if (resetSelection) {
+        reset();
+        setToolsMetadata({});
+      }
+      setFetchingTools(true);
+      try {
+        const data = await listTools({ serverId: serverName });
+        if (seq !== toolsRequestSeqRef.current) return;
+        const toolArray = data.tools ?? [];
+        const dictionary = Object.fromEntries(
+          toolArray.map((tool: Tool) => [tool.name, tool]),
+        );
+        setTools(dictionary);
+        setToolsMetadata(data.toolsMetadata ?? {});
+        toolsSettledKeyRef.current = toolsRequestKey;
+      } catch (err) {
+        if (seq !== toolsRequestSeqRef.current) return;
+        console.error("Failed to fetch tools:", err);
+        toolsFailedAtRevisionRef.current = requestRevision;
+        setExecutionError(
+          err instanceof Error ? err.message : "Failed to fetch tools",
+        );
+      } finally {
+        if (seq === toolsRequestSeqRef.current) {
+          toolsInFlightKeyRef.current = null;
+          setFetchingTools(false);
+        }
+      }
+    },
+    [serverName, reset, setTools, setExecutionError, toolsRequestKey],
+  );
 
   const loadToolsUntilMatch = useCallback(
     async (toolName?: string) => {
@@ -578,12 +650,39 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       status: serverConnectionStatus,
     };
 
+    // A listing still in flight belongs to the previous server, even while
+    // the new one cannot be asked yet.
+    const dropListing = () => {
+      toolsRequestSeqRef.current += 1;
+      toolsInFlightKeyRef.current = null;
+      toolsSettledKeyRef.current = null;
+      toolsFailedAtRevisionRef.current = null;
+      setFetchingTools(false);
+    };
+    if (serverChanged) dropListing();
+
     if (serverConfig && serverName && serverConnectionStatus === "connected") {
-      if (!serverChanged && !statusChanged && Object.keys(tools).length > 0) {
+      // Wait for a context that can build the request rather than send one
+      // the route would refuse.
+      if (toolsRequestKey === null) {
+        if (serverChanged || statusChanged) {
+          reset();
+          setToolsMetadata({});
+        }
         return;
       }
-      fetchTools();
+      // This exact request is being listed, or listed successfully with
+      // nothing newer in flight. Keyed on the request, not on whether the
+      // list is empty: `fetchTools` empties it before asking, so an empty
+      // list cannot mean "not loaded".
+      const inFlight = toolsInFlightKeyRef.current;
+      const listed =
+        inFlight === toolsRequestKey ||
+        (inFlight === null && toolsSettledKeyRef.current === toolsRequestKey);
+      if (!serverChanged && !statusChanged && listed) return;
+      fetchTools({ resetSelection: serverChanged || statusChanged });
     } else {
+      dropListing();
       reset();
       setToolsMetadata({});
     }
@@ -591,10 +690,10 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     serverConfig,
     serverName,
     serverConnectionStatus,
-    apiContextRevision,
+    toolsRequestKey,
+    toolsRetryRevision,
     fetchTools,
     reset,
-    tools,
   ]);
 
   // Subscribe to the app-tools registry so form fields regenerate when an

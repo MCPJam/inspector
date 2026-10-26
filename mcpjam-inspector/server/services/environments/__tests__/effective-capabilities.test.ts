@@ -286,6 +286,81 @@ describe("resolveEffectiveCapabilities — skills", () => {
   });
 });
 
+describe("resolveEffectiveCapabilities — captured server skills", () => {
+  const captured = (versionHash: string, serverSkillId: string) => ({
+    serverSkillId,
+    versionId: `v_${serverSkillId}`,
+    serverId: "srv_acme",
+    serverSlug: "acme",
+    serverLabel: "Acme",
+    ref: "acme/refunds",
+    skillUri: "skill://acme/refunds/SKILL.md",
+    name: "refunds",
+    description: "Refunds",
+    content: "BODY",
+    contentSha256: "ab".repeat(32),
+    versionHash,
+    versionNumber: 1,
+    capturedAt: 1,
+    files: [],
+  });
+
+  it("disambiguates a colliding server ref instead of dropping the skill", () => {
+    // The spec: a host must not silently discard or prefer one of two
+    // same-named skills. The second claimant keeps a loadable ref, suffixed
+    // with the short form of its content-addressed version hash.
+    const set = resolveEffectiveCapabilities(
+      spec({
+        serverSkills: [
+          captured("1111aaaa2222bbbb", "ss_1"),
+          captured("3333cccc4444dddd", "ss_2"),
+        ],
+      }),
+      attribution()
+    );
+    expect(set.serverSkills.map((skill) => skill.ref)).toEqual([
+      "acme/refunds",
+      "acme/refunds~3333cccc",
+    ]);
+    expect(set.problems).toEqual([
+      expect.objectContaining({
+        code: "skill_ref_collision",
+        ref: "acme/refunds",
+        skillId: "ss_2",
+      }),
+    ]);
+    expect(set.serverSkills[0].contentSha256).toBe("ab".repeat(32));
+  });
+
+  it("says a skill is dropped when its suffixed ref is taken as well", () => {
+    // Two captures whose version hashes share the first eight characters
+    // mint the same suffix. The second cannot be addressed, and the problem
+    // says so instead of calling it loadable.
+    const set = resolveEffectiveCapabilities(
+      spec({
+        serverSkills: [
+          captured("1111aaaa2222bbbb", "ss_1"),
+          captured("3333cccc4444dddd", "ss_2"),
+          captured("3333cccc9999eeee", "ss_3"),
+        ],
+      }),
+      attribution()
+    );
+
+    expect(set.serverSkills.map((skill) => skill.ref)).toEqual([
+      "acme/refunds",
+      "acme/refunds~3333cccc",
+    ]);
+    expect(set.problems).toHaveLength(2);
+    expect(set.problems[0]!.message).toContain('is loadable as "acme/refunds~3333cccc"');
+    expect(set.problems[1]).toEqual(
+      expect.objectContaining({ code: "skill_ref_collision", skillId: "ss_3" })
+    );
+    expect(set.problems[1]!.message).toContain("is not loadable");
+    expect(set.problems[1]!.message).not.toContain("is loadable as");
+  });
+});
+
 describe("resolveEffectiveCapabilities — degraded attribution", () => {
   it("still runs every server and skill when attribution is unavailable", () => {
     const set = resolveEffectiveCapabilities(
