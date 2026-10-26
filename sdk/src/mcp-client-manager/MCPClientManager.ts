@@ -186,6 +186,7 @@ import {
 } from "./mcp-header-mirror.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 import { cancellationLeafForVersion } from "../host-config/types.js";
+import { forgetVerifiedServerSkillReads } from "../server-skills-cache.js";
 import {
   applyRuntimeClientCapabilities,
   getDefaultClientCapabilities,
@@ -857,6 +858,9 @@ export class MCPClientManager {
     this.mrtrInputCollectors.delete(serverId);
     this.mrtrExtensionClaims.delete(serverId);
     this.mrtrFormSchemaSelectors.delete(serverId);
+    // The Skills spec: a host removes a server's cached skill content when
+    // the user removes that server.
+    forgetVerifiedServerSkillReads(this, serverId);
   }
 
   /**
