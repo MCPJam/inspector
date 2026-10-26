@@ -305,6 +305,11 @@ export interface RegisterHostBridgeHandlersOptions {
   ) => void;
 }
 
+/** Error a widget gets for `resources/read` when the host advertises no
+ * `serverResources`. Shared with the eval harness's direct-binding guard. */
+export const RESOURCE_READS_DISABLED_MESSAGE =
+  "This host does not allow resource reads.";
+
 /**
  * Install the SEP-1865 host bridge handlers on `bridge`, gated by
  * `effectiveHostCapabilities` and the capabilities matrix. This is the
@@ -312,11 +317,6 @@ export interface RegisterHostBridgeHandlersOptions {
  * matrix-gated `sendToolCancelled`, and the app-tool invocation lifecycle —
  * lifted out of the React renderer so the eval harness shares it verbatim.
  */
-/** Error a widget gets for `resources/read` when the host advertises no
- * `serverResources`. Shared with the eval harness's direct-binding guard. */
-export const RESOURCE_READS_DISABLED_MESSAGE =
-  "This host does not allow resource reads.";
-
 export function registerHostBridgeHandlers(
   bridge: AppBridge,
   options: RegisterHostBridgeHandlersOptions

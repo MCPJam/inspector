@@ -942,6 +942,8 @@ export class McpAppBrowserHarness {
         _source,
         payload: { widgetId: string; params: ResourceReadParams },
       ): Promise<{ result: MCPReadResourceResult } | { error: string }> => {
+        if (typeof payload?.params?.uri !== "string")
+          return { error: "Invalid resource read request" };
         const widget = this.mounted.get(payload.widgetId);
         if (!widget || this.closing)
           return { error: "Resource read owner is closed" };

@@ -11,7 +11,13 @@ afterEach(async () => {
   await Promise.all(harnesses.splice(0).map((h) => h.dispose()));
 });
 
-async function widgetHtml(force = false) {
+async function widgetHtml(
+  force = false,
+  payload: unknown = {
+    widgetId: "preview",
+    params: { uri: "box://fixture/document" },
+  },
+) {
   const bundle = await build({
     stdin: {
       contents: `
@@ -28,7 +34,7 @@ async function widgetHtml(force = false) {
           } catch (error) { document.querySelector('#status').textContent = String(error); }
         };
         if (${force}) {
-          try { document.querySelector('#status').textContent += ' ' + JSON.stringify(await window.parent.__mcpjamHostReadResource({widgetId:'preview',params:{uri:'box://fixture/document'}})); }
+          try { document.querySelector('#status').textContent += ' ' + JSON.stringify(await window.parent.__mcpjamHostReadResource(${JSON.stringify(payload)})); }
           catch (error) { document.querySelector('#status').textContent += ' threw ' + String(error); }
         }
       })();`,
@@ -43,13 +49,17 @@ async function widgetHtml(force = false) {
   return `<html><body><script>${bundle.outputFiles[0].text}</script></body></html>`;
 }
 
-async function open(harness: McpAppBrowserHarness, force = false) {
+async function open(
+  harness: McpAppBrowserHarness,
+  force = false,
+  payload?: unknown,
+) {
   harnesses.push(harness);
   const result = await harness.renderWidget({
     toolCallId: "preview",
     toolName: "get_file_preview",
     serverId: "box-origin",
-    html: await widgetHtml(force),
+    html: await widgetHtml(force, payload),
     keepMounted: true,
   });
   expect(result.status).toBe("rendered");
@@ -129,6 +139,21 @@ describe.runIf(await isChromiumInstalled())(
       );
       expect(readResource).not.toHaveBeenCalled();
     });
+
+    it.each([null, { widgetId: "preview", params: null }])(
+      "refuses malformed direct-binding payloads without exposing a Node stack: %j",
+      async (payload) => {
+        const readResource = vi.fn();
+        const harness = new McpAppBrowserHarness({
+          callTool: vi.fn(),
+          readResource,
+          hostCapabilities: { serverResources: {} },
+        });
+        await open(harness, true, payload);
+        await visible(harness, '{"error":"Invalid resource read request"}');
+        expect(readResource).not.toHaveBeenCalled();
+      },
+    );
 
     it("gives a widget that calls the binding directly only the error message", async () => {
       const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
