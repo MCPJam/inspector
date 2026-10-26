@@ -241,6 +241,21 @@ function backfillHistory<THistory extends BackfillableHistoryEntry>(
 export const FALLBACK_HINT =
   "Configure a pre-registered client or enable DCR on the authorization server.";
 
+const HTTP_ERROR_PREFIX = "Dynamic Client Registration failed (";
+
+/**
+ * Whether a debugger step error is the authorization server answering the
+ * registration POST with a non-2xx status, with or without the fallback hint.
+ *
+ * The debug proxy hands back whatever the server under test answered, and its
+ * own failures throw instead, which become "Client registration failed: …"
+ * below. So this message only follows the server's real answer, and consumers
+ * can keep it visible without filing it as an MCPJam defect.
+ */
+export function isDynamicClientRegistrationHttpError(error: string): boolean {
+  return error.startsWith(HTTP_ERROR_PREFIX);
+}
+
 /**
  * Executes an RFC 7591 registration POST via the caller's executor, back-fills
  * a cloned last history entry with the redacted response, and classifies the
@@ -284,7 +299,7 @@ export async function executeDynamicClientRegistration<
   const httpHistory = backfillHistory(input.httpHistory, redacted);
 
   if (!response.ok) {
-    const registrationError = `Dynamic Client Registration failed (${response.status}).`;
+    const registrationError = `${HTTP_ERROR_PREFIX}${response.status}).`;
     return {
       status: "http_error",
       response: redacted,
