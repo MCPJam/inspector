@@ -1,16 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-const { revokeAuthKitSessionMock } = vi.hoisted(() => ({
+const { revokeAuthKitSessionMock, hostedMode } = vi.hoisted(() => ({
   revokeAuthKitSessionMock: vi.fn(),
+  hostedMode: { value: false },
 }));
 
 vi.mock("../../services/auth-session-revocation.js", () => ({
   revokeAuthKitSession: revokeAuthKitSessionMock,
 }));
 
+vi.mock("../../config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../config.js")>()),
+  get HOSTED_MODE() {
+    return hostedMode.value;
+  },
+}));
+
 import workosAuthkitRoutes from "../workos-authkit.js";
 import { getLocalSessionNamespace } from "../../utils/local-session-namespace.js";
+import { logger } from "../../utils/logger.js";
 import {
   WORKOS_SCOPED_COOKIE_MAX_AGE_S,
   scopedCookieName,
@@ -134,6 +143,8 @@ describe("workos authkit local session bridge", () => {
 
   afterEach(() => {
     global.fetch = ORIGINAL_FETCH;
+    hostedMode.value = false;
+    vi.restoreAllMocks();
     for (const key of ENV_KEYS) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
@@ -349,11 +360,87 @@ describe("workos authkit local session bridge", () => {
         .mockResolvedValueOnce(tokens("refresh-token-2"));
 
       const failed = await refresh(app, jar);
-      expect(failed.status).toBe(500);
+      expect(failed.status).toBe(503);
+      expect(await failed.json()).toEqual({
+        error_description: "Could not reach WorkOS",
+      });
       expect(setCookieFor(failed, name)).toBeUndefined();
 
       const recovered = await refresh(app, jar);
       expect(recovered.status).toBe(200);
+    });
+
+    // INSPECTOR-HONO-4W: one install that could not reach api.workos.com
+    // paged 201 times in half an hour, because AuthKit retries a transient
+    // refresh failure every second and each throw reached `app.onError`.
+    it("self-hosted, answers an unreachable or timed-out WorkOS with a 503 that does not page", async () => {
+      const errorSpy = vi.spyOn(logger, "error");
+      const warnSpy = vi.spyOn(logger, "warn");
+      const app = createTestApp();
+      const { jar } = await signedIn(app);
+      vi.mocked(fetch)
+        .mockRejectedValueOnce(
+          new TypeError("fetch failed", { cause: { code: "ENOTFOUND" } }),
+        )
+        .mockRejectedValueOnce(
+          new DOMException("The operation timed out.", "TimeoutError"),
+        );
+
+      expect((await refresh(app, jar)).status).toBe(503);
+      expect((await codeExchange(app, jar)).status).toBe(503);
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(warnSpy.mock.calls).toEqual([
+        [
+          "Could not reach WorkOS to authenticate",
+          {
+            event: "auth.workos_authenticate_unreachable",
+            grantType: "refresh_token",
+            reason: "TypeError",
+            networkCode: "ENOTFOUND",
+          },
+        ],
+        [
+          "Could not reach WorkOS to authenticate",
+          {
+            event: "auth.workos_authenticate_unreachable",
+            grantType: "authorization_code",
+            reason: "TimeoutError",
+            networkCode: undefined,
+          },
+        ],
+      ]);
+    });
+
+    it("hosted, pages when WorkOS is unreachable, since the network is ours", async () => {
+      hostedMode.value = true;
+      const errorSpy = vi.spyOn(logger, "error");
+      const app = createTestApp();
+      const { jar, name } = await signedIn(app);
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError("fetch failed"));
+
+      const res = await refresh(app, jar);
+      expect(res.status).toBe(503);
+      expect(setCookieFor(res, name)).toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Could not reach WorkOS to authenticate",
+        expect.any(Error),
+        expect.objectContaining({
+          source: "workos.authenticate",
+          origin: "mcpjam",
+          captured: true,
+        }),
+      );
+    });
+
+    it("bounds the authenticate request with its own timeout", async () => {
+      const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+      const app = createTestApp();
+      const { jar } = await signedIn(app);
+      vi.mocked(fetch).mockResolvedValueOnce(tokens("refresh-token-2"));
+      await refresh(app, jar);
+      expect(timeoutSpy).toHaveBeenCalledWith(8_000);
+      const init = vi.mocked(fetch).mock.calls[1]?.[1] as RequestInit;
+      expect(init.signal).toBe(timeoutSpy.mock.results.at(-1)?.value);
     });
 
     it("clears THIS namespace's session when WorkOS rejects the token, but never the host-wide hint", async () => {
