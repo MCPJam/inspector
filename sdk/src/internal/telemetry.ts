@@ -222,6 +222,7 @@ export function rebuildSentryEvent<T extends object>(
   const ownedFrames = chain.values.flatMap((value) => value.stacktrace?.frames ?? []);
   const facts = rebuildSentryFacts(extra, options);
   const code = typeof facts.code === "string" ? facts.code : typeof facts.slug === "string" ? facts.slug : undefined;
+  const capturedBy = typeof facts.event === "string" ? facts.event : undefined;
   const last = chain.values.at(-1);
   if (last && code) last.value = code;
   return {
@@ -237,10 +238,13 @@ export function rebuildSentryEvent<T extends object>(
     // Exceptions keep Sentry's default hash, which groups source-mapped frames
     // across builds; emitted file/line positions move with every build. A
     // message-only event has no stack, so its finite message is the group.
+    // An exception thrown wholly inside dependency code keeps no frame, so the
+    // event that captured it is what separates it from every other such throw.
     fingerprint: [
       ...(chain.values.length ? ["{{ default }}"] : []),
       chain.values.at(-1)?.type ?? message,
       ...(chain.values.length && approvedMessage ? [approvedMessage] : []),
+      ...(chain.values.length && capturedBy ? [capturedBy] : []),
       ...(code ? [code] : []),
     ],
     extra: {
