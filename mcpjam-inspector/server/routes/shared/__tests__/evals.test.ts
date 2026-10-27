@@ -375,6 +375,33 @@ describe("RunTestCaseRequestSchema runs cap", () => {
   });
 });
 
+describe("RunTestCaseRequestSchema hostConfigOverride.mcpProfile", () => {
+  const withProfile = (mcpProfile: unknown) => ({
+    ...(buildTestCaseRequest() as Record<string, unknown>),
+    hostConfigOverride: { hostStyle: "claude", mcpProfile },
+  });
+
+  it("rejects a malformed apps profile before the run starts", () => {
+    expect(
+      RunTestCaseRequestSchema.safeParse(withProfile({ apps: null })).success
+    ).toBe(false);
+    expect(
+      RunTestCaseRequestSchema.safeParse(
+        withProfile({ apps: { mcpAppsOverrides: { serverResources: "yes" } } })
+      ).success
+    ).toBe(false);
+  });
+
+  it("accepts a valid profile and keeps unrelated keys", () => {
+    const profile = {
+      apps: { mcpAppsOverrides: { serverResources: false }, extra: 1 },
+      tools: { anything: true },
+    };
+    const req = RunTestCaseRequestSchema.parse(withProfile(profile));
+    expect(req.hostConfigOverride?.mcpProfile).toEqual(profile);
+  });
+});
+
 describe("assertSuiteRunWithinCap", () => {
   it("passes when total LLM calls is within the cap", () => {
     const req = RunEvalsRequestSchema.parse(

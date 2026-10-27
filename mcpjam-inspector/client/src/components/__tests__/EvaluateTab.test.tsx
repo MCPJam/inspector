@@ -543,6 +543,124 @@ describe("EvaluateTab", () => {
     });
   });
 
+  describe("Add case and Setup Run with no suite yet", () => {
+    function withSuites(sortedSuites: unknown[], isOverviewLoading = false) {
+      mocks.useEvalQueries.mockImplementation(
+        ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
+          ...makeQueryState(selectedSuiteId),
+          suiteOverview: sortedSuites,
+          sortedSuites,
+          selectedSuiteEntry: null,
+          selectedSuite: null,
+          isOverviewLoading,
+        }),
+      );
+    }
+
+    beforeEach(() => {
+      mocks.route.current = { type: "list" };
+    });
+
+    it("Setup Run goes straight to creating a suite instead of an empty picker", async () => {
+      withSuites([]);
+      render(<EvaluateTab projectId="ws-1" />);
+
+      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+        type: "create",
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("Add test case goes straight to creating a suite too", async () => {
+      withSuites([]);
+      render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "More evaluate actions" }),
+      );
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "Add test case" }),
+      );
+
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+        type: "create",
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("still opens the picker when a suite exists", async () => {
+      render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "More evaluate actions" }),
+      );
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "Add test case" }),
+      );
+
+      expect(
+        screen.getByText("Choose a suite for the new case."),
+      ).toBeInTheDocument();
+      expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    });
+
+    it("waits for suites to load before deciding there are none", async () => {
+      withSuites([], true);
+      const view = render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+      expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+      expect(screen.getByText("Loading suites…")).toBeInTheDocument();
+
+      withSuites([]);
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+        type: "create",
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("opens the picker once suites arrive, without sending anyone to create one", async () => {
+      withSuites([], true);
+      const view = render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+
+      mocks.useEvalQueries.mockImplementation(
+        ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+          makeQueryState(selectedSuiteId),
+      );
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+
+      expect(
+        screen.getByText("Choose a suite to configure its next run."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Loading suites…")).toBeNull();
+      expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    });
+
+    it("drops a pending action when the route leaves the list", async () => {
+      withSuites([], true);
+      const view = render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+
+      // Back to another page while suites load, then the overview answers.
+      mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+      withSuites([]);
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+
+      // (The overview's own redirect for a suite that no longer exists may
+      // run; Create suite must not.)
+      expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith({
+        type: "create",
+      });
+    });
+  });
+
   it("defaults the bare Evaluate route to Runs, with Runs first", () => {
     mocks.route.current = { type: "list" };
     render(<EvaluateTab projectId="ws-1" />);

@@ -361,6 +361,9 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm ci --legacy-peer-deps
+      # Harness descriptors import SDK subpaths from dist on this fresh runner.
+      - name: Build SDK for the runtime contract check
+        run: npm run build:sdk -w @mcpjam/inspector
       - name: Collect conformance evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

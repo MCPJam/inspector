@@ -299,6 +299,37 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(updateState).toHaveBeenCalledWith(serverFailure);
   });
 
+  // PLB-273: 34 events from 5 users in 120 days, every one a server under test
+  // whose certificate Node.js would not accept, filed as an MCPJam failure.
+  it("ignores a certificate failure on the server under test", async () => {
+    const { wrapped, updateState, execute } = wrappedUpdateState(
+      vi.fn(),
+      "request_without_token",
+    );
+    vi.mocked(authFetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error:
+            "The server's TLS certificate could not be verified: unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca",
+        }),
+        { status: 502, statusText: "Bad Gateway" },
+      ),
+    );
+    const failure = await execute({
+      url: "https://mcp.example.test/mcp",
+      method: "POST",
+      headers: {},
+    }).catch((error: Error) => error);
+    const update = {
+      error: `Failed to request MCP server: ${(failure as Error).message}`,
+    };
+
+    wrapped(update);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(update);
+  });
+
   it("still reports the debug proxy failing on the probe", () => {
     const { wrapped } = wrappedUpdateState(vi.fn(), "request_without_token");
 
