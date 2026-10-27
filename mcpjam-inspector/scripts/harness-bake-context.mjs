@@ -99,7 +99,45 @@ const CLAUDE_CODE_PATCH_SENTINEL_CANDIDATES = [
   "mcpjamForwardSubagentStep",
 ];
 
+const SDK_SOURCE = join(here, "..", "..", "sdk", "src");
+
+let sdkSourcesHooked = false;
+/**
+ * Resolve `@mcpjam/sdk/*` to the SDK's TypeScript sources (the server tsconfig
+ * maps it there too) rather than a built `dist/`, which a fresh checkout such
+ * as the computer template build does not have. It must be registered before
+ * the first TypeScript import: a module that reaches the SDK earlier resolves
+ * through the package exports to `dist/` and fails there.
+ */
+function resolveSdkFromSources() {
+  if (sdkSourcesHooked) return;
+  if (typeof registerHooks !== "function") {
+    throw new Error(
+      "the bake context generator needs Node >= 22.15 (module.registerHooks)",
+    );
+  }
+  registerHooks({
+    resolve(specifier, context, nextResolve) {
+      const match = /^@mcpjam\/sdk(?:\/(.+))?$/.exec(specifier);
+      if (match) {
+        const sub = match[1] ?? "index";
+        for (const candidate of [
+          join(SDK_SOURCE, `${sub}.ts`),
+          join(SDK_SOURCE, sub, "index.ts"),
+        ]) {
+          if (existsSync(candidate)) {
+            return { url: pathToFileURL(candidate).href, shortCircuit: true };
+          }
+        }
+      }
+      return nextResolve(specifier, context);
+    },
+  });
+  sdkSourcesHooked = true;
+}
+
 async function tsModule(path) {
+  resolveSdkFromSources();
   const { tsImport } = await import("tsx/esm/api");
   return tsImport(path, { parentURL: import.meta.url, tsconfig: false });
 }
@@ -129,38 +167,14 @@ function recipeFiles(recipe) {
   });
 }
 
-const SDK_SOURCE = join(here, "..", "..", "sdk", "src");
-
 let registryPromise;
 /**
  * The harness registry, loaded the way the server resolves it: the server
- * tsconfig's aliases, and `@mcpjam/sdk/*` read from the SDK's TypeScript
- * sources (the server tsconfig maps it there too) rather than a built `dist/`.
+ * tsconfig's aliases, and `@mcpjam/sdk/*` read from the SDK's sources.
  */
 function loadHarnessRegistry() {
   registryPromise ??= (async () => {
-    if (typeof registerHooks !== "function") {
-      throw new Error(
-        "the bake context generator needs Node >= 22.15 (module.registerHooks)",
-      );
-    }
-    registerHooks({
-      resolve(specifier, context, nextResolve) {
-        const match = /^@mcpjam\/sdk(?:\/(.+))?$/.exec(specifier);
-        if (match) {
-          const sub = match[1] ?? "index";
-          for (const candidate of [
-            join(SDK_SOURCE, `${sub}.ts`),
-            join(SDK_SOURCE, sub, "index.ts"),
-          ]) {
-            if (existsSync(candidate)) {
-              return { url: pathToFileURL(candidate).href, shortCircuit: true };
-            }
-          }
-        }
-        return nextResolve(specifier, context);
-      },
-    });
+    resolveSdkFromSources();
     const { tsImport } = await import("tsx/esm/api");
     return tsImport("../server/utils/harness/registry.ts", {
       parentURL: import.meta.url,

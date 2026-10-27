@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
 import {
@@ -558,6 +559,36 @@ describe("the generated bake context", () => {
     expect(run.stderr).toMatch(/do not match .*stale-lock\.json/);
     expect(run.stderr).toMatch(/--write-lock/);
     expect(existsSync(join(out, "refused"))).toBe(false);
+  }, 120_000);
+
+  it("needs no built SDK, as in the computer template build", () => {
+    // The template build installs with --ignore-scripts and never builds the
+    // SDK. Failing every resolution into its dist/ proves each module the
+    // generator loads reads the SDK's sources, where CI's built dist/ would
+    // otherwise hide one that does not.
+    const builtSdk = pathToFileURL(
+      join(realpathSync(join(PACKAGE_ROOT, "..", "sdk")), "dist"),
+    ).href;
+    const guard = `import { registerHooks } from "node:module";
+registerHooks({ resolve(specifier, context, next) {
+  const resolved = next(specifier, context);
+  if (resolved.url.startsWith(${JSON.stringify(`${builtSdk}/`)}) || resolved.url.includes("/node_modules/@mcpjam/sdk/dist/"))
+    throw new Error("resolved " + specifier + " to the built SDK");
+  return resolved;
+} });`;
+    const run = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        `data:text/javascript,${encodeURIComponent(guard)}`,
+        "scripts/harness-bake-context.mjs",
+        "--out",
+        join(out, "no-built-sdk"),
+      ],
+      { cwd: PACKAGE_ROOT, encoding: "utf8" },
+    );
+    expect(run.stderr).not.toMatch(/to the built SDK/);
+    expect(run.status).toBe(0);
   }, 120_000);
 
   it("refuses to overwrite a directory it did not write", () => {
