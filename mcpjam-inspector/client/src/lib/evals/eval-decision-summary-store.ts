@@ -65,6 +65,14 @@ export const DECISION_SUMMARY_BADGE_LIMIT = 1;
 export const DECISION_SUMMARY_DETAIL_LIMIT = 25;
 
 /**
+ * The SDK's `isEvalRunTerminalStatus` under the name this module exported
+ * before the contract owned it. Callers still importing it from here (the test
+ * template editor's trial-chain display) get the same predicate; new code
+ * imports it from `@mcpjam/sdk/contract`.
+ */
+export { isEvalRunTerminalStatus as isTerminalEvalRunStatus } from "@mcpjam/sdk/contract";
+
+/**
  * A marker for "this run row, as currently observed".
  *
  * A terminal run's decision summary is NOT frozen: asynchronous judge fanout
