@@ -535,7 +535,9 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     expect(banner).toHaveTextContent(
       "1 completed, 0 failed, 1 stopped at an organization usage limit.",
     );
-    expect(banner).toHaveTextContent("Out of MCPJam credits.");
+    expect(banner).toHaveTextContent(
+      "You don't have enough credits to complete this run.",
+    );
     expect(banner).not.toHaveTextContent("Use BYOK");
     expect(
       screen.queryByTestId("new-swarm-running-rate-limit"),
@@ -562,7 +564,7 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     expect(banner).toHaveTextContent("Credits temporarily held");
     expect(banner).toHaveTextContent("1 session stopped");
     expect(banner).not.toHaveTextContent(
-      /usage limit|Out of MCPJam credits|credit options/i,
+      /usage limit|enough credits to complete|credit options/i,
     );
     // It owns its cause: no account-limit callout, no grouped failure banner.
     expect(
@@ -624,7 +626,9 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     expect(limit).toHaveTextContent(
       "0 completed, 0 failed, 1 stopped at an organization usage limit, 1 held.",
     );
-    expect(limit).toHaveTextContent("Out of MCPJam credits.");
+    expect(limit).toHaveTextContent(
+      "You don't have enough credits to complete this run.",
+    );
     expect(
       screen.queryByTestId("new-swarm-running-failure"),
     ).not.toBeInTheDocument();
@@ -729,7 +733,9 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     const failure = await screen.findByTestId(
       "new-swarm-running-account-limit",
     );
-    expect(failure).toHaveTextContent("Out of MCPJam credits.");
+    expect(failure).toHaveTextContent(
+      "You don't have enough credits to complete this run.",
+    );
     expect(failure).toHaveTextContent(
       "MCPJam credits ran out after 0 of 1 sessions",
     );

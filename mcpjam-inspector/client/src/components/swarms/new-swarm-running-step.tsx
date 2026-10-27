@@ -1518,7 +1518,7 @@ export function NewSwarmRunningStep({
                   </p>
                   <p className="mt-0.5">
                     {accountLimit.exhausted > 0
-                      ? "Out of MCPJam credits. View your credit options to continue testing. Swarm generation requires MCPJam credits even when you use your own API key."
+                      ? "You don't have enough credits to complete this run. View your credit options to continue testing. Swarm generation requires MCPJam credits even when you use your own API key."
                       : (accountLimit.message ??
                         "Review your organization's usage limits before retrying.")}
                   </p>

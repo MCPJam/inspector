@@ -763,6 +763,8 @@ describe("MCPJamLimitDialog", () => {
     );
   });
 
+  const SWARM_TITLE = "You don't have enough credits to complete this run";
+
   const openSwarmWall = (
     org: { _id: string; myRole?: string },
     period?: "daily" | "monthly",
@@ -783,7 +785,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /out of MCPJam credits/i }),
+      screen.getByRole("heading", { name: SWARM_TITLE }),
     ).toBeInTheDocument();
     // "I have my own key, why am I blocked" is the question that filed this
     // bug, and this modal is the only thing on screen to answer it.
@@ -800,7 +802,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /out of MCPJam credits/i }),
+      screen.getByRole("heading", { name: SWARM_TITLE }),
     ).toBeInTheDocument();
     // Telling a monthly org to wait for "tomorrow" would be plain wrong: the
     // allowance renews with the billing period, which can be weeks out.
@@ -817,11 +819,26 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("heading", { name: /out of MCPJam credits/i }),
+      screen.getByRole("heading", { name: SWARM_TITLE }),
     ).toBeInTheDocument();
     expect(
       screen.getByTestId("limit-dialog-description"),
     ).not.toHaveTextContent(/tomorrow|billing period/i);
+  });
+
+  it("keeps the swarm title when the refusal says how many credits are left", () => {
+    openSwarmWall({ _id: "org-active", myRole: "owner" }, "daily");
+    useMCPJamLimitDialogStore.setState({
+      shortfall: { creditsRemaining: 23, creditsRequired: 30 },
+    });
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: SWARM_TITLE }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Not enough MCPJam credits" }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers only the actions that resolve a swarm limit", () => {

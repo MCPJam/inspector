@@ -486,7 +486,15 @@ export function MCPJamLimitDialog() {
         <CreditsLimitDialogView
           engagementContext={engagementContext}
           isFreePlan={isFreeEffectivePlan}
-          title={limitShortfall ? "Not enough MCPJam credits" : undefined}
+          // A swarm stops partway, often with credits still left, so its title
+          // says the run cannot finish rather than that the balance is empty.
+          title={
+            isSwarmWall
+              ? "You don't have enough credits to complete this run"
+              : limitShortfall
+                ? "Not enough MCPJam credits"
+                : undefined
+          }
           description={isSwarmWall ? swarmDescription : creditDescription}
           isSwarm={isSwarmWall}
           isKnownNonManager={isKnownNonManager}
