@@ -7,7 +7,8 @@ versions the adapter's own lockfile resolves them to. Frozen by
 `pnpm-lock.yaml`; the pack build installs it with `--frozen-lockfile`.
 
 A security bump may pin a peer ahead of the adapter's lockfile (the MCP SDK is
-at 1.32.1 here while the adapter still resolves 1.30.0). Nothing checks peers
+at 1.32.1 and zod at 4.6.7 here while the adapter still resolves 1.30.0 and
+4.4.3). Nothing checks peers
 against the adapter, so an adapter bump must not move one back down.
 
 The adapter's bridge is **not** here: it is the Inspector layer
