@@ -22,6 +22,17 @@ afterEach(() => {
 });
 
 describe("WebMCP view runtime", () => {
+  it("shadows both native aliases with the same context and keeps invocation private", () => {
+    const w = realm(`
+      Object.defineProperty(Document.prototype, 'modelContext', {get: () => 'native'});
+      Object.defineProperty(Navigator.prototype, 'modelContext', {get: () => 'native'});
+      ${WEBMCP_VIEW_POLYFILL_JS}
+    `);
+    expect(w.eval(`document.modelContext === navigator.modelContext`)).toBe(true);
+    expect(w.eval(`typeof document.modelContext.invoke`)).toBe("undefined");
+    expect(w.eval(`typeof document.modelContext.registerTool`)).toBe("function");
+  });
+
   it("shadows native, clones inputs, unregisters and serializes returns", async () => {
     const w = realm(WEBMCP_VIEW_POLYFILL_JS);
     expect(
@@ -137,7 +148,11 @@ describe("WebMCP relay", () => {
       ),
     ).toBe(true);
     expect(w.eval(`h.sent[1].type`)).toBe("mcpjam:webmcp/cancel");
-    expect(w.eval(`h.posted[0].error.code`)).toBe(-32800);
+    expect(w.eval(`h.posted.length`)).toBe(0);
+    w.eval(`h.relay.view({type:'mcpjam:webmcp/list-result',requestId:h.sent[0].requestId,tools:[]})`);
+    expect(w.eval(`h.posted.length`)).toBe(0);
+    w.eval(`h.relay.reset()`);
+    expect(w.eval(`h.posted.length`)).toBe(0);
   });
 
   it("bounds list timeouts and coalesces change notifications", () => {

@@ -21,8 +21,8 @@ import {
 } from "../../../config.js";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled.js";
 import { RECORDER_SHIM_JS } from "./recorder-shim.js";
-import { WEBMCP_VIEW_POLYFILL_JS } from "./webmcp-view-polyfill.js";
-import { WEBMCP_RELAY_SOURCE } from "./webmcp-relay-source.js";
+import { WEBMCP_VIEW_POLYFILL_JS } from "../../../utils/webmcp-view/webmcp-view-polyfill.js";
+import { WEBMCP_RELAY_SOURCE } from "../../../utils/webmcp-view/webmcp-relay-source.js";
 
 /**
  * Loopback origins that may frame the proxy and post to it.

@@ -21,13 +21,10 @@ function requester(value: unknown = { tools }) {
 }
 
 describe("WebMCP app discovery", () => {
-  it("requires explicit opt-in and prefers declared legacy tools", () => {
-    expect(appToolSourceFor({}, {})).toBeNull();
-    expect(appToolSourceFor({}, { webmcpTools: false })).toBeNull();
-    expect(appToolSourceFor({}, { webmcpTools: true })).toBe("webmcp");
-    expect(appToolSourceFor({ tools: {} }, { webmcpTools: true })).toBe(
-      "mcp-apps"
-    );
+  it("selects WebMCP unless the app declares legacy tools", () => {
+    expect(appToolSourceFor(undefined)).toBe("webmcp");
+    expect(appToolSourceFor({})).toBe("webmcp");
+    expect(appToolSourceFor({ tools: {} })).toBe("mcp-apps");
   });
 
   it("lists through the reserved method and passes the signal", async () => {

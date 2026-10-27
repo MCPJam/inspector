@@ -1,3 +1,4 @@
+/** Manual end-to-end suite; run with node --import tsx. Not a CI Vitest target. */
 import { build } from "esbuild";
 import { chromium, _electron } from "playwright";
 import { createServer } from "node:http";
@@ -24,6 +25,7 @@ const fixtures = path.join(
   root,
   "mcpjam-inspector/server/routes/apps/mcp-apps/__tests__/fixtures/webmcp",
 );
+const baselineCommit = "4dbef72d18e15e24316b090e853ec1123d7be53f";
 const pin = "efcc19c377770f64d4844485bb2be73a6c4b813c";
 const upstream = process.env.MCPJAM_EXT_APPS_FIXTURE_REPO;
 if (!upstream)
@@ -76,7 +78,7 @@ const baseline = execFileSync(
   "git",
   [
     "show",
-    "HEAD:mcpjam-inspector/server/routes/apps/mcp-apps/sandbox-proxy.html",
+    `${baselineCommit}:mcpjam-inspector/server/routes/apps/mcp-apps/sandbox-proxy.html`,
   ],
   { cwd: root, encoding: "utf8" },
 )
@@ -85,6 +87,8 @@ const baseline = execFileSync(
     '"__MCPJAM_HOST_ORIGINS__"',
     JSON.stringify(["http://127.0.0.1:*", "http://localhost:*"]),
   );
+const escapeHtml = (text) => text.replace(/[&<>]/g, character =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]);
 const escapeScript = (text) => text.replace(/<\/script/gi, "<\\/script");
 const server = createServer((request, response) => {
   const url = new URL(request.url, "http://127.0.0.1");
@@ -99,20 +103,20 @@ const server = createServer((request, response) => {
     );
   } else if (url.pathname === "/view") {
     const settings = {
-      id: url.searchParams.get("id"),
-      source: url.searchParams.get("source"),
+      id: url.searchParams.get("id") || "A",
+      source: url.searchParams.get("source") || "direct",
     };
-    const code =
-      views[settings.source.startsWith("v3") ? "v3" : settings.source];
+    const code = views[settings.source.startsWith("v3") ? "v3" : settings.source];
+    if (typeof code !== "string") { response.writeHead(400); response.end("Unknown fixture"); return; }
     response.end(
-      `<!doctype html><html><head></head><body><pre id="settings">${JSON.stringify(settings)}</pre><script>${escapeScript(code)}</script></body></html>`,
+      `<!doctype html><html><head></head><body><pre id="settings">${escapeHtml(JSON.stringify(settings))}</pre><script>${escapeScript(code)}</script></body></html>`,
     );
   } else
     response.end(
       '<!doctype html><html><body><script src="/host.js"></script></body></html>',
     );
 });
-await new Promise((resolve) => server.listen(0, "0.0.0.0", resolve));
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const url = `http://127.0.0.1:${server.address().port}`;
 
 async function check(page, runtime, name, body) {
@@ -457,11 +461,12 @@ try {
     const main = path.join(temp, "electron.cjs");
     await writeFile(
       main,
-      `const {app,BrowserWindow}=require('electron');app.commandLine.appendSwitch('enable-features','WebMCP');app.commandLine.appendSwitch('enable-blink-features','WebMCP');app.whenReady().then(()=>{const w=new BrowserWindow({show:false});w.loadURL(${JSON.stringify(url)});});`,
+      `const {app,BrowserWindow}=require('electron');app.commandLine.appendSwitch('enable-features','WebMCP');app.commandLine.appendSwitch('enable-blink-features','WebMCP');app.whenReady().then(()=>{const w=new BrowserWindow({show:false});w.loadURL(process.env.MCPJAM_E2E_URL);});`,
     );
     const app = await _electron.launch({
       executablePath: require("electron"),
       args: [main],
+      env: { ...process.env, MCPJAM_E2E_URL: url },
     });
     try {
       await exercise(await app.firstWindow(), "electron-native-true");
@@ -595,7 +600,8 @@ try {
       : "mcpjam-inspector/.playwright/webmcp-app-tools-spike.json",
   );
   await mkdir(path.dirname(output), { recursive: true });
-  await writeFile(output, JSON.stringify({ pin, results }, null, 2));
+  await writeFile(output, JSON.stringify({ baselineCommit, pin, results }, null, 2));
+  process.stdout.write(`Baseline: ${baselineCommit}\n`);
   process.stdout.write(`Evidence: ${output}\n`);
 }
 if (results.some((result) => result.status !== "pass")) process.exitCode = 1;

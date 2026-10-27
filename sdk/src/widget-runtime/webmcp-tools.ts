@@ -32,11 +32,10 @@ const listSchema = z.object({
 });
 
 export function appToolSourceFor(
-  appCapabilities: { tools?: unknown } | undefined,
-  hostCapabilities: { webmcpTools?: boolean }
-): AppToolSource | null {
+  appCapabilities: { tools?: unknown } | undefined
+): AppToolSource {
   if (appCapabilities?.tools) return "mcp-apps";
-  return hostCapabilities.webmcpTools === true ? "webmcp" : null;
+  return "webmcp";
 }
 
 export async function listViewWebmcpTools(

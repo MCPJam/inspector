@@ -84,9 +84,9 @@ const spike = {
     };
     frame.contentWindow.postMessage(resource, "*");
     await ready;
-    const candidate = appToolSourceFor(bridge.getAppCapabilities(), {
-      webmcpTools: enabled === true,
-    });
+    const candidate = bridge.getAppCapabilities()?.tools || enabled === true
+      ? appToolSourceFor(bridge.getAppCapabilities())
+      : null;
     const discovery = candidate
       ? await discoverViewAppTools(
           bridge,

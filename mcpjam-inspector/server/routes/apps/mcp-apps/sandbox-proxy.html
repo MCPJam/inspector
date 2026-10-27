@@ -1031,7 +1031,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
         appliedCspMode,
         cspIntent,
       ) {
-        if (typeof webmcpRelay !== "undefined" && webmcpRelay) {
+        if (webmcpRelay) {
           webmcpRelay.reset();
         }
         // Scoped to this proxy instance and incremented for every fresh inner
@@ -1074,7 +1074,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
               // reloaded itself). Claude's opaque mode stops relaying for it; so do we.
               // Say so, or the host just sees a view that stopped answering.
               channelDead = true;
-              if (typeof webmcpRelay !== "undefined" && webmcpRelay) {
+              if (webmcpRelay) {
                 webmcpRelay.reset();
               }
               innerReady = false;

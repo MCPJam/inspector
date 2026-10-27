@@ -13,7 +13,7 @@ ${WEBMCP_WIRE_SOURCE}
   let changeQueued = false;
   let context;
   const isReplaced = () => {
-    try { return doc.modelContext !== context; }
+    try { return doc.modelContext !== context || navigator.modelContext !== context; }
     catch (error) { return true; }
   };
   const post = message => window.parent.postMessage(message, "*");
@@ -26,6 +26,20 @@ ${WEBMCP_WIRE_SOURCE}
       post({type: "mcpjam:webmcp/tools-changed"});
     });
   };
+  async function invoke(name, input, signal) {
+      const entry = registry.get(name);
+      if (!entry) throw new Error("Unknown WebMCP tool: " + name);
+      if (signal.aborted) throw signal.reason;
+      let abort;
+      const stopped = new Promise((resolve, reject) => {
+        abort = () => reject(signal.reason || new DOMException("Cancelled", "AbortError"));
+        signal.addEventListener("abort", abort, {once: true});
+      });
+      try {
+        const work = Promise.resolve().then(() => entry.execute(webmcpWire.snapshot(input), {signal}));
+        return await Promise.race([work, stopped]);
+      } finally { signal.removeEventListener("abort", abort); }
+    }
   class ModelContext extends EventTarget {
     constructor() { super(); this.handler = null; }
     get ontoolchange() { return this.handler; }
@@ -58,23 +72,9 @@ ${WEBMCP_WIRE_SOURCE}
         origin: doc.location.origin
       }));
     }
-    async invoke(name, input, signal) {
-      const entry = registry.get(name);
-      if (!entry) throw new Error("Unknown WebMCP tool: " + name);
-      if (signal.aborted) throw signal.reason;
-      let abort;
-      const stopped = new Promise((resolve, reject) => {
-        abort = () => reject(signal.reason || new DOMException("Cancelled", "AbortError"));
-        signal.addEventListener("abort", abort, {once: true});
-      });
-      try {
-        const work = Promise.resolve().then(() => entry.execute(webmcpWire.snapshot(input), {signal}));
-        return await Promise.race([work, stopped]);
-      } finally { signal.removeEventListener("abort", abort); }
-    }
     async executeTool(tool, input = {}, options = {}) {
       const signal = options.signal || new AbortController().signal;
-      const value = webmcpWire.snapshot(await this.invoke(tool.name, input, signal));
+      const value = webmcpWire.snapshot(await invoke(tool.name, input, signal));
       webmcpWire.success(value);
       return JSON.stringify(value);
     }
@@ -82,6 +82,7 @@ ${WEBMCP_WIRE_SOURCE}
   context = new ModelContext();
   Object.defineProperty(context, marker, {value: true});
   Object.defineProperty(doc, "modelContext", {value: context, configurable: true});
+  Object.defineProperty(navigator, "modelContext", {value: context, configurable: true});
   window.addEventListener("message", async event => {
     if (event.source !== window.parent || !webmcpWire.object(event.data)) return;
     const {type, requestId, name, input} = event.data;
@@ -101,7 +102,7 @@ ${WEBMCP_WIRE_SOURCE}
       calls.set(requestId, controller);
       try {
         if (isReplaced()) throw new Error("The view replaced the host WebMCP polyfill");
-        const value = webmcpWire.snapshot(await context.invoke(name, input || {}, controller.signal));
+        const value = webmcpWire.snapshot(await invoke(name, input || {}, controller.signal));
         webmcpWire.success(value);
         const reply = {type: "mcpjam:webmcp/call-result", requestId, ok: true, value};
         if (webmcpWire.bytes(reply) > webmcpWire.contract.maxResultBytes) throw new Error("Tool result exceeds the 256 KiB limit");

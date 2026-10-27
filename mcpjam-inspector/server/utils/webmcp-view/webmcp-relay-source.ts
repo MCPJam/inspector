@@ -17,7 +17,7 @@ function createWebmcpRelay(options) {
     if (!pending) return;
     requests.delete(key);
     if (pending.timer) clearTimeout(pending.timer);
-    options.post({jsonrpc: "2.0", id: pending.id, ...response});
+    if (response) options.post({jsonrpc: "2.0", id: pending.id, ...response});
   };
   return {
     configure(value) { enabled = value === true; },
@@ -36,7 +36,7 @@ function createWebmcpRelay(options) {
         for (const [key, pending] of requests) {
           if (pending.id !== (data.params || {}).requestId) continue;
           options.send({type: "mcpjam:webmcp/cancel", requestId: key});
-          finish(key, {error: {code: -32800, message: "App tool call cancelled"}});
+          finish(key);
           return true;
         }
         return false;
