@@ -1674,6 +1674,7 @@ export type {
   EvalOutOfOrderToolCall,
   EvalToolCall,
   EvalToolCallMatchResult,
+  EvalToolCallRetry,
 } from "./matchers.js";
 
 // HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).

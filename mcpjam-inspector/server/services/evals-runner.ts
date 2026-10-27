@@ -1801,6 +1801,7 @@ function buildPromptTraceSummaries(
           ),
         };
       }),
+      ...(summary.retries?.length ? { retries: summary.retries } : {}),
     };
   });
 }
