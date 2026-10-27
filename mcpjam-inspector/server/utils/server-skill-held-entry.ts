@@ -130,12 +130,12 @@ function slugFamily(slug: string): string {
 function refParts(
   ref: string,
 ):
-  | { slugFamily: string; name: string; disambiguator: string | undefined }
+  | { slugFamily: string; disambiguator: string | undefined }
   | undefined {
   if (!SERVER_SKILL_REF_RE.test(ref)) return undefined;
   const [slug, rest] = ref.split("/") as [string, string];
-  const [name, disambiguator] = rest.split("~") as [string, string?];
-  return { slugFamily: slugFamily(slug), name, disambiguator };
+  const [, disambiguator] = rest.split("~");
+  return { slugFamily: slugFamily(slug), disambiguator };
 }
 
 /**
@@ -146,11 +146,11 @@ function refParts(
  * request's catalog. A server re-addresses a skill without changing it by
  * serving a second skill of the same name, after which both take the
  * `~<uri hash>` form; and a slug's collision suffix moves when the user adds a
- * server with the same label. So a ref matches every form this skill can take,
- * and rules it out only by a different slug family, a different name, or a
- * disambiguator that hashes another URI. A URI is the skill's identity, and a
- * `server` hint says whose copy it was. A call with no identifier to read
- * could have named any skill.
+ * server with the same label. The server can also rename a skill while keeping
+ * its URI. An unreadable ref therefore rules it out only by a different slug
+ * family or a disambiguator that hashes another URI. A URI is the skill's
+ * identity, and a `server` hint says whose copy it was. A call with no
+ * identifier to read could have named any skill.
  */
 async function callCouldNameEntry(
   input: unknown,
@@ -177,7 +177,7 @@ async function callCouldNameEntry(
   // Not a ref: `loadSkill` sent it to the base source, not to a server.
   const called = refParts(identifier);
   if (!called) return false;
-  if (called.slugFamily !== own.slugFamily || called.name !== own.name) {
+  if (called.slugFamily !== own.slugFamily) {
     return false;
   }
   return (

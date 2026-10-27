@@ -358,7 +358,6 @@ describe("a load whose text cannot be read", () => {
   it("leaves another skill's files alone", async () => {
     const unknown = { type: "future-shape" };
     for (const input of [
-      { name: "acme/other" },
       { name: "beta/refunds" },
       { uri: "skill://acme/other/SKILL.md" },
       // A bare name loads from the base source, never from a server.
@@ -387,6 +386,19 @@ describe("a load whose text cannot be read", () => {
       for (let i = 0; i < 40; i += 1) output = { type: "json", value: output };
       return output;
     };
+
+    it.each(["unrecognized", "too deep"])(
+      "refuses a renamed skill at the same URI when the load is %s",
+      async (shape) => {
+        const output =
+          shape === "unrecognized" ? { type: "future-shape" } : await deep();
+        const messages = history(output);
+        await expectGated(messages);
+        expect(
+          await heldEntryConflict({ ...CHANGED, ref: "acme/returns" }, messages),
+        ).toMatch(/^Error \(load_unconfirmed\)/);
+      },
+    );
 
     it("still refuses: the old ref could have named either", async () => {
       const messages = history(await deep());

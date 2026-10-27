@@ -159,13 +159,16 @@ describe("a loaded server skill across reopened conversations", () => {
       expect(report.unverifiedToolCalls, `round ${round}`).toBe(0);
       expect(await bashAsks(messages), `round ${round}`).toBe(true);
       const readable = loadResultDepth(messages) <= TOOL_OUTPUT_TEXT_DEPTH;
-      // The second pair is the same skill after the server serves another
-      // `refunds`, which re-addresses both: the URI, not the ref, is held.
+      // Names and collision suffixes can change while the skill keeps its URI.
       for (const [own, changed] of [
         [ENTRY, CHANGED],
         [
           { ...ENTRY, ref: reAddressed },
           { ...CHANGED, ref: reAddressed },
+        ],
+        [
+          { ...ENTRY, ref: "acme/returns" },
+          { ...CHANGED, ref: "acme/returns" },
         ],
       ]) {
         expect(await heldEntryConflict(own, messages)).toEqual(
