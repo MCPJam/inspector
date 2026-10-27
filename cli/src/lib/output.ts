@@ -122,6 +122,9 @@ export function writeError(
   return payload;
 }
 
+let activeConsoleRoutes = 0;
+let savedConsoleMethods: Pick<Console, "log" | "info" | "debug"> | undefined;
+
 /**
  * Send `console.log`/`info`/`debug` to STDERR while a command runs.
  *
@@ -139,11 +142,6 @@ export function writeError(
  * and stderr routing installed after both returned. The originals are saved
  * once and restored when the last active route releases.
  */
-let activeConsoleRoutes = 0;
-let savedConsoleMethods:
-  | Pick<Console, "log" | "info" | "debug">
-  | undefined;
-
 export function routeConsoleToStderr(): () => void {
   if (activeConsoleRoutes === 0) {
     savedConsoleMethods = {
