@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 
 const { revokeAuthKitSessionMock, hostedMode } = vi.hoisted(() => ({
   revokeAuthKitSessionMock: vi.fn(),
@@ -409,6 +409,24 @@ describe("workos authkit local session bridge", () => {
           },
         ],
       ]);
+    });
+
+    it("lets a failure that is not the network reach onError, keeping the session", async () => {
+      const warnSpy = vi.spyOn(logger, "warn");
+      const app = createTestApp();
+      const onError = vi.fn((_error: Error, c: Context) =>
+        c.json({ error_description: "internal" }, 500),
+      );
+      app.onError(onError);
+      const { jar, name } = await signedIn(app);
+      const malformed = new TypeError("Failed to parse URL from not a url");
+      vi.mocked(fetch).mockRejectedValueOnce(malformed);
+
+      const res = await refresh(app, jar);
+      expect(res.status).toBe(500);
+      expect(onError).toHaveBeenCalledWith(malformed, expect.anything());
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(setCookieFor(res, name)).toBeUndefined();
     });
 
     it("hosted, pages when WorkOS is unreachable, since the network is ours", async () => {

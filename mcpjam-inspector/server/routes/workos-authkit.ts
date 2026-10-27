@@ -12,7 +12,11 @@ import { resolveWorkosClientId } from "../services/authkit-jwt.js";
 import { revokeAuthKitSession } from "../services/auth-session-revocation.js";
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "../utils/logger.js";
-import { getFetchErrorCause } from "../utils/fetch-error-cause.js";
+import {
+  getFetchErrorCause,
+  isFetchConnectionFailure,
+  isFetchTimeout,
+} from "../utils/fetch-error-cause.js";
 import { reportRouteFailure } from "../utils/route-error-report.js";
 import {
   applyScopedCookieWrites,
@@ -442,6 +446,10 @@ workosAuthkitRoutes.post("/authenticate", async (c) => {
     });
     responseText = await response.text();
   } catch (error) {
+    // Anything that is not the network (a malformed WorkOS base URL, a bug
+    // here) goes on to `app.onError`: answering it 503 would have AuthKit
+    // retry a failure that can never recover, blamed on the user's network.
+    if (!isFetchConnectionFailure(error) && !isFetchTimeout(error)) throw error;
     // This server could not reach WorkOS: offline, DNS, a proxy, or a
     // timeout. Hosted, that network is ours and every sign-in is down, so it
     // pages. Self-hosted, it is the user's machine, and AuthKit retries a
