@@ -240,11 +240,15 @@ export function rebuildSentryEvent<T extends object>(
     // message-only event has no stack, so its finite message is the group.
     // An exception thrown wholly inside dependency code keeps no frame, so the
     // event that captured it is what separates it from every other such throw.
+    // With an owned frame the stack already names the throw site, and adding
+    // the event would only split and reopen groups that are correct today.
     fingerprint: [
       ...(chain.values.length ? ["{{ default }}"] : []),
       chain.values.at(-1)?.type ?? message,
       ...(chain.values.length && approvedMessage ? [approvedMessage] : []),
-      ...(chain.values.length && capturedBy ? [capturedBy] : []),
+      ...(chain.values.length && !ownedFrames.length && capturedBy
+        ? [capturedBy]
+        : []),
       ...(code ? [code] : []),
     ],
     extra: {

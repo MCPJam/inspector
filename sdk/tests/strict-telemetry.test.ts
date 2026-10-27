@@ -176,6 +176,31 @@ describe("strict telemetry reconstruction", () => {
       ).fingerprint
     ).toEqual(["{{ default }}", "McpError"]);
   });
+  it("leaves the fingerprint of an exception with an owned frame alone", () => {
+    const output = rebuildSentryEvent(
+      {
+        exception: {
+          values: [
+            {
+              type: "TypeError",
+              stacktrace: {
+                frames: [{ filename: "server/example.ts", lineno: 10 }],
+              },
+            },
+          ],
+        },
+        extra: { event: "process.unhandled_rejection" },
+      },
+      {
+        ...catalog,
+        diagnosticFields: { event: ["process.unhandled_rejection"] },
+      }
+    );
+    expect(output.fingerprint).toEqual(["{{ default }}", "TypeError"]);
+    expect(output.extra).toMatchObject({
+      event: "process.unhandled_rejection",
+    });
+  });
   it("rebuilds transactions and child spans separately", () => {
     const span = {
       description: secret,
