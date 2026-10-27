@@ -10,7 +10,10 @@ import {
   nextStepFits,
 } from "@/components/swarms/swarm-credit-cap";
 import type { SwarmCreditCapNotice } from "@/components/swarms/swarm-credit-cap-notice";
-import { MIN_SWARM_ITERATIONS } from "@/components/swarms/swarm-intensity";
+import {
+  MAX_SWARM_ITERATIONS,
+  MIN_SWARM_ITERATIONS,
+} from "@/components/swarms/swarm-intensity";
 import {
   useSwarmCreditCap,
   type ReusedGoalRuns,
@@ -58,8 +61,13 @@ export function useSwarmConfirmCap({
   fits: (conversationsPerEnvironment: number) => boolean;
   /** The tooltip on an add control the cap disabled. */
   capReason: string | null;
-  /** The most iterations a persona with `goals` goals can take. */
+  /** The most iterations a new persona with `goals` goals can take. */
   iterationsCap: (goals: number, iterations: number) => number;
+  /** The most iterations a reused persona's goals can take. */
+  reusedIterationsCap: (
+    journeyIds: readonly string[],
+    iterations: number,
+  ) => number;
   /** Why Continue is blocked, when the swarm is over the max. */
   blockedReason: string | null;
   notice: NoticeProps | null;
@@ -104,6 +112,27 @@ export function useSwarmConfirmCap({
         otherConversations: count - goals * iterations * environmentCount,
         conversationsPerIteration: goals * environmentCount,
       }),
+    reusedIterationsCap: (journeyIds, iterations) => {
+      if (max === null) return Number.POSITIVE_INFINITY;
+      // Each step re-prices the swarm: these goals cost what their own config
+      // costs, so one shared per-conversation price would misjudge the fit.
+      let fitting = iterations;
+      while (fitting < MAX_SWARM_ITERATIONS) {
+        const next = fitting + 1;
+        const nextMax = cap.maxFor(
+          reusedGoals.map((goal) =>
+            journeyIds.includes(goal.journeyId)
+              ? { ...goal, sessions: next }
+              : goal,
+          ),
+        );
+        const added =
+          journeyIds.length * (next - iterations) * environmentCount;
+        if (nextMax !== null && count + added > nextMax) break;
+        fitting = next;
+      }
+      return Math.max(MIN_SWARM_ITERATIONS, fitting);
+    },
     blockedReason: over
       ? `Your credits cover up to ${max} conversations, and this swarm has ${launchCount}.`
       : null,

@@ -77,12 +77,8 @@ import {
   MIN_SWARM_ITERATIONS,
   SWARM_INTENSITY_PRESETS,
 } from "@/components/swarms/swarm-intensity";
-import { capGeneration } from "@/components/swarms/swarm-credit-cap";
 import { SwarmCreditCapNotice } from "@/components/swarms/swarm-credit-cap-notice";
-import {
-  useSwarmCreditCap,
-  type SwarmCreditCapAtClick,
-} from "@/hooks/use-swarm-credit-cap";
+import { useSwarmDescribeCap } from "@/hooks/use-swarm-describe-cap";
 import {
   SOLO_HERO_CHARACTERS,
   SwarmHeroCharacters,
@@ -670,9 +666,6 @@ export function NewSwarmCreateFlow({
       : null,
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [capAtClick, setCapAtClick] = useState<
-    (SwarmCreditCapAtClick & { environmentCount: number }) | null
-  >(null);
   /**
    * The backend refused generation because the visitor is anonymous. Held
    * separately from `errorMessage` because the remedy is a control, not a
@@ -874,7 +867,6 @@ export function NewSwarmCreateFlow({
     }
     setResolvedEnvironmentIds(null);
     setResolvedEnvironments(null);
-    setCapAtClick(null);
   }, [environmentSelectionKey]);
 
   useEffect(() => {
@@ -900,20 +892,16 @@ export function NewSwarmCreateFlow({
     () => personaList.filter((persona) => reusedIds.includes(persona._id)),
     [personaList, reusedIds],
   );
-  const creditCap = useSwarmCreditCap({
+  const creditCap = useSwarmDescribeCap({
     projectId,
     organizationId,
-    // In compose mode the environments exist only once Generate resolves them.
-    environmentIds: composeMode ? [] : targetState.environmentIds,
-    maxTurns: preset.maxTurns,
+    environmentIds: targetState.environmentIds,
+    composeMode,
+    selectionKey: environmentSelectionKey,
+    preset,
     judgeConfig,
+    reusedPersonaIds: reusedIds,
   });
-  const describeCap = capAtClick ?? {
-    ...creditCap,
-    reusedConversations: 0,
-    environmentCount: targetState.environmentIds.length,
-  };
-  const describeGeneration = capGeneration({ ...describeCap, preset });
 
   const hasGenerateTargets =
     (!composeMode && targetState.environmentIds.length > 0) ||
@@ -990,7 +978,7 @@ export function NewSwarmCreateFlow({
     !hasSwarmName
       ? false
       : wantsGenerate
-      ? canGenerate && describeCap.max !== 0
+      ? canGenerate && creditCap.canGenerate
       : reusedIds.length > 0;
 
   /** Why the primary button is disabled, or a short summary when it isn't. */
@@ -1007,6 +995,8 @@ export function NewSwarmCreateFlow({
         return `Shorten the description to ${SWARM_DESCRIPTION_MAX_CHARS.toLocaleString()} characters to continue.`;
       }
       if (wantsGenerate) {
+        // The credit notice says why; a second sentence here would differ.
+        if (!creditCap.canGenerate) return null;
         if (!workOsUser) {
           return "Sign in to generate personas with MCPJam models.";
         }
@@ -1025,7 +1015,7 @@ export function NewSwarmCreateFlow({
       return "Describe your users to continue.";
     }
     const reused = reusedIds.length;
-    const fresh = preset.personaCount;
+    const fresh = creditCap.size.personaCount;
     if (wantsGenerate && reused > 0) {
       return `${reused} existing · ${fresh} new on next step`;
     }
@@ -1222,15 +1212,7 @@ export function NewSwarmCreateFlow({
             : "Pick an environment to generate against.",
         );
       }
-      const cap = {
-        ...(await creditCap.capFor({
-          environmentIds: resolved.environmentIds,
-          reusedPersonaIds: reusedIds,
-        })),
-        environmentCount: resolved.environmentIds.length,
-      };
-      setCapAtClick(cap);
-      const { size } = capGeneration({ ...cap, preset });
+      const size = await creditCap.sizeAtClick(resolved.environmentIds);
       // Not one goal fits: the credit notice now says so and offers credits.
       if (!size) return;
       const result = await generateSwarmPersonaBatch({
@@ -1327,7 +1309,7 @@ export function NewSwarmCreateFlow({
     projectId,
     pushIntensity,
     resolveTargets,
-    reusedIds,
+    reusedIds.length,
     reusedPersonas,
   ]);
 
@@ -2666,14 +2648,9 @@ export function NewSwarmCreateFlow({
               />
             ) : null}
 
-            {describeCap.max !== null &&
-            describeGeneration.binds &&
-            creditCap.credits !== null ? (
+            {creditCap.notice ? (
               <SwarmCreditCapNotice
-                credits={creditCap.credits}
-                max={describeCap.max}
-                conversationCredits={describeCap.conversationCredits}
-                organizationId={organizationId}
+                {...creditCap.notice}
                 data-testid="new-swarm-credit-cap-notice"
               />
             ) : null}
@@ -2700,8 +2677,7 @@ export function NewSwarmCreateFlow({
                   {generationProgressLine({
                     stage: materializing ? "targets" : "personas",
                     elapsedSeconds: generationElapsedSeconds,
-                    personaCount: preset.personaCount,
-                    journeyCount: preset.journeyCount,
+                    ...creditCap.size,
                   })}
                 </p>
               ) : continueHint ? (

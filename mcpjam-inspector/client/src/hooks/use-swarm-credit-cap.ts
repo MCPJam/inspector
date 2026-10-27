@@ -136,6 +136,12 @@ export function useSwarmCreditCap({
   /** The cheapest conversation, for the credits dialog. */
   conversationCredits: number | null;
   /**
+   * The cap with the reused goals at other iterations: a reused goal is
+   * priced from its own config, so its runs can cost more or less than new
+   * ones, and the cap moves with them.
+   */
+  maxFor: (reusedGoals: readonly ReusedGoalRuns[]) => number | null;
+  /**
    * The cap for targets the flow only knows at click time. Reused personas
    * are passed by id, since their goals are not loaded before Confirm.
    */
@@ -232,6 +238,7 @@ export function useSwarmCreditCap({
     max,
     credits,
     conversationCredits: cheapestConversation(estimate),
+    maxFor: (goals) => capOf(estimate, balance, allowance, goals),
     capFor,
   };
 }

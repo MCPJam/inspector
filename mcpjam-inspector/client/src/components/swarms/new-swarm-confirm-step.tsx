@@ -1259,7 +1259,7 @@ export function NewSwarmConfirmStep({
     reusedIterations: reusedPersonas.map((p) => reusedIterationsFor(p._id)),
     locked: structureLocked,
   });
-  const { fits, capReason, iterationsCap } = creditCap;
+  const { fits, capReason, iterationsCap, reusedIterationsCap } = creditCap;
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -1662,8 +1662,10 @@ export function NewSwarmConfirmStep({
                     onIterationsChange={(value) =>
                       onIterationsChange(persona._id, value)
                     }
-                    maxIterations={iterationsCap(
-                      reusedResolved[persona._id]?.targets?.length ?? 0,
+                    maxIterations={reusedIterationsCap(
+                      (reusedResolved[persona._id]?.targets ?? []).map(
+                        (target) => target.journeyId,
+                      ),
                       reusedIterationsFor(persona._id),
                     )}
                     capReason={capReason}
@@ -1694,18 +1696,23 @@ export function NewSwarmConfirmStep({
           {!structureLocked && personasAvailableToAdd.length > 0 ? (
             // Add-only: what is already attached is dropped from the list, and
             // detaching is the card's own Remove.
-            <PersonaPickerPopover
-              disabled={!fits(1)}
-              personas={personasAvailableToAdd}
-              open={addExistingOpen}
-              onOpenChange={setAddExistingOpen}
-              groupLabel="Add existing persona"
-              triggerLabel="Add existing persona"
-              triggerSize="sm"
-              triggerTestId="new-swarm-confirm-add-existing"
-              showTriggerIcon={false}
-              mode={{ kind: "add", onAdd: onAddReused }}
-            />
+            <DisabledReasonTooltip
+              reason={fits(1) ? null : capReason}
+              variant="muted"
+            >
+              <PersonaPickerPopover
+                disabled={!fits(1)}
+                personas={personasAvailableToAdd}
+                open={addExistingOpen}
+                onOpenChange={setAddExistingOpen}
+                groupLabel="Add existing persona"
+                triggerLabel="Add existing persona"
+                triggerSize="sm"
+                triggerTestId="new-swarm-confirm-add-existing"
+                showTriggerIcon={false}
+                mode={{ kind: "add", onAdd: onAddReused }}
+              />
+            </DisabledReasonTooltip>
           ) : null}
         </div>
 

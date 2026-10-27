@@ -5,6 +5,7 @@ let cap: {
   max: number | null;
   credits: number | null;
   conversationCredits: number | null;
+  maxFor?: (goals: { journeyId: string; sessions: number }[]) => number | null;
 };
 vi.mock("@/hooks/use-swarm-credit-cap", () => ({
   useSwarmCreditCap: () => cap,
@@ -97,5 +98,32 @@ describe("useSwarmConfirmCap", () => {
     expect(confirm.blockedReason).toBeNull();
     expect(confirm.notice).toBeNull();
     expect(confirm.capReason).toBeNull();
+  });
+
+  it("re-prices a reused persona's goals at each extra iteration", () => {
+    // 100 credits; the reused goal costs 25 a run, new goals 10. At one
+    // iteration the max is 1 + 75 / 10 = 8, but each further iteration of the
+    // reused goal shrinks it: at 4 the goal alone takes the 100.
+    cap = {
+      max: 8,
+      credits: 100,
+      conversationCredits: 10,
+      maxFor: (goals) => {
+        const reusedRuns = goals[0]?.sessions ?? 0;
+        const left = 100 - 25 * reusedRuns;
+        return left < 0
+          ? Math.floor(100 / 25)
+          : reusedRuns + Math.floor(left / 10);
+      },
+    };
+    const confirm = render({
+      launchCount: 1,
+      proposed: [],
+      reusedGoals: [{ journeyId: "goal-1", sessions: 1 }],
+      reusedIterations: [1],
+    });
+    expect(confirm.reusedIterationsCap(["goal-1"], 1)).toBe(4);
+    // One shared price would have allowed every iteration up to 5.
+    expect(confirm.iterationsCap(1, 1)).toBe(8);
   });
 });
