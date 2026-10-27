@@ -1573,7 +1573,27 @@ interface StepContext {
   remainingTurnMs?: () => number;
 }
 
-type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
+type PersistedAssistantPart =
+  | TextPart
+  | ToolCallPart
+  // `providerOptions` is where a model message carries what the provider said
+  // about the part — on the OpenAI Responses API, the reply's `rs_…` item id,
+  // which the next request needs. The UI reasoning part has no such field.
+  | (ReasoningUIPart & { providerOptions?: TextPart["providerOptions"] });
+
+/**
+ * What a backend chunk said about the part it belongs to, in the shape a model
+ * message carries it. The chunk type here is loose (`[key: string]: unknown`),
+ * so this is the one place that narrows it.
+ */
+function chunkProviderOptions(chunk: {
+  providerMetadata?: unknown;
+}): TextPart["providerOptions"] | undefined {
+  const metadata = chunk.providerMetadata;
+  return metadata !== null && typeof metadata === "object"
+    ? (metadata as TextPart["providerOptions"])
+    : undefined;
+}
 
 interface LiveTraceTurnContext {
   recordedRequestPayloads: LiveChatTraceRequestPayloadEntry[];
@@ -2432,8 +2452,10 @@ async function processStream(
   const toolInputErrors: string[] = [];
   const unfinishedTools = new Map<string, string>();
   let pendingText = "";
+  let pendingTextMetadata: TextPart["providerOptions"] | undefined;
   let pendingReasoning = "";
   let pendingReasoningId: string | null = null;
+  let pendingReasoningMetadata: TextPart["providerOptions"] | undefined;
   let hasToolCalls = false;
   let finishChunk: UIMessageChunk | null = null;
   let firstChunkAt: number | undefined;
@@ -2441,21 +2463,38 @@ async function processStream(
 
   const flushText = () => {
     if (pendingText) {
-      contentParts.push({ type: "text", text: pendingText });
+      contentParts.push({
+        type: "text",
+        text: pendingText,
+        ...(pendingTextMetadata
+          ? { providerOptions: pendingTextMetadata }
+          : {}),
+      });
       pendingText = "";
     }
+    pendingTextMetadata = undefined;
   };
 
   const flushReasoning = () => {
-    if (pendingReasoning) {
+    // An empty reasoning block is kept when the provider NAMED it. On the
+    // OpenAI Responses API a reply is replayed by item id, and a message item
+    // whose reasoning item is missing is refused outright, so a `rs_…` with no
+    // summary text still has to survive into the next request. Without an id
+    // there is nothing to reference and an empty part would only render a
+    // "Reasoning" header with nothing under it, so that case is still dropped.
+    if (pendingReasoning || pendingReasoningMetadata) {
       contentParts.push({
         type: "reasoning",
         text: pendingReasoning,
         state: "done",
+        ...(pendingReasoningMetadata
+          ? { providerOptions: pendingReasoningMetadata }
+          : {}),
       });
       pendingReasoning = "";
     }
     pendingReasoningId = null;
+    pendingReasoningMetadata = undefined;
   };
 
   const parsedStream = parseJsonEventStream({
@@ -2538,11 +2577,13 @@ async function processStream(
         case "text-start":
           flushReasoning();
           flushText();
+          pendingTextMetadata = chunkProviderOptions(chunk);
           writer.write(chunk);
           break;
 
         case "text-delta":
           flushReasoning();
+          pendingTextMetadata = chunkProviderOptions(chunk) ?? pendingTextMetadata;
           pendingText += chunk.delta ?? "";
           if (chunk.delta) {
             safelyEmitLiveTextDelta(onLiveTextDelta, chunk.delta);
@@ -2560,6 +2601,8 @@ async function processStream(
           break;
 
         case "text-end":
+          pendingTextMetadata =
+            chunkProviderOptions(chunk) ?? pendingTextMetadata;
           flushText();
           writer.write(chunk);
           break;
@@ -2568,6 +2611,7 @@ async function processStream(
           flushText();
           flushReasoning();
           pendingReasoningId = chunk.id;
+          pendingReasoningMetadata = chunkProviderOptions(chunk);
           writer.write(chunk);
           break;
 
@@ -2577,6 +2621,8 @@ async function processStream(
             flushReasoning();
           }
           pendingReasoningId = chunk.id;
+          pendingReasoningMetadata =
+            chunkProviderOptions(chunk) ?? pendingReasoningMetadata;
           pendingReasoning += chunk.delta ?? "";
           writer.write(chunk);
           break;
@@ -2586,6 +2632,8 @@ async function processStream(
             flushReasoning();
             pendingReasoningId = chunk.id;
           }
+          pendingReasoningMetadata =
+            chunkProviderOptions(chunk) ?? pendingReasoningMetadata;
           flushReasoning();
           writer.write(chunk);
           break;
