@@ -60,6 +60,11 @@ export interface CreditBalanceState {
    * read as "out of budget".
    */
   voiceSecondsRemaining?: number;
+  /**
+   * The floor every metered call is admitted against, per pool. A pool holding
+   * less than this cannot start another call. Absent from older backends.
+   */
+  perCallMinimumCredits?: number;
 }
 
 const clampPercent = (value: unknown): number => {
@@ -120,6 +125,7 @@ export const normalizeBalance = (
     // Absent (older backend) → undefined so the mic falls back to the global
     // cap; a real 0 stays 0 and disables the mic.
     voiceSecondsRemaining: optionalNumberOrUndefined(r.voiceSecondsRemaining),
+    perCallMinimumCredits: optionalNumberOrUndefined(r.perCallMinimumCredits),
   };
 };
 

@@ -1,6 +1,10 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useCreditBalance, useOutOfCredits } from "@/hooks/useCreditBalance";
+import {
+  normalizeBalance,
+  useCreditBalance,
+  useOutOfCredits,
+} from "@/hooks/useCreditBalance";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const mocks = vi.hoisted(() => ({
@@ -346,5 +350,17 @@ describe("useCreditBalance", () => {
       outOfCreditsDismissed: true,
       balanceOutByOrganization: { "org-1": true, "org-2": false },
     });
+  });
+});
+
+describe("normalizeBalance", () => {
+  it("passes the per-call minimum through, and leaves it out when absent or invalid", () => {
+    expect(
+      normalizeBalance({ perCallMinimumCredits: 25 })?.perCallMinimumCredits,
+    ).toBe(25);
+    expect(normalizeBalance({})?.perCallMinimumCredits).toBeUndefined();
+    expect(
+      normalizeBalance({ perCallMinimumCredits: "25" })?.perCallMinimumCredits,
+    ).toBeUndefined();
   });
 });
