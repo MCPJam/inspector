@@ -21,6 +21,7 @@
  * Nothing here has failed — this is standing guidance — and minting a fake
  * error to borrow a colour would put a live alert on a healthy screen.
  */
+import type { ReactNode } from "react";
 import { severityStyles } from "@/components/ui/error-card";
 import { cn } from "@/lib/utils";
 
@@ -33,9 +34,16 @@ const SWARM_PRODUCTION_NOTICE_HEADING =
 const SWARM_PRODUCTION_NOTICE_BODY =
   "Agents take real actions on these servers, including writing and deleting data. Use development servers, not production.";
 
-export function SwarmProductionNotice({
+/** Blue standing guidance in the swarm setup flow: a heading and its reason. */
+export function SwarmInfoNotice({
+  heading,
+  body,
+  action,
   "data-testid": testId,
 }: {
+  heading: string;
+  body: string;
+  action?: ReactNode;
   "data-testid": string;
 }) {
   const styles = severityStyles("info");
@@ -51,14 +59,25 @@ export function SwarmProductionNotice({
           aria-hidden
         />
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="font-medium leading-tight">
-            {SWARM_PRODUCTION_NOTICE_HEADING}
-          </p>
-          <p className="leading-snug text-foreground/80">
-            {SWARM_PRODUCTION_NOTICE_BODY}
-          </p>
+          <p className="font-medium leading-tight">{heading}</p>
+          <p className="leading-snug text-foreground/80">{body}</p>
+          {action}
         </div>
       </div>
     </div>
+  );
+}
+
+export function SwarmProductionNotice({
+  "data-testid": testId,
+}: {
+  "data-testid": string;
+}) {
+  return (
+    <SwarmInfoNotice
+      heading={SWARM_PRODUCTION_NOTICE_HEADING}
+      body={SWARM_PRODUCTION_NOTICE_BODY}
+      data-testid={testId}
+    />
   );
 }
