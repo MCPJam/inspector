@@ -597,6 +597,23 @@ function EvaluateTabContent({
   );
 
   const [suiteAction, setSuiteAction] = useState<"run" | "case" | null>(null);
+  // A case and a run both start from a suite. With none there is nothing to
+  // pick, so Add case and Setup Run go straight to creating one instead of
+  // opening the picker on an empty list. A tap while suites load waits.
+  const hasNoSuites =
+    !overviewQueries.isOverviewLoading && visibleSuites.length === 0;
+  useEffect(() => {
+    // The picker lives on the list. Leaving it (Back while suites load)
+    // drops the pending action, or Create suite would open over another
+    // page once the overview answers.
+    if (route.type !== "list") {
+      setSuiteAction(null);
+      return;
+    }
+    if (suiteAction === null || !hasNoSuites) return;
+    setSuiteAction(null);
+    handleOpenCreateSuite();
+  }, [route.type, suiteAction, hasNoSuites, handleOpenCreateSuite]);
   const [runReviewSuiteId, setRunReviewSuiteId] = useState<string | null>(null);
   useEffect(() => {
     if (route.type === "run-detail") setRunReviewSuiteId(null);
@@ -1745,7 +1762,7 @@ function EvaluateTabContent({
         )}
 
         <Sheet
-          open={route.type === "list" && suiteAction !== null}
+          open={route.type === "list" && suiteAction !== null && !hasNoSuites}
           onOpenChange={(open) => {
             if (!open) setSuiteAction(null);
           }}
@@ -1791,19 +1808,10 @@ function EvaluateTabContent({
                 </Button>
               ))}
               {visibleSuites.length === 0 && (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    Create a suite to get started.
-                  </p>
-                  <Button
-                    onClick={() => {
-                      setSuiteAction(null);
-                      handleOpenCreateSuite();
-                    }}
-                  >
-                    Create suite
-                  </Button>
-                </>
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  Loading suites…
+                </p>
               )}
             </div>
           </SheetContent>
