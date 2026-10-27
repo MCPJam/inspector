@@ -256,6 +256,7 @@ import {
   type SideEffectGate,
 } from "./evals/tool-policy-gate.js";
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
+import { deferredViewToolPolicyNames } from "./evals/view-tool-policy-name.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
@@ -4306,8 +4307,8 @@ export const runEvalSuiteWithAiSdk = async ({
         resolvedToolPolicyWarnings = validateToolPolicyNames({
           policy: toolPolicy,
           availableToolNames,
-          // View tool names are discovered only after an app renders.
-          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES, ...(toolPolicy.deny ?? [])],
+          // Bare names must still match at launch; only view: names are deferred.
+          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES, ...deferredViewToolPolicyNames(toolPolicy)],
         });
       } catch (error) {
         if (error instanceof UnmatchedToolPolicyNameError) {

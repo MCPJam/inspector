@@ -3,6 +3,7 @@ import { tool, type ToolSet, type ToolExecutionOptions } from "ai";
 import { z } from "zod";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import type { ToolPolicyGate } from "./tool-policy-gate.js";
+import { VIEW_TOOL_SERVER_ID } from "./view-tool-policy-name.js";
 
 /** Reuse the full gate, including the benchmark manifest, at actual dispatch. */
 async function dispatch(
@@ -65,7 +66,7 @@ export function guardEvalViewTools(
         // No server annotations can classify code supplied by the view.
         return dispatch(
           gate,
-          "mcpjam:view",
+          VIEW_TOOL_SERVER_ID,
           input.name,
           input.arguments as Record<string, unknown>,
           async () => execute(input, options),

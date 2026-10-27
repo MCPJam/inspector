@@ -372,7 +372,7 @@ describe("createBrowserSessionContext — render hook", () => {
     ).toBeUndefined();
   });
 
-  it("renders for non-Claude drivers too (observations without Computer Use)", async () => {
+  it.each([false, true])("renders without Computer Use; view-tool retention enabled: %s", async (enableViewTools) => {
     const manager = {
       executeTool: vi.fn(),
       getAllToolsMetadata: vi
@@ -392,15 +392,16 @@ describe("createBrowserSessionContext — render hook", () => {
     const ctx = await createBrowserSessionContext({
       model: NON_CLAUDE_MODEL,
       mcpClientManager: manager,
+      enableViewTools,
     });
     await ctx.handleEngineToolResult(baseEvent);
 
     expect(ctx.widgetRenderObservations).toHaveLength(1);
-    // No Computer Use → don't keep the widget mounted.
+    // View-tool discovery needs a live view even when Computer Use is disabled.
     expect(
       (renderMcpAppToolResult.mock.calls[0]![0] as { keepMounted?: boolean })
         .keepMounted
-    ).toBe(false);
+    ).toBe(enableViewTools);
   });
 });
 
@@ -1198,8 +1199,14 @@ describe("createBrowserSessionContext — widget interaction checks", () => {
 
 
 describe("view tool carry", () => {
-  it.each([true, false])("keeps the view only while it exposes tools: %s", async (hasTools) => {
-    const ctx = await createBrowserSessionContext({ model: CLAUDE_MODEL, enableComputerUse: true, enableViewTools: true, mcpClientManager: stubManager() });
+  it.each([
+    [CLAUDE_MODEL, true, true],
+    [CLAUDE_MODEL, true, false],
+    [NON_CLAUDE_MODEL, false, true],
+    [NON_CLAUDE_MODEL, false, false],
+  ])("keeps the view only while it exposes tools: %s / %s / %s", async (model, enableComputerUse, hasTools) => {
+    const ctx = await createBrowserSessionContext({ model, enableComputerUse, enableViewTools: true, mcpClientManager: stubManager() });
+    await ctx.viewTools.widget_tools.execute!({}, { toolCallId: "list", messages: [], context: undefined });
     const harness = harnessInstances[0];
     harness.getMountedWidgetId.mockReturnValue("A");
     harness.viewTools.list.mockResolvedValue({ viewId: "A", tools: hasTools ? [{ name: "move" }] : [] });

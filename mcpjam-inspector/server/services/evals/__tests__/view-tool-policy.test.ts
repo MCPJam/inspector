@@ -13,10 +13,12 @@ const options = { toolCallId: "call", messages: [], context: undefined };
 describe("eval view tools", () => {
   it.each([
     [{ mode: "readOnly" as const }, true],
-    [{ mode: "readOnly" as const, allow: ["move"] }, false],
-    [{ mode: "readOnly" as const, allow: ["move"], deny: ["move"] }, true],
+    [{ mode: "readOnly" as const, allow: ["view:move"] }, false],
+    [{ mode: "readOnly" as const, allow: ["view:move"], deny: ["view:move"] }, true],
+    [{ mode: "default" as const, deny: ["view:move"] }, true],
+    [{ mode: "default" as const, deny: ["move"] }, false],
   ])(
-    "checks the raw name before invoking the view: %j",
+    "checks the qualified policy name before invoking the view: %j",
     async (policy, blocked) => {
       const execute = vi.fn(async () => ({ content: [] }));
       const gate = createToolPolicyGate({ policy, annotations: new Map() });
@@ -39,10 +41,34 @@ describe("eval view tools", () => {
       );
     },
   );
+  it("keeps a qualified view allow from allowing the same server tool", async () => {
+    const executeTool = vi.fn(async () => ({ content: [] }));
+    const gate = createToolPolicyGate({
+      policy: { mode: "readOnly", allow: ["view:move"] },
+      annotations: new Map(),
+    });
+    expect(await evalWidgetServerCall(gate, { executeTool })("server", "move", {}))
+      .toHaveProperty("mcpjamPolicyBlock", true);
+    expect(executeTool).not.toHaveBeenCalled();
+  });
+  it("keeps a server allow from allowing the same view tool", async () => {
+    const execute = vi.fn(async () => ({ content: [] }));
+    const gate = createToolPolicyGate({
+      policy: { mode: "readOnly", allow: ["move"] },
+      annotations: new Map(),
+    });
+    const guarded = guardEvalViewTools({
+      widget_call_tool: tool({ inputSchema: z.record(z.string(), z.unknown()), execute }),
+    }, gate);
+    expect(await guarded.widget_call_tool.execute!(
+      { viewId: "A", name: "move", arguments: {} }, options,
+    )).toHaveProperty("mcpjamPolicyBlock", true);
+    expect(execute).not.toHaveBeenCalled();
+  });
   it("enforces the pinned write manifest even for an allow-listed view tool", async () => {
     const execute = vi.fn(async () => ({ content: [] }));
     const gate = createToolPolicyGate({
-      policy: { mode: "default", allow: ["move"] },
+      policy: { mode: "default", allow: ["view:move"] },
       annotations: new Map(),
       sideEffectGate: {
         sideEffects: undefined,
