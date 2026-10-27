@@ -473,6 +473,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
       "setActivePromptIndex:0",
       "dismissCarriedWidget",
       "runAssistantTurn",
+      "dismissCarriedWidget",
       "dispose",
     ]);
 

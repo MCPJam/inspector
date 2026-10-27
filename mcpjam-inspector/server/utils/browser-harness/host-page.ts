@@ -1,3 +1,4 @@
+import { createViewToolsPage } from "../webmcp-view/view-tools-page.js";
 import type { HarnessPresentation } from "../../../shared/unattended-workspace";
 import { mountHarnessWorkspace } from "./host-workspace";
 /**
@@ -40,7 +41,10 @@ type ReadResourceHandler = NonNullable<HostBridgeCallbacks["onReadResourceV2"]>;
 
 const WIDGET_ROOT_ID = "mcpjam-widget-root";
 
+const viewTools = createViewToolsPage();
+
 export interface HostPageRenderOptions {
+  enableViewTools?: boolean;
   presentation?: HarnessPresentation;
   widgetId: string;
   /** Widget resource HTML (already OpenAI-compat-injected by Node if needed). */
@@ -272,6 +276,8 @@ async function renderWidget(
     };
   }
 
+  const detachViewTools = opts.enableViewTools ? viewTools.attach(opts.widgetId, iframe) : () => {};
+
   // Host is now listening. Write the widget HTML into the SAME document so the
   // guest's scripts execute against a host that's already connected.
   try {
@@ -282,6 +288,7 @@ async function renderWidget(
     // Close the connected bridge + drop the iframe so this failed render
     // doesn't leave an orphaned host bridge running.
     void bridge.close?.().catch?.(() => {});
+    detachViewTools();
     iframe.remove();
     return {
       mounted: false,
@@ -298,6 +305,7 @@ async function renderWidget(
         bridge.setHostContext({ theme: value.theme });
     },
     dispose: () => {
+      detachViewTools();
       void bridge.close?.().catch?.(() => {});
       iframe.remove();
     },

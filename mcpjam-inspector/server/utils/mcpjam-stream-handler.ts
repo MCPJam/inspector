@@ -1,3 +1,4 @@
+import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
@@ -2043,7 +2044,7 @@ function scrubMessagesForBackend(
     Object.keys(tools as Record<string, unknown>),
     // A page's tools exist only while that page is open; what the model did
     // with them is still what happened. See the parameter's doc.
-    isWebmcpPageToolName,
+    name => isWebmcpPageToolName(name) || WIDGET_TOOL_VERBS.includes(name),
   );
 
   const scrubbed = scrubChatGPTAppsToolResultsForBackend(
@@ -3756,7 +3757,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // and the Convex `/stream` request see the same narrowed set.
   if (prepareAdvertisedTools) {
     const advertised = new Set(
-      applyPrepareAdvertisedTools({
+      await applyPrepareAdvertisedTools({
         defaultToolNames: activeToolDefs.map((def) => def.name),
         stepIndex,
         prepareAdvertisedTools,
