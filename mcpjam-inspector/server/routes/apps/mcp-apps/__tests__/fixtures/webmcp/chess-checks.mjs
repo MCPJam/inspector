@@ -26,20 +26,23 @@ export async function checkChessViews(page, check, assert, runtime) {
         await host.notifyToolResult("A", initialA);
         const redeliveredA = await state("A");
         const afterRedeliveryB = await state("B");
-        const retiredAlias = host.alias("A");
+        const originalAlias = host.alias("A");
+        const secondGameAlias = host.alias("B");
         await host.close("A");
-        await host.mount({ id: "A", html, mode: "write", permissive: true });
-        let retiredCallRejected = false;
+        let absentRejected = false;
         try {
-          await host.callAlias(retiredAlias, { san: "e4" });
+          await host.callAlias(originalAlias, { san: "e4" });
         } catch {
-          retiredCallRejected = true;
+          absentRejected = true;
         }
+        await host.mount({ id: "A", html, mode: "write", permissive: true });
+        const remountedAlias = host.alias("A");
+        await host.callAlias(originalAlias, { san: "e4" });
         const replacementA = await state("A");
         const survivingB = await state("B");
         return { a, b, initialA, initialB, movedA, untouchedB, movedB,
           unchangedA, redeliveredA, afterRedeliveryB, survivingB,
-          retiredCallRejected, replacementA };
+          originalAlias, secondGameAlias, absentRejected, remountedAlias, replacementA };
       }, { html });
       const fen = result => result.structuredContent.fen;
       assert(result.a.source === (variant === "legacy" ? "mcp-apps" : "webmcp"), "Wrong chess source");
@@ -51,8 +54,10 @@ export async function checkChessViews(page, check, assert, runtime) {
       assert(fen(result.redeliveredA) === fen(result.initialA), "Chess did not honor its server-result contract");
       assert(fen(result.afterRedeliveryB) === fen(result.movedB), "A's server result changed B");
       assert(fen(result.survivingB) === fen(result.movedB), "Closing A changed B");
-      assert(result.retiredCallRejected, "A retired alias called the replacement view");
-      assert(fen(result.replacementA) === fen(result.initialA), "Retired call changed the replacement board");
+      assert(result.originalAlias !== result.secondGameAlias, "Separate games shared a tool alias");
+      assert(result.absentRejected, "A closed game's alias reached a different game");
+      assert(result.originalAlias === result.remountedAlias, "Reload renamed the same widget's tool");
+      assert(fen(result.replacementA) === fen(result.movedA), "Stable alias did not reach the remounted board");
     });
   }
 }

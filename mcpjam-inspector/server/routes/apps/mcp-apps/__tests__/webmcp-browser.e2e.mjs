@@ -157,6 +157,29 @@ function assert(condition, message) {
 }
 async function exercise(page, runtime) {
   await checkChessViews(page, check, assert, runtime);
+  for (const source of ["legacy", "direct"]) {
+    await check(page, runtime, `${source}/in-flight-remount`, async () => {
+      const originalAlias = await page.evaluate(async source => {
+        await window.spike.mount({ id: "A", source });
+        window.pendingRemountCall = window.spike.call("A", { kind: "wait" })
+          .then(() => false, () => true);
+        return window.spike.alias("A");
+      }, source);
+      const rootFrame = typeof page.mainFrame === "function" ? page.mainFrame() : page;
+      const view = rootFrame.childFrames()[0].childFrames()[0];
+      await view.waitForFunction(() => document.body.dataset.waiting === "true");
+      const result = await page.evaluate(async ({ source, originalAlias }) => {
+        await window.spike.close("A");
+        const rejected = await window.pendingRemountCall;
+        await window.spike.mount({ id: "A", source });
+        return { rejected, alias: window.spike.alias("A"),
+          fresh: await window.spike.callAlias(originalAlias, {}) };
+      }, { source, originalAlias });
+      assert(result.rejected, "The in-flight call survived remount");
+      assert(result.alias === originalAlias, "Remount renamed the tool");
+      assert(result.fresh.structuredContent.moves === 1, "Stable alias did not reach the fresh view");
+    });
+  }
   for (const mode of ["write", "srcdoc", "opaque"]) {
     for (const source of ["legacy", "direct", "v3", "v3-tools"]) {
       await check(page, runtime, `${mode}/${source}`, async () => {
