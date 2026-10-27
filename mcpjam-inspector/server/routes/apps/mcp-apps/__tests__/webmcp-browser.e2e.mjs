@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { renderSandboxProxyHtml } from "../sandbox-proxy-html.ts";
+import { checkChessViews } from "./fixtures/webmcp/chess-checks.mjs";
 
 const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -155,6 +156,7 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 async function exercise(page, runtime) {
+  await checkChessViews(page, check, assert, runtime);
   for (const mode of ["write", "srcdoc", "opaque"]) {
     for (const source of ["legacy", "direct", "v3", "v3-tools"]) {
       await check(page, runtime, `${mode}/${source}`, async () => {

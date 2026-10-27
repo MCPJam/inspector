@@ -17,7 +17,7 @@ export async function dispatchAppToolCall(
   return new Promise<Awaited<typeof call>>((resolve, reject) => {
     const abort = () =>
       reject(
-        signal.reason ?? new Error("App iframe was torn down mid-dispatch"),
+        signal.reason ?? new Error("The app closed before the tool finished. Open the app and try again."),
       );
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();

@@ -20,6 +20,15 @@ window.addEventListener("message", (event) => {
 
 const spike = {
   traffic,
+  alias(id, rawName = "make_move") {
+    return registry.getState().snapshotForChatBody("e2e")
+      .find(tool => tool.parentToolCallId === id && tool.rawName === rawName)?.alias;
+  },
+  callAlias(alias, input) {
+    const resolved = registry.getState().resolve(alias, "e2e");
+    if (!resolved) throw new Error("App tool is unavailable");
+    return dispatchAppToolCall(resolved, input);
+  },
   async list(id) {
     const entry = entries.get(id);
     await entry.refresh(entry.bridge, id, { force: true, isLive: () => entry.frame.isConnected });
@@ -33,6 +42,9 @@ const spike = {
     entry.frame.contentWindow.postMessage(entry.resource, "*");
     return ready;
   },
+  notifyToolResult(id, result) {
+    return entries.get(id).bridge.sendToolResult(result);
+  },
   async mount({
     id,
     source = "direct",
@@ -40,6 +52,7 @@ const spike = {
     enabled = true,
     baseline = false,
     permissive = false,
+    html: suppliedHtml,
   }) {
     const frame = document.createElement("iframe");
     frame.dataset.id = id;
@@ -53,7 +66,7 @@ const spike = {
       initialized = resolve;
     });
     bridge.oninitialized = () => initialized();
-    const html = await fetch(`/view?source=${source}&id=${id}`).then(
+    const html = suppliedHtml ?? await fetch(`/view?source=${source}&id=${id}`).then(
       (response) => response.text(),
     );
     const proxyReady = new Promise((resolve) => {
@@ -103,7 +116,7 @@ const spike = {
     entries.set(id, { bridge, frame, resource, source: discovery.source, refresh });
     return discovery;
   },
-  async call(id, input = {}, cancelAfter = 0) {
+  async call(id, input = {}, cancelAfter = 0, rawName = "make_move") {
     const entry = entries.get(id);
     const controller = new AbortController();
     const timer = cancelAfter
@@ -111,7 +124,7 @@ const spike = {
       : null;
     try {
       const alias = registry.getState().snapshotForChatBody("e2e")
-        .find(tool => tool.parentToolCallId === id && tool.rawName === "make_move")?.alias;
+        .find(tool => tool.parentToolCallId === id && tool.rawName === rawName)?.alias;
       const resolved = alias ? registry.getState().resolve(alias, "e2e") : null;
       if (!resolved) throw new Error("App tool is unavailable");
       registry.getState().registerPendingCall(id, controller);

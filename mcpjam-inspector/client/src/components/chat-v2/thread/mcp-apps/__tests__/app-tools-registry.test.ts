@@ -192,7 +192,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     expect(aliasInFlight).toMatch(/^app_[a-z0-9]{8}$/i);
   });
 
-  it("aliases are deterministic given identical inputs (sha256 over preimage)", async () => {
+  it("retires aliases when a closed view is replaced in the same slot", async () => {
     await useAppToolsRegistry
       .getState()
       .registerInstance(makeInstance("b-1", [readonlyTool("ping")]));
@@ -203,10 +203,11 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
       .getState()
       .registerInstance(makeInstance("b-1", [readonlyTool("ping")]));
     const second = [...useAppToolsRegistry.getState().aliases.keys()][0];
-    expect(second).toBe(first);
+    expect(second).not.toBe(first);
+    expect(useAppToolsRegistry.getState().resolve(first)).toBeNull();
   });
 
-  it("keeps the same alias when the same rendered app reconnects with a new bridge", async () => {
+  it("retires aliases when a new bridge supersedes a live view", async () => {
     const firstBridge = makeInstance("b-1", [readonlyTool("ping")]);
     await useAppToolsRegistry.getState().registerInstance(firstBridge);
     const firstAlias = [...useAppToolsRegistry.getState().aliases.keys()][0];
@@ -215,8 +216,9 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     await useAppToolsRegistry.getState().registerInstance(secondBridge);
 
     const state = useAppToolsRegistry.getState();
-    expect([...state.aliases.keys()]).toEqual([firstAlias]);
-    const resolved = state.resolve(firstAlias);
+    expect([...state.aliases.keys()]).not.toContain(firstAlias);
+    expect(state.resolve(firstAlias)).toBeNull();
+    const resolved = state.resolve([...state.aliases.keys()][0]);
     expect(resolved?.instance.bridgeId).toBe("b-2");
     expect(resolved?.bridge).toBe(secondBridge.bridge);
     expect(state.instancesByBridgeId.has("b-1")).toBe(false);

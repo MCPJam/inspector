@@ -55,6 +55,14 @@ describe.each(["inline", "modal"] as const)("%s discovery", (surface) => {
     ).toBe("mcp-apps");
   });
 
+  it("keeps aliases stable while refreshing the same live bridge", async () => {
+    const f = fixture();
+    await f.refresh(f.bridge, "bridge", { surface, isLive: () => true });
+    const before = f.registry.getState().snapshotForChatBody("chat");
+    await f.refresh(f.bridge, "bridge", { surface, force: true, isLive: () => true });
+    expect(f.registry.getState().snapshotForChatBody("chat")).toEqual(before);
+  });
+
   it("falls back on initial method-not-found and keeps that source", async () => {
     const f = fixture(true);
     f.list.mockRejectedValueOnce(

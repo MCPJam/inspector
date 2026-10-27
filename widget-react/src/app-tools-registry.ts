@@ -152,10 +152,9 @@ export interface AppToolsRegistryState {
  * name is always 12 chars: well under Anthropic's 64-char tool-name limit
  * and never collides with the `getInvalidAnthropicToolNames` charset.
  *
- * Deliberately exclude `bridgeId`: a live app can reconnect/re-register its
- * bridge without changing the rendered host tool call or raw app-tool name.
- * The alias must stay stable across that churn so the model does not see the
- * same app tool under a fresh name.
+ * Include the mount identity: replacing a view under the same host tool call
+ * must not let an old alias invoke the replacement. Refreshing the tools on
+ * the same live bridge keeps its identity and therefore its aliases.
  *
  * Collision retry: if a generated alias is already in use, the caller
  * (`registerInstance`) re-rolls with a numeric salt appended to the
@@ -168,11 +167,12 @@ async function generateAlias(
   parentToolCallId: string,
   surface: AppInstance["surface"],
   rawName: string,
+  mountIdentity: string,
   salt = 0
 ): Promise<string> {
   const preimage = `${
     chatSessionId ?? ""
-  }\0${serverId}\0${parentToolCallId}\0${surface}\0${rawName}\0${salt}`;
+  }\0${serverId}\0${parentToolCallId}\0${surface}\0${rawName}\0${mountIdentity}\0${salt}`;
   const bytes = new TextEncoder().encode(preimage);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const hex = Array.from(new Uint8Array(digest))
@@ -212,6 +212,7 @@ export function createAppToolsRegistry(
 ) {
   let disposed = false;
   let enabled = true;
+  const mountIdentities = new WeakMap<AppBridge, string>();
   // In-flight registrations only. An entry lives from `registerInstance`'s
   // first line until it settles; `unregisterInstance` deletes it, which is
   // what invalidates a registration still hashing. Keeping a counter per
@@ -245,6 +246,11 @@ export function createAppToolsRegistry(
     // Generate aliases for every tool the app listed. `readOnly` is cached
     // from annotations, but it is not an inclusion gate.
     const aliasesForInst: AppToolAlias[] = [];
+    let mountIdentity = mountIdentities.get(inst.bridge);
+    if (!mountIdentity) {
+      mountIdentity = crypto.randomUUID();
+      mountIdentities.set(inst.bridge, mountIdentity);
+    }
     const existing = new Set(
       [...get().aliases.entries()]
         .filter(([, alias]) => {
@@ -261,6 +267,7 @@ export function createAppToolsRegistry(
         inst.parentToolCallId,
         inst.surface,
         tool.name,
+        mountIdentity,
         salt
       );
       while (existing.has(alias)) {
@@ -271,6 +278,7 @@ export function createAppToolsRegistry(
           inst.parentToolCallId,
           inst.surface,
           tool.name,
+          mountIdentity,
           salt
         );
       }
