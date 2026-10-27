@@ -3,6 +3,16 @@ import { validateToolPolicyNames } from "@mcpjam/sdk/contract";
 import { deferredViewToolPolicyNames } from "../view-tool-policy-name.js";
 
 describe("deferred view policy names", () => {
+  it("does not warn for a qualified view allow, but still warns for a plain typo", () => {
+    const policy = { mode: "readOnly" as const, allow: ["view:make_move", "delte_file"] };
+    expect(validateToolPolicyNames({
+      policy,
+      availableToolNames: ["delete_file"],
+      deferredToolNames: deferredViewToolPolicyNames(policy),
+    })).toEqual([
+      "Tool policy allow name(s) did not match any available tool: delte_file",
+    ]);
+  });
   it("defers a qualified view deny with a visible warning", () => {
     const policy = { mode: "default" as const, deny: ["view:make_move"] };
     expect(validateToolPolicyNames({

@@ -7,9 +7,9 @@ export function viewToolPolicyName(rawName: string): string {
   return `view:${rawName}`;
 }
 
-/** Only explicitly qualified view names may be unknown before the app renders. */
+/** Explicitly qualified allows and denies resolve only after the app renders. */
 export function deferredViewToolPolicyNames(policy: EvalSuiteFileToolPolicy): string[] {
-  return (policy.deny ?? []).filter(
+  return [...(policy.deny ?? []), ...(policy.allow ?? [])].filter(
     (name) => name.startsWith("view:") && name.length > "view:".length,
   );
 }
