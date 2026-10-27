@@ -3,17 +3,21 @@
  * the last launch error and the Back / Continue row. The step decides every
  * number and whether Continue is allowed; this only lays them out.
  */
+import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { DisabledReasonTooltip } from "@mcpjam/design-system/tooltip";
 import { SwarmFundingSummary } from "@/components/swarms/swarm-funding-summary";
 import type { SwarmFundingPreviewState } from "@/hooks/use-swarm-funding-preview";
+import { cn } from "@/lib/utils";
 
 export function NewSwarmConfirmFooter({
   personaTotal,
   environmentCount,
   reusedCount,
   conversationCount,
+  max,
+  notice,
   fundingState,
   requestedRuns,
   pendingGoals,
@@ -30,6 +34,10 @@ export function NewSwarmConfirmFooter({
   environmentCount: number;
   reusedCount: number;
   conversationCount: number;
+  /** What the credits cover; `null` when there is no cap. */
+  max: number | null;
+  /** The credit cap notice, above the action row. */
+  notice: ReactNode;
   fundingState: SwarmFundingPreviewState;
   requestedRuns: number;
   pendingGoals: number;
@@ -75,9 +83,19 @@ export function NewSwarmConfirmFooter({
             </p>
           ) : null}
         </div>
-        <p className="shrink-0 font-mono text-xl font-semibold tabular-nums">
-          {conversationCount.toLocaleString()}
+        <p
+          className="shrink-0 font-mono text-xl font-semibold tabular-nums"
+          data-testid="new-swarm-conversation-count"
+        >
+          <span
+            className={cn(
+              max !== null && conversationCount > max && "text-destructive",
+            )}
+          >
+            {conversationCount.toLocaleString()}
+          </span>
           <span className="ml-1 font-sans text-xs font-normal text-muted-foreground">
+            {max !== null ? `of ${max.toLocaleString()} ` : null}
             conversations
           </span>
         </p>
@@ -95,6 +113,8 @@ export function NewSwarmConfirmFooter({
           {errorMessage}
         </p>
       ) : null}
+
+      {notice}
 
       <div className="flex items-center justify-end gap-5 pt-2">
         <Button

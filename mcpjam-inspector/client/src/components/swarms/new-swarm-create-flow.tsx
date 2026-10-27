@@ -2396,6 +2396,8 @@ export function NewSwarmCreateFlow({
           />
         ) : step === "confirm" ? (
           <NewSwarmConfirmStep
+            organizationId={organizationId}
+            maxTurns={preset.maxTurns}
             proposed={proposed}
             onProposedChange={setProposed}
             reusedPersonas={reusedPersonas}

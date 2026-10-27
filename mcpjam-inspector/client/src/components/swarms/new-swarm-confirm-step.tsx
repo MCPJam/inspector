@@ -35,6 +35,9 @@ import { useSwarmFundingPreview } from "@/hooks/use-swarm-funding-preview";
 import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import { useOutOfCreditsReason } from "@/hooks/useCreditBalance";
 import { NewSwarmConfirmFooter } from "@/components/swarms/new-swarm-confirm-footer";
+import { DisabledReasonTooltip } from "@mcpjam/design-system/tooltip";
+import { SwarmCreditCapNotice } from "@/components/swarms/swarm-credit-cap-notice";
+import { useSwarmConfirmCap } from "@/hooks/use-swarm-confirm-cap";
 import { NewSwarmJudgeRow } from "@/components/swarms/new-swarm-judge-row";
 import {
   fundingPreviewRuns,
@@ -374,14 +377,21 @@ function PersonaIterationsRow({
   personaName,
   onChange,
   disabled,
+  maxIterations = MAX_SWARM_ITERATIONS,
+  capReason = null,
 }: {
   goalCount: number;
   iterations: number;
   personaName: string;
   onChange: (value: number) => void;
   disabled: boolean;
+  /** What the credits allow; typed values above it are clamped to it. */
+  maxIterations?: number;
+  /** Why "+" stops below the control's own maximum. */
+  capReason?: string | null;
 }) {
   const id = useId();
+  const limit = Math.min(MAX_SWARM_ITERATIONS, maxIterations);
   // What the user is part-way through typing, before it is a count. Committing
   // every keystroke through the clamp turned the "1" already in the field plus
   // a typed "2" into 12, which landed straight on the maximum.
@@ -412,7 +422,7 @@ function PersonaIterationsRow({
           id={id}
           type="number"
           min={MIN_SWARM_ITERATIONS}
-          max={MAX_SWARM_ITERATIONS}
+          max={limit}
           step={1}
           value={draft ?? iterations}
           disabled={disabled}
@@ -434,7 +444,7 @@ function PersonaIterationsRow({
               count >= MIN_SWARM_ITERATIONS &&
               count <= MAX_SWARM_ITERATIONS
             ) {
-              commit(count);
+              commit(Math.min(count, limit));
               return;
             }
             // Only a shrinking field holds text that is not a count: an empty
@@ -449,17 +459,26 @@ function PersonaIterationsRow({
           }}
           className="h-7 w-14 text-center font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
         />
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          className="size-7"
-          aria-label={`More iterations for ${personaName}`}
-          disabled={disabled || iterations >= MAX_SWARM_ITERATIONS}
-          onClick={() => commit(iterations + 1)}
+        <DisabledReasonTooltip
+          reason={
+            iterations >= limit && limit < MAX_SWARM_ITERATIONS
+              ? capReason
+              : null
+          }
+          variant="muted"
         >
-          <Plus className="size-3.5" />
-        </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-7"
+            aria-label={`More iterations for ${personaName}`}
+            disabled={disabled || iterations >= limit}
+            onClick={() => commit(iterations + 1)}
+          >
+            <Plus className="size-3.5" />
+          </Button>
+        </DisabledReasonTooltip>
       </div>
       <p
         className="text-sm text-muted-foreground"
@@ -530,6 +549,7 @@ function PersonaDetailPanel({
   onChangeContext,
   onChangeGoal,
   onAddGoal,
+  addGoalBlockedReason = null,
   onSave,
   saving,
   avatarShape,
@@ -564,6 +584,8 @@ function PersonaDetailPanel({
   onChangeContext?: (notes: string) => void;
   onChangeGoal?: (goalKey: string, goal: string) => void;
   onAddGoal?: () => void;
+  /** Set when one more goal would pass what the credits cover. */
+  addGoalBlockedReason?: string | null;
   /**
    * "Done here". Always offered: it commits a persisted row's draft (a no-op
    * for an unchanged one) and collapses the panel either way.
@@ -666,14 +688,20 @@ function PersonaDetailPanel({
           <div className="flex items-center justify-between gap-3">
             <SectionLabel>Goals</SectionLabel>
             {onAddGoal ? (
-              <button
-                type="button"
-                onClick={onAddGoal}
-                data-testid="new-swarm-add-goal"
-                className="text-xs font-medium text-primary hover:text-primary/80"
+              <DisabledReasonTooltip
+                reason={addGoalBlockedReason}
+                variant="muted"
               >
-                + Add goal
-              </button>
+                <button
+                  type="button"
+                  onClick={onAddGoal}
+                  disabled={addGoalBlockedReason !== null}
+                  data-testid="new-swarm-add-goal"
+                  className="text-xs font-medium text-primary hover:text-primary/80 disabled:opacity-50"
+                >
+                  + Add goal
+                </button>
+              </DisabledReasonTooltip>
             ) : null}
           </div>
           {loadingGoals ? (
@@ -827,6 +855,8 @@ function ReusedPersonaCard({
   iterations,
   disabled,
   onIterationsChange,
+  maxIterations,
+  capReason,
 }: {
   persona: ReusedPersona;
   muted?: boolean;
@@ -837,6 +867,8 @@ function ReusedPersonaCard({
   iterations: number;
   disabled: boolean;
   onIterationsChange: (value: number) => void;
+  maxIterations: number;
+  capReason: string | null;
 }) {
   const goalCount = resolved?.goals.length;
   // Set for THIS run, not written back: the journey belongs to whoever
@@ -876,6 +908,8 @@ function ReusedPersonaCard({
             personaName={persona.name}
             disabled={disabled}
             onChange={onIterationsChange}
+            maxIterations={maxIterations}
+            capReason={capReason}
           />
         ) : null
       }
@@ -909,6 +943,8 @@ export function NewSwarmConfirmStep({
   createdTargets = null,
   fundingRefreshKey = 0,
   fundingNotice = null,
+  organizationId,
+  maxTurns,
 }: {
   proposed: ProposedPersona[];
   onProposedChange: (next: ProposedPersona[]) => void;
@@ -966,6 +1002,10 @@ export function NewSwarmConfirmStep({
   fundingRefreshKey?: number;
   /** Why the last launch stopped for review, when it did. */
   fundingNotice?: string | null;
+  /** The swarm project's organization, whose credits pay for the run. */
+  organizationId?: string | null;
+  /** Turns per conversation, which the credit estimate prices. */
+  maxTurns: number;
 }) {
   const [selected, setSelected] = useState<SelectedPersona | null>(null);
   const [reusedResolved, setReusedResolved] = useState<
@@ -1199,6 +1239,27 @@ export function NewSwarmConfirmStep({
     pendingGoals,
     allowanceRemaining: sponsorshipAllowance?.remaining,
   });
+
+  const creditCap = useSwarmConfirmCap({
+    projectId,
+    organizationId,
+    environmentIds,
+    reusedGoals: previewTargets.map((target) => ({
+      journeyId: target.journeyId,
+      sessions: target.sessionsPerTarget ?? DEFAULT_SWARM_ITERATIONS,
+    })),
+    maxTurns,
+    judgeConfig,
+    launchCount: launchSessionEstimate,
+    environmentCount: fanoutEnvironmentCount,
+    proposed: proposed.map((persona) => ({
+      journeys: persona.journeys,
+      iterations: iterationsFor(persona.key),
+    })),
+    reusedIterations: reusedPersonas.map((p) => reusedIterationsFor(p._id)),
+    locked: structureLocked,
+  });
+  const { fits, capReason, iterationsCap } = creditCap;
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -1458,6 +1519,9 @@ export function NewSwarmConfirmStep({
                           ? undefined
                           : () => addGoal(persona.key)
                       }
+                      addGoalBlockedReason={
+                        fits(iterationsFor(persona.key)) ? null : capReason
+                      }
                       // In-memory edits already landed as they were typed, so
                       // this only collapses the editor.
                       onSave={() => setSelected(null)}
@@ -1504,6 +1568,11 @@ export function NewSwarmConfirmStep({
                       onChange={(value) =>
                         onIterationsChange(persona.key, value)
                       }
+                      maxIterations={iterationsCap(
+                        persona.journeys.length,
+                        iterationsFor(persona.key),
+                      )}
+                      capReason={capReason}
                     />
                   }
                 />
@@ -1593,6 +1662,11 @@ export function NewSwarmConfirmStep({
                     onIterationsChange={(value) =>
                       onIterationsChange(persona._id, value)
                     }
+                    maxIterations={iterationsCap(
+                      reusedResolved[persona._id]?.targets?.length ?? 0,
+                      reusedIterationsFor(persona._id),
+                    )}
+                    capReason={capReason}
                   />
                 );
               })}
@@ -1602,19 +1676,26 @@ export function NewSwarmConfirmStep({
 
         <div className="flex flex-wrap items-center gap-3">
           {structureLocked ? null : (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={addPersona}
-              data-testid="new-swarm-add-persona"
+            <DisabledReasonTooltip
+              reason={fits(DEFAULT_SWARM_ITERATIONS) ? null : capReason}
+              variant="muted"
             >
-              Add new persona
-            </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={addPersona}
+                disabled={!fits(DEFAULT_SWARM_ITERATIONS)}
+                data-testid="new-swarm-add-persona"
+              >
+                Add new persona
+              </Button>
+            </DisabledReasonTooltip>
           )}
           {!structureLocked && personasAvailableToAdd.length > 0 ? (
             // Add-only: what is already attached is dropped from the list, and
             // detaching is the card's own Remove.
             <PersonaPickerPopover
+              disabled={!fits(1)}
               personas={personasAvailableToAdd}
               open={addExistingOpen}
               onOpenChange={setAddExistingOpen}
@@ -1645,7 +1726,16 @@ export function NewSwarmConfirmStep({
           fundingNotice={fundingNotice}
           errorMessage={errorMessage}
           launching={launching}
-          launchBlockedReason={launchBlockedReason}
+          max={creditCap.max}
+          notice={
+            creditCap.notice && (
+              <SwarmCreditCapNotice
+                {...creditCap.notice}
+                data-testid="new-swarm-confirm-credit-cap-notice"
+              />
+            )
+          }
+          launchBlockedReason={launchBlockedReason ?? creditCap.blockedReason}
           launchDisabled={!canLaunch || previewSettling}
           onBack={onBack}
           onContinue={() =>

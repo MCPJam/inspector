@@ -58,6 +58,7 @@ export function PersonaPickerPopover({
   triggerTestId,
   listTestId,
   showTriggerIcon = true,
+  disabled = false,
 }: {
   personas: readonly PersonaPickerOption[];
   open: boolean;
@@ -72,6 +73,7 @@ export function PersonaPickerPopover({
   listTestId?: string;
   /** Mockup omits the plus on Confirm's "Add existing persona". */
   showTriggerIcon?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -81,6 +83,7 @@ export function PersonaPickerPopover({
           variant="secondary"
           size={triggerSize}
           className={triggerClassName}
+          disabled={disabled}
           data-testid={triggerTestId}
         >
           {showTriggerIcon ? <Plus className="mr-1.5 size-4" /> : null}
