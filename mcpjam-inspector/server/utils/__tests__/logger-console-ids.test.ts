@@ -154,7 +154,11 @@ describe("logger console IDs", () => {
   });
 
   it("prints nothing in production unless verbose logging is on", async () => {
-    const quiet = await loadLogger({ NODE_ENV: "production", DO_NOT_TRACK: "1" });
+    const quiet = await loadLogger({
+      NODE_ENV: "production",
+      DO_NOT_TRACK: "1",
+      VERBOSE_LOGS: "false",
+    });
     quiet.info("quiet", { runId: "run_1" });
     quiet.warn("quiet", { runId: "run_1" });
     quiet.error("quiet", new Error("quiet"), { runId: "run_1" });
