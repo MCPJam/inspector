@@ -105,9 +105,10 @@ const EVALUATORS_ROOT = join(here, "..", "..", "evaluators");
 
 /** An `@mcpjam/sdk` subpath's source: the SDK's subpaths mirror its src/ tree. */
 function sdkSourceFile(sub) {
-  return [join(SDK_SOURCE, `${sub}.ts`), join(SDK_SOURCE, sub, "index.ts")].find(
-    (candidate) => existsSync(candidate),
-  );
+  return [
+    join(SDK_SOURCE, `${sub}.ts`),
+    join(SDK_SOURCE, sub, "index.ts"),
+  ].find((candidate) => existsSync(candidate));
 }
 
 /**
@@ -130,7 +131,10 @@ function evaluatorsSourceFile(sub) {
           ? subpath.slice(prefix.length)
           : undefined;
     if (rest === undefined) continue;
-    const built = /^\.\/dist\/(.+)\.js$/.exec(target.import.replace("*", rest));
+    // Node substitutes every `*` in a pattern target, not only the first.
+    const built = /^\.\/dist\/(.+)\.js$/.exec(
+      target.import.replaceAll("*", rest),
+    );
     const file = built && join(EVALUATORS_ROOT, "src", `${built[1]}.ts`);
     return file && existsSync(file) ? file : undefined;
   }
