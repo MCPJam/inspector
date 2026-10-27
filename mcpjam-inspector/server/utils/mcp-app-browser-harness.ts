@@ -1,4 +1,4 @@
-import { McpAppViewTools } from "./mcp-app-view-tools.js";
+import { McpAppViewTools, type ViewToolCallRecord } from "./mcp-app-view-tools.js";
 import { WEBMCP_RELAY_SOURCE } from "./webmcp-view/webmcp-relay-source.js";
 import { WEBMCP_VIEW_POLYFILL_JS } from "./webmcp-view/webmcp-view-polyfill.js";
 import { randomUUID } from "node:crypto";
@@ -410,6 +410,7 @@ type ResourceReadParams = Parameters<MCPClientManager["readResource"]>[1];
 
 export interface McpAppBrowserHarnessOptions {
   enableViewTools?: boolean;
+  onViewToolCall?: (call: ViewToolCallRecord) => void;
   /** Current host transcript/appearance. Pure data; never an execution callback. */
   getWorkspacePresentation?: () => HarnessPresentation;
   /** Dispatch a widget-initiated tools/call (app->host). */
@@ -699,6 +700,7 @@ export class McpAppBrowserHarness {
     this.viewport = opts.viewport ?? { ...DEFAULT_VIEWPORT };
     this.blockPrivateNetworks = opts.blockPrivateNetworks ?? HOSTED_MODE;
     this.viewTools = new McpAppViewTools({
+      onCall: opts.onViewToolCall,
       enabled: opts.enableViewTools === true, page: () => this.page,
       mount: () => { const viewId = this.getMountedWidgetId(); const mount = viewId ? this.mounted.get(viewId) : null; return viewId && mount ? { viewId, serverId: mount.serverId, resourceUri: mount.resourceUri } : null; },
       dismiss: id => this.unmount(id),

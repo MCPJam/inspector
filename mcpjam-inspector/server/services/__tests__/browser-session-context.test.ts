@@ -32,6 +32,7 @@ vi.mock("../../utils/model-capabilities", () => ({
 
 const harnessInstances: Array<{
   getMountedWidgetId: ReturnType<typeof vi.fn>;
+  viewTools: { list: ReturnType<typeof vi.fn>; available: boolean };
   dismissWidget: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   executeAction: ReturnType<typeof vi.fn>;
@@ -56,6 +57,7 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
     McpAppBrowserHarness: vi.fn().mockImplementation(function () {
       const instance = {
         getMountedWidgetId: vi.fn().mockReturnValue(null),
+        viewTools: { list: vi.fn().mockResolvedValue(null), available: false },
         dismissWidget: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn().mockResolvedValue(undefined),
         executeAction: vi.fn(),
@@ -1191,5 +1193,31 @@ describe("createBrowserSessionContext — widget interaction checks", () => {
         /multiple widgets for tool/i.test(f.reason),
       ),
     ).toBe(true);
+  });
+});
+
+
+describe("view tool carry", () => {
+  it.each([true, false])("keeps the view only while it exposes tools: %s", async (hasTools) => {
+    const ctx = await createBrowserSessionContext({ model: CLAUDE_MODEL, enableComputerUse: true, enableViewTools: true, mcpClientManager: stubManager() });
+    const harness = harnessInstances[0];
+    harness.getMountedWidgetId.mockReturnValue("A");
+    harness.viewTools.list.mockResolvedValue({ viewId: "A", tools: hasTools ? [{ name: "move" }] : [] });
+    await ctx.dismissCarriedWidget();
+    expect(harness.dismissWidget).toHaveBeenCalledTimes(hasTools ? 0 : 1);
+    await ctx.dispose();
+  });
+  it("uses the installed policy for every later widget server call", async () => {
+    const manager = new MCPClientManager();
+    const execute = vi.spyOn(manager, "executeTool");
+    const ctx = await createBrowserSessionContext({ model: CLAUDE_MODEL, enableComputerUse: true, enableViewTools: true, mcpClientManager: manager });
+    const policy = vi.fn(async () => ({ content: [], mcpjamPolicyBlock: true }));
+    ctx.setWidgetToolCallPolicy(policy);
+    const options = vi.mocked(McpAppBrowserHarness).mock.calls[0][0];
+    await options.callTool("server", "delete", {});
+    await options.callTool("server", "delete", { fromTimer: true });
+    expect(policy).toHaveBeenCalledTimes(2);
+    expect(execute).not.toHaveBeenCalled();
+    await ctx.dispose();
   });
 });

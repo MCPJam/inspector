@@ -32,6 +32,7 @@ Four authoring entry points — `test`, `expectedToolCalls`, `predicates`, `scor
 | iterations | the configured number of iterations of a case | `repetitions` |
 | legacyIterations | the legacy-policy per-case count, read as a floor | the public API case field `iterations` on a legacy-policy suite, stored as `runs` |
 | trace | captured evidence of that execution | unchanged |
+| view tool call | a tool dispatched inside a rendered MCP App; assertions use its original tool name, while traces retain the `widget_call_tool` verb and view ID | distinct from a view calling an MCP server tool |
 | evaluator | an assertion or a judge | `Scorer`, `grader`, umbrella uses of `check` |
 | assertion | a deterministic rule | `Predicate`, `check`, matcher-backed rules |
 | judge | a model-based rubric | unchanged |
