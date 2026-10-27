@@ -142,6 +142,12 @@ export interface PinnedHostExecutionSpec {
    */
   mcpProfile?: HostConfigMcpProfileV1;
   /**
+   * The host's style, frozen with the target so sparse `mcpProfile` app
+   * overrides resolve against the same preset an eval run uses. Absent on
+   * runs created before the backend pinned it.
+   */
+  hostStyle?: string;
+  /**
    * Pinned MCP client capabilities advertised on INITIALIZE, captured at
    * run-create time. Passed into `createAuthorizedManager` so the run negotiates
    * with the SAME capabilities the host declared (mirrors the scenario path's
