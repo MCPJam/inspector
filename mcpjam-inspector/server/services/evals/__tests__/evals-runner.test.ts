@@ -443,6 +443,68 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     );
   });
 
+  it("skips the untouched row of a case that starts with a tool call once credits run out", async () => {
+    const success = streamTextMock.getMockImplementation()!;
+    streamTextMock
+      .mockImplementationOnce(success)
+      .mockImplementationOnce(() => {
+        throw new Error("Credits exhausted");
+      });
+    const config = buildQuickRunConfig();
+    const test = config.config.tests[0];
+    test.runs = 3;
+    test.promptTurns = [
+      {
+        id: "turn-1",
+        prompt: "",
+        expectedToolCalls: [],
+        pinnedToolCall: {
+          serverName: "Asana",
+          toolName: "list_tasks",
+          arguments: {},
+        },
+      } as any,
+      { id: "turn-2", prompt: "Hello", expectedToolCalls: [] },
+    ];
+    // Rows as the backend pre-creates them: the snapshot query is the case's
+    // first prompt, not the runner's "Pinned tool call: …".
+    convexClient.query.mockImplementation(async (name: string) =>
+      name === "testSuites:getTestSuiteRunDetails"
+        ? {
+            iterations: [
+              {
+                _id: "row-3",
+                testCaseId: "case-1",
+                iterationNumber: 3,
+                status: "pending",
+                testCaseSnapshot: {
+                  title: "Case",
+                  query: "Hello",
+                  model: test.model,
+                  provider: test.provider,
+                },
+              },
+            ],
+          }
+        : { status: "running" },
+    );
+    const recorder = {
+      startIteration: vi.fn().mockResolvedValue("iteration"),
+      finishIteration: vi.fn().mockResolvedValue(undefined),
+      finalize: vi.fn().mockResolvedValue(undefined),
+    };
+    await runEvalSuiteWithAiSdk({
+      ...config,
+      runId: "suite-run",
+      recorder,
+    } as any);
+    const skipped = convexClient.action.mock.calls.filter(
+      ([name, args]) =>
+        name === "testSuites:updateTestIteration" && args.status === "skipped",
+    );
+    expect(skipped.map(([, args]) => args.iterationId)).toEqual(["row-3"]);
+  });
+
   it("hands the run's bearer to finalize so evidence uploads as the launching user", async () => {
     const config = buildQuickRunConfig();
     const recorder = {

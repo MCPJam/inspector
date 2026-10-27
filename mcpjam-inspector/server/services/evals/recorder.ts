@@ -18,6 +18,7 @@ import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
+import { findPrecreatedIterationByCase } from "./precreated-iteration.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
 import { rerunRefusalError } from "./rerun-refusal.js";
 import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
@@ -336,27 +337,10 @@ export const createSuiteRunRecorder = ({
           { runId },
         );
 
-        const iterations = response?.iterations || [];
-
-        // Find the iteration that matches this test case and iteration number
-        // Match by testCaseSnapshot if available, otherwise by testCaseId
-        const matchingIteration = iterations.find((iter: any) => {
-          if (testCaseSnapshot && iter.testCaseSnapshot) {
-            // Match by model and provider from snapshot
-            return (
-              iter.testCaseSnapshot.title === testCaseSnapshot.title &&
-              iter.testCaseSnapshot.query === testCaseSnapshot.query &&
-              iter.testCaseSnapshot.model === testCaseSnapshot.model &&
-              iter.testCaseSnapshot.provider === testCaseSnapshot.provider &&
-              iter.iterationNumber === iterationNumber
-            );
-          }
-          // Fallback to matching by testCaseId and iteration number
-          return (
-            iter.testCaseId === testCaseId &&
-            iter.iterationNumber === iterationNumber
-          );
-        });
+        const matchingIteration = findPrecreatedIterationByCase(
+          response?.iterations || [],
+          { testCaseId, testCaseSnapshot, iterationNumber },
+        );
 
         if (!matchingIteration) {
           logger.error(

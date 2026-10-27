@@ -194,6 +194,7 @@ import {
   createSuiteRunRecorder,
   type SuiteRunRecorder,
 } from "./evals/recorder";
+import { findPrecreatedIterationByCase } from "./evals/precreated-iteration";
 import { finalizeAiSdkTraceOnFailure } from "./evals/eval-trace-capture";
 import type {
   EvalTraceBlobV1,
@@ -2946,37 +2947,24 @@ async function findIterationIdForTimeout(args: {
     return undefined;
   }
 
-  const resolvedTest = resolveEvalTestCase(args.test);
-  const shouldMatchByTestCaseOnly =
-    !turnsNeedModel({
-      caseType: args.test.caseType,
-      promptTurns: resolvedTest.promptTurns,
-    }) && Boolean(args.test.testCaseId);
   try {
     const response = await args.convexClient.query(
       "testSuites:getTestSuiteRunDetails" as any,
       { runId: args.runId },
     );
-    const iterations = response?.iterations ?? [];
-    const matching = iterations.find((iteration: any) => {
-      if (
-        shouldMatchByTestCaseOnly &&
-        iteration.testCaseId === args.test.testCaseId &&
-        iteration.iterationNumber === args.runIndex + 1 &&
-        (iteration.status === "pending" || iteration.status === "running")
-      ) {
-        return true;
-      }
-
-      const snapshot = iteration.testCaseSnapshot ?? {};
-      return (
-        snapshot.title === args.test.title &&
-        snapshot.query === resolvedTest.query &&
-        snapshot.model === args.test.model &&
-        snapshot.provider === args.test.provider &&
-        iteration.iterationNumber === args.runIndex + 1 &&
-        (iteration.status === "pending" || iteration.status === "running")
-      );
+    const open = (response?.iterations ?? []).filter(
+      (iteration: any) =>
+        iteration.status === "pending" || iteration.status === "running",
+    );
+    const matching = findPrecreatedIterationByCase(open, {
+      testCaseId: args.test.testCaseId,
+      testCaseSnapshot: {
+        title: args.test.title,
+        query: resolveEvalTestCase(args.test).query,
+        model: args.test.model,
+        provider: args.test.provider,
+      },
+      iterationNumber: args.runIndex + 1,
     });
     return matching?._id as string | undefined;
   } catch (error) {
@@ -5141,10 +5129,10 @@ const runLocalIteration = async ({
   const iterationParams = {
     ...iterationParamsBase,
     // Model-free (pinned-only) iterations omit the testCaseSnapshot so the
-    // recorder pairs the pre-created row by testCaseId + iterationNumber. The
-    // snapshot's query is synthesized ("Pinned tool call: …") and would never
-    // match the pre-created row's stored query, leaving the row unpaired and
-    // perpetually pending. Mirrors the old probe path, which passed no snapshot.
+    // recorder pairs the pre-created row by testCaseId + iterationNumber even
+    // on a row without a case id, where pairing falls back to snapshot text:
+    // this snapshot's query is synthesized ("Pinned tool call: …") and would
+    // never match the stored one. Mirrors the old probe path.
     ...(shouldOmitSnapshotForPairing ? {} : { testCaseSnapshot }),
   };
 
