@@ -411,6 +411,20 @@ describe("workos authkit local session bridge", () => {
       ]);
     });
 
+    it("answers 503 when the socket drops while reading WorkOS's response", async () => {
+      const app = createTestApp();
+      const { jar, name } = await signedIn(app);
+      const dropped = new Response("{}");
+      vi.spyOn(dropped, "text").mockRejectedValueOnce(
+        new TypeError("terminated", { cause: { code: "UND_ERR_SOCKET" } }),
+      );
+      vi.mocked(fetch).mockResolvedValueOnce(dropped);
+
+      const res = await refresh(app, jar);
+      expect(res.status).toBe(503);
+      expect(setCookieFor(res, name)).toBeUndefined();
+    });
+
     it("lets a failure that is not the network reach onError, keeping the session", async () => {
       const warnSpy = vi.spyOn(logger, "warn");
       const app = createTestApp();
