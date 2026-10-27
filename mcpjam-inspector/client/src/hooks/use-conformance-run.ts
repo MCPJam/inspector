@@ -28,6 +28,7 @@ import type {
 // Browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls Node-only
 // transitive deps that break the Vite browser bundle.
 import {
+  PROTOCOL_VERSION_ERAS,
   canRunConformance,
   pooledConformanceScore,
   scoreFromAppsResult,
@@ -48,6 +49,7 @@ import {
   submitOAuthConformanceCode,
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 
 export type SuiteStatus =
   | "idle"
@@ -190,6 +192,12 @@ export interface UseConformanceRunOptions {
    * deduction.
    */
   deferOAuthAuthorization?: boolean;
+  /**
+   * Tools the operator named as safe for the protocol suite to call (see
+   * `use-conformance-probes`). Absent ⇒ nothing on the server is executed,
+   * and the two checks that need a tool report could-not-run.
+   */
+  probes?: ConformanceProbes;
 }
 
 export interface UseConformanceRunResult {
@@ -217,6 +225,7 @@ export interface UseConformanceRunResult {
 export function useConformanceRun({
   server,
   deferOAuthAuthorization = false,
+  probes,
 }: UseConformanceRunOptions): UseConformanceRunResult {
   const httpServer = isHttpServer(server);
   const [protocol, setProtocol] = useState<ProtocolSuiteState>(() =>
@@ -338,6 +347,15 @@ export function useConformanceRun({
       try {
         const { result } = await runProtocolConformance(serverName, {
           protocolVersion: versionPin === "auto" ? undefined : versionPin,
+          // Only on a pinned 2026-era run, the only one whose checks call
+          // them and the only one the page offers them on, and only when one
+          // is named. Every other run sends exactly what it sent before
+          // probes existed.
+          ...(versionPin !== "auto" &&
+          PROTOCOL_VERSION_ERAS[versionPin] === "modern" &&
+          (probes?.logProbe || probes?.inputRequiredProbe)
+            ? { probes }
+            : {}),
         });
         if (!isRunActive(runToken, serverName)) return;
         setProtocol({ status: "done", result, verdict: verdictOf(result) });
@@ -349,7 +367,7 @@ export function useConformanceRun({
         });
       }
     },
-    [httpServer, isRunActive, versionPin]
+    [httpServer, isRunActive, versionPin, probes]
   );
 
   const runApps = useCallback(

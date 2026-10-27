@@ -15,6 +15,14 @@ import type {
 } from "@mcpjam/sdk";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
+const { enabledFlags } = vi.hoisted(() => ({
+  enabledFlags: new Set<string>(),
+}));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (key: string) => enabledFlags.has(key),
+}));
+
 const mockRunProtocol = vi.fn();
 const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
@@ -235,6 +243,7 @@ function createStdioServer(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  enabledFlags.clear();
 });
 
 describe("ConformanceTab", () => {
@@ -459,11 +468,20 @@ describe("ConformanceTab", () => {
     }
   });
 
-  it("shows the readiness sections without a flag of their own", () => {
-    // This file mocks no feature-flag provider, so the sections appearing here
-    // IS the assertion: reaching this page already required
-    // `mcpjam-conformance`, and a second flag would have gated an audience
-    // against itself. If one is ever reintroduced, this fails.
+  it("hides the readiness sections unless mcpjam-directory-readiness is on", () => {
+    // Directory submissions are a later phase than protocol conformance, so
+    // the sections stay out of the page until the flag says otherwise.
+    render(<ConformanceTab server={createHttpServer()} />);
+    expect(
+      screen.getByText("Run your first conformance check"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Claude Directory Readiness")).toBeNull();
+    expect(screen.queryByText("OpenAI Directory Readiness")).toBeNull();
+    expect(screen.queryByText("Muse Directory Readiness")).toBeNull();
+  });
+
+  it("shows the readiness sections when mcpjam-directory-readiness is on", () => {
+    enabledFlags.add("mcpjam-directory-readiness");
     render(<ConformanceTab server={createHttpServer()} />);
 
     // Before any run, too: readiness has its own run control and recovers an
@@ -477,6 +495,7 @@ describe("ConformanceTab", () => {
   });
 
   it("keeps the readiness sections mounted when the first run starts", async () => {
+    enabledFlags.add("mcpjam-directory-readiness");
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
     const before = screen.getByText("OpenAI Directory Readiness");
@@ -525,6 +544,67 @@ describe("ConformanceTab", () => {
       2,
     );
     expect(mockRunProtocol).not.toHaveBeenCalled();
+  });
+
+  it("offers Probe tools only once the 2026-07-28 version is pinned", async () => {
+    const user = userEvent.setup();
+    render(<ConformanceTab server={createHttpServer()} />);
+    // Auto: the checks that need a tool may not even apply.
+    expect(screen.queryByRole("button", { name: /Probe tools/ })).toBeNull();
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2025-11-25" }));
+    expect(screen.queryByRole("button", { name: /Probe tools/ })).toBeNull();
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2026-07-28" }));
+    expect(
+      screen.getByRole("button", { name: /Probe tools/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("sends the saved probe tools with a 2026-07-28 run, and only with it", async () => {
+    const key = "mcpjam.conformance.probes.v1:http-server";
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ logProbe: { toolName: "emit-logs" } }),
+    );
+    try {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      render(<ConformanceTab server={createHttpServer()} />);
+
+      // An Auto run leaves them out: the page does not offer them there.
+      await runToCompletion();
+      expect(mockRunProtocol).toHaveBeenLastCalledWith("http-server", {
+        protocolVersion: undefined,
+      });
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Protocol version" }),
+      );
+      await user.click(screen.getByRole("option", { name: "2026-07-28" }));
+      expect(
+        screen.getByRole("button", { name: "Probe tools · 1" }),
+      ).toBeDefined();
+      await runToCompletion();
+
+      expect(mockRunProtocol).toHaveBeenLastCalledWith("http-server", {
+        protocolVersion: "2026-07-28",
+        probes: { logProbe: { toolName: "emit-logs" } },
+      });
+    } finally {
+      window.localStorage.removeItem(key);
+    }
+  });
+
+  it("offers no probe tools for a stdio server", () => {
+    render(<ConformanceTab server={createStdioServer()} />);
+    expect(screen.queryByRole("button", { name: /Probe tools/ })).toBeNull();
   });
 
   it("runs unpinned by default and forwards the OAuth profile's own version", async () => {

@@ -19,8 +19,10 @@ import {
 import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import {
+  PROBE_KEYS,
   loadProtocolSuiteConfig,
   validateFixtures,
+  validateProbe,
 } from "../lib/config-file.js";
 import {
   renderConformanceForCli,
@@ -54,6 +56,18 @@ export interface ProtocolConformanceOptions {
   fixturesFile?: string;
   fixtureTool?: string[];
   fixturePrompt?: string[];
+  logProbe?: string;
+  inputRequiredProbe?: string;
+}
+
+type ConformanceProbes = Pick<
+  MCPConformanceConfig,
+  "logProbe" | "inputRequiredProbe"
+>;
+
+interface FixturesFileContents {
+  fixtures: NonNullable<MCPConformanceConfig["fixtures"]>;
+  probes: ConformanceProbes;
 }
 
 export function registerProtocolCommands(program: Command): void {
@@ -100,7 +114,7 @@ export function registerProtocolCommands(program: Command): void {
     )
     .option(
       "--fixtures-file <path>",
-      'JSON file naming primitives that are SAFE TO EXECUTE, so checks that need a real result can run: {"toolCalls":[{"toolName":"echo","arguments":{}}],"promptGets":[{"promptName":"welcome"}]}. Nothing is ever called without this.',
+      'JSON file naming primitives that are SAFE TO EXECUTE, so checks that need a real result can run: {"toolCalls":[{"toolName":"echo","arguments":{}}],"promptGets":[{"promptName":"welcome"}],"logProbe":{"toolName":"emit-logs"},"inputRequiredProbe":{"toolName":"ask-user"}}. Nothing is ever called without this.',
     )
     .option(
       "--fixture-tool <name>",
@@ -113,6 +127,14 @@ export function registerProtocolCommands(program: Command): void {
       "Name of a prompt that is safe to render with no arguments. Repeat for multiple. For prompts that need arguments, use --fixtures-file.",
       (value: string, previous: string[] = []) => [...previous, value],
       [],
+    )
+    .option(
+      "--log-probe <tool>",
+      "Tool that emits logs when called, safe to call repeatedly with no arguments (2026-07-28 logging checks). For a tool that needs arguments, use logProbe in --fixtures-file.",
+    )
+    .option(
+      "--input-required-probe <tool>",
+      "Tool that asks the user for input, safe to call with no arguments (modern-undeclared-capability-error). For a tool that needs arguments, use inputRequiredProbe in --fixtures-file.",
     )
     .option(
       "--reporter <reporter>",
@@ -219,11 +241,8 @@ function collectInvalidEntries(
  */
 function resolveFixtures(
   options: ProtocolConformanceOptions,
+  fromFile: FixturesFileContents["fixtures"] | undefined,
 ): MCPConformanceConfig["fixtures"] | undefined {
-  const fromFile = options.fixturesFile
-    ? readFixturesFile(options.fixturesFile)
-    : undefined;
-
   const toolCalls = [
     ...(fromFile?.toolCalls ?? []),
     ...(options.fixtureTool ?? [])
@@ -243,9 +262,32 @@ function resolveFixtures(
   return { toolCalls, promptGets };
 }
 
-function readFixturesFile(
-  path: string,
-): NonNullable<MCPConformanceConfig["fixtures"]> {
+/**
+ * The two named probes, from a flag (a tool taking no arguments) or from the
+ * fixtures file (any arguments). Naming one probe both ways is refused rather
+ * than resolved by precedence: two answers to "which tool logs?" is a mistake
+ * the operator should see, not one we should silently pick a side of.
+ */
+function resolveProbes(
+  options: ProtocolConformanceOptions,
+  fromFile: ConformanceProbes | undefined,
+): ConformanceProbes {
+  const probes: ConformanceProbes = {};
+  for (const key of PROBE_KEYS) {
+    const flag = options[key]?.trim();
+    const filed = fromFile?.[key];
+    if (flag && filed) {
+      throw usageError(
+        `${key} is named both by a flag and by the fixtures file; keep one`,
+      );
+    }
+    const probe = flag ? { toolName: flag } : filed;
+    if (probe) probes[key] = probe;
+  }
+  return probes;
+}
+
+function readFixturesFile(path: string): FixturesFileContents {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
@@ -270,7 +312,7 @@ function readFixturesFile(
 
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw usageError(
-      `Fixtures file ${path} must contain a JSON object with toolCalls and/or promptGets`,
+      `Fixtures file ${path} must contain a JSON object with toolCalls, promptGets, logProbe and/or inputRequiredProbe`,
     );
   }
 
@@ -280,20 +322,41 @@ function readFixturesFile(
   // makes the fixture-gated checks skip — which reads as "my server does not
   // support this" rather than "my config has a typo"), and every entry must be
   // an object naming a non-empty primitive.
-  validateFixtures(parsed, `Fixtures file ${path}`);
+  // The probe keys sit beside the fixture collections in the same file, so
+  // they are split off first and validated by their own rule.
+  const { logProbe, inputRequiredProbe, ...collections } = parsed as Record<
+    string,
+    unknown
+  >;
+  validateFixtures(collections, `Fixtures file ${path}`);
+  validateProbe(logProbe, `Fixtures file ${path}.logProbe`);
+  validateProbe(inputRequiredProbe, `Fixtures file ${path}.inputRequiredProbe`);
 
-  const document = parsed as {
+  const document = collections as {
     toolCalls?: unknown;
     promptGets?: unknown;
   };
 
   return {
-    toolCalls: (document.toolCalls ?? []) as NonNullable<
-      MCPConformanceConfig["fixtures"]
-    >["toolCalls"],
-    promptGets: (document.promptGets ?? []) as NonNullable<
-      MCPConformanceConfig["fixtures"]
-    >["promptGets"],
+    fixtures: {
+      toolCalls: (document.toolCalls ?? []) as NonNullable<
+        MCPConformanceConfig["fixtures"]
+      >["toolCalls"],
+      promptGets: (document.promptGets ?? []) as NonNullable<
+        MCPConformanceConfig["fixtures"]
+      >["promptGets"],
+    },
+    probes: {
+      ...(logProbe
+        ? { logProbe: logProbe as ConformanceProbes["logProbe"] }
+        : {}),
+      ...(inputRequiredProbe
+        ? {
+            inputRequiredProbe:
+              inputRequiredProbe as ConformanceProbes["inputRequiredProbe"],
+          }
+        : {}),
+    },
   };
 }
 
@@ -337,7 +400,11 @@ export function buildConfig(
     );
   }
 
-  const fixtures = resolveFixtures(options);
+  const fromFile = options.fixturesFile
+    ? readFixturesFile(options.fixturesFile)
+    : undefined;
+  const fixtures = resolveFixtures(options, fromFile?.fixtures);
+  const probes = resolveProbes(options, fromFile?.probes);
 
   const protocolVersion = options.protocolVersion?.trim();
   if (
@@ -364,5 +431,6 @@ export function buildConfig(
       ? { protocolVersion: protocolVersion as MCPConformanceConfig["protocolVersion"] }
       : {}),
     ...(fixtures ? { fixtures } : {}),
+    ...probes,
   };
 }

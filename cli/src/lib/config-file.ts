@@ -189,11 +189,48 @@ export function validateFixtures(value: unknown, label: string): void {
   }
 }
 
+/**
+ * The two named probes: a tool that emits logs (`logProbe`) and a tool that
+ * asks for input (`inputRequiredProbe`). Same contract as a fixture entry —
+ * the operator vouches the tool is safe to call — so the same strictness: the
+ * keys and the name are checked, the arguments are arbitrary JSON. Without
+ * this, a misspelled `toolname` reached the SDK, found no tool, and the check
+ * reported could-not-run, which reads as a server gap rather than a typo.
+ */
+export const PROBE_KEYS = ["logProbe", "inputRequiredProbe"] as const;
+
+export function validateProbe(value: unknown, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+  assertObject(value, label);
+  const probe = value as JsonObject;
+  const unknown = Object.keys(probe).filter(
+    (key) => key !== "toolName" && key !== "arguments",
+  );
+  if (unknown.length > 0) {
+    throw usageError(
+      `${label} has unknown key${unknown.length === 1 ? "" : "s"} ${unknown
+        .map((key) => JSON.stringify(key))
+        .join(", ")}; expected toolName and optional arguments`,
+    );
+  }
+  if (typeof probe.toolName !== "string" || probe.toolName.trim() === "") {
+    throw usageError(`${label}.toolName must be a non-empty string`);
+  }
+  if (probe.arguments !== undefined) {
+    assertObject(probe.arguments, `${label}.arguments`);
+  }
+}
+
 function validateProtocolRun(run: JsonObject, label: string): void {
   validateOptionalString(run.label, `${label}.label`);
   validateEnumArray(run.categories, MCP_CHECK_CATEGORIES, `${label}.categories`);
   validateEnumArray(run.checkIds, MCP_CHECK_IDS, `${label}.checkIds`);
   validateFixtures(run.fixtures, `${label}.fixtures`);
+  for (const key of PROBE_KEYS) {
+    validateProbe(run[key], `${label}.${key}`);
+  }
   if (run.protocolVersion !== undefined) {
     if (
       typeof run.protocolVersion !== "string" ||

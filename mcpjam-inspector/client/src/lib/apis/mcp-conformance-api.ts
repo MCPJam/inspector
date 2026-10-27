@@ -1,4 +1,5 @@
 import type {
+  MCPConformanceConfig,
   MCPConformanceResult,
   MCPAppsConformanceResult,
   MCPTasksConformanceResult,
@@ -44,22 +45,34 @@ export interface OAuthStartInput {
 
 export async function runProtocolConformance(
   serverNameOrId: string,
-  options?: { protocolVersion?: McpProtocolVersion },
+  options?: {
+    protocolVersion?: McpProtocolVersion;
+    /** Tools the operator named as safe to call; see `use-conformance-probes`. */
+    probes?: Pick<MCPConformanceConfig, "logProbe" | "inputRequiredProbe">;
+  },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
-  const versionFields = options?.protocolVersion
-    ? { protocolVersion: options.protocolVersion }
-    : {};
+  const runFields = {
+    ...(options?.protocolVersion
+      ? { protocolVersion: options.protocolVersion }
+      : {}),
+    ...(options?.probes?.logProbe
+      ? { logProbe: options.probes.logProbe }
+      : {}),
+    ...(options?.probes?.inputRequiredProbe
+      ? { inputRequiredProbe: options.probes.inputRequiredProbe }
+      : {}),
+  };
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/protocol", {
         serverId: serverNameOrId,
-        ...versionFields,
+        ...runFields,
       }),
     hosted: () => {
       const request = buildServerRequest(serverNameOrId);
       return webPost("/api/web/conformance/protocol", {
         ...request,
-        ...versionFields,
+        ...runFields,
       });
     },
   });

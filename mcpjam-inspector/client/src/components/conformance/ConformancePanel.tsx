@@ -1,4 +1,5 @@
 import { useState, useMemo, type ReactNode } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { Loader2, AlertTriangle } from "lucide-react";
@@ -43,10 +44,13 @@ import {
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
 import {
+  isHttpServer,
   useConformanceRun,
   type ProtocolVersionPin,
   type SuiteState,
 } from "@/hooks/use-conformance-run";
+import { useConformanceProbes } from "@/hooks/use-conformance-probes";
+import { ConformanceProbeSettings } from "./ConformanceProbeSettings";
 import {
   PersistConformanceRun,
   type ConformancePersistConfig,
@@ -230,7 +234,8 @@ function ConformanceContent({
   // Run state, per-suite scores and the pooled headline all live in the shared
   // hook — score.mcpjam.com runs the same four suites and must pool them the
   // same way. Rendering stays here.
-  const snapshot = useConformanceRun({ server });
+  const { probes, setProbes } = useConformanceProbes(server.name);
+  const snapshot = useConformanceRun({ server, probes });
   const {
     protocol,
     apps,
@@ -277,13 +282,20 @@ function ConformanceContent({
   // so there is no number to pool. Each section owns its own run control and
   // recovers a run still in flight when it mounts, so it shows before the
   // suites have run, too.
-  const readiness = (
+  //
+  // Behind `mcpjam-directory-readiness` again while directory submissions are
+  // a later phase: the page ships protocol conformance first. `=== true`, so
+  // a missing flag (or one PostHog has not hydrated yet) keeps them hidden
+  // rather than flashing them for users the flag excludes.
+  const directoryReadinessEnabled =
+    useFeatureFlagEnabled("mcpjam-directory-readiness") === true;
+  const readiness = directoryReadinessEnabled ? (
     <div className="space-y-4">
       <DirectoryReadinessSection publisher="claude" server={server} />
       <DirectoryReadinessSection publisher="openai" server={server} />
       <DirectoryReadinessSection publisher="muse" server={server} />
     </div>
-  );
+  ) : null;
 
   const runButton = (
     <Button size="sm" onClick={handleRun} disabled={isRunning}>
@@ -318,6 +330,16 @@ function ConformanceContent({
           onChange={setVersionPin}
           disabled={isRunning}
         />
+        {isHttpServer(server) &&
+        versionPin !== "auto" &&
+        PROTOCOL_VERSION_ERAS[versionPin] === "modern" ? (
+          <ConformanceProbeSettings
+            serverName={server.name}
+            probes={probes}
+            onChange={setProbes}
+            disabled={isRunning}
+          />
+        ) : null}
         {runButton}
       </ConformanceHeader>
 
@@ -471,7 +493,7 @@ function ConformanceContent({
 
             {/* The same slot before and after the first run, so starting it
                 keeps the sections mounted and their selections intact. */}
-            <div className="mt-6">{readiness}</div>
+            {readiness ? <div className="mt-6">{readiness}</div> : null}
           </div>
         )}
       </ConformanceTabPanel>

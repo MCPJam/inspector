@@ -387,9 +387,23 @@ mode will dial a link-local or cloud-metadata address.
 | `--check-timeout <ms>` | No | `15000` | Per-check timeout in milliseconds |
 | `--category <category>` | No | all | Restrict checks to one or more categories |
 | `--check-id <id>` | No | all | Restrict checks to one or more check IDs |
+| `--log-probe <tool>` | No | | Tool that emits logs when called, safe to call repeatedly with no arguments. Runs the 2026-07-28 logging checks |
+| `--input-required-probe <tool>` | No | | Tool that asks the user for input, safe to call with no arguments. Runs `modern-undeclared-capability-error` |
+| `--fixtures-file <path>` | No | | JSON file naming tools and prompts that are safe to call, including probes that need arguments |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.
+
+Two checks for MCP 2026-07-28 need to call a tool on your server, and the CLI never picks one for you. Without a probe, they report "could not run" and the run is incomplete. Name a tool that takes no arguments with `--log-probe` or `--input-required-probe`, or put a probe that needs arguments in the fixtures file:
+
+```json
+{
+  "logProbe": { "toolName": "emit-logs" },
+  "inputRequiredProbe": { "toolName": "confirm", "arguments": { "topic": "conformance" } }
+}
+```
+
+Name each probe once: setting the same probe with a flag and in the file is an error.
 
 ### `protocol conformance-suite`
 

@@ -366,3 +366,109 @@ test("fixtures: a malformed file is a usage error, never a silent empty set", as
       error instanceof CliError && /Could not read fixtures file/.test(error.message),
   );
 });
+
+async function writeFixturesJson(contents: object): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-probes-"));
+  const file = path.join(dir, "fixtures.json");
+  await writeFile(file, JSON.stringify(contents));
+  return file;
+}
+
+test("probes: no flags and no file means the SDK sees no probe keys", () => {
+  const config = buildConfig({ url: "https://example.com/mcp" });
+  assert.equal("logProbe" in config, false);
+  assert.equal("inputRequiredProbe" in config, false);
+});
+
+test("probes: --log-probe and --input-required-probe name no-argument tools", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    logProbe: " emit-logs ",
+    inputRequiredProbe: "ask-user",
+  });
+  assert.deepEqual(config.logProbe, { toolName: "emit-logs" });
+  assert.deepEqual(config.inputRequiredProbe, { toolName: "ask-user" });
+});
+
+test("probes: --fixtures-file carries probe arguments beside the fixtures", async () => {
+  const file = await writeFixturesJson({
+    toolCalls: [{ toolName: "echo" }],
+    logProbe: { toolName: "emit-logs", arguments: { count: 2 } },
+  });
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    fixturesFile: file,
+  });
+  assert.deepEqual(config.logProbe, {
+    toolName: "emit-logs",
+    arguments: { count: 2 },
+  });
+  assert.deepEqual(config.fixtures?.toolCalls, [{ toolName: "echo" }]);
+});
+
+test("probes: a file with only probes adds no empty fixtures key", async () => {
+  const file = await writeFixturesJson({
+    inputRequiredProbe: { toolName: "ask-user" },
+  });
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    fixturesFile: file,
+  });
+  assert.deepEqual(config.inputRequiredProbe, { toolName: "ask-user" });
+  assert.equal("fixtures" in config, false);
+});
+
+test("probes: naming one probe by flag and by file is refused", async () => {
+  const file = await writeFixturesJson({
+    logProbe: { toolName: "emit-logs" },
+  });
+  assert.throws(
+    () =>
+      buildConfig({
+        url: "https://example.com/mcp",
+        fixturesFile: file,
+        logProbe: "other-tool",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("logProbe is named both by a flag"),
+  );
+});
+
+test("probes: a malformed probe in the file is a usage error, not a silent skip", async () => {
+  for (const [probe, message] of [
+    [{ toolname: "emit-logs" }, 'unknown key "toolname"'],
+    [{ toolName: "" }, "toolName must be a non-empty string"],
+    [{ toolName: "emit-logs", arguments: [1] }, "arguments must be a JSON object"],
+  ] as const) {
+    const file = await writeFixturesJson({ logProbe: probe });
+    assert.throws(
+      () => buildConfig({ url: "https://example.com/mcp", fixturesFile: file }),
+      (error) => error instanceof CliError && error.message.includes(message),
+      JSON.stringify(probe),
+    );
+  }
+});
+
+test("probes: the flags are registered on protocol conformance", async () => {
+  let captured: unknown;
+  const program = buildConformanceCommand((options) => {
+    captured = options;
+  });
+  await program.parseAsync(
+    [
+      "protocol",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--log-probe",
+      "emit-logs",
+      "--input-required-probe",
+      "ask-user",
+    ],
+    { from: "user" },
+  );
+  const config = buildConfig(captured as Parameters<typeof buildConfig>[0]);
+  assert.deepEqual(config.logProbe, { toolName: "emit-logs" });
+  assert.deepEqual(config.inputRequiredProbe, { toolName: "ask-user" });
+});
