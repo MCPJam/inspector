@@ -5734,7 +5734,7 @@ export function PlaygroundMain({
               : [],
           ),
         }
-      : { model: isCompareMode ? null : selectedModel },
+      : { model: selectedModel },
   );
   const composerNotice =
     apiSessionNotice ||
