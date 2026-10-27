@@ -73,6 +73,9 @@
     "react-force-graph-2d": "^1.29.2"
   },
   "overrides": {
+    "@chromatic-com/playwright": {
+      "storybook": "10.6.2"
+    },
     "shell-quote": "^1.11.0",
     "source-map-js": "^1.2.2",
     "tar": "^7.5.22",
