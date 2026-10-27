@@ -412,6 +412,15 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     expect(queryMock).not.toHaveBeenCalled();
   });
 
+  it("keeps the selector-conflict 400 ahead of the id shape 404", async () => {
+    const res = await makeApp().request(
+      `/api/v1/projects/${PROJECT}/eval-suites/my-suite/run-disclosure?environmentId=${ENV_1}&environmentIds=${ENV_2}`
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as any;
+    expect(body.code).toBe("VALIDATION_ERROR");
+  });
+
   it("rejects environmentId and environmentIds together with a clear 400, not a confusing 404", async () => {
     // Forwarding both to Convex would hit its ArgumentValidationError, which
     // `translateConvexReadError` reads as a bad-id 404 — correct for a stale

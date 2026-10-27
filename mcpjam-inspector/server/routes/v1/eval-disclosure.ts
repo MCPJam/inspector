@@ -40,10 +40,7 @@ import {
   classifyConvexReadError,
   translateConvexReadError,
 } from "./convex-read-errors.js";
-import {
-  requireConvexIdParam,
-  requireConvexIdShape,
-} from "./convex-id-param.js";
+import { requireConvexIdShape } from "./convex-id-param.js";
 import { HOSTED_MODE } from "../../config.js";
 import { runnerCapabilities } from "../../services/evals/runner-capabilities.js";
 
@@ -239,14 +236,7 @@ evalDisclosure.get(
     // authorizes per-suite (`authorizeForSuite(ctx, suiteId, userId,
     // 'run.view')`) and does not take a projectId argument — a suite id
     // already answers "which project" on the backend.
-    //
-    // Shape-gated like the query ids below. A malformed suite id would still
-    // end as a 404, but only after both `getRunDisclosure` and the
-    // `getTestSuite` preflight fail in Convex.
-    const suiteId = requireConvexIdParam(c, "suiteId", {
-      scope: "v1.evalDisclosure",
-      notFoundMessage: "Eval suite not found",
-    });
+    const suiteId = c.req.param("suiteId");
     const caseIds = csvQuery(c.req.query("caseIds"));
     const environmentId = c.req.query("environmentId") || undefined;
     const environmentIds = csvQuery(c.req.query("environmentIds"));
@@ -275,6 +265,14 @@ evalDisclosure.get(
         "host and environmentId/environmentIds are mutually exclusive — a launch plan resolves on exactly one axis, and an environment already resolves a host."
       );
     }
+    // Every id is shape-gated AFTER the conflict checks, so an ambiguous
+    // request keeps its 400. A malformed suite id would otherwise still end
+    // as a 404, but only after both `getRunDisclosure` and the
+    // `getTestSuite` preflight fail in Convex.
+    requireConvexIdShape(suiteId, "suiteId", {
+      scope: "v1.evalDisclosure",
+      notFoundMessage: "Eval suite not found",
+    });
     requireQueryIdShapes(caseIds, "caseIds", "Eval case not found");
     requireQueryIdShapes(
       environmentId ? [environmentId] : undefined,
