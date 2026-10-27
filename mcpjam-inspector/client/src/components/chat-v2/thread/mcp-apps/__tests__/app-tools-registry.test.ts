@@ -192,16 +192,17 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     expect(aliasInFlight).toMatch(/^app_[a-z0-9]{8}$/i);
   });
 
-  it("retires aliases when a closed view is replaced in the same slot", async () => {
+  it("retires aliases even when a closed view reuses its bridge object", async () => {
+    const instance = makeInstance("b-1", [readonlyTool("ping")]);
     await useAppToolsRegistry
       .getState()
-      .registerInstance(makeInstance("b-1", [readonlyTool("ping")]));
+      .registerInstance(instance);
     const first = [...useAppToolsRegistry.getState().aliases.keys()][0];
     useAppToolsRegistry.getState().unregisterInstance("b-1");
 
     await useAppToolsRegistry
       .getState()
-      .registerInstance(makeInstance("b-1", [readonlyTool("ping")]));
+      .registerInstance(instance);
     const second = [...useAppToolsRegistry.getState().aliases.keys()][0];
     expect(second).not.toBe(first);
     expect(useAppToolsRegistry.getState().resolve(first)).toBeNull();

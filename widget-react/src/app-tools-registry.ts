@@ -417,6 +417,8 @@ export function createAppToolsRegistry(
     unregisterInstance: (bridgeId) => {
       // Invalidates a registration of this bridge that is still hashing.
       pendingRegistrations.delete(bridgeId);
+      const retired = get().instancesByBridgeId.get(bridgeId);
+      if (retired) mountIdentities.delete(retired.bridge);
       // Abort any in-flight `bridge.callTool` dispatches against this bridge
       // BEFORE we drop the instance entry. The catch branch in
       // `useChat.onToolCall` picks up the abort and resolves the tool call
