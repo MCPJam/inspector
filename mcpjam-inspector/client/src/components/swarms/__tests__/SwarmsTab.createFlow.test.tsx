@@ -237,6 +237,20 @@ vi.mock("convex/react", () => ({
   useQueries: () => ({}),
 }));
 
+// The credit cap's own reads are unit-tested; here it is set per case, and
+// off by default so every other case runs uncapped as before.
+const creditCapRef: {
+  current: {
+    max: number | null;
+    credits: number | null;
+    conversationCredits: number | null;
+  };
+} = { current: { max: null, credits: null, conversationCredits: null } };
+const capForMock = vi.fn();
+vi.mock("@/hooks/use-swarm-credit-cap", () => ({
+  useSwarmCreditCap: () => ({ ...creditCapRef.current, capFor: capForMock }),
+}));
+
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
     serverAttachments: [
@@ -480,6 +494,16 @@ beforeEach(() => {
   });
   updateJourneyMock.mockResolvedValue(undefined);
   updatePersonaMock.mockResolvedValue(undefined);
+  creditCapRef.current = {
+    max: null,
+    credits: null,
+    conversationCredits: null,
+  };
+  capForMock.mockResolvedValue({
+    max: null,
+    reusedConversations: 0,
+    conversationCredits: null,
+  });
   generateSwarmPersonaBatchMock.mockResolvedValue({
     personas: [
       {
@@ -4224,5 +4248,170 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
       screen.queryByTestId("new-swarm-confirm-add-existing"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("new-swarm-confirm-locked")).toBeInTheDocument();
+  });
+});
+
+describe("SwarmsTab — credit cap", () => {
+  const capAt = (max: number, credits: number) => {
+    creditCapRef.current = { max, credits, conversationCredits: 20 };
+    capForMock.mockResolvedValue({
+      max,
+      reusedConversations: 0,
+      conversationCredits: 20,
+    });
+  };
+
+  /** One persona with 2 goals and one with 4: 6 conversations. */
+  const sixConversations = () =>
+    generateSwarmPersonaBatchMock.mockResolvedValue({
+      personas: [
+        {
+          persona: { name: "Refund Chaser", role: "Support agent" },
+          journeys: [{ goal: "Refund a charge" }, { goal: "Dispute a fee" }],
+        },
+        {
+          persona: { name: "Billing Dev", role: "Engineer" },
+          journeys: [
+            { goal: "Wire the webhook" },
+            { goal: "Rotate a key" },
+            { goal: "Read an invoice" },
+            { goal: "Cancel a plan" },
+          ],
+        },
+      ],
+    });
+
+  async function generateToConfirm() {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+  }
+
+  it("sizes generation to the cap and says why on Describe", async () => {
+    capAt(7, 140);
+    openDescribe();
+    fillDescribe();
+
+    const notice = screen.getByTestId("new-swarm-credit-cap-notice");
+    expect(notice).toHaveTextContent("You have 140 credits left");
+    expect(notice).toHaveTextContent(
+      "That covers up to 7 conversations, the most you can run in this swarm.",
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await waitFor(() =>
+      expect(generateSwarmPersonaBatchMock).toHaveBeenCalled(),
+    );
+    expect(capForMock).toHaveBeenCalledWith({
+      environmentIds: ["env-1"],
+      reusedPersonaIds: [],
+    });
+    expect(generateSwarmPersonaBatchMock.mock.calls[0][0]).toMatchObject({
+      personaCount: 3,
+      journeyCount: 2,
+    });
+  });
+
+  it("reads the cap on Generate in compose mode, once the clients resolve", async () => {
+    environmentsRef.current = [];
+    environments = environmentsRef.current;
+    capForMock.mockResolvedValue({
+      max: 7,
+      reusedConversations: 0,
+      conversationCredits: 20,
+    });
+    openDescribe();
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
+      target: { value: "Support agents answering refunds" },
+    });
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+    expect(
+      screen.queryByTestId("new-swarm-credit-cap-notice"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    await waitFor(() =>
+      expect(generateSwarmPersonaBatchMock).toHaveBeenCalled(),
+    );
+    expect(capForMock).toHaveBeenCalledWith({
+      environmentIds: ["adhoc-host-1", "adhoc-host-2"],
+      reusedPersonaIds: [],
+    });
+    // 7 conversations over 2 environments: 3 goals, one per persona.
+    expect(generateSwarmPersonaBatchMock.mock.calls[0][0]).toMatchObject({
+      personaCount: 3,
+      journeyCount: 1,
+    });
+  });
+
+  it("does not generate when not one conversation fits", async () => {
+    capAt(0, 12);
+    openDescribe();
+    fillDescribe();
+
+    expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
+    expect(screen.getByTestId("new-swarm-credit-cap-notice")).toHaveTextContent(
+      "That isn't enough for one conversation. Add credits to generate personas for this swarm.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Get more credits" }),
+    ).toBeInTheDocument();
+  });
+
+  it("stops each add control before it passes the max on Confirm", async () => {
+    capAt(7, 140);
+    sixConversations();
+    await generateToConfirm();
+
+    expect(
+      screen.getByTestId("new-swarm-conversation-count"),
+    ).toHaveTextContent("6of 7 conversations");
+    // 6 of 7: another iteration of the 2-goal persona would make 8.
+    expect(
+      screen.getByRole("button", { name: "More iterations for Refund Chaser" }),
+    ).toBeDisabled();
+    // Typing 2 there clamps to the 1 that fits.
+    const [refundIterations] = screen.getAllByTestId(
+      "new-swarm-persona-iterations",
+    );
+    fireEvent.change(refundIterations, { target: { value: "12" } });
+    expect(refundIterations).toHaveValue(1);
+
+    // One more persona (one empty goal) lands on 7, then nothing more fits.
+    fireEvent.click(screen.getByTestId("new-swarm-add-persona"));
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-add-persona")).toBeDisabled(),
+    );
+    expect(
+      screen.getByTestId("new-swarm-confirm-credit-cap-notice"),
+    ).toHaveTextContent(
+      "That covers up to 7 conversations, the most you can run in this swarm.",
+    );
+    expect(submitLaunchEnabled()).toBe(true);
+  });
+
+  it("blocks Continue above the max and says how many to remove", async () => {
+    sixConversations();
+    // Generation was sized against 7, then the balance dropped to cover 4.
+    capForMock.mockResolvedValue({
+      max: 7,
+      reusedConversations: 0,
+      conversationCredits: 20,
+    });
+    creditCapRef.current = { max: 4, credits: 80, conversationCredits: 20 };
+    await generateToConfirm();
+
+    expect(submitLaunchEnabled()).toBe(false);
+    expect(
+      screen.getByTestId("new-swarm-confirm-credit-cap-notice"),
+    ).toHaveTextContent(
+      "That covers up to 4 conversations, and this swarm has 6. Remove 2 conversations to continue.",
+    );
+    expect(
+      screen.getByTestId("new-swarm-conversation-count"),
+    ).toHaveTextContent("6of 4 conversations");
   });
 });
