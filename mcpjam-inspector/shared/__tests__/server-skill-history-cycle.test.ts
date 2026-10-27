@@ -28,7 +28,7 @@ import { convertToMcpjamModelMessages } from "../../server/utils/mcp-tool-result
 import { applyActingServerSkillGate } from "../../server/utils/server-skill-acting-gate";
 import { heldEntryConflict } from "../../server/utils/server-skill-held-entry";
 import { buildServerSkillToolOutput } from "../server-skill-banner";
-import { manifestDigestSetHash } from "../server-skill-refs";
+import { manifestDigestSetHash, skillUriHashHex } from "../server-skill-refs";
 import { TOOL_OUTPUT_TEXT_DEPTH } from "../tool-output-envelope";
 
 const ctx: ProvenanceContext = {
@@ -45,6 +45,7 @@ const SKILL_URI = "skill://acme/refunds/SKILL.md";
 const ENTRY = {
   ref: "acme/refunds",
   skillUri: SKILL_URI,
+  serverId: "srv_acme",
   serverLabel: "Acme",
   resources: [{ uri: SKILL_URI, digest: `sha256:${"a".repeat(64)}` }],
 };
@@ -145,6 +146,7 @@ describe("a loaded server skill across reopened conversations", () => {
     // Each reopen wraps the persisted result in one more `json` envelope
     // (out of scope here). Until the reader's limit the entry is held; past
     // it the entry is refused as unconfirmed, never read as "nothing loaded".
+    const reAddressed = `acme/refunds~${(await skillUriHashHex(SKILL_URI)).slice(0, 8)}`;
     let browser: UIMessage[] = [
       userTurn("u0", "load refunds"),
       await liveLoadTurn(),
@@ -157,16 +159,26 @@ describe("a loaded server skill across reopened conversations", () => {
       expect(report.unverifiedToolCalls, `round ${round}`).toBe(0);
       expect(await bashAsks(messages), `round ${round}`).toBe(true);
       const readable = loadResultDepth(messages) <= TOOL_OUTPUT_TEXT_DEPTH;
-      expect(await heldEntryConflict(ENTRY, messages)).toEqual(
-        readable
-          ? undefined
-          : expect.stringMatching(/^Error \(load_unconfirmed\)/),
-      );
-      expect(await heldEntryConflict(CHANGED, messages)).toMatch(
-        readable
-          ? /^Error \(manifest_changed\)/
-          : /^Error \(load_unconfirmed\)/,
-      );
+      // The second pair is the same skill after the server serves another
+      // `refunds`, which re-addresses both: the URI, not the ref, is held.
+      for (const [own, changed] of [
+        [ENTRY, CHANGED],
+        [
+          { ...ENTRY, ref: reAddressed },
+          { ...CHANGED, ref: reAddressed },
+        ],
+      ]) {
+        expect(await heldEntryConflict(own, messages)).toEqual(
+          readable
+            ? undefined
+            : expect.stringMatching(/^Error \(load_unconfirmed\)/),
+        );
+        expect(await heldEntryConflict(changed, messages)).toMatch(
+          readable
+            ? /^Error \(manifest_changed\)/
+            : /^Error \(load_unconfirmed\)/,
+        );
+      }
 
       // The server persists this request's history; the user reopens it from
       // the sidebar and sends another message.

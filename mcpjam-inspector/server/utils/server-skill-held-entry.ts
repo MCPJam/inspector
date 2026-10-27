@@ -26,7 +26,11 @@ import {
   type ActingServerSkill,
   type ServerSkillLoad,
 } from "../../shared/server-skill-banner.js";
-import { manifestDigestSetHash } from "../../shared/server-skill-refs.js";
+import {
+  manifestDigestSetHash,
+  SERVER_SKILL_REF_RE,
+  skillUriHashHex,
+} from "../../shared/server-skill-refs.js";
 import {
   isMarkedClientProvenance,
   isMarkedUnverifiedCall,
@@ -73,6 +77,7 @@ export function messagesOf(
 interface HeldEntrySkill {
   ref: string;
   skillUri: string;
+  serverId: string;
   serverLabel: string;
   resources: ReadonlyArray<{ uri: string; digest: string }>;
 }
@@ -117,11 +122,68 @@ function isLoadOf(skill: ActingServerSkill, entry: HeldEntrySkill): boolean {
   );
 }
 
-/** Whether a `loadSkill` call asked for this skill, by ref or by URI. */
-function callNamesEntry(input: unknown, entry: HeldEntrySkill): boolean {
-  const { name, uri } = (input ?? {}) as { name?: unknown; uri?: unknown };
+/** A slug without its collision suffix: `acme-2` and `acme` may be one server. */
+function slugFamily(slug: string): string {
+  return slug.replace(/-\d+$/, "");
+}
+
+function refParts(
+  ref: string,
+):
+  | { slugFamily: string; name: string; disambiguator: string | undefined }
+  | undefined {
+  if (!SERVER_SKILL_REF_RE.test(ref)) return undefined;
+  const [slug, rest] = ref.split("/") as [string, string];
+  const [name, disambiguator] = rest.split("~") as [string, string?];
+  return { slugFamily: slugFamily(slug), name, disambiguator };
+}
+
+/**
+ * Whether a `loadSkill` call could have loaded this skill, judged only by what
+ * a server cannot change.
+ *
+ * The call is all an unreadable load leaves, and its ref was minted for that
+ * request's catalog. A server re-addresses a skill without changing it by
+ * serving a second skill of the same name, after which both take the
+ * `~<uri hash>` form; and a slug's collision suffix moves when the user adds a
+ * server with the same label. So a ref matches every form this skill can take,
+ * and rules it out only by a different slug family, a different name, or a
+ * disambiguator that hashes another URI. A URI is the skill's identity, and a
+ * `server` hint says whose copy it was. A call with no identifier to read
+ * could have named any skill.
+ */
+async function callCouldNameEntry(
+  input: unknown,
+  entry: HeldEntrySkill,
+): Promise<boolean> {
+  const { name, uri, server } = (input ?? {}) as {
+    name?: unknown;
+    uri?: unknown;
+    server?: unknown;
+  };
   const identifier = uri ?? name;
-  return identifier === entry.ref || identifier === entry.skillUri;
+  const own = refParts(entry.ref);
+  if (typeof identifier !== "string" || !own) return true;
+  if (looksLikeUri(identifier)) {
+    if (identifier !== entry.skillUri) return false;
+    // `loadSkill` reads an empty hint as none.
+    if (typeof server !== "string" || server === "") return true;
+    return (
+      server === entry.serverId ||
+      server === entry.serverLabel ||
+      slugFamily(server) === own.slugFamily
+    );
+  }
+  // Not a ref: `loadSkill` sent it to the base source, not to a server.
+  const called = refParts(identifier);
+  if (!called) return false;
+  if (called.slugFamily !== own.slugFamily || called.name !== own.name) {
+    return false;
+  }
+  return (
+    called.disambiguator === undefined ||
+    (await skillUriHashHex(entry.skillUri)).startsWith(called.disambiguator)
+  );
 }
 
 /**
@@ -136,8 +198,8 @@ function callNamesEntry(input: unknown, entry: HeldEntrySkill): boolean {
  *
  * A load of this skill the server cannot stand behind, after the last one it
  * can, is refused the same way: an untrusted result, or one whose text cannot
- * be read. An unreadable result whose call is missing is taken to be this
- * skill's, since which skill it loaded cannot be told.
+ * be read. An unreadable result counts against every skill its call could
+ * have named, and against any skill when its call is missing.
  */
 export async function heldEntryConflict(
   entry: HeldEntrySkill,
@@ -153,7 +215,7 @@ export async function heldEntryConflict(
     const ofThisSkill =
       load.kind === "loaded"
         ? isLoadOf(load.skill, entry)
-        : call === undefined || callNamesEntry(call.input, entry);
+        : call === undefined || (await callCouldNameEntry(call.input, entry));
     if (!ofThisSkill) continue;
     if (load.kind === "loaded" && isTrustedLoad(load, call)) {
       if (load.skill.digestSet !== undefined) held = load.skill;

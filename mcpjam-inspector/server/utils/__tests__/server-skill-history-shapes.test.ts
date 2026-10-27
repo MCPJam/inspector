@@ -18,7 +18,10 @@ import {
   type UIMessageChunk,
 } from "ai";
 import { buildServerSkillToolOutput } from "../../../shared/server-skill-banner";
-import { manifestDigestSetHash } from "../../../shared/server-skill-refs";
+import {
+  manifestDigestSetHash,
+  skillUriHashHex,
+} from "../../../shared/server-skill-refs";
 import {
   createUiChunkProvenanceSigner,
   verifyClientHistory,
@@ -44,6 +47,7 @@ const SKILL_URI = "skill://acme/refunds/SKILL.md";
 const ENTRY = {
   ref: "acme/refunds",
   skillUri: SKILL_URI,
+  serverId: "srv_acme",
   serverLabel: "Acme",
   resources: [{ uri: SKILL_URI, digest: `sha256:${"a".repeat(64)}` }],
 };
@@ -303,7 +307,10 @@ describe("a load the server cannot stand behind", () => {
 });
 
 describe("a load whose text cannot be read", () => {
-  function history(output: unknown): ModelMessage[] {
+  function history(
+    output: unknown,
+    input: unknown = { name: ENTRY.ref },
+  ): ModelMessage[] {
     return [
       {
         role: "assistant",
@@ -312,7 +319,7 @@ describe("a load whose text cannot be read", () => {
             type: "tool-call",
             toolCallId: "call_load",
             toolName: "loadSkill",
-            input: { name: ENTRY.ref },
+            input,
           },
         ],
       },
@@ -349,19 +356,113 @@ describe("a load whose text cannot be read", () => {
   });
 
   it("leaves another skill's files alone", async () => {
-    const messages = history({ type: "future-shape" });
-    messages[0] = {
-      role: "assistant",
-      content: [
-        {
-          type: "tool-call",
-          toolCallId: "call_load",
-          toolName: "loadSkill",
-          input: { name: "acme/other" },
-        },
-      ],
+    const unknown = { type: "future-shape" };
+    for (const input of [
+      { name: "acme/other" },
+      { name: "beta/refunds" },
+      { uri: "skill://acme/other/SKILL.md" },
+      // A bare name loads from the base source, never from a server.
+      { name: "refunds" },
+    ]) {
+      expect(
+        await heldEntryConflict(ENTRY, history(unknown, input)),
+      ).toBeUndefined();
+    }
+  });
+
+  it("counts a call it cannot read as this skill's", async () => {
+    expect(
+      await heldEntryConflict(ENTRY, history({ type: "future-shape" }, {})),
+    ).toMatch(/^Error \(load_unconfirmed\)/);
+  });
+
+  describe("after the catalog re-addresses the skill", () => {
+    // The server serves a second `refunds`, so both take the `~<uri hash>`
+    // form and the ref the load was made under no longer names either.
+    const OTHER_URI = "skill://acme/support/refunds/SKILL.md";
+    const refFor = async (uri: string) =>
+      `acme/refunds~${(await skillUriHashHex(uri)).slice(0, 8)}`;
+    const deep = async () => {
+      let output: unknown = { type: "text", value: await loadOutput() };
+      for (let i = 0; i < 40; i += 1) output = { type: "json", value: output };
+      return output;
     };
-    expect(await heldEntryConflict(ENTRY, messages)).toBeUndefined();
+
+    it("still refuses: the old ref could have named either", async () => {
+      const messages = history(await deep());
+      const own = { ...CHANGED, ref: await refFor(SKILL_URI) };
+      const other = {
+        ...CHANGED,
+        skillUri: OTHER_URI,
+        ref: await refFor(OTHER_URI),
+      };
+      expect(await heldEntryConflict(own, messages)).toMatch(
+        /^Error \(load_unconfirmed\)/,
+      );
+      expect(await heldEntryConflict(other, messages)).toMatch(
+        /^Error \(load_unconfirmed\)/,
+      );
+    });
+
+    it("tells the two apart by a disambiguated ref", async () => {
+      const messages = history(await deep(), {
+        name: await refFor(OTHER_URI),
+      });
+      expect(
+        await heldEntryConflict(
+          { ...CHANGED, ref: await refFor(SKILL_URI) },
+          messages,
+        ),
+      ).toBeUndefined();
+      expect(
+        await heldEntryConflict(
+          { ...CHANGED, skillUri: OTHER_URI, ref: await refFor(OTHER_URI) },
+          messages,
+        ),
+      ).toMatch(/^Error \(load_unconfirmed\)/);
+    });
+
+    it("still refuses when the user's labels move the slug's suffix", async () => {
+      expect(
+        await heldEntryConflict(
+          { ...CHANGED, ref: "acme-2/refunds" },
+          history(await deep()),
+        ),
+      ).toMatch(/^Error \(load_unconfirmed\)/);
+    });
+  });
+
+  it("reads a URI load's server hint, and refuses when there is none", async () => {
+    const beta = {
+      ...ENTRY,
+      ref: "beta/refunds",
+      serverId: "srv_beta",
+      serverLabel: "Beta",
+    };
+    const unknown = { type: "future-shape" };
+    const cases: Array<[unknown, boolean, boolean]> = [
+      // input, refuses Acme's copy, refuses Beta's copy
+      [{ uri: SKILL_URI }, true, true],
+      [{ uri: SKILL_URI, server: "" }, true, true],
+      [{ uri: SKILL_URI, server: "beta" }, false, true],
+      [{ uri: SKILL_URI, server: "Acme" }, true, false],
+      [{ uri: SKILL_URI, server: "srv_acme" }, true, false],
+      // A URI passed as `name` is resolved the same way.
+      [{ name: SKILL_URI, server: "acme" }, true, false],
+    ];
+    for (const [input, acme, betaToo] of cases) {
+      const messages = history(unknown, input);
+      expect(
+        await heldEntryConflict(ENTRY, messages),
+        JSON.stringify(input),
+      ).toEqual(acme ? expect.stringMatching(/load_unconfirmed/) : undefined);
+      expect(
+        await heldEntryConflict(beta, messages),
+        JSON.stringify(input),
+      ).toEqual(
+        betaToo ? expect.stringMatching(/load_unconfirmed/) : undefined,
+      );
+    }
   });
 
   it("never takes a held entry from an error-text result", async () => {
