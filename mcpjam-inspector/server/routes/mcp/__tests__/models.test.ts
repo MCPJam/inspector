@@ -7,10 +7,24 @@ vi.mock("../../../services/hosted-model-catalog.js", () => ({
   ingestHostedCatalogIds: vi.fn(),
 }));
 
+vi.mock("../../../utils/route-error-report.js", () => ({
+  reportRouteFailure: vi.fn(() => ({
+    normalized: { slug: "internal/unknown" },
+    origin: "mcpjam",
+    captured: true,
+  })),
+}));
+
 import models, { __resetModelsCacheForTests } from "../models.js";
 import { ingestHostedCatalogIds } from "../../../services/hosted-model-catalog.js";
+import { reportRouteFailure } from "../../../utils/route-error-report.js";
+import {
+  INSPECTOR_SENTRY_CATALOG,
+  rebuildSentryEvent,
+} from "../../../../shared/strict-sentry.js";
 
 const ingestMock = vi.mocked(ingestHostedCatalogIds);
+const reportMock = vi.mocked(reportRouteFailure);
 
 function mount(): Hono {
   const app = new Hono();
@@ -33,6 +47,7 @@ describe("GET /api/mcp/models (catalog proxy)", () => {
     process.env.CONVEX_HTTP_URL = "https://backend.test";
     __resetModelsCacheForTests();
     ingestMock.mockClear();
+    reportMock.mockClear();
     fetchMock = vi.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
   });
@@ -98,6 +113,26 @@ describe("GET /api/mcp/models (catalog proxy)", () => {
     const res = await mount().request("/api/mcp/models");
     expect(res.status).toBe(502);
     expect((await res.json()).ok).toBe(false);
+  });
+
+  it("reports the backend's HTTP status under a key the Sentry boundary keeps", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 503 }));
+    await mount().request("/api/mcp/models");
+
+    expect(reportMock).toHaveBeenCalledTimes(1);
+    const [, , options] = reportMock.mock.calls[0]!;
+    expect(options.context).toEqual({ httpStatus: 503 });
+
+    // The strict boundary rebuilds every event from an allowlist; a status
+    // under any other key reaches Sentry as nothing.
+    const sent = rebuildSentryEvent(
+      {
+        exception: { values: [{ type: "Error", value: "" }] },
+        extra: options.context,
+      },
+      INSPECTOR_SENTRY_CATALOG,
+    ) as { extra: Record<string, unknown> };
+    expect(sent.extra.httpStatus).toBe(503);
   });
 
   it("serves the last-good catalog when the backend fails after the memo goes stale", async () => {
