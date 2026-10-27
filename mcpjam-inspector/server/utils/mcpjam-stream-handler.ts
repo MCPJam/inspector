@@ -4,6 +4,7 @@ import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-ret
 import { withSwarmStepAdmissionRetry } from "./swarm-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
 /**
  * MCPJam Stream Handler
  *
@@ -166,23 +167,8 @@ export {
 
 let warnedLegacyUnsignedApproval = false;
 
-function unwrapJsonEnvelope(value: unknown): unknown {
-  let current = value;
-  for (let depth = 0; depth < 4; depth += 1) {
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      return current;
-    }
-    const record = current as Record<string, unknown>;
-    if (record.type !== "json" || !("value" in record)) {
-      return current;
-    }
-    current = record.value;
-  }
-  return current;
-}
-
 function isModelVisibleImageOutput(value: unknown): boolean {
-  const output = unwrapJsonEnvelope(value);
+  const output = unwrapToolOutputEnvelope(value, 4).value;
   if (!output || typeof output !== "object" || Array.isArray(output)) {
     return false;
   }

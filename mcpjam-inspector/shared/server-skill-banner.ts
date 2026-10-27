@@ -24,6 +24,7 @@
 
 import type { ModelMessage } from "ai";
 import { parseUserContextText } from "./user-context-message.js";
+import { readToolOutputTexts } from "./tool-output-envelope.js";
 
 export interface ServerSkillBannerArgs {
   /** Runtime address: `<serverSlug>/<name>`, `~<uriHash8>` when disambiguated. */
@@ -83,67 +84,121 @@ export interface ActingServerSkill {
 }
 
 /**
+ * The marker without its closing quote, so it still matches in a result that
+ * was JSON-stringified (into a tool-output fence, say), however many times.
+ */
+const MARKER_STEM = SERVER_SKILL_ORIGIN_MARKER.slice(0, -1);
+
+/** How deep {@link holdsMarker} looks before it stops and assumes a skill. */
+const MARKER_SCAN_DEPTH = 32;
+
+/** Whether a value holds the marker in any string, or nests too deep to tell. */
+function holdsMarker(value: unknown, depth: number): boolean {
+  if (typeof value === "string") return value.includes(MARKER_STEM);
+  if (!value || typeof value !== "object") return false;
+  if (depth >= MARKER_SCAN_DEPTH) return true;
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return children.some((child) => holdsMarker(child, depth + 1));
+}
+
+function isLoadSkillResult(part: Record<string, unknown> | undefined): boolean {
+  return part?.type === "tool-result" && part.toolName === "loadSkill";
+}
+
+/**
  * Whether any server-served skill is in the model's context.
  *
- * The question the approval gate asks, answered from the marker alone so it
- * FAILS CLOSED: a banner the parser below cannot read still counts, because
- * the only thing that put the marker there is a server skill entering
- * context, and a server must not be able to switch the gate off by shaping
- * its URI.
+ * The question the approval gate asks. The gate only ever ADDS a prompt, so
+ * this answers conservatively and FAILS CLOSED:
+ *   - it looks for the marker in every string of a part's text, output and
+ *     result, whatever envelope a history round trip wrapped them in, and in
+ *     its JSON-escaped form;
+ *   - a banner the parser below cannot read still counts, because only a
+ *     server skill entering context puts the marker there, and a server must
+ *     not be able to switch the gate off by shaping its URI;
+ *   - a `loadSkill` result whose text cannot be read, or that nests past the
+ *     scan depth, counts as a loaded skill.
  */
 export function mentionsServerSkill(
   messages: ReadonlyArray<ModelMessage> | undefined
 ): boolean {
-  for (const text of messageTexts(messages ?? [])) {
-    if (text.includes(SERVER_SKILL_ORIGIN_MARKER)) return true;
+  for (const message of messages ?? []) {
+    const content = (message as { content?: unknown }).content;
+    if (typeof content === "string") {
+      if (content.includes(MARKER_STEM)) return true;
+      continue;
+    }
+    if (!Array.isArray(content)) continue;
+    for (const part of content as Array<Record<string, unknown>>) {
+      if (
+        holdsMarker(part?.text, 0) ||
+        holdsMarker(part?.output, 0) ||
+        holdsMarker(part?.result, 0)
+      ) {
+        return true;
+      }
+      if (
+        isLoadSkillResult(part) &&
+        readToolOutputTexts(part.output).status !== "ok"
+      ) {
+        return true;
+      }
+    }
   }
   return false;
 }
 
-/**
- * The server-served skills whose SKILL.md is in the model's context.
- *
- * The spec's acting window runs from the moment a SKILL.md enters context
- * until it leaves, and context here is the conversation: a skill loaded in an
- * earlier request is still being acted on in this one. A banner is read only
- * from the two places a load writes one ({@link loadedSkillTexts}). Later
- * loads of the same ref win, so the entry recorded is the most recent load.
- */
-export function actingServerSkills(
-  messages: ReadonlyArray<ModelMessage> | undefined
-): ActingServerSkill[] {
-  const byRef = new Map<string, ActingServerSkill>();
-  for (const text of loadedSkillTexts(messages ?? [])) {
-    const match = ORIGIN_LINE_RE.exec(text);
-    if (!match) continue;
-    byRef.set(match[1]!, {
-      ref: match[1]!,
-      serverLabel: decodeBannerField(match[2]!),
-      skillUri: decodeBannerField(match[3]!),
-      ...(match[4] ? { digestSet: match[4] } : {}),
-    });
-  }
-  return [...byRef.values()];
+function parseServerSkillBanner(text: string): ActingServerSkill | undefined {
+  const match = ORIGIN_LINE_RE.exec(text);
+  if (!match) return undefined;
+  return {
+    ref: match[1]!,
+    serverLabel: decodeBannerField(match[2]!),
+    skillUri: decodeBannerField(match[3]!),
+    ...(match[4] ? { digestSet: match[4] } : {}),
+  };
 }
 
+/** One server skill load in the conversation, in conversation order. */
+export type ServerSkillLoad =
+  | {
+      kind: "loaded";
+      skill: ActingServerSkill;
+      /** Absent for a skill the user picked: a user turn, not a tool result. */
+      toolCallId?: string;
+      /** The result part's provider options, where provenance marks ride. */
+      providerOptions?: unknown;
+    }
+  | {
+      /** A `loadSkill` result whose text could not be read in any known shape. */
+      kind: "unreadable";
+      toolCallId?: string;
+      providerOptions?: unknown;
+    };
+
 /**
- * The texts a banner is read from: the output of a `loadSkill` tool result,
- * and the body of a "Skill loaded by the user" context block, which is the
- * same output sent as a user part when the user picks a skill in the
- * popover. Both start with the banner.
+ * The server skill loads in the conversation, for the held entry.
  *
- * Nowhere else. The digest set a banner records is the held entry a later
- * file read is checked against, and a skill can ship a supporting file, or
+ * STRICT, unlike {@link mentionsServerSkill}: the held entry is state a later
+ * file read is checked against, so a load is read only from the two places a
+ * load writes one, and only from their content:
+ *   - the first `text` of a `loadSkill` result, never its `error-text`;
+ *   - the body of a "Skill loaded by the user" context block, which is the
+ *     same output sent as a user part when the user picks a skill.
+ * The banner must open that text. A skill can ship a supporting file, or
  * instruct the model to write text, shaped like a banner for its own ref
- * with the digest set of a manifest it has not served yet. Read from a
+ * with the digest set of a manifest it has not served yet; read from a
  * `readSkillFile` result or from assistant text, that banner would move the
- * held entry to files the user never approved. The gate itself keeps
- * scanning every text ({@link mentionsServerSkill}), since it only closes.
+ * held entry to files the user never approved.
+ *
+ * Whether a load is trusted (provenance) is the server's call, made in
+ * `server/utils/server-skill-held-entry.ts`.
  */
-function* loadedSkillTexts(
-  messages: ReadonlyArray<ModelMessage>
-): Generator<string> {
-  for (const message of messages) {
+export function serverSkillLoads(
+  messages: ReadonlyArray<ModelMessage> | undefined,
+): ServerSkillLoad[] {
+  const loads: ServerSkillLoad[] = [];
+  for (const message of messages ?? []) {
     const content = (message as { content?: unknown }).content;
     if (message.role === "user") {
       const texts =
@@ -156,42 +211,54 @@ function* loadedSkillTexts(
             : [];
       for (const text of texts) {
         const block = parseUserContextText(text);
-        if (block?.kind === "skill") yield block.body.replace(/^\n/, "");
+        if (block?.kind !== "skill") continue;
+        const skill = parseServerSkillBanner(block.body.replace(/^\n/, ""));
+        if (skill) loads.push({ kind: "loaded", skill });
       }
       continue;
     }
     if (message.role !== "tool" || !Array.isArray(content)) continue;
     for (const part of content as Array<Record<string, unknown>>) {
-      if (part?.type !== "tool-result" || part.toolName !== "loadSkill") {
+      if (!isLoadSkillResult(part)) continue;
+      const toolCallId =
+        typeof part.toolCallId === "string" ? part.toolCallId : undefined;
+      const providerOptions = part.providerOptions;
+      const read = readToolOutputTexts(part.output);
+      const text =
+        (read.status === "ok"
+          ? read.texts.find((candidate) => candidate.kind === "text")?.value
+          : undefined) ??
+        (typeof part.result === "string" ? part.result : undefined);
+      if (text === undefined) {
+        if (read.status !== "ok") {
+          loads.push({ kind: "unreadable", toolCallId, providerOptions });
+        }
         continue;
       }
-      const output = part.output as { type?: string; value?: unknown } | undefined;
-      if (output?.type === "text" && typeof output.value === "string") {
-        yield output.value;
-      } else if (typeof part.result === "string") {
-        yield part.result;
+      const skill = parseServerSkillBanner(text);
+      if (skill) {
+        loads.push({ kind: "loaded", skill, toolCallId, providerOptions });
       }
     }
   }
+  return loads;
 }
 
-function* messageTexts(
-  messages: ReadonlyArray<ModelMessage>
-): Generator<string> {
-  for (const message of messages) {
-    const content = (message as { content?: unknown }).content;
-    if (typeof content === "string") {
-      yield content;
-      continue;
-    }
-    if (!Array.isArray(content)) continue;
-    for (const part of content as Array<Record<string, unknown>>) {
-      if (typeof part?.text === "string") yield part.text;
-      const output = part?.output as { type?: string; value?: unknown } | undefined;
-      if (output && typeof output.value === "string") yield output.value;
-      if (typeof part?.result === "string") yield part.result;
-    }
+/**
+ * The server-served skills whose SKILL.md is in the model's context, read
+ * strictly ({@link serverSkillLoads}). The spec's acting window runs from the
+ * moment a SKILL.md enters context until it leaves, and context here is the
+ * conversation: a skill loaded in an earlier request is still being acted on
+ * in this one. Later loads of the same ref win.
+ */
+export function actingServerSkills(
+  messages: ReadonlyArray<ModelMessage> | undefined,
+): ActingServerSkill[] {
+  const byRef = new Map<string, ActingServerSkill>();
+  for (const load of serverSkillLoads(messages)) {
+    if (load.kind === "loaded") byRef.set(load.skill.ref, load.skill);
   }
+  return [...byRef.values()];
 }
 
 /**

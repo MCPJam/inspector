@@ -40,6 +40,12 @@ export const memberFixture: AppFixture = {
   signedIn: true,
   mutations: { "productUpdates:initializeIfNeeded": null },
   queries: {
+    "legalAcceptance:getStatus": {
+      needsAcceptance: false,
+      termsVersion: "fixture-terms",
+      privacyVersion: "fixture-privacy",
+      minimumAge: 18,
+    },
     "organizationModelProviders:getVisibleConfig": { providers: [] },
     "projectEnvironments:getCapabilities": {},
     "projectEnvironments:listEnvironments": [],
