@@ -27,7 +27,7 @@ export function SwarmCreditCapNotice({
   /** Every persona is already at one iteration. */
   iterationsAtMinimum?: boolean;
   /** What one conversation costs, for the credits dialog at `max` 0. */
-  conversationCredits?: number;
+  conversationCredits?: number | null;
   organizationId?: string | null;
   "data-testid": string;
 }) {

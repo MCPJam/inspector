@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CreditBalanceState } from "@/hooks/useCreditBalance";
 import {
+  capGeneration,
   generationSize,
   iterationsThatFit,
   maxConversations,
@@ -265,5 +266,24 @@ describe("iterationsThatFit", () => {
         conversationsPerIteration: 2,
       }),
     ).toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
+describe("capGeneration", () => {
+  const preset = { personaCount: 3, journeyCount: 5 };
+
+  it("binds only when the cap changes the preset", () => {
+    expect(capGeneration({ max: null, environmentCount: 1, preset })).toEqual({
+      size: preset,
+      binds: false,
+    });
+    expect(capGeneration({ max: 7, environmentCount: 1, preset })).toEqual({
+      size: { personaCount: 3, journeyCount: 2 },
+      binds: true,
+    });
+    expect(capGeneration({ max: 0, environmentCount: 1, preset })).toEqual({
+      size: null,
+      binds: true,
+    });
   });
 });

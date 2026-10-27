@@ -8,6 +8,7 @@
  * the flow behaves as it did before the cap existed.
  */
 import type { CreditBalanceState } from "@/hooks/useCreditBalance";
+import { DEFAULT_SWARM_ITERATIONS } from "@/components/swarms/swarm-intensity";
 
 /** One environment's line from the backend estimate. */
 export interface ConversationEstimate {
@@ -156,6 +157,41 @@ export function generationSize({
   return {
     personaCount: personas,
     journeyCount: Math.min(journeyCount, Math.floor(goals / personas)),
+  };
+}
+
+/**
+ * The generation the New Swarm flow should ask for under `max`, at the
+ * default iterations, and whether the cap changed it (the notice shows only
+ * then). `size` is `null` when not one goal fits.
+ */
+export function capGeneration({
+  max,
+  reusedConversations = 0,
+  environmentCount,
+  preset,
+}: {
+  max: number | null;
+  reusedConversations?: number;
+  environmentCount: number;
+  preset: { personaCount: number; journeyCount: number };
+}): {
+  size: { personaCount: number; journeyCount: number } | null;
+  binds: boolean;
+} {
+  const size = generationSize({
+    max,
+    reusedConversations,
+    environmentCount,
+    iterations: DEFAULT_SWARM_ITERATIONS,
+    personaCount: preset.personaCount,
+    journeyCount: preset.journeyCount,
+  });
+  return {
+    size,
+    binds:
+      size?.personaCount !== preset.personaCount ||
+      size.journeyCount !== preset.journeyCount,
   };
 }
 

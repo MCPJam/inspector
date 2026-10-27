@@ -77,6 +77,12 @@ import {
   MIN_SWARM_ITERATIONS,
   SWARM_INTENSITY_PRESETS,
 } from "@/components/swarms/swarm-intensity";
+import { capGeneration } from "@/components/swarms/swarm-credit-cap";
+import { SwarmCreditCapNotice } from "@/components/swarms/swarm-credit-cap-notice";
+import {
+  useSwarmCreditCap,
+  type SwarmCreditCapAtClick,
+} from "@/hooks/use-swarm-credit-cap";
 import {
   SOLO_HERO_CHARACTERS,
   SwarmHeroCharacters,
@@ -664,6 +670,9 @@ export function NewSwarmCreateFlow({
       : null,
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [capAtClick, setCapAtClick] = useState<
+    (SwarmCreditCapAtClick & { environmentCount: number }) | null
+  >(null);
   /**
    * The backend refused generation because the visitor is anonymous. Held
    * separately from `errorMessage` because the remedy is a control, not a
@@ -865,6 +874,7 @@ export function NewSwarmCreateFlow({
     }
     setResolvedEnvironmentIds(null);
     setResolvedEnvironments(null);
+    setCapAtClick(null);
   }, [environmentSelectionKey]);
 
   useEffect(() => {
@@ -890,6 +900,20 @@ export function NewSwarmCreateFlow({
     () => personaList.filter((persona) => reusedIds.includes(persona._id)),
     [personaList, reusedIds],
   );
+  const creditCap = useSwarmCreditCap({
+    projectId,
+    organizationId,
+    // In compose mode the environments exist only once Generate resolves them.
+    environmentIds: composeMode ? [] : targetState.environmentIds,
+    maxTurns: preset.maxTurns,
+    judgeConfig,
+  });
+  const describeCap = capAtClick ?? {
+    ...creditCap,
+    reusedConversations: 0,
+    environmentCount: targetState.environmentIds.length,
+  };
+  const describeGeneration = capGeneration({ ...describeCap, preset });
 
   const hasGenerateTargets =
     (!composeMode && targetState.environmentIds.length > 0) ||
@@ -966,7 +990,7 @@ export function NewSwarmCreateFlow({
     !hasSwarmName
       ? false
       : wantsGenerate
-      ? canGenerate
+      ? canGenerate && describeCap.max !== 0
       : reusedIds.length > 0;
 
   /** Why the primary button is disabled, or a short summary when it isn't. */
@@ -1198,11 +1222,21 @@ export function NewSwarmCreateFlow({
             : "Pick an environment to generate against.",
         );
       }
+      const cap = {
+        ...(await creditCap.capFor({
+          environmentIds: resolved.environmentIds,
+          reusedPersonaIds: reusedIds,
+        })),
+        environmentCount: resolved.environmentIds.length,
+      };
+      setCapAtClick(cap);
+      const { size } = capGeneration({ ...cap, preset });
+      // Not one goal fits: the credit notice now says so and offers credits.
+      if (!size) return;
       const result = await generateSwarmPersonaBatch({
         projectId,
         environmentId: groundingEnvironmentId,
-        personaCount: preset.personaCount,
-        journeyCount: preset.journeyCount,
+        ...size,
         description: draft.trim(),
         // Dedup hints: the slate is told what the project already has so a
         // returning user doesn't get near-copies of their own personas.
@@ -1287,12 +1321,13 @@ export function NewSwarmCreateFlow({
   }, [
     canGenerate,
     composeMode,
+    creditCap,
     draft,
     preset,
     projectId,
     pushIntensity,
     resolveTargets,
-    reusedIds.length,
+    reusedIds,
     reusedPersonas,
   ]);
 
@@ -2629,6 +2664,17 @@ export function NewSwarmCreateFlow({
               />
             ) : null}
 
+            {describeCap.max !== null &&
+            describeGeneration.binds &&
+            creditCap.credits !== null ? (
+              <SwarmCreditCapNotice
+                credits={creditCap.credits}
+                max={describeCap.max}
+                conversationCredits={describeCap.conversationCredits}
+                organizationId={organizationId}
+                data-testid="new-swarm-credit-cap-notice"
+              />
+            ) : null}
             {describeStepError || errorMessage ? (
               <ErrorCard error={describeStepError ?? errorMessage} />
             ) : null}

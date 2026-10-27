@@ -21,6 +21,7 @@ import {
   type CreditBalanceState,
 } from "@/hooks/useCreditBalance";
 import { useSoftQuery } from "@/hooks/use-soft-query";
+import { SWARM_QUERIES } from "@/lib/swarm-api";
 import {
   useSwarmSponsorshipAllowanceState,
   type SwarmSponsorshipAllowanceState,
@@ -61,6 +62,33 @@ export interface ReusedGoalRuns {
 export interface SwarmCreditCapTargets {
   environmentIds: readonly string[];
   reusedGoals?: readonly ReusedGoalRuns[];
+}
+
+/** The cap for targets the flow resolved at click time. */
+export interface SwarmCreditCapAtClick {
+  /** `null` means no cap. */
+  max: number | null;
+  /** Conversations the reused goals already take. */
+  reusedConversations: number;
+  /** The cheapest conversation, for the credits dialog. */
+  conversationCredits: number | null;
+}
+
+const listJourneysQuery = makeFunctionReference<
+  "query",
+  { personaRefId: string },
+  Array<{ _id: string; config?: { sessionsPerTarget?: number } | null }>
+>(SWARM_QUERIES.listJourneysByPersona);
+
+function cheapestConversation(
+  estimate: EstimateResult | undefined,
+): number | null {
+  const costs = (estimate?.environments ?? []).flatMap((environment) =>
+    environment.tokenCredits === null
+      ? []
+      : [environment.tokenCredits + environment.feeCredits],
+  );
+  return costs.length > 0 ? Math.min(...costs) : null;
 }
 
 function capOf(
@@ -105,8 +133,15 @@ export function useSwarmCreditCap({
   max: number | null;
   /** The balance as the sidebar shows it, for the notice heading. */
   credits: number | null;
-  /** The cap for targets the flow only knows at click time. */
-  capFor: (targets: SwarmCreditCapTargets) => Promise<number | null>;
+  /** The cheapest conversation, for the credits dialog. */
+  conversationCredits: number | null;
+  /**
+   * The cap for targets the flow only knows at click time. Reused personas
+   * are passed by id, since their goals are not loaded before Confirm.
+   */
+  capFor: (
+    targets: SwarmCreditCapTargets & { reusedPersonaIds?: readonly string[] },
+  ) => Promise<SwarmCreditCapAtClick>;
 } {
   const convex = useConvex();
   const { balance } = useCreditBalance({ organizationId });
@@ -137,17 +172,47 @@ export function useSwarmCreditCap({
   );
 
   const capFor = useCallback(
-    async (targets: SwarmCreditCapTargets) => {
-      const request = argsFor(targets);
-      if (!request) return null;
+    async ({
+      reusedPersonaIds = [],
+      ...targets
+    }: SwarmCreditCapTargets & {
+      reusedPersonaIds?: readonly string[];
+    }): Promise<SwarmCreditCapAtClick> => {
+      const uncapped = {
+        max: null,
+        reusedConversations: 0,
+        conversationCredits: null,
+      };
       try {
+        const reusedGoals =
+          targets.reusedGoals ??
+          (
+            await Promise.all(
+              reusedPersonaIds.map((personaRefId) =>
+                convex.query(listJourneysQuery, { personaRefId }),
+              ),
+            )
+          )
+            .flat()
+            .map((journey) => ({
+              journeyId: journey._id,
+              sessions: journey.config?.sessionsPerTarget ?? 1,
+            }));
+        const request = argsFor({ ...targets, reusedGoals });
+        if (!request) return uncapped;
         const fresh = await convex.query(estimateQuery, request);
-        return capOf(fresh, balance, allowance, targets.reusedGoals ?? []);
+        return {
+          max: capOf(fresh, balance, allowance, reusedGoals),
+          reusedConversations:
+            reusedGoals.reduce((sum, goal) => sum + goal.sessions, 0) *
+            targets.environmentIds.length,
+          conversationCredits: cheapestConversation(fresh),
+        };
       } catch {
-        // The cap is optional: a failed estimate (an older backend without
-        // the query, a dropped connection) leaves generation uncapped, as it
+        // The cap is optional: a failed read (an older backend without the
+        // estimate, a dropped connection) leaves generation uncapped, as it
         // was before the cap existed. Per-call admission still guards spend.
-        return null;
+        return uncapped;
       }
     },
     [allowance, argsFor, balance, convex],
@@ -163,5 +228,10 @@ export function useSwarmCreditCap({
         : (balance.monthlyAllowanceRemaining ?? 0)) +
       balance.paidCreditsRemaining
     : null;
-  return { max, credits, capFor };
+  return {
+    max,
+    credits,
+    conversationCredits: cheapestConversation(estimate),
+    capFor,
+  };
 }

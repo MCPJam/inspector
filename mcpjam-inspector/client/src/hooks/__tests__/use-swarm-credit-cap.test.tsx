@@ -113,12 +113,58 @@ describe("useSwarmCreditCap", () => {
     convexQueryMock.mockResolvedValueOnce(ESTIMATE);
     await expect(
       result.current.capFor({ environmentIds: ["env-1"] }),
-    ).resolves.toBe(11);
+    ).resolves.toEqual({
+      max: 11,
+      reusedConversations: 0,
+      conversationCredits: 20,
+    });
 
     convexQueryMock.mockRejectedValueOnce(new Error("no such function"));
     await expect(
       result.current.capFor({ environmentIds: ["env-1"] }),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({
+      max: null,
+      reusedConversations: 0,
+      conversationCredits: null,
+    });
+  });
+
+  it("loads a reused persona's goals at click time and counts them first", async () => {
+    allowance = { status: "unsupported" };
+    const { result } = render([]);
+    convexQueryMock.mockImplementation(
+      async (_query: unknown, args: Record<string, unknown>) =>
+        "personaRefId" in args
+          ? [{ _id: "goal-1", config: { sessionsPerTarget: 2 } }]
+          : {
+              ...ESTIMATE,
+              reused: [
+                {
+                  journeyId: "goal-1",
+                  sessionsPerTarget: 2,
+                  environments: ESTIMATE.environments,
+                },
+              ],
+            },
+    );
+
+    const cap = await result.current.capFor({
+      environmentIds: ["env-1"],
+      reusedPersonaIds: ["persona-1"],
+    });
+
+    expect(convexQueryMock).toHaveBeenLastCalledWith(expect.anything(), {
+      projectId: "project-1",
+      environmentIds: ["env-1"],
+      maxTurns: 6,
+      reusedJourneyIds: ["goal-1"],
+    });
+    // 2 reused conversations at 20 leave 100: five new ones.
+    expect(cap).toEqual({
+      max: 7,
+      reusedConversations: 2,
+      conversationCredits: 20,
+    });
   });
 
   it("prices reused goals at the iterations they will launch with", () => {
