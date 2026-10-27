@@ -16,6 +16,7 @@ import {
   PROTOCOL_CHECK_CATALOG,
   PROTOCOL_VERSION_ERAS,
   TASKS_CHECK_CATALOG,
+  isAuthorizationRequiredCheck,
   type ConformanceScore,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
@@ -255,6 +256,15 @@ function ConformanceContent({
   );
   const protocolPendingIds = pendingIdSet(protocol.result);
   const tasksPendingIds = pendingIdSet(tasks.result);
+  // Checks the server refused for credentials. They could not run, so each
+  // suite reads INCOMPLETE; one notice above the suites names the next step
+  // instead of leaving a 401 in every section.
+  const waitingOnAuthorization = [protocol, apps, tasks].reduce(
+    (count, suite) =>
+      count +
+      (suite.result?.checks.filter(isAuthorizationRequiredCheck).length ?? 0),
+    0,
+  );
 
   // The page opens on the "run your first check" state and only swaps to the
   // suites once a run has begun. Keyed by server, so a server switch resets it.
@@ -342,6 +352,15 @@ function ConformanceContent({
                   isRunning={isRunning}
                   oauthNotScored={oauthNotScored}
                 />
+
+                {waitingOnAuthorization > 0 && (
+                  <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs leading-relaxed">
+                    This server requires sign-in, and this run had no valid
+                    session, so {waitingOnAuthorization} check(s) could not
+                    run. Reconnect the server with OAuth from the server menu,
+                    or update its access token, then run again.
+                  </div>
+                )}
 
                 <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card">
                   <SuiteSection
