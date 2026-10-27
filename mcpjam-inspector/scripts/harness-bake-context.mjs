@@ -68,6 +68,7 @@ import {
 import { registerHooks } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { writeTelemetryCatalogs } from "../../scripts/generate-telemetry-catalogs.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -100,17 +101,54 @@ const CLAUDE_CODE_PATCH_SENTINEL_CANDIDATES = [
 ];
 
 const SDK_SOURCE = join(here, "..", "..", "sdk", "src");
+const EVALUATORS_ROOT = join(here, "..", "..", "evaluators");
 
-let sdkSourcesHooked = false;
+/** An `@mcpjam/sdk` subpath's source: the SDK's subpaths mirror its src/ tree. */
+function sdkSourceFile(sub) {
+  return [join(SDK_SOURCE, `${sub}.ts`), join(SDK_SOURCE, sub, "index.ts")].find(
+    (candidate) => existsSync(candidate),
+  );
+}
+
 /**
- * Resolve `@mcpjam/sdk/*` to the SDK's TypeScript sources (the server tsconfig
- * maps it there too) rather than a built `dist/`, which a fresh checkout such
- * as the computer template build does not have. It must be registered before
- * the first TypeScript import: a module that reaches the SDK earlier resolves
- * through the package exports to `dist/` and fails there.
+ * An `@mcpjam/evaluators` subpath's source, found through the package's own
+ * export map: each target is `./dist/<path>.js`, built from `src/<path>.ts`.
  */
-function resolveSdkFromSources() {
-  if (sdkSourcesHooked) return;
+function evaluatorsSourceFile(sub) {
+  const subpath = sub ? `./${sub}` : ".";
+  const { exports } = JSON.parse(
+    readFileSync(join(EVALUATORS_ROOT, "package.json"), "utf8"),
+  );
+  for (const [key, target] of Object.entries(exports)) {
+    const prefix = key.endsWith("*") ? key.slice(0, -1) : undefined;
+    const rest =
+      prefix === undefined
+        ? key === subpath
+          ? ""
+          : undefined
+        : subpath.startsWith(prefix)
+          ? subpath.slice(prefix.length)
+          : undefined;
+    if (rest === undefined) continue;
+    const built = /^\.\/dist\/(.+)\.js$/.exec(target.import.replace("*", rest));
+    const file = built && join(EVALUATORS_ROOT, "src", `${built[1]}.ts`);
+    return file && existsSync(file) ? file : undefined;
+  }
+  return undefined;
+}
+
+let workspaceSourcesReady = false;
+/**
+ * Read `@mcpjam/sdk` and the `@mcpjam/evaluators` it re-exports from their
+ * TypeScript sources (the server tsconfig maps the SDK there too) rather than
+ * a built `dist/`, and write the telemetry catalogs those sources import. A
+ * fresh checkout such as the computer template build has neither. This must
+ * run before the first TypeScript import: a module that reaches either
+ * package earlier resolves through the package exports to `dist/` and fails.
+ */
+function useWorkspaceSources() {
+  if (workspaceSourcesReady) return;
+  writeTelemetryCatalogs();
   if (typeof registerHooks !== "function") {
     throw new Error(
       "the bake context generator needs Node >= 22.15 (module.registerHooks)",
@@ -118,26 +156,21 @@ function resolveSdkFromSources() {
   }
   registerHooks({
     resolve(specifier, context, nextResolve) {
-      const match = /^@mcpjam\/sdk(?:\/(.+))?$/.exec(specifier);
-      if (match) {
-        const sub = match[1] ?? "index";
-        for (const candidate of [
-          join(SDK_SOURCE, `${sub}.ts`),
-          join(SDK_SOURCE, sub, "index.ts"),
-        ]) {
-          if (existsSync(candidate)) {
-            return { url: pathToFileURL(candidate).href, shortCircuit: true };
-          }
-        }
-      }
+      const match = /^@mcpjam\/(sdk|evaluators)(?:\/(.+))?$/.exec(specifier);
+      const file =
+        match &&
+        (match[1] === "sdk"
+          ? sdkSourceFile(match[2] ?? "index")
+          : evaluatorsSourceFile(match[2]));
+      if (file) return { url: pathToFileURL(file).href, shortCircuit: true };
       return nextResolve(specifier, context);
     },
   });
-  sdkSourcesHooked = true;
+  workspaceSourcesReady = true;
 }
 
 async function tsModule(path) {
-  resolveSdkFromSources();
+  useWorkspaceSources();
   const { tsImport } = await import("tsx/esm/api");
   return tsImport(path, { parentURL: import.meta.url, tsconfig: false });
 }
@@ -174,7 +207,7 @@ let registryPromise;
  */
 function loadHarnessRegistry() {
   registryPromise ??= (async () => {
-    resolveSdkFromSources();
+    useWorkspaceSources();
     const { tsImport } = await import("tsx/esm/api");
     return tsImport("../server/utils/harness/registry.ts", {
       parentURL: import.meta.url,

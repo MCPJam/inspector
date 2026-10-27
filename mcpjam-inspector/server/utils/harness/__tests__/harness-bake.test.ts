@@ -561,19 +561,22 @@ describe("the generated bake context", () => {
     expect(existsSync(join(out, "refused"))).toBe(false);
   }, 120_000);
 
-  it("needs no built SDK, as in the computer template build", () => {
-    // The template build installs with --ignore-scripts and never builds the
-    // SDK. Failing every resolution into its dist/ proves each module the
-    // generator loads reads the SDK's sources, where CI's built dist/ would
-    // otherwise hide one that does not.
-    const builtSdk = pathToFileURL(
-      join(realpathSync(join(PACKAGE_ROOT, "..", "sdk")), "dist"),
-    ).href;
+  it("needs no built workspace package, as in the computer template build", () => {
+    // The template build installs with --ignore-scripts and builds nothing.
+    // Failing every resolution into the SDK's or the evaluators' dist/ proves
+    // each module the generator loads reads their sources, where CI's built
+    // dist/ would otherwise hide one that does not.
+    const repo = realpathSync(join(PACKAGE_ROOT, ".."));
+    const built = ["sdk", "evaluators"].map(
+      (name) => `${pathToFileURL(join(repo, name, "dist")).href}/`,
+    );
     const guard = `import { registerHooks } from "node:module";
+const built = ${JSON.stringify(built)};
+const linked = ["/node_modules/@mcpjam/sdk/dist/", "/node_modules/@mcpjam/evaluators/dist/"];
 registerHooks({ resolve(specifier, context, next) {
   const resolved = next(specifier, context);
-  if (resolved.url.startsWith(${JSON.stringify(`${builtSdk}/`)}) || resolved.url.includes("/node_modules/@mcpjam/sdk/dist/"))
-    throw new Error("resolved " + specifier + " to the built SDK");
+  if (built.some((dist) => resolved.url.startsWith(dist)) || linked.some((dist) => resolved.url.includes(dist)))
+    throw new Error("resolved " + specifier + " to a built workspace package");
   return resolved;
 } });`;
     const run = spawnSync(
@@ -583,11 +586,11 @@ registerHooks({ resolve(specifier, context, next) {
         `data:text/javascript,${encodeURIComponent(guard)}`,
         "scripts/harness-bake-context.mjs",
         "--out",
-        join(out, "no-built-sdk"),
+        join(out, "no-built-packages"),
       ],
       { cwd: PACKAGE_ROOT, encoding: "utf8" },
     );
-    expect(run.stderr).not.toMatch(/to the built SDK/);
+    expect(run.stderr).not.toMatch(/to a built workspace package/);
     expect(run.status).toBe(0);
   }, 120_000);
 
