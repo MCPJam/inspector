@@ -18,9 +18,11 @@ import {
   DECISION_SUMMARY_BADGE_LIMIT,
   DECISION_SUMMARY_DETAIL_LIMIT,
   decisionSummaryKey,
+  isTerminalEvalRunStatus,
 } from "../eval-decision-summary-store";
 import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import { readDecisionSummaryFixture } from "@/test/eval-decision-summary-fixtures";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import type { EvalRunDecisionSummary } from "@mcpjam/sdk/contract";
 
 const PASSING = readDecisionSummaryFixture("policyV2-passing");
@@ -71,6 +73,14 @@ function detailRequest(runId: string, extra: { revision?: string } = {}) {
     ...extra,
   };
 }
+
+describe("isTerminalEvalRunStatus", () => {
+  // The old export name, kept for its importers. It must stay the SDK
+  // predicate rather than grow its own list of terminal statuses again.
+  it("is the SDK contract's terminal-status predicate", () => {
+    expect(isTerminalEvalRunStatus).toBe(isEvalRunTerminalStatus);
+  });
+});
 
 describe("EvalDecisionSummaryStore", () => {
   let now = 1_000;
