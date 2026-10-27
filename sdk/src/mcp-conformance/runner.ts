@@ -297,9 +297,10 @@ async function runClientChecks(
   surface?: MCPServerSurfaceSnapshot;
   readiness: MCPReadinessWarning[];
   /**
-   * The era-detection connection of a raw-only Auto run was refused for
-   * credentials. `checks` then already holds every selected check as
-   * could-not-run, and the raw families must not run against a guessed era.
+   * An Auto run's connection was refused for credentials before the era was
+   * negotiated. `checks` then already holds every selected check, client and
+   * raw, as could-not-run, and the raw families must not run against a
+   * guessed era.
    */
   authorizationRefused?: true;
 }> {
@@ -447,31 +448,39 @@ async function runClientChecks(
     );
 
   } catch (error) {
+    // Refused for credentials on an Auto run: the connection that would have
+    // negotiated the era never completed, so the era is UNKNOWN — not the
+    // legacy default. Gating against that default would report the other
+    // era's checks `not-applicable`, a verdict about a server this run never
+    // reached. Every selected check, client or raw, could not run, and the raw
+    // probes do not run against a guessed era. A pinned run knows its era and
+    // keeps era gating below.
+    if (
+      config.protocolVersion === undefined &&
+      isAuthorizationRefusal(error)
+    ) {
+      return {
+        checks: [...selectedCheckIds].map((id) =>
+          couldNotRunResult(
+            selectedClientChecks.find((check) => check.id === id) ?? {
+              id,
+              category: CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
+              ...PROTOCOL_CHECK_CATALOG[id],
+            },
+            AUTHORIZATION_REQUIRED_MESSAGE,
+            authorizationRequiredDetails(error),
+          ),
+        ),
+        config,
+        readiness: [],
+        authorizationRefused: true,
+      };
+    }
+
     // A raw-only Auto run has no client-backed check on which to report a
     // failed negotiation. Reject the run instead of silently executing raw
     // checks with the legacy default after detection failed.
     if (selectedClientChecks.length === 0) {
-      // Refused for credentials is the one detection failure with a verdict
-      // to give: nothing selected could run, so the run is `incomplete`
-      // rather than rejected.
-      if (isAuthorizationRefusal(error)) {
-        return {
-          checks: [...selectedCheckIds].map((id) =>
-            couldNotRunResult(
-              {
-                id,
-                category: CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
-                ...PROTOCOL_CHECK_CATALOG[id],
-              },
-              AUTHORIZATION_REQUIRED_MESSAGE,
-              authorizationRequiredDetails(error),
-            ),
-          ),
-          config,
-          readiness: [],
-          authorizationRefused: true,
-        };
-      }
       throw error;
     }
 
@@ -488,11 +497,12 @@ async function runClientChecks(
       (check) => !eraGate(check, config.era, config.protocolVersion),
     );
 
-    // Refused for credentials: nothing below the auth layer was reached, so no
-    // check has a verdict — every applicable one could not run, and the run is
-    // `incomplete` rather than `failed`. The degenerate all-era-skipped
-    // selection still anchors one result on the first check, so the refusal
-    // can never vanish into a `passed` run.
+    // Refused for credentials on a PINNED run: the era is the pin, so era
+    // gating still holds, and every applicable client check could not run —
+    // `incomplete` rather than `failed`. The raw probes run as usual and any
+    // 401 they see is reclassified the same way. The degenerate
+    // all-era-skipped selection still anchors one result on the first check,
+    // so the refusal can never vanish into a `passed` run.
     if (isAuthorizationRefusal(error)) {
       const refused = (check: MCPClientCheckDefinition) =>
         couldNotRunResult(
@@ -618,7 +628,7 @@ export class MCPConformanceTest {
       recorder,
     };
 
-    // A refused raw-only Auto run already reported every selected check as
+    // A refused Auto run already reported every selected check as
     // could-not-run; the raw families get nothing to grade against an era the
     // run never learned.
     const rawSelection: Set<MCPCheckId> = clientRun.authorizationRefused

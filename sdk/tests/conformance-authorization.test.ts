@@ -13,6 +13,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { isAuthorizationRequiredCheck } from "../src/conformance-authorization.js";
 import { MCPConformanceTest } from "../src/mcp-conformance/index.js";
+import { scoreFromProtocolResult } from "../src/conformance-score.js";
 import { MCPAppsConformanceTest } from "../src/apps-conformance/index.js";
 import {
   MCP_TASKS_CHECK_IDS,
@@ -75,6 +76,92 @@ describe("protocol conformance against a server that requires authorization", ()
     expect(initialize?.error?.message).toMatch(/requires authorization/);
     expect(isAuthorizationRequiredCheck(initialize!)).toBe(true);
     expect(result.incompleteReason).toMatch(/requires authorization/);
+  }, 60_000);
+
+  it("treats the era as unknown on an unpinned refused run: every selected check could not run, none is era-skipped", async () => {
+    const serverUrl = await serveStatus(401);
+    // The default selection mixes client-backed and raw checks of both eras.
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      checkTimeout: 5_000,
+    }).run();
+
+    expect(result.checks.length).toBeGreaterThan(0);
+    for (const check of result.checks) {
+      expect(check, check.id).toMatchObject({
+        status: "skipped",
+        skipReason: "could-not-run",
+      });
+      expect(isAuthorizationRequiredCheck(check), check.id).toBe(true);
+    }
+    // Both eras are represented, and neither was judged against a guessed one.
+    const ids = result.checks.map((check) => check.id);
+    expect(ids).toContain("server-initialize");
+    expect(ids).toContain("modern-client-handshake");
+    expect(ids).toContain("protocol-invalid-method-error");
+
+    const score = scoreFromProtocolResult(result);
+    expect(score.outcome).toBe("incomplete");
+    expect(score.notApplicable).toBe(0);
+    expect(score.passed).toBe(0);
+    expect(score.failed).toBe(0);
+    expect(score.couldNotRun).toBe(score.applicable);
+  }, 60_000);
+
+  it("does not era-skip a client-only unpinned selection either", async () => {
+    const serverUrl = await serveStatus(401);
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      checkIds: ["server-initialize", "modern-client-handshake"],
+      checkTimeout: 5_000,
+    }).run();
+
+    expect(
+      result.checks.map((check) => [check.id, check.skipReason]),
+    ).toEqual([
+      ["server-initialize", "could-not-run"],
+      ["modern-client-handshake", "could-not-run"],
+    ]);
+    expect(result.outcome).toBe("incomplete");
+  }, 60_000);
+
+  it("keeps era gating on a pinned refused run and still runs its raw probes", async () => {
+    const serverUrl = await serveStatus(401);
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      protocolVersion: "2025-11-25",
+      checkIds: [
+        "server-initialize",
+        "modern-client-handshake",
+        "protocol-invalid-method-error",
+      ],
+      checkTimeout: 5_000,
+    }).run();
+
+    const byId = Object.fromEntries(
+      result.checks.map((check) => [check.id, check]),
+    );
+    // The pin names the era, so the other era's check does not apply.
+    expect(byId["modern-client-handshake"]).toMatchObject({
+      status: "skipped",
+      skipReason: "not-applicable",
+    });
+    expect(byId["server-initialize"]).toMatchObject({
+      skipReason: "could-not-run",
+    });
+    // The raw probe ran, saw the 401, and was reclassified rather than skipped.
+    expect(byId["protocol-invalid-method-error"]).toMatchObject({
+      skipReason: "could-not-run",
+      details: expect.objectContaining({
+        status: 401,
+        probeFailure: expect.any(String),
+      }),
+    });
+
+    const score = scoreFromProtocolResult(result);
+    expect(score.outcome).toBe("incomplete");
+    expect(score.notApplicable).toBe(1);
+    expect(score.couldNotRun).toBe(2);
   }, 60_000);
 
   it("reclassifies a raw probe that only saw the 401, keeping its original message", async () => {
