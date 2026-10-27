@@ -316,6 +316,8 @@ interface SessionResult {
 
 /** Pinned host runtime a synthetic session executes against. */
 export interface SyntheticHostRuntime {
+  /** Capabilities resolved from the immutable client snapshot. */
+  hostCapabilities?: Record<string, unknown>;
   modelDefinition: ModelDefinition;
   /**
    * The saved selection behind `modelDefinition`, already checked with
@@ -1098,6 +1100,7 @@ export async function runSyntheticHostSession(
       enableComputerUse: true,
       mcpClientManager: manager,
       logScope: "sessionSimulation",
+      hostCapabilities: runtime.hostCapabilities,
       // Live view: a frame per action, at CAPTURE time. Only wired when this
       // surface has a stream to put it on and the flag is on — absent, the
       // context does no thumbnail work at all.
