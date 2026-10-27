@@ -187,6 +187,21 @@ describe("strict log boundary", () => {
     expect(row).not.toHaveProperty("durationMs");
     expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
   });
+  it("names a dependency error class and keeps an unlisted one unknown", () => {
+    const named = (name: string) =>
+      Object.assign(new Error("PRIVATE_SENTINEL"), { name });
+    expect(
+      buildStrictLogRow("http.request.failed", {}, {}, named("McpError")),
+    ).toMatchObject({ errorClass: "McpError", knownError: true });
+    expect(
+      buildStrictLogRow(
+        "http.request.failed",
+        {},
+        {},
+        named("PRIVATE_SENTINEL"),
+      ),
+    ).toMatchObject({ errorClass: "UnknownError", knownError: false });
+  });
   it("copies Convex IDs from the server's context and never from a payload", () => {
     const [org, project, server, forged] = ["org", "project", "server", "forged"]
       .map((seed) => seed.padEnd(32, "0"));
