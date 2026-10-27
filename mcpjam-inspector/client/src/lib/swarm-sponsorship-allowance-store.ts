@@ -3,14 +3,23 @@ export interface SwarmSponsorshipAllowance {
   granted: number;
 }
 
-type Listener = (value: SwarmSponsorshipAllowance | null) => void;
-type Loader = (
-  signal: AbortSignal,
-) => Promise<SwarmSponsorshipAllowance | null>;
+/**
+ * `unsupported` is a real answer (this server or user gets no sponsored
+ * conversations); `loading` and `error` are not, so a reader that sizes
+ * something by the allowance can tell "none" from "unknown".
+ */
+export type SwarmSponsorshipAllowanceState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "unsupported" }
+  | ({ status: "ready" } & SwarmSponsorshipAllowance);
+
+type Listener = (value: SwarmSponsorshipAllowanceState) => void;
+type Loader = (signal: AbortSignal) => Promise<SwarmSponsorshipAllowanceState>;
 const reads = new Map<
   string,
   {
-    value: SwarmSponsorshipAllowance | null;
+    value: SwarmSponsorshipAllowanceState;
     listeners: Set<Listener>;
     refresh: () => void;
     dispose: () => void;
@@ -27,7 +36,7 @@ export function subscribeSwarmAllowance(
   if (!entry) {
     let controller: AbortController | undefined;
     entry = {
-      value: null,
+      value: { status: "loading" },
       listeners: new Set(),
       dispose: () => {},
       refresh: () => {
@@ -35,7 +44,7 @@ export function subscribeSwarmAllowance(
         const request = new AbortController();
         controller = request;
         load(request.signal)
-          .catch(() => null)
+          .catch((): SwarmSponsorshipAllowanceState => ({ status: "error" }))
           .then((value) => {
             if (request.signal.aborted) return;
             entry!.value = value;

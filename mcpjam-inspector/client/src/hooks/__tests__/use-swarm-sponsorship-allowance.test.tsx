@@ -12,7 +12,10 @@ vi.mock("@/state/app-state-context", () => ({
   useOptionalSharedAppState: () => appState,
 }));
 
-import { useSwarmSponsorshipAllowance } from "../use-swarm-sponsorship-allowance";
+import {
+  useSwarmSponsorshipAllowance,
+  useSwarmSponsorshipAllowanceState,
+} from "../use-swarm-sponsorship-allowance";
 
 const withProject = () => ({
   activeProjectId: "local-1",
@@ -141,4 +144,51 @@ it("ignores a stale in-flight read after launch invalidation", async () => {
     resolveOld({ supported: true, remaining: 500, granted: 500, runs: [] });
   });
   expect(view.result.current?.remaining).toBe(485);
+});
+
+describe("useSwarmSponsorshipAllowanceState", () => {
+  it("is loading until the read lands, then ready", async () => {
+    fetchPreviewMock.mockResolvedValue({
+      supported: true,
+      remaining: 12,
+      granted: 500,
+      runs: [],
+    });
+    const { result } = renderHook(() => useSwarmSponsorshipAllowanceState());
+    expect(result.current).toEqual({ status: "loading" });
+    await waitFor(() =>
+      expect(result.current).toEqual({
+        status: "ready",
+        remaining: 12,
+        granted: 500,
+      }),
+    );
+  });
+
+  it("tells a failed read apart from no sponsorship", async () => {
+    fetchPreviewMock.mockRejectedValue(new Error("boom"));
+    const failed = renderHook(() => useSwarmSponsorshipAllowanceState());
+    await waitFor(() =>
+      expect(failed.result.current).toEqual({ status: "error" }),
+    );
+    failed.unmount();
+
+    fetchPreviewMock.mockResolvedValue({
+      supported: false,
+      remaining: 0,
+      granted: 0,
+      runs: [],
+    });
+    const unsupported = renderHook(() => useSwarmSponsorshipAllowanceState());
+    await waitFor(() =>
+      expect(unsupported.result.current).toEqual({ status: "unsupported" }),
+    );
+  });
+
+  it("is unsupported without an active shared project", () => {
+    appState = { activeProjectId: "local-1", projects: { "local-1": {} } };
+    const { result } = renderHook(() => useSwarmSponsorshipAllowanceState());
+    expect(result.current).toEqual({ status: "unsupported" });
+    expect(fetchPreviewMock).not.toHaveBeenCalled();
+  });
 });
