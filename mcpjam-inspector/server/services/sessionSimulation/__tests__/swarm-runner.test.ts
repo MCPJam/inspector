@@ -2119,6 +2119,37 @@ describe("target setup before claims", () => {
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
   });
+  it("stores why a failed setup stopped the target instead of a bare prerequisites code", async () => {
+    const { SwarmSetupError } = await import("../swarm-setup-turn");
+    setupTurnMock.mockImplementation(async ({ target }) => {
+      if (target.targetId !== "bad") return record;
+      throw new SwarmSetupError(
+        { ...record, status: "failed", readiness: "unavailable", reason: "timeout" },
+        undefined,
+        new Error("aborted"),
+      );
+    });
+    await startJourneyRun(
+      baseOpts({
+        hosts: [
+          { ...HOST, targetId: "bad" },
+          { ...HOST_2, targetId: "good" },
+        ],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    const bad = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.targetId === "bad" && a.status !== "running");
+    expect(bad).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "prerequisites_unavailable",
+        errorMessage: expect.stringContaining("Setup ran out of time"),
+      }),
+    ]);
+  });
   it("stores a setup that could not sign in to the server as that sign-in failure, and does not retry it", async () => {
     const { SwarmSetupError } = await import("../swarm-setup-turn");
     const message =
