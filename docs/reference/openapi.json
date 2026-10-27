@@ -16224,7 +16224,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). Absent when the case sets none — omitted from the response rather than sent as `null`."
           },
           "assertions": {
             "type": "object",
@@ -16380,7 +16380,7 @@
           },
           "matchOptions": {
             "type": ["object", "null"],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "assertions": {
             "type": ["object", "null"],
@@ -16589,7 +16589,7 @@
           },
           "matchOptions": {
             "type": ["object", "null"],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "assertions": {
             "type": ["object", "null"],
@@ -17000,7 +17000,8 @@
                 "description": "Suite-level floor on per-case iterations: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` clears it."
               },
               "matchOptions": {
-                "type": ["object", "null"]
+                "type": ["object", "null"],
+                "description": "Suite default tool-call match options, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. Fields you omit keep their current values; `null` clears them."
               },
               "defaultAssertions": {
                 "type": ["array", "null"],
@@ -17272,7 +17273,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). Absent when the case sets none — omitted from the response rather than sent as `null`."
           },
           "checks": {
             "type": "object",
@@ -17597,7 +17598,7 @@
               "object",
               "null"
             ],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "checks": {
             "type": [
@@ -18218,7 +18219,7 @@
               "object",
               "null"
             ],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "checks": {
             "type": [
@@ -18883,7 +18884,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+            "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
             "additionalProperties": true
           },
           "predicates": {
@@ -19142,7 +19143,7 @@
                 },
                 "matchOptions": {
                   "type": "object",
-                  "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+                  "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
                   "additionalProperties": true
                 },
                 "predicates": {
@@ -19613,7 +19614,8 @@
             "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
           },
           "matchOptions": {
-            "type": ["object", "null"]
+            "type": ["object", "null"],
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). `null` when the suite sets none."
           },
           "checks": {
             "type": "array",
@@ -19780,7 +19782,8 @@
             "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
           },
           "matchOptions": {
-            "type": ["object", "null"]
+            "type": ["object", "null"],
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). `null` when the suite sets none."
           },
           "defaultAssertions": {
             "type": "array",
@@ -24288,7 +24291,8 @@
                 "description": "Suite-level floor on per-case iterations: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` clears it."
               },
               "matchOptions": {
-                "type": ["object", "null"]
+                "type": ["object", "null"],
+                "description": "Suite default tool-call match options, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. Fields you omit keep their current values; `null` clears them."
               },
               "checks": {
                 "type": ["array", "null"],
