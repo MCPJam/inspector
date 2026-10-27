@@ -60,6 +60,9 @@ async function bundle(entry, app, minify = false) {
     alias: {
       "spike-app": app,
       "spike-runtime": path.join(root, "sdk/src/widget-runtime/index.ts"),
+      "fixture-discovery": path.join(root, "widget-react/src/app-tool-discovery.ts"),
+      "fixture-registry": path.join(root, "widget-react/src/app-tools-registry.ts"),
+      "fixture-dispatch": path.join(root, "widget-react/src/app-tool-dispatch.ts"),
     },
     nodePaths: [path.join(root, "node_modules")],
   });
