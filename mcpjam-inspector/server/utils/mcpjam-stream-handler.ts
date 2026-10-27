@@ -1561,7 +1561,27 @@ interface StepContext {
   remainingTurnMs?: () => number;
 }
 
-type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
+type PersistedAssistantPart =
+  | TextPart
+  | ToolCallPart
+  // `providerOptions` is where a model message carries what the provider said
+  // about the part — on the OpenAI Responses API, the reply's `rs_…` item id,
+  // which the next request needs. The UI reasoning part has no such field.
+  | (ReasoningUIPart & { providerOptions?: TextPart["providerOptions"] });
+
+/**
+ * What a backend chunk said about the part it belongs to, in the shape a model
+ * message carries it. The chunk type here is loose (`[key: string]: unknown`),
+ * so this is the one place that narrows it.
+ */
+function chunkProviderOptions(chunk: {
+  providerMetadata?: unknown;
+}): TextPart["providerOptions"] | undefined {
+  const metadata = chunk.providerMetadata;
+  return metadata !== null && typeof metadata === "object"
+    ? (metadata as TextPart["providerOptions"])
+    : undefined;
+}
 
 interface LiveTraceTurnContext {
   recordedRequestPayloads: LiveChatTraceRequestPayloadEntry[];
@@ -1915,11 +1935,49 @@ function normalizePreservedReasoning(messages: ModelMessage[]): ModelMessage[] {
 }
 
 /**
+ * Org provider keys the backend builds with `provider(modelId)` on
+ * `@ai-sdk/openai` / `@ai-sdk/azure` — i.e. the OpenAI RESPONSES API
+ * (`convex/stream/buildOrgModel.ts`, `call: "model"`).
+ */
+const OPENAI_RESPONSES_PROVIDER_KEYS = new Set(["openai", "azure"]);
+
+/**
+ * Whether this turn's backend call lands on the OpenAI Responses API, where
+ * reasoning must NOT be pruned.
+ *
+ * With `store` on — the provider's default — that API replays an earlier reply
+ * by item id: the reply's text goes back as
+ * `{ type: "item_reference", id: "msg_…" }`, and OpenAI refuses a message item
+ * whose reasoning item is missing ("Item 'msg_…' of type 'message' was
+ * provided without its required 'reasoning' item: 'rs_…'"), which ends the
+ * conversation on the next turn. Dropping old reasoning saves real tokens on
+ * every other provider, which resends it as full text; here it saves none,
+ * because the reasoning rides back as an id too.
+ *
+ * `/stream` never qualifies: MCPJam's own models go through the gateway or
+ * OpenRouter, neither of which carries OpenAI item ids.
+ */
+function usesOpenAiResponsesApi(
+  endpointPath: string,
+  extraBodyFields: Record<string, unknown> | undefined,
+): boolean {
+  if (endpointPath !== "/stream/org") return false;
+  const providerKey = extraBodyFields?.providerKey;
+  return (
+    typeof providerKey === "string" &&
+    OPENAI_RESPONSES_PROVIDER_KEYS.has(providerKey)
+  );
+}
+
+/**
  * Scrub messages for sending to the backend LLM.
  * Removes UI-specific metadata that shouldn't be sent to the model.
  *
  * `preserveReasoningFromIndex` starts the current user turn. Reasoning from
- * that index survives tool steps; reasoning from earlier turns is pruned.
+ * that index survives tool steps; reasoning from earlier turns is pruned —
+ * unless `keepAllReasoning` says the turn runs on the OpenAI Responses API
+ * ({@link usesOpenAiResponsesApi}), which rejects a reply whose reasoning item
+ * is gone.
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
@@ -1927,9 +1985,14 @@ function scrubMessagesForBackend(
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
   preserveReasoningFromIndex?: number,
+  keepAllReasoning?: boolean,
 ): ModelMessage[] {
   let pruned: ModelMessage[];
-  if (
+  if (keepAllReasoning) {
+    // Same UI-only `state` strip the current-turn slice gets below, applied to
+    // the whole history since all of it now reaches the provider.
+    pruned = normalizePreservedReasoning(messages);
+  } else if (
     typeof preserveReasoningFromIndex === "number" &&
     preserveReasoningFromIndex > 0 &&
     preserveReasoningFromIndex < messages.length
@@ -2377,8 +2440,10 @@ async function processStream(
   const toolInputErrors: string[] = [];
   const unfinishedTools = new Map<string, string>();
   let pendingText = "";
+  let pendingTextMetadata: TextPart["providerOptions"] | undefined;
   let pendingReasoning = "";
   let pendingReasoningId: string | null = null;
+  let pendingReasoningMetadata: TextPart["providerOptions"] | undefined;
   let hasToolCalls = false;
   let finishChunk: UIMessageChunk | null = null;
   let firstChunkAt: number | undefined;
@@ -2386,21 +2451,38 @@ async function processStream(
 
   const flushText = () => {
     if (pendingText) {
-      contentParts.push({ type: "text", text: pendingText });
+      contentParts.push({
+        type: "text",
+        text: pendingText,
+        ...(pendingTextMetadata
+          ? { providerOptions: pendingTextMetadata }
+          : {}),
+      });
       pendingText = "";
     }
+    pendingTextMetadata = undefined;
   };
 
   const flushReasoning = () => {
-    if (pendingReasoning) {
+    // An empty reasoning block is kept when the provider NAMED it. On the
+    // OpenAI Responses API a reply is replayed by item id, and a message item
+    // whose reasoning item is missing is refused outright, so a `rs_…` with no
+    // summary text still has to survive into the next request. Without an id
+    // there is nothing to reference and an empty part would only render a
+    // "Reasoning" header with nothing under it, so that case is still dropped.
+    if (pendingReasoning || pendingReasoningMetadata) {
       contentParts.push({
         type: "reasoning",
         text: pendingReasoning,
         state: "done",
+        ...(pendingReasoningMetadata
+          ? { providerOptions: pendingReasoningMetadata }
+          : {}),
       });
       pendingReasoning = "";
     }
     pendingReasoningId = null;
+    pendingReasoningMetadata = undefined;
   };
 
   const parsedStream = parseJsonEventStream({
@@ -2483,11 +2565,13 @@ async function processStream(
         case "text-start":
           flushReasoning();
           flushText();
+          pendingTextMetadata = chunkProviderOptions(chunk);
           writer.write(chunk);
           break;
 
         case "text-delta":
           flushReasoning();
+          pendingTextMetadata = chunkProviderOptions(chunk) ?? pendingTextMetadata;
           pendingText += chunk.delta ?? "";
           if (chunk.delta) {
             safelyEmitLiveTextDelta(onLiveTextDelta, chunk.delta);
@@ -2505,6 +2589,8 @@ async function processStream(
           break;
 
         case "text-end":
+          pendingTextMetadata =
+            chunkProviderOptions(chunk) ?? pendingTextMetadata;
           flushText();
           writer.write(chunk);
           break;
@@ -2513,6 +2599,7 @@ async function processStream(
           flushText();
           flushReasoning();
           pendingReasoningId = chunk.id;
+          pendingReasoningMetadata = chunkProviderOptions(chunk);
           writer.write(chunk);
           break;
 
@@ -2522,6 +2609,8 @@ async function processStream(
             flushReasoning();
           }
           pendingReasoningId = chunk.id;
+          pendingReasoningMetadata =
+            chunkProviderOptions(chunk) ?? pendingReasoningMetadata;
           pendingReasoning += chunk.delta ?? "";
           writer.write(chunk);
           break;
@@ -2531,6 +2620,8 @@ async function processStream(
             flushReasoning();
             pendingReasoningId = chunk.id;
           }
+          pendingReasoningMetadata =
+            chunkProviderOptions(chunk) ?? pendingReasoningMetadata;
           flushReasoning();
           writer.write(chunk);
           break;
@@ -3708,6 +3799,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       mcpClientManager,
       selectedServers,
       traceTurn.promptMessageStartIndex,
+      usesOpenAiResponsesApi(ctx.endpointPath, ctx.extraBodyFields),
     ),
     modelId,
     provider,
