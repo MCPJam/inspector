@@ -2,15 +2,15 @@
   "schema": 2,
   "harnesses": {
     "claude-code": {
-      "fingerprint": "sha256:e8b7f5935685c8e2026d8549874f2ad689ef0194494a6ba56ecf9bae8ad29a22",
+      "fingerprint": "sha256:b842bdfdcc679182e7b31daab6caa4881cc352eb87d8f00a0fb3ea93f6c5b71d",
       "inputs": {
         "pack-dependency-closure": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         ".github/workflows/local-harness-pack.yml": "sha256:0f3afb13d8d01806fcd36bd2a84528d1916f08612b2f73947ffbb31b8a791d97",
         "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:73bbbf7622207800b3a23c6db1df11f3beba49f2e3411a01995a15275bb7e317",
         "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:d5dd9ebd218430eb0cca6c705b9c94f28d03f94ea3f5b04ef158e15803e06213",
         "mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs": "sha256:89eda8f785d769cca750a58ddad4d5e954368a824e7e8916cc3c558c2b0bbeeb",
-        "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code-vendor/package.json": "sha256:4ec8b0b189fa9d2de63254c851921726b12409622dedf975e1926551435f9e31",
-        "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code-vendor/pnpm-lock.yaml": "sha256:aaa52c46aea591c482bc11795865238c30c20d5d0c368cb01a0add5dcb87bed2",
+        "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code-vendor/package.json": "sha256:36ac6c1b01e523384ed489fa369039cfc432a4253a71fcaa5549c5a84d0198e1",
+        "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code-vendor/pnpm-lock.yaml": "sha256:389051088b9bddd1f3e7848a2c0f7989e3b24ff65c4574ebf9c507334521ab5a",
         "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code.mjs": "sha256:8e5767f3533b5c86a8a4b1ca38ce7147e2bd5432b948333b0d8f0f6ef6fdb496",
         "mcpjam-inspector/scripts/local-harness-toolchain.json": "sha256:621261feb62400bd29bf2e88d508ecc6ac4ace155aa19d833d6da79998ff06db",
         "mcpjam-inspector/scripts/read-local-harness-toolchain.mjs": "sha256:c15e4c3799e32e5c0daf26bde9ae58bf836e7d323788d75e5d0a788c74e59e96",
@@ -19,8 +19,8 @@
         "mcpjam-inspector/tools/mcpjam-job-launcher/go.sum": "sha256:8636998393adc6606e3d7fcff44b7be8b73925f3ef8d2cd17339dd02adbbcc17",
         "mcpjam-inspector/tools/mcpjam-job-launcher/main.go": "sha256:c3c5a24c16ff609cb7660845b8460d32134c4d4073928cb45b94e5cb6b93a57d",
         "mcpjam-inspector/tools/mcpjam-job-launcher/main_test.go": "sha256:a132f51debb45404e804cf7e06b2a5ab2aedea8f5b9c20cdecb2fea7ad3d1735",
-        "recipe/package.json": "sha256:4ec8b0b189fa9d2de63254c851921726b12409622dedf975e1926551435f9e31",
-        "recipe/pnpm-lock.yaml": "sha256:aaa52c46aea591c482bc11795865238c30c20d5d0c368cb01a0add5dcb87bed2"
+        "recipe/package.json": "sha256:36ac6c1b01e523384ed489fa369039cfc432a4253a71fcaa5549c5a84d0198e1",
+        "recipe/pnpm-lock.yaml": "sha256:389051088b9bddd1f3e7848a2c0f7989e3b24ff65c4574ebf9c507334521ab5a"
       }
     },
     "codex": {
