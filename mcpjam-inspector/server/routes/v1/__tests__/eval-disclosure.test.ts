@@ -49,8 +49,8 @@ import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 import { runnerCapabilities } from "../../../services/evals/runner-capabilities.js";
 
 const PROJECT = "proj_a";
-const SUITE = "suite_a";
-// Query ids pass the route's Convex id shape check (`convex-id-param.ts`).
+// Ids pass the route's Convex id shape check (`convex-id-param.ts`).
+const SUITE = "suitea".padEnd(32, "x");
 const CASE_1 = "case1".padEnd(32, "x");
 const CASE_2 = "case2".padEnd(32, "x");
 const ENV_1 = "env1".padEnd(32, "x");
@@ -400,6 +400,16 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
       expect(body.code).toBe("NOT_FOUND");
       expect(queryMock).not.toHaveBeenCalled();
     }
+  });
+
+  it("404s a malformed :suiteId before either Convex query runs", async () => {
+    const res = await makeApp().request(
+      `/api/v1/projects/${PROJECT}/eval-suites/my-suite/run-disclosure`
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as any;
+    expect(body.message).toBe("Eval suite not found");
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("rejects environmentId and environmentIds together with a clear 400, not a confusing 404", async () => {
