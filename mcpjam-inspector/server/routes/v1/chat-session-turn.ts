@@ -1,3 +1,8 @@
+import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import { buildSetupManifest } from "../../services/chat-turn/setup-manifest.js";
+import { resolveChatSessionEnvironment } from "./chat-session-environment.js";
+import type { ResolvedTarget } from "./chat-session-environment.js";
+import { resolveApiHarnessEnvironment } from "./chat-session-harness-environment.js";
 import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
@@ -120,7 +125,6 @@ import {
   runtimeServerNames,
   runtimeSkills as environmentRuntimeSkills,
 } from "../../services/environments/runtime.js";
-import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { logger } from "../../utils/logger.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
@@ -132,14 +136,12 @@ import {
 } from "../../services/environments/effective-capabilities.js";
 import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
 import { captureServerEvent } from "../../utils/analytics.js";
-import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
   playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
-  resolvePlaygroundCredentialEnvironment,
   type PlaygroundBoxReason,
 } from "../../utils/harness/playground-box.js";
 import type { HarnessBox } from "../../utils/harness/harness-box.js";
@@ -308,7 +310,7 @@ const turnSchema = z
       .optional(),
     hostId: z.string().min(1).optional(),
     environmentId: z.string().min(1).optional(),
-    serverIds: z.array(z.string().min(1)).min(1).max(20).optional(),
+    serverIds: z.array(z.string().min(1)).max(20).optional(),
     systemPrompt: z.string().max(8_000).optional(),
     temperature: z.number().min(0).max(2).optional(),
     /**
@@ -512,57 +514,6 @@ async function releaseTurnLease(
 
 // ── Target resolution ───────────────────────────────────────────────────────
 
-interface ResolvedTarget {
-  serverIds: string[];
-  serverNames?: string[];
-  environmentId?: string;
-  /**
-   * The environment's own capability set, when the turn named one.
-   *
-   * An environment DECIDES what runs — which skills, which plugin versions,
-   * which captured server skills — and that decision is the whole reason a
-   * caller names one. Building a live set from the project pool instead would
-   * hand the model every skill the project has, including the ones the
-   * environment deliberately left out, drop the plugin skills it attached, and
-   * swap its captured server skills for live ones. Absent ⇒ the turn pinned
-   * bare `serverIds` and there is no environment decision to honour, so the
-   * caller builds a live set instead.
-   */
-  environmentCapabilities?: EffectiveCapabilitySet;
-  /**
-   * The SAME environment decision, flattened for the HARNESS engine.
-   *
-   * `environmentCapabilities` is what the emulated engine consumes; a harness
-   * writes skills to disk inside its sandbox and reads only this flat list
-   * (`runtimeSkillsOverride` → `selectHarnessSkillSource`). Setting one and
-   * not the other is how an environment-backed harness turn ends up running
-   * the LIVE project-wide catalog — the environment's decision honoured on one
-   * engine and ignored on the other, which is worse than either alone because
-   * the two turns look identical from outside.
-   *
-   * PRESENCE, not length, is the signal: an environment that resolves zero
-   * skills delivers zero, and must never fall through to the project pool.
-   * Absent ⇒ nobody ANSWERED — no environment was named, or the resolver is
-   * old enough not to carry `skills` — and the live fetch is what is correct
-   * for an unknown, since only a real answer may speak for the environment.
-   */
-  environmentSkills?: RuntimeSkill[];
-  /**
-   * The host this turn executes as, resolved SERVER-SIDE — from the
-   * environment's own `spec.host`, or by re-fetching an explicit `hostId`.
-   *
-   * Absent for a bare `serverIds` turn with no host pointer, which is the
-   * pre-existing shape and always runs the emulated engine. Present ⇒ its
-   * `runtimeConfig` is the only source of `harness`/`computer` for this turn.
-   */
-  host?: ChatSessionHostTarget;
-  /**
-   * Built-in tool ids the target's client advertises that THIS surface does
-   * not run — see {@link unappliedBuiltInToolIds}.
-   */
-  unappliedCapabilities?: string[];
-}
-
 /**
  * The client's `builtInToolIds`, which this route deliberately does not apply.
  *
@@ -607,15 +558,7 @@ function hostSelectedServerIds(
     : [];
 }
 
-/**
- * Re-fetch a host's authoritative runtime config, and FAIL CLOSED.
- *
- * The same fetch and the same fail-closed posture as `routes/web/chat-v2.ts`'s
- * host-bound branch, for the same reason: this config is the only source of
- * `harness`, so falling back to "no host config" would silently run the
- * emulated engine for a host that declares a real runtime — the exact
- * misattribution this whole path exists to prevent.
- */
+/** Re-fetch the authoritative host config before choosing the runtime. */
 async function fetchExplicitHostTarget(
   hostId: string,
   context: { authHeader: string; signal?: AbortSignal },
@@ -666,7 +609,7 @@ async function fetchExplicitHostTarget(
  * the environment pins its own host, and a pointer naming a different one is
  * refused rather than resolved by precedence.
  */
-async function resolveTarget(
+async function resolveLegacyTarget(
   client: ConvexHttpClient,
   projectId: string,
   input: { environmentId?: string; serverIds?: string[]; hostId?: string },
@@ -1077,6 +1020,17 @@ async function handleTurn(c: Context): Promise<Response> {
   }
 
   const body = parseWithSchema(turnSchema, await readJsonObjectBody(c));
+  if (!body.sessionId && body.modelId) assertUnambiguousModelId(body.modelId);
+  if (
+    !body.sessionId && !body.environmentId &&
+    body.serverIds === undefined && !body.hostId
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "A first turn must name its target: pass environmentId, serverIds, or hostId.",
+    );
+  }
 
   const client = await chatSessionClient(c);
   const authHeader = `Bearer ${await getConvexBearerForRequest(c)}`;
@@ -1145,7 +1099,7 @@ async function handleTurn(c: Context): Promise<Response> {
           serverIds: body.serverIds,
         }
       : existing.resumeConfig;
-    if (!runtimeId || !resume?.modelId) {
+    if (!runtimeId || !resume || (!configuring && !resume.modelId)) {
       // An `api` session that lost its pins cannot be continued deterministically
       // — we would have to invent a model. Say so rather than pick one.
       return v1Error(
@@ -1170,7 +1124,7 @@ async function handleTurn(c: Context): Promise<Response> {
       ? body.reasoningEffort
       : (existing.resumeConfig?.reasoningEffort ?? undefined);
     pins = {
-      modelId: resume.modelId,
+      modelId: resume?.modelId ?? "",
       toolMode: resume.toolMode ?? "read_only",
       ...(resume.systemPrompt ? { systemPrompt: resume.systemPrompt } : {}),
       ...(typeof resume.temperature === "number"
@@ -1210,7 +1164,9 @@ async function handleTurn(c: Context): Promise<Response> {
         { reason: "HOST_TARGET_REQUIRED" },
       );
     }
-    priorMessages = (await loadResumeHistory(existing)) as ModelMessage[];
+    priorMessages = configuring
+      ? []
+      : ((await loadResumeHistory(existing)) as ModelMessage[]);
   } else {
     if (!body.projectId) {
       return v1Error(
@@ -1219,19 +1175,11 @@ async function handleTurn(c: Context): Promise<Response> {
         "projectId is required to start a new session.",
       );
     }
-    if (!body.modelId) {
-      return v1Error(
-        c,
-        "VALIDATION_ERROR",
-        "modelId is required to start a new session.",
-      );
-    }
-    assertUnambiguousModelId(body.modelId);
     projectId = body.projectId;
     runtimeChatSessionId = randomUUID();
     pinnedReasoningEffort = body.reasoningEffort;
     pins = {
-      modelId: body.modelId,
+      modelId: body.modelId ?? "",
       toolMode: body.toolMode ?? "read_only",
       ...(body.systemPrompt ? { systemPrompt: body.systemPrompt } : {}),
       ...(body.temperature !== undefined
@@ -1415,7 +1363,7 @@ async function handleTurn(c: Context): Promise<Response> {
     }
 
     // --- Target + model ---------------------------------------------------
-    const target = await resolveTarget(
+    const target = await resolveChatSessionEnvironment(
       client,
       projectId,
       {
@@ -1428,6 +1376,7 @@ async function handleTurn(c: Context): Promise<Response> {
       // The turn's own controller, so a host fetch stops with the turn rather
       // than running on to its own timeout after the caller has gone.
       { authHeader, signal: abortController.signal },
+      resolveLegacyTarget,
     );
     // A host-only turn deliberately pins NOTHING here. Pinning the resolved
     // server set would look like a convenience and behave like a trap twice
@@ -1457,7 +1406,7 @@ async function handleTurn(c: Context): Promise<Response> {
       target,
       allowed,
     );
-    if (selected.length === 0) {
+    if (selected.length === 0 && pins.serverIds?.length !== 0) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
@@ -1472,6 +1421,20 @@ async function handleTurn(c: Context): Promise<Response> {
     // off every named one and send the whole turn back to raw ids.
     const serverLabels = serverLabelsFor(selected);
 
+    if (!pins.modelId) {
+      const fallback =
+        target.resolvedEnvironment?.host.runtimeConfig.modelId ??
+        target.host?.runtimeConfig.modelId;
+      if (typeof fallback !== "string" || !fallback.trim()) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "Choose a model for this session or configure one on its client.",
+        );
+      }
+      assertUnambiguousModelId(fallback);
+      pins.modelId = fallback;
+    }
     const resolvedModelDefinition = await resolveHostModelDefinition({
       modelId: pins.modelId,
       projectId,
@@ -1714,12 +1677,19 @@ async function handleTurn(c: Context): Promise<Response> {
     );
 
     // --- Connect ----------------------------------------------------------
+    const connectableSelection = selected.filter(
+      (entry) => !target.unavailableServerIds?.includes(entry.id),
+    );
     const connection = await createManualHostedConnection(
       c,
       {
         projectId,
-        serverIds: selectedServerIds,
-        ...(selectedServerNames ? { serverNames: selectedServerNames } : {}),
+        serverIds: connectableSelection.map((entry) => entry.id),
+        ...(selectedServerNames
+          ? {
+              serverNames: connectableSelection.map((entry) => entry.name ?? entry.id),
+            }
+          : {}),
       },
       connectionSchema,
       {
@@ -1736,7 +1706,19 @@ async function handleTurn(c: Context): Promise<Response> {
       },
     );
     manager = connection.manager;
-    const unavailable: Record<string, unknown> = { ...connection.refusedServers };
+    const unavailable: Record<string, unknown> = {
+      ...Object.fromEntries(
+        (target.unavailableServerIds ?? []).map((id) => [
+          id,
+          new WebRouteError(
+            404,
+            ErrorCode.NOT_FOUND,
+            "Server is no longer available in this project",
+          ),
+        ]),
+      ),
+      ...connection.refusedServers,
+    };
 
     // Two ways to say "no tools", answered identically. `allowedTools: []` is
     // an allowlist that admits nothing, which is the same request as
@@ -1917,6 +1899,42 @@ async function handleTurn(c: Context): Promise<Response> {
       Math.min(body.maxSteps ?? DEFAULT_MAX_STEPS, MAX_STEPS_CEILING),
     );
 
+    const setupAtTurn = await buildSetupManifest({
+      environment: target.resolvedEnvironment,
+      capabilities: turnCapabilities,
+      model: {
+        id: String(modelDefinition.id),
+        provider: modelDefinition.provider,
+      },
+      routingRef: routingSelection
+        ? JSON.stringify(routingSelection)
+        : runtime.modelSource === "mcpjam"
+          ? "mcpjam-hosted"
+          : undefined,
+      engine: engine.kind === "harness" ? engine.harness : "emulated",
+      venue: "hosted",
+      systemPrompt: prepared.enhancedSystemPrompt,
+      temperature: prepared.resolvedTemperature,
+      reasoningEffort: turnReasoningEffort,
+      requireToolApproval: false,
+      serverIds: selectedServerIds.filter((id) => !unavailable[id]),
+      tools,
+      builtInIds: Object.keys(builtInTools ?? {}),
+      connectionIds: prepared.connectionsAtTurn?.map((c) => c.connectionId),
+      maxSteps,
+      maxToolCalls: body.maxToolCalls,
+      toolMode: pins.toolMode,
+      allowedServerIds: body.allowedServerIds,
+      allowedTools: body.allowedTools,
+      policy: { progressiveToolDiscovery: prepared.progressivePlan?.enabled },
+      executionPolicy: effectiveBrowserPolicy
+        ? { browser: effectiveBrowserPolicy }
+        : {},
+      incomplete: prepared.liveServerSkills
+        ? ["skill_provenance_unavailable"]
+        : [],
+    });
+
     const userMessage: ModelMessage = { role: "user", content: body.message };
     const inputMessages = [...priorMessages, userMessage];
 
@@ -1949,25 +1967,26 @@ async function handleTurn(c: Context): Promise<Response> {
       // pins one; otherwise, for a `credential` harness on a host, the same
       // HIDDEN ad-hoc environment selecting the member's key that the
       // Playground mints. Refused here, before any box, when there is no key.
-      let boxEnvironmentId = pins.environmentId;
+      const boxEnvironment = await resolveApiHarnessEnvironment({
+        projectId,
+        bearer: authHeader,
+        harnessId: engine.harness,
+        credential: boxReason === "credential",
+        hostId: target.host?.hostId,
+        pinnedEnvironmentId: pins.environmentId,
+        resolvedEnvironmentId:
+          target.resolvedEnvironment?.environmentRef.environmentId,
+      });
+      if (!boxEnvironment.ok) {
+        return v1Error(
+          c,
+          boxEnvironment.status === 409 ? "CONFLICT" : "SERVER_UNREACHABLE",
+          boxEnvironment.message,
+          { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+        );
+      }
+      const boxEnvironmentId = boxEnvironment.environmentId;
       if (boxReason === "credential") {
-        if (!boxEnvironmentId && target.host) {
-          const hidden = await resolvePlaygroundCredentialEnvironment({
-            bearer: authHeader,
-            projectId,
-            hostId: target.host.hostId,
-            harnessId: engine.harness,
-          });
-          if (!hidden.ok) {
-            return v1Error(
-              c,
-              hidden.status === 409 ? "CONFLICT" : "SERVER_UNREACHABLE",
-              hidden.message,
-              { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
-            );
-          }
-          boxEnvironmentId = hidden.environmentId;
-        }
         // The credential check `runHarnessTurn` would fail, run BEFORE the box
         // is booted: a refused turn must not pay for a box, nor fail past
         // `modelCallStarted` and hold the lease to its TTL. Same function and
@@ -2112,6 +2131,9 @@ async function handleTurn(c: Context): Promise<Response> {
     unsettledHarnessCommit = result.harnessSessionCommit;
 
     await runtime.finalizeUsage(result);
+    if (result.turnTrace)
+      result.turnTrace = { ...result.turnTrace, setupAtTurn };
+
     // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
     // waiting on background agents ends that wait at the deadline and keeps
     // the answer it already has (`claude-code-background-drain.ts`). Only the
@@ -2571,7 +2593,7 @@ async function handleTurn(c: Context): Promise<Response> {
 /** Minimal body shape `createManualHostedConnection` authorizes against. */
 const connectionSchema = z.object({
   projectId: z.string().min(1),
-  serverIds: z.array(z.string().min(1)).min(1),
+  serverIds: z.array(z.string().min(1)),
   serverNames: z.array(z.string()).optional(),
 });
 

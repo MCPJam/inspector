@@ -1,3 +1,4 @@
+import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
@@ -235,7 +236,11 @@ beforeEach(() => {
       selectedServerIds: ["srv_1"],
     },
   });
-  queryMock.mockResolvedValue({
+  queryMock.mockImplementation(async (name) => name === "projectEnvironments:resolveEnvironmentForRuntime" ? {
+    environmentRef: { environmentId: "chat-env", name: "Chat", revision: 1 },
+    host: { hostId: HOST, runtimeConfig: { hostId: HOST, harness: "claude-code", selectedServerIds: ["srv_1"] } },
+    servers: { effectiveServerIds: ["srv_1"] }, skills: [], pluginVersions: [],
+  } : {
     _id: "cs_1",
     chatSessionId: "runtime-uuid",
     projectId: PROJECT,
@@ -245,11 +250,12 @@ beforeEach(() => {
     messagesBlobUrl: "https://blob.test/messages",
     resumeConfig: { modelId: MODEL, toolMode: "auto" },
   });
-  mutationMock.mockImplementation(async (name: string) =>
-    name === "chatSessions:claimTurnLease"
-      ? { status: "claimed", turnId: "turn_1" }
-      : null,
-  );
+  mutationMock.mockImplementation(async (reference) => {
+    const name = typeof reference === "string" ? reference : getFunctionName(reference);
+    if (name === "chatSessions:claimTurnLease") return { status: "claimed", turnId: "turn_1" };
+    if (name === "projectEnvironments:ensureAdhocEnvironment") return { environment: { environmentId: "chat-env" } };
+    return null;
+  });
   finalizeUsageMock.mockResolvedValue(undefined);
   runUnifiedAssistantTurnMock.mockImplementation(
     async (opts: { onEngineError?: (e: { message: string }) => void }) => {

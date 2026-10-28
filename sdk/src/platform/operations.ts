@@ -9312,7 +9312,7 @@ const sendChatMessageInput = z.object({
     .min(1)
     .optional()
     .describe(
-      'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required on a first turn. A bare id is REJECTED rather than guessed, because an unprefixed id is indistinguishable from a local Ollama model.'
+      'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Optional on a first turn: the environment model, then the client model, supplies the default; the resolved model is pinned for continuations. A bare id is REJECTED rather than guessed, because an unprefixed id is indistinguishable from a local Ollama model.'
     ),
   hostId: z
     .string()
@@ -9332,11 +9332,10 @@ const sendChatMessageInput = z.object({
     ),
   serverIds: z
     .array(z.string().trim().min(1))
-    .min(1)
     .max(20)
     .optional()
     .describe(
-      "Run against these project servers. Mutually exclusive with environmentId. First turn only."
+      "Run against these project servers; [] explicitly selects no MCP servers. Mutually exclusive with environmentId, including when empty. First turn only; continuations retain this selection."
     ),
   systemPrompt: z.string().max(8000).optional().describe("First turn only."),
   temperature: z
