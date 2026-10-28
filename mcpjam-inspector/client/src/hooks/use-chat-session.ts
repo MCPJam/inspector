@@ -1,4 +1,5 @@
 import { nextResumedVersion } from "./use-resumed-thread-persistence";
+import { isForwardingApprovalId, withoutForwardingGateParts, stripForwardingRequestBody } from "@/shared/forwarding-approval";
 import { dispatchAppToolCall } from "@mcpjam/widget-react";
 import { useSavedClientSendGuard } from "./use-saved-client-send-guard";
 import { stableStringifyJson } from "@/lib/client-config";
@@ -3497,6 +3498,7 @@ export function useChatSession(
       // Resolve the WorkOS / guest bearer at request time for every chat
       // route. authFetch attaches it only to allowlisted Convex-backed paths,
       // including both /api/web/chat-v2 and local /api/mcp/chat-v2.
+      if (typeof init?.body === "string") init = { ...init, body: stripForwardingRequestBody(init.body) };
       let response = await authFetch(input, init);
 
       // Scenario access recovery. A scenario turn re-resolves its authoritative
@@ -4349,7 +4351,8 @@ export function useChatSession(
     // by an automatic follow-up. Bounded like the agent surface: never past a
     // cut-off reply or a spent step budget, or a turn the server can no
     // longer serve is re-posted indefinitely (`autoResumeStopReason`).
-    sendAutomaticallyWhen: (options) => {
+    sendAutomaticallyWhen: (incoming) => {
+      const options = { ...incoming, messages: withoutForwardingGateParts(incoming.messages) };
       autoResumeHeldBackRef.current = null;
       if (lastStepHasPendingApproval(options)) return false;
       if (
@@ -4391,6 +4394,13 @@ export function useChatSession(
       addToolOutput,
     });
     return async (response: Parameters<typeof respond>[0]) => {
+      if (isForwardingApprovalId(response.id)) {
+        const result = await authFetch("/api/web/harness-forwarding/approval", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: response.id, approved: response.approved }) });
+        if (!result.ok) { toast.error("This approval is no longer available. Try the turn again."); return; }
+        const acknowledged: unknown = await result.json();
+        if (!acknowledged || typeof acknowledged !== "object" || !("ok" in acknowledged) || acknowledged.ok !== true) { toast.error("The approval could not be confirmed. Try again."); return; }
+        return sdkAddToolApprovalResponse(response);
+      }
       const selection = restoredApprovalSelectionRef.current;
       if (reasoningEffortHarness && isHostedTransport && hostedEnsureServerIds &&
           selection?.sessionId === chatSessionIdRef.current) {
@@ -4693,7 +4703,7 @@ export function useChatSession(
     }
     let cancelled = false;
     void convertToModelMessages(
-      persistent.map(({ id: _omitId, ...rest }) => rest) as Parameters<
+      withoutForwardingGateParts(persistent).map(({ id: _omitId, ...rest }) => rest) as Parameters<
         typeof convertToModelMessages
       >[0],
       { ignoreIncompleteToolCalls: true },
