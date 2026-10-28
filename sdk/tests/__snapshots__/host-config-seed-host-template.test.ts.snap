@@ -182,6 +182,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "structuredContent": true,
           },
         },
+        "modelContextPolicy": {
+          "maxBlocks": 256,
+          "turnMaxBytes": 8388608,
+          "updateMaxBytes": 2548000,
+        },
         "pluginExtensions": {
           "capabilities": {
             "fileResources": false,
@@ -382,6 +387,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "structuredContent": true,
           },
+        },
+        "modelContextPolicy": {
+          "maxBlocks": 256,
+          "turnMaxBytes": 8388608,
+          "updateMaxBytes": 2548000,
         },
         "pluginExtensions": {
           "capabilities": {
