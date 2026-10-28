@@ -46,6 +46,8 @@ export type {
 // SEP-2243 header mirroring: CLI and conformance use the send path’s walk.
 export {
   buildMcpParamHeaders,
+  findMcpHeaderIssues,
+  deriveMirroredBodyValues,
   classifyMcpHeader,
   decodeMcpHeaderValue,
   encodeMcpHeaderValue,
@@ -749,6 +751,7 @@ export {
   isInapplicableCheck,
   isUnrunCheck,
 } from "./conformance-outcome.js";
+export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -1150,6 +1153,11 @@ export {
   fetchOAuthMetadata,
 } from "./oauth-proxy.js";
 export type { OAuthProxyRequest, OAuthProxyResponse } from "./oauth-proxy.js";
+export {
+  isTlsTrustFailure,
+  TLS_TRUST_FAILURE,
+  tlsTrustFailure,
+} from "./oauth-proxy-error.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
 export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
@@ -1668,6 +1676,7 @@ export type {
   EvalOutOfOrderToolCall,
   EvalToolCall,
   EvalToolCallMatchResult,
+  EvalToolCallRetry,
 } from "./matchers.js";
 
 // HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).

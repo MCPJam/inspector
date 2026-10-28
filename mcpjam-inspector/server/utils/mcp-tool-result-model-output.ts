@@ -20,6 +20,7 @@ import {
   stripMcpToolOriginMetadata,
 } from "@/shared/mcp-tool-origin-metadata";
 import { UI_CONTEXT_PART_TYPE, renderUiContextText } from "@/shared/ui-context";
+import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
 import { provenanceMarksOf } from "./history-provenance.js";
 
 export type McpToolResultModelOutputOptions =
@@ -99,24 +100,6 @@ function readPartType(part: unknown): string | undefined {
   if (!part || typeof part !== "object") return undefined;
   const type = (part as { type?: unknown }).type;
   return typeof type === "string" ? type : undefined;
-}
-
-function unwrapJsonToolOutput(output: unknown): unknown {
-  let current = output;
-  for (let depth = 0; depth < 5; depth += 1) {
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      return current;
-    }
-    const record = current as Record<string, unknown>;
-    if (
-      record.type !== "json" ||
-      !Object.prototype.hasOwnProperty.call(record, "value")
-    ) {
-      return current;
-    }
-    current = record.value;
-  }
-  return current;
 }
 
 function readRawMcpResultFromPart(part: unknown): unknown | undefined {
@@ -320,7 +303,7 @@ export async function mapMcpImageToolOutputs(
       }
 
       const rawOutputValue =
-        rawResultValue ?? unwrapJsonToolOutput(part.output);
+        rawResultValue ?? unwrapToolOutputEnvelope(part.output, 5).value;
       const strippedPart = stripInternalProviderOptions(part);
       if (rawOutputValue == null || typeof rawOutputValue !== "object") {
         if (strippedPart !== part) didChange = true;

@@ -400,6 +400,7 @@ import {
   useCurrentOrgRoute,
 } from "./lib/app-navigation";
 import { ScopedNavigate } from "./components/routing/scoped-navigate";
+import { HostedBrowserScopeProvider } from "./hooks/useHostedBrowserAvailability";
 import {
   AppRouteReactContext,
   useAppRouteContext,
@@ -6761,7 +6762,16 @@ export default function App() {
                   <FeedbackReporterProvider
                     enabled={HOSTED_MODE && isFeedbackMember === true}
                   >
-                    {appContent}
+                    <HostedBrowserScopeProvider
+                      organizationId={activeOrganizationId}
+                      projectId={
+                        shouldQueryProjectId(convexProjectId)
+                          ? convexProjectId
+                          : null
+                      }
+                    >
+                      {appContent}
+                    </HostedBrowserScopeProvider>
                   </FeedbackReporterProvider>
                 )}
               </HostedShellGate>
