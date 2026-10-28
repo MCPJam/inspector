@@ -12,7 +12,9 @@ import {
 import { toast } from "sonner";
 import { ConvexError } from "convex/values";
 import { OrganizationsTab } from "../OrganizationsTab";
+import { getCurrentPlanRenewalLine } from "../organization/OrganizationCurrentPlanPanel";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
+import type { OrganizationBillingStatus } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { offeredPlans } from "@/lib/pricing-catalog";
 import {
@@ -148,13 +150,13 @@ function createPlanCatalog() {
 
 function billingStatusFixture(
   overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
+): OrganizationBillingStatus {
   return {
     organizationId: "org-1",
     organizationName: "Org One",
     plan: "free",
     effectivePlan: "free",
-    source: "free",
+    source: overrides.plan && overrides.plan !== "free" ? "subscription" : "free",
     billingInterval: null,
     billingConfigured: true,
     subscriptionStatus: null,
@@ -1756,12 +1758,303 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps a Free card deadline-free when stale cancellation state remains", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          hasCustomer: true,
+          stripeCancelAtPeriodEnd: true,
+          stripeCancelAt: Date.parse("2026-09-26T12:00:00.000Z"),
+          stripeCurrentPeriodEnd: Date.parse("2026-09-26T12:00:00.000Z"),
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    const panel = within(screen.getByTestId("current-plan-panel"));
+    expect(panel.getByText("Free")).toBeInTheDocument();
+    expect(panel.getByText("Limited functionality")).toBeInTheDocument();
+    expect(panel.queryByTestId("current-plan-non-renewing-badge")).toBeNull();
+    expect(panel.queryByTestId("current-plan-scheduled-cancel")).toBeNull();
+    expect(panel.queryByText(/Service ends|Will not renew|Sep 26/)).toBeNull();
+  });
+
+  describe("subscription notice applicability", () => {
+    const deadline = Date.parse("2026-12-26T12:00:00.000Z");
+    const staleFields = {
+      hasCustomer: true,
+      subscriptionStatus: "past_due",
+      billingInterval: "annual",
+      stripeCurrentPeriodEnd: deadline,
+      stripeCancelAt: deadline,
+      stripeScheduledPlan: "team",
+      stripeScheduledBillingInterval: "monthly",
+      stripeScheduledEffectiveAt: deadline,
+      canCancelScheduledBillingChange: true,
+      paymentState: "past_due",
+      paymentGraceEndsAt: deadline,
+    } as const;
+
+    it.each([
+      { name: "Free", plan: "free", effectivePlan: "free", source: "free" },
+      {
+        name: "Free with paid limits",
+        plan: "free",
+        effectivePlan: "team",
+        source: "subscription",
+      },
+      {
+        name: "starter trial",
+        plan: "free",
+        effectivePlan: "team",
+        source: "trial",
+      },
+      {
+        name: "expired trial",
+        plan: "free",
+        effectivePlan: "free",
+        source: "free",
+        trialStatus: "expired",
+      },
+      {
+        name: "simulation",
+        plan: "team",
+        effectivePlan: "pro",
+        source: "simulation",
+      },
+      {
+        name: "trial with historical paid plan",
+        plan: "team",
+        effectivePlan: "team",
+        source: "trial",
+      },
+    ] as const)("hides stale subscription notices for $name", (state) => {
+      for (const stripeCancelAtPeriodEnd of [true, false]) {
+        const billingStatus = billingStatusFixture({
+          ...staleFields,
+          ...state,
+          stripeCancelAtPeriodEnd,
+        });
+        mockUseOrganizationBilling.mockReturnValue(
+          createBillingHookState({ billingStatus }),
+        );
+        const view = render(
+          <OrganizationsTab organizationId="org-1" section="billing" />,
+        );
+        const element = screen.getByTestId("current-plan-panel");
+        const panel = within(element);
+        expect(
+          panel.queryByTestId("current-plan-non-renewing-badge"),
+        ).toBeNull();
+        expect(panel.queryByTestId("current-plan-scheduled-cancel")).toBeNull();
+        expect(panel.queryByTestId("current-plan-scheduled-change")).toBeNull();
+        expect(panel.queryByTestId("current-plan-past-due-banner")).toBeNull();
+        expect(
+          panel.queryByText(
+            /Service ends|Will not renew|Payment failed|Renews|Changes|Dec 26/,
+          ),
+        ).toBeNull();
+        expect(
+          panel.queryByRole("button", {
+            name: /Manage billing|Change to|Keep .* plan|Update payment method/,
+          }),
+        ).toBeNull();
+        expect(element.children).toHaveLength(
+          state.source === "simulation" ? 3 : 2,
+        );
+        expect(
+          getCurrentPlanRenewalLine(
+            billingStatus,
+            "period",
+            "cancel",
+            "schedule",
+          ),
+        ).toBe("No active subscription");
+        if (state.source === "trial") {
+          expect(panel.getByTestId("current-plan-renewal")).toHaveTextContent(
+            "Trial ends",
+          );
+        }
+        view.unmount();
+      }
+    });
+
+    it.each([null, Date.parse("2026-09-26T12:00:00.000Z"), deadline])(
+      "hides Free cancellation with missing, past or future date %s",
+      (date) => {
+        mockUseOrganizationBilling.mockReturnValue(
+          createBillingHookState({
+            billingStatus: billingStatusFixture({
+              ...staleFields,
+              stripeCancelAtPeriodEnd: true,
+              stripeCancelAt: date,
+              stripeCurrentPeriodEnd: date,
+            }),
+          }),
+        );
+        render(<OrganizationsTab organizationId="org-1" section="billing" />);
+        const panel = within(screen.getByTestId("current-plan-panel"));
+        expect(panel.getByText("Free")).toBeInTheDocument();
+        expect(panel.getByText("Limited functionality")).toBeInTheDocument();
+        expect(panel.queryByTestId("current-plan-renewal")).toBeNull();
+        expect(
+          panel.queryByText(/Service ends|Will not renew|access ends/),
+        ).toBeNull();
+      },
+    );
+
+    it.each(["team", "free"] as const)(
+      "keeps paid notices when effective limits are %s, including non-owners",
+      (effectivePlan) => {
+        for (const isOwner of [true, false]) {
+          for (const notice of ["cancel", "schedule", "grace"] as const) {
+            const billingStatus = billingStatusFixture({
+              ...staleFields,
+              plan: "team",
+              effectivePlan,
+              source: effectivePlan === "free" ? "free" : "subscription",
+              isOwner,
+              canManageBilling: isOwner,
+              stripeCancelAtPeriodEnd: notice === "cancel",
+              stripeScheduledPlan: notice === "schedule" ? "team" : null,
+              paymentState: notice === "grace" ? "past_due" : "ok",
+            });
+            mockUseOrganizationBilling.mockReturnValue(
+              createBillingHookState({ billingStatus }),
+            );
+            const view = render(
+              <OrganizationsTab organizationId="org-1" section="billing" />,
+            );
+            const panel = within(screen.getByTestId("current-plan-panel"));
+            expect(
+              panel.getByTestId(
+                notice === "cancel"
+                  ? "current-plan-scheduled-cancel"
+                  : notice === "schedule"
+                    ? "current-plan-scheduled-change"
+                    : "current-plan-past-due-banner",
+              ),
+            ).toHaveTextContent("Dec 26, 2026");
+            expect(panel.getByTestId("current-plan-renewal")).toHaveTextContent(
+              notice === "cancel"
+                ? "Cancels"
+                : notice === "schedule"
+                  ? "Changes"
+                  : "Payment failed",
+            );
+            expect(
+              panel.queryByRole("button", { name: "Manage billing" }) != null,
+            ).toBe(isOwner);
+            if (notice === "grace") {
+              expect(
+                panel.queryByRole("button", {
+                  name: "Update payment method",
+                }) != null,
+              ).toBe(isOwner);
+            }
+            view.unmount();
+          }
+        }
+      },
+    );
+
+    it.each(["loading", "error", "catalog loading"])(
+      "does not leak deadlines while %s",
+      (state) => {
+        mockUseOrganizationBilling.mockReturnValue(
+          createBillingHookState({
+            billingStatus: billingStatusFixture({
+              ...staleFields,
+              stripeCancelAtPeriodEnd: true,
+            }),
+            isLoadingBilling: state === "loading",
+            isLoadingPlanCatalog: state === "catalog loading",
+            error: state === "error" ? "Billing unavailable" : null,
+          }),
+        );
+        render(<OrganizationsTab organizationId="org-1" section="billing" />);
+        expect(
+          screen.queryByText(/Service ends|Will not renew|access ends|Dec 26/),
+        ).toBeNull();
+        if (state === "loading")
+          expect(
+            screen.getByText("Loading billing details..."),
+          ).toBeInTheDocument();
+        if (state === "error")
+          expect(screen.getByText("Billing unavailable")).toBeInTheDocument();
+      },
+    );
+
+    it("does not mark a simulation downgrade as a scheduled subscription cancellation", () => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            ...staleFields,
+            plan: "team",
+            source: "simulation",
+            stripeCancelAtPeriodEnd: true,
+          }),
+        }),
+      );
+      render(<OrganizationsTab organizationId="org-1" section="plans" />);
+      expect(
+        within(getPlanColumn("Free")).queryByRole("button", {
+          name: /Downgrade scheduled/,
+        }),
+      ).toBeNull();
+    });
+
+    it("updates notices across paid to Free and back without remounting", () => {
+      const paid = billingStatusFixture({
+        ...staleFields,
+        plan: "team",
+        effectivePlan: "team",
+        stripeCancelAtPeriodEnd: true,
+      });
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({ billingStatus: paid }),
+      );
+      const view = render(
+        <OrganizationsTab organizationId="org-1" section="billing" />,
+      );
+      expect(
+        screen.getByTestId("current-plan-scheduled-cancel"),
+      ).toBeInTheDocument();
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: {
+            ...paid,
+            plan: "free",
+            effectivePlan: "free",
+            source: "free",
+          },
+        }),
+      );
+      view.rerender(
+        <OrganizationsTab organizationId="org-1" section="billing" />,
+      );
+      expect(screen.queryByTestId("current-plan-scheduled-cancel")).toBeNull();
+      expect(screen.queryByTestId("current-plan-past-due-banner")).toBeNull();
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({ billingStatus: paid }),
+      );
+      view.rerender(
+        <OrganizationsTab organizationId="org-1" section="billing" />,
+      );
+      expect(
+        screen.getByTestId("current-plan-scheduled-cancel"),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("shows scheduled cancellation state instead of renewal copy for non-renewing subscriptions", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
           plan: "team",
           effectivePlan: "team",
+          source: "subscription",
           billingInterval: "monthly",
           subscriptionStatus: "active",
           hasCustomer: true,

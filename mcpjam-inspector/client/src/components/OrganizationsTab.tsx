@@ -79,6 +79,7 @@ import {
 } from "@/hooks/useOrganizationBilling";
 import {
   formatPlanName,
+  canShowSubscriptionNotices,
   getBillingErrorMessage,
   isGateAccessDenied,
 } from "@/lib/billing-entitlements";
@@ -207,6 +208,7 @@ function getScheduledBillingChangeCancellationState(
 ): ScheduledBillingChangeCancellationState | null {
   if (
     !billingStatus?.canManageBilling ||
+    !canShowSubscriptionNotices(billingStatus) ||
     !billingStatus.canCancelScheduledBillingChange ||
     billingStatus.stripeCancelAtPeriodEnd
   ) {
