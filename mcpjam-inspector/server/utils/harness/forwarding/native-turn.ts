@@ -60,6 +60,7 @@ export async function prepareNativeForwarding(args: {
   origin: string;
   expiresAt: number;
   turnId: string;
+  promptIndex?: number;
   strategy: HarnessMcpProxyStrategy;
   authHeader: string;
   policies?: Record<string, ToolPolicySnapshot>;
@@ -87,6 +88,8 @@ export async function prepareNativeForwarding(args: {
   const mcpJson = buildHarnessProxyMcpJson(inputs);
   const keyToServerId = harnessServerKeyToName(inputs);
   for (const [key, serverId] of Object.entries(keyToServerId)) {
+    // The native HTTP request includes the human approval wait at the gate.
+    mcpJson.mcpServers[key].timeout = Math.max(1000, args.expiresAt - Date.now());
     const owner = args.owners.find(
       (candidate) => candidate.serverId === serverId,
     )!;
@@ -109,6 +112,7 @@ export async function prepareNativeForwarding(args: {
       control: createExecutionControl({ owner }),
       owner,
       turnId: args.turnId,
+      promptIndex: args.promptIndex,
       writer: args.writer,
     }),
   );
