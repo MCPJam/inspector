@@ -28,7 +28,7 @@
  * (bootstrap MUST resolve before discovery decides whether to delegate).
  */
 import { z } from "zod";
-import { HOSTED_MODE, hostedBrowserEnabled } from "../../config.js";
+import { HOSTED_MODE } from "../../config.js";
 import { logger } from "../logger.js";
 import {
   getConvexHttpUrl,
@@ -192,10 +192,9 @@ export function isHostedBrowserVerdictStale(now: number = Date.now()): boolean {
  *           is that the desktop rate is unset, which would meter every hosted
  *           browser hour at the terminal rate.
  *   null  — the backend did not answer (it predates the gate, or bootstrap has
- *           not run). NOT a refusal, and not a yes: the caller falls back to
- *           its own env flag, which is dark by default anyway. Treating
- *           silence as refusal would break the staging path the flag exists
- *           for; treating it as approval would defeat the gate.
+ *           not run). NOT a refusal, and not a yes: what silence means
+ *           depends on the deployment mode, and `isHostedBrowserRefused`
+ *           decides it in one place.
  */
 export function isHostedBrowserExposable(): boolean | null {
   return hostedBrowserExposable;
@@ -232,9 +231,11 @@ export function isHostedDesktopProvisionable(): boolean | null {
  *
  *   LOCAL — permission. A local inspector may be pointed at any backend,
  *     including an older one or none at all, and its bootstrap may simply not
- *     have run. Refusing on silence would break the staging path the env flag
- *     exists to serve, and the env flag is already dark by default, so silence
- *     costs nothing there.
+ *     have run. Refusing on silence would refuse every local inspector without
+ *     a service token to bootstrap with. Silence costs little there: a local
+ *     chat offers the cloud browser only on the backend's own answer
+ *     (`hostedBrowser:getAvailability`), and the reservation refuses an
+ *     unconfigured deployment itself (`desktop_unavailable`).
  *
  *   HOSTED — refusal. A hosted replica has exactly one backend, which it
  *     bootstraps at boot; silence means that bootstrap failed or the backend
@@ -249,16 +250,16 @@ export function isHostedBrowserRefused(): boolean {
 
 /**
  * Is booking a per-run DESKTOP BOX for a hosted browser worth doing on this
- * replica — the rollout env flag, plus the backend verdict that would NOT
- * stop the reservation on its own?
+ * replica — the backend verdict that would NOT stop the reservation on its
+ * own?
  *
  * One definition because there are now two kinds of caller and they must not
  * disagree: `resolveHostTools` asks at tool-resolution time, and the eval and
  * swarm runners ask BEFORE PROVISIONING, because a desktop box is booked for
  * the life of a run and a resolver that then suppresses every browser tool
  * would leave that box paid for and idle. The backend refuses its own half of
- * this (`desktop_not_advertised`, `desktop_unavailable`), but it cannot see an
- * inspector-side env flag, so the provisioning side has to ask here.
+ * this (`desktop_not_advertised`, `desktop_unavailable`), but not a
+ * reservation on `exposable: false`, so the provisioning side has to ask here.
  *
  * `isHostedDesktopUnavailable` is DELIBERATELY NOT one of them, though it
  * looks like it belongs. The two backend verdicts fail differently:
@@ -288,7 +289,7 @@ export function isHostedBrowserRefused(): boolean {
  * facts rather than deployment ones.
  */
 export function hostedBrowserAdvertisable(): boolean {
-  return hostedBrowserEnabled() && !isHostedBrowserRefused();
+  return !isHostedBrowserRefused();
 }
 
 /**

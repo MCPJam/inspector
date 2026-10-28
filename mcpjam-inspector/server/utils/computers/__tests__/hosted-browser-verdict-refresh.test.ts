@@ -59,7 +59,6 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-10-28T00:00:00Z"));
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
   vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
-  vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "1");
   for (const fn of Object.values(logger)) fn.mockReset();
 });
 

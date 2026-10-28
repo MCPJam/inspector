@@ -70,7 +70,7 @@ import {
   ELICITATION_TIMEOUT_EXTENSION_MS,
   HOSTED_MODE,
   WEB_STREAM_TIMEOUT_MS,
-  webmcpInspectorReachable,
+  WEBMCP_INSPECTOR_ENABLED,
 } from "../../config.js";
 import {
   HostedElicitationBridge,
@@ -1492,14 +1492,12 @@ chatV2.post("/", async (c) => {
     }
 
     // WebMCP page tools: same boundary treatment as the app-tool snapshot, and
-    // gated on whether a session could exist here at all. Hosted, that means
-    // the hosted-reachability switch as well as the kill switch — a turn must
-    // not advertise the tools of a page this deployment cannot drive, because
-    // the model would call one and the client would have no session to fulfil
-    // it with.
+    // gated on the inspector's kill switch: a turn must not advertise the
+    // tools of a page this deployment cannot drive, because the model would
+    // call one and the client would have no session to fulfil it with.
     let validatedPageTools: PageToolEntry[];
     try {
-      validatedPageTools = webmcpInspectorReachable()
+      validatedPageTools = WEBMCP_INSPECTOR_ENABLED
         ? validatePageToolEntries(body.pageTools)
         : [];
     } catch (error) {

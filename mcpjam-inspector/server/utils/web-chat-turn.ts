@@ -478,7 +478,7 @@ export interface WebChatTurnPrepareInputs {
    * client-fulfilled like `appTools` — the client invokes them through the
    * session it already owns, hosted or local, and posts the result back.
    *
-   * The CALLER validates and gates them (`webmcpInspectorReachable`), because
+   * The CALLER validates and gates them (`WEBMCP_INSPECTOR_ENABLED`), because
    * a turn must never advertise a page tool on a deployment where no session
    * can exist: the model would call it and the turn would strand.
    */
