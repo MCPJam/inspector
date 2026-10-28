@@ -85,6 +85,58 @@ function hang() {
   return new Promise(() => {});
 }
 
+function mockPassingSuites() {
+  const base = {
+    passed: true,
+    outcome: "passed",
+    serverUrl: "https://example.com/mcp",
+    target: "https://example.com/mcp",
+    summary: "ok",
+    durationMs: 1,
+    checks: [],
+    categorySummary: {},
+  };
+  mockRunProtocol.mockResolvedValue({ success: true, result: base });
+  mockRunApps.mockResolvedValue({
+    success: true,
+    result: {
+      ...base,
+      discovery: {
+        toolCount: 0,
+        uiToolCount: 0,
+        listedResourceCount: 0,
+        listedUiResourceCount: 0,
+        checkedUiResourceCount: 0,
+      },
+    },
+  });
+  mockRunTasks.mockResolvedValue({
+    success: true,
+    result: {
+      ...base,
+      discovery: {
+        protocolVersion: "2025-11-25",
+        wire: "legacy",
+        toolCount: 0,
+        taskCapableToolCount: 0,
+      },
+    },
+  });
+  mockStartOAuth.mockResolvedValue({
+    phase: "complete",
+    result: {
+      passed: true,
+      outcome: "passed",
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "cimd",
+      serverUrl: "https://example.com/mcp",
+      summary: "ok",
+      durationMs: 1,
+      steps: [],
+    },
+  });
+}
+
 describe("ConformanceTab persist", () => {
   beforeEach(() => {
     startRun.mockClear();
@@ -152,57 +204,58 @@ describe("ConformanceTab persist", () => {
     expect(finalizeRun).not.toHaveBeenCalled();
   });
 
+  it("cancels a run whose id arrives after the page left", async () => {
+    const user = userEvent.setup();
+    let resolveStart: (value: { runId: string }) => void = () => {};
+    startRun.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveStart = resolve)),
+    );
+    const { unmount } = render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+
+    unmount();
+    expect(cancelRun).not.toHaveBeenCalled();
+    resolveStart({ runId: "run_2" });
+
+    await waitFor(() =>
+      expect(cancelRun).toHaveBeenCalledWith({ runId: "run_2" }),
+    );
+  });
+
+  it("cancels a run whose finalize fails after the page left", async () => {
+    const user = userEvent.setup();
+    mockPassingSuites();
+    let rejectFinalize: (error: Error) => void = () => {};
+    finalizeRun.mockImplementationOnce(
+      () => new Promise((_, reject) => (rejectFinalize = reject)),
+    );
+    const { unmount } = render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() => expect(finalizeRun).toHaveBeenCalledTimes(1));
+
+    unmount();
+    expect(cancelRun).not.toHaveBeenCalled();
+    rejectFinalize(new Error("finalize failed"));
+
+    await waitFor(() =>
+      expect(cancelRun).toHaveBeenCalledWith({ runId: "run_1" }),
+    );
+  });
+
   it("links a finished run to its saved page and does not cancel it on leave", async () => {
     const user = userEvent.setup();
-    const base = {
-      passed: true,
-      outcome: "passed",
-      serverUrl: "https://example.com/mcp",
-      target: "https://example.com/mcp",
-      summary: "ok",
-      durationMs: 1,
-      checks: [],
-      categorySummary: {},
-    };
-    mockRunProtocol.mockResolvedValue({ success: true, result: base });
-    mockRunApps.mockResolvedValue({
-      success: true,
-      result: {
-        ...base,
-        discovery: {
-          toolCount: 0,
-          uiToolCount: 0,
-          listedResourceCount: 0,
-          listedUiResourceCount: 0,
-          checkedUiResourceCount: 0,
-        },
-      },
-    });
-    mockRunTasks.mockResolvedValue({
-      success: true,
-      result: {
-        ...base,
-        discovery: {
-          protocolVersion: "2025-11-25",
-          wire: "legacy",
-          toolCount: 0,
-          taskCapableToolCount: 0,
-        },
-      },
-    });
-    mockStartOAuth.mockResolvedValue({
-      phase: "complete",
-      result: {
-        passed: true,
-        outcome: "passed",
-        protocolVersion: "2025-11-25",
-        registrationStrategy: "cimd",
-        serverUrl: "https://example.com/mcp",
-        summary: "ok",
-        durationMs: 1,
-        steps: [],
-      },
-    });
+    mockPassingSuites();
     const { unmount } = render(
       <ConformanceTab
         server={createHttpServer()}

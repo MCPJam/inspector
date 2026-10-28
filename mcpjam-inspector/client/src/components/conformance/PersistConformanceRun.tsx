@@ -35,6 +35,16 @@ const cancelRunMutation = makeFunctionReference<
   { cancelled: boolean; status: string }
 >("conformanceRuns:cancelRun");
 
+function cancelRunQuietly(
+  cancel: (args: { runId: string }) => Promise<unknown>,
+  runId: string,
+) {
+  void Promise.resolve(cancel({ runId })).catch(() => {
+    // No cancel on this deployment, or the tab is closing: the stale sweep
+    // closes the run instead.
+  });
+}
+
 function suiteReport(
   kind: "protocol" | "apps" | "tasks" | "oauth",
   state: {
@@ -201,6 +211,7 @@ export function PersistConformanceRun({
   const startedVersionRef = useRef(0);
   const finalizedRef = useRef(false);
   const finalizationScheduledRef = useRef(false);
+  const disposedRef = useRef(false);
 
   const { protocol, apps, tasks, oauth, isRunning, runVersion } = snapshot;
 
@@ -244,6 +255,7 @@ export function PersistConformanceRun({
               : undefined,
           serverRef: server.name,
         };
+    const version = runVersion;
     void startRun({
       projectId: persist.projectId,
       target,
@@ -252,10 +264,17 @@ export function PersistConformanceRun({
       actorLabel: "Inspector UI",
     })
       .then((result: { runId?: string }) => {
-        if (result?.runId) {
-          runIdRef.current = result.runId;
-          setRunId(result.runId);
+        const startedRunId = result?.runId;
+        if (!startedRunId) return;
+        // The page left before the run existed, so leaving had no id to cancel.
+        if (disposedRef.current) {
+          cancelRunQuietly(cancelRunRef.current, startedRunId);
+          return;
         }
+        // A newer run started while this one was being created.
+        if (startedVersionRef.current !== version) return;
+        runIdRef.current = startedRunId;
+        setRunId(startedRunId);
       })
       .catch(() => {
         // Persistence is best-effort for the live panel; the suites still run.
@@ -383,7 +402,15 @@ export function PersistConformanceRun({
           if (runIdRef.current === runId) onSavedRunRef.current?.(runId);
         })
         .catch(() => {
-          // Persistence is best-effort; the live results stay on screen.
+          // The live results stay on screen, but the run is still open. Mark
+          // it unfinalized so leaving the page cancels it, or cancel it now if
+          // the page left while finalizing.
+          if (runIdRef.current !== runId) return;
+          if (disposedRef.current) {
+            cancelRunQuietly(cancelRunRef.current, runId);
+          } else {
+            finalizedRef.current = false;
+          }
         });
     });
   }, [finalizeRun, isRunning, runVersion, server, runId]);
@@ -393,20 +420,17 @@ export function PersistConformanceRun({
   // `timed_out`. Best effort on tab close, where the request may not leave.
   // A deployment without `cancelRun` rejects the call; the sweep still runs.
   useEffect(() => {
+    disposedRef.current = false;
     const cancelIfOpen = () => {
       const openRunId = runIdRef.current;
       if (!openRunId || finalizedRef.current) return;
       finalizedRef.current = true;
-      void Promise.resolve(cancelRunRef.current({ runId: openRunId })).catch(
-        () => {
-          // No cancel on this deployment, or the tab is closing: the stale
-          // sweep closes the run instead.
-        },
-      );
+      cancelRunQuietly(cancelRunRef.current, openRunId);
     };
     window.addEventListener("beforeunload", cancelIfOpen);
     return () => {
       window.removeEventListener("beforeunload", cancelIfOpen);
+      disposedRef.current = true;
       cancelIfOpen();
     };
   }, []);
