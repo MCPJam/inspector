@@ -203,7 +203,7 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
             <p className="p-2 text-xs text-muted-foreground">Loading…</p>
           ) : triggers.length === 0 ? (
             <p className="p-2 text-xs text-muted-foreground">
-              No triggers yet.
+              No triggers yet. Create one to run an agent when an event arrives.
             </p>
           ) : (
             <ul className="space-y-1" data-testid="trigger-list">
