@@ -440,9 +440,9 @@ relaunch, which `pkill`s their Chromium.
 
 So `ensureBrowserSession` takes a TARGET:
 
-| Target               | Reserves                 | Stream | Relaunch claim / lease fence | Lifetime         | Profile |
-| -------------------- | ------------------------ | ------ | ---------------------------- | ---------------- | ------- |
-| `computer` (default) | yes, per member          | yes    | yes                          | the member's box | Persistent |
+| Target               | Reserves                 | Stream | Relaunch claim / lease fence | Lifetime         | Profile                                          |
+| -------------------- | ------------------------ | ------ | ---------------------------- | ---------------- | ------------------------------------------------ |
+| `computer` (default) | yes, per member          | yes    | yes                          | the member's box | Persistent                                       |
 | `sandbox`            | no — already provisioned | no     | no                           | the run          | Blank or a per-run saved-profile copy; no export |
 
 `ensureBrowserSession` REFUSES `ephemeral` on a computer target by name

@@ -941,8 +941,10 @@ export async function launchBrowserdContext(
     };
 
     if (options.contextMode === "ephemeral") {
-      if (options.profileImported) return await launchProfileContext("ephemeral");
-      // Unseeded runs use an isolated in-memory context without a profile directory.
+      if (options.profileImported)
+        return await launchProfileContext("ephemeral");
+      // Unseeded runs use an isolated in-memory context with no profile
+      // directory.
       const browser = await chromium.launch(launchArgs);
       let context;
       try {

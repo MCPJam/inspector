@@ -10774,7 +10774,8 @@ async function launchBrowserdContext(options) {
       return await finish(context);
     };
     if (options.contextMode === "ephemeral") {
-      if (options.profileImported) return await launchProfileContext("ephemeral");
+      if (options.profileImported)
+        return await launchProfileContext("ephemeral");
       const browser = await chromium.launch(launchArgs);
       let context;
       try {

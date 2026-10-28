@@ -109,7 +109,7 @@ web chat rejects local Browser selection and Browser consent headers.
 | Surface                 | Mode                                                       | Why                                                                                           |
 | ----------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | Playground chat         | persistent, `~/.mcpjam/computer/browser/<project>/profile` | A login must survive the turn that made it.                                                   |
-| Evals, swarms, journeys | ephemeral; optional saved-profile copy                               | Each run starts blank or from its own copy of the client's saved profile. Changes are discarded; profile export is disabled. |
+| Evals, swarms, journeys | ephemeral, no profile at all                               | One run must never inherit another's cookies — that is a verdict decided by the previous run. |
 
 Derived from the approval delivery, never configured: a surface that can ask a
 person is interactive and keeps its logins; one that cannot starts blank.

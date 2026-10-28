@@ -13,6 +13,14 @@ import {
   BROWSERD_OBSERVATION_VIEWPORT,
 } from "../launch-args";
 
+// Hoisted by vitest, so it applies to the whole file; only the
+// `launchBrowserdContext` tests below reach Playwright.
+const launchMocks = vi.hoisted(() => ({
+  launch: vi.fn(),
+  launchPersistentContext: vi.fn(),
+}));
+vi.mock("playwright", () => ({ chromium: launchMocks }));
+
 /**
  * Unit coverage for the ONE piece of the Playwright adapter that had a P1: the
  * network-idle wait must NOT convert a never-idling page into a settled one. The
@@ -275,12 +283,6 @@ describe("contextOptionsFor — the surface decides what is a determinism pin", 
   });
 });
 
-const launchMocks = vi.hoisted(() => ({
-  launch: vi.fn(),
-  launchPersistentContext: vi.fn(),
-}));
-vi.mock("playwright", () => ({ chromium: launchMocks }));
-
 describe("launchBrowserdContext profile selection", () => {
   it.each(["persistent", "ephemeral"] as const)(
     "uses the imported directory in %s mode with that mode's options",
@@ -289,14 +291,18 @@ describe("launchBrowserdContext profile selection", () => {
       const context = fakeAnyContext();
       launchMocks.launchPersistentContext.mockResolvedValue(context);
       const driver = await launchBrowserdContext({
-        userDataDir: "/tmp/browserd-launch-test-absent", headless: true,
-        contextMode, profileImported: true, deviceScaleFactor: 2,
+        userDataDir: "/tmp/browserd-launch-test-absent",
+        headless: true,
+        contextMode,
+        profileImported: true,
+        deviceScaleFactor: 2,
       });
       expect(launchMocks.launch).not.toHaveBeenCalled();
       expect(launchMocks.launchPersistentContext).toHaveBeenCalledWith(
         "/tmp/browserd-launch-test-absent",
         expect.objectContaining({
-          acceptDownloads: false, permissions: [],
+          acceptDownloads: false,
+          permissions: [],
           ...contextOptionsFor({ contextMode, deviceScaleFactor: 2 }),
         }),
       );
@@ -306,25 +312,40 @@ describe("launchBrowserdContext profile selection", () => {
 
   it("keeps an unseeded ephemeral browser isolated and closes its browser", async () => {
     vi.clearAllMocks();
-    const browser = { newContext: vi.fn().mockResolvedValue(fakeAnyContext()), close: vi.fn() };
+    const browser = {
+      newContext: vi.fn().mockResolvedValue(fakeAnyContext()),
+      close: vi.fn(),
+    };
     launchMocks.launch.mockResolvedValue(browser);
     const driver = await launchBrowserdContext({
-      userDataDir: "/unused", contextMode: "ephemeral", headless: true,
+      userDataDir: "/unused",
+      contextMode: "ephemeral",
+      headless: true,
     });
     expect(launchMocks.launchPersistentContext).not.toHaveBeenCalled();
-    expect(browser.newContext).toHaveBeenCalledWith(expect.objectContaining({
-      acceptDownloads: false, permissions: [], deviceScaleFactor: 1,
-    }));
+    expect(browser.newContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        acceptDownloads: false,
+        permissions: [],
+        deviceScaleFactor: 1,
+      }),
+    );
     await driver.close();
     expect(browser.close).toHaveBeenCalledOnce();
   });
 
   it("does not fall back to a blank browser when the imported profile cannot launch", async () => {
     vi.clearAllMocks();
-    launchMocks.launchPersistentContext.mockRejectedValue(new Error("invalid profile"));
-    await expect(launchBrowserdContext({
-      userDataDir: "/tmp/browserd-launch-test-absent", contextMode: "ephemeral", profileImported: true,
-    })).rejects.toThrow("invalid profile");
+    launchMocks.launchPersistentContext.mockRejectedValue(
+      new Error("invalid profile"),
+    );
+    await expect(
+      launchBrowserdContext({
+        userDataDir: "/tmp/browserd-launch-test-absent",
+        contextMode: "ephemeral",
+        profileImported: true,
+      }),
+    ).rejects.toThrow("invalid profile");
     expect(launchMocks.launch).not.toHaveBeenCalled();
   });
 });
