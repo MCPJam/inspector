@@ -266,6 +266,7 @@ describe("resolveTurnBuiltInToolIds", () => {
   it("still role-gates an environment turn's own list", async () => {
     const { result, loadProjectDefaultConfig } = resolve({
       targetKind: "environment",
+      hostRuntimeConfig: { builtInToolIds: [READ, GATED_WRITE] },
       requested: [READ, GATED_WRITE],
       loadProjectAccess: async () => ({ projectRole: null }),
     });

@@ -1,3 +1,4 @@
+import { guardEvalViewTools } from "./view-tool-policy.js";
 import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { createConvexEvidenceReadTransport } from "../../utils/harness/harness-evidence-reader.js";
 import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
@@ -527,6 +528,7 @@ export async function driveHostedEvalTurn(
   const mergedTools = {
     ...prepared.allTools,
     ...browser.computerWidgetTools,
+    ...guardEvalViewTools(browser.viewTools ?? {}, params.toolPolicyGate),
   };
   const tracedTools = wrapToolSetForEvalTrace(
     params.toolPolicyGate
@@ -544,7 +546,7 @@ export async function driveHostedEvalTurn(
   acc.messageHistory.push({ role: "user", content: params.prompt });
   acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
-  const appContext = browser.getModelContext?.();
+  let appContext: ReturnType<BrowserSessionContext["getModelContext"]>;
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
@@ -716,6 +718,7 @@ export async function driveHostedEvalTurn(
   // iteration-abort path (CodeRabbit, PR 2610).
   try {
     await browser.dismissCarriedWidget();
+    appContext = browser.getModelContext?.();
     sinks =
       params.buildSinks?.({
         promptIndex,

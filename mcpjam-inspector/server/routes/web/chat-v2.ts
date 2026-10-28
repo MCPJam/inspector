@@ -1,3 +1,6 @@
+import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config.js";
+import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import { resolveChatTurn } from "../../services/chat-turn/resolve-chat-turn.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
 import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
 import { hasServiceCredential } from "../../services/service-credential.js";
@@ -49,7 +52,6 @@ import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import { ranTurnSelection } from "../../utils/session-model-selection.js";
 import type { ChatV2Request } from "@/shared/chat-v2";
-import { getCanonicalModelId } from "@/shared/types";
 import {
   decideTurnRail,
   resolveChatSelection,
@@ -132,7 +134,6 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import {
-  fetchScenarioRuntimeConfig,
   isScenarioParticipant,
   planScenarioSandbox,
   scenarioHarnessRepublishRefusal,
@@ -146,7 +147,6 @@ import {
   scenarioHarnessBoxRefusal,
   scenarioHarnessProvisionRefusal,
 } from "./scenario-harness-refusals.js";
-import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   applyHostConformanceKnobs,
   applyHostParamMirroring,
@@ -173,7 +173,6 @@ import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { normalizeExecutionTarget } from "@/shared/execution-target";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import {
-  resolveEnvironmentForRuntime,
   runtimeServerIds,
   runtimeServerNames,
   runtimeServersAreOverridden,
@@ -193,7 +192,10 @@ import {
   withLiveProjectSkills,
   type EffectiveCapabilitySet,
 } from "../../services/environments/effective-capabilities.js";
-import { applyPluginVersionOverride } from "../../services/environments/plugin-override.js";
+import {
+  applyPluginVersionOverride,
+  withoutGuestPlugins,
+} from "../../services/environments/plugin-override.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import {
   resolveHostTools,
@@ -216,10 +218,10 @@ import {
 import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
+  resolvePlaygroundCredentialEnvironment,
   playgroundCredentialRefusal,
   playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
-  resolvePlaygroundCredentialEnvironment,
 } from "../../utils/harness/playground-box.js";
 import {
   isSandboxNoticeReason,
@@ -428,12 +430,14 @@ chatV2.post("/", async (c) => {
     // turn, including one that selected none. Scenario turns are exempt, since
     // their access is the `scenarioId` grant, re-checked by the runtime-config
     // fetch, not membership.
+    let chatEnvironmentsSupported = false;
     if (!isScenarioSession) {
-      await authorizeProject(
+      const authorized = await authorizeProject(
         callerContextFromHono(c),
         bearerToken,
         hostedBody.projectId,
       );
+      chatEnvironmentsSupported = authorized.chatEnvironments;
     }
 
     // Host config is owned by the scenario's host, not the request body.
@@ -465,7 +469,13 @@ chatV2.post("/", async (c) => {
     // (hosts are plugin-blind), and never persisted: it is provenance for this
     // launch, not a restorable pin.
     let effectiveCapabilities: EffectiveCapabilitySet | null = null;
-    if (executionTarget.kind === "environment") {
+    let turnMode: "interactive" | "recorded" = isScenarioSession
+      ? "recorded"
+      : "interactive";
+    if (
+      !isScenarioSession &&
+      (executionTarget.kind === "environment" || chatEnvironmentsSupported)
+    ) {
       // `sk_…` API-key bearers can't query Convex directly; this resolves the
       // delegated JWT (and passes JWTs through untouched), same as the eval
       // launch path.
@@ -475,34 +485,52 @@ chatV2.post("/", async (c) => {
       // One atomic member-read: host runtime config + closed server set +
       // composed skill union + pinned plugin versions, at one revision. The
       // browser never supplies any of it.
-      environmentSpec = await resolveEnvironmentForRuntime(convexClient, {
-        projectId: hostedBody.projectId,
-        environmentId: executionTarget.environmentId,
-        ...(executionTarget.overrides
-          ? { overrides: executionTarget.overrides }
-          : {}),
+      const resolvedTurn = await resolveChatTurn({
+        target: executionTarget,
+        access: { kind: "project", projectId: hostedBody.projectId },
+        selection:
+          executionTarget.kind === "environment"
+            ? executionTarget.overrides?.serverIds !== undefined
+              ? {
+                  kind: "explicit",
+                  serverIds: executionTarget.overrides.serverIds,
+                }
+              : { kind: "environment-default" }
+            : { kind: "explicit", serverIds: selectedServerIds ?? [] },
+        client: convexClient,
+        bearer: bearerToken,
+        signal: c.req.raw.signal,
       });
+      turnMode = resolvedTurn.mode;
+      environmentSpec = resolvedTurn.environment;
+      if (c.get("guestId")) environmentSpec = withoutGuestPlugins(environmentSpec);
       hostRuntimeConfig = environmentSpec.host.runtimeConfig;
       // Attribution is a SECOND read and deliberately cannot fail the turn:
       // the environment already decided what runs, and a probe blip must
       // degrade origin reporting, not stop a send. Costs nothing when the
       // environment pins no plugins.
-      const attribution = await fetchPluginRuntimeAttribution(convexClient, {
-        projectId: hostedBody.projectId,
-        pluginVersionIds: (environmentSpec.pluginVersions ?? []).map(
-          (plugin) => plugin.pluginVersionId,
-        ),
-      });
+      const attribution = c.get("guestId")
+        ? null
+        : await fetchPluginRuntimeAttribution(convexClient, {
+            projectId: hostedBody.projectId,
+            pluginVersionIds: (environmentSpec.pluginVersions ?? []).map(
+              (plugin) => plugin.pluginVersionId,
+            ),
+          });
       // INS-4: the Playground's ephemeral plugin narrowing, applied to the
       // resolved spec (see `plugin-override.ts` for why it cannot be a query
       // argument). It runs BEFORE the capability projection so everything
       // downstream — connected servers, delivered skills, trace origin,
       // telemetry — sees one spec, and it can only ever remove.
-      if (executionTarget.overrides?.pluginVersionIds !== undefined) {
+      const retainedVersionIds =
+        !c.get("guestId") && executionTarget.kind === "environment"
+          ? executionTarget.overrides?.pluginVersionIds
+          : undefined;
+      if (retainedVersionIds !== undefined) {
         const narrowed = applyPluginVersionOverride({
           spec: environmentSpec,
           attribution,
-          retainedVersionIds: executionTarget.overrides.pluginVersionIds,
+          retainedVersionIds,
         });
         environmentSpec = narrowed.spec;
         if (narrowed.droppedVersionIds.length > 0) {
@@ -801,10 +829,7 @@ chatV2.post("/", async (c) => {
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
         hostStyle:
           body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
-        builtInToolIds:
-          isScenarioSession || environmentSpec
-            ? undefined
-            : body.builtInToolIds,
+        builtInToolIds: isScenarioSession ? undefined : body.builtInToolIds,
       },
       // Scenario: the published host wins (a share-link client can't override).
       // Host preview (Playground): the owner's in-session tweaks win, while
@@ -1271,8 +1296,9 @@ chatV2.post("/", async (c) => {
     // not be able to add the project's pool to it. A backend too old to say
     // (`environmentOrigin` absent) is treated as named.
     const requestedProjectSkills =
-      executionTarget.kind === "environment" &&
-      (rawBody as Record<string, unknown>).includeProjectSkills === true;
+      !isScenarioSession &&
+      (executionTarget.kind !== "environment" ||
+        (rawBody as Record<string, unknown>).includeProjectSkills === true);
     const includeProjectSkills =
       requestedProjectSkills && environmentSpec?.environmentOrigin === "adhoc";
     if (requestedProjectSkills && !includeProjectSkills) {
@@ -1306,6 +1332,7 @@ chatV2.post("/", async (c) => {
     // and `listCloudRuntimeSkills` throwing is still distinguishable from a
     // project that genuinely has none.
     let liveProjectCapabilities: EffectiveCapabilitySet | undefined;
+    let projectSkillReadFailed = false;
     if (cloudSkillsEnabled && hostedBody.projectId) {
       try {
         liveProjectCapabilities = buildLiveEffectiveCapabilities({
@@ -1315,6 +1342,7 @@ chatV2.post("/", async (c) => {
           }),
         });
       } catch (error) {
+        projectSkillReadFailed = true;
         logger.warn(
           "[chat-v2] project skill catalog fetch failed; turn proceeds without them",
           {
@@ -1615,7 +1643,10 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    const isolatedServerIds = chatTurnIsolatedServerIds(effectiveServerIds, isScenarioSession);
+    const isolatedServerIds = chatTurnIsolatedServerIds(
+      effectiveServerIds,
+      turnMode,
+    );
     // Membership chat (no share/scenario token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / scenario)
@@ -1853,13 +1884,15 @@ chatV2.post("/", async (c) => {
     // secrets at all, and it would do it silently: the box simply would not
     // have the credential, and the failure would surface as a `stripe` command
     // exiting non-zero with nothing to connect it back to.
-    const secretsFetch = await fetchRuntimeSecrets(bearerToken, {
-      projectId: hostedBody.projectId,
-      ...(environmentServers
-        ? { environmentId: environmentServers.environmentRef.environmentId }
-        : {}),
-      ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
-    });
+    const secretsFetch = c.get("guestId")
+      ? { ok: true as const, secrets: [] }
+      : await fetchRuntimeSecrets(bearerToken, {
+          projectId: hostedBody.projectId,
+          ...(environmentServers
+            ? { environmentId: environmentServers.environmentRef.environmentId }
+            : {}),
+          ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+        });
     // A FAILED FETCH IS NOT "NO SECRETS" — IT FORKS THE SESSION.
     //
     // The tri-state exists precisely so a transient Convex failure cannot read
@@ -2194,7 +2227,10 @@ chatV2.post("/", async (c) => {
       // (the environments UI is off, so a client turn is the normal case).
       // Refused here, before any box, when the member has no usable key.
       let playgroundEnvironmentId =
-        environmentSpec?.environmentRef.environmentId;
+        executionTarget.kind === "environment" ||
+        playgroundBoxReason === "credential"
+          ? environmentSpec?.environmentRef.environmentId
+          : undefined;
       if (
         playgroundBoxReason === "credential" &&
         !playgroundEnvironmentId &&
@@ -2354,7 +2390,11 @@ chatV2.post("/", async (c) => {
         ? {
             kind: "conversation" as const,
             sessionId: body.chatSessionId,
-            ...(hostId ? { hostId } : {}),
+            ...(environmentSpec
+              ? { hostId: environmentSpec.host.hostId }
+              : hostId
+                ? { hostId }
+                : {}),
           }
         : undefined;
     const pageToolsPeek = await peekPageToolsForChatTurn({
@@ -2827,6 +2867,8 @@ chatV2.post("/", async (c) => {
             ? { includeProjectSkills: true }
             : {}),
           ...(turnProvenance ? { turnProvenance } : {}),
+          ...(environmentSpec ? { setupEnvironment: environmentSpec } : {}),
+          setupSkillProvenanceIncomplete: projectSkillReadFailed,
           // WHAT THIS TURN ACTUALLY ADVERTISED from the page. Written down
           // rather than re-derived, so a reopened conversation shows the tools
           // the model really had rather than the ones the browser has now.
@@ -2862,8 +2904,12 @@ chatV2.post("/", async (c) => {
           // with the END USER'S OWN bearer, so the backend decides which of
           // them that user's session receives — this process cannot ask for
           // somebody else's. Absent ⇒ no grant.
-          ...(environmentSpec
-            ? { environmentId: environmentSpec.environmentRef.environmentId }
+          ...(environmentSpec &&
+          (executionTarget.kind === "environment" || externalAccountHarnessTurn)
+            ? {
+                environmentId: environmentSpec.environmentRef.environmentId,
+                persistEnvironmentPin: executionTarget.kind === "environment",
+              }
             : {}),
           // Already resolved above, so the turn helper does not re-fetch:
           // presence is semantic, and one fetch is what keeps the scrubber's

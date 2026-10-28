@@ -36,6 +36,7 @@ export class McpAppViewTools {
   constructor(
     private readonly io: {
       enabled: boolean;
+      onCall?: (call: ViewToolCallRecord) => void;
       page: () => Page | null;
       mount: () => ViewMount | null;
       dismiss: (viewId: string) => Promise<void>;
@@ -120,7 +121,9 @@ export class McpAppViewTools {
           widgetToolCalls: [],
           followUps: [],
         };
+        innerSignal.throwIfAborted();
         this.records.push(record);
+        this.io.onCall?.(record);
         try {
           const result = await callViewWebmcpTool(
             {

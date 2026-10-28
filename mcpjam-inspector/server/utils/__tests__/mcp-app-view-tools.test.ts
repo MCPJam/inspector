@@ -105,6 +105,18 @@ describe("harness view tools", () => {
     ).rejects.toThrow("replaced");
     expect(calls).toEqual(["first", "second"]);
   }, 30000);
+  it("rejects in-flight work when a replacement mounts and keeps its results separate", async () => {
+    const { harness, calls, render } = fixture();
+    await render("A");
+    await harness.viewTools.list();
+    const outcome = harness.viewTools.call("A", "move", { move: "old", delay: 500 }).catch(error => error);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await render("B");
+    expect(await outcome).toBeInstanceOf(Error);
+    expect((await harness.viewTools.list())?.viewId).toBe("B");
+    await harness.viewTools.call("B", "move", { move: "new" });
+    expect(calls).toEqual(["new"]);
+  }, 30000);
   it("aborts a hung handler, dismisses its view and settles the caller", async () => {
     const { harness, render } = fixture();
     await render("A");

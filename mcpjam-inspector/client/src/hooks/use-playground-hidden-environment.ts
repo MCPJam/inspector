@@ -1,3 +1,4 @@
+import { ensureChatEnvironment } from "@/lib/plugins/ensure-chat-environment";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import {
@@ -99,6 +100,7 @@ export interface PlaygroundHiddenEnvironmentState {
    * the chat runs as a plain client turn.
    */
   failed: boolean;
+  blockingError?: string;
   /** Re-read the plugins and recompose (one retry after a refusal). */
   recover: () => Promise<HiddenEnvironmentRecovery>;
 }
@@ -130,7 +132,7 @@ type Composed =
     }
   /** No plugin is runnable after a re-read: a plain client turn. */
   | { key: string; status: "none" }
-  | { key: string; status: "failed" };
+  | { key: string; status: "failed"; blockingError?: string };
 
 const EMPTY_SERVERS: ActivePluginServer[] = [];
 const NO_PLUGINS: ActivePluginRow[] = [];
@@ -264,7 +266,7 @@ export function usePlaygroundHiddenEnvironment(
 
   const composition = useMemo((): Composition | "loading" | null => {
     if (pluginsPending) return "loading";
-    if (!eligible || !isMember || !projectId || !hostId) return null;
+    if (!eligible || !projectId || !hostId) return null;
     if (pluginVersionIds.length === 0) return null;
     if (!hostResolved) return "loading";
     if (credential.status === "missing") return null;
@@ -344,8 +346,9 @@ export function usePlaygroundHiddenEnvironment(
 
   const ensureFor = useCallback(
     async (target: Composition, versionIds: string[]): Promise<string> => {
-      const result = await ensureRef.current({
+      const result = await ensureChatEnvironment(ensureRef.current, {
         projectId: target.projectId,
+        purpose: "chat",
         hostId: target.hostId,
         // No stored servers: each turn names the chat's own selection.
         serverSelection: { mode: "none" },
@@ -383,7 +386,11 @@ export function usePlaygroundHiddenEnvironment(
           "[playground] couldn't prepare this chat's plugins; it runs without them",
           error,
         );
-        setComposed({ key: target.key, status: "failed" });
+        setComposed({
+          key: target.key,
+          status: "failed",
+          blockingError: hiddenEnvironmentLimitError(error),
+        });
       },
     );
     return () => {
@@ -458,6 +465,9 @@ export function usePlaygroundHiddenEnvironment(
       });
       return { ok: true, environmentId, pluginServerIds: serverIds };
     } catch (error) {
+      const blockingError = hiddenEnvironmentLimitError(error);
+      if (blockingError)
+        setComposed({ key: target.key, status: "failed", blockingError });
       console.warn(
         "[playground] couldn't recompose this chat's plugins",
         error,
@@ -489,6 +499,26 @@ export function usePlaygroundHiddenEnvironment(
         ? current.pluginServerIds
         : pluginServerIds,
     failed: current?.status === "failed" || waitTimedOut || readFailed,
+    blockingError:
+      current?.status === "failed" ? current.blockingError : undefined,
     recover,
   };
+}
+
+export function hiddenEnvironmentLimitError(
+  error: unknown,
+): string | undefined {
+  if (!error || typeof error !== "object" || !("data" in error))
+    return undefined;
+  const data = error.data;
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !("code" in data) ||
+    data.code !== "ENV_ADHOC_LIMIT"
+  )
+    return undefined;
+  return "message" in data && typeof data.message === "string"
+    ? data.message
+    : "This project has reached its environment limit. Try an existing setup.";
 }

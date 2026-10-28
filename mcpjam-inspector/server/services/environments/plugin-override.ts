@@ -31,6 +31,52 @@
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { PluginRuntimeAttribution } from "./plugin-attribution.js";
 import type { ResolvedEnvironmentRuntime } from "./runtime.js";
+import { resolveEffectiveCapabilities } from "./effective-capabilities.js";
+
+/** Guests remove all plugins using resolved sources, without an attribution probe. */
+export function withoutGuestPlugins(
+  spec: ResolvedEnvironmentRuntime,
+): ResolvedEnvironmentRuntime {
+  const dropped = new Set(
+    resolveEffectiveCapabilities(spec, null).pluginServerIds,
+  );
+  const keepServer = (s: { serverId: string }) => !dropped.has(s.serverId);
+  return {
+    ...spec,
+    pluginVersions: [],
+    selectedSecretIds: [],
+    servers: {
+      ...spec.servers,
+      pluginServerIds: [],
+      effectiveServerIds: spec.servers.effectiveServerIds.filter(
+        (id) => !dropped.has(id),
+      ),
+      connectable: spec.servers.connectable?.filter(keepServer),
+    },
+    skills: (spec.skills ?? []).flatMap((skill) => {
+      const channels = skill.channels?.filter(
+        (channel) => channel !== "plugin",
+      );
+      if (channels)
+        return channels.length
+          ? [
+              {
+                ...skill,
+                channels,
+                provenance: skill.provenance && {
+                  ...skill.provenance,
+                  channels,
+                  modelRef: skill.name,
+                },
+              },
+            ]
+          : [];
+      // Unknown channels cannot prove a skill is independent of pinned plugins.
+      return spec.pluginVersions?.length ? [] : [skill];
+    }),
+    serverSkills: spec.serverSkills?.filter(keepServer),
+  };
+}
 
 export interface PluginVersionOverrideResult {
   /** The spec the turn should execute — the input when nothing was dropped. */

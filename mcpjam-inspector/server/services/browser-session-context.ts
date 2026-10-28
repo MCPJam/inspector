@@ -1,3 +1,4 @@
+import type { ViewToolCallRecord } from "../utils/mcp-app-view-tools.js";
 import { buildWidgetToolVerbs, WIDGET_TOOL_VERBS } from "./widget-tool-verbs.js";
 import { pluginModelContextMessage } from "../../shared/plugin-model-context.js";
 import type { HarnessPresentation } from "../../shared/unattended-workspace";
@@ -49,6 +50,7 @@ import {
   DEFAULT_VIEWPORT,
   McpAppBrowserHarness,
   type WidgetToolCall,
+  type McpAppBrowserHarnessOptions,
 } from "../utils/mcp-app-browser-harness";
 import {
   MAX_SCRIPTED_STEP_TEXT_CHARS,
@@ -266,6 +268,7 @@ export interface CreateBrowserSessionContextParams {
    *  model-capabilities.ts), the computer tools are advertised. */
   enableComputerUse?: boolean;
   enableViewTools?: boolean;
+  callWidgetTool?: McpAppBrowserHarnessOptions["callTool"];
   mcpClientManager: MCPClientManager;
   injectOpenAiCompat?: boolean;
   /** Effective capabilities pinned by the selected client profile. */
@@ -300,6 +303,8 @@ export interface BrowserSessionContext {
    *  lacks vision/tool-calling. */
   readonly computerWidgetTools: ToolSet;
   readonly viewTools: ToolSet;
+  setWidgetToolCallPolicy(call: McpAppBrowserHarnessOptions["callTool"]): void;
+  readonly viewToolCalls: Array<{ promptIndex: number; call: ViewToolCallRecord }>;
   /** Collected render observations (promptIndex stamped at push time). */
   readonly widgetRenderObservations: RunnerWidgetRenderObservation[];
   /** Collected Computer Use steps (promptIndex/stepIndex stamped at push time). */
@@ -428,6 +433,8 @@ export async function createBrowserSessionContext(
   params: CreateBrowserSessionContextParams,
 ): Promise<BrowserSessionContext> {
   const { mcpClientManager, injectOpenAiCompat } = params;
+  let widgetToolCall = params.callWidgetTool;
+  const viewToolCalls: Array<{ promptIndex: number; call: ViewToolCallRecord }> = [];
   const scope = params.logScope ?? "evals";
   // Computer Use is OPT-IN (default off) and reserved for session simulation;
   // evals never opt in (they interact deterministically via Interact steps). No
@@ -504,11 +511,12 @@ export async function createBrowserSessionContext(
     if (!widgetHarnessRef.current) {
       widgetHarnessRef.current = new McpAppBrowserHarness({
         enableViewTools: params.enableViewTools,
+        onViewToolCall: (call) => viewToolCalls.push({ promptIndex: activePromptIndex, call }),
         getWorkspacePresentation: () => readWorkspacePresentation?.() ?? {},
         hostCapabilities: params.hostCapabilities,
         readResource: (sid, resource) => mcpClientManager.readResource(sid, resource),
         callTool: (sid, name, args) =>
-          mcpClientManager.executeTool(sid, name, args),
+          widgetToolCall ? widgetToolCall(sid, name, args) : mcpClientManager.executeTool(sid, name, args),
         resolveToolVisibility: (sid, name) =>
           resolveToolVisibilityFromMeta(
             mcpClientManager.getAllToolsMetadata(sid)?.[name],
@@ -1073,6 +1081,8 @@ export async function createBrowserSessionContext(
     computerUseVersion,
     computerWidgetTools,
     viewTools,
+    viewToolCalls,
+    setWidgetToolCallPolicy(call) { widgetToolCall = call; },
     widgetRenderObservations,
     browserInteractionSteps,
     prepareAdvertisedTools,

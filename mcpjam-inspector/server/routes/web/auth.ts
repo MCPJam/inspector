@@ -955,7 +955,7 @@ export async function authorizeProject(
   caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
-): Promise<void> {
+): Promise<{ chatEnvironments: boolean }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -980,7 +980,22 @@ export async function authorizeProject(
       `Failed to reach authorization service: ${parseErrorMessage(error)}`,
     );
   }
-  if (response.ok) return;
+  if (response.ok) {
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      // Older successful authorization responses need not advertise features.
+      return { chatEnvironments: false };
+    }
+    return {
+      chatEnvironments:
+        !!payload &&
+        typeof payload === "object" &&
+        "chatEnvironmentVersion" in payload &&
+        payload.chatEnvironmentVersion === 1,
+    };
+  }
 
   // A refusal with no JSON body still fails closed, with a generic message. A
   // backend that predates the route is one: its router answers 404 in plain

@@ -1272,6 +1272,7 @@ export function applySkillToolApproval(
 }
 
 export interface PrepareChatV2Result {
+  liveServerSkills?: boolean;
   connectionsAtTurn?: Array<{
     serverId: string;
     connectionId: string;
@@ -1990,6 +1991,7 @@ export async function prepareChatV2(
     );
 
   return {
+    liveServerSkills: serverSkills.buildPromptSection !== null,
     ...(selectedGroups
       ? {
           toolConnections,
