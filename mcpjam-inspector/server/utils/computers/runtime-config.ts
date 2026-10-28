@@ -448,10 +448,7 @@ const verdictRouteSchema = z.object({
 });
 
 export type HostedBrowserVerdictRefresh =
-  | "answered"
-  | "route-missing"
-  | "failed"
-  | "skipped";
+  "answered" | "route-missing" | "failed" | "skipped";
 
 /**
  * Re-asks the backend for the hosted-browser verdict, with no credentials on
