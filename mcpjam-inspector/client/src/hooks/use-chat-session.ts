@@ -3625,6 +3625,15 @@ export function useChatSession(
     serverIds: string[];
     serverNames: string[];
   } | null>(null);
+  // The last send's resolved servers, kept for that chat's continuations
+  // (approvals, client-tool resumes). They have no preflight of their own and
+  // can run before the newly saved ids reach `hostedSelectedServerIds`.
+  const sentHostedServersRef = useRef<{
+    projectId: string;
+    chatSessionId: string;
+    serverIds: string[];
+    serverNames: string[];
+  } | null>(null);
   // The auth/org scope the CURRENT turn started under, captured once at
   // submit (in the transport body builder) and read by the task-created
   // data-part handler. A task created by a turn belongs to the scope the turn
@@ -3727,19 +3736,36 @@ export function useChatSession(
       // pre-resolved selection for surfaces without a preflight (e.g. scenario).
       const preflight = resolvedHostedServersRef.current;
       resolvedHostedServersRef.current = null;
+      if (preflight) {
+        sentHostedServersRef.current = {
+          ...preflight,
+          projectId: hostedProjectId,
+          chatSessionId,
+        };
+      }
       // A scenario's servers come from the scenario, not this selection.
-      if (
-        isHostedDirectChat &&
-        !hostedEnvironmentId &&
-        !preflight &&
-        hostedSelectedServerIds.length !== selectedServers.length
-      ) {
+      const directSelection = isHostedDirectChat && !hostedEnvironmentId;
+      const selectionUnsaved =
+        hostedSelectedServerIds.length !== selectedServers.length;
+      // A continuation reuses its send's ids for the same chat and servers.
+      const sent = sentHostedServersRef.current;
+      const servers =
+        preflight ??
+        (directSelection &&
+        selectionUnsaved &&
+        sent?.projectId === hostedProjectId &&
+        sent.chatSessionId === chatSessionId &&
+        sent.serverNames.length === selectedServers.length &&
+        sent.serverNames.every((name, index) => name === selectedServers[index])
+          ? sent
+          : null);
+      if (directSelection && selectionUnsaved && !servers) {
         throw new Error("Save the selected servers before sending this message.");
       }
       const hostedServerBatch = buildResolvedServerBatchRequest({
         projectId: hostedProjectId,
-        serverIds: preflight?.serverIds ?? hostedSelectedServerIds,
-        serverNames: preflight?.serverNames ?? selectedServers,
+        serverIds: servers?.serverIds ?? hostedSelectedServerIds,
+        serverNames: servers?.serverNames ?? selectedServers,
         accessScope: "chat_v2",
         ...(isHostedDirectChat &&
         hostedOAuthTokens &&
@@ -3914,20 +3940,6 @@ export function useChatSession(
                 ...(!hostedScenarioId && !hostedExecutionTarget && hostedHostId
                   ? { hostId: hostedHostId }
                   : {}),
-                // "This machine": run this host's bash on the local computer
-                // engine. The consent capability rides the header above; the
-                // server ignores this without it (and off the /mcp direct
-                // path). Absent ⇒ the legacy cloud-family resolution.
-                ...(!hostedScenarioId && personalBrowserEngine
-                  ? {
-                      browserEngine: sendLocalBrowser
-                        ? ("local" as const)
-                        : ("cloud" as const),
-                    }
-                  : {}),
-                ...(sendLocalEngine
-                  ? { computerEngine: "local" as const }
-                  : {}),
                 // Pass projectId for BYOK direct-chat history persistence
                 ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
                 // Convex server Ids parallel to `selectedServers`. Only sent
@@ -3938,14 +3950,6 @@ export function useChatSession(
                 // validator would reject the whole ingest call.
                 ...(hostedSelectedServerIds.length === selectedServers.length
                   ? { selectedServerIds: hostedSelectedServerIds }
-                  : {}),
-                // Keeps an org-runtime model's turn on the local route's own
-                // runtime resolution. Local-only MCP servers need it; so does
-                // an explicit local-harness ask, for the same reason — the
-                // agent runs here, so the servers it reaches must resolve here.
-                ...(localMcpRuntimeRequired ||
-                (localHarnessRequested && selectedModelUsesOrgRuntime)
-                  ? { localMcpRuntimeRequired: true }
                   : {}),
                 // Phase F: owner-preview / local scenario sessions persist as
                 // `sourceType: "scenario"`. Without forwarding the resolved
@@ -3959,13 +3963,13 @@ export function useChatSession(
                 ...(hostedScenarioId && hostedScenarioSurface
                   ? { surface: hostedScenarioSurface }
                   : {}),
-                ...(selectedModel.provider === "ollama"
-                  ? { ollamaBaseUrl: getOllamaBaseUrl() }
-                  : {}),
-                ...(selectedModel.provider === "azure"
-                  ? { azureBaseUrl: getAzureBaseUrl() }
-                  : {}),
               }),
+          // Local builds only, for both bodies. "This machine": run this host's
+          // bash on the local computer engine; the consent capability rides the
+          // header above, and the server ignores this without it. Absent ⇒ the
+          // legacy cloud-family resolution. `localMcpRuntimeRequired` keeps an
+          // org-runtime model's turn on this server's runtime resolution, which
+          // local-only MCP servers and an explicit local-harness ask both need.
           ...(!HOSTED_MODE ? {
             ...(personalBrowserEngine && !hostedScenarioId ? {
               browserEngine: sendLocalBrowser ? "local" : "cloud",
@@ -5084,7 +5088,8 @@ export function useChatSession(
             return false; // fail closed — do not send with unresolved servers
           }
         }
-        if (usesWebEngine && !hostedEnvironmentId && !hostedEnsureServerIds &&
+        // A scenario's servers come from the scenario, not this selection.
+        if (usesWebEngine && !hostedScenarioId && !hostedEnvironmentId && !hostedEnsureServerIds &&
             hostedSelectedServerIds.length !== serverNamesSnapshot.length) {
           pendingWidgetModelContextRef.current = undefined;
           resolvedHostedServersRef.current = null;
@@ -5166,6 +5171,7 @@ export function useChatSession(
       hostedEnsureServerIds,
       hostedSelectedServerIds,
       hostedEnvironmentId,
+      hostedScenarioId,
       selectedServers,
       shouldUseOrgAwareChatApi,
     ],

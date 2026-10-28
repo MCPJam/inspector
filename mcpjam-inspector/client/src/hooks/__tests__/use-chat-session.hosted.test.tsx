@@ -1546,6 +1546,39 @@ describe("useChatSession hosted mode", () => {
     expect(() => lastTransportOptions.body()).not.toThrow();
   });
 
+  it("builds a continuation on the ids its send resolved", async () => {
+    const ensureServerIds = vi.fn(async (names: string[]) =>
+      names.map((name) => ({ serverId: `id-${name}` })),
+    );
+    const { result, rerender } = renderHook(
+      ({ selectedServers }) =>
+        useChatSession({
+          selectedServers,
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: [],
+            ensureServerIds,
+          },
+        }),
+      { initialProps: { selectedServers: ["adhoc-server"] } },
+    );
+    await act(async () => {
+      await result.current.sendMessage({ text: "hi" });
+    });
+
+    // The approval's request runs before the saved id reaches this selection.
+    expect(lastTransportOptions.body()).toMatchObject({
+      selectedServerIds: ["id-adhoc-server"],
+      selectedServerNames: ["adhoc-server"],
+    });
+
+    // A different selection was never resolved, so it still needs saving.
+    rerender({ selectedServers: ["adhoc-server", "other-server"] });
+    expect(() => lastTransportOptions.body()).toThrow(
+      "Save the selected servers before sending this message.",
+    );
+  });
+
   it("builds a scenario request whose servers come from the scenario", async () => {
     lastTransportOptions = undefined;
     renderHook(() =>
@@ -1562,6 +1595,29 @@ describe("useChatSession hosted mode", () => {
     await waitFor(() => expect(lastTransportOptions).toBeDefined());
 
     expect(() => lastTransportOptions.body()).not.toThrow();
+  });
+
+  it("sends a scenario message whose servers have no ids here", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-a"],
+        hostedContext: {
+          projectId: "project-1",
+          scenarioId: "scenario-1",
+          accessVersion: 1,
+          selectedServerIds: [],
+        },
+      }),
+    );
+    mockState.authFetch.mockClear();
+
+    let dispatched: boolean | undefined;
+    await act(async () => {
+      dispatched = await result.current.sendMessage({ text: "hi" });
+    });
+
+    expect(dispatched).toBe(true);
+    expect(mockState.authFetch).toHaveBeenCalled();
   });
 
   it("does not block submit on unresolved server ids when a send-time resolver is provided", async () => {
