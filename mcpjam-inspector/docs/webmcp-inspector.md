@@ -376,8 +376,8 @@ The nav item's flag key must stay in `SIDEBAR_RESOLVED_FLAG_KEYS` or the item is
 invisible forever.
 
 There is no deployment switch for the hosted browser. The `hosted-browser-enabled`
-flag, evaluated by email on the backend, decides who may launch on every path,
-so withdrawing it is the rollback. Clearing the desktop template stops every
+PostHog flag, which the backend evaluates by email as its `hosted-browser` gate,
+decides who may launch on every path, so withdrawing the flag is the rollback. Clearing the desktop template stops every
 desktop from booting, and `MCPJAM_WEBMCP_INSPECTOR_ENABLED=false` takes the
 inspector out entirely.
 
