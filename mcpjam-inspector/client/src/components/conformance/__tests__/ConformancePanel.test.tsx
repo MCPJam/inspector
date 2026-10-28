@@ -779,6 +779,49 @@ describe("ConformanceTab", () => {
     openSpy.mockRestore();
   });
 
+  it("keeps OAuth skipped when a callback already submitting finishes after the skip", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    const submit = createDeferred<{ success: boolean }>();
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+    mockSubmitCode.mockReturnValue(submit.promise);
+    mockCompleteOAuth.mockResolvedValue({
+      phase: "complete",
+      result: createOAuthResult(),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+    await screen.findByText("Waiting for browser authorization...");
+
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+      }),
+    );
+    await waitFor(() => expect(mockSubmitCode).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip OAuth" }));
+    submit.resolve({ success: true });
+    await submit.promise;
+
+    const header = await waitFor(() =>
+      screen
+        .getByText("OAuth was skipped, so it is not scored for this run.")
+        .closest("button"),
+    );
+    expect(within(header!).getByText("NOT APPLICABLE")).toBeDefined();
+    expect(mockCompleteOAuth).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
   it("runs the OAuth suite without a negative-checks opt-in", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);

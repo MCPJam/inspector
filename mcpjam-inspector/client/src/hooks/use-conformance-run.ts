@@ -288,6 +288,19 @@ export function useConformanceRun({
     []
   );
 
+  /** The run whose OAuth suite the visitor skipped, if any. */
+  const skippedOAuthRunTokenRef = useRef<number | null>(null);
+
+  // A skip ends only the OAuth suite, so it cannot bump the run token the
+  // other suites report under. A callback already past its listener checks
+  // this instead, or it would overwrite the skip with a late result.
+  const isOAuthRunActive = useCallback(
+    (runToken: number, serverName: string) =>
+      isRunActive(runToken, serverName) &&
+      skippedOAuthRunTokenRef.current !== runToken,
+    [isRunActive]
+  );
+
   /**
    * The current server, read without making the reset depend on its OBJECT
    * identity. `ServerWithName` carries mutable fields (`connectionStatus`,
@@ -420,13 +433,13 @@ export function useConformanceRun({
       for (let i = 0; i < MAX_POLLS; i++) {
         try {
           const poll = await completeOAuthConformance(sessionId);
-          if (!isRunActive(runToken, serverName)) return;
+          if (!isOAuthRunActive(runToken, serverName)) return;
           if (poll.phase === "complete" && poll.result) {
             setOAuth(oauthStateFromResult(poll.result));
             return;
           }
         } catch (err) {
-          if (!isRunActive(runToken, serverName)) return;
+          if (!isOAuthRunActive(runToken, serverName)) return;
           setOAuth({
             status: "error",
             error: err instanceof Error ? err.message : String(err),
@@ -435,10 +448,10 @@ export function useConformanceRun({
         }
       }
 
-      if (!isRunActive(runToken, serverName)) return;
+      if (!isOAuthRunActive(runToken, serverName)) return;
       setOAuth({ status: "error", error: "OAuth conformance timed out" });
     },
-    [isRunActive]
+    [isOAuthRunActive]
   );
 
   const handleOAuthCallback = useCallback(
@@ -451,7 +464,7 @@ export function useConformanceRun({
     ) => {
       try {
         await submitOAuthConformanceCode({ sessionId, code, state });
-        if (!isRunActive(runToken, serverName)) return;
+        if (!isOAuthRunActive(runToken, serverName)) return;
         setOAuth((prev) => ({
           ...prev,
           waitingForAuth: false,
@@ -459,14 +472,14 @@ export function useConformanceRun({
         }));
         await pollOAuthComplete(sessionId, runToken, serverName);
       } catch (err) {
-        if (!isRunActive(runToken, serverName)) return;
+        if (!isOAuthRunActive(runToken, serverName)) return;
         setOAuth({
           status: "error",
           error: err instanceof Error ? err.message : String(err),
         });
       }
     },
-    [isRunActive, pollOAuthComplete]
+    [isOAuthRunActive, pollOAuthComplete]
   );
 
   /**
@@ -651,6 +664,7 @@ export function useConformanceRun({
   // The listeners for the code stay unwired after a skip, so a consent that
   // completes late in another tab cannot resurrect the suite.
   const skipOAuth = useCallback(() => {
+    skippedOAuthRunTokenRef.current = latestRunTokenRef.current;
     pendingOAuthRef.current = null;
     clearOAuthListeners();
     setOAuth({
