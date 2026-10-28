@@ -291,7 +291,6 @@ export function usePlaygroundHiddenEnvironment(
   }, [
     pluginsPending,
     eligible,
-    isMember,
     projectId,
     hostId,
     hostResolved,

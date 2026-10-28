@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { isMCPJamProvidedModelMenuItem } from "@/components/chat-v2/shared/model-helpers";
@@ -238,6 +238,15 @@ describe("useChatSession — hidden environment on this machine", () => {
     expect(result.current.submitBlocked).toBe(false);
   });
 
+  it("ignores a composition cap when the selected model runs locally", async () => {
+    vi.mocked(isMCPJamProvidedModelMenuItem).mockReturnValue(false);
+    const { result } = await renderHidden({ selectionIntent: "picked", hostedContext: {
+      ...hiddenContext, hiddenEnvironment: { ...hiddenContext.hiddenEnvironment, environmentId: null, blockingError: "Setup limit reached" },
+    } });
+    expect(result.current.hiddenEnvironmentActive).toBe(false);
+    await act(async () => { await result.current.sendMessage({ text: "hello" }); });
+    expect(mockState.sendMessage).toHaveBeenCalledOnce();
+  });
   it("keeps a turn with a local-only server on the local route", async () => {
     mockState.appState = {
       projects: {},

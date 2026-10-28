@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { UIMessage } from "ai";
 /** Saved-client comparison wiring and mode transitions. */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -371,6 +372,12 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
 // the right `compareId`, `hostSnapshot`, `executionConfig`, etc.
 vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
   MultiModelPlaygroundCard: (props: any) => {
+    useEffect(() => {
+      props.onSendReadinessChange?.(
+        `${props.compareKind}:${props.compareId}`,
+        true,
+      );
+    }, [props.onSendReadinessChange, props.compareKind, props.compareId]);
     mockMultiModelPlaygroundCard(props);
     return (
       <div
