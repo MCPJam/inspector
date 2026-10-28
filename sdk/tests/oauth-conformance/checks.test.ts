@@ -512,6 +512,35 @@ describe("oauth server obligation checks", () => {
       });
     });
 
+    it("probes 2026-07-28 with a stateless tools/list request, not initialize", async () => {
+      const trackedRequest = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: { "www-authenticate": BEARER_WITH_METADATA },
+        body: { error: "unauthorized" },
+      });
+
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...baseObligationInput.config,
+          protocolVersion: "2026-07-28",
+        },
+        trackedRequest,
+      });
+
+      const request = trackedRequest.mock.calls[0][0];
+      expect(request.body.method).toBe("tools/list");
+      expect(request.headers["Mcp-Method"]).toBe("tools/list");
+      expect(request.headers["MCP-Protocol-Version"]).toBe("2026-07-28");
+      expect(request.headers.Authorization).toBeUndefined();
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
+        status: "passed",
+      });
+    });
+
     it("fails when the server returns 500 instead of 401", async () => {
       const result = await runUnauthenticatedChallengeCheck({
         ...(baseObligationInput as any),

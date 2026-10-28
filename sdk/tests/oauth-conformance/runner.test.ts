@@ -1251,6 +1251,62 @@ describe("OAuthConformanceTest", () => {
     },
   );
 
+  it("reports a stateless 2026-07-28 server without auth as not applicable, not a passed 401", async () => {
+    const serverUrl = "https://stateless.example.com/mcp";
+    const requestedUrls: string[] = [];
+
+    // A real 2026-07-28 server: it rejects the legacy `initialize` handshake
+    // with 400 -32020 and serves the stateless `tools/list` with no token. The
+    // pre-flight used to send `initialize`, read the 400 as inconclusive, and
+    // run the flow — whose 200 probe then printed a green "401 Unauthorized
+    // Received" row.
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url !== serverUrl) {
+        return new Response(null, { status: 404 });
+      }
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      if (body.method === "initialize") {
+        return jsonResponse(
+          {
+            jsonrpc: "2.0",
+            id: body.id,
+            error: {
+              code: -32020,
+              message:
+                "Bad Request: an initialize request (legacy handshake) was sent with a modern MCP-Protocol-Version header",
+            },
+          },
+          400,
+        );
+      }
+      return jsonResponse({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: { tools: [], resultType: "complete" },
+      });
+    }) as unknown as typeof fetch;
+
+    const test = new OAuthConformanceTest({
+      serverUrl,
+      protocolVersion: "2026-07-28",
+      registrationStrategy: "dcr",
+      fetchFn,
+    });
+
+    const result = await test.run();
+
+    expect(result.outcome).toBe("not-applicable");
+    expect(result.steps.some((step) => step.status === "failed")).toBe(false);
+    expect(result.steps.map((step) => step.step)).not.toContain(
+      "received_401_unauthorized",
+    );
+    expect(
+      requestedUrls.some((url) => url.includes("oauth-protected-resource")),
+    ).toBe(false);
+  });
+
   it("emits one row per step when a step fails, not a green/red duplicate", async () => {
     const serverUrl = "https://mcp.excalidraw.example/mcp";
 

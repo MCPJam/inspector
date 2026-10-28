@@ -1,6 +1,7 @@
 import type { OAuthFlowState } from "../../oauth/state-machines/types.js";
 import {
   buildInitializeRequestBody,
+  buildStatelessVerifyRequestBody,
   resolveInitializeProtocolVersion,
 } from "../../oauth/state-machines/shared/initialize.js";
 import type {
@@ -206,6 +207,27 @@ export function buildUnauthenticatedMcpRequest(
 
   if (config.protocolVersion !== "2025-03-26") {
     headers["MCP-Protocol-Version"] = config.protocolVersion;
+  }
+
+  // 2026-07-28 has no initialize handshake: a modern server rejects an
+  // `initialize` body with 400 (-32020), which the authorization pre-flight
+  // reads as inconclusive — so a server that needs no auth would run the whole
+  // flow instead of reporting not applicable. Probe with the same stateless
+  // `tools/list` the debug-oauth-2026-07-28 machine sends.
+  if (config.protocolVersion === "2026-07-28") {
+    headers["Mcp-Method"] = "tools/list";
+    return {
+      method: "POST",
+      url: config.serverUrl,
+      headers,
+      body: buildStatelessVerifyRequestBody({
+        protocolVersion: config.protocolVersion,
+        authMode: config.auth.mode,
+        clientName: "MCPJam SDK OAuth Conformance",
+        clientVersion: "1.0.0",
+        id: 1001,
+      }),
+    };
   }
 
   return {
