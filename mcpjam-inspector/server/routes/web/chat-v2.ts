@@ -9,6 +9,8 @@ import {
   readOwnedTurnContext,
   pluginContextReferencesSchema,
 } from "../../services/plugin-host/turn-context.js";
+import { pluginModelContextPolicy } from "../../services/plugin-host/context-profile.js";
+import { pluginModelContextMessage } from "../../../shared/plugin-model-context.js";
 import { pluginHostBindingDigest } from "../../services/plugin-host/bindings.js";
 import { createModelMrtrAdapter } from "../../services/plugin-host/model-mrtr.js";
 import { parseMrtrChatResumeRequest } from "@/shared/mrtr-continuation";
@@ -24,7 +26,6 @@ import { pluginChatRefusal } from "./chat-v2-plugin-refusal.js";
 import { parsePluginWorkspaceDescriptor } from "@/shared/plugin-workspace";
 import {
   globalOwnerAdmission,
-  mergePluginContextMessages,
   withGlobalOwnerFallback,
 } from "./chat-v2-global-owner.js";
 import { toolApprovalSubjectFromAuthHeader } from "../../utils/tool-approval-token.js";
@@ -2402,13 +2403,20 @@ chatV2.post("/", async (c) => {
             subject: modelPluginSubject!,
           },
         });
-      const pluginContext = mergePluginContextMessages(
-        contextReferences.length
-          ? await readTurnContext(contextReferences, modelPluginAdmission!)
-          : undefined,
-        globalContextReferences.length && globalPluginAdmission
-          ? await readTurnContext(globalContextReferences, globalPluginAdmission)
-          : undefined,
+      // One budget over both owners: the chat client's, read for this turn.
+      const pluginContext = pluginModelContextMessage(
+        [
+          ...(contextReferences.length
+            ? await readTurnContext(contextReferences, modelPluginAdmission!)
+            : []),
+          ...(globalContextReferences.length && globalPluginAdmission
+            ? await readTurnContext(
+                globalContextReferences,
+                globalPluginAdmission,
+              )
+            : []),
+        ],
+        pluginModelContextPolicy(hostRuntimeConfig).turnMaxBytes,
       );
       const appMessages = await withGlobalOwnerFallback(
         (admission) =>

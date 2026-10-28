@@ -38,8 +38,11 @@ export function pluginModelContextBytes(params: {
   content?: unknown;
   structuredContent?: unknown;
 }): number {
+  // A structured-only update is stored with `content: []`, and counts the
+  // same before and after.
+  const empty = Array.isArray(params.content) && !params.content.length;
   return byteSize({
-    content: params.content,
+    content: empty ? undefined : params.content,
     structuredContent: params.structuredContent,
   });
 }
@@ -281,22 +284,27 @@ export function parsePluginModelContext(
   return structuredClone(params);
 }
 
-/** Per-turn, untrusted app state. Presentation/request metadata never reaches the model. */
+/**
+ * Per-turn, untrusted app state. Presentation/request metadata never reaches
+ * the model. `turnMaxBytes` is the chat client's budget over every App in the
+ * turn; eval turns keep MCPJam's default.
+ */
 export function pluginModelContextMessage(
   contexts: readonly PluginModelContext[],
+  turnMaxBytes = MODEL_CONTEXT_POLICY_DEFAULTS.turnMaxBytes,
 ): ModelMessage | undefined {
   if (!contexts.length) return;
-  const turnSize = byteSize(
-    contexts.map(({ content, structuredContent }) => ({
-      content,
-      structuredContent,
-    })),
+  // What each App's update was admitted at, so one App at `updateMaxBytes`
+  // fits any turn budget at least that large.
+  const turnSize = contexts.reduce(
+    (sum, context) => sum + pluginModelContextBytes(context),
+    0,
   );
-  if (turnSize > MODEL_CONTEXT_POLICY_DEFAULTS.turnMaxBytes)
+  if (turnSize > turnMaxBytes)
     throw new PluginModelContextError("PLUGIN_CONTEXT_TURN_TOO_LARGE", {
       budget: "turnMaxBytes",
       actual: turnSize,
-      allowed: MODEL_CONTEXT_POLICY_DEFAULTS.turnMaxBytes,
+      allowed: turnMaxBytes,
     });
   const parts: UserContent = [];
   for (const context of contexts) {

@@ -261,6 +261,41 @@ describe("original model App context", () => {
     expect((await request()).status).toBe(403);
     modelApps.close(f.token, actor);
   });
+  it("admits an update against the client's policy, freshly resolved", async () => {
+    const f = fixture();
+    const update = () =>
+      f.router.request("/context", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: "project",
+          pluginWorkspace: { version: 1, workspaceId: "workspace" },
+          instanceToken: f.token,
+          operationId: crypto.randomUUID(),
+          sequence: 1,
+          params: {
+            content: Array.from({ length: 100 }, () => ({
+              type: "text",
+              text: "part",
+            })),
+          },
+        }),
+      });
+    // MCPJam's defaults admit 64 blocks.
+    expect((await update()).status).toBe(403);
+    mocks.resolve.mockResolvedValue({
+      revision: "source-revision",
+      contextEnabled: true,
+      tool: { name: "pickFile", _meta: meta },
+      modelContextPolicy: {
+        updateMaxBytes: 2_548_000,
+        maxBlocks: 256,
+        turnMaxBytes: 8 * 1024 * 1024,
+      },
+    });
+    expect((await update()).status).toBe(200);
+    modelApps.close(f.token, actor);
+  });
   it("removes all of its context through the same ownership checks", async () => {
     const f = fixture();
     const owner = {
