@@ -2574,7 +2574,7 @@ export async function createAuthorizedManager(
       : {}),
     oauthServerUrls,
     serverNamesById,
-    authenticatedUserId: caller.getLogContext?.()?.userId ?? null,
+    authenticatedUserId: authorizedUserId,
     ...(options?.tolerateServerRefusals ? { refusedServers } : {}),
   };
 }
