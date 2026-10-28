@@ -172,6 +172,7 @@ import { buildLocalExecutionRecord } from "../utils/local-execution-record.js";
 import { postLocalUsage } from "../utils/org-model-stream-handler.js";
 import type { LocalModelCallSettled } from "./evals/drive-local-eval-turn.js";
 import {
+  extractToolErrors,
   hasSkillTools,
   mergeToolCallsByPromptIndex,
   summarizeRenderObservations,
@@ -6109,6 +6110,14 @@ const runLocalIteration = async ({
       acc.toolsCalledByPrompt,
       test.isNegativeTest,
       test.matchOptions,
+      // The failures the verdict path grades with, so a retried attempt reads
+      // as a retry in this failed iteration's turn summaries too.
+      {
+        toolErrors: extractToolErrors({
+          messages: failMessages,
+          spans: acc.capturedSpans,
+        }),
+      },
     );
     // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
     // The persisted iteration is hard-coded `passed: false` below, but the
