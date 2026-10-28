@@ -481,7 +481,7 @@ export function EventsTab({
           icon={Radio}
           className="py-12"
           title="This server does not declare events"
-          description="This server has not enabled events. Ask its maintainer to turn them on."
+          description="Ask the server's maintainer to turn events on."
         />
         <div className="mx-auto w-full max-w-2xl px-5 pb-8">
           <CapabilityPanel catalog={catalog} />
