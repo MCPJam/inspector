@@ -1515,14 +1515,6 @@ export function PlaygroundMain({
   const setActiveChatSessionId = useActiveChatSessionStore(
     (state) => state.setSessionId,
   );
-  useEffect(() => {
-    setActiveChatSessionId(chatSessionId);
-    return () => {
-      useActiveChatSessionStore.setState((state) =>
-        state.sessionId === chatSessionId ? { sessionId: null } : state,
-      );
-    };
-  }, [chatSessionId, setActiveChatSessionId]);
 
   // Set playground active flag for widget renderers to read
   const setPlaygroundActive = useUIPlaygroundStore(
@@ -2393,6 +2385,25 @@ export function PlaygroundMain({
   // mode-specific flags around for code that still needs to know
   // WHICH compare grid is up (e.g. the per-column derivation memos).
   const isCompareMode = isMultiModelMode || isMultiHostMode;
+  useEffect(() => {
+    setActiveChatSessionId(chatSessionId);
+    useActiveChatSessionStore.setState({
+      compareActive: isCompareMode,
+      viewOnly: apiSessionViewOnly,
+    });
+    return () => {
+      useActiveChatSessionStore.setState((state) =>
+        state.sessionId === chatSessionId
+          ? { sessionId: null, compareActive: false, viewOnly: false }
+          : state,
+      );
+    };
+  }, [
+    chatSessionId,
+    setActiveChatSessionId,
+    isCompareMode,
+    apiSessionViewOnly,
+  ]);
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
     useModelSelectorLayoutLock(isCompareMode);
 

@@ -1,3 +1,4 @@
+import { nextResumedVersion } from "./use-resumed-thread-persistence";
 import { dispatchAppToolCall } from "@mcpjam/widget-react";
 import { useSavedClientSendGuard } from "./use-saved-client-send-guard";
 import { stableStringifyJson } from "@/lib/client-config";
@@ -2762,6 +2763,23 @@ export function useChatSession(
             receipt.turnId === expectedTurn.turnId;
           if (sameSession && sameTurn) {
             persistReceiptRef.current = receipt;
+            // The SDK can start a client-tool continuation before React effects.
+            // Preserve unversioned surfaces; only advance an existing cursor.
+            if (
+              (receipt.outcome === "saved" || receipt.outcome === "duplicate") &&
+              typeof receipt.version === "number" &&
+              resumedVersionRef.current?.sessionId === receipt.chatSessionId &&
+              resumedVersionRef.current.version !== null
+            ) {
+              const next = nextResumedVersion({
+                previous: resumedVersionRef.current,
+                currentSessionId: chatSessionIdRef.current,
+                sessionId: receipt.chatSessionId,
+                version: receipt.version,
+              });
+              resumedVersionRef.current = next;
+              setResumedVersion(next);
+            }
           }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
@@ -2851,7 +2869,8 @@ export function useChatSession(
         // A dedicated identity for receipt matching, captured while the turn is
         // starting rather than read off trace state later: `activeTurnId` is
         // cleared by `turn_finish`, which lands before the receipt does. A new
-        // turn also invalidates the previous turn's receipt.
+        // request also invalidates the previous request's receipt; client-tool
+        // continuations have already advanced the tracked version on arrival.
         receiptTurnIdentityRef.current = {
           chatSessionId: chatSessionIdRef.current,
           turnId: part.data.turnId,
@@ -2878,13 +2897,14 @@ export function useChatSession(
   /**
    * Take this turn's persist receipt, if one arrived and passed validation.
    *
-   * Consuming rather than reading: the receipt describes exactly one turn, and
+   * Consuming rather than reading: the receipt describes one request, and
    * leaving it in place would let a later reconciliation pass mistake it for a
    * fresh answer about a different turn.
    *
    * Ordering is safe. The AI SDK processes stream chunks in order and only
    * flips `status` to `ready` once the reader completes, so a receipt on the
-   * wire is always observed before any post-stream effect runs. A client abort
+   * wire advances a tracked version before an automatic continuation starts.
+   * The effect consumes the final request's receipt. A client abort
    * or disconnect means no receipt at all — callers fall back to reconciling
    * against the session subscription.
    */
@@ -2921,18 +2941,12 @@ export function useChatSession(
 
   const syncResumedVersion = useCallback(
     (version: number | null, sessionId = chatSessionId) => {
-      // History reads can finish after navigation. Their cursor belongs to the
-      // requested thread, never whichever thread happens to be mounted now.
-      if (sessionId !== chatSessionIdRef.current) return;
-      const previous = resumedVersionRef.current;
-      if (
-        version !== null &&
-        previous?.sessionId === sessionId &&
-        previous.version !== null &&
-        version < previous.version
-      )
-        return;
-      const next = { sessionId, version };
+      const next = nextResumedVersion({
+        previous: resumedVersionRef.current,
+        currentSessionId: chatSessionIdRef.current,
+        sessionId,
+        version,
+      });
       resumedVersionRef.current = next;
       setResumedVersion(next);
     },
@@ -4142,8 +4156,8 @@ export function useChatSession(
     // Records whether the turn was aborted, for `consumeTurnAborted`. Runs in
     // the SDK's `finally` — after `setStatus({ status: "ready" })` but before
     // React renders that status — so a post-stream effect reading it on the
-    // ready transition always sees THIS turn's answer. Same ordering guarantee
-    // the persist receipt already relies on.
+    // ready transition sees the final request's answer. Client-tool continuations
+    // can start before that effect; receipts advance the cursor in onData.
     onFinish: ({ isAbort, message, finishReason }) => {
       turnAbortedRef.current = isAbort;
       lastFinishRef.current = {
