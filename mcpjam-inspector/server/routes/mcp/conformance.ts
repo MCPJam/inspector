@@ -14,6 +14,7 @@ import {
   UnsupportedTransportError,
   assertHttpSupported,
   completeOAuthConformance,
+  conformanceProbeFields,
   runAppsConformance,
   runLocalDirectoryReadiness,
   runProtocolConformance,
@@ -73,6 +74,7 @@ const protocolSchema = z.object({
   serverId: z.string().min(1),
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
+  ...conformanceProbeFields,
 });
 
 conformance.post("/protocol", async (c) => {
@@ -98,6 +100,8 @@ conformance.post("/protocol", async (c) => {
     const { result } = await runProtocolConformance({
       ...toHttpResolved(resolved.config as HttpServerConfig),
       protocolVersion: parsed.data.protocolVersion,
+      logProbe: parsed.data.logProbe,
+      inputRequiredProbe: parsed.data.inputRequiredProbe,
     });
     return c.json({ success: true, result });
   } catch (error) {

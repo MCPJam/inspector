@@ -18,6 +18,7 @@ import {
   OAuthConformanceSessionNotFoundError,
   UnsupportedTransportError,
   completeOAuthConformance,
+  conformanceProbeFields,
   runAppsConformance,
   runProtocolConformance,
   runTasksConformance,
@@ -223,6 +224,7 @@ const protocolSchema = z
   .object({
     /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
     protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
+    ...conformanceProbeFields,
   })
   .passthrough(); // project/guest fields pass through to resolveHostedHttpConfig
 
@@ -237,6 +239,8 @@ conformanceWeb.post("/protocol", async (c) =>
       const { result } = await runProtocolConformance({
         ...resolved,
         protocolVersion: parsed.protocolVersion,
+        logProbe: parsed.logProbe,
+        inputRequiredProbe: parsed.inputRequiredProbe,
       });
       return { success: true, result };
     } catch (error) {

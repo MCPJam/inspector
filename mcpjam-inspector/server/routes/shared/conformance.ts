@@ -29,6 +29,7 @@ import {
   type OAuthConformanceProfile,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
+import { z } from "zod";
 import {
   createSession,
   getSession,
@@ -141,6 +142,36 @@ export interface ResolvedHttpConfig {
   protocolVersion?: McpProtocolVersion;
 }
 
+/**
+ * The tools an operator names as safe for the protocol suite to call: one
+ * that emits logs (`modern-logs-require-log-level`) and one that asks for
+ * input (`modern-undeclared-capability-error`). The SDK never picks a tool to
+ * call on its own, so without these both checks report could-not-run on every
+ * 2026-07-28 server. Both routes accept the same shape.
+ */
+const conformanceProbeSchema = z
+  .object({
+    toolName: z.string().trim().min(1).max(256),
+    arguments: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .refine(
+        (value) => value === undefined || JSON.stringify(value).length <= 10_000,
+        "Probe arguments must serialize to at most 10,000 characters",
+      ),
+  })
+  .strict();
+
+export const conformanceProbeFields = {
+  logProbe: conformanceProbeSchema.optional(),
+  inputRequiredProbe: conformanceProbeSchema.optional(),
+};
+
+export type ConformanceProbes = Pick<
+  MCPConformanceConfig,
+  "logProbe" | "inputRequiredProbe"
+>;
+
 export class UnsupportedTransportError extends Error {
   readonly code = "unsupportedTransport" as const;
 }
@@ -157,13 +188,17 @@ export function assertHttpSupported(
 }
 
 export async function runProtocolConformance(
-  input: ResolvedHttpConfig,
+  input: ResolvedHttpConfig & ConformanceProbes,
 ): Promise<{ result: MCPConformanceResult }> {
   const config: MCPConformanceConfig = {
     serverUrl: input.serverUrl,
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
+    ...(input.logProbe ? { logProbe: input.logProbe } : {}),
+    ...(input.inputRequiredProbe
+      ? { inputRequiredProbe: input.inputRequiredProbe }
+      : {}),
     // Checking the URL the caller named is not the same as checking the
     // addresses we end up dialing: a target can answer `302 Location:
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted

@@ -351,3 +351,36 @@ test("loadAppsSuiteConfig rejects invalid apps check ids", () => {
     );
   });
 });
+
+test("loadProtocolSuiteConfig keeps a valid probe and rejects a malformed one", () => {
+  const valid = {
+    serverUrl: "https://mcp.example.com/mcp",
+    runs: [
+      {
+        label: "modern",
+        protocolVersion: "2026-07-28",
+        logProbe: { toolName: "emit-logs", arguments: { count: 1 } },
+      },
+    ],
+  };
+  withTempFile(JSON.stringify(valid), (path) => {
+    const result = loadProtocolSuiteConfig(path);
+    assert.deepEqual(result.runs[0].logProbe, {
+      toolName: "emit-logs",
+      arguments: { count: 1 },
+    });
+  });
+
+  const malformed = {
+    serverUrl: "https://mcp.example.com/mcp",
+    runs: [{ inputRequiredProbe: { tool: "ask-user" } }],
+  };
+  withTempFile(JSON.stringify(malformed), (path) => {
+    assert.throws(
+      () => loadProtocolSuiteConfig(path),
+      (error) =>
+        error instanceof CliError &&
+        error.message.includes("runs[0].inputRequiredProbe has unknown key"),
+    );
+  });
+});
