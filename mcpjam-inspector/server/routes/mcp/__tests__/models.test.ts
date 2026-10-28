@@ -69,6 +69,7 @@ describe("GET /api/mcp/models (catalog proxy)", () => {
     if (originalConvexUrl === undefined) delete process.env.CONVEX_HTTP_URL;
     else process.env.CONVEX_HTTP_URL = originalConvexUrl;
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   it("normalizes the backend page and serves the memo within the TTL", async () => {
@@ -127,6 +128,8 @@ describe("GET /api/mcp/models (catalog proxy)", () => {
   });
 
   it("reports the backend's HTTP status under a key the Sentry boundary keeps", async () => {
+    // A shell with the telemetry opt-out set would skip the capture entirely.
+    vi.stubEnv("DO_NOT_TRACK", "");
     fetchMock.mockResolvedValueOnce(new Response("", { status: 503 }));
     await mount().request("/api/mcp/models");
 
