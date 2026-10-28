@@ -8,18 +8,22 @@ import {
 } from "@testing-library/react";
 import type { ConformanceRunListItem } from "../ConformanceHistory";
 
-const { navigateMock, useArtifactQueryMock, fetchArtifactMock } = vi.hoisted(
-  () => ({
-    navigateMock: vi.fn(),
-    useArtifactQueryMock: vi.fn(),
-    fetchArtifactMock: vi.fn(),
-  }),
-);
+const {
+  navigateMock,
+  useArtifactQueryMock,
+  fetchArtifactMock,
+  setSharingMock,
+} = vi.hoisted(() => ({
+  navigateMock: vi.fn(),
+  useArtifactQueryMock: vi.fn(),
+  setSharingMock: vi.fn(),
+  fetchArtifactMock: vi.fn(),
+}));
 
 vi.mock("convex/react", () => ({
   useQuery: vi.fn(),
   useMutation: () => vi.fn(),
-  useAction: () => vi.fn(),
+  useAction: () => setSharingMock,
 }));
 
 vi.mock("@/lib/artifact-urls", () => ({
@@ -116,6 +120,7 @@ describe("ConformanceRunDetailPage", () => {
   beforeEach(() => {
     useArtifactQueryMock.mockReset();
     fetchArtifactMock.mockReset();
+    setSharingMock.mockReset();
   });
 
   it("says it is loading until the run arrives", () => {
@@ -139,6 +144,20 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.queryByText(/Client-reported/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Private/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
+  });
+
+  it("offers Share on a private run, which turns sharing on", async () => {
+    setSharingMock.mockResolvedValue({ enabled: false });
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    await waitFor(() =>
+      expect(setSharingMock).toHaveBeenCalledWith({
+        runId: "run_1",
+        enabled: true,
+      }),
+    );
   });
 
   it("keeps a way to stop sharing a run that is already shared", () => {

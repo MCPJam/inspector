@@ -364,9 +364,8 @@ export function ConformanceRunDetailPage({
                 <Share2 className="size-3.5" aria-hidden /> Share
               </Button>
             ) : detail.sharingEnabled ? (
-              // No "Private" control: a private run is the default and needs
-              // no button. A run already shared keeps this one, so its link
-              // can still be turned off.
+              // A run already shared keeps this one, so its link can still be
+              // turned off.
               <Button
                 variant="secondary"
                 size="sm"
@@ -375,7 +374,18 @@ export function ConformanceRunDetailPage({
               >
                 <Share2 className="size-3.5" aria-hidden /> Shareable
               </Button>
-            ) : null}
+            ) : (
+              // No "Private" label: a private run is the default. This is the
+              // only way to create a link while unified sharing is off.
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={shareBusy || !finished}
+                onClick={() => void copyShare(true)}
+              >
+                <Share2 className="size-3.5" aria-hidden /> Share
+              </Button>
+            )}
             <Button size="sm" onClick={() => navigate("/conformance")}>
               Run again
             </Button>
