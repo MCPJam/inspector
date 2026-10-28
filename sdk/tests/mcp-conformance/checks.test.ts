@@ -136,12 +136,15 @@ describe("mcp conformance unit checks", () => {
   });
 
   it("reports the connect handshake's duration on server-initialize", async () => {
-    vi.useFakeTimers();
+    // Only the clock is controlled: fake timers left the run waiting on a
+    // timer nothing advanced, which timed the test out under CI load.
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
     try {
       mockedOperations.withEphemeralClient.mockImplementation(
         async (_config, fn) => {
           // The handshake happens inside the connect, before the callback.
-          await vi.advanceTimersByTimeAsync(420);
+          now += 420;
           return fn(
             {
               getManagedClient: vi.fn().mockReturnValue({}),
@@ -173,15 +176,16 @@ describe("mcp conformance unit checks", () => {
         durationMs: 420,
       });
     } finally {
-      vi.useRealTimers();
+      clock.mockRestore();
     }
   });
 
   it("reports how long a failed connect took on server-initialize", async () => {
-    vi.useFakeTimers();
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
     try {
       mockedOperations.withEphemeralClient.mockImplementation(async () => {
-        await vi.advanceTimersByTimeAsync(1_500);
+        now += 1_500;
         throw new Error("connect ECONNREFUSED");
       });
 
@@ -197,7 +201,7 @@ describe("mcp conformance unit checks", () => {
         durationMs: 1_500,
       });
     } finally {
-      vi.useRealTimers();
+      clock.mockRestore();
     }
   });
 
