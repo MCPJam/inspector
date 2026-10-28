@@ -304,3 +304,21 @@ it("releases a CR-only SSE frame before the server closes", async () => {
   controller.close();
   await reader.cancel();
 });
+
+it("preserves the empty 202 acknowledgement for native notifications", async () => {
+  const notification = { jsonrpc: "2.0", method: "notifications/initialized" };
+  const raw = JSON.stringify(notification);
+  const response = await forwardNativeMcp({
+    url: "https://upstream.example/mcp",
+    serverId: "server",
+    request: new Request("https://forwarder.example/mcp", {
+      method: "POST",
+      body: raw,
+    }),
+    body: raw,
+    message: notification,
+    fetch: vi.fn(async () => new Response("", { status: 202 })),
+  });
+  expect(response.status).toBe(202);
+  expect(await response.text()).toBe("");
+});

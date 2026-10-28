@@ -94,6 +94,8 @@ export async function nativeResponse(args: {
         if (bytes > MAX_BODY) throw new NativeWireError("response_too_large");
         chunks.push(chunk.value);
       }
+      if (id === undefined && response.status === 202 && bytes === 0)
+        return new Response(null, { status: response.status, headers });
       const raw = Buffer.concat(chunks).toString("utf8");
       let parsed: unknown;
       try {
