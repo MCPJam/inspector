@@ -35,6 +35,11 @@ import {
   type HostBridgeCallbacks,
 } from "@/components/chat-v2/thread/mcp-apps/host-app-bridge";
 import { PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
+import {
+  deliverToolData,
+  settleToolData,
+  type ToolDataDelivery,
+} from "./tool-data-delivery";
 
 type ReadResourceHandler = NonNullable<HostBridgeCallbacks["onReadResourceV2"]>;
 
@@ -65,6 +70,8 @@ export interface HostPageRenderResult {
   /** Structural blankness: the mounted document painted no visible content. */
   blank: boolean;
   mountError?: string;
+  /** What happened to the tool data sent after the handshake. */
+  toolData?: ToolDataDelivery;
 }
 
 interface ActiveWidget {
@@ -201,6 +208,7 @@ async function renderWidget(
   }
 
   let initialized = false;
+  let toolData: Promise<ToolDataDelivery> | undefined;
   const bridge = createHostAppBridge({
     hostInfo: opts.hostInfo,
     hostCapabilities: opts.hostCapabilities as never,
@@ -224,13 +232,12 @@ async function renderWidget(
       },
       onAppInitialized: (b) => {
         initialized = true;
-        // Deliver tool data so data-driven widgets actually paint.
-        if (opts.toolInput) {
-          void b.sendToolInput({ arguments: opts.toolInput }).catch(() => {});
-        }
-        if (opts.toolOutput !== undefined) {
-          void b.sendToolResult(opts.toolOutput as never).catch(() => {});
-        }
+        // Deliver tool data so data-driven widgets actually paint, and keep
+        // what happened to it: painting is not proof the widget took its data.
+        toolData = deliverToolData(b, {
+          toolInput: opts.toolInput,
+          toolOutput: opts.toolOutput,
+        });
       },
       onReadResourceV2: async (params) => {
         const readResource = window.__mcpjamHostReadResource;
@@ -313,6 +320,14 @@ async function renderWidget(
     mounted: true,
     bridgeInitialized: initialized,
     blank: isDocumentBlank(iframe.contentDocument),
+    ...(toolData
+      ? {
+          toolData: await settleToolData(
+            toolData,
+            opts.renderTimeoutMs - (Date.now() - start),
+          ),
+        }
+      : {}),
   };
 }
 
