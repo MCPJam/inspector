@@ -46,6 +46,8 @@ export type {
 // SEP-2243 header mirroring: CLI and conformance use the send path’s walk.
 export {
   buildMcpParamHeaders,
+  findMcpHeaderIssues,
+  deriveMirroredBodyValues,
   classifyMcpHeader,
   decodeMcpHeaderValue,
   encodeMcpHeaderValue,
@@ -749,6 +751,7 @@ export {
   isInapplicableCheck,
   isUnrunCheck,
 } from "./conformance-outcome.js";
+export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -1673,6 +1676,7 @@ export type {
   EvalOutOfOrderToolCall,
   EvalToolCall,
   EvalToolCallMatchResult,
+  EvalToolCallRetry,
 } from "./matchers.js";
 
 // HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).

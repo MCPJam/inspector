@@ -877,6 +877,44 @@ describe("useEvalHandlers", () => {
       });
     });
 
+    it.each([{ servers: [] }, { servers: ["server-1"] }])(
+      "refuses a replay fallback that cannot honor the iteration count (%j)",
+      async ({ servers }) => {
+        mockIsHostedMode.mockReturnValue(true);
+        const { result } = renderHook(() =>
+          useEvalHandlers({
+            ...defaultProps,
+            connectedServerNames: new Set(),
+            ensureServersReady: vi.fn().mockResolvedValue({
+              readyServerNames: [],
+              missingServerNames: [],
+              failedServerNames: ["server-1"],
+              reauthServerNames: [],
+            }),
+            latestRunBySuiteId: new Map<string, any>([
+              ["suite-123", { _id: "run-source", hasServerReplayConfig: true }],
+            ]),
+          }),
+        );
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(
+              {
+                _id: "suite-123",
+                name: "Suite",
+                source: "ui",
+                environment: { servers },
+              } as any,
+              { iterationOverride: 1, throwOnFailure: true },
+            ),
+          ).rejects.toThrow(
+            "Replay cannot honor the requested iteration count",
+          );
+        });
+        expect(mockAuthFetch).not.toHaveBeenCalled();
+      },
+    );
+
     it("replays the latest run when auto-connect fails and replay is available", async () => {
       mockIsHostedMode.mockReturnValue(true);
       const ensureServersReady = vi.fn().mockResolvedValue({

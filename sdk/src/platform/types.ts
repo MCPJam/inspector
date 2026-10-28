@@ -732,6 +732,9 @@ export interface PlatformChatSessionDetail {
 
 /** One turn's entry in a trace read. */
 export interface PlatformChatSessionTraceTurn {
+  setupHashAtTurn?: string;
+  setupStatus?: "complete" | "incomplete";
+  setupIncompleteReasons?: string[];
   browser?: {
     browserSessionId: string;
     bootId?: string;

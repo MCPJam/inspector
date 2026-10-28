@@ -4,6 +4,13 @@ import {
   isUnrunCheck,
 } from "../conformance-outcome.js";
 import {
+  AUTHORIZATION_REQUIRED_MESSAGE,
+  authorizationRequiredDetails,
+  isAuthorizationRefusal,
+  isUnauthorizedProbe,
+} from "../conformance-authorization.js";
+import { PROTOCOL_CHECK_CATALOG } from "../conformance-catalog.js";
+import {
   buildConformanceProfileStamp,
   conformanceProfile,
   partitionByProfile,
@@ -289,6 +296,13 @@ async function runClientChecks(
   config: NormalizedMCPConformanceConfig;
   surface?: MCPServerSurfaceSnapshot;
   readiness: MCPReadinessWarning[];
+  /**
+   * An Auto run's connection was refused for credentials before the era was
+   * negotiated. `checks` then already holds every selected check, client and
+   * raw, as could-not-run, and the raw families must not run against a
+   * guessed era.
+   */
+  authorizationRefused?: true;
 }> {
   const selectedClientChecks = CLIENT_CHECKS.filter((check) =>
     selectedCheckIds.has(check.id),
@@ -434,6 +448,35 @@ async function runClientChecks(
     );
 
   } catch (error) {
+    // Refused for credentials on an Auto run: the connection that would have
+    // negotiated the era never completed, so the era is UNKNOWN — not the
+    // legacy default. Gating against that default would report the other
+    // era's checks `not-applicable`, a verdict about a server this run never
+    // reached. Every selected check, client or raw, could not run, and the raw
+    // probes do not run against a guessed era. A pinned run knows its era and
+    // keeps era gating below.
+    if (
+      config.protocolVersion === undefined &&
+      isAuthorizationRefusal(error)
+    ) {
+      return {
+        checks: [...selectedCheckIds].map((id) =>
+          couldNotRunResult(
+            selectedClientChecks.find((check) => check.id === id) ?? {
+              id,
+              category: CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
+              ...PROTOCOL_CHECK_CATALOG[id],
+            },
+            AUTHORIZATION_REQUIRED_MESSAGE,
+            authorizationRequiredDetails(error),
+          ),
+        ),
+        config,
+        readiness: [],
+        authorizationRefused: true,
+      };
+    }
+
     // A raw-only Auto run has no client-backed check on which to report a
     // failed negotiation. Reject the run instead of silently executing raw
     // checks with the legacy default after detection failed.
@@ -453,6 +496,31 @@ async function runClientChecks(
     const firstApplicableCheck = selectedClientChecks.find(
       (check) => !eraGate(check, config.era, config.protocolVersion),
     );
+
+    // Refused for credentials on a PINNED run: the era is the pin, so era
+    // gating still holds, and every applicable client check could not run —
+    // `incomplete` rather than `failed`. The raw probes run as usual and any
+    // 401 they see is reclassified the same way. The degenerate
+    // all-era-skipped selection still anchors one result on the first check,
+    // so the refusal can never vanish into a `passed` run.
+    if (isAuthorizationRefusal(error)) {
+      const refused = (check: MCPClientCheckDefinition) =>
+        couldNotRunResult(
+          check,
+          AUTHORIZATION_REQUIRED_MESSAGE,
+          authorizationRequiredDetails(error),
+        );
+      return {
+        checks: selectedClientChecks.map((check, index) =>
+          !firstApplicableCheck && index === 0
+            ? refused(check)
+            : (eraGate(check, config.era, config.protocolVersion) ??
+              refused(check)),
+        ),
+        config,
+        readiness: [],
+      };
+    }
 
     // Degenerate modern-era selection: EVERY selected client check is
     // legacy-only, so there is no era-applicable check to pin the connect
@@ -513,6 +581,24 @@ async function runClientChecks(
   }
 }
 
+/**
+ * A raw probe that "failed" on a 401 graded the authorization layer, not the
+ * MCP behaviour it names (a missing JSON-RPC error object, an initialize that
+ * did not return a session). Same rule the transport checks already apply to
+ * a gateway's 401 page: the run establishes nothing there, so it could not
+ * run. The original failure message stays in `details` for the record.
+ */
+function reclassifyUnauthorizedProbe(check: MCPCheckResult): MCPCheckResult {
+  if (check.status !== "failed" || !isUnauthorizedProbe(check.details)) {
+    return check;
+  }
+  return couldNotRunResult(check, AUTHORIZATION_REQUIRED_MESSAGE, {
+    ...check.details,
+    ...authorizationRequiredDetails(),
+    probeFailure: check.error?.message,
+  });
+}
+
 export class MCPConformanceTest {
   private readonly config: NormalizedMCPConformanceConfig;
 
@@ -542,6 +628,13 @@ export class MCPConformanceTest {
       recorder,
     };
 
+    // A refused Auto run already reported every selected check as
+    // could-not-run; the raw families get nothing to grade against an era the
+    // run never learned.
+    const rawSelection: Set<MCPCheckId> = clientRun.authorizationRefused
+      ? new Set()
+      : selectedCheckIds;
+
     const [
       protocolChecks,
       securityChecks,
@@ -549,10 +642,10 @@ export class MCPConformanceTest {
       modernChecks,
       rawReadiness,
     ] = await Promise.all([
-      runProtocolChecks(rawContext, selectedCheckIds),
-      runSecurityChecks(rawContext, selectedCheckIds),
-      runTransportChecks(rawContext, selectedCheckIds),
-      runModernChecks(rawContext, selectedCheckIds),
+      runProtocolChecks(rawContext, rawSelection),
+      runSecurityChecks(rawContext, rawSelection),
+      runTransportChecks(rawContext, rawSelection),
+      runModernChecks(rawContext, rawSelection),
       collectRawReadiness(rawContext),
     ]);
 
@@ -561,7 +654,7 @@ export class MCPConformanceTest {
     // all of them or it would grade a partial record and call it complete.
     const wireSchema = await runWireSchemaCheck(
       rawContext,
-      selectedCheckIds,
+      rawSelection,
       recorder,
     );
 
@@ -572,7 +665,7 @@ export class MCPConformanceTest {
       ...transportChecks,
       ...modernChecks,
       ...wireSchema.results,
-    ];
+    ].map(reclassifyUnauthorizedProbe);
     // The tally reports EVERYTHING that ran, pending checks included: a report
     // that hid them would misstate what the run did. Only the VERDICT is
     // narrowed to the scored set, below.
