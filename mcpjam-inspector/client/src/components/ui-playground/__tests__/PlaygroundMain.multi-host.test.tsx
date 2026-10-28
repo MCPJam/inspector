@@ -11,6 +11,7 @@ import {
   within,
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
+import { GUEST_LOCKED_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useHostContextStore } from "@/stores/client-context-store";
 import type { HostDetail } from "@/hooks/useClients";
@@ -1481,6 +1482,53 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(screen.getAllByTestId("multi-host-card")).toHaveLength(1);
     expect(screen.getByText("The saved model or connection is unavailable. Edit this client in Connect.")).toBeTruthy();
     expect(mockChatInput.mock.calls.at(-1)?.[0].submitDisabled).toBe(true);
+  });
+
+  it("sign-in-locked saved model leaves the reason to the composer notice", () => {
+    const hostA = makeHost("h-A", "Host A", {
+      hostStyle: "chatgpt",
+      modelId: "openai/gpt-5-mini",
+    });
+    const hostB = makeHost("h-B", "Host B", {
+      hostStyle: "claude",
+      modelId: "anthropic/claude-sonnet-4.5",
+    });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    const previousModels = mockUseChatSession.availableModels;
+    mockUseChatSession.availableModels = previousModels.map((model) =>
+      model.id === "anthropic/claude-sonnet-4.5"
+        ? {
+            ...model,
+            disabled: true,
+            disabledReason: GUEST_LOCKED_MODEL_REASON,
+          }
+        : model,
+    );
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getAllByTestId("multi-host-card")).toHaveLength(1);
+      expect(
+        screen.queryByText(
+          "The saved model or connection is unavailable. Edit this client in Connect.",
+        ),
+      ).toBeNull();
+      const inputProps = mockChatInput.mock.calls.at(-1)![0];
+      expect(inputProps.submitDisabled).toBe(true);
+      render(<>{inputProps.notice}</>);
+      expect(screen.getByTestId("sign-in-model-notice").textContent).toContain(
+        "Host B can't run Claude Sonnet 4.5.",
+      );
+    } finally {
+      mockUseChatSession.availableModels = previousModels;
+    }
   });
 
   it("keeps client transcripts by identity when adding, removing and reordering clients", () => {

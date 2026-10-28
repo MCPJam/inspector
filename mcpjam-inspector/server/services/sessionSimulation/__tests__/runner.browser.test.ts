@@ -1054,6 +1054,28 @@ describe("runSyntheticHostSession — execution budgets", () => {
     expect(saved.turnTrace).toBeUndefined();
   });
 
+  it("saves timeout evidence without waiting on the server's tool list", async () => {
+    runAssistantTurnMock.mockImplementationOnce(async (opts: { messages: ModelMessage[] }) => ({
+      messages: [...opts.messages, { role: "assistant", content: "first answer" }],
+      assistantMessages: [], toolCalls: [], toolResults: [], turnTrace: TURN_TRACE,
+    })).mockImplementation(partialOnAbort(true));
+    const listTools = vi.fn().mockResolvedValue({ tools: [] });
+    const adapter = baseAdapter();
+    adapter.managerFactory = async () => ({
+      manager: { hasServer: () => true, listTools, executeTool: vi.fn(), getAllToolsMetadata: vi.fn().mockReturnValue({}) } as never,
+      connectedServerIds: ["server-1"], connectedServerNames: ["Server One"], dispose: async () => {},
+    });
+    adapter.nextPersonaTurn.mockReset().mockResolvedValue({ message: "continue", endSession: false });
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 30 });
+    const result = await runSyntheticHostSession(adapter);
+    expect(result.errorReason).toBe("turn_timeout");
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(2);
+    // Only the completed turn lists tools for its snapshot.
+    expect(listTools).toHaveBeenCalledTimes(1);
+    expect(persistChatSessionToConvexMock.mock.calls[0][0].toolSnapshot).toBeDefined();
+    expect(persistChatSessionToConvexMock.mock.calls[1][0].toolSnapshot).toBeUndefined();
+  });
+
   it.each(["reject", "throw"])("keeps timeout classification when evidence persistence fails: %s", async (failure) => {
     runAssistantTurnMock.mockImplementation(partialOnAbort(true));
     if (failure === "throw") persistChatSessionToConvexMock.mockRejectedValue(new Error("fixture unavailable"));

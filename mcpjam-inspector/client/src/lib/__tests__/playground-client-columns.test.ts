@@ -91,6 +91,14 @@ describe("saved-client comparison resolution", () => {
     });
   });
 
+  it("keeps a disabled saved model on the unavailable result", () => {
+    const locked = { ...hosted, disabled: true, disabledReason: "Sign in to use this frontier model" };
+    expect(resolve(host, [locked])).toMatchObject({
+      status: "unavailable",
+      model: locked,
+    });
+  });
+
   it("reports loading, missing and invalid clients explicitly", () => {
     const args = {
       hostId: "a",

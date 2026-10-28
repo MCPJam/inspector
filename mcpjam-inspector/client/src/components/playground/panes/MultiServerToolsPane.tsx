@@ -37,6 +37,9 @@ import { BrowserToolsSection } from "@/components/playground/BrowserToolsSection
 import { ToolSourceHeader } from "@/components/playground/ToolSourceHeader";
 import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 import { useBuiltinToolRun } from "@/components/playground/use-builtin-tool-run";
+import { AppToolsSection } from "../AppToolsSection";
+import { useAppToolRun } from "../use-app-tool-run";
+import type { AppPaneGroup } from "../app-pane-tools";
 import { useBrowserToolRun } from "@/components/playground/use-browser-tool-run";
 import { BuiltinToolDetailView } from "@/components/playground/BuiltinToolDetailView";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
@@ -60,6 +63,7 @@ interface InnerProps {
    * means the section isn't rendered.
    */
   browserTools?: BrowserToolsState;
+  previewedHarnessId?: string | null;
 }
 
 interface Selection {
@@ -72,6 +76,7 @@ export function MultiServerToolsPaneInner({
   builtinTools = [],
   builtinToolsRunLocally = false,
   browserTools,
+  previewedHarnessId,
 }: InnerProps) {
   const state = usePlaygroundStateContext();
   const appState = useSharedAppState();
@@ -98,6 +103,7 @@ export function MultiServerToolsPaneInner({
   // Harness built-in tools share the same select → detail → Run UX; "Run" asks
   // the agent (no API fires a built-in tool call directly). One of {server tool,
   // built-in} is selected at a time.
+  const app = useAppToolRun();
   const builtin = useBuiltinToolRun(builtinTools);
   const browser = useBrowserToolRun(
     browserTools?.tools ?? [],
@@ -186,6 +192,7 @@ export function MultiServerToolsPaneInner({
   };
 
   const handleSelect = (entry: Selection) => {
+    app.clear();
     builtin.clear();
     browser.clear();
     setSelected(entry);
@@ -194,6 +201,7 @@ export function MultiServerToolsPaneInner({
   };
 
   const handleSelectBuiltin = (key: string) => {
+    app.clear();
     setSelected(null);
     browser.clear();
     builtin.select(key);
@@ -202,6 +210,7 @@ export function MultiServerToolsPaneInner({
   };
 
   const handleSelectBrowser = (key: string) => {
+    app.clear();
     setSelected(null);
     builtin.clear();
     browser.select(key);
@@ -209,19 +218,33 @@ export function MultiServerToolsPaneInner({
     setActiveTab("tools");
   };
 
+  const handleSelectApp = (key: string) => {
+    setSelected(null);
+    builtin.clear();
+    browser.clear();
+    app.select(key);
+    setIsListExpanded(false);
+    setActiveTab("tools");
+  };
+
   // Top "Run": execute the selected server tool, invoke a page tool directly,
   // or ask the agent to run a built-in / browser verb.
   const handleRun = () => {
-    if (browser.selected) void browser.run();
+    if (app.selected) void app.run();
+    else if (browser.selected) void browser.run();
     else if (builtin.selected) builtin.askAgentToRun();
     else void handleExecute();
   };
 
   const hasSelection =
-    !!selectedEntry || !!builtin.selected || !!browser.selected;
+    !!selectedEntry ||
+    !!builtin.selected ||
+    !!browser.selected ||
+    !!app.selected;
 
   const handleTabChange = (tab: "tools" | "saved") => {
     setActiveTab(tab);
+    app.clear();
     if (tab === "tools") {
       // Clicking the Tools tab returns to the tool list (the tool menu),
       // deselecting any open tool (server tool or harness built-in) — the
@@ -247,7 +270,14 @@ export function MultiServerToolsPaneInner({
     ) {
       return;
     }
-    if (!hasSelection || state.isExecuting || browser.invoking) return;
+    if (
+      !hasSelection ||
+      state.isExecuting ||
+      browser.invoking ||
+      app.invoking ||
+      (app.selected && !app.canRun)
+    )
+      return;
     e.preventDefault();
     handleRun();
   };
@@ -262,8 +292,14 @@ export function MultiServerToolsPaneInner({
         onTabChange={handleTabChange}
         toolCount={flat.length}
         savedCount={0}
-        isExecuting={state.isExecuting || browser.invoking}
-        canExecute={browser.selected ? browser.canRun : hasSelection}
+        isExecuting={state.isExecuting || browser.invoking || app.invoking}
+        canExecute={
+          app.selected
+            ? app.canRun
+            : browser.selected
+              ? browser.canRun
+              : hasSelection
+        }
         canSave={false}
         fetchingTools={isLoadingAny}
         onExecute={handleRun}
@@ -276,6 +312,10 @@ export function MultiServerToolsPaneInner({
           <SavedRequestsPlaceholder />
         ) : isListExpanded || !hasSelection ? (
           <FlatToolList
+            appGroups={app.groups}
+            selectedAppKey={app.selectedKey}
+            onSelectApp={handleSelectApp}
+            previewedHarnessId={previewedHarnessId}
             entries={filteredEntries}
             totalCount={flat.length}
             loading={isLoadingAny || reconnectingServerNames.length > 0}
@@ -300,6 +340,11 @@ export function MultiServerToolsPaneInner({
                 handleSelect(entry);
               }
             }}
+          />
+        ) : app.detailProps ? (
+          <BuiltinToolDetailView
+            {...app.detailProps}
+            onExpand={() => setIsListExpanded(true)}
           />
         ) : browser.selected ? (
           <BuiltinToolDetailView
@@ -368,6 +413,10 @@ export function MultiServerToolsPaneInner({
 }
 
 interface FlatToolListProps {
+  appGroups: AppPaneGroup[];
+  selectedAppKey: string | null;
+  onSelectApp: (key: string) => void;
+  previewedHarnessId?: string | null;
   entries: ReturnType<typeof useAggregatedTools>["flat"];
   totalCount: number;
   loading: boolean;
@@ -386,6 +435,10 @@ interface FlatToolListProps {
 }
 
 function FlatToolList({
+  appGroups,
+  selectedAppKey,
+  onSelectApp,
+  previewedHarnessId,
   entries,
   totalCount,
   loading,
@@ -406,7 +459,9 @@ function FlatToolList({
   // and a browser host has the six `browser_*` ones — so the "no tools" empty
   // state must account for both, or it reports the wrong reason for a list
   // that is not actually empty.
+  const hasAppTools = appGroups.some((group) => group.tools.length > 0);
   const hasBuiltin =
+    hasAppTools ||
     builtinTools.length > 0 ||
     (browserTools?.tools.length ?? 0) > 0 ||
     Boolean(browserTools?.localConsent || browserTools?.catalogError);
@@ -458,6 +513,13 @@ function FlatToolList({
                 onRetryCatalog={browserTools.refreshPage}
               />
             ) : null}
+            <AppToolsSection
+              groups={appGroups}
+              searchQuery={searchQuery}
+              selectedKey={selectedAppKey}
+              onSelect={onSelectApp}
+              previewedHarnessId={previewedHarnessId}
+            />
             {entries.length > 0 ? (
               <ToolSourceHeader
                 title="Servers"

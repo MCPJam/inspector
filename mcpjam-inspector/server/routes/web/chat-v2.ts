@@ -1,3 +1,4 @@
+import { stripForwardingRequestBody } from "@/shared/forwarding-approval";
 import { resolveHostedChatSetup } from "../../services/chat-turn/resolve-hosted-chat-setup.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
 import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
@@ -253,7 +254,7 @@ chatV2.post("/", async (c) => {
   let scenarioBox: HarnessBox | undefined;
   try {
     const bearerToken = assertBearerToken(c);
-    const rawBody = await readJsonBody<Record<string, unknown>>(c);
+    const rawBody = JSON.parse(stripForwardingRequestBody(JSON.stringify(await readJsonBody<Record<string, unknown>>(c)))) as Record<string, unknown>;
     if (
       rawBody.browserEngine === "local" ||
       c.req.header("x-mcpjam-browser-consent")
@@ -2523,6 +2524,7 @@ chatV2.post("/", async (c) => {
           ...(scenarioBox ? { scenarioBox } : {}),
           ...(scenarioParticipant ? { scenarioParticipant: true } : {}),
           authenticatedUserId,
+          ...(hostId ? { hostId } : {}),
           originalMessages: messages,
           ...(resolvedExecution.harness
             ? { harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
