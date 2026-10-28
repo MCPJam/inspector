@@ -176,7 +176,7 @@ describe("obtainStdioCommandApproval", () => {
     const outcome = obtainStdioCommandApproval(PROMPT);
     await answerNextPrompt(true);
     await expect(outcome).rejects.toThrow(
-      "The command could not be approved on this device.",
+      "The command could not be approved on this device. Try approving it again.",
     );
   });
 

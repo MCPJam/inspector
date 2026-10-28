@@ -105,6 +105,9 @@ export function readStdioCommandApprovalTerms(
   };
 }
 
+const APPROVAL_FAILED_MESSAGE =
+  "The command could not be approved on this device. Try approving it again.";
+
 async function approveStdioCommand(args: {
   projectId: string;
   serverId: string;
@@ -129,9 +132,7 @@ async function approveStdioCommand(args: {
   return {
     ok: false,
     error:
-      typeof body?.error === "string"
-        ? body.error
-        : "The command could not be approved on this device.",
+      typeof body?.error === "string" ? body.error : APPROVAL_FAILED_MESSAGE,
     terms: readStdioCommandApprovalTerms(body),
   };
 }
@@ -196,9 +197,7 @@ export async function askStdioCommandApprovalForChatError(
       toast.success("Allowed on this device. Send your message again.");
   } catch (failure) {
     toast.error(
-      failure instanceof Error
-        ? failure.message
-        : "The command could not be approved on this device.",
+      failure instanceof Error ? failure.message : APPROVAL_FAILED_MESSAGE,
     );
   }
 }
