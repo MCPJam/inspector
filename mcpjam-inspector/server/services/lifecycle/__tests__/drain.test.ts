@@ -82,7 +82,9 @@ describe("drain coordinator", () => {
   });
 
   it("returns at once with no deadline, as a shutdown without a drain does", async () => {
-    const drain = createDrainCoordinator();
+    // A stopped clock, so `waitedMs` shows the drain never waited rather than
+    // whether the real clock ticked between its two readings.
+    const drain = createDrainCoordinator(() => 0);
     drain.track("claimed_job", new Promise<void>(() => {}));
 
     await expect(drain.drain(0)).resolves.toMatchObject({
