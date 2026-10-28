@@ -6,7 +6,6 @@ import {
 } from "ai";
 import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
 import { describeError, describeAsSlug } from "@mcpjam/sdk";
-import type { ModelProvider } from "@/shared/types";
 import type {
   ProgressiveToolPlan,
   ToolDiscoveryState,
@@ -39,7 +38,7 @@ import {
 } from "../../utils/direct-chat-scope-step-up.js";
 import type { MrtrEngineResume } from "../../utils/mrtr-hosted-chat.js";
 
-function formatStreamError(error: unknown, provider?: ModelProvider): string {
+function formatStreamError(error: unknown, provider?: string): string {
   if (!(error instanceof Error)) {
     return String(error);
   }
@@ -129,7 +128,7 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
 export function streamDirectChatWithLiveTrace(options: {
   llmModel: RunDirectChatTurnOptions["llmModel"];
   modelId: string;
-  provider?: ModelProvider;
+  provider?: string;
   messageHistory: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
