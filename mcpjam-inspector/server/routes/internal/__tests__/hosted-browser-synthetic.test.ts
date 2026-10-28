@@ -293,7 +293,8 @@ describe("the test page", () => {
     expect(res.headers.get("origin-agent-cluster")).toBe("?1");
     const html = await res.text();
     expect(html).toContain(`name: "${SYNTHETIC_TOOL_NAME}"`);
-    const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1] ?? "";
+    const open = html.indexOf("<script>") + "<script>".length;
+    const script = html.slice(open, html.indexOf("</script>", open));
     const hash = createHash("sha256").update(script).digest("base64");
     expect(res.headers.get("content-security-policy")).toContain(
       `script-src 'sha256-${hash}'`,
