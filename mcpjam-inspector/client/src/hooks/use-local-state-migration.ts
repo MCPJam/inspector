@@ -247,14 +247,15 @@ export function useLocalStateMigration({
     inFlightRef.current = true;
     // Each migrated project is seeded with an MCPJam client in the viewer's
     // theme, as a project created from the sidebar would be. Read the theme
-    // this tab renders: the hook mounts above PreferencesStoreProvider.
-    const themeMode = getRenderedThemeMode();
+    // this tab renders at each call: the hook mounts above
+    // PreferencesStoreProvider, and the viewer can switch mid-migration.
     runLocalStateMigration({
-      createProject: (args) => createProject({ ...args, themeMode }),
+      createProject: (args) =>
+        createProject({ ...args, themeMode: getRenderedThemeMode() }),
       ensureDefaultProject: async ({ organizationId: orgId }) => {
         const result = await (ensureDefaultProject as any)({
           ...(orgId ? { organizationId: orgId } : {}),
-          themeMode,
+          themeMode: getRenderedThemeMode(),
         });
         if (typeof result !== "string") {
           throw new Error(
