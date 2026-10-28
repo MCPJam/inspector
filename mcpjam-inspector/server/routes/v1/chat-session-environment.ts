@@ -30,6 +30,21 @@ export interface ResolvedTarget {
   unavailableServerIds?: string[];
 }
 
+/** v1 reports client built-ins that this surface does not execute. */
+export function unappliedBuiltInToolIds(
+  runtimeConfig: unknown,
+): string[] {
+  if (
+    !runtimeConfig ||
+    typeof runtimeConfig !== "object" ||
+    !("builtInToolIds" in runtimeConfig)
+  ) return [];
+  const ids = runtimeConfig.builtInToolIds;
+  return Array.isArray(ids)
+    ? ids.filter((id): id is string => typeof id === "string" && id !== "")
+    : [];
+}
+
 const capabilitiesRef = makeFunctionReference<
   "query",
   { projectId: string },
@@ -146,10 +161,7 @@ export async function resolveChatSessionEnvironment(
     projectId,
     pluginVersionIds: (spec.pluginVersions ?? []).map((p) => p.pluginVersionId),
   });
-  const builtIns = spec.host.runtimeConfig.builtInToolIds;
-  const unappliedCapabilities = Array.isArray(builtIns)
-    ? builtIns.filter((id): id is string => typeof id === "string" && id !== "")
-    : [];
+  const unappliedCapabilities = unappliedBuiltInToolIds(spec.host.runtimeConfig);
   return {
     serverIds,
     ...(serverNames.length === serverIds.length ? { serverNames } : {}),
