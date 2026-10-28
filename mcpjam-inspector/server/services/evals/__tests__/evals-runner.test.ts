@@ -5897,6 +5897,13 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             }),
           ]),
         );
+        // The live Tools diff joins each call to a failure by this id, so a
+        // retried attempt reads as retried before the iteration persists.
+        expect(
+          (snap as { actualToolCalls?: unknown[] }).actualToolCalls,
+        ).toEqual([
+          expect.objectContaining({ toolName: "search", toolCallId: "call-1" }),
+        ]);
       } finally {
         runAssistantTurnSpy.mockRestore();
       }

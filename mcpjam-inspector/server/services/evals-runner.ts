@@ -1838,6 +1838,7 @@ function toStreamToolCalls(toolCalls: ToolCall[]): EvalStreamToolCall[] {
   return toolCalls.map((toolCall) => ({
     toolName: toolCall.toolName,
     arguments: toolCall.arguments,
+    ...(toolCall.toolCallId ? { toolCallId: toolCall.toolCallId } : {}),
   }));
 }
 
