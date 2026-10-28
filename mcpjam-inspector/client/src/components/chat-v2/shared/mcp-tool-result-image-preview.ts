@@ -10,6 +10,7 @@ import {
   type ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/browser";
 import { readResource as readResourceApi } from "@/lib/apis/mcp-resources-api";
+import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
 
 export interface McpToolResultImagePreview {
   src: string;
@@ -46,17 +47,9 @@ function getEmbeddedResource(block: Record<string, unknown>) {
 }
 
 // Tool outputs may be wrapped as `{ type: "json", value: ... }` one or more
-// times before the model-facing content shape. Mirrors the transcript
-// reader's unwrap; kept local so this shared renderer doesn't pull in the
-// heavy transcript-conversion module.
+// times before the model-facing content shape; the shared reader strips them.
 function unwrapJsonEnvelope(value: unknown): unknown {
-  let current = value;
-  for (let depth = 0; depth < 4; depth += 1) {
-    if (!isRecord(current)) return current;
-    if (current.type !== "json" || !("value" in current)) return current;
-    current = current.value;
-  }
-  return current;
+  return unwrapToolOutputEnvelope(value, 4).value;
 }
 
 // A persisted tool result that has been round-tripped through the AI SDK

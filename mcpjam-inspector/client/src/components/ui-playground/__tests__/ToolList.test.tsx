@@ -1,3 +1,5 @@
+import { makeAppInstance } from "@/test/factories";
+import { deriveAppPaneTools } from "@/components/playground/app-pane-tools";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Tool } from "@modelcontextprotocol/client";
@@ -605,4 +607,60 @@ it("keeps catalog recovery visible when there are no server tools", () => {
   }} />);
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(refreshPage).toHaveBeenCalledOnce();
+});
+
+it("shows the shared app section without a server and routes stable row keys", () => {
+  const instance = makeAppInstance();
+  const groups = deriveAppPaneTools({
+    offered: [
+      {
+        instance,
+        alias: "app_12345678",
+        bridgeId: instance.bridgeId,
+        rawName: "make_move",
+        readOnly: false,
+      },
+    ],
+    dropped: [],
+  });
+  const onSelectApp = vi.fn();
+  render(
+    <ToolList
+      {...defaultProps}
+      appGroups={groups}
+      onSelectApp={onSelectApp}
+      hasConnectedServer={false}
+    />,
+  );
+  expect(screen.queryByText(/No server connected/)).toBeNull();
+  fireEvent.click(screen.getByText("make_move"));
+  expect(onSelectApp).toHaveBeenCalledWith("app:chat-1\0call-1\0make_move");
+  expect(screen.queryByText("Servers")).toBeNull();
+});
+
+it("uses the search empty state when mounted app tools do not match", () => {
+  const instance = makeAppInstance();
+  const groups = deriveAppPaneTools({
+    offered: [
+      {
+        instance,
+        alias: "app_12345678",
+        bridgeId: instance.bridgeId,
+        rawName: "make_move",
+        readOnly: false,
+      },
+    ],
+    dropped: [],
+  });
+  render(
+    <ToolList
+      {...defaultProps}
+      appGroups={groups}
+      onSelectApp={vi.fn()}
+      searchQuery="unmatched"
+      hasConnectedServer={false}
+    />,
+  );
+  expect(screen.getByText("No tools match your search")).toBeInTheDocument();
+  expect(screen.queryByTestId("app-tools-section")).toBeNull();
 });
