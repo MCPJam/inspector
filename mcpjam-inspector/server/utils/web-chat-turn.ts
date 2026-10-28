@@ -1,3 +1,9 @@
+import { HOSTED_MODE } from "../config.js";
+import { buildLocalScopeStepUpResume, buildLocalScopeStepUpCancellation, readProtectedResourceUrl } from "../services/chat-turn/local-interactions.js";
+import { createLocalScopeStepUpContinuation } from "./scope-step-up-continuation.js";
+import { prepareDirectProvider, type DirectProviderInput } from "../services/chat-turn/direct-provider.js";
+import { streamDirectChatWithLiveTrace } from "../services/chat-turn/direct-stream.js";
+import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import { DEFAULT_TURN_MAX_STEPS } from "../../shared/turn-step-budget.js";
 import { capturePreparedWebSetup } from "../services/chat-turn/setup-manifest.js";
 import type { ResolvedEnvironmentRuntime } from "../services/environments/runtime.js";
@@ -41,6 +47,7 @@ import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
 import { withoutServerVerifiedApprovalTools } from "./built-in-tools/mcpjam.js";
 import {
   historyVerificationFor,
+  presentHistoryForModel,
   resolveToolOutputFenceKey,
   signHistoryForPersistence,
   TOOL_OUTPUT_TRUST_NOTE,
@@ -411,6 +418,9 @@ export interface WebChatTurnPersistContext {
  * here so the helper signature is self-contained.
  */
 export interface WebChatTurnPrepareInputs {
+  /** A local ingress has selected its direct-provider path. */
+  directProvider?: DirectProviderInput;
+  localMcpRuntimeRequired?: boolean;
   modelToolExecutor?: import("./model-tool-executor.js").ModelToolExecutor;
   selectedServerIds: string[];
   modelDefinition: ModelDefinition;
@@ -478,7 +488,7 @@ export interface WebChatTurnPrepareInputs {
    * client-fulfilled like `appTools` — the client invokes them through the
    * session it already owns, hosted or local, and posts the result back.
    *
-   * The CALLER validates and gates them (`webmcpInspectorReachable`), because
+   * The CALLER validates and gates them (`WEBMCP_INSPECTOR_ENABLED`), because
    * a turn must never advertise a page tool on a deployment where no session
    * can exist: the model would call it and the turn would strand.
    */
@@ -547,6 +557,12 @@ export interface WebChatTurnPrepareInputs {
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
 export interface WebChatTurnRuntime {
+  localScopeStepUp?: {
+    bindingKey: string;
+    resumeRequest?: ScopeStepUpResumeRequest;
+    cancelRequest?: ScopeStepUpCancelRequest;
+  };
+  onStreamWriterReady?: (writer: ElicitationChunkWriter) => void;
   /** Authorization header (Bearer …) — forwarded to ingest + stream calls. */
   authHeader: string | undefined;
   clientIp: string | null;
@@ -640,6 +656,8 @@ export interface WebChatTurnRuntime {
    * gets `agent_billing_rejected` in the middle of one.
    */
   maxSteps?: number;
+  /** Request owner supplied by ingress; excludes durable continuations. */
+  dispose?: () => Promise<void>;
   /** Hono context (needed for getSpendClientIp fallback / future hooks). */
   c: Context;
 }
@@ -694,25 +712,25 @@ export function stripUiContextModelParts(
  * the caller is responsible for disconnecting the manager on the throw
  * path and mapping the error to a `webError(...)` response.
  */
-export async function streamWebChatTurn(
+export async function streamWebChatTurn(args: StreamWebChatTurnArgs): Promise<Response> {
+  if (!process.env.CONVEX_HTTP_URL) {
+    throw new WebRouteError(500, ErrorCode.INTERNAL_ERROR, "Server missing CONVEX_HTTP_URL configuration");
+  }
+  return streamChatTurn(args, "managed");
+}
+
+/** Shared execution; only server-owned setup adapters choose the source. */
+export async function streamChatTurn(
   args: StreamWebChatTurnArgs,
+  source: "managed" | "standalone",
 ): Promise<Response> {
   const { manager, prepare, persist, runtime } = args;
   const { c } = runtime;
-  // Mid-stream failures happen after this route has already returned a 200
-  // stream, where the HTTP failure events can't see them. The request-scoped
-  // reporter gives every engine below one typed route.operation.failed path
-  // carrying the full request envelope (orgId/route/requestId/release).
-  const failureReporter = createRequestStreamFailureReporter(c, "chat");
-
-  // Guard the env once at the top — both branches POST to Convex.
-  if (!process.env.CONVEX_HTTP_URL) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration",
-    );
+  if (source === "standalone" && (HOSTED_MODE || persist.projectId ||
+      persist.environmentId || persist.scenarioId || persist.harness)) {
+    throw new WebRouteError(403, ErrorCode.FORBIDDEN, "Managed turns cannot use standalone execution.");
   }
+  const failureReporter = createRequestStreamFailureReporter(c, "chat");
 
   const sessionStartedAt = Date.now();
 
@@ -885,6 +903,7 @@ export async function streamWebChatTurn(
   } = prepared;
   // What the browser is told about this turn, once, on whichever engine runs.
   const emitTurnNotices = (writer: ElicitationChunkWriter): void => {
+    runtime.onStreamWriterReady?.(writer);
     emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
     emitPluginServersUnavailable(writer, persist.chatSessionId, {
       ...prepare.isolatedServers,
@@ -950,8 +969,14 @@ export async function streamWebChatTurn(
       persist.selectedServerNames,
     ) ?? {};
   let suspendedScopeStepUpToolCallId: string | undefined;
-  const scopeStepUpResume =
-    runtime.scopeStepUp?.resumeRequest && persist.chatSessionId
+  const scopeStepUpResume = runtime.localScopeStepUp?.resumeRequest
+    ? buildLocalScopeStepUpResume({ request: runtime.localScopeStepUp.resumeRequest,
+        bindingKey: runtime.localScopeStepUp.bindingKey, tools: preparedTools,
+        modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults })
+    : runtime.localScopeStepUp?.cancelRequest
+    ? buildLocalScopeStepUpCancellation({ request: runtime.localScopeStepUp.cancelRequest,
+        bindingKey: runtime.localScopeStepUp.bindingKey })
+    : runtime.scopeStepUp?.resumeRequest && persist.chatSessionId
       ? buildHostedScopeStepUpResume({
           request: runtime.scopeStepUp.resumeRequest,
           bearer: runtime.scopeStepUp.bearer,
@@ -972,8 +997,23 @@ export async function streamWebChatTurn(
           tools: preparedTools,
         })
       : undefined;
-  const createScopeStepUpContinuation =
-    runtime.scopeStepUp && persist.chatSessionId
+  const createScopeStepUpContinuation = runtime.localScopeStepUp
+    ? async ({ info, toolName, toolInput }: {
+        info: Parameters<typeof createHostedScopeStepUpContinuation>[0]["info"];
+        toolName: string; toolInput: unknown;
+      }) => {
+        const event = createLocalScopeStepUpContinuation({
+          bindingKey: runtime.localScopeStepUp!.bindingKey,
+          connectionId: toolConnectionAttribution(preparedTools[toolName], toolInput, info.toolCallId)?.connectionId,
+          serverId: info.serverId,
+          resourceUrl: readProtectedResourceUrl(manager, info.serverId),
+          toolCallId: info.toolCallId,
+          toolName, toolInput, challenge: info, serverName: info.serverId,
+        });
+        suspendedScopeStepUpToolCallId = event.toolCallId;
+        return event;
+      }
+    : runtime.scopeStepUp && persist.chatSessionId
       ? async ({
           info,
           toolName,
@@ -1132,6 +1172,7 @@ export async function streamWebChatTurn(
   // fingerprint that says "unavailable" is only ever persisted by a turn that
   // genuinely delivered nothing.
   const secretsFetch = await resolveTurnRuntimeSecrets({
+    ...(source === "standalone" ? { callerSecrets: [] } : {}),
     ...(persist.runtimeSecrets !== undefined
       ? { callerSecrets: persist.runtimeSecrets }
       : {}),
@@ -1156,6 +1197,7 @@ export async function streamWebChatTurn(
     : null;
 
   const cleanupStream = async () => {
+    if (runtime.dispose) return runtime.dispose();
     // The turn is over: its box stops heartbeating (and is left for the
     // conversation's next turn). Idempotent, and never throws.
     await persist.scenarioBox?.release();
@@ -1240,7 +1282,11 @@ export async function streamWebChatTurn(
       ? (persist.hostConfig({ resolvedTemperature }) ?? null)
       : (persist.hostConfig ?? null);
 
-  const captureSetup = (maxSteps: number, tools = preparedTools) =>
+  const captureSetup = (
+    maxSteps: number,
+    tools = preparedTools,
+    modelVenue: "local" | "remote" = "remote",
+  ) =>
     capturePreparedWebSetup({
       prepare,
       persist,
@@ -1248,6 +1294,7 @@ export async function streamWebChatTurn(
       tools,
       maxSteps,
       secretsUnavailable,
+      modelVenue,
       systemPrompt: effectiveEnhancedSystemPrompt,
       serverIds: prepare.selectedServerIds.filter(
         (id) =>
@@ -1320,7 +1367,7 @@ export async function streamWebChatTurn(
           reasoningEffort: prepare.reasoningEffort,
         }),
         modelSource,
-        projectId: persist.projectId,
+        ...(persist.projectId ? { projectId: persist.projectId } : {}),
         sourceType: persist.sourceType,
         origin: persist.origin,
         ...(isScenarioSession && persist.surface
@@ -1458,6 +1505,82 @@ export async function streamWebChatTurn(
     };
   };
 
+  if (!usesMcpjamFreePath && prepare.directProvider) {
+    const provider = await prepareDirectProvider({
+      input: prepare.directProvider,
+      model: prepare.modelDefinition,
+      projectId: persist.projectId || undefined,
+      selection: prepare.routingSelection,
+      auth: {
+        authHeader: runtime.authHeader,
+        scenarioId: persist.scenarioId,
+        accessVersion: persist.accessVersion,
+        serverIds: persist.selectedServerIds,
+      },
+      reasoningEffort: prepare.reasoningEffort,
+      explicitTemperature: prepare.explicitTemperature,
+    });
+    // Same venue rule as the org path's local runtime: an Ollama or custom
+    // endpoint is reached from this machine.
+    const directProviderKey = prepare.modelDefinition.provider;
+    setupAtTurn = await captureSetup(
+      runtime.maxSteps ?? DEFAULT_TURN_MAX_STEPS,
+      preparedTools,
+      directProviderKey === "ollama" || directProviderKey === "custom"
+        ? "local"
+        : "remote",
+    );
+    const onComplete = buildOnConversationComplete(String(prepare.modelDefinition.id), "byok");
+    return streamDirectChatWithLiveTrace({
+      llmModel: provider.model,
+      provider: prepare.modelDefinition.provider,
+      maxSteps: runtime.maxSteps ?? DEFAULT_TURN_MAX_STEPS,
+      reportError: (error, phase) => failureReporter({
+        message: `[chat-v2/direct] ${phase} error`, error,
+        source: `chat-v2.direct.${phase}`, hop: "user_server_hop",
+        transport: "http_stream",
+      }),
+      modelId: String(prepare.modelDefinition.id),
+      messageHistory: scrubMessages(modelMessages),
+      systemPrompt: effectiveEnhancedSystemPrompt,
+      temperature: resolvedTemperature,
+      providerOptions: provider.providerOptions,
+      tools: allTools,
+      // The system prompt tells the model every tool result is fenced; this
+      // is what fences them, as on every other engine.
+      ...(historyPresentation
+        ? {
+            transformStepMessages: (stepMessages: ModelMessage[]) =>
+              presentHistoryForModel(
+                stepMessages,
+                allTools,
+                historyPresentation,
+              ),
+          }
+        : {}),
+      progressivePlan,
+      discoveryState,
+      abortSignal: runtime.abortSignal,
+      chatSessionId: persist.chatSessionId,
+      scopeStepUpResume,
+      shouldPauseAfterStep: () => suspendedScopeStepUpToolCallId !== undefined,
+      suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
+      onStreamComplete: cleanupStream,
+      onStreamWriterReady: (writer) => {
+        scopeChallengeWriter = writer;
+        emitTurnNotices(writer);
+        runtime.rpcCollector?.attachStreamWriter(writer);
+        runtime.elicitationBridge?.attachStreamWriter(writer);
+        runtime.taskCreatedBridge?.attachStreamWriter(writer);
+      },
+      onPersist: onComplete ? async (event) => {
+        const history = [...modelMessages];
+        appendDedupedModelMessages(history, event.responseMessages);
+        return onComplete(history, event.turnTrace);
+      } : undefined,
+    });
+  }
+
   if (!usesMcpjamFreePath) {
     const providerKeyResult = deriveOrgProviderKeyResult(
       prepare.modelDefinition,
@@ -1481,7 +1604,7 @@ export async function streamWebChatTurn(
     // connection when the org requires its own keys, a connection that is
     // gone) is answered as the refusal it is, never as an outage and never by
     // falling back to another rail.
-    const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
+    const orgRuntime: OrgProviderRuntime = !prepare.localMcpRuntimeRequired && isLocalRuntimeEligible(providerKey)
       ? await resolveOrgProviderRuntime(
           persist.projectId,
           providerKey,
@@ -1520,6 +1643,7 @@ export async function streamWebChatTurn(
     setupAtTurn = await captureSetup(
       orgMaxSteps,
       orgRuntime.runtimeLocation === "local" ? localTools.tools : preparedTools,
+      orgRuntime.runtimeLocation === "local" ? "local" : "remote",
     );
 
     const onConversationComplete = buildOnConversationComplete(
@@ -1861,16 +1985,20 @@ export async function streamWebChatTurn(
       // A task can be created on ANY engine path, so unlike the MRTR bridge
       // this one attaches at all three sites, following the elicitation bridge.
       runtime.taskCreatedBridge?.attachStreamWriter(writer);
+    },
+    onHarnessMcpReady: (scopeIds) => {
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
           persist.selectedServerIds,
           runtime.rpcCollector,
+          scopeIds,
         );
         // COMP-21: cross-instance frames (harness-mcp landed on another
         // instance) arrive via the shared Convex sink. No-op single-instance.
         stopCrossInstanceRpcLogPoll = startCrossInstanceRpcLogPoll(
           persist.selectedServerIds,
           runtime.rpcCollector,
+          scopeIds,
         );
       }
     },

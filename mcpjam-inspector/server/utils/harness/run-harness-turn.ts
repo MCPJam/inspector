@@ -790,6 +790,7 @@ export async function runHarnessTurn(
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
+    onHarnessMcpReady,
     onToolCall,
     onToolResult,
     onStepFinish,
@@ -1592,6 +1593,7 @@ export async function runHarnessTurn(
           : {}),
       });
       const useNativeForwarding = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && nativeMcpDelivery && harnessAdapter.id === "claude-code" && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
+      if (!useNativeForwarding) onHarnessMcpReady?.();
       const proxyConfig = nativeMcpDelivery && !harnessExecutionTarget && !useNativeForwarding
         ? await buildNativeProxyConfig()
         : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
@@ -2634,6 +2636,7 @@ export async function runHarnessTurn(
                 : {}),
             });
       if (nativeForwarding) harnessRuntime = withAutoApprovedNativeRequests(harnessRuntime, undefined, new Set(), nativeForwarding.isForwardedTool);
+      if (nativeForwarding) onHarnessMcpReady?.(nativeForwarding.logScopeIds);
       if (localPrepared) {
         harnessRuntime = await withLocalRuntimeBootstrap(harnessRuntime, localPrepared.plan.runtime);
         if (sourceType !== "eval" && sourceType !== "swarm" && requireToolApproval === false) {

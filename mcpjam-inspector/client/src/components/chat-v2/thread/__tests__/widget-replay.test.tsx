@@ -106,6 +106,21 @@ describe("WidgetReplay", () => {
     expect(gate).not.toHaveBeenCalledWith("server-1");
   });
 
+  it("addresses a restored snapshot through the caller's resolved server", () => {
+    mockDetectUIType.mockReturnValue("mcp-apps");
+    const gate = vi.fn(() => true);
+    render(
+      <WidgetReplay
+        {...baseProps}
+        serverId="qa-server"
+        renderOverride={{ serverId: "convex-server-1" }}
+        resolveHostSupportsWidget={gate}
+      />,
+    );
+    expect(gate).toHaveBeenCalledWith("qa-server");
+    expect(gate).not.toHaveBeenCalledWith("convex-server-1");
+  });
+
   // The caps-blob → boolean integration (`hostSupportsWidgetRendering` over the
   // active host's resolved `clientCapabilities`) now lives in the injecting
   // caller (PartSwitch) and is covered by PartSwitch.test.tsx. WidgetReplay only
