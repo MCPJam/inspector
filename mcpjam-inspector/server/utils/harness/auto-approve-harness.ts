@@ -10,6 +10,7 @@ export function withAutoApprovedNativeRequests<T extends HarnessV1>(
   harness: T,
   onApproval?: (approvalId: string) => void,
   pendingApprovalIds: ReadonlySet<string> = new Set(),
+  shouldApprove?: (toolName: string | undefined) => boolean,
 ): T {
   return new Proxy(harness, {
     get(target, key) {
@@ -32,6 +33,7 @@ export function withAutoApprovedNativeRequests<T extends HarnessV1>(
                 HarnessV1PromptTurnOptions | HarnessV1ContinueTurnOptions,
             ) => {
               const seen = new Set<string>();
+              const toolNames = new Map<string, string>();
               const queued: string[] = [];
               let control: HarnessV1PromptControl | undefined;
               let pending = Promise.resolve();
@@ -56,11 +58,16 @@ export function withAutoApprovedNativeRequests<T extends HarnessV1>(
                 void pending.catch(fail);
               };
               const emit: typeof options.emit = (part) => {
+                if (part.type === "tool-call") {
+                  if (toolNames.size >= 1024) toolNames.delete(toolNames.keys().next().value!);
+                  toolNames.set(part.toolCallId, part.toolName);
+                }
                 if (part.type !== "tool-approval-request") {
                   options.emit(part);
                   return;
                 }
-                if (pendingApprovalIds.has(part.approvalId)) {
+                if (pendingApprovalIds.has(part.approvalId) ||
+                    (shouldApprove && !shouldApprove(toolNames.get(part.toolCallId)))) {
                   options.emit(part);
                   return;
                 }
