@@ -9,7 +9,7 @@ name: Build examples
 #
 # It runs on EVERY pull request, with no `paths:` filter, on purpose. A
 # path-filtered workflow cannot be a required check (a PR that does not match
-# never reports it and waits forever), and dependabot-auto-merge.yml queues an
+# never reports it and waits forever), and dependabot-auto-merge.yml approves an
 # example-app major or runtime update only while this check is REQUIRED on
 # main. A PR that touches no example finishes in seconds.
 
@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
 
 jobs:
   build:

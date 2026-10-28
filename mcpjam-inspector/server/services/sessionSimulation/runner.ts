@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import {
   AdmissionWaitBudget,
@@ -146,6 +147,7 @@ import {
 } from "@/shared/widget-snapshot";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
+import { failedHarnessPersist, requirePersistedHarnessTurn } from "./harness-persistence.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 import { ranTurnSelection } from "../../utils/session-model-selection";
@@ -314,6 +316,8 @@ interface SessionResult {
 
 /** Pinned host runtime a synthetic session executes against. */
 export interface SyntheticHostRuntime {
+  /** Capabilities resolved from the immutable client snapshot. */
+  hostCapabilities?: Record<string, unknown>;
   modelDefinition: ModelDefinition;
   /**
    * The saved selection behind `modelDefinition`, already checked with
@@ -410,6 +414,8 @@ export interface SyntheticHostRuntime {
   harnessSandboxBinding?: TrustedHarnessSandboxBinding;
   harnessExecutionTarget?: LocalHarnessExecutionTarget;
   harness?: Harness;
+  agentLoop?: Harness;
+  tasks?: MCPJamHandlerOptions["tasks"];
   /**
    * Scenario-access version for the drain's `/stream/org/resolve` authorization
    * and the scenario-scoped widget capture. Set on the scenario surface; the
@@ -566,7 +572,9 @@ export async function runSyntheticHostSession(
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     computer,
-    harness,
+    harness: configuredHarness,
+    agentLoop,
+    tasks,
     sandboxBinding,
     harnessSandboxBinding,
     harnessExecutionTarget,
@@ -597,7 +605,7 @@ export async function runSyntheticHostSession(
   // the swarm runner knows whether the ephemeral regime is in force, and a
   // rule here that assumed it would refuse every harness on the legacy path
   // too. The runner sets this whenever it could not produce a binding.
-  if (runtime.harness && runtime.harnessBlockedReason) {
+  if ((agentLoop ?? configuredHarness) && runtime.harnessBlockedReason) {
     const reason = runtime.harnessBlockedReason;
     logger.warn("[sessionSimulation.runner] harness turn refused", {
       runId: adapter.runId,
@@ -611,6 +619,16 @@ export async function runSyntheticHostSession(
       message: reason,
     });
     return { outcome: "failed", errorMessage: reason };
+  }
+
+  let harness: ReturnType<typeof resolveAgentLoop>["harnessId"];
+  try {
+    harness = resolveAgentLoop({ agentLoop, harness: configuredHarness }).harnessId;
+  } catch (error) {
+    return {
+      outcome: "failed",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
   }
 
   const sessionStartedAt = Date.now();
@@ -1039,6 +1057,7 @@ export async function runSyntheticHostSession(
       requireToolApproval,
       respectToolVisibility,
       modelVisibleMcpToolResults,
+      tasks,
       ...(harness ? { harness } : {}),
       ...(progressiveToolDiscovery !== undefined
         ? {
@@ -1079,8 +1098,10 @@ export async function runSyntheticHostSession(
       // agentic personas drive rendered widgets by screenshots. Evals stay
       // deterministic and never enable it.
       enableComputerUse: true,
+      enableViewTools: true,
       mcpClientManager: manager,
       logScope: "sessionSimulation",
+      hostCapabilities: runtime.hostCapabilities,
       // Live view: a frame per action, at CAPTURE time. Only wired when this
       // surface has a stream to put it on and the flag is on — absent, the
       // context does no thumbnail work at all.
@@ -1203,7 +1224,7 @@ export async function runSyntheticHostSession(
             ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
-            tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
+            tools: { ...prepared.allTools, ...browser!.computerWidgetTools, ...browser!.viewTools },
             hooks: {
               onToolCall: (event) => {
                 browser!.noteToolCallInput(event);
@@ -1220,13 +1241,13 @@ export async function runSyntheticHostSession(
                   args,
                 });
               },
-              onToolResult: (event) => {
-                void browser!.handleEngineToolResult(event);
+              onToolResult: async (event) => {
                 emit?.({
                   type: "tool_result",
                   toolCallId: event.toolCallId,
                   result: event.output,
                 });
+                await browser!.handleEngineToolResult(event);
               },
               ...(browser!.prepareAdvertisedTools
                 ? { prepareAdvertisedTools: browser!.prepareAdvertisedTools }
@@ -1281,6 +1302,10 @@ export async function runSyntheticHostSession(
             selectedServers: selectedServerIds,
             requireToolApproval,
             ...(harness ? { harness } : {}),
+            agentLoop,
+            tasks,
+            respectToolVisibility,
+            modelVisibleMcpToolResults,
             // Harness MCP-proxy plane (harness hosts with MCP servers) + swarm
             // continuity identity (`swarm-chat` owner lane). `harnessMcpProxy` is
             // resolved once above; `journeyRunId`/`hostId` are the swarm run + pinned
@@ -1329,6 +1354,7 @@ export async function runSyntheticHostSession(
             projectId,
             authHeader,
             abortSignal: turnDeadline!.signal,
+            remainingTurnMs: () => turnDeadline!.remainingMs(),
             // Threaded into the per-step /stream (or /stream/org) body and the
             // /stream/org/local-usage writeback so the backend BYOK and JAM-paid
             // writers can stamp the run id onto llmUsageRecord for per-run spend
@@ -1371,6 +1397,7 @@ export async function runSyntheticHostSession(
         };
       }
 
+      await browser.dismissCarriedWidget();
       emit?.({ type: "turn_finish", turnIndex: turn });
       // Track the first turn's modelSource for the per-session persist
       // calls. modelSource is stable across turns within a session because
@@ -1473,9 +1500,19 @@ export async function runSyntheticHostSession(
         // derives the lane's journeyRunId/hostId from the top-level swarm
         // attribution above. Undefined for the emulated engine.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
-      });
+      }).catch(failedHarnessPersist(harnessSessionCommit));
       warnIfSimulationPersistNotSaved(turnPersist, "turn", chatSessionId);
+      // Do not retry a rejected turn from the terminal empty-session fallback.
       anyTurnPersisted = true;
+      await requirePersistedHarnessTurn({
+        turnError: failedTurn,
+        outcome: turnPersist,
+        commit: harnessSessionCommit,
+        projectId,
+        journeyRunId: persist.journeyRunId,
+        hostId: persist.hostId,
+        bearer: authHeader,
+      });
 
       // MCP App widget snapshots so the Sessions viewer renders the actual
       // widget instead of a collapsed tool pill. Best-effort — a failure here
@@ -2106,7 +2143,7 @@ export async function drainAssistantTurn(
     chatSessionId: args.chatSessionId,
     requireToolApproval: args.requireToolApproval,
     tools: args.tools as ToolSet,
-    ...(args.harness ? { harness: args.harness } : {}),
+    ...((args.agentLoop ?? args.harness) ? { harness: args.agentLoop ?? args.harness } : {}),
     ...(mergedExtraBodyFields
       ? { extraBodyFields: mergedExtraBodyFields }
       : {}),
@@ -2137,7 +2174,7 @@ export async function drainAssistantTurn(
     if (
       rt.runtime.kind !== "hosted" ||
       rt.modelSource !== "mcpjam" ||
-      args.harness ||
+      args.agentLoop || args.harness ||
       rt.runtime.harness ||
       !journeyRunId ||
       !hostId
@@ -2178,6 +2215,10 @@ export async function drainAssistantTurn(
       streamSink: "none",
       messages: args.messages,
       systemPrompt: args.systemPrompt,
+    agentLoop: args.agentLoop,
+    respectToolVisibility: args.respectToolVisibility,
+    tasks: args.tasks,
+    harnessTurnContext: args.harnessTurnContext,
       ...(args.temperature !== undefined
         ? { temperature: args.temperature }
         : {}),
@@ -2291,6 +2332,10 @@ export async function drainAssistantTurn(
     messages: args.messages,
     modelDefinition: turnModelDefinition,
     systemPrompt: args.systemPrompt,
+    agentLoop: args.agentLoop,
+    respectToolVisibility: args.respectToolVisibility,
+    tasks: args.tasks,
+    harnessTurnContext: args.harnessTurnContext,
     ...(args.temperature !== undefined
       ? { temperature: args.temperature }
       : {}),
@@ -2347,6 +2392,7 @@ export async function drainAssistantTurn(
     ...(args.progressivePlan ? { progressivePlan: args.progressivePlan } : {}),
     ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
     ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
+    ...(args.remainingTurnMs ? { remainingTurnMs: args.remainingTurnMs } : {}),
     ...(hooks?.onToolCall ? { onToolCall: hooks.onToolCall } : {}),
     ...(hooks?.onToolResult ? { onToolResult: hooks.onToolResult } : {}),
     ...(hooks?.onLiveTextDelta

@@ -9,7 +9,7 @@ name: Desktop Package Smoke
 #
 # Path-filtered and advisory for now: it is NOT in the required-checks ruleset.
 # Promoting it to required is what would let the Electron/native packaging
-# chain come off the auto-merge hold list in dependabot-auto-merge.yml.
+# chain come off the hold list in dependabot-auto-merge.yml.
 
 on:
   pull_request:
@@ -42,7 +42,7 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
 
 jobs:
   package:

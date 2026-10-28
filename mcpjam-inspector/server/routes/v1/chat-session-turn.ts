@@ -79,6 +79,8 @@ import {
  * boundary (`preserveAgentResumePins`), which is the actual guarantee — this
  * check is the friendly error.
  */
+import { skippedServerDetails } from "../../utils/server-refusal.js";
+import { emitPluginServersUnavailable } from "../../utils/plugin-server-isolation.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { Hono } from "hono";
 import type { Context } from "hono";
@@ -103,6 +105,10 @@ import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { withSelectionRouting } from "../../utils/selection-rail.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
+import {
+  releaseUncommittedHarnessLane,
+  type HarnessSessionCommitPayload,
+} from "../../utils/harness/harness-session-state.js";
 import {
   persistChatSessionToConvex,
   type AgentTurnToolMode,
@@ -856,12 +862,25 @@ async function computeExcludedToolNames(
     allowedTools?: string[];
     /** `maxToolCalls: 0` — advertise nothing at all. */
     excludeAll?: true;
+    onUnavailable?: (serverId: string, error: unknown) => void;
   },
 ): Promise<{ excluded: string[]; advertised: number }> {
   let tools: Array<{ name?: string; annotations?: { readOnlyHint?: unknown } }>;
   try {
-    tools = (await listToolsWithinBudget(manager, serverIds)) as typeof tools;
+    tools = policy.onUnavailable
+      ? (await Promise.all(serverIds.map(async (id) => {
+          try {
+            return await listToolsWithinBudget(manager, [id]);
+          } catch (error) {
+            // Omit this server; the response reports its failure below.
+            if (error instanceof WebRouteError && error.code === ErrorCode.INTERNAL_ERROR) throw error;
+            policy.onUnavailable?.(id, error);
+            return [];
+          }
+        }))).flat() as typeof tools
+      : (await listToolsWithinBudget(manager, serverIds)) as typeof tools;
   } catch (error) {
+    if (error instanceof WebRouteError && error.code === ErrorCode.INTERNAL_ERROR) throw error;
     // A target we cannot enumerate is a target we cannot apply a tool policy
     // to. Failing OPEN here would advertise every tool on a `read_only` turn,
     // which is precisely the outcome the mode exists to prevent.
@@ -1255,6 +1274,25 @@ async function handleTurn(c: Context): Promise<Response> {
   let handoffResumed = false;
   let leaseSettled = false;
   let turnSucceeded = false;
+  // This route persists harness turns itself, so the engine's resume-state
+  // commit rides the first write that lands and the lane advances with the
+  // transcript. A commit no write has landed is released unapplied in the
+  // `finally`, so the caller's next turn is not refused until the lease TTL.
+  let unsettledHarnessCommit: HarnessSessionCommitPayload | undefined;
+  const persistTurn = async (
+    ...[options, c]: Parameters<typeof persistChatSessionToConvex>
+  ) => {
+    const outcome = await persistChatSessionToConvex(
+      unsettledHarnessCommit
+        ? { ...options, harnessSessionCommit: unsettledHarnessCommit }
+        : options,
+      c,
+    );
+    if (outcome.outcome === "saved" || outcome.outcome === "duplicate") {
+      unsettledHarnessCommit = undefined;
+    }
+    return outcome;
+  };
   /**
    * Set the instant before the engine is invoked, and never cleared.
    *
@@ -1532,7 +1570,7 @@ async function handleTurn(c: Context): Promise<Response> {
       return v1Error(
         c,
         "FEATURE_NOT_SUPPORTED",
-        `This host runs the ${engineDecision.harness} harness, which this turn can't run: ${engineDecision.reason}.`,
+        engineDecision.reason,
         {
           reason: "HARNESS_UNAVAILABLE",
           harness: engineDecision.harness,
@@ -1686,6 +1724,7 @@ async function handleTurn(c: Context): Promise<Response> {
       connectionSchema,
       {
         timeoutMs: CONNECT_TIMEOUT_MS,
+        tolerateServerRefusals: true,
         // This surface emulates no host persona — it is MCPJam's own agent —
         // and it ships the fulfiller, since `prepareChatV2` merges
         // `withServerSkills`, which loads only through the verified read path
@@ -1697,6 +1736,7 @@ async function handleTurn(c: Context): Promise<Response> {
       },
     );
     manager = connection.manager;
+    const unavailable: Record<string, unknown> = { ...connection.refusedServers };
 
     // Two ways to say "no tools", answered identically. `allowedTools: []` is
     // an allowlist that admits nothing, which is the same request as
@@ -1706,8 +1746,9 @@ async function handleTurn(c: Context): Promise<Response> {
 
     const { excluded } = await computeExcludedToolNames(
       manager,
-      selectedServerIds,
+      selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id)),
       {
+        onUnavailable: (id, error) => { unavailable[id] = error; },
         toolMode: pins.toolMode,
         ...(body.allowedTools ? { allowedTools: body.allowedTools } : {}),
         // "No tools" is enforced by not ADVERTISING any, not by letting the
@@ -1767,10 +1808,12 @@ async function handleTurn(c: Context): Promise<Response> {
       }
     }
 
+    const activeServerIds = selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id));
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
       ...(builtInTools ? { builtInTools } : {}),
-      selectedServers: selectedServerIds,
+      selectedServers: activeServerIds,
+      isolatedServers: activeServerIds,
       ...(turnCapabilities
         ? {
             skillsSource: {
@@ -1855,6 +1898,15 @@ async function handleTurn(c: Context): Promise<Response> {
       // byte-identical to every turn this surface ran before host targeting.
       ...(engine.kind === "harness" ? { harness: engine.harness } : {}),
     });
+    for (const [id, error] of prepared.unavailableServers ?? []) unavailable[id] = error;
+    const skippedServers = skippedServerDetails(
+      unavailable,
+      selectedServerIds,
+      selectedServerNames ??
+        selectedServerIds.map((id) => connection.serverNamesById?.[id] ?? id),
+    );
+    emitPluginServersUnavailable(null, runtimeChatSessionId, { serverIds: selectedServerIds, refused: unavailable });
+
     // Never emulate a harness. `runAssistantTurn` would log-and-degrade, and a
     // local-BYOK resolution drops `harness` entirely — both would answer 200
     // for a runtime that never ran.
@@ -2001,6 +2053,8 @@ async function handleTurn(c: Context): Promise<Response> {
       tools,
       ...(builtInTools ? { builtInTools } : {}),
       mcpClientManager: manager,
+      selectedServerIds,
+      unavailableServerIds: Object.keys(unavailable),
       authContext: { kind: "user_bearer", token: authHeader },
       sourceType: "direct",
       origin: "api",
@@ -2055,6 +2109,7 @@ async function handleTurn(c: Context): Promise<Response> {
         lastEngineError = event;
       },
     } as never);
+    unsettledHarnessCommit = result.harnessSessionCommit;
 
     await runtime.finalizeUsage(result);
     // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
@@ -2091,7 +2146,7 @@ async function handleTurn(c: Context): Promise<Response> {
     ) {
       // The shell and incrementally uploaded screenshots survive failure; retain
       // the partial transcript/trace as well so retries can inspect what ran.
-      const failed = await persistChatSessionToConvex(
+      const failed = await persistTurn(
         {
           chatSessionId: runtimeChatSessionId,
           modelId: String(modelDefinition.id),
@@ -2204,7 +2259,7 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(pins.serverIds ? { serverIds: pins.serverIds } : {}),
     };
 
-    const persisted = await persistChatSessionToConvex(
+    const persisted = await persistTurn(
       {
         chatSessionId: runtimeChatSessionId,
         modelId: String(modelDefinition.id),
@@ -2408,6 +2463,7 @@ async function handleTurn(c: Context): Promise<Response> {
       // The host this turn executed as, when there was one. Server-resolved —
       // an environment's own host, or the pointer the caller sent.
       ...(target.host ? { hostId: target.host.hostId } : {}),
+      skippedServers,
       advertisedToolCount: Object.keys(tools).length,
       excludedToolCount: excluded.length,
       // Present only when the client asked for something this surface does not
@@ -2458,6 +2514,14 @@ async function handleTurn(c: Context): Promise<Response> {
       await flushBrowserEvidence(browserOutbox);
 
     requestSignal.removeEventListener("abort", onRequestAbort);
+    // Awaited on every exit, so the caller's next turn cannot race it.
+    if (unsettledHarnessCommit) {
+      await releaseUncommittedHarnessLane({
+        commit: unsettledHarnessCommit,
+        projectId,
+        bearer: authHeader,
+      });
+    }
     // Release admission before attempting desktop cleanup.
     if (shouldReleaseLease({ leaseTurnId, leaseSettled, modelCallStarted })) {
       await releaseTurnLease(client, leaseTurnId!, executionOwnerToken);

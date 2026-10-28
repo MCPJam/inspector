@@ -12,6 +12,8 @@ on:
   pull_request:
     paths:
       - "sdk/src/internal/**"
+      - "scripts/generate-telemetry-catalogs.mjs"
+      - "scripts/telemetry-route-catalog.mjs"
       - "sdk/src/sentry.ts"
       - "sdk/tests/packaged-telemetry.test.ts"
       - "sdk/tsup.config.ts"

@@ -187,6 +187,14 @@ vi.mock("@/lib/billing-gates", async (importOriginal) => {
   };
 });
 
+vi.mock("@/hooks/usePluginServerSignIn", () => ({
+  usePluginServerSignIn: () => ({
+    available: false,
+    pendingKey: null,
+    signIn: vi.fn(),
+  }),
+}));
+
 // Soft reads (`useSoftQuery`, e.g. the active-plugins read) go through
 // `useQueries`; `withUseQueries` answers them from the same `mockUseQuery`.
 vi.mock("convex/react", async () =>
@@ -1630,7 +1638,7 @@ describe("ServersTab shared detail modal", () => {
         name: "Auto-connect servers on this device",
       });
       expect(toggle).not.toBeDisabled();
-      expect(toggle).toHaveAttribute("data-state", "checked");
+      expect(toggle).toHaveAttribute("data-state", "unchecked");
     });
 
     it("stays hidden when the project has no servers to connect", () => {
@@ -1661,6 +1669,7 @@ describe("ServersTab shared detail modal", () => {
     });
 
     it("does not touch the attempt log when flipped OFF", () => {
+      localStorage.setItem("mcpjam-auto-connect-servers", "true");
       render(<ServersTab {...defaultProps} projects={sharedProject} />);
       fireEvent.click(
         screen.getByRole("switch", {

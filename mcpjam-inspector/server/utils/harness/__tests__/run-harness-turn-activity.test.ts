@@ -65,7 +65,7 @@ vi.mock("../registry.js", () => ({
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
-    mcpDelivery: "host-executed",
+    mcpDelivery: "mcpjam",
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
@@ -264,6 +264,7 @@ describe("runHarnessTurn activity", () => {
   });
 
   it("a failed built-in call settles its card as failed, with its output", async () => {
+    const onToolResult = vi.fn();
     harnessState.script = [
       toolCall("call_1"),
       {
@@ -288,7 +289,7 @@ describe("runHarnessTurn activity", () => {
     ];
     harnessState.finalText = "It is missing.";
 
-    const result = await runHarnessTurn(options() as any, "ui");
+    const result = await runHarnessTurn(options({ onToolResult }) as any, "ui");
     const chunks = sseChunks(await result.response!.text());
     const errors = chunks.filter((chunk) => chunk.type === "tool-output-error");
     expect(errors).toEqual([
@@ -299,5 +300,31 @@ describe("runHarnessTurn activity", () => {
         providerExecuted: true,
       }),
     ]);
+    expect(onToolResult).toHaveBeenCalledWith(expect.objectContaining({
+      toolCallId: "call_1", isError: true,
+      output: "Exit code 1\ncat: missing.txt: No such file or directory",
+    }));
+    expect(JSON.stringify(result.messageHistory)).toContain("cat: missing.txt");
+    expect(onToolResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists a resumed tool failure once when the call came from history", async () => {
+    const onToolResult = vi.fn();
+    const failure = { type: "tool-error", toolCallId: "prior-call", error: "sandbox failed" };
+    harnessState.script = [failure, failure, { type: "text-delta", delta: "Failed." }];
+    harnessState.finalText = "Failed.";
+    const result = await runHarnessTurn(options({
+      onToolResult,
+      messages: [
+        { role: "user", content: "Run it" },
+        { role: "assistant", content: [{ type: "tool-call", toolCallId: "prior-call", toolName: "Bash", input: { command: "pwd" } }] },
+      ],
+    }) as any, "ui");
+    const chunks = sseChunks(await result.response!.text());
+    expect(chunks.filter((chunk) => chunk.type === "tool-output-error")).toHaveLength(1);
+    expect(onToolResult).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      toolCallId: "prior-call", toolName: "Bash", isError: true, output: "sandbox failed",
+    }));
+    expect(JSON.stringify(result.messageHistory)).toContain("sandbox failed");
   });
 });

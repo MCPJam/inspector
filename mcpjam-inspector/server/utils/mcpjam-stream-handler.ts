@@ -1,6 +1,11 @@
+import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
+import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
+import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
+import { withSwarmStepAdmissionRetry } from "./swarm-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
 /**
  * MCPJam Stream Handler
  *
@@ -107,6 +112,7 @@ import {
   scrubChatGPTAppsToolResultsForBackend,
 } from "./chat-helpers";
 import { normalizeModelMessagesForConvex } from "./normalize-model-messages-for-convex";
+import { hostedMessagesWithoutEmptyText } from "./empty-text-blocks";
 import {
   serializeToolsForConvex,
   type ToolDefinition,
@@ -162,23 +168,8 @@ export {
 
 let warnedLegacyUnsignedApproval = false;
 
-function unwrapJsonEnvelope(value: unknown): unknown {
-  let current = value;
-  for (let depth = 0; depth < 4; depth += 1) {
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      return current;
-    }
-    const record = current as Record<string, unknown>;
-    if (record.type !== "json" || !("value" in record)) {
-      return current;
-    }
-    current = record.value;
-  }
-  return current;
-}
-
 function isModelVisibleImageOutput(value: unknown): boolean {
-  const output = unwrapJsonEnvelope(value);
+  const output = unwrapToolOutputEnvelope(value, 4).value;
   if (!output || typeof output !== "object" || Array.isArray(output)) {
     return false;
   }
@@ -326,6 +317,8 @@ import { normalizeFinishReason } from "@/shared/eval-trace";
 import {
   describeEmptyStepFailure,
   hasSettledToolCallThisPrompt,
+  isMcpjamOwnedEmptyStep,
+  type EmptyStepFacts,
 } from "./empty-step-failure.js";
 import {
   mergeLiveChatTraceUsage,
@@ -698,6 +691,19 @@ export const PROVIDER_NOT_ALLOWLISTED_CODE = "provider_not_allowlisted";
  */
 const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
 
+/**
+ * Backend refusal code (convex `stream/routes.ts`): MCPJam retired the model
+ * the request names. Arrives as HTTP 400.
+ */
+const MODEL_RETIRED_CODE = "model_retired";
+
+/**
+ * Backend refusal code (convex `stream/orgRoutes.ts`): the organization's own
+ * provider connection does not serve this model (OpenRouter's selected models,
+ * Azure's deployments). Arrives as HTTP 400.
+ */
+const ORG_MODEL_NOT_ALLOWED_CODE = "model_not_allowed";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -748,6 +754,15 @@ export function describeBackendStreamFailure(
   if (code === FREE_TIER_MODEL_RESTRICTED_CODE) {
     return describeAsSlug("provider/mcpjam_limit", detail);
   }
+
+  // A 400 that refuses the user's own model choice: the model is retired, or
+  // the organization's provider does not allow it. Read by status alone it is
+  // `internal/unknown`, which the internal hop promotes to an MCPJam page. Both
+  // slugs are `user_config`, so neither pages.
+  if (code === MODEL_RETIRED_CODE)
+    return describeAsSlug("provider/model_retired", detail);
+  if (code === ORG_MODEL_NOT_ALLOWED_CODE)
+    return describeAsSlug("org/model_not_allowed", detail);
 
   if (status !== undefined && status >= 500) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
@@ -1128,9 +1143,13 @@ export interface MCPJamHandlerOptions {
   scenarioParticipant?: boolean;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
+  unavailableServerIds?: readonly string[];
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
    *  When "claude-code", handleMCPJamFreeChatModel routes to runHarnessTurn. */
   harness?: Harness;
+  agentLoop?: Harness;
+  harnessTurnContext?: string;
+  harnessUnavailableAppTools?: boolean;
   /** Which MCP-proxy plane the harness uses to route its MCP through MCPJam —
    *  set by the CALLER ROUTE (local `/api/mcp/*` vs hosted `/api/web/*`), not a
    *  global env. Absent ⇒ harness runs without proxied MCP. See
@@ -1432,6 +1451,8 @@ export interface MCPJamHandlerOptions {
    * release per-request resources (e.g. MCPClientManager teardown).
    */
   abortSignal?: AbortSignal;
+  /** Remaining execution time; admission waits must leave room to report. */
+  remainingTurnMs?: () => number;
   /**
    * Idle heartbeat interval. While the stream has been silent for at least
    * this many ms, the handler writes a transient `heartbeat` trace event so
@@ -1457,6 +1478,7 @@ export interface MCPJamHandlerOptions {
 }
 
 interface StepContext {
+  admissionBudget: AdmissionWaitBudget;
   durableCheckpoint?: MCPJamHandlerOptions["durableCheckpoint"];
   writer: {
     write: (chunk: UIMessageChunk) => void;
@@ -1537,9 +1559,30 @@ interface StepContext {
   // Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing.
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   abortSignal?: AbortSignal;
+  remainingTurnMs?: () => number;
 }
 
-type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
+type PersistedAssistantPart =
+  | TextPart
+  | ToolCallPart
+  // `providerOptions` is where a model message carries what the provider said
+  // about the part — on the OpenAI Responses API, the reply's `rs_…` item id,
+  // which the next request needs. The UI reasoning part has no such field.
+  | (ReasoningUIPart & { providerOptions?: TextPart["providerOptions"] });
+
+/**
+ * What a backend chunk said about the part it belongs to, in the shape a model
+ * message carries it. The chunk type here is loose (`[key: string]: unknown`),
+ * so this is the one place that narrows it.
+ */
+function chunkProviderOptions(chunk: {
+  providerMetadata?: unknown;
+}): TextPart["providerOptions"] | undefined {
+  const metadata = chunk.providerMetadata;
+  return metadata !== null && typeof metadata === "object"
+    ? (metadata as TextPart["providerOptions"])
+    : undefined;
+}
 
 interface LiveTraceTurnContext {
   recordedRequestPayloads: LiveChatTraceRequestPayloadEntry[];
@@ -1893,14 +1936,49 @@ function normalizePreservedReasoning(messages: ModelMessage[]): ModelMessage[] {
 }
 
 /**
+ * Org provider keys the backend builds with `provider(modelId)` on
+ * `@ai-sdk/openai` / `@ai-sdk/azure` — i.e. the OpenAI RESPONSES API
+ * (`convex/stream/buildOrgModel.ts`, `call: "model"`).
+ */
+const OPENAI_RESPONSES_PROVIDER_KEYS = new Set(["openai", "azure"]);
+
+/**
+ * Whether this turn's backend call lands on the OpenAI Responses API, where
+ * reasoning must NOT be pruned.
+ *
+ * With `store` on — the provider's default — that API replays an earlier reply
+ * by item id: the reply's text goes back as
+ * `{ type: "item_reference", id: "msg_…" }`, and OpenAI refuses a message item
+ * whose reasoning item is missing ("Item 'msg_…' of type 'message' was
+ * provided without its required 'reasoning' item: 'rs_…'"), which ends the
+ * conversation on the next turn. Dropping old reasoning saves real tokens on
+ * every other provider, which resends it as full text; here it saves none,
+ * because the reasoning rides back as an id too.
+ *
+ * `/stream` never qualifies: MCPJam's own models go through the gateway or
+ * OpenRouter, neither of which carries OpenAI item ids.
+ */
+function usesOpenAiResponsesApi(
+  endpointPath: string,
+  extraBodyFields: Record<string, unknown> | undefined,
+): boolean {
+  if (endpointPath !== "/stream/org") return false;
+  const providerKey = extraBodyFields?.providerKey;
+  return (
+    typeof providerKey === "string" &&
+    OPENAI_RESPONSES_PROVIDER_KEYS.has(providerKey)
+  );
+}
+
+/**
  * Scrub messages for sending to the backend LLM.
  * Removes UI-specific metadata that shouldn't be sent to the model.
  *
- * `preserveReasoningFromIndex` is the index of the first message in the
- * *current* user turn (post the latest user message). Messages at or after
- * that index keep their reasoning parts so a thinking model can see its
- * own scratchpad between tool steps. Messages before that index still get
- * reasoning pruned to match prior behavior.
+ * `preserveReasoningFromIndex` starts the current user turn. Reasoning from
+ * that index survives tool steps; reasoning from earlier turns is pruned —
+ * unless `keepAllReasoning` says the turn runs on the OpenAI Responses API
+ * ({@link usesOpenAiResponsesApi}), which rejects a reply whose reasoning item
+ * is gone.
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
@@ -1908,9 +1986,14 @@ function scrubMessagesForBackend(
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
   preserveReasoningFromIndex?: number,
+  keepAllReasoning?: boolean,
 ): ModelMessage[] {
   let pruned: ModelMessage[];
-  if (
+  if (keepAllReasoning) {
+    // Same UI-only `state` strip the current-turn slice gets below, applied to
+    // the whole history since all of it now reaches the provider.
+    pruned = normalizePreservedReasoning(messages);
+  } else if (
     typeof preserveReasoningFromIndex === "number" &&
     preserveReasoningFromIndex > 0 &&
     preserveReasoningFromIndex < messages.length
@@ -1961,7 +2044,7 @@ function scrubMessagesForBackend(
     Object.keys(tools as Record<string, unknown>),
     // A page's tools exist only while that page is open; what the model did
     // with them is still what happened. See the parameter's doc.
-    isWebmcpPageToolName,
+    name => isWebmcpPageToolName(name) || WIDGET_TOOL_VERBS.includes(name),
   );
 
   const scrubbed = scrubChatGPTAppsToolResultsForBackend(
@@ -2358,8 +2441,10 @@ async function processStream(
   const toolInputErrors: string[] = [];
   const unfinishedTools = new Map<string, string>();
   let pendingText = "";
+  let pendingTextMetadata: TextPart["providerOptions"] | undefined;
   let pendingReasoning = "";
   let pendingReasoningId: string | null = null;
+  let pendingReasoningMetadata: TextPart["providerOptions"] | undefined;
   let hasToolCalls = false;
   let finishChunk: UIMessageChunk | null = null;
   let firstChunkAt: number | undefined;
@@ -2367,21 +2452,38 @@ async function processStream(
 
   const flushText = () => {
     if (pendingText) {
-      contentParts.push({ type: "text", text: pendingText });
+      contentParts.push({
+        type: "text",
+        text: pendingText,
+        ...(pendingTextMetadata
+          ? { providerOptions: pendingTextMetadata }
+          : {}),
+      });
       pendingText = "";
     }
+    pendingTextMetadata = undefined;
   };
 
   const flushReasoning = () => {
-    if (pendingReasoning) {
+    // An empty reasoning block is kept when the provider NAMED it. On the
+    // OpenAI Responses API a reply is replayed by item id, and a message item
+    // whose reasoning item is missing is refused outright, so a `rs_…` with no
+    // summary text still has to survive into the next request. Without an id
+    // there is nothing to reference and an empty part would only render a
+    // "Reasoning" header with nothing under it, so that case is still dropped.
+    if (pendingReasoning || pendingReasoningMetadata) {
       contentParts.push({
         type: "reasoning",
         text: pendingReasoning,
         state: "done",
+        ...(pendingReasoningMetadata
+          ? { providerOptions: pendingReasoningMetadata }
+          : {}),
       });
       pendingReasoning = "";
     }
     pendingReasoningId = null;
+    pendingReasoningMetadata = undefined;
   };
 
   const parsedStream = parseJsonEventStream({
@@ -2464,11 +2566,13 @@ async function processStream(
         case "text-start":
           flushReasoning();
           flushText();
+          pendingTextMetadata = chunkProviderOptions(chunk);
           writer.write(chunk);
           break;
 
         case "text-delta":
           flushReasoning();
+          pendingTextMetadata = chunkProviderOptions(chunk) ?? pendingTextMetadata;
           pendingText += chunk.delta ?? "";
           if (chunk.delta) {
             safelyEmitLiveTextDelta(onLiveTextDelta, chunk.delta);
@@ -2486,6 +2590,8 @@ async function processStream(
           break;
 
         case "text-end":
+          pendingTextMetadata =
+            chunkProviderOptions(chunk) ?? pendingTextMetadata;
           flushText();
           writer.write(chunk);
           break;
@@ -2494,6 +2600,7 @@ async function processStream(
           flushText();
           flushReasoning();
           pendingReasoningId = chunk.id;
+          pendingReasoningMetadata = chunkProviderOptions(chunk);
           writer.write(chunk);
           break;
 
@@ -2503,6 +2610,8 @@ async function processStream(
             flushReasoning();
           }
           pendingReasoningId = chunk.id;
+          pendingReasoningMetadata =
+            chunkProviderOptions(chunk) ?? pendingReasoningMetadata;
           pendingReasoning += chunk.delta ?? "";
           writer.write(chunk);
           break;
@@ -2512,6 +2621,8 @@ async function processStream(
             flushReasoning();
             pendingReasoningId = chunk.id;
           }
+          pendingReasoningMetadata =
+            chunkProviderOptions(chunk) ?? pendingReasoningMetadata;
           flushReasoning();
           writer.write(chunk);
           break;
@@ -3646,7 +3757,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // and the Convex `/stream` request see the same narrowed set.
   if (prepareAdvertisedTools) {
     const advertised = new Set(
-      applyPrepareAdvertisedTools({
+      await applyPrepareAdvertisedTools({
         defaultToolNames: activeToolDefs.map((def) => def.name),
         stepIndex,
         prepareAdvertisedTools,
@@ -3681,15 +3792,18 @@ async function processOneStep(ctx: StepContext): Promise<{
   const llmStartAbs = stepStartAbs;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
 
-  // Scrub messages before sending to backend. Preserve reasoning on
-  // assistant messages added during the current turn so thinking models can
-  // see their own scratchpad across tool steps.
-  const backendMessages = scrubMessagesForBackend(
-    messageHistory,
-    tools,
-    mcpClientManager,
-    selectedServers,
-    traceTurn.promptMessageStartIndex,
+  // Keep current-turn reasoning while cleaning only the outgoing provider copy.
+  const backendMessages = hostedMessagesWithoutEmptyText(
+    scrubMessagesForBackend(
+      messageHistory,
+      tools,
+      mcpClientManager,
+      selectedServers,
+      traceTurn.promptMessageStartIndex,
+      usesOpenAiResponsesApi(ctx.endpointPath, ctx.extraBodyFields),
+    ),
+    modelId,
+    provider,
   );
   const scrubbedMessages = historyPresentation
     ? presentHistoryForModel(backendMessages, tools, historyPresentation)
@@ -3782,8 +3896,8 @@ async function processOneStep(ctx: StepContext): Promise<{
   // back: a provider that rejects the request outright still failed as the
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
-  try {
-    res = await fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
+  res = await withSwarmStepAdmissionRetry(
+    () => fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
       method: "POST",
       headers: convexHeaders,
       body: JSON.stringify({
@@ -3810,17 +3924,15 @@ async function processOneStep(ctx: StepContext): Promise<{
         ...(extraBodyFields ?? {}),
       }),
       ...(abortSignal ? { signal: abortSignal } : {}),
-    });
-  } catch (error) {
-    // AbortError on fetch is the standard cancellation signal — propagate
-    // it without writing a fail span. Real network errors fall through to
-    // the existing failure path via the !res.ok branch (we synthesize a
-    // 500-shaped error below for parity).
-    if (isAbortError(error)) {
-      throw error;
-    }
-    throw error;
-  }
+    }),
+    {
+      sourceType,
+      stepIndex,
+      budget: ctx.admissionBudget,
+      signal: abortSignal,
+      remainingTurnMs: ctx.remainingTurnMs,
+    },
+  );
 
   // A 200 OK with Content-Type: application/json is a non-stream denial
   // (e.g. spend-precheck: `{ok:false, code:"user_rate_limit", ...}`).
@@ -4707,13 +4819,15 @@ async function processOneStep(ctx: StepContext): Promise<{
   // chunk: `didEmitFinish: false` with `shouldContinue: false` is the pair the
   // agentic loop reads as `settledWithError`.
   if (contentParts.length === 0 && !quietFinishAfterToolCall) {
-    const emptyStepMessage = describeEmptyStepFailure({
+    const emptyStepFacts: EmptyStepFacts = {
       finishReason: harnessSpanMeta.finishReason,
       toolInputErrors,
       unfinishedToolNames,
       outputTokens: stepUsage?.outputTokens,
-    });
+    };
+    const emptyStepMessage = describeEmptyStepFailure(emptyStepFacts);
     const emptyStepNormalized = describeError(emptyStepMessage);
+    const emptyStepOwnedByMcpjam = isMcpjamOwnedEmptyStep(emptyStepFacts);
     pushBackendStepLlmFailureSpans(
       traceTurn.turnSpans,
       traceTurn.turnStartedAt,
@@ -4749,10 +4863,16 @@ async function processOneStep(ctx: StepContext): Promise<{
           message: "[mcpjam-stream-handler] backend step returned no content",
           error: new Error(emptyStepMessage),
           source: "mcp.chat-v2.engine-step",
-          // The model rail is MCPJam's own hosted provider, not the user's MCP
-          // server. Filing this against `user_server_hop` would blame the server
-          // under test for its host's outage.
-          hop: "mcpjam_internal",
+          // The hop is chosen on the provider's own usage report, like the
+          // recognized-denial split at the backend-stream site. The catalog
+          // files the slug `ambiguous`; `mcpjam_internal` promotes it to a
+          // page. That is right only when the provider generated content our
+          // rail failed to deliver (see `isMcpjamOwnedEmptyStep`). A provider
+          // that reports 0 output tokens, or a named model-side cause (the
+          // token limit, a rejected tool input, a safety filter), stays
+          // `ambiguous` on `user_server_hop`, the same hop the agentic loop
+          // files provider errors on — unpromoted, not blamed on the server.
+          hop: emptyStepOwnedByMcpjam ? "mcpjam_internal" : "user_server_hop",
           transport: "http_stream",
           normalized: emptyStepNormalized,
           context: {
@@ -4765,14 +4885,17 @@ async function processOneStep(ctx: StepContext): Promise<{
             // budget reasoning from a provider outage, or say which model.
             modelId,
             outputTokens: stepUsage?.outputTokens,
+            ownedByMcpjam: emptyStepOwnedByMcpjam,
           },
           ...(failureCapture
             ? {
-                // An empty stream is malformed output from our model rail — an
-                // incident, grouped apart from throws on the same source.
+                // Ask MCPJam captures every failure. Content our rail lost is
+                // an incident, grouped apart from throws on the same source;
+                // an empty reply the provider owns pings only on a spike.
                 capture: failureCapture.policyFor({
                   source: "mcp.chat-v2.engine-step",
                   code: "provider_empty_response",
+                  ...(emptyStepOwnedByMcpjam ? {} : { pageClass: "routine" }),
                 }),
               }
             : {}),
@@ -5043,6 +5166,7 @@ export async function runChatEngineLoop(
   // / auto-deny re-scans re-walk the whole history on later ones, and all
   // three must reach the same answer about the same call — once.
   const approvalDecisions = createApprovalDecisionCache();
+  const admissionBudget = new AdmissionWaitBudget();
   const traceTurn: LiveTraceTurnContext = {
     recordedRequestPayloads: [],
     turnId: generateLiveTraceTurnId(),
@@ -5395,6 +5519,7 @@ export async function runChatEngineLoop(
         });
         const { shouldContinue, didEmitFinish, modelFinishReason } =
           await processOneStep({
+            admissionBudget,
             durableCheckpoint: options.durableCheckpoint,
             writer: safeWriter,
             messageHistory,
@@ -5448,6 +5573,7 @@ export async function runChatEngineLoop(
             // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
             prepareAdvertisedTools,
             abortSignal,
+            remainingTurnMs: options.remainingTurnMs,
           });
 
         steps++;
@@ -5840,7 +5966,10 @@ export async function handleMCPJamFreeChatModel(
   // validated HarnessId (readHarness → isHarness) or undefined, so a truthiness
   // check is the right gate — runHarnessTurn re-resolves the adapter defensively.
   // Both satisfy the same ChatEngineLoopResult contract (streamSink "ui" → Response).
-  const useHarness = Boolean(options.harness && !options.scopeStepUpResume);
+  const dispatch = resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : options.harness });
+  options = { ...options, harness: dispatch.harnessId };
+  assertAgentLoopResume(options.agentLoop, Boolean(options.scopeStepUpResume));
+  const useHarness = Boolean((options.agentLoop ?? options.harness) && !options.scopeStepUpResume);
   const result = await (useHarness
     ? runHarnessTurn(options, "ui")
     : runChatEngineLoop(options, "ui"));

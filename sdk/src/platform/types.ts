@@ -14,6 +14,11 @@ import type {
   SwarmReport,
 } from "../contract/index.js";
 import type { CaseJudgeSettings } from "../contract/judge-settings.js";
+import type { PlatformGoalJudge } from "./goal-judge.js";
+export type {
+  PlatformGoalJudge,
+  PlatformGoalJudgeWrite,
+} from "./goal-judge.js";
 import type {
   JudgeRubric,
   JudgeEvidenceManifest,
@@ -669,6 +674,18 @@ export interface PlatformChatTurn {
   engine?: string;
   /** The saved host this turn executed as, when it named one. */
   hostId?: string;
+  /** Servers omitted from this interactive turn. Absent on older servers. */
+  skippedServers?: Array<{
+    serverId: string;
+    serverName: string;
+    reason:
+      | "hosted_requires_https"
+      | "hosted_stdio_unsupported"
+      | "needs_sign_in"
+      | "unreachable"
+      | "other";
+    message: string;
+  }>;
   advertisedToolCount?: number;
   excludedToolCount?: number;
   persisted: { outcome: string; version?: number };
@@ -4111,6 +4128,8 @@ export interface PlatformGoal {
   iterations: number | null;
   maxTurns: number | null;
   setupWrites?: boolean;
+  /** The goal-completion judge. Absent on older API deployments. */
+  judge?: PlatformGoalJudge;
   createdAt: number;
   updatedAt: number;
 }

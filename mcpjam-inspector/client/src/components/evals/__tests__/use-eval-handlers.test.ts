@@ -18,6 +18,10 @@ import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
 import { setApiContext } from "@/lib/apis/web/context";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
+import {
+  beginCaseLaunch,
+  useCaseLaunches,
+} from "../../evaluate/case-workspace/pending-case-launches";
 
 /**
  * Server-side eval-iteration cap rejection, in the shape `postEvalRequest`
@@ -103,7 +107,9 @@ vi.mock("@/lib/analytics", () => ({
 // Mock toast
 vi.mock("sonner", () => ({
   toast: {
-    loading: vi.fn().mockReturnValue("toast-id"),
+    // A case launch pins the toast to its launch id; everything else gets the
+    // pinned id the wall tests dismiss.
+    loading: vi.fn((_, options?: { id?: string }) => options?.id ?? "toast-id"),
     success: vi.fn().mockReturnValue("toast-id"),
     error: vi.fn(),
     warning: vi.fn(),
@@ -170,7 +176,10 @@ describe("useEvalHandlers", () => {
     usePlanLimitDialogStore.setState({ isOpen: false, limit: null });
     // Pinned so the wall tests can assert the exact toast the handler dismisses.
     vi.mocked(toast.success).mockReturnValue("toast-id");
-    vi.mocked(toast.loading).mockReturnValue("toast-id");
+    vi.mocked(toast.loading).mockImplementation(
+      (_, options?: { id?: string }) => options?.id ?? "toast-id",
+    );
+    useCaseLaunches.setState({ launches: [] });
 
     // Default mock implementations
     mockGetAccessToken.mockResolvedValue("mock-access-token");
@@ -431,10 +440,7 @@ describe("useEvalHandlers", () => {
     });
 
     it("narrows a run to one case, and says so in the body", async () => {
-      // "Run test" on the case page. It must be a SUITE run — the judge is
-      // keyed by `suiteRunId` at every surface, so a quick run can never
-      // answer "did it accomplish the goal?" — narrowed to the one case so the
-      // suite's total cap does not reject it.
+      // Case runs need a suite run for judging, narrowed to the selected case.
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
       const mockSuite = {
         _id: "suite-run-one",
@@ -444,10 +450,13 @@ describe("useEvalHandlers", () => {
       await act(async () => {
         await result.current.handleRerun(mockSuite as any, {
           caseIds: ["test-case-1"],
+          caseLaunchId: "case-launch",
         });
       });
       const body = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
       expect(body.caseIds).toEqual(["test-case-1"]);
+      expect(body.runGroupId).toBe("case-launch");
+      expect(toast.loading).toHaveBeenCalledWith("Starting run…", { id: "case-launch" });
       expect(body.suiteRerun).toBe(true);
       // The payload must agree with what the server will execute; sending the
       // whole suite alongside a narrowing `caseIds` makes the run's own record
@@ -868,6 +877,44 @@ describe("useEvalHandlers", () => {
       });
     });
 
+    it.each([{ servers: [] }, { servers: ["server-1"] }])(
+      "refuses a replay fallback that cannot honor the iteration count (%j)",
+      async ({ servers }) => {
+        mockIsHostedMode.mockReturnValue(true);
+        const { result } = renderHook(() =>
+          useEvalHandlers({
+            ...defaultProps,
+            connectedServerNames: new Set(),
+            ensureServersReady: vi.fn().mockResolvedValue({
+              readyServerNames: [],
+              missingServerNames: [],
+              failedServerNames: ["server-1"],
+              reauthServerNames: [],
+            }),
+            latestRunBySuiteId: new Map<string, any>([
+              ["suite-123", { _id: "run-source", hasServerReplayConfig: true }],
+            ]),
+          }),
+        );
+        await act(async () => {
+          await expect(
+            result.current.handleRerun(
+              {
+                _id: "suite-123",
+                name: "Suite",
+                source: "ui",
+                environment: { servers },
+              } as any,
+              { iterationOverride: 1, throwOnFailure: true },
+            ),
+          ).rejects.toThrow(
+            "Replay cannot honor the requested iteration count",
+          );
+        });
+        expect(mockAuthFetch).not.toHaveBeenCalled();
+      },
+    );
+
     it("replays the latest run when auto-connect fails and replay is available", async () => {
       mockIsHostedMode.mockReturnValue(true);
       const ensureServersReady = vi.fn().mockResolvedValue({
@@ -1037,6 +1084,60 @@ describe("useEvalHandlers", () => {
         });
       });
       expect(mockNavigateApp).not.toHaveBeenCalled();
+    });
+
+    it("keeps the accepted host's pending rows and settles the launch toast after a partial case fanout", async () => {
+      // The setup sheet opens the pending rows and the "Starting run…" toast
+      // under one launch id before anything is requested. The fan-out must
+      // drop the rows of the host that refused, stamp the accepted host's rows
+      // with its run id, and report the outcome on that same toast.
+      mockAuthFetch.mockImplementation(async (_path, init) => {
+        const body = JSON.parse(init.body);
+        return body.namedHostId === "host-a"
+          ? createFetchResponse({ runId: "new-a" })
+          : createFetchResponse({ message: "Unavailable" }, 500);
+      });
+      const launchId = beginCaseLaunch(
+        {
+          projectId: "project-1",
+          suiteId: "suite-partial",
+          caseId: "test-case-1",
+        },
+        [
+          { hostId: "host-a", client: "Host A", model: "gpt-4" },
+          { hostId: "host-b", client: "Host B", model: "gpt-4" },
+        ],
+        2,
+      );
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun(
+          {
+            _id: "suite-partial",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+            hostAttachments: ["host-a", "host-b"].map((namedHostId) => ({
+              namedHostId,
+              hostName: namedHostId,
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-1"],
+            })),
+          } as any,
+          { caseIds: ["test-case-1"], caseLaunchId: launchId },
+        );
+      });
+      const [launch] = useCaseLaunches.getState().launches;
+      expect(launch.runIds).toEqual({ 0: "new-a" });
+      expect(launch.rows).toHaveLength(2);
+      expect(
+        launch.rows.every(
+          (row) => row.hostId === "host-a" && row.suiteRunId === "new-a",
+        ),
+      ).toBe(true);
+      expect(toast.error).toHaveBeenCalledExactlyOnceWith(
+        "1 of 2 client runs failed: host-b",
+        { id: launchId },
+      );
     });
 
     it("uses the normal rerun path when live servers are connected", async () => {

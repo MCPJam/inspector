@@ -27,6 +27,7 @@ const ALL_IDS: HostTemplateId[] = [
   "vscode",
   "agentcore",
   "n8n",
+  "gemini",
   "perplexity",
   "cline",
   "notion",
@@ -136,14 +137,14 @@ describe("seedHostTemplate", () => {
   it("seeds the real Claude Code harness + a personal computer", () => {
     const config = seedHostTemplate("claude-code", { theme: "dark" });
     expect(config.hostStyle).toBe("claude-code");
-    expect(config.modelId).toBe("anthropic/claude-haiku-4.5");
+    expect(config.modelId).toBe("anthropic/claude-haiku-5.5");
     expect(config.harness).toBe("claude-code");
     expect(config.computer).toEqual({ kind: "personal" });
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
     expect(config.progressiveToolDiscovery).toBe(false);
-    // Bumped with the 2026-09-03 re-probe, from 2.1.237.
-    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.259");
+    // Bumped with the 2026-10-26 re-probe, from 2.1.259.
+    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.310");
   });
 
   it("seeds the real Codex harness + a personal computer", () => {
@@ -286,8 +287,9 @@ describe("seedHostTemplate", () => {
 
   it("keeps Cursor CSP subtype findings in the SDK seed", () => {
     const config = seedHostTemplate("cursor", { theme: "dark" });
+    // Bumped with the 2026-10-26 re-probe, from 3.21.16.
     expect(config.mcpProfile?.apps?.uiInitialize?.hostInfo.version).toBe(
-      "3.21.16"
+      "3.27.14"
     );
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
@@ -427,7 +429,7 @@ describe("seedHostTemplate", () => {
     });
   });
 
-  it("keeps VS Code 1.136 handshake facts and deliberate emulator defaults", () => {
+  it("keeps VS Code handshake facts and deliberate emulator defaults", () => {
     const config = seedHostTemplate("vscode", { theme: "dark" });
     const profile = config.mcpProfile;
     const hostContext = config.hostContext as {
@@ -482,9 +484,12 @@ describe("seedHostTemplate", () => {
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
       clientInfo: { name: "Visual Studio Code", version: "1.136.1" },
     });
+    // 2026-10-26 capture. `initialize.clientInfo` above stays on 1.136.1:
+    // that run's wire clientInfo was `copilot-cli`, so it cannot speak for
+    // what VS Code's own MCP client sends.
     expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
       name: "Visual Studio Code",
-      version: "1.136.1",
+      version: "1.143.1",
     });
     expect(profile?.apps?.compatRuntime).toEqual({ openaiApps: false });
     expect(profile?.apps?.mcpAppsOverrides).toMatchObject({

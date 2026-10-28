@@ -17,6 +17,9 @@ import { PLUGIN_APP_REPLY_MAX_BYTES } from "@/shared/plugin-app-ui-limits";
 
 export type ThreadAppToolResult = z.infer<typeof mcpAppToolResultSchema>;
 
+/** A plugin server's id, or a plugin that has no server and onboards by itself. */
+export type PluginOnboardingTarget = string | { pluginId: string };
+
 export interface ThreadAppScope {
   projectId: string;
   hostId: string;
@@ -202,7 +205,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
   }
   return {
     onboarding: async (
-      serverId: string,
+      target: PluginOnboardingTarget,
       content: boolean,
       signal: AbortSignal,
     ) => {
@@ -211,8 +214,9 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
         {
           projectId: scope.projectId,
           pluginWorkspace: scope.pluginWorkspace,
-          hostId: scope.hostId,
-          serverId,
+          ...(typeof target === "string"
+            ? { hostId: scope.hostId, serverId: target }
+            : { pluginId: target.pluginId }),
           content,
         },
         signal,

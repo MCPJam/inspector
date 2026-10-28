@@ -52,6 +52,7 @@ export const AI_FEATURE_GROUPS: ReadonlyArray<{
   { id: "session_map", label: "Session map" },
   { id: "harness", label: "Harness runtimes" },
   { id: "transcription", label: "Transcription" },
+  { id: "web_search", label: "Web search" },
   { id: "ask_mcpjam", label: "Ask MCPJam" },
 ];
 
@@ -194,6 +195,7 @@ export function operationModelFix(
 
 /** The model an operation runs on when the backend does not name it. */
 function modelKindForOperation(operation: AiOperationId): OrgAiModelKind {
+  if (operation === "web_search") return "search";
   if (operation === "embedding") return "embedding";
   if (operation === "speech_transcription") return "transcription";
   return "default";
@@ -281,6 +283,7 @@ const FEATURE_OWN_OPERATION: Partial<Record<AiFeatureGroupId, AiOperationId>> =
     chat: "chat",
     harness: "harness_runtime",
     transcription: "speech_transcription",
+    web_search: "web_search",
     ask_mcpjam: "agent_chat",
   };
 
@@ -317,6 +320,7 @@ const OPERATION_LABELS: Record<AiOperationId, string> = {
   typed_decision: "typed decisions",
   embedding: "embeddings",
   speech_transcription: "speech transcription",
+  web_search: "web search",
   agent_chat: "Ask MCPJam",
 };
 
@@ -402,6 +406,11 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
     noun: "default AI model",
     runs: "Insights and findings, generation, typed decisions and simulated users",
   },
+  search: {
+    label: "Search model",
+    noun: "search model",
+    runs: "Web search",
+  },
   embedding: {
     label: "Embedding model",
     noun: "embedding model",
@@ -414,7 +423,7 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
   },
 };
 
-/** "default AI model", "embedding model", "transcription model". */
+/** "default AI model", "search model", "embedding model", … */
 export function orgAiModelNoun(kind: OrgAiModelKind): string {
   return ORG_AI_MODEL_PRESENTATION[kind]?.noun ?? `${kind} model`;
 }

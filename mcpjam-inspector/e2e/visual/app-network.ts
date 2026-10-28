@@ -1,6 +1,6 @@
 import { renderSandboxProxyHtml } from "../../server/routes/apps/mcp-apps/sandbox-proxy-html";
 import type { BrowserContext, Route, WebSocketRoute } from "@playwright/test";
-import { FIXED_TIME, queries, responses } from "./app-data";
+import { FIXED_TIME, mutations, queries, responses } from "./app-data";
 
 const ORIGIN = "http://127.0.0.1:6289";
 type Message = {
@@ -158,13 +158,6 @@ async function serveHttp(
     url.pathname === "/repos/MCPJam/inspector"
   )
     return route.fulfill({ json: { stargazers_count: 2500 } });
-  if (
-    ["https://fonts.googleapis.com", "https://fonts.gstatic.com"].includes(
-      url.origin,
-    ) &&
-    route.request().method() === "GET"
-  )
-    return route.continue();
   failures.push(`HTTP: ${url.origin}${url.pathname}`);
   await route.abort("blockedbyclient");
 }
@@ -178,6 +171,7 @@ export async function prepareApp(
   const fixture = {
     ...overrides,
     queries: { ...queries, ...overrides.queries },
+    mutations: { ...mutations, ...overrides.mutations },
     responses: { ...responses, ...overrides.responses },
   };
   if (fixture.signedIn)

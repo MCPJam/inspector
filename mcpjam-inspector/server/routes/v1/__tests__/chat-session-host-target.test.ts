@@ -1,3 +1,4 @@
+import { ErrorCode, WebRouteError } from "../../web/errors.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
@@ -294,7 +295,7 @@ afterEach(() => {
 });
 
 describe("host targeting dispatches the real harness", () => {
-  it("runs the harness an ENVIRONMENT's host declares, with an MCP proxy", async () => {
+  it("runs the environment's harness with its selected MCP servers", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({ harness: "claude-code", modelId: MODEL }),
     );
@@ -315,12 +316,43 @@ describe("host targeting dispatches the real harness", () => {
         harnessMcpProxy: expect.objectContaining({
           plane: "web-authorized",
         }),
+        selectedServerIds: ["srv_1"],
       }),
     );
     // The response SAYS which engine ran. This is the field whose absence let
     // a silently emulated turn look identical to a harness one.
     expect(body.engine).toBe("harness:claude-code");
     expect(body.hostId).toBe(HOST);
+  });
+
+  it("returns a reply and skipped servers even when the entire environment is refused", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ harness: "claude-code", modelId: MODEL }));
+    createManualHostedConnectionMock.mockResolvedValue({
+      manager: { getTools: getToolsMock, disconnectAllServers: async () => {} },
+      refusedServers: { srv_1: new WebRouteError(400, ErrorCode.FEATURE_NOT_SUPPORTED, "Hosted mode requires HTTPS server URLs", { refusalReason: "hosted_requires_https" }) },
+    });
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.skippedServers).toEqual([expect.objectContaining({ serverId: "srv_1", reason: "hosted_requires_https" })]);
+    expect(body.skippedServers[0].message).toContain("Use an https:// URL");
+    expect(getToolsMock).not.toHaveBeenCalled();
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(expect.objectContaining({ selectedServers: [] }));
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(expect.objectContaining({ selectedServerIds: ["srv_1"], unavailableServerIds: ["srv_1"] }));
+    expect(createManualHostedConnectionMock.mock.calls[0][3]).toMatchObject({ tolerateServerRefusals: true });
+  });
+
+  it("uses authorized names when an ID-only target cannot connect", async () => {
+    createManualHostedConnectionMock.mockResolvedValue({
+      manager: { getTools: getToolsMock, disconnectAllServers: async () => {} },
+      serverNamesById: { srv_1: "Saved server" },
+      refusedServers: { srv_1: new WebRouteError(400, ErrorCode.FEATURE_NOT_SUPPORTED, "Hosted mode requires HTTPS server URLs", { refusalReason: "hosted_requires_https" }) },
+    });
+    const response = await turn(firstTurn({ serverIds: ["srv_1"] }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.skippedServers[0]).toMatchObject({ serverName: "Saved server", reason: "hosted_requires_https" });
+    expect(body.skippedServers[0].message).toContain('"Saved server"');
   });
 
   it("binds the conversation's throwaway box to a harness turn and releases it", async () => {
@@ -1519,7 +1551,7 @@ describe("assertHarnessDispatchable", () => {
         engine: { kind: "harness", harness: "claude-code", hostId: HOST },
         runtimeKind: "direct",
       }),
-    ).toThrow(/refused rather than run on the emulated engine/);
+    ).toThrow(/Claude Code client cannot use a locally hosted model/);
   });
 
   it("is a no-op for a hosted harness and for an emulated turn", () => {

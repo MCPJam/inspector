@@ -12,6 +12,12 @@ node_modules
 !.claude/skills/
 docs/superpowers/
 *.bundled.ts
+# Telemetry catalogs: written by scripts/generate-telemetry-catalogs.mjs from
+# every entry point that reads them. Other generated JSON stays committed.
+sdk/src/internal/telemetry-catalog.generated.json
+mcpjam-inspector/shared/telemetry-catalog.generated.json
+mcpjam-inspector/shared/browser-telemetry-catalog.generated.json
+mcpjam-inspector/shared/browser-telemetry-source-files.generated.json
 mcpjam-inspector/server/utils/browser-harness/*.generated.ts
 cli/dist/
 sdk/dist/
@@ -27,6 +33,3 @@ wt-*/
 .playwright-mcp/
 evaluators/dist/
 
-
-# Meticulous AI onboard workspace
-.meticulous-onboard/

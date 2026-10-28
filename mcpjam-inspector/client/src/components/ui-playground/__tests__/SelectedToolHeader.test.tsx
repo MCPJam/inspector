@@ -4,6 +4,24 @@ import userEvent from "@testing-library/user-event";
 import { SelectedToolHeader } from "../SelectedToolHeader";
 
 describe("SelectedToolHeader", () => {
+  it.each([undefined, "prompt"] as const)(
+    "labels the list action for %s",
+    async (listLabel) => {
+      const onExpand = vi.fn();
+      render(
+        <SelectedToolHeader
+          toolName="selected"
+          onExpand={onExpand}
+          listLabel={listLabel}
+        />,
+      );
+      const label = `Show full ${listLabel ?? "tool"} list`;
+      const back = screen.getByRole("button", { name: label, exact: true });
+      expect(back).toHaveAttribute("title", label);
+      await userEvent.click(back);
+      expect(onExpand).toHaveBeenCalledOnce();
+    },
+  );
   it("selects by id when two tools share a label", async () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();

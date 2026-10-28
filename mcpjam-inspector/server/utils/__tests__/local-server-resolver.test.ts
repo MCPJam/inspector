@@ -1710,7 +1710,12 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
   // cannot carry the service-token acting-as exchange. A delegated caller
   // hitting a plugin component must get the real reason, not an
   // unauthenticated-query failure.
-  it("fails closed when a delegated caller resolves a plugin component", async () => {
+  // The backend's `pluginComponent` flag routes a component with no
+  // placeholder into preparation too, so it fails closed the same way.
+  it.each([
+    ["a placeholder", { args: ["${PLUGIN_ROOT}/server/index.js"] }],
+    ["the backend's flag", { args: ["server.js"], pluginComponent: true }],
+  ])("fails closed when a delegated caller resolves a plugin component (%s)", async (_label, config) => {
     const originalServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
     process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
     const fetchMock = vi.fn(async (input: any) => {
@@ -1719,8 +1724,8 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
         return localBatchResponse({
           transportType: "stdio",
           command: "node",
-          args: ["${PLUGIN_ROOT}/server/index.js"],
           env: {},
+          ...config,
         });
       }
       throw new Error(`Unexpected fetch ${url}`);

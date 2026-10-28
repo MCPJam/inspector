@@ -480,6 +480,14 @@ export function resolveHostTools(
 
   for (const id of ids) {
     if (id === WEB_SEARCH_TOOL_NAME) {
+      // The backend refuses guest searches outside a shared scenario, so the tool would only fail.
+      if (ctx.isGuest && !ctx.scenarioId) {
+        logger.debug(
+          "[built-in-tools] web_search not advertised to guest actor outside a scenario; skipping",
+          { projectId: ctx.projectId },
+        );
+        continue;
+      }
       out[WEB_SEARCH_TOOL_NAME] = buildExaWebSearchTool({
         authHeader,
         projectId: ctx.projectId,
@@ -951,5 +959,10 @@ export function resolveHostTools(
     logger.warn("[built-in-tools] unknown builtInToolId; skipping", { id });
   }
 
+  for (const name of Object.keys(out)) {
+    out[name] = Object.assign({}, out[name], {
+      _toolOrigin: "builtin" as const,
+    });
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }

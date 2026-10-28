@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { BehaviorTab } from "../BehaviorTab";
 
@@ -48,7 +48,10 @@ vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
 function renderBehaviorTab(
   partial?: Parameters<typeof emptyHostConfigInputV2>[0],
 ) {
-  const draft = emptyHostConfigInputV2(partial);
+  const draft = {
+    ...emptyHostConfigInputV2(partial),
+    systemPromptDefault: partial?.systemPromptDefault,
+  };
   return render(
     <BehaviorTab draft={draft} onDraftChange={vi.fn()} attention={[]} />,
   );
@@ -64,7 +67,7 @@ function sliderRoot(container: HTMLElement): Element {
 }
 
 describe("BehaviorTab harness gray-out", () => {
-  it("disables temperature for a claude-code harness host but not model/system prompt", () => {
+  it("disables temperature for a claude-code harness while keeping its model editable", () => {
     const { container } = renderBehaviorTab({ harness: "claude-code" });
 
     // Permanently not enforced for the harness → disabled with an honest note.
@@ -73,15 +76,12 @@ describe("BehaviorTab harness gray-out", () => {
       screen.getByText(/runs its own loop and ignores temperature/i),
     ).toBeInTheDocument();
 
-    // Model + system prompt DO cross into the harness, so they stay editable
-    // (no blanket isHarnessHost disable). Claude Code's model credentials are
+    // Claude Code's model credentials are
     // brokered by MCPJam, so the selection is what the runtime launches with.
     expect(screen.getByTestId("model-selector")).not.toHaveAttribute(
       "data-disabled",
     );
-    expect(
-      screen.getByPlaceholderText(/helpful assistant/i),
-    ).not.toHaveAttribute("readonly");
+    expect(screen.getByRole("textbox", { name: "System prompt" })).toBeEnabled();
   });
 
   it("leaves approval EDITABLE for claude-code now that its proxy phase landed", () => {
@@ -297,4 +297,70 @@ describe("the model list a harness host offers", () => {
       "hosted:anthropic/claude-haiku-4.5,orgprov_o:gpt-5-mini",
     );
   });
+});
+
+describe("saved system prompt status", () => {
+  it.each([
+    [
+      "Official text",
+      {
+        source: {
+          publisher: "OpenAI",
+          catalogEntryId: "entry",
+          revision: "2026-10-01",
+          sourceUrl: "https://platform.claude.com",
+        },
+      },
+    ],
+    ["Custom text", undefined],
+    ["", {}],
+    ["", undefined],
+  ] as const)(
+    "shows editable text and preserves saved attribution",
+    (text, metadata) => {
+      renderBehaviorTab({ systemPrompt: text, systemPromptDefault: metadata });
+      const editor = screen.getByRole("textbox", { name: "System prompt" });
+      expect(editor).toBeEnabled();
+      expect(editor).toHaveValue(text);
+      expect(screen.queryByText("Not editable")).not.toBeInTheDocument();
+      if (metadata && "source" in metadata) {
+        expect(
+          screen.getByText("Source: OpenAI · 2026-10-01"),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      }
+    },
+  );
+});
+
+describe("system prompt editing", () => {
+  it.each(["A custom prompt", ""])(
+    "updates the draft to %j and clears default attribution",
+    (text) => {
+      const draft = {
+        ...emptyHostConfigInputV2({ systemPrompt: "Original prompt" }),
+        systemPromptDefault: {
+          source: {
+            publisher: "OpenAI",
+            catalogEntryId: "entry",
+            revision: "revision",
+            sourceUrl: "https://example.com/prompt",
+          },
+        },
+      };
+      const onDraftChange = vi.fn();
+      render(
+        <BehaviorTab draft={draft} onDraftChange={onDraftChange} attention={[]} />,
+      );
+      fireEvent.change(screen.getByRole("textbox", { name: "System prompt" }), {
+        target: { value: text },
+      });
+      expect(onDraftChange).toHaveBeenCalledTimes(1);
+      expect(onDraftChange.mock.calls[0][0](draft)).toEqual({
+        ...draft,
+        systemPrompt: text,
+        systemPromptDefault: undefined,
+      });
+    },
+  );
 });
