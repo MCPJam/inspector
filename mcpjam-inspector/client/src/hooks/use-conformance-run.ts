@@ -412,7 +412,10 @@ export function useConformanceRun({
       }
 
       if (!isRunActive(runToken, serverName)) return;
-      setOAuth({ status: "error", error: "OAuth conformance timed out" });
+      setOAuth({
+        status: "error",
+        error: "The OAuth checks took too long to finish. Run the checks again.",
+      });
     },
     [isRunActive]
   );

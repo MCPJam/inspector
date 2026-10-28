@@ -32,6 +32,7 @@ import {
 import {
   createSession,
   getSession,
+  touchSession,
   setSessionError,
   setSessionResult,
   submitAuthorizationCode,
@@ -387,6 +388,10 @@ export class OAuthConformanceSessionNotFoundError extends Error {
   readonly code = "notFound" as const;
 }
 
+/** What the user sees when their session is gone: it expired while idle. */
+export const OAUTH_SESSION_EXPIRED_MESSAGE =
+  "Authorization took too long. Run the checks again.";
+
 export class OAuthConformanceSessionFailedError extends Error {
   readonly code = "runnerFailed" as const;
 }
@@ -397,9 +402,10 @@ export async function completeOAuthConformance(
   const session = getSession(input.sessionId);
   if (!session) {
     throw new OAuthConformanceSessionNotFoundError(
-      "Session not found or expired",
+      OAUTH_SESSION_EXPIRED_MESSAGE,
     );
   }
+  touchSession(input.sessionId);
   if (session.result) {
     return { phase: "complete", result: session.result };
   }
@@ -415,7 +421,9 @@ export async function completeOAuthConformance(
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     const current = getSession(input.sessionId);
     if (!current) {
-      throw new OAuthConformanceSessionNotFoundError("Session expired");
+      throw new OAuthConformanceSessionNotFoundError(
+        OAUTH_SESSION_EXPIRED_MESSAGE,
+      );
     }
     if (current.result) {
       return { phase: "complete", result: current.result };

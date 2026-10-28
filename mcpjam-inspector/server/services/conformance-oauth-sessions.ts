@@ -5,7 +5,9 @@
  * SDK — the controller owns the "wait for auth URL / deliver code" dance, this
  * store owns the `sessionId → controller` mapping and TTL eviction.
  *
- * Sessions expire after 5 minutes and are swept every 60 seconds.
+ * A session waits up to 10 minutes for the user to finish authorizing, and is
+ * dropped after 15 minutes without activity (creation, the code arriving, or a
+ * client poll). The sweep runs every 60 seconds.
  */
 
 import {
@@ -29,11 +31,21 @@ export interface OAuthConformanceSession {
   /** If the run errored out. */
   error?: string;
   createdAt: number;
+  /** Last time the browser or a poll touched this session; drives expiry. */
+  lastActivityAt: number;
 }
 
 // ── Store ───────────────────────────────────────────────────────────────
 
-const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+/**
+ * How long the runner waits for the user to come back from the authorization
+ * server. A consent screen with a login, MFA or an account picker easily takes
+ * longer than the runner's 30s per-step timeout, which used to cap this wait.
+ */
+export const AUTHORIZATION_WAIT_MS = 10 * 60 * 1000; // 10 minutes
+// Longer than the wait, so a session still waiting on consent (no polls yet:
+// the client only polls once the code is back) is never swept first.
+const SESSION_IDLE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const CLEANUP_INTERVAL_MS = 60 * 1000; // 60 seconds
 
 const sessions = new Map<string, OAuthConformanceSession>();
@@ -45,7 +57,7 @@ function ensureCleanupTimer() {
   cleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [id, session] of sessions) {
-      if (now - session.createdAt > SESSION_TTL_MS) {
+      if (now - session.lastActivityAt > SESSION_IDLE_TTL_MS) {
         session.controller.fail(new Error("Session expired"));
         sessions.delete(id);
       }
@@ -77,8 +89,8 @@ export interface CreateSessionOptions {
    */
   redirectUrl: string;
   /**
-   * Optional hard timeout for waiting on an authorization code after the URL
-   * is surfaced. Falls back to the runner's per-step timeout when omitted.
+   * How long to wait for an authorization code after the URL is surfaced.
+   * Defaults to {@link AUTHORIZATION_WAIT_MS}.
    */
   codeTimeoutMs?: number;
 }
@@ -89,13 +101,15 @@ export function createSession(
   const id = `oauth-conf-${Date.now()}-${nextId++}`;
   const controller = createRemoteBrowserAuthorizationController({
     redirectUrl: options.redirectUrl,
-    codeTimeoutMs: options.codeTimeoutMs,
+    codeTimeoutMs: options.codeTimeoutMs ?? AUTHORIZATION_WAIT_MS,
   });
+  const now = Date.now();
   const session: OAuthConformanceSession = {
     id,
     controller,
     completedSteps: [],
-    createdAt: Date.now(),
+    createdAt: now,
+    lastActivityAt: now,
   };
 
   // Once the runner surfaces the auth URL, mirror it onto the session so the
@@ -117,6 +131,12 @@ export function getSession(
   sessionId: string,
 ): OAuthConformanceSession | undefined {
   return sessions.get(sessionId);
+}
+
+/** Keep a session alive while a client is still polling it. */
+export function touchSession(sessionId: string): void {
+  const session = sessions.get(sessionId);
+  if (session) session.lastActivityAt = Date.now();
 }
 
 export function deleteSession(sessionId: string): void {
@@ -141,6 +161,7 @@ export function submitAuthorizationCode(
   // on the runner's own state-mismatch handling and treat any unknown session
   // as a miss.
   if (!session) return false;
+  session.lastActivityAt = Date.now();
   session.controller.deliverCode({ code, state });
   return true;
 }
