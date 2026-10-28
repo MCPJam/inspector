@@ -47,6 +47,7 @@ import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
 import { withoutServerVerifiedApprovalTools } from "./built-in-tools/mcpjam.js";
 import {
   historyVerificationFor,
+  presentHistoryForModel,
   resolveToolOutputFenceKey,
   signHistoryForPersistence,
   TOOL_OUTPUT_TRUST_NOTE,
@@ -1519,7 +1520,16 @@ export async function streamChatTurn(
       reasoningEffort: prepare.reasoningEffort,
       explicitTemperature: prepare.explicitTemperature,
     });
-    setupAtTurn = await captureSetup(runtime.maxSteps ?? DEFAULT_TURN_MAX_STEPS, preparedTools, prepare.modelDefinition.provider === "ollama" ? "local" : "remote");
+    // Same venue rule as the org path's local runtime: an Ollama or custom
+    // endpoint is reached from this machine.
+    const directProviderKey = prepare.modelDefinition.provider;
+    setupAtTurn = await captureSetup(
+      runtime.maxSteps ?? DEFAULT_TURN_MAX_STEPS,
+      preparedTools,
+      directProviderKey === "ollama" || directProviderKey === "custom"
+        ? "local"
+        : "remote",
+    );
     const onComplete = buildOnConversationComplete(String(prepare.modelDefinition.id), "byok");
     return streamDirectChatWithLiveTrace({
       llmModel: provider.model,
@@ -1536,6 +1546,18 @@ export async function streamChatTurn(
       temperature: resolvedTemperature,
       providerOptions: provider.providerOptions,
       tools: allTools,
+      // The system prompt tells the model every tool result is fenced; this
+      // is what fences them, as on every other engine.
+      ...(historyPresentation
+        ? {
+            transformStepMessages: (stepMessages: ModelMessage[]) =>
+              presentHistoryForModel(
+                stepMessages,
+                allTools,
+                historyPresentation,
+              ),
+          }
+        : {}),
       progressivePlan,
       discoveryState,
       abortSignal: runtime.abortSignal,
@@ -1621,7 +1643,7 @@ export async function streamChatTurn(
     setupAtTurn = await captureSetup(
       orgMaxSteps,
       orgRuntime.runtimeLocation === "local" ? localTools.tools : preparedTools,
-      "remote",
+      orgRuntime.runtimeLocation === "local" ? "local" : "remote",
     );
 
     const onConversationComplete = buildOnConversationComplete(
