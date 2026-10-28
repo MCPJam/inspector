@@ -2,6 +2,7 @@ import { setManagerOrganization } from "../../../mcp-connections";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { unsealHarnessProxyToken } from "../../harness-proxy-policy-seal";
+import { nativeRpcLogScope } from "../native-rpc-logs";
 import {
   hasForwardingOrganization,
   nativeForwardingSelection,
@@ -54,6 +55,7 @@ describe("native turn configuration", () => {
       writer: { write: vi.fn() },
     });
     const entry = prepared.mcpJson.mcpServers.server;
+    expect(prepared.logScopeIds).toEqual({ server: nativeRpcLogScope(owner, "turn") });
     expect(new URL(entry.url).searchParams.get("native")).toBe("1");
     expect(JSON.stringify(prepared.mcpJson)).not.toContain(
       "private-user-bearer",

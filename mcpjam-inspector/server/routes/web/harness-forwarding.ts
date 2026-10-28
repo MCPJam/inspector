@@ -16,6 +16,7 @@ import {
   readExecutionInput,
 } from "../../utils/harness/forwarding/approval.js";
 import { forwardNativeMcp } from "../../utils/harness/forwarding/native-transport.js";
+import { createNativeRpcLogger } from "../../utils/harness/forwarding/native-rpc-logs.js";
 import {
   parseNativeMessage,
   readNativeBody,
@@ -110,6 +111,12 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
           fetch: config.baseFetch!,
           onUnauthorized: config.onUnauthorized,
           settle,
+          rpcLogger: createNativeRpcLogger({
+            owner: context.owner,
+            turnId: context.turnId,
+            projectId: caller.projectId,
+            organizationId: caller.organizationId,
+          }),
         });
       if (
         !message?.method ||

@@ -35,7 +35,7 @@ import {
   ELICITATION_TIMEOUT_EXTENSION_MS,
   HOSTED_MODE,
   WEB_STREAM_TIMEOUT_MS,
-  webmcpInspectorReachable,
+  WEBMCP_INSPECTOR_ENABLED,
 } from "../../config.js";
 import {
   HostedElicitationBridge,
@@ -279,6 +279,13 @@ export async function prepareManagedConnections(args: {
       : undefined;
   const mrtrAuthPrincipal = resolveMrtrAuthPrincipal(c);
 
+  // Cleanup runs in reverse, so the disconnect is owned BEFORE the bridge:
+  // pending elicitation rows are withdrawn while the turn's connections are
+  // still open, and no prompt stays answerable for a turn that has ended.
+  let connectedManager: { disconnectAllServers(): Promise<void> } | undefined;
+  resources.own(async () => {
+    await connectedManager?.disconnectAllServers();
+  });
   const elicitationBridge = elicitationEnabled
     ? new HostedElicitationBridge({
         convexBearer: convexBearer!,
@@ -568,7 +575,7 @@ export async function prepareManagedConnections(args: {
       ...(executionScope ? { executionScope } : {}),
     },
   );
-  resources.own(() => manager.disconnectAllServers());
+  connectedManager = manager;
   if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
     void refreshConnectionProfiles(manager, bearerToken, hostedBody.projectId);
 
@@ -646,14 +653,12 @@ export async function prepareManagedConnections(args: {
   }
 
   // WebMCP page tools: same boundary treatment as the app-tool snapshot, and
-  // gated on whether a session could exist here at all. Hosted, that means
-  // the hosted-reachability switch as well as the kill switch — a turn must
-  // not advertise the tools of a page this deployment cannot drive, because
-  // the model would call one and the client would have no session to fulfil
-  // it with.
+  // gated on the inspector's kill switch: a turn must not advertise the
+  // tools of a page this deployment cannot drive, because the model would
+  // call one and the client would have no session to fulfil it with.
   let validatedPageTools: PageToolEntry[];
   try {
-    validatedPageTools = webmcpInspectorReachable()
+    validatedPageTools = WEBMCP_INSPECTOR_ENABLED
       ? validatePageToolEntries(body.pageTools)
       : [];
   } catch (error) {

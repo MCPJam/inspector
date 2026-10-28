@@ -70,6 +70,7 @@ export async function nativeResponse(args: {
   id?: string | number;
   settle?: (result: Settlement) => Promise<void>;
   subscription?: boolean;
+  onMessage?: (message: unknown) => void;
 }): Promise<Response> {
   const { response, id, settle } = args;
   const headers = nativeResponseHeaders(response.headers);
@@ -120,11 +121,13 @@ export async function nativeResponse(args: {
         if (settle)
           await settle({ outcome: "protocol_error", resultJson: safe });
         headers.set("content-type", "application/json");
+        args.onMessage?.(JSON.parse(safe));
         return new Response(safe, {
           status: response.status >= 400 ? response.status : 502,
           headers,
         });
       }
+      args.onMessage?.(parsed);
       if (settle && id !== undefined)
         await settle(outcome(raw, id) ?? { outcome: "incomplete" });
       return new Response(Buffer.concat(chunks), {
@@ -176,6 +179,7 @@ export async function nativeResponse(args: {
                 message.jsonrpc !== "2.0"
               )
                 throw new NativeWireError("non_mcp_stream");
+              args.onMessage?.(message);
               if (id !== undefined && settle) {
                 const result = outcome(data, id);
                 if (result) {

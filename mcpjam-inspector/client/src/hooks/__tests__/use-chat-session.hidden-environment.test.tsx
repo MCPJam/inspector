@@ -215,7 +215,6 @@ describe("useChatSession — hidden environment on this machine", () => {
   it("sends the environment through local ingress", async () => {
     const { result } = await renderHidden();
     expect(result.current.hiddenEnvironmentActive).toBe(true);
-    expect(result.current.hiddenEnvironmentOffReason).toBeNull();
     const { api, body } = lastTransport();
     expect(api).toBe("/api/mcp/chat-v2");
     expect(body).toMatchObject({
@@ -229,7 +228,6 @@ describe("useChatSession — hidden environment on this machine", () => {
     vi.mocked(isMCPJamProvidedModelMenuItem).mockReturnValue(false);
     const { result } = await renderHidden({ selectionIntent: "picked" });
     expect(result.current.hiddenEnvironmentActive).toBe(true);
-    expect(result.current.hiddenEnvironmentOffReason).toBeNull();
     const { api, body } = lastTransport();
     expect(api).toBe("/api/mcp/chat-v2");
     expect(body.executionTarget).toEqual({ kind: "environment", environmentId: "env_hidden" });
@@ -254,7 +252,7 @@ describe("useChatSession — hidden environment on this machine", () => {
       },
     };
     const { result } = await renderHidden();
-    expect(result.current.hiddenEnvironmentOffReason).toBeNull();
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
     expect(lastTransport().api).toBe("/api/mcp/chat-v2");
   });
 
@@ -265,7 +263,7 @@ describe("useChatSession — hidden environment on this machine", () => {
         resolveSendTarget: () => null,
       },
     });
-    expect(result.current.hiddenEnvironmentOffReason).toBeNull();
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
     expect(lastTransport().body.executionTarget).toEqual({ kind: "environment", environmentId: "env_hidden" });
   });
 
@@ -283,7 +281,7 @@ describe("useChatSession — hidden environment on this machine", () => {
         resolveSendTarget: () => null,
       },
     });
-    expect(result.current.hiddenEnvironmentOffReason).toBeNull();
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
     const { api, body } = lastTransport();
     expect(api).toBe("/api/mcp/chat-v2");
     expect(body).toMatchObject({
@@ -311,7 +309,7 @@ describe("useChatSession — hidden environment on this machine", () => {
         resolveSendTarget: () => null,
       },
     });
-    expect(result.current.hiddenEnvironmentOffReason).toBeNull();
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
     expect(lastTransport().body.executionTarget).toEqual({ kind: "environment", environmentId: "env_hidden" });
   });
 
@@ -319,7 +317,7 @@ describe("useChatSession — hidden environment on this machine", () => {
     const { result } = await renderHidden({
       personalComputerEngine: { engine: "local", consentToken: "consent" },
     });
-    expect(result.current.hiddenEnvironmentOffReason).toBeNull();
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
     expect(lastTransport().api).toBe("/api/mcp/chat-v2");
   });
 
@@ -334,7 +332,7 @@ describe("useChatSession — hidden environment on this machine", () => {
     await waitFor(() =>
       expect(mockState.transportOptions.length).toBeGreaterThan(1),
     );
-    expect(rendered.result.current.hiddenEnvironmentOffReason).toBeNull();
+    expect(rendered.result.current.hiddenEnvironmentActive).toBe(false);
     expect(lastTransport().api).toBe("/api/mcp/chat-v2");
     expect(lastTransport().body.hostId).toBe("host_1");
   });
