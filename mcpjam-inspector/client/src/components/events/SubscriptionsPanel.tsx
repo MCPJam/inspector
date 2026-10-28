@@ -128,20 +128,22 @@ function SubscriptionCard({
         <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
           <p>
-            The server delivered under subscription id{" "}
+            The server sent events under subscription ID{" "}
             <code className="font-mono">
               {subscription.conflictingServerSubscriptionId}
             </code>
-            , which differs from the reconciled id
+            , not the ID it returned when MCPJam subscribed
             {subscription.serverSubscriptionId ? (
               <>
                 {" "}
+                (
                 <code className="font-mono">
                   {subscription.serverSubscriptionId}
                 </code>
+                )
               </>
             ) : null}
-            . Those deliveries are journalled with an id conflict flag.
+            . The feed still records them with a Subscription mismatch flag.
           </p>
         </div>
       ) : null}
