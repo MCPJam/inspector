@@ -243,12 +243,18 @@ const creditCapRef: {
   current: {
     max: number | null;
     credits: number | null;
-    conversationCredits: number | null;
+    goalCredits: number | null;
   };
-} = { current: { max: null, credits: null, conversationCredits: null } };
+} = { current: { max: null, credits: null, goalCredits: null } };
 const capForMock = vi.fn();
-vi.mock("@/hooks/use-swarm-credit-cap", () => ({
-  useSwarmCreditCap: () => ({ ...creditCapRef.current, capFor: capForMock }),
+vi.mock("@/hooks/use-swarm-credit-cap", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/use-swarm-credit-cap")>()),
+  useSwarmCreditCap: () => ({
+    ...creditCapRef.current,
+    stateKey: JSON.stringify(creditCapRef.current),
+    maxFor: () => creditCapRef.current.max,
+    capFor: capForMock,
+  }),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -497,12 +503,12 @@ beforeEach(() => {
   creditCapRef.current = {
     max: null,
     credits: null,
-    conversationCredits: null,
+    goalCredits: null,
   };
   capForMock.mockResolvedValue({
     max: null,
     reusedConversations: 0,
-    conversationCredits: null,
+    goalCredits: null,
   });
   generateSwarmPersonaBatchMock.mockResolvedValue({
     personas: [
@@ -4253,11 +4259,11 @@ describe("SwarmsTab — sponsored conversations in the launch", () => {
 
 describe("SwarmsTab — credit cap", () => {
   const capAt = (max: number, credits: number) => {
-    creditCapRef.current = { max, credits, conversationCredits: 20 };
+    creditCapRef.current = { max, credits, goalCredits: 20 };
     capForMock.mockResolvedValue({
       max,
       reusedConversations: 0,
-      conversationCredits: 20,
+      goalCredits: 20,
     });
   };
 
@@ -4319,7 +4325,7 @@ describe("SwarmsTab — credit cap", () => {
     capForMock.mockResolvedValue({
       max: 7,
       reusedConversations: 0,
-      conversationCredits: 20,
+      goalCredits: 20,
     });
     openDescribe();
     fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
@@ -4399,9 +4405,9 @@ describe("SwarmsTab — credit cap", () => {
     capForMock.mockResolvedValue({
       max: 7,
       reusedConversations: 0,
-      conversationCredits: 20,
+      goalCredits: 20,
     });
-    creditCapRef.current = { max: 4, credits: 80, conversationCredits: 20 };
+    creditCapRef.current = { max: 4, credits: 80, goalCredits: 20 };
     await generateToConfirm();
 
     expect(submitLaunchEnabled()).toBe(false);

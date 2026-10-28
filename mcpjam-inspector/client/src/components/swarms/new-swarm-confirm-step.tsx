@@ -1246,7 +1246,10 @@ export function NewSwarmConfirmStep({
     environmentIds,
     reusedGoals: previewTargets.map((target) => ({
       journeyId: target.journeyId,
-      sessions: target.sessionsPerTarget ?? DEFAULT_SWARM_ITERATIONS,
+      sessions:
+        target.sessionsPerTarget ??
+        target.bornIterations ??
+        DEFAULT_SWARM_ITERATIONS,
     })),
     maxTurns,
     judgeConfig,
@@ -1710,7 +1713,14 @@ export function NewSwarmConfirmStep({
                 triggerSize="sm"
                 triggerTestId="new-swarm-confirm-add-existing"
                 showTriggerIcon={false}
-                mode={{ kind: "add", onAdd: onAddReused }}
+                mode={{
+                  kind: "add",
+                  onAdd: (personaId) => {
+                    onAddReused(personaId);
+                    // The next add may not fit once this persona's goals load.
+                    if (creditCap.max !== null) setAddExistingOpen(false);
+                  },
+                }}
               />
             </DisabledReasonTooltip>
           ) : null}

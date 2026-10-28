@@ -109,7 +109,7 @@ describe("SwarmCreditCapNotice", () => {
       <SwarmCreditCapNotice
         credits={12}
         max={0}
-        conversationCredits={20}
+        goalCredits={20}
         organizationId="org-1"
         data-testid={TEST_ID}
       />,
@@ -128,5 +128,42 @@ describe("SwarmCreditCapNotice", () => {
       creditsRequired: 20,
     });
     expect(state.outOfCreditsHit).toBe(false);
+  });
+
+  it("talks about launching at max 0 on Confirm, where nothing is left to generate", () => {
+    render(
+      <SwarmCreditCapNotice
+        credits={12}
+        max={0}
+        count={9}
+        goalCredits={20}
+        data-testid={TEST_ID}
+      />,
+    );
+    expect(screen.getByTestId(TEST_ID)).toHaveTextContent(
+      /That isn't enough for one conversation, and this swarm has 9 conversations\. Add credits to launch it\./,
+    );
+  });
+
+  it("opens the dialog as an exhaustion, not a shortfall, with no credits left", () => {
+    render(<SwarmCreditCapNotice credits={0} max={0} data-testid={TEST_ID} />);
+    fireEvent.click(screen.getByRole("button", { name: "Get more credits" }));
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.isOpen).toBe(true);
+    expect(state.shortfall).toBeNull();
+  });
+
+  it("uses the singular for one credit and one conversation", () => {
+    render(
+      <SwarmCreditCapNotice
+        credits={1}
+        max={1}
+        count={3}
+        data-testid={TEST_ID}
+      />,
+    );
+    expect(screen.getByTestId(TEST_ID)).toHaveTextContent(
+      /^You have 1 credit leftThat covers up to 1 conversation, and this swarm has 3\. Remove 2 conversations to continue\./,
+    );
   });
 });

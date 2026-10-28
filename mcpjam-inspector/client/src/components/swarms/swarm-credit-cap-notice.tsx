@@ -1,4 +1,5 @@
 import { Button } from "@mcpjam/design-system/button";
+import { countOf } from "@/components/swarms/swarm-credit-cap";
 import { SwarmInfoNotice } from "@/components/swarms/swarm-production-notice";
 import { formatCredits } from "@/hooks/use-run-cost-estimate";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
@@ -14,49 +15,64 @@ export function SwarmCreditCapNotice({
   count = 0,
   locked = false,
   iterationsAtMinimum = false,
-  conversationCredits,
+  goalCredits,
   organizationId,
   "data-testid": testId,
 }: {
   credits: number;
   max: number;
-  /** Conversations the swarm has now; above `max` the notice says what to cut. */
+  /**
+   * Conversations the swarm has now. Confirm passes it, so the notice talks
+   * about launching and says what to cut above `max`; Describe has none yet.
+   */
   count?: number;
   /** Goals are already created, so only iterations can change. */
   locked?: boolean;
   /** Every persona is already at one iteration. */
   iterationsAtMinimum?: boolean;
-  /** What one conversation costs, for the credits dialog at `max` 0. */
-  conversationCredits?: number | null;
+  /** What one goal costs across every environment, for the credits dialog. */
+  goalCredits?: number | null;
   organizationId?: string | null;
   "data-testid": string;
 }) {
   const notifyLimitHit = useMCPJamLimitDialogStore((s) => s.notifyLimitHit);
-  const heading = `You have ${formatCredits(credits)} credits left`;
+  const shownCredits = formatCredits(credits);
+  const heading = `You have ${shownCredits} ${
+    shownCredits === "1" ? "credit" : "credits"
+  } left`;
 
   if (max === 0) {
     return (
       <SwarmInfoNotice
         heading={heading}
-        body="That isn't enough for one conversation. Add credits to generate personas for this swarm."
+        body={
+          count > 0
+            ? `That isn't enough for one conversation, and this swarm has ${countOf(count, "conversation")}. Add credits to launch it.`
+            : "That isn't enough for one conversation. Add credits to generate personas for this swarm."
+        }
         action={
           <Button
             type="button"
             variant="link"
             className="h-auto p-0 text-xs"
             onClick={() =>
-              // Asked for, and with a shortfall: some credits may be left,
-              // so the dialog must not lock MCPJam models everywhere else.
               notifyLimitHit({
                 surface: "swarm",
                 userInitiated: true,
-                shortfall: {
-                  creditsRemaining: credits,
-                  creditsRequired: Math.max(
-                    credits + 1,
-                    conversationCredits ?? 0,
-                  ),
-                },
+                // With some credits left this is a shortfall, and the dialog
+                // must not lock MCPJam models everywhere else. With none left
+                // it is the real exhaustion, and the lock is right.
+                ...(credits > 0
+                  ? {
+                      shortfall: {
+                        creditsRemaining: credits,
+                        creditsRequired: Math.max(
+                          credits + 1,
+                          goalCredits ?? 0,
+                        ),
+                      },
+                    }
+                  : {}),
                 ...(organizationId ? { organizationId } : {}),
               })
             }
@@ -70,12 +86,13 @@ export function SwarmCreditCapNotice({
   }
 
   const over = count - max;
+  const covers = `That covers up to ${countOf(max, "conversation")}`;
   const body =
     over <= 0
-      ? `That covers up to ${max} conversations, the most you can run in this swarm.`
-      : `That covers up to ${max} conversations, and this swarm has ${count}. ${
+      ? `${covers}, the most you can run in this swarm.`
+      : `${covers}, and this swarm has ${count}. ${
           !locked
-            ? `Remove ${over} ${over === 1 ? "conversation" : "conversations"} to continue.`
+            ? `Remove ${countOf(over, "conversation")} to continue.`
             : iterationsAtMinimum
               ? "Go back and start a new swarm with fewer goals."
               : "Lower iterations to continue."

@@ -28,23 +28,29 @@ export interface ReusedGoalEstimate {
   perEnvironment: readonly ConversationEstimate[] | null;
 }
 
-/** New personas a capped generation writes, at most. */
-const MAX_CAPPED_PERSONAS = 3;
+/** "1 conversation", "7 conversations". */
+export function countOf(count: number, noun: string): string {
+  return `${count.toLocaleString("en-US")} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * The credits the plan includes before paid ones: the daily bucket, or the
+ * monthly allowance (with rollover already inside it).
+ */
+export function includedCredits(balance: CreditBalanceState): number {
+  return balance.billingModel === "daily"
+    ? balance.freeDailyCreditsRemaining
+    : (balance.monthlyAllowanceRemaining ?? 0);
+}
 
 /**
  * Credits a swarm can spend. Each pool loses the per-call floor, because a pool
- * below it cannot admit another call. Monthly rollover is already inside the
- * monthly allowance.
+ * below it cannot admit another call.
  */
 export function usableCredits(balance: CreditBalanceState): number {
-  if (balance.walletLocked) return 0;
   const floor = balance.perCallMinimumCredits ?? 0;
   const pool = (credits: number) => Math.max(0, credits - floor);
-  const included =
-    balance.billingModel === "daily"
-      ? balance.freeDailyCreditsRemaining
-      : (balance.monthlyAllowanceRemaining ?? 0);
-  return pool(included) + pool(balance.paidCreditsRemaining);
+  return pool(includedCredits(balance)) + pool(balance.paidCreditsRemaining);
 }
 
 function costsOf(
@@ -59,6 +65,16 @@ function costsOf(
     });
   }
   return costs;
+}
+
+/** What one goal at one iteration costs: a conversation in every environment. */
+export function goalCredits(
+  perEnvironment: readonly ConversationEstimate[],
+): number | null {
+  const costs = costsOf(perEnvironment);
+  return costs === null
+    ? null
+    : costs.reduce((sum, cost) => sum + cost.credits, 0);
 }
 
 /**
@@ -109,27 +125,42 @@ export function maxConversations({
   }
   if (!reusedAllFit) return reusedThatFit;
 
+  // New slots, in closed form so the cost does not grow with the balance:
+  // slots whose eligible environments are all free, then at most one slot
+  // where the free conversations run out partway, then full-price slots.
+  const slotCredits = costs.reduce((sum, cost) => sum + cost.credits, 0);
+  const eligible = costs.filter((cost) => cost.freeEligible);
   let slots = 0;
-  // Terminates: once the free conversations run out, every slot spends the
-  // credits of at least one environment with a nonzero cost.
-  for (;;) {
-    let nextCredits = credits;
-    let nextFree = free;
-    for (const cost of costs) {
-      if (cost.freeEligible && nextFree > 0) nextFree -= 1;
-      else nextCredits -= cost.credits;
+  if (eligible.length > 0 && free > 0) {
+    const discounted =
+      slotCredits - eligible.reduce((sum, cost) => sum + cost.credits, 0);
+    const freeSlots = Math.floor(free / eligible.length);
+    const paidFor =
+      discounted > 0 ? Math.floor(credits / discounted) : freeSlots;
+    slots = Math.min(freeSlots, paidFor);
+    if (slots < freeSlots) return reusedThatFit + slots * costs.length;
+    credits -= slots * discounted;
+    free -= slots * eligible.length;
+    if (free > 0) {
+      let mixedCredits = 0;
+      for (const cost of costs) {
+        if (cost.freeEligible && free > 0) free -= 1;
+        else mixedCredits += cost.credits;
+      }
+      if (credits < mixedCredits) return reusedThatFit + slots * costs.length;
+      credits -= mixedCredits;
+      slots += 1;
     }
-    if (nextCredits < 0) return reusedThatFit + slots * costs.length;
-    credits = nextCredits;
-    free = nextFree;
-    slots += 1;
   }
+  slots += Math.floor(credits / slotCredits);
+  return reusedThatFit + slots * costs.length;
 }
 
 /**
  * How many personas and goals each to generate under `max`. Persona variety
- * matters more than goals per persona, so a capped generation keeps up to 3
- * personas and shrinks their goals. `null` when not one goal fits.
+ * matters more than goals per persona, so a capped generation keeps the
+ * preset's personas and shrinks their goals, dropping personas only when fewer
+ * goals fit than there are personas. `null` when not one goal fits.
  */
 export function generationSize({
   max,
@@ -153,7 +184,7 @@ export function generationSize({
     return { personaCount, journeyCount };
   }
   if (goals === 0) return null;
-  const personas = Math.min(MAX_CAPPED_PERSONAS, personaCount, goals);
+  const personas = Math.min(personaCount, goals);
   return {
     personaCount: personas,
     journeyCount: Math.min(journeyCount, Math.floor(goals / personas)),

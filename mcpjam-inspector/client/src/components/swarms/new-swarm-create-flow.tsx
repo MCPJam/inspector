@@ -1214,7 +1214,10 @@ export function NewSwarmCreateFlow({
       }
       const size = await creditCap.sizeAtClick(resolved.environmentIds);
       // Not one goal fits: the credit notice now says so and offers credits.
-      if (!size) return;
+      if (!size) {
+        track("swarm_create_generate_capped", { location: "swarms" });
+        return;
+      }
       const result = await generateSwarmPersonaBatch({
         projectId,
         environmentId: groundingEnvironmentId,
@@ -1264,7 +1267,7 @@ export function NewSwarmCreateFlow({
       );
       track("swarm_create_generate_completed", {
         location: "swarms",
-        personasRequested: preset.personaCount,
+        personasRequested: size.personaCount,
         personasReturned: result.personas.length,
       });
       setStep("confirm");

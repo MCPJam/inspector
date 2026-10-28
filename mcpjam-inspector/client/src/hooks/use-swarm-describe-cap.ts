@@ -2,19 +2,30 @@
  * The credit cap as the Describe step applies it: how big a generation to ask
  * for, whether Generate can start, and the notice to show.
  *
- * In compose mode the environments exist only once Generate resolves the
- * selected clients, and reused personas' goals are not loaded before Confirm,
- * so `sizeAtClick` reads the cap then. That reading stands only for the inputs
- * it was taken with: once the balance, the selection, the preset, the judge or
- * the reused personas change, Describe goes back to the live cap.
+ * The live cap covers picked environments and the reused personas' goals. In
+ * compose mode the environments exist only once Generate resolves the
+ * selected clients, so `sizeAtClick` reads the cap then. That reading stands
+ * only for the inputs it was taken with: once the balance, the free allowance,
+ * the selection, the preset, the judge or the reused personas change, it is
+ * dropped and Describe goes back to the live cap.
  */
-import { useCallback, useState, type ComponentProps } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentProps,
+} from "react";
+import { useQueries } from "convex/react";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { capGeneration } from "@/components/swarms/swarm-credit-cap";
 import type { SwarmCreditCapNotice } from "@/components/swarms/swarm-credit-cap-notice";
 import type { SwarmIntensityPreset } from "@/components/swarms/swarm-intensity";
 import {
+  listJourneysQuery,
+  reusedGoalRunsOf,
   useSwarmCreditCap,
+  type ReusedGoalRuns,
   type SwarmCreditCapAtClick,
 } from "@/hooks/use-swarm-credit-cap";
 
@@ -54,16 +65,38 @@ export function useSwarmDescribeCap({
     resolvedEnvironmentIds: readonly string[],
   ) => Promise<GenerationSize | null>;
 } {
+  const journeyQueries = useMemo<Parameters<typeof useQueries>[0]>(
+    () =>
+      Object.fromEntries(
+        reusedPersonaIds.map((personaRefId) => [
+          personaRefId,
+          { query: listJourneysQuery, args: { personaRefId } },
+        ]),
+      ),
+    [reusedPersonaIds],
+  );
+  const journeyResults = useQueries(journeyQueries);
+  // `null` until every reused persona's goals have loaded; no live cap then.
+  const reusedGoals = useMemo((): ReusedGoalRuns[] | null => {
+    const goals: ReusedGoalRuns[] = [];
+    for (const personaRefId of reusedPersonaIds) {
+      const journeys: unknown = journeyResults[personaRefId];
+      if (!Array.isArray(journeys)) return null;
+      goals.push(...reusedGoalRunsOf(journeys));
+    }
+    return goals;
+  }, [journeyResults, reusedPersonaIds]);
   const cap = useSwarmCreditCap({
     projectId,
     organizationId,
     environmentIds: composeMode ? [] : environmentIds,
+    reusedGoals: reusedGoals ?? [],
     maxTurns: preset.maxTurns,
     judgeConfig,
   });
   const inputsKey = JSON.stringify([
     selectionKey,
-    cap.credits,
+    cap.stateKey,
     cap.max,
     preset.value,
     judgeConfig ?? null,
@@ -72,13 +105,18 @@ export function useSwarmDescribeCap({
   const [atClick, setAtClick] = useState<
     (SwarmCreditCapAtClick & { environmentCount: number; key: string }) | null
   >(null);
+  useEffect(() => {
+    setAtClick((read) => (read && read.key !== inputsKey ? null : read));
+  }, [inputsKey]);
   const current =
     atClick?.key === inputsKey
       ? atClick
       : {
-          max: cap.max,
-          reusedConversations: 0,
-          conversationCredits: cap.conversationCredits,
+          max: reusedGoals === null ? null : cap.max,
+          reusedConversations:
+            (reusedGoals ?? []).reduce((sum, goal) => sum + goal.sessions, 0) *
+            environmentIds.length,
+          goalCredits: cap.goalCredits,
           environmentCount: environmentIds.length,
         };
   const { size, binds } = capGeneration({ ...current, preset });
@@ -112,7 +150,7 @@ export function useSwarmDescribeCap({
             // environments, or reused goals that take the rest): say so the
             // way the empty case does, since Generate is off either way.
             max: size === null ? 0 : current.max,
-            conversationCredits: current.conversationCredits,
+            goalCredits: current.goalCredits,
             organizationId,
           }
         : null,

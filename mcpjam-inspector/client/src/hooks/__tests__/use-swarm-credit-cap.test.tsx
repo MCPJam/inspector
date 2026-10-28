@@ -116,7 +116,7 @@ describe("useSwarmCreditCap", () => {
     ).resolves.toEqual({
       max: 11,
       reusedConversations: 0,
-      conversationCredits: 20,
+      goalCredits: 20,
     });
 
     convexQueryMock.mockRejectedValueOnce(new Error("no such function"));
@@ -125,7 +125,7 @@ describe("useSwarmCreditCap", () => {
     ).resolves.toEqual({
       max: null,
       reusedConversations: 0,
-      conversationCredits: null,
+      goalCredits: null,
     });
   });
 
@@ -163,7 +163,7 @@ describe("useSwarmCreditCap", () => {
     expect(cap).toEqual({
       max: 7,
       reusedConversations: 2,
-      conversationCredits: 20,
+      goalCredits: 20,
     });
   });
 
@@ -192,5 +192,10 @@ describe("useSwarmCreditCap", () => {
     );
     // 3 reused conversations at 20 leave 80: four new ones.
     expect(result.current.max).toBe(7);
+  });
+
+  it("gives no cap while the wallet is locked for review", () => {
+    balance = { ...balance!, walletLocked: true };
+    expect(render().result.current.max).toBeNull();
   });
 });

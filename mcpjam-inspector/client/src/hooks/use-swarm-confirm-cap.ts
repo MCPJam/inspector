@@ -6,6 +6,7 @@
 import type { ComponentProps } from "react";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
+  countOf,
   iterationsThatFit,
   nextStepFits,
 } from "@/components/swarms/swarm-credit-cap";
@@ -82,16 +83,17 @@ export function useSwarmConfirmCap({
   });
   const { max } = cap;
   // An empty draft goal counts against the cap: it launches once it has text.
-  const count =
-    launchCount +
-    proposed.reduce(
-      (sum, persona) =>
-        sum +
-        persona.journeys.filter((journey) => !journey.goal.trim()).length *
-          persona.iterations,
-      0,
-    ) *
-      environmentCount;
+  // Once the goals exist (locked), a draft can neither launch nor be removed.
+  const draftRuns = locked
+    ? 0
+    : proposed.reduce(
+        (sum, persona) =>
+          sum +
+          persona.journeys.filter((journey) => !journey.goal.trim()).length *
+            persona.iterations,
+        0,
+      );
+  const count = launchCount + draftRuns * environmentCount;
   const fits = (conversationsPerEnvironment: number) =>
     nextStepFits({
       count,
@@ -105,7 +107,7 @@ export function useSwarmConfirmCap({
     capReason:
       max === null
         ? null
-        : `Your credits cover up to ${max} conversations. Remove a goal or lower iterations to add more.`,
+        : `Your credits cover up to ${countOf(max, "conversation")}. Remove a goal or lower iterations to add more.`,
     iterationsCap: (goals, iterations) =>
       iterationsThatFit({
         max,
@@ -134,7 +136,7 @@ export function useSwarmConfirmCap({
       return Math.max(MIN_SWARM_ITERATIONS, fitting);
     },
     blockedReason: over
-      ? `Your credits cover up to ${max} conversations, and this swarm has ${launchCount}.`
+      ? `Your credits cover up to ${countOf(max, "conversation")}, and this swarm has ${launchCount}.`
       : null,
     notice:
       max !== null && (over || !fits(1)) && cap.credits !== null
@@ -147,7 +149,7 @@ export function useSwarmConfirmCap({
               ...proposed.map((persona) => persona.iterations),
               ...reusedIterations,
             ].every((iterations) => iterations <= MIN_SWARM_ITERATIONS),
-            conversationCredits: cap.conversationCredits,
+            goalCredits: cap.goalCredits,
             organizationId,
           }
         : null,

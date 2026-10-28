@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { CreditBalanceState } from "@/hooks/useCreditBalance";
 import {
   capGeneration,
+  countOf,
   generationSize,
+  goalCredits,
   iterationsThatFit,
   maxConversations,
   nextStepFits,
@@ -66,14 +68,6 @@ describe("usableCredits", () => {
         }),
       ),
     ).toBe(275);
-  });
-
-  it("is zero while the wallet is locked", () => {
-    expect(
-      usableCredits(
-        daily({ freeDailyCreditsRemaining: 300, walletLocked: true }),
-      ),
-    ).toBe(0);
   });
 });
 
@@ -194,6 +188,13 @@ describe("generationSize", () => {
     });
   });
 
+  it("keeps a bigger preset's personas and shrinks their goals", () => {
+    // Standard is 6 personas x 3 goals; 17 conversations fit 6 x 2.
+    expect(
+      generationSize({ ...quick, max: 17, personaCount: 6, journeyCount: 3 }),
+    ).toEqual({ personaCount: 6, journeyCount: 2 });
+  });
+
   it("writes fewer personas when fewer goals fit than personas", () => {
     expect(generationSize({ ...quick, max: 2 })).toEqual({
       personaCount: 2,
@@ -285,5 +286,85 @@ describe("capGeneration", () => {
       size: null,
       binds: true,
     });
+  });
+});
+
+describe("maxConversations in closed form", () => {
+  // The slot-by-slot rule the closed form replaces, kept here as the oracle.
+  function slotBySlot(
+    usable: number,
+    freeLeft: number,
+    perEnvironment: ConversationEstimate[],
+  ): number {
+    let credits = usable;
+    let free = freeLeft;
+    let slots = 0;
+    for (;;) {
+      let nextCredits = credits;
+      let nextFree = free;
+      for (const environment of perEnvironment) {
+        if (environment.freeEligible && nextFree > 0) nextFree -= 1;
+        else
+          nextCredits -=
+            (environment.tokenCredits ?? 0) + environment.feeCredits;
+      }
+      if (nextCredits < 0) return slots * perEnvironment.length;
+      credits = nextCredits;
+      free = nextFree;
+      slots += 1;
+    }
+  }
+
+  it("matches the slot-by-slot rule across mixed environments", () => {
+    for (let seed = 1; seed <= 300; seed += 1) {
+      const pick = (n: number) => ((seed * 7919 + n * 104729) % 97) / 97;
+      const perEnvironment = Array.from(
+        { length: 1 + Math.floor(pick(1) * 4) },
+        (_, index) =>
+          env({
+            environmentId: `env-${index}`,
+            tokenCredits: Math.floor(pick(index + 2) * 40),
+            feeCredits: pick(index + 9) > 0.5 ? 30 : 0,
+            freeEligible: pick(index + 17) > 0.4,
+          }),
+      );
+      if (
+        perEnvironment.every(
+          (environment) =>
+            (environment.tokenCredits ?? 0) + environment.feeCredits === 0,
+        )
+      )
+        continue;
+      const usable = Math.floor(pick(30) * 2_000);
+      const freeLeft = Math.floor(pick(31) * 40);
+      expect(maxConversations({ usable, freeLeft, perEnvironment })).toBe(
+        slotBySlot(usable, freeLeft, perEnvironment),
+      );
+    }
+  });
+
+  it("stays cheap for a large balance", () => {
+    expect(
+      maxConversations({
+        usable: 10_000_000,
+        freeLeft: 0,
+        perEnvironment: [env({ tokenCredits: 1 })],
+      }),
+    ).toBe(10_000_000);
+  });
+});
+
+describe("goalCredits and countOf", () => {
+  it("prices one goal across every environment", () => {
+    expect(
+      goalCredits([env(), env({ environmentId: "env-2", tokenCredits: 30 })]),
+    ).toBe(50);
+    expect(goalCredits([env({ tokenCredits: null })])).toBeNull();
+  });
+
+  it("uses the singular for one", () => {
+    expect(countOf(1, "conversation")).toBe("1 conversation");
+    expect(countOf(7, "conversation")).toBe("7 conversations");
+    expect(countOf(1_200, "credit")).toBe("1,200 credits");
   });
 });

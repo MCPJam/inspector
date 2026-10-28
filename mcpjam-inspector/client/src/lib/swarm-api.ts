@@ -39,6 +39,8 @@ export const SWARM_QUERIES = {
   listPersonas: "personas:listPersonas",
   personaTrackRecord: "personas:getPersonaTrackRecord",
   listJourneysByPersona: "journeys:listJourneysByPersona",
+  estimateSwarmConversationCredits:
+    "swarms/conversationEstimate:estimateSwarmConversationCredits",
   journeyRollup: "journeys:getJourneyRollup",
   listHosts: "hosts:listHosts",
   listJourneyRuns: "journeyRuns:listJourneyRuns",

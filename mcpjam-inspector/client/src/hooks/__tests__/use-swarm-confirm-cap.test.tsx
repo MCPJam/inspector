@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let cap: {
   max: number | null;
   credits: number | null;
-  conversationCredits: number | null;
+  goalCredits: number | null;
   maxFor?: (goals: { journeyId: string; sessions: number }[]) => number | null;
 };
 vi.mock("@/hooks/use-swarm-credit-cap", () => ({
@@ -39,7 +39,7 @@ const render = (
   ).result.current;
 
 beforeEach(() => {
-  cap = { max: 7, credits: 140, conversationCredits: 20 };
+  cap = { max: 7, credits: 140, goalCredits: 20 };
 });
 
 describe("useSwarmConfirmCap", () => {
@@ -65,10 +65,10 @@ describe("useSwarmConfirmCap", () => {
   });
 
   it("shows the notice only at the max, and blocks Continue above it", () => {
-    cap = { max: 20, credits: 400, conversationCredits: 20 };
+    cap = { max: 20, credits: 400, goalCredits: 20 };
     expect(render().notice).toBeNull();
 
-    cap = { max: 7, credits: 140, conversationCredits: 20 };
+    cap = { max: 7, credits: 140, goalCredits: 20 };
     const over = render({ launchCount: 9 });
     expect(over.blockedReason).toBe(
       "Your credits cover up to 7 conversations, and this swarm has 9.",
@@ -91,7 +91,7 @@ describe("useSwarmConfirmCap", () => {
   });
 
   it("turns every rule off without a cap", () => {
-    cap = { max: null, credits: 140, conversationCredits: null };
+    cap = { max: null, credits: 140, goalCredits: null };
     const confirm = render({ launchCount: 900 });
     expect(confirm.fits(50)).toBe(true);
     expect(confirm.iterationsCap(2, 1)).toBe(Number.POSITIVE_INFINITY);
@@ -107,7 +107,7 @@ describe("useSwarmConfirmCap", () => {
     cap = {
       max: 8,
       credits: 100,
-      conversationCredits: 10,
+      goalCredits: 10,
       maxFor: (goals) => {
         const reusedRuns = goals[0]?.sessions ?? 0;
         const left = 100 - 25 * reusedRuns;
@@ -125,5 +125,29 @@ describe("useSwarmConfirmCap", () => {
     expect(confirm.reusedIterationsCap(["goal-1"], 1)).toBe(4);
     // One shared price would have allowed every iteration up to 5.
     expect(confirm.iterationsCap(1, 1)).toBe(8);
+  });
+
+  it("ignores blank drafts once the goals exist, since they can't launch", () => {
+    const blank = {
+      proposed: [
+        { journeys: goals("a", "b", ""), iterations: 2 },
+        { journeys: goals("c", "d"), iterations: 1 },
+      ],
+      launchCount: 6,
+    };
+    cap = { max: 7, credits: 140, goalCredits: 20 };
+    expect(render({ ...blank, locked: true }).fits(1)).toBe(true);
+    expect(render({ ...blank, locked: false }).fits(1)).toBe(false);
+  });
+
+  it("uses the singular when the credits cover one conversation", () => {
+    cap = { max: 1, credits: 20, goalCredits: 20 };
+    const confirm = render({ launchCount: 3 });
+    expect(confirm.capReason).toBe(
+      "Your credits cover up to 1 conversation. Remove a goal or lower iterations to add more.",
+    );
+    expect(confirm.blockedReason).toBe(
+      "Your credits cover up to 1 conversation, and this swarm has 3.",
+    );
   });
 });

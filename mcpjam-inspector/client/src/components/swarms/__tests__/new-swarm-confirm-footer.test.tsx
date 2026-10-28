@@ -7,6 +7,8 @@ const base = {
   environmentCount: 1,
   reusedCount: 0,
   conversationCount: 3,
+  max: null,
+  notice: null,
   fundingState: { status: "idle" } as const,
   requestedRuns: 0,
   pendingGoals: 0,

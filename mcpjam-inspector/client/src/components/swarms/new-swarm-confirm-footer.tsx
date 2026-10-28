@@ -80,7 +80,7 @@ export function NewSwarmConfirmFooter({
           </p>
           {reusedCount > 0 ? (
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Reused goals are counted at the iterations already saved on them.
+              Reused goals are counted at the iterations set for this run.
             </p>
           ) : null}
         </div>

@@ -12,10 +12,13 @@ import { useConvex } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
+  goalCredits,
+  includedCredits,
   maxConversations,
   usableCredits,
   type ConversationEstimate,
 } from "@/components/swarms/swarm-credit-cap";
+import { reusedIterationsSeed } from "@/components/swarms/swarm-intensity";
 import {
   useCreditBalance,
   type CreditBalanceState,
@@ -26,9 +29,6 @@ import {
   useSwarmSponsorshipAllowanceState,
   type SwarmSponsorshipAllowanceState,
 } from "@/hooks/use-swarm-sponsorship-allowance";
-
-const ESTIMATE_QUERY =
-  "swarms/conversationEstimate:estimateSwarmConversationCredits";
 
 type EstimateArgs = {
   projectId: string;
@@ -51,7 +51,7 @@ const estimateQuery = makeFunctionReference<
   "query",
   EstimateArgs,
   EstimateResult
->(ESTIMATE_QUERY);
+>(SWARM_QUERIES.estimateSwarmConversationCredits);
 
 /** A reused goal in this swarm, at the iterations it will launch with. */
 export interface ReusedGoalRuns {
@@ -70,25 +70,32 @@ export interface SwarmCreditCapAtClick {
   max: number | null;
   /** Conversations the reused goals already take. */
   reusedConversations: number;
-  /** The cheapest conversation, for the credits dialog. */
-  conversationCredits: number | null;
+  /** What one new goal costs, for the credits dialog. */
+  goalCredits: number | null;
 }
 
-const listJourneysQuery = makeFunctionReference<
+type PersonaJourney = {
+  _id: string;
+  config?: { sessionsPerTarget?: number } | null;
+};
+
+export const listJourneysQuery = makeFunctionReference<
   "query",
   { personaRefId: string },
-  Array<{ _id: string; config?: { sessionsPerTarget?: number } | null }>
+  PersonaJourney[]
 >(SWARM_QUERIES.listJourneysByPersona);
 
-function cheapestConversation(
-  estimate: EstimateResult | undefined,
-): number | null {
-  const costs = (estimate?.environments ?? []).flatMap((environment) =>
-    environment.tokenCredits === null
-      ? []
-      : [environment.tokenCredits + environment.feeCredits],
+/**
+ * A reused persona's goals at the iterations Confirm launches them with: one
+ * seed for all of the persona's goals, as the persona's counter starts.
+ */
+export function reusedGoalRunsOf(
+  journeys: readonly PersonaJourney[],
+): ReusedGoalRuns[] {
+  const sessions = reusedIterationsSeed(
+    journeys.map((journey) => journey.config?.sessionsPerTarget ?? null),
   );
-  return costs.length > 0 ? Math.min(...costs) : null;
+  return journeys.map((journey) => ({ journeyId: journey._id, sessions }));
 }
 
 function capOf(
@@ -97,7 +104,9 @@ function capOf(
   allowance: SwarmSponsorshipAllowanceState,
   reusedGoals: readonly ReusedGoalRuns[],
 ): number | null {
-  if (!estimate || !balance) return null;
+  // A wallet locked for review has its own handling, and the backend refuses
+  // its calls whatever the swarm's size.
+  if (!estimate || !balance || balance.walletLocked) return null;
   if (allowance.status === "loading" || allowance.status === "error") {
     return null;
   }
@@ -133,8 +142,10 @@ export function useSwarmCreditCap({
   max: number | null;
   /** The balance as the sidebar shows it, for the notice heading. */
   credits: number | null;
-  /** The cheapest conversation, for the credits dialog. */
-  conversationCredits: number | null;
+  /** What one new goal costs, for the credits dialog. */
+  goalCredits: number | null;
+  /** Changes when the balance or the free allowance does. */
+  stateKey: string;
   /**
    * The cap with the reused goals at other iterations: a reused goal is
    * priced from its own config, so its runs can cost more or less than new
@@ -173,7 +184,7 @@ export function useSwarmCreditCap({
   );
   const args = argsFor({ environmentIds, reusedGoals });
   const { data: estimate } = useSoftQuery<EstimateResult>(
-    ESTIMATE_QUERY,
+    SWARM_QUERIES.estimateSwarmConversationCredits,
     args ?? "skip",
   );
 
@@ -187,7 +198,7 @@ export function useSwarmCreditCap({
       const uncapped = {
         max: null,
         reusedConversations: 0,
-        conversationCredits: null,
+        goalCredits: null,
       };
       try {
         const reusedGoals =
@@ -198,12 +209,7 @@ export function useSwarmCreditCap({
                 convex.query(listJourneysQuery, { personaRefId }),
               ),
             )
-          )
-            .flat()
-            .map((journey) => ({
-              journeyId: journey._id,
-              sessions: journey.config?.sessionsPerTarget ?? 1,
-            }));
+          ).flatMap(reusedGoalRunsOf);
         const request = argsFor({ ...targets, reusedGoals });
         if (!request) return uncapped;
         const fresh = await convex.query(estimateQuery, request);
@@ -212,7 +218,7 @@ export function useSwarmCreditCap({
           reusedConversations:
             reusedGoals.reduce((sum, goal) => sum + goal.sessions, 0) *
             targets.environmentIds.length,
-          conversationCredits: cheapestConversation(fresh),
+          goalCredits: goalCredits(fresh.environments),
         };
       } catch {
         // The cap is optional: a failed read (an older backend without the
@@ -229,15 +235,18 @@ export function useSwarmCreditCap({
     [allowance, balance, estimate, reusedGoals],
   );
   const credits = balance
-    ? (balance.billingModel === "daily"
-        ? balance.freeDailyCreditsRemaining
-        : (balance.monthlyAllowanceRemaining ?? 0)) +
-      balance.paidCreditsRemaining
+    ? includedCredits(balance) + balance.paidCreditsRemaining
     : null;
   return {
     max,
     credits,
-    conversationCredits: cheapestConversation(estimate),
+    goalCredits: estimate ? goalCredits(estimate.environments) : null,
+    stateKey: JSON.stringify([
+      credits,
+      balance?.walletLocked ?? null,
+      allowance.status,
+      allowance.status === "ready" ? allowance.remaining : null,
+    ]),
     maxFor: (goals) => capOf(estimate, balance, allowance, goals),
     capFor,
   };
