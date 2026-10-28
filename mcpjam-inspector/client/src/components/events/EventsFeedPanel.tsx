@@ -104,7 +104,7 @@ function FeedEntryRow({
           </span>
         ) : null}
         {entry.idConflict ? (
-          <Flag title="The server sent this event under a different subscription ID than the one it returned when MCPJam subscribed. The event was still recorded.">
+          <Flag title="The server sent this event under a different subscription ID. The event was still recorded.">
             Subscription mismatch
           </Flag>
         ) : null}

@@ -128,19 +128,17 @@ function SubscriptionCard({
         <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
           <p>
-            The server sent events under subscription ID{" "}
+            The server sent events under a different subscription ID,{" "}
             <code className="font-mono">
               {subscription.conflictingServerSubscriptionId}
             </code>
-            , not the ID it returned when MCPJam subscribed
             {subscription.serverSubscriptionId ? (
               <>
                 {" "}
-                (
+                instead of{" "}
                 <code className="font-mono">
                   {subscription.serverSubscriptionId}
                 </code>
-                )
               </>
             ) : null}
             . The feed still records them with a Subscription mismatch flag.
