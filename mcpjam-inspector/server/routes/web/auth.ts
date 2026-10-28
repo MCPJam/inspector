@@ -1,3 +1,4 @@
+import { setManagerOrganization } from "../../utils/mcp-connections.js";
 import { nameServerRefusal } from "../../utils/server-refusal.js";
 import {
   serverCheckScope,
@@ -2562,6 +2563,7 @@ export async function createAuthorizedManager(
   }
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
+  setManagerOrganization(manager, batch.organizationId);
   return {
     manager,
     ...(options?.lazyConnect
@@ -2572,7 +2574,7 @@ export async function createAuthorizedManager(
       : {}),
     oauthServerUrls,
     serverNamesById,
-    authenticatedUserId: caller.getLogContext?.()?.userId ?? null,
+    authenticatedUserId: authorizedUserId,
     ...(options?.tolerateServerRefusals ? { refusedServers } : {}),
   };
 }
