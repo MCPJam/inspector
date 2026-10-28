@@ -6,6 +6,7 @@ import {
 import {
   ensureLocalHarnessTarget,
   LOCAL_HARNESS_DISPLAY_NAMES,
+  LocalAutoApproveConsentRequiredError,
 } from "../../utils/harness/local/readiness.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import { apiSessionWriteAllowed } from "../../routes/web/api-session-write-guard";
@@ -553,6 +554,7 @@ export async function resolveManagedTurnSetup(args: {
           projectId: hostedBody.projectId,
           scope: "attended",
           harnessId: localHarnessId,
+          requireToolApproval,
         })
       ).target;
     } catch (error) {
@@ -563,6 +565,10 @@ export async function resolveManagedTurnSetup(args: {
               error instanceof Error
                 ? error.message
                 : `${localHarnessName} is not ready`,
+            // The client opens its consent prompt on this status.
+            ...(error instanceof LocalAutoApproveConsentRequiredError
+              ? { status: error.status }
+              : {}),
           },
           409,
         ),
@@ -697,8 +703,11 @@ export async function resolveManagedTurnSetup(args: {
       );
     }
   }
+  // This machine's skills are an interactive extra, like
+  // `includeProjectSkills` above: a recorded scenario turn never takes them.
   if (
     localIngress &&
+    turnMode === "interactive" &&
     !resolvedExecution.harness &&
     (usesLiveSkills || includeProjectSkills)
   ) {

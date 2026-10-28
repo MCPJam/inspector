@@ -279,6 +279,13 @@ export async function prepareManagedConnections(args: {
       : undefined;
   const mrtrAuthPrincipal = resolveMrtrAuthPrincipal(c);
 
+  // Cleanup runs in reverse, so the disconnect is owned BEFORE the bridge:
+  // pending elicitation rows are withdrawn while the turn's connections are
+  // still open, and no prompt stays answerable for a turn that has ended.
+  let connectedManager: { disconnectAllServers(): Promise<void> } | undefined;
+  resources.own(async () => {
+    await connectedManager?.disconnectAllServers();
+  });
   const elicitationBridge = elicitationEnabled
     ? new HostedElicitationBridge({
         convexBearer: convexBearer!,
@@ -568,7 +575,7 @@ export async function prepareManagedConnections(args: {
       ...(executionScope ? { executionScope } : {}),
     },
   );
-  resources.own(() => manager.disconnectAllServers());
+  connectedManager = manager;
   if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
     void refreshConnectionProfiles(manager, bearerToken, hostedBody.projectId);
 
