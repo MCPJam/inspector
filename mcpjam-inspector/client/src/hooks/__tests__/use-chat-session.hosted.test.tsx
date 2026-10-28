@@ -1518,6 +1518,52 @@ describe("useChatSession hosted mode", () => {
     expect(mockState.authFetch).not.toHaveBeenCalled();
   });
 
+  it("keeps a sent turn's continuation valid when the server selection changes", async () => {
+    const { result, rerender } = renderHook(
+      ({ selectedServers, selectedServerIds }) =>
+        useChatSession({
+          selectedServers,
+          hostedContext: { projectId: "project-1", selectedServerIds },
+        }),
+      {
+        initialProps: {
+          selectedServers: ["server-a"],
+          selectedServerIds: ["id-a"],
+        },
+      },
+    );
+    await act(async () => {
+      await result.current.sendMessage({ text: "hi" });
+    });
+
+    // A server reconnecting or joining changes the selection while an
+    // approval is pending; the approval's request must still build.
+    rerender({
+      selectedServers: ["server-a", "server-b"],
+      selectedServerIds: ["id-a", "id-b"],
+    });
+
+    expect(() => lastTransportOptions.body()).not.toThrow();
+  });
+
+  it("builds a scenario request whose servers come from the scenario", async () => {
+    lastTransportOptions = undefined;
+    renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-a"],
+        hostedContext: {
+          projectId: "project-1",
+          scenarioId: "scenario-1",
+          accessVersion: 1,
+          selectedServerIds: [],
+        },
+      }),
+    );
+    await waitFor(() => expect(lastTransportOptions).toBeDefined());
+
+    expect(() => lastTransportOptions.body()).not.toThrow();
+  });
+
   it("does not block submit on unresolved server ids when a send-time resolver is provided", async () => {
     const ensureServerIds = vi.fn(async (names: string[]) =>
       names.map((name) => ({ serverId: `id-${name}` })),
@@ -2484,7 +2530,6 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
       }),
     );
     expect(again.result.current.hiddenEnvironmentActive).toBe(false);
-    expect(again.result.current.hiddenEnvironmentOffReason).toBeNull();
     const body = lastTransportOptions.body();
     expect(body).toEqual(plain);
     expect(body.hostId).toBe("host_1");

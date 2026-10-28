@@ -1359,7 +1359,6 @@ export function PlaygroundMain({
     urlElicitationRequired,
     dismissUrlElicitationRequired,
     hiddenEnvironmentActive,
-    hiddenEnvironmentOffReason,
     outOfCreditsReason,
   } = useChatSession({
     pluginWorkspace: extensionWorkspaceForSession,
@@ -1404,9 +1403,8 @@ export function PlaygroundMain({
               : {}),
             // The environment's servers resolve by Convex id server-side (and
             // some are plugin-contributed, i.e. invisible to the browser's
-            // catalog), so the turn MUST go through /api/web/chat-v2 — the local
-            // /api/mcp engine cannot connect them and rejects the target
-            // outright.
+            // catalog), so the turn MUST use the managed setup, which
+            // resolves them.
             requiresWebChatApi: true,
             // Deliberately NO `ensureServerIds`: resolving environment servers
             // by NAME would fail for plugin-contributed ones and bypass plugin
@@ -1437,7 +1435,7 @@ export function PlaygroundMain({
             ...(previewedHostId ? { hostId: previewedHostId } : {}),
             // The project has a runnable plugin and the environments UI is
             // hidden: the chat hook sends this composition INSTEAD of
-            // `hostId` wherever the web chat route can run the turn, keeping
+            // `hostId` wherever a managed turn runs, keeping
             // the server preflight above for the chat's own servers. Absent
             // otherwise, so a chat without plugins sends exactly what it did.
             ...(hiddenEnvironment.wanted || hiddenEnvironment.blockingError
@@ -2420,14 +2418,10 @@ export function PlaygroundMain({
     const skipped = skippedPluginsForNotice(hiddenEnvironment.plugins);
     if (skipped.length > 0) notices.push({ kind: "skipped", plugins: skipped });
     if (hiddenEnvironment.failed) notices.push({ kind: "unavailable" });
-    if (hiddenEnvironmentOffReason) {
-      notices.push({ kind: "off", reason: hiddenEnvironmentOffReason });
-    }
     return notices;
   }, [
     hiddenEnvironment.plugins,
     hiddenEnvironment.failed,
-    hiddenEnvironmentOffReason,
   ]);
   // A send is the chat's status entering "submitted". Opening a chat, or a
   // restored transcript landing in it, changes the messages but never the
