@@ -6047,7 +6047,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("leaves the conformance server choice to the page, so the last-run server is restored", async () => {
+  it("leaves the conformance server choice to the page, so the last-selected server is restored", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/conformance");

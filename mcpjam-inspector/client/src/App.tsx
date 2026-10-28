@@ -4532,8 +4532,9 @@ export default function App() {
   }, [activeTab, appState.servers, setSelectedServer]);
 
   // Auto-select a connected server when navigating to tabs that need one.
-  // Conformance is left out: ConformanceTab picks its own (the server last run
-  // there first), and this effect runs after it, so it would overwrite that.
+  // Conformance is left out: ConformanceTab picks its own (the server last
+  // selected there first), and this effect runs after it, so it would
+  // overwrite that.
   useEffect(() => {
     const needsServer =
       activeTab === "playground" ||
