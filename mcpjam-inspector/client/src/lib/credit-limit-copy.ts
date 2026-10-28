@@ -28,3 +28,10 @@ export function creditUpgradeBenefit(plans: PlanCatalogEntry[] = []): string {
       )}. Run more evaluations and Swarms, with top-ups available.`
     : "Get more monthly credits and top-ups with Pro or Team.";
 }
+
+/**
+ * Shared by the swarm credits dialog title and the Running step's banner, so
+ * the two cannot drift apart at the next copy edit.
+ */
+export const SWARM_INSUFFICIENT_CREDITS_COPY =
+  "You don't have enough credits to complete this run";

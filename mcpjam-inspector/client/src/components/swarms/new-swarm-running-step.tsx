@@ -1,5 +1,6 @@
 import { invalidateSwarmSponsorshipAllowance } from "@/lib/swarm-sponsorship-allowance-store";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
+import { SWARM_INSUFFICIENT_CREDITS_COPY } from "@/lib/credit-limit-copy";
 /**
  * Running step of the New swarm create flow.
  *
@@ -1497,7 +1498,7 @@ export function NewSwarmRunningStep({
                 >
                   <p className="font-medium">
                     {accountLimit.exhausted > 0 && allTerminal
-                      ? `Stopped: this organization's MCPJam credits ran out after ${uncanceledTotals.succeeded} of ${uncanceledTotals.total} sessions.`
+                      ? `Stopped after ${uncanceledTotals.succeeded} of ${uncanceledTotals.total} sessions: you don't have enough credits to complete this run.`
                       : "Sessions stopped at an organization usage limit."}
                   </p>
                   <p className="mt-0.5">
@@ -1518,7 +1519,7 @@ export function NewSwarmRunningStep({
                   </p>
                   <p className="mt-0.5">
                     {accountLimit.exhausted > 0
-                      ? "You don't have enough credits to complete this run. View your credit options to continue testing. Swarm generation requires MCPJam credits even when you use your own API key."
+                      ? `${SWARM_INSUFFICIENT_CREDITS_COPY}. View your credit options to continue testing. Swarm generation requires MCPJam credits even when you use your own API key.`
                       : (accountLimit.message ??
                         "Review your organization's usage limits before retrying.")}
                   </p>

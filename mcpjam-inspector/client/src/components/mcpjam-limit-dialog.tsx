@@ -1,4 +1,7 @@
-import { creditUpgradeBenefit } from "@/lib/credit-limit-copy";
+import {
+  creditUpgradeBenefit,
+  SWARM_INSUFFICIENT_CREDITS_COPY,
+} from "@/lib/credit-limit-copy";
 import { FrontierSignInDialogView } from "./billing/FrontierSignInDialogView";
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { GuestCreditWallView } from "@/components/billing/GuestCreditWallView";
@@ -490,7 +493,7 @@ export function MCPJamLimitDialog() {
           // says the run cannot finish rather than that the balance is empty.
           title={
             isSwarmWall
-              ? "You don't have enough credits to complete this run"
+              ? SWARM_INSUFFICIENT_CREDITS_COPY
               : limitShortfall
                 ? "Not enough MCPJam credits"
                 : undefined
