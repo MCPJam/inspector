@@ -8,6 +8,7 @@ import {
   type PluginContextSnapshot,
 } from "@/shared/plugin-model-context";
 import type { PluginContextExcess } from "@/shared/plugin-diagnostics";
+import { MODEL_CONTEXT_POLICY_CEILINGS } from "@mcpjam/sdk/host-config/internal";
 
 export class PluginContextUpdateRejected extends Error {}
 /** The person removed this App's context; its own updates stay refused until
@@ -38,13 +39,16 @@ export const PLUGIN_CONTEXT_NOT_PERSISTED_CODES: ReadonlySet<string> = new Set([
   "INVALID_INSTANCE_CONTEXT",
   "RATE_LIMITED",
 ]);
-/** Refuse an update over a budget before it is sent, as the server would. */
+/**
+ * Refuse an update no client may send, before sending it. The server admits
+ * an update against the client's policy, which the browser doesn't hold.
+ */
 function parseUpdate(
   value: unknown,
   onRefused?: (refusal: PluginContextNotPersisted) => void,
 ): PluginModelContextParams {
   try {
-    return parsePluginModelContext(value);
+    return parsePluginModelContext(value, MODEL_CONTEXT_POLICY_CEILINGS);
   } catch (error) {
     if (
       !(error instanceof PluginModelContextError) ||
@@ -101,11 +105,15 @@ export function createModelContextController({
   };
   const acceptSnapshot = (value: unknown) => {
     const next = pluginContextSnapshotSchema.parse(value);
+    // State the server already admitted, under whatever policy held then.
     if (next.state)
-      parsePluginModelContext({
-        content: next.state.content,
-        structuredContent: next.state.structuredContent,
-      });
+      parsePluginModelContext(
+        {
+          content: next.state.content,
+          structuredContent: next.state.structuredContent,
+        },
+        MODEL_CONTEXT_POLICY_CEILINGS,
+      );
     if (next.revision < snapshot.revision) return false;
     if (
       next.revision === snapshot.revision &&

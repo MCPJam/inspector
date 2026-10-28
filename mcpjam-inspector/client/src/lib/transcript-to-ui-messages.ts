@@ -1,3 +1,4 @@
+import { MODEL_CONTEXT_POLICY_CEILINGS } from "@mcpjam/sdk/host-config/internal";
 import { mergeHarnessApprovalSegments, mergeTranscriptApprovals, readTranscriptApproval } from "./transcript-tool-approvals";
 import { parsePluginModelContext } from "@/shared/plugin-model-context";
 import { readPluginMessageHistoryTitle } from "@/shared/plugin-message-history";
@@ -329,9 +330,12 @@ function convertParts(
         );
       if (match && part.mediaType === match[1]) {
         try {
-          parsePluginModelContext({
-            content: [{ type: "image", mimeType: match[1], data: match[2] }],
-          });
+          parsePluginModelContext(
+            {
+              content: [{ type: "image", mimeType: match[1], data: match[2] }],
+            },
+            MODEL_CONTEXT_POLICY_CEILINGS,
+          );
           parts.push({ type: "file", mediaType: match[1], url: part.data });
         } catch {
           /* Malformed/oversized stored bytes stay unavailable. */

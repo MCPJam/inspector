@@ -1,13 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
-  parsePluginModelContext,
+  parsePluginModelContext as parseWith,
+  pluginContextSnapshotSchema,
+  pluginModelContextBytes,
   pluginModelContextMessage,
   appendPluginModelContext,
   stripPluginModelContext,
-  PLUGIN_CONTEXT_MAX_BYTES,
   pluginContextAttachments,
 } from "../plugin-model-context";
 import { modelMessageSchema, type ModelMessage } from "ai";
+import {
+  MODEL_CONTEXT_POLICY_CEILINGS,
+  MODEL_CONTEXT_POLICY_DEFAULTS,
+} from "@mcpjam/sdk/host-config/internal";
+
+/** A new update, admitted against MCPJam's default budgets. */
+const parsePluginModelContext = (value: unknown) =>
+  parseWith(value, MODEL_CONTEXT_POLICY_DEFAULTS);
 
 const context = (content: unknown[]) => ({
   instanceId: "private-instance",
@@ -258,7 +267,12 @@ describe("plugin per-turn context boundary", () => {
     expect(parsed._meta).toEqual(input._meta);
     expect(() =>
       parsePluginModelContext({
-        content: [{ type: "text", text: "x".repeat(PLUGIN_CONTEXT_MAX_BYTES) }],
+        content: [
+          {
+            type: "text",
+            text: "x".repeat(MODEL_CONTEXT_POLICY_DEFAULTS.updateMaxBytes),
+          },
+        ],
       }),
     ).toThrow("TOO_LARGE");
     expect(() => parsePluginModelContext({ unknown: true })).toThrow();
@@ -270,6 +284,74 @@ describe("plugin per-turn context boundary", () => {
         ),
       ),
     ).toThrow("TURN_TOO_LARGE");
+  });
+});
+
+describe("admission limits and ceilings", () => {
+  // 256 images, about 2.5 MB: what a ChatGPT-sized policy admits.
+  const image = "A".repeat(10_000);
+  const large = {
+    content: Array.from({ length: 256 }, () => ({
+      type: "image",
+      mimeType: "image/png",
+      data: image,
+    })),
+  };
+
+  it("refuses a new update above the default budgets", () => {
+    expect(() => parsePluginModelContext(large)).toThrow(
+      "PLUGIN_CONTEXT_TOO_LARGE",
+    );
+    expect(() =>
+      parsePluginModelContext({ content: large.content.slice(0, 32) }),
+    ).toThrow("PLUGIN_CONTEXT_TOO_LARGE");
+  });
+
+  it("re-reads admitted state of that size against the ceilings", () => {
+    expect(
+      parseWith(large, MODEL_CONTEXT_POLICY_CEILINGS).content,
+    ).toHaveLength(256);
+    expect(
+      pluginContextSnapshotSchema.parse({
+        revision: 1,
+        sequence: 1,
+        state: { updateId: "u", content: large.content },
+      }).state?.content,
+    ).toHaveLength(256);
+    // The turn budget, not the per-context re-parse, decides a turn.
+    expect(
+      pluginModelContextMessage([context(large.content.slice(0, 64))]),
+    ).toBeDefined();
+  });
+
+  it("still bounds what any client may hold", () => {
+    expect(() =>
+      parseWith(
+        {
+          content: Array.from({ length: 1025 }, () => ({
+            type: "text",
+            text: "x",
+          })),
+        },
+        MODEL_CONTEXT_POLICY_CEILINGS,
+      ),
+    ).toThrow("PLUGIN_CONTEXT_TOO_LARGE");
+  });
+
+  it("counts the model-visible half of an update, never its _meta", () => {
+    const update = {
+      content: [{ type: "text", text: "state" }],
+      structuredContent: { part: "7" },
+    };
+    expect(pluginModelContextBytes(update)).toBe(
+      new TextEncoder().encode(JSON.stringify(update)).length,
+    );
+    expect(
+      pluginModelContextBytes({
+        ...update,
+        _meta: { big: "x".repeat(9000) },
+      } as never),
+    ).toBe(pluginModelContextBytes(update));
   });
 });
 
