@@ -510,6 +510,48 @@ describe("ConformanceTab", () => {
     info.mockRestore();
   });
 
+  it("keeps a run in flight when its server disconnects, but blocks a new one", async () => {
+    const pending = createDeferred<{
+      success: true;
+      result: MCPConformanceResult;
+    }>();
+    setupSuccessfulRunMocks();
+    mockRunProtocol.mockReturnValue(pending.promise);
+    const onSelectServer = vi.fn();
+    const server = createHttpServer({ name: "alpha" });
+    const { rerender } = render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    clickRun();
+    await screen.findByText(/Running \d+ checks/);
+
+    // The server drops mid-run and nothing else is connected.
+    rerender(
+      <ConformanceTab
+        server={server}
+        servers={[]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    pending.resolve({ success: true, result: createProtocolResult() });
+    await waitFor(() => {
+      expect(within(suiteHeader("protocol")).getByText("PASSED")).toBeDefined();
+    });
+
+    const info = vi.spyOn(toast, "info");
+    mockRunProtocol.mockClear();
+    clickRun();
+    expect(info).toHaveBeenCalledWith(
+      "Connect an MCP server to run conformance checks.",
+    );
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
   it("keeps a connected selection and remembers it", () => {
     const onSelectServer = vi.fn();
     render(

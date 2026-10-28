@@ -54,6 +54,8 @@ import {
   type ConformancePersistConfig,
 } from "@/components/conformance/PersistConformanceRun";
 
+const NO_SERVER_MESSAGE = "Connect an MCP server to run conformance checks.";
+
 /**
  * The protocol suite is era-gated: a pinned version runs only its own era's
  * checks. With a pin we filter to exactly what will run; on "auto" the era is
@@ -222,6 +224,7 @@ function ConformanceContent({
   showHistory,
   history,
   serverPicker,
+  canRun,
 }: {
   server: ServerWithName;
   persist?: ConformancePersistConfig;
@@ -230,6 +233,8 @@ function ConformanceContent({
   showHistory: boolean;
   history?: ReactNode;
   serverPicker: ReactNode;
+  /** False while the selected server is not connected: Run asks for one. */
+  canRun: boolean;
 }) {
   // Run state, per-suite scores and the pooled headline all live in the shared
   // hook — score.mcpjam.com runs the same four suites and must pool them the
@@ -273,6 +278,10 @@ function ConformanceContent({
   // suites once a run has begun. Keyed by server, so a server switch resets it.
   const [started, setStarted] = useState(false);
   const handleRun = () => {
+    if (!canRun) {
+      toast.info(NO_SERVER_MESSAGE);
+      return;
+    }
     setStarted(true);
     runAll();
   };
@@ -589,25 +598,10 @@ export function ConformanceTab({
   // non-connected shape as "no server selected" so the panel never runs
   // against `undefined` (which would surface as "Hosted server not found
   // for 'undefined'" when Apps conformance calls the hosted resolver).
-  // With a picker, only an offered (connected) server can run. Otherwise a
-  // selection left over from before a disconnect still mounts the run view,
-  // e.g. when no server is connected and the effect above has nothing to pick.
-  const selectionIsRunnable = servers === undefined || selectionIsOffered;
-  if (
-    !server ||
-    !server.name ||
-    server.name === "none" ||
-    !server.config ||
-    !selectionIsRunnable
-  ) {
+  if (!server || !server.name || server.name === "none" || !server.config) {
     // Same pre-run page as with a server; running just asks for one first.
     const noServerRunButton = (
-      <Button
-        size="sm"
-        onClick={() =>
-          toast.info("Connect an MCP server to run conformance checks.")
-        }
-      >
+      <Button size="sm" onClick={() => toast.info(NO_SERVER_MESSAGE)}>
         {RUN_LABEL}
       </Button>
     );
@@ -637,6 +631,11 @@ export function ConformanceTab({
     );
   }
 
+  // With a picker, only an offered (connected) server can start a run: a
+  // selection left from before a disconnect must not. The run view stays
+  // mounted, so a run in flight when the server drops or reconnects keeps its
+  // results and still finishes persisting.
+  const canRun = servers === undefined || selectionIsOffered;
   return (
     <ConformanceContent
       key={server.name}
@@ -647,6 +646,7 @@ export function ConformanceTab({
       showHistory={showHistory}
       history={history}
       serverPicker={serverPicker}
+      canRun={canRun}
     />
   );
 }
