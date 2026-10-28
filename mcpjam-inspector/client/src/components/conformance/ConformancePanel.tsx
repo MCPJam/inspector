@@ -508,7 +508,7 @@ function ConformanceContent({
   );
 }
 
-/** The server last run on this page, so the next visit starts there. */
+/** The server last selected on this page, so the next visit starts there. */
 const LAST_SERVER_KEY = "mcpjam.conformance.lastServer.v1";
 
 function readLastServer(): string | null {
@@ -558,7 +558,8 @@ export function ConformanceTab({
   // and the picker then reads "Select a server" while the page still names
   // another one — two connected servers left people unsure which one ran.
   // When the selection is not one this page can run, pick for them: the
-  // server last run here if it is connected, otherwise the first connected.
+  // server last selected here if it is connected, otherwise the first
+  // connected.
   const selectionIsOffered = Boolean(
     server?.name && servers?.some((offered) => offered.name === server.name),
   );

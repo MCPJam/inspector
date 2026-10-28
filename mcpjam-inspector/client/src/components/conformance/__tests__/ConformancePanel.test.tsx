@@ -473,7 +473,7 @@ describe("ConformanceTab", () => {
     expect(onSelectServer).toHaveBeenCalledWith("alpha");
   });
 
-  it("returns to the server last run here when it is still connected", () => {
+  it("returns to the server last selected here when it is still connected", () => {
     window.localStorage.setItem("mcpjam.conformance.lastServer.v1", "beta");
     const onSelectServer = vi.fn();
     // A selection that is not connected is not one this page can run.
