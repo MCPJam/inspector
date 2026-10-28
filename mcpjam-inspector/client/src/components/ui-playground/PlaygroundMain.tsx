@@ -276,6 +276,7 @@ import { replaceLeadHostId } from "@/lib/selected-host-storage";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
 import { useMissingLeadFallback } from "./use-missing-lead-fallback";
 import { playgroundClientInitNotice } from "./playground-client-init-notice";
+import { needsSignIn, signInModelNotice } from "./sign-in-model-notice";
 import { useProjectServers } from "@/hooks/useViews";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
@@ -1515,14 +1516,6 @@ export function PlaygroundMain({
   const setActiveChatSessionId = useActiveChatSessionStore(
     (state) => state.setSessionId,
   );
-  useEffect(() => {
-    setActiveChatSessionId(chatSessionId);
-    return () => {
-      useActiveChatSessionStore.setState((state) =>
-        state.sessionId === chatSessionId ? { sessionId: null } : state,
-      );
-    };
-  }, [chatSessionId, setActiveChatSessionId]);
 
   // Set playground active flag for widget renderers to read
   const setPlaygroundActive = useUIPlaygroundStore(
@@ -2393,6 +2386,25 @@ export function PlaygroundMain({
   // mode-specific flags around for code that still needs to know
   // WHICH compare grid is up (e.g. the per-column derivation memos).
   const isCompareMode = isMultiModelMode || isMultiHostMode;
+  useEffect(() => {
+    setActiveChatSessionId(chatSessionId);
+    useActiveChatSessionStore.setState({
+      compareActive: isCompareMode,
+      viewOnly: apiSessionViewOnly,
+    });
+    return () => {
+      useActiveChatSessionStore.setState((state) =>
+        state.sessionId === chatSessionId
+          ? { sessionId: null, compareActive: false, viewOnly: false }
+          : state,
+      );
+    };
+  }, [
+    chatSessionId,
+    setActiveChatSessionId,
+    isCompareMode,
+    apiSessionViewOnly,
+  ]);
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
     useModelSelectorLayoutLock(isCompareMode);
 
@@ -5740,18 +5752,31 @@ export function PlaygroundMain({
     projectId: multiHostProjectId,
     ...clientInit,
   });
+  const signInNotice = signInModelNotice(
+    isMultiHostMode
+      ? {
+          clients: unavailableClients.flatMap((client) =>
+            client.status === "unavailable" && needsSignIn(client.model)
+              ? [{ clientName: client.compareLabel, modelName: client.model!.name }]
+              : [],
+          ),
+        }
+      : { model: selectedModel },
+  );
   const composerNotice =
     apiSessionNotice ||
     conversationTargetNotice ||
     localHarnessNotice ||
     localHarnessReadyNotice ||
-    clientInitNotice ? (
+    clientInitNotice ||
+    signInNotice ? (
       <div className="flex flex-col gap-2">
         {apiSessionNotice}
         {conversationTargetNotice}
         {localHarnessNotice}
         {localHarnessReadyNotice}
         {clientInitNotice}
+        {signInNotice}
       </div>
     ) : null;
 
@@ -6803,7 +6828,11 @@ export function PlaygroundMain({
                         if (resolution.status !== "ready") return (
                           <div key={resolution.compareId} role="status" className="rounded-lg border p-4 text-sm">
                             <strong>{resolution.compareLabel}</strong>
-                            <p>{resolution.reason}</p>
+                            {/* The composer's sign-in notice already explains this case. */}
+                            {resolution.status === "unavailable" &&
+                            needsSignIn(resolution.model) ? null : (
+                              <p>{resolution.reason}</p>
+                            )}
                           </div>
                         );
                         const column = resolution.column;

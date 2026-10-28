@@ -1419,7 +1419,9 @@ export async function runSyntheticHostSession(
       // Mirror chat-v2's per-turn persistence so the Trace tab and the
       // tool-snapshot/serverInspections fan-out work identically for
       // synthetic sessions and Playground sessions. Snapshot failures
-      // must never block the persist.
+      // must never block the persist. A timed-out turn skips the snapshot:
+      // the server that stalled the turn can stall `tools/list` for its whole
+      // request timeout before the evidence is saved.
       let toolSnapshot: unknown;
       try {
         const liveManager = built.manager;
@@ -1427,7 +1429,7 @@ export async function runSyntheticHostSession(
           typeof liveManager.hasServer === "function"
             ? selectedServerIds.filter((id) => liveManager.hasServer(id))
             : selectedServerIds;
-        if (knownIds.length > 0) {
+        if (knownIds.length > 0 && !drainedTurnTimedOut) {
           toolSnapshot =
             await exportConnectedServerToolSnapshotForEvalAuthoring(
               liveManager,
