@@ -188,6 +188,7 @@ import {
   resolveBrowserRollout,
   guestBrowserProject,
 } from "../../utils/computers/browser-rollout.js";
+import { isHostedBrowserAvailableFor } from "../../utils/computers/hosted-browser-availability.js";
 import {
   LOCAL_HARNESS_GRANT_HEADER,
   parseHarnessExecutionTarget,
@@ -1815,11 +1816,25 @@ chatV2.post("/", async (c) => {
     });
 
     const localBrowserRequested = body.browserEngine === "local";
-    const browserRollout =
+    const wantsBrowser =
       !localBrowserSettingsUnavailable &&
-      resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID)
-        ? await resolveBrowserRollout(c, localBrowserRequested)
-        : { enabled: false, actor: null };
+      resolvedExecution.builtInToolIds?.includes(BROWSER_BUILT_IN_TOOL_ID);
+    // A cloud browser follows the backend's answer, which evaluates the
+    // `hosted-browser` flag by the member's email as the desktop reservation
+    // does; this server knows a WorkOS id, not an email.
+    const browserRollout = !wantsBrowser
+      ? { enabled: false, actor: null }
+      : localBrowserRequested
+        ? await resolveBrowserRollout(c, true)
+        : {
+            enabled: await isHostedBrowserAvailableFor({
+              bearer: requestAuthHeader,
+              projectId:
+                typeof body.projectId === "string" ? body.projectId : null,
+              surface: "tools",
+            }),
+            actor: null,
+          };
     const localBrowserGuestId =
       localBrowserRequested &&
       browserRollout.enabled &&

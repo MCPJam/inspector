@@ -45,6 +45,14 @@ export { INSPECTOR_SERVICE_TOKEN_HEADER };
 const FETCH_TIMEOUT_MS = 5_000;
 const RETRY_DELAYS_MS = [1_000, 3_000];
 const FAILURE_COOLDOWN_MS = 60_000;
+/** How often a hosted replica re-asks the backend for the hosted-browser verdict. */
+export const HOSTED_BROWSER_VERDICT_REFRESH_MS = 60_000;
+/**
+ * The oldest verdict a hosted replica will still launch on. Past this, new
+ * launches are refused until a refresh succeeds; running sessions and cleanup
+ * never consult the verdict, so neither is affected.
+ */
+export const HOSTED_BROWSER_VERDICT_MAX_AGE_MS = 5 * 60_000;
 
 /** The backend's verdict on whether the hosted browser may be offered. Absent
  *  on a backend that predates the gate — which is NOT the same as a refusal;
@@ -116,12 +124,54 @@ let lastFailureAtMs: number | null = null;
 let hostedBrowserExposable: boolean | null = null;
 /** null = the backend did not say (old backend, or bootstrap never ran). */
 let hostedDesktopProvisionable: boolean | null = null;
+/** When the backend last answered the verdict; null = it never has. */
+let verdictAnsweredAtMs: number | null = null;
+/**
+ * The backend predates `GET /internal/v1/computers/hosted-browser`. Its boot
+ * answer then stays in force, because it cannot be refreshed; expiring it would
+ * turn every older backend into a refusal five minutes after boot.
+ */
+let verdictRouteMissing = false;
+let verdictRefreshTimer: ReturnType<typeof setInterval> | null = null;
+/** The stale-verdict error goes to Sentry once per outage, not once a minute. */
+let staleVerdictReported = false;
 
 export function resetComputersRuntimeConfigBootstrapForTests(): void {
   bootstrapPromise = null;
   lastFailureAtMs = null;
   hostedBrowserExposable = null;
   hostedDesktopProvisionable = null;
+  verdictAnsweredAtMs = null;
+  verdictRouteMissing = false;
+  staleVerdictReported = false;
+  stopHostedBrowserVerdictRefresh();
+}
+
+function recordHostedBrowserVerdict(
+  verdict: NonNullable<z.infer<typeof hostedBrowserSchema>>,
+): void {
+  const wasExposable = hostedBrowserExposable;
+  hostedBrowserExposable = verdict.exposable;
+  hostedDesktopProvisionable = verdict.desktopProvisionable ?? null;
+  verdictAnsweredAtMs = Date.now();
+  if (!verdict.exposable && wasExposable !== false) {
+    logger.info(
+      "[computers] hosted browser is not exposable" +
+        (verdict.reason ? `: ${verdict.reason}` : ""),
+    );
+  }
+}
+
+/**
+ * Is this replica's verdict too old to launch on? Only a hosted replica asks:
+ * a local inspector may run against no backend at all, and its rollout env
+ * flag already keeps the hosted browser dark there.
+ */
+export function isHostedBrowserVerdictStale(now: number = Date.now()): boolean {
+  if (!HOSTED_MODE || verdictRouteMissing || verdictAnsweredAtMs === null) {
+    return false;
+  }
+  return now - verdictAnsweredAtMs > HOSTED_BROWSER_VERDICT_MAX_AGE_MS;
 }
 
 /**
@@ -251,9 +301,15 @@ export function isHostedDesktopUnavailable(): boolean {
   return refusesOnVerdict(isHostedDesktopProvisionable());
 }
 
-/** What a three-state verdict means to a caller, per the rule above. */
+/**
+ * What a three-state verdict means to a caller, per the rule above. A verdict
+ * past its maximum age refuses too: readiness changes without a redeploy, so a
+ * replica that has lost touch with its backend must not keep launching on an
+ * answer that may have been withdrawn.
+ */
 function refusesOnVerdict(verdict: boolean | null): boolean {
   if (verdict === false) return true;
+  if (isHostedBrowserVerdictStale()) return true;
   return verdict === null && HOSTED_MODE;
 }
 
@@ -324,17 +380,7 @@ async function fetchRuntimeConfigOnce(
   // key still answers the question, and answering it early keeps the
   // registry's check synchronous.
   if (parsed.data.hostedBrowser) {
-    hostedBrowserExposable = parsed.data.hostedBrowser.exposable;
-    hostedDesktopProvisionable =
-      parsed.data.hostedBrowser.desktopProvisionable ?? null;
-    if (!parsed.data.hostedBrowser.exposable) {
-      logger.info(
-        "[computers] hosted browser is not exposable" +
-          (parsed.data.hostedBrowser.reason
-            ? `: ${parsed.data.hostedBrowser.reason}`
-            : ""),
-      );
-    }
+    recordHostedBrowserVerdict(parsed.data.hostedBrowser);
   }
   if (!parsed.data.enabled) {
     return "unavailable";
@@ -393,6 +439,111 @@ export function initComputersRuntimeConfigBootstrap(
   }
   bootstrapPromise = runBootstrap(deps.sleep ?? defaultSleep);
   return bootstrapPromise;
+}
+
+const verdictRouteSchema = z.object({
+  ok: z.literal(true),
+  hostedBrowser: hostedBrowserSchema.unwrap(),
+});
+
+export type HostedBrowserVerdictRefresh =
+  | "answered"
+  | "route-missing"
+  | "failed"
+  | "skipped";
+
+/**
+ * Re-asks the backend for the hosted-browser verdict, with no credentials on
+ * the wire. Never rejects: a failed refresh leaves the last answer in place,
+ * and that answer ages toward `HOSTED_BROWSER_VERDICT_MAX_AGE_MS`.
+ */
+export async function refreshHostedBrowserVerdict(): Promise<HostedBrowserVerdictRefresh> {
+  if (verdictRouteMissing) return "route-missing";
+  const token = getInspectorServiceToken();
+  const base = getConvexHttpUrl();
+  if (!token || !base) return "skipped";
+  const outcome = await fetchHostedBrowserVerdict(base, token);
+  if (outcome === "failed" && isHostedBrowserVerdictStale()) {
+    if (!staleVerdictReported) {
+      staleVerdictReported = true;
+      logger.error(
+        "[computers] hosted-browser verdict is older than its maximum age; refusing new hosted browser launches until the backend answers",
+      );
+    }
+  } else if (outcome === "answered") {
+    staleVerdictReported = false;
+  }
+  return outcome;
+}
+
+async function fetchHostedBrowserVerdict(
+  base: string,
+  token: string,
+): Promise<HostedBrowserVerdictRefresh> {
+  let response: Response;
+  try {
+    response = await fetch(
+      new URL("/internal/v1/computers/hosted-browser", base).toString(),
+      {
+        headers: { [INSPECTOR_SERVICE_TOKEN_HEADER]: token },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      },
+    );
+  } catch (error) {
+    logger.warn("[computers] hosted-browser verdict refresh network error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "failed";
+  }
+  if (response.status === 404) {
+    verdictRouteMissing = true;
+    stopHostedBrowserVerdictRefresh();
+    logger.info(
+      "[computers] backend predates the hosted-browser verdict route; keeping the boot answer",
+    );
+    return "route-missing";
+  }
+  if (!response.ok) {
+    logger.warn(
+      `[computers] hosted-browser verdict refresh failed (status ${response.status})`,
+    );
+    return "failed";
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    logger.warn("[computers] hosted-browser verdict refresh returned non-JSON");
+    return "failed";
+  }
+  const parsed = verdictRouteSchema.safeParse(payload);
+  if (!parsed.success) {
+    logger.warn("[computers] hosted-browser verdict payload failed validation");
+    return "failed";
+  }
+  recordHostedBrowserVerdict(parsed.data.hostedBrowser);
+  return "answered";
+}
+
+/**
+ * Keeps a hosted replica's verdict fresh: readiness changes on the backend
+ * (a template set, a keypair cleared) without a redeploy of this server.
+ * Idempotent; a no-op outside hosted mode and once the route is known missing.
+ */
+export function startHostedBrowserVerdictRefresh(
+  intervalMs: number = HOSTED_BROWSER_VERDICT_REFRESH_MS,
+): void {
+  if (!HOSTED_MODE || verdictRefreshTimer || verdictRouteMissing) return;
+  verdictRefreshTimer = setInterval(() => {
+    void refreshHostedBrowserVerdict();
+  }, intervalMs);
+  verdictRefreshTimer.unref?.();
+}
+
+export function stopHostedBrowserVerdictRefresh(): void {
+  if (!verdictRefreshTimer) return;
+  clearInterval(verdictRefreshTimer);
+  verdictRefreshTimer = null;
 }
 
 /**
