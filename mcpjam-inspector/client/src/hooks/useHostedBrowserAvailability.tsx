@@ -67,7 +67,8 @@ export function HostedBrowserScopeProvider({
  * Tri-state, like the flag hooks it replaces: `undefined` while the answer is
  * not in yet, so a route guard waits rather than bouncing a member who
  * cold-loads a URL. A guest gets `false`. A failed query also reads `false`:
- * an older backend without the query offers nothing it cannot launch.
+ * an older backend without the query offers nothing it cannot launch. So does
+ * a `null` answer, which the backend never sends but a stand-in or proxy can.
  */
 function useHostedAnswer(surface: HostedBrowserSurface): boolean | undefined {
   const scope = useContext(HostedBrowserScopeContext);
@@ -95,11 +96,11 @@ function useHostedAnswer(surface: HostedBrowserSurface): boolean | undefined {
     [canAsk, argsKey],
   );
   const result = useQueries(queries).availability as
-    Availability | Error | undefined;
+    Availability | Error | null | undefined;
 
   if (isMember === false) return false;
   if (!canAsk || result === undefined) return undefined;
-  if (result instanceof Error) return false;
+  if (result === null || result instanceof Error) return false;
   return result[surface]?.available === true;
 }
 
