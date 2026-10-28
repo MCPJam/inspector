@@ -467,23 +467,27 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       { id: "turn-2", prompt: "Hello", expectedToolCalls: [] },
     ];
     // Rows as the backend pre-creates them: the snapshot query is the case's
-    // first prompt, not the runner's "Pinned tool call: …".
+    // first prompt, not the runner's "Pinned tool call: …". Another case's
+    // row for iteration 3 and this case's row for iteration 2 come first.
+    const row = (_id: string, testCaseId: string, iterationNumber: number) => ({
+      _id,
+      testCaseId,
+      iterationNumber,
+      status: "pending",
+      testCaseSnapshot: {
+        title: "Case",
+        query: "Hello",
+        model: test.model,
+        provider: test.provider,
+      },
+    });
     convexClient.query.mockImplementation(async (name: string) =>
       name === "testSuites:getTestSuiteRunDetails"
         ? {
             iterations: [
-              {
-                _id: "row-3",
-                testCaseId: "case-1",
-                iterationNumber: 3,
-                status: "pending",
-                testCaseSnapshot: {
-                  title: "Case",
-                  query: "Hello",
-                  model: test.model,
-                  provider: test.provider,
-                },
-              },
+              row("other-row-3", "case-2", 3),
+              row("row-2", "case-1", 2),
+              row("row-3", "case-1", 3),
             ],
           }
         : { status: "running" },

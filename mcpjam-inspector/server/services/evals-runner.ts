@@ -2931,8 +2931,9 @@ const runHostedIteration = async (
 // the guard-vs-model-free-fork at the top and the per-branch runner family
 // differ. `runTestCase` / `streamTestCase` are thin wrappers below.
 // Locate the pending/running iteration row for a (test, runIndex) so a timeout
-// can mark it `timed_out`. Prefers the precreated id; otherwise matches on
-// testCaseId (model-free) or snapshot identity + iteration number.
+// or credit stop can settle it. Prefers the precreated id; otherwise pairs like
+// the recorder does: by case, iteration and model, or by case and iteration
+// alone for a case with no prompt.
 async function findIterationIdForTimeout(args: {
   convexClient: ConvexHttpClient;
   runId: string | null;
@@ -2956,14 +2957,25 @@ async function findIterationIdForTimeout(args: {
       (iteration: any) =>
         iteration.status === "pending" || iteration.status === "running",
     );
+    const resolvedTest = resolveEvalTestCase(args.test);
+    // The backend files a case with no prompt under a display-only sentinel
+    // model, so its row cannot be matched on the runner's model.
+    const caseNeedsModel = turnsNeedModel({
+      caseType: args.test.caseType,
+      promptTurns: resolvedTest.promptTurns,
+    });
     const matching = findPrecreatedIterationByCase(open, {
       testCaseId: args.test.testCaseId,
-      testCaseSnapshot: {
-        title: args.test.title,
-        query: resolveEvalTestCase(args.test).query,
-        model: args.test.model,
-        provider: args.test.provider,
-      },
+      ...(caseNeedsModel
+        ? {
+            testCaseSnapshot: {
+              title: args.test.title,
+              query: resolvedTest.query,
+              model: args.test.model,
+              provider: args.test.provider,
+            },
+          }
+        : {}),
       iterationNumber: args.runIndex + 1,
     });
     return matching?._id as string | undefined;
@@ -5128,11 +5140,9 @@ const runLocalIteration = async ({
     (precreatedIterationId !== undefined || recorder !== null);
   const iterationParams = {
     ...iterationParamsBase,
-    // Model-free (pinned-only) iterations omit the testCaseSnapshot so the
-    // recorder pairs the pre-created row by testCaseId + iterationNumber even
-    // on a row without a case id, where pairing falls back to snapshot text:
-    // this snapshot's query is synthesized ("Pinned tool call: …") and would
-    // never match the stored one. Mirrors the old probe path.
+    // Model-free (pinned-only) iterations omit the testCaseSnapshot so pairing
+    // never compares the backend's display-only sentinel model. A row without
+    // a case id still cannot pair (PLB-407). Mirrors the old probe path.
     ...(shouldOmitSnapshotForPairing ? {} : { testCaseSnapshot }),
   };
 

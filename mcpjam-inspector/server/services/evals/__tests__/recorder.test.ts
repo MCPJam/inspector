@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "ai";
+import { logger } from "../../../utils/logger";
 import {
   createSuiteRunRecorder,
   startSuiteRunWithRecorder,
@@ -942,6 +943,53 @@ describe("createSuiteRunRecorder", () => {
 
       expect(iterationId).toBe("iter-azure");
     });
+
+    it("pairs nothing when neither the test nor the row has a case id", async () => {
+      const { iterationId } = await startWith(
+        [
+          {
+            _id: "other-case",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+          },
+        ],
+        { iterationNumber: 1, startedAt: Date.now() },
+      );
+
+      expect(iterationId).toBeUndefined();
+    });
+  });
+
+  it("treats a run whose details answer null as deleted, without logging a pairing miss", async () => {
+    // A deleted run answers null (PLB-52) rather than throwing "not found".
+    const query = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:getTestSuiteRunDetails") return null;
+      throw new Error(`unexpected query ${ref}`);
+    });
+    const recorder = createSuiteRunRecorder({
+      convexClient: { query, mutation: vi.fn() } as any,
+      suiteId: "suite-1",
+      runId: "run-1",
+    });
+    const errorSpy = vi.spyOn(logger, "error");
+    const start = () =>
+      recorder.startIteration({
+        testCaseId: "tc1",
+        iterationNumber: 1,
+        startedAt: Date.now(),
+      });
+
+    expect(await start()).toBeUndefined();
+    expect(await start()).toBeUndefined();
+    const pairingMisses = errorSpy.mock.calls.filter(
+      ([message]) =>
+        message === "[evals] Could not find pre-created iteration for",
+    );
+    errorSpy.mockRestore();
+
+    expect(pairingMisses).toHaveLength(0);
+    expect(recorder.isRunDeleted?.()).toBe(true);
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it("flips runDeleted when finishIteration's shared finalize sees 'not found', short-circuiting subsequent startIteration", async () => {

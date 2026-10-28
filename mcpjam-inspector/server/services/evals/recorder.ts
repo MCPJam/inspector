@@ -336,6 +336,11 @@ export const createSuiteRunRecorder = ({
           "testSuites:getTestSuiteRunDetails" as any,
           { runId },
         );
+        // A deleted run answers null (PLB-52) rather than throwing.
+        if (response === null) {
+          runDeleted = true;
+          return undefined;
+        }
 
         const matchingIteration = findPrecreatedIterationByCase(
           response?.iterations || [],
