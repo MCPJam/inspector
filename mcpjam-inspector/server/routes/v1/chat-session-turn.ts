@@ -1,6 +1,9 @@
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { buildSetupManifest } from "../../services/chat-turn/setup-manifest.js";
-import { resolveChatSessionEnvironment } from "./chat-session-environment.js";
+import {
+  resolveChatSessionEnvironment,
+  unappliedBuiltInToolIds,
+} from "./chat-session-environment.js";
 import type { ResolvedTarget } from "./chat-session-environment.js";
 import { resolveApiHarnessEnvironment } from "./chat-session-harness-environment.js";
 import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
@@ -513,32 +516,6 @@ async function releaseTurnLease(
 }
 
 // ── Target resolution ───────────────────────────────────────────────────────
-
-/**
- * The client's `builtInToolIds`, which this route deliberately does not apply.
- *
- * Built-in tools (`bash`, `web_search`) are wired in `routes/web/chat-v2.ts`
- * via `resolveHostTools`; nothing in this route reads them, so an environment
- * whose client attaches a computer and asks for `bash` runs here with the MCP
- * server tools alone. That is a real limitation, not an oversight to paper
- * over — the computer-backed shell needs a reserved box and a data plane this
- * synchronous surface does not stand up.
- *
- * What was wrong is that it happened SILENTLY. The write path accepts the
- * capability, the turn drops it, and the caller sees a model that simply never
- * uses the tool it was configured with — indistinguishable from the model
- * choosing not to. Reporting it turns an invisible gap into a named one.
- *
- * Reported, not refused: a client carrying a computer is a perfectly good
- * client for a plain MCP turn, and refusing the turn would break every caller
- * whose client happens to have one attached.
- */
-function unappliedBuiltInToolIds(runtimeConfig: unknown): string[] {
-  const ids = (runtimeConfig as { builtInToolIds?: unknown } | undefined)
-    ?.builtInToolIds;
-  if (!Array.isArray(ids)) return [];
-  return ids.filter((id): id is string => typeof id === "string" && id !== "");
-}
 
 /**
  * Read the host's OWN server selection, for a turn that named only a host.

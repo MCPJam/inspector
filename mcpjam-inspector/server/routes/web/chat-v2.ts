@@ -1,6 +1,4 @@
-import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config.js";
-import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
-import { resolveChatTurn } from "../../services/chat-turn/resolve-chat-turn.js";
+import { resolveHostedChatSetup } from "../../services/chat-turn/resolve-hosted-chat-setup.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
 import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
 import { hasServiceCredential } from "../../services/service-credential.js";
@@ -138,10 +136,8 @@ import {
   planScenarioSandbox,
   scenarioHarnessRepublishRefusal,
   shouldWarnSecretsUndelivered,
-  readScenarioEnvironment,
   readComputerSandboxMode,
   readComputerSandboxHarness,
-  type ScenarioEnvironmentRuntime,
 } from "../../utils/scenario-runtime-config.js";
 import {
   scenarioHarnessBoxRefusal,
@@ -179,23 +175,13 @@ import {
   runtimeSkills as environmentRuntimeSkills,
   turnSkillProvenance,
   type EnvironmentSkillDelivery,
-  type ResolvedEnvironmentRuntime,
 } from "../../services/environments/runtime.js";
-import {
-  fetchPluginRuntimeAttribution,
-  type PluginRuntimeAttribution,
-} from "../../services/environments/plugin-attribution.js";
 import {
   buildLiveEffectiveCapabilities,
   pluginOriginByServerId,
-  resolveEffectiveCapabilities,
   withLiveProjectSkills,
   type EffectiveCapabilitySet,
 } from "../../services/environments/effective-capabilities.js";
-import {
-  applyPluginVersionOverride,
-  withoutGuestPlugins,
-} from "../../services/environments/plugin-override.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import {
   resolveHostTools,
@@ -379,7 +365,7 @@ chatV2.post("/", async (c) => {
     const executionTarget = normalizedTarget.target;
     // True when this turn flows through a scenario surface. sourceType +
     // accessScope decisions hinge on this.
-    const isScenarioSession = executionTarget.kind === "scenario";
+    const isScenarioRequest = executionTarget.kind === "scenario";
     // True when the execution context was RESOLVED SERVER-SIDE, so its host
     // config — not the request body — is authoritative for capability
     // declarations. Scenario (a share-link visitor controls the body) and
@@ -392,7 +378,7 @@ chatV2.post("/", async (c) => {
     // declaration is not a preference — it changes what the SDK advertises on
     // the initialize wire — so it follows the resolved host either way.
     const isHostAuthoritative =
-      isScenarioSession || executionTarget.kind === "environment";
+      isScenarioRequest || executionTarget.kind === "environment";
 
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new WebRouteError(
@@ -430,7 +416,7 @@ chatV2.post("/", async (c) => {
     // their access is the `scenarioId` grant, re-checked by the runtime-config
     // fetch, not membership.
     let chatEnvironmentsSupported = false;
-    if (!isScenarioSession) {
+    if (!isScenarioRequest) {
       const authorized = await authorizeProject(
         callerContextFromHono(c),
         bearerToken,
@@ -439,303 +425,38 @@ chatV2.post("/", async (c) => {
       chatEnvironmentsSupported = authorized.chatEnvironments;
     }
 
-    // Host config is owned by the scenario's host, not the request body.
-    // When this turn is scenario-bound, re-resolve the live values from
-    // Convex so a stale client snapshot or tampered body can't route the
-    // session through a different model or skip tool approval. The
-    // helper is a no-op (returns body values) for non-scenario surfaces.
-    //
-    // PR 4c of the engine consolidation: this merge is now owned by the
-    // shared `resolveExecutionContext` helper alongside `mcp/chat-v2.ts`
-    // (chat surface) and PR 4d's eval rewire. Single contract for
-    // body × hostConfig × precedence; per-field warnings preserved via
-    // `result.drift`. Pure refactor — `host-execution-context.test.ts`
-    // locks the shape.
-    let hostRuntimeConfig: Record<string, unknown> | null = null;
-    // Set for an environment target only. Once resolved it is the SINGLE
-    // source for this turn's host config, server set, and skills — nothing
-    // downstream may fall back to the body's `selectedServerIds`.
-    let environmentSpec: ResolvedEnvironmentRuntime | null = null;
-    // Phase 5: set ONLY for an environment-backed scenario turn — the additive
-    // `environment` payload on the scenario runtime config (mcpjam-backend
-    // #805). Once present it is authoritative for the turn's server set and
-    // skills exactly like `environmentSpec` is for an environment target;
-    // absent ⇒ host-backed scenario, today's behavior byte-identical.
-    let scenarioEnvironment: ScenarioEnvironmentRuntime | null = null;
-    // INS-3: the turn's one answer to "what may this run reach?" — the split
-    // explicit/plugin server sets, ref-addressed skills, and plugin origin.
-    // Derived from `environmentSpec`, never from the body or a HostConfig
-    // (hosts are plugin-blind), and never persisted: it is provenance for this
-    // launch, not a restorable pin.
-    let effectiveCapabilities: EffectiveCapabilitySet | null = null;
-    let turnMode: "interactive" | "recorded" = isScenarioSession
-      ? "recorded"
-      : "interactive";
-    if (
-      !isScenarioSession &&
-      (executionTarget.kind === "environment" || chatEnvironmentsSupported)
-    ) {
-      // `sk_…` API-key bearers can't query Convex directly; this resolves the
-      // delegated JWT (and passes JWTs through untouched), same as the eval
-      // launch path.
-      const convexClient = createConvexClient(
-        await getConvexBearerForRequest(c),
-      );
-      // One atomic member-read: host runtime config + closed server set +
-      // composed skill union + pinned plugin versions, at one revision. The
-      // browser never supplies any of it.
-      const resolvedTurn = await resolveChatTurn({
-        target: executionTarget,
-        access: { kind: "project", projectId: hostedBody.projectId },
-        selection:
-          executionTarget.kind === "environment"
-            ? executionTarget.overrides?.serverIds !== undefined
-              ? {
-                  kind: "explicit",
-                  serverIds: executionTarget.overrides.serverIds,
-                }
-              : { kind: "environment-default" }
-            : { kind: "explicit", serverIds: selectedServerIds ?? [] },
-        client: convexClient,
-        bearer: bearerToken,
-        signal: c.req.raw.signal,
-      });
-      turnMode = resolvedTurn.mode;
-      environmentSpec = resolvedTurn.environment;
-      if (c.get("guestId")) environmentSpec = withoutGuestPlugins(environmentSpec);
-      hostRuntimeConfig = environmentSpec.host.runtimeConfig;
-      // Attribution is a SECOND read and deliberately cannot fail the turn:
-      // the environment already decided what runs, and a probe blip must
-      // degrade origin reporting, not stop a send. Costs nothing when the
-      // environment pins no plugins.
-      const attribution = c.get("guestId")
-        ? null
-        : await fetchPluginRuntimeAttribution(convexClient, {
-            projectId: hostedBody.projectId,
-            pluginVersionIds: (environmentSpec.pluginVersions ?? []).map(
-              (plugin) => plugin.pluginVersionId,
-            ),
-          });
-      // INS-4: the Playground's ephemeral plugin narrowing, applied to the
-      // resolved spec (see `plugin-override.ts` for why it cannot be a query
-      // argument). It runs BEFORE the capability projection so everything
-      // downstream — connected servers, delivered skills, trace origin,
-      // telemetry — sees one spec, and it can only ever remove.
-      const retainedVersionIds =
-        !c.get("guestId") && executionTarget.kind === "environment"
-          ? executionTarget.overrides?.pluginVersionIds
-          : undefined;
-      if (retainedVersionIds !== undefined) {
-        const narrowed = applyPluginVersionOverride({
-          spec: environmentSpec,
-          attribution,
-          retainedVersionIds,
-        });
-        environmentSpec = narrowed.spec;
-        if (narrowed.droppedVersionIds.length > 0) {
-          logger.info("[chat-v2] playground plugin override applied", {
-            environmentId: environmentSpec.environmentRef.environmentId,
-            droppedVersionIds: narrowed.droppedVersionIds,
-            droppedServerCount: narrowed.droppedServerIds.length,
-            droppedSkillCount: narrowed.droppedSkillIds.length,
-          });
-        }
-      }
-      effectiveCapabilities = resolveEffectiveCapabilities(
-        environmentSpec,
-        attribution,
-      );
-      if (effectiveCapabilities.problems.length > 0) {
-        // Codes and ids only, never `problem.message` — those messages
-        // interpolate the skill's own NAME, which is user-authored content and
-        // is held out of the provenance telemetry below for the same reason.
-        // One aggregated line, so a collision-heavy environment does not emit
-        // an entry per problem per turn.
-        logger.warn("[chat-v2] effective capability problems", {
-          environmentId: environmentSpec.environmentRef.environmentId,
-          codes: effectiveCapabilities.problems.map((problem) => problem.code),
-          skillIds: effectiveCapabilities.problems.flatMap((problem) =>
-            "skillId" in problem ? [problem.skillId] : [],
-          ),
-        });
-      }
-      // Plugin origin on every RPC frame this turn produces, so a trace answers
-      // "which plugin revision served this tool call" without a second lookup.
+    const {
+      mode: turnMode,
+      hostRuntimeConfig,
+      environmentSpec,
+      scenarioEnvironment,
+      effectiveCapabilities: resolvedCapabilities,
+    } = await resolveHostedChatSetup({
+      target: executionTarget,
+      access:
+        executionTarget.kind === "scenario"
+          ? {
+              kind: "scenario",
+              scenarioId: executionTarget.scenarioId,
+              accessVersion,
+            }
+          : {
+              kind: "project",
+              projectId: hostedBody.projectId,
+              guest: Boolean(c.get("guestId")),
+              chatEnvironments: chatEnvironmentsSupported,
+            },
+      projectId: hostedBody.projectId,
+      selectedServerIds,
+      bearer: bearerToken,
+      signal: c.req.raw.signal,
+      getClient: async () => createConvexClient(await getConvexBearerForRequest(c)),
+    });
+    let effectiveCapabilities = resolvedCapabilities;
+    if (effectiveCapabilities) {
       rpcCollector?.setPluginOriginByServerId(
         pluginOriginByServerId(effectiveCapabilities),
       );
-    } else if (isScenarioSession && scenarioId) {
-      const runtime = await fetchScenarioRuntimeConfig({
-        scenarioId,
-        bearer: bearerToken,
-        // Opt this turn into backend version enforcement. A caller whose
-        // cached version is behind the row's is running against a config
-        // that has since moved (rebind, mode change, republish); it must
-        // re-redeem rather than have its stale view honored.
-        accessVersion,
-        // Only a server that can provision the conversation's box may be
-        // told a participant's harness runs on one; anyone else would have
-        // nowhere to run it.
-        harnessBox: canProvisionHarnessBoxes(),
-      });
-      if (runtime.ok) {
-        // Environment-backed scenario (live-follow): the backend resolved the
-        // environment FRESH and projected its closed server set + skill union
-        // onto the config. A present-but-malformed payload is an UNKNOWN
-        // environment, not a host-backed scenario — stop the turn (same
-        // fail-closed rationale as the fetch-error branch below) rather than
-        // fall through to the body's server list.
-        const environmentRead = readScenarioEnvironment(runtime.config);
-        if (environmentRead.kind === "invalid") {
-          logger.warn(
-            "[chat-v2] scenario environment payload malformed; failing closed",
-            { scenarioId, detail: environmentRead.detail },
-          );
-          throw new WebRouteError(
-            502,
-            ErrorCode.INTERNAL_ERROR,
-            "Couldn't load this scenario's environment, so the turn was stopped to avoid running with the wrong configuration.",
-          );
-        }
-        if (environmentRead.kind === "present") {
-          scenarioEnvironment = environmentRead.environment;
-          // Phase 6.1: attribution for scenario turns, from the payload's own
-          // pinned plugin versions. Guarded on their presence — a backend
-          // that predates `pluginVersions` (or an environment pinning none)
-          // costs zero extra reads — and FAIL-OPEN like the environment
-          // target's probe: this turn is guest-reachable, and the probe is
-          // member-gated backend-side, so a guest (or any probe failure)
-          // degrades to "origin unknown" rather than stopping the send.
-          let attribution: PluginRuntimeAttribution | null = null;
-          const pinnedVersionIds = (
-            scenarioEnvironment.pluginVersions ?? []
-          ).map((plugin) => plugin.pluginVersionId);
-          if (pinnedVersionIds.length > 0) {
-            try {
-              attribution = await fetchPluginRuntimeAttribution(
-                createConvexClient(await getConvexBearerForRequest(c)),
-                {
-                  projectId: hostedBody.projectId,
-                  pluginVersionIds: pinnedVersionIds,
-                },
-              );
-            } catch (error) {
-              // `fetchPluginRuntimeAttribution` already swallows probe
-              // failures; this catches client construction (missing
-              // CONVEX_URL on a deployment that never configured it).
-              logger.warn(
-                "[chat-v2] scenario attribution unavailable; running without plugin origin",
-                {
-                  scenarioId,
-                  error: error instanceof Error ? error.message : String(error),
-                },
-              );
-            }
-          }
-          // Same projection the environment target uses, so the EMULATED
-          // engine advertises the environment's skills (skillsSource:
-          // "resolved") instead of silently delivering zero.
-          effectiveCapabilities = resolveEffectiveCapabilities(
-            scenarioEnvironment,
-            attribution,
-          );
-          if (effectiveCapabilities.problems.length > 0) {
-            // Codes and ids only — same redaction rationale as the
-            // environment-target log above.
-            logger.warn("[chat-v2] effective capability problems", {
-              environmentId: scenarioEnvironment.environmentRef.environmentId,
-              codes: effectiveCapabilities.problems.map(
-                (problem) => problem.code,
-              ),
-              skillIds: effectiveCapabilities.problems.flatMap((problem) =>
-                "skillId" in problem ? [problem.skillId] : [],
-              ),
-            });
-          }
-          // Plugin origin on this turn's RPC frames, exactly as the
-          // environment target stamps it. Empty (no-op) until the backend
-          // serves `pluginVersions` and the probe attributes them.
-          rpcCollector?.setPluginOriginByServerId(
-            pluginOriginByServerId(effectiveCapabilities),
-          );
-        }
-        hostRuntimeConfig = runtime.config as unknown as Record<
-          string,
-          unknown
-        >;
-      } else {
-        // FAIL CLOSED, matching the host-bound branch below. The fetched
-        // config is the ONLY source of `harness`/`computer` (deliberately
-        // excluded from ExecutionOverrides so the body can't set them) and of
-        // every host-wins protection. Falling back to body values would (a)
-        // silently run a harness-published scenario on the emulated engine —
-        // misrepresenting the runtime — and (b) let client-supplied
-        // model/approval/server values govern a share-link-reachable turn,
-        // the exact tampered-body window this fetch exists to close.
-        logger.warn("[chat-v2] runtime-config fetch failed; failing closed", {
-          scenarioId,
-          status: runtime.status,
-          error: runtime.error,
-        });
-        // Two ACCESS verdicts, neither an internal fault, each with its own
-        // recovery: STALE means "re-redeem and replay" (the client does it
-        // transparently), DENIED means "you cannot run this turn".
-        // Everything else keeps the generic classification (>=500 collapses
-        // to a 502 upstream failure).
-        const failClosedMessage = `Couldn't load this scenario's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
-        if (runtime.code === "SCENARIO_SIGN_IN_REQUIRED") {
-          throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, runtime.error, {
-            code: runtime.code,
-          });
-        }
-        if (runtime.code === "SCENARIO_ACCESS_STALE") {
-          throw new WebRouteError(
-            409,
-            ErrorCode.SCENARIO_ACCESS_STALE,
-            failClosedMessage,
-          );
-        }
-        throw new WebRouteError(
-          runtime.status >= 500 ? 502 : runtime.status,
-          runtime.status === 403
-            ? ErrorCode.SCENARIO_ACCESS_DENIED
-            : ErrorCode.INTERNAL_ERROR,
-          failClosedMessage,
-        );
-      }
-    } else if (executionTarget.kind === "host") {
-      const targetHostId = executionTarget.hostId;
-      // Host-bound direct session (Playground). The host config — including the
-      // server-authoritative `harness`/`computer` — is the source of truth for
-      // execution shaping. Unlike the scenario path, FAIL CLOSED here: if we
-      // can't resolve the authoritative config we must not silently run the
-      // emulated engine, because the host may be a harness host and running
-      // emulated would misrepresent it as the real Claude Code runtime.
-      const runtime = await fetchHostRuntimeConfig({
-        hostId: targetHostId,
-        bearer: bearerToken,
-        signal: c.req.raw.signal as AbortSignal | undefined,
-      });
-      if (runtime.ok) {
-        hostRuntimeConfig = runtime.config as unknown as Record<
-          string,
-          unknown
-        >;
-      } else {
-        logger.warn(
-          "[chat-v2] host runtime-config fetch failed; failing closed",
-          {
-            hostId: targetHostId,
-            status: runtime.status,
-            error: runtime.error,
-          },
-        );
-        throw new WebRouteError(
-          runtime.status >= 500 ? 502 : runtime.status,
-          ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
-        );
-      }
     }
 
     // ── The turn's effective server set ─────────────────────────────────────
@@ -827,14 +548,14 @@ chatV2.post("/", async (c) => {
         modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
         hostStyle:
-          body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
-        builtInToolIds: isScenarioSession ? undefined : body.builtInToolIds,
+          body.hostStyle ?? (turnMode === "interactive" ? "claude" : undefined),
+        builtInToolIds: turnMode === "recorded" ? undefined : body.builtInToolIds,
       },
       // Scenario: the published host wins (a share-link client can't override).
       // Host preview (Playground): the owner's in-session tweaks win, while
       // `harness`/`computer` stay host-only (not in ExecutionOverrides, so
       // precedence can't leak them from the body).
-      precedence: isScenarioSession ? "host-wins" : "override-wins",
+      precedence: turnMode === "recorded" ? "host-wins" : "override-wins",
     });
 
     // A continuation whose step budget is already spent is refused here,
@@ -1042,7 +763,7 @@ chatV2.post("/", async (c) => {
       }
     }
     if (
-      (isScenarioSession || externalAccountHarnessTurn) &&
+      (turnMode === "recorded" || externalAccountHarnessTurn) &&
       hostRuntimeConfig &&
       resolvedExecution.modelId &&
       resolvedExecution.modelId !== modelDefinition.id
@@ -1078,7 +799,7 @@ chatV2.post("/", async (c) => {
       inherited: resolvedExecution.routingSelection,
       inheritedOrigin: resolvedExecution.modelSelectionOrigin,
       model: modelDefinition,
-      hostWins: isScenarioSession,
+      hostWins: turnMode === "recorded",
       allowLocal: false,
     });
     if (!selected.ok) {
@@ -1105,7 +826,7 @@ chatV2.post("/", async (c) => {
       hostSelection:
         routingSelection?.source === "legacy" ? undefined : routingSelection,
       requestSelection: selected.requestSelection,
-      hostWins: isScenarioSession,
+      hostWins: turnMode === "recorded",
     });
     if (routingSelection) {
       routingSelection = ranTurnSelection({
@@ -1143,7 +864,7 @@ chatV2.post("/", async (c) => {
     // gets a 400 saying so. Dropping the field silently would leave a
     // misconfigured client believing its turn ran locally.
     let harnessExecutionTarget: LocalHarnessExecutionTarget | undefined;
-    if ((await shouldUseLocalHarness(resolvedExecution.harness, bearerToken, hostedBody.projectId)) && !c.get("guestId") && !isScenarioSession) {
+    if ((await shouldUseLocalHarness(resolvedExecution.harness, bearerToken, hostedBody.projectId)) && !c.get("guestId") && turnMode === "interactive") {
       const localHarnessId = localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
       const localHarnessName = LOCAL_HARNESS_DISPLAY_NAMES[localHarnessId];
       if (!hostedBody.projectId) return c.json({ error: `A project is required for local ${localHarnessName}` }, 400);
@@ -1202,7 +923,7 @@ chatV2.post("/", async (c) => {
         // Playground chat may run a harness × model pair the evidence table
         // has not verified (with a warning); a scenario session is an eval
         // surface and may not.
-        purpose: isScenarioSession ? "eval" : "chat",
+        purpose: turnMode === "recorded" ? "eval" : "chat",
       });
       if (availability.ok && availability.warning) {
         getRequestLogger(c, "routes.web.chat-v2").event(
@@ -1249,7 +970,7 @@ chatV2.post("/", async (c) => {
     // reworded so they never name the study's credits, budget, organization or
     // environment (`participantSafeStudyError`). Members keep the detail.
     const scenarioParticipant =
-      isScenarioSession && isScenarioParticipant(hostRuntimeConfig);
+      turnMode === "recorded" && isScenarioParticipant(hostRuntimeConfig);
 
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
@@ -1295,7 +1016,7 @@ chatV2.post("/", async (c) => {
     // not be able to add the project's pool to it. A backend too old to say
     // (`environmentOrigin` absent) is treated as named.
     const requestedProjectSkills =
-      !isScenarioSession &&
+      turnMode === "interactive" &&
       (executionTarget.kind !== "environment" ||
         (rawBody as Record<string, unknown>).includeProjectSkills === true);
     const includeProjectSkills =
@@ -1406,7 +1127,7 @@ chatV2.post("/", async (c) => {
         hostDeclaresElicitation(effectiveClientCapabilities)) ||
         pluginModelMrtrEnabled({
           emulated: isEmulatedMcpjam,
-          workspace: !!pluginWorkspace && !isScenarioSession,
+          workspace: !!pluginWorkspace && turnMode === "interactive",
           forms: pluginExtensions?.capabilities.forms,
           serviceCredential: hasServiceCredential(),
           elicitationHandshake:
@@ -1574,7 +1295,7 @@ chatV2.post("/", async (c) => {
     // Emulated and Codex harness turns (whose MCP tools run here, in process)
     // take the same plugin executor; see `chatPluginFormPlan`.
     const pluginPins =
-      pluginWorkspace && hostRuntimeConfig && !isScenarioSession
+      pluginWorkspace && hostRuntimeConfig && turnMode === "interactive"
         ? buildHostConnectionPins(hostRuntimeConfig as never, WEB_STREAM_TIMEOUT_MS)
         : undefined;
     const pluginPinFor = (id: string) =>
@@ -1678,7 +1399,7 @@ chatV2.post("/", async (c) => {
         multiConnection: true,
         tolerateServerRefusals: isolatedServerIds,
         ...(modelFormDispatch ? { extensionRequestHandlers: modelFormDispatch.handlers } : {}),
-        ...(isScenarioSession ? { accessScope: "chat_v2" } : {}),
+        ...(turnMode === "recorded" ? { accessScope: "chat_v2" } : {}),
         scenarioId,
         accessVersion,
         rpcLogger: rpcCollector.rpcLogger,
@@ -1954,11 +1675,11 @@ chatV2.post("/", async (c) => {
     const harnessWantsScenarioBox =
       Boolean(resolvedExecution.harness) &&
       !harnessExecutionTarget &&
-      isScenarioSession &&
+      turnMode === "recorded" &&
       Boolean(scenarioId) &&
       readComputerSandboxHarness(hostRuntimeConfig);
     const computerSandboxMode =
-      isScenarioSession &&
+      turnMode === "recorded" &&
       scenarioId &&
       (!resolvedExecution.harness || harnessWantsScenarioBox)
         ? readComputerSandboxMode(hostRuntimeConfig)
@@ -2183,7 +1904,7 @@ chatV2.post("/", async (c) => {
     const playgroundBoxReason = playgroundHarnessBoxReason({
       harnessId: resolvedExecution.harness,
       localExecution: Boolean(harnessExecutionTarget),
-      isScenarioSession,
+      isScenarioSession: turnMode === "recorded",
       comparePane: hostedBody.comparePane === true,
     });
     // A guest has no project computer to protect and no project to hold a box
@@ -2364,7 +2085,7 @@ chatV2.post("/", async (c) => {
           // `secretScrubber` miss away from being the leak the whole feature
           // exists to prevent, and a count answers the operational question.
           secretCount: secretEnv ? Object.keys(secretEnv).length : 0,
-          isScenarioSession,
+          isScenarioSession: turnMode === "recorded",
         },
       );
       sandboxNotices = [...(sandboxNotices ?? []), "secrets_undelivered"];
@@ -2380,7 +2101,7 @@ chatV2.post("/", async (c) => {
     const browserSessionScope =
       body.browserScope === "conversation" &&
       body.chatSessionId &&
-      !isScenarioSession
+      turnMode === "interactive"
         ? {
             kind: "conversation" as const,
             sessionId: body.chatSessionId,
@@ -2456,11 +2177,11 @@ chatV2.post("/", async (c) => {
           ? { onBrowserSecretDelivered: markSecretsDelivered }
           : {}),
         isGuest: Boolean(c.get("guestId")),
-        isScenarioSession,
+        isScenarioSession: turnMode === "recorded",
         // Lets a spend inside a shared scenario bill the scenario OWNER instead
         // of the visitor, who has no wallet to charge. Only web search reads
         // it today; the model turn and voice already send their own.
-        ...(isScenarioSession && scenarioId ? { scenarioId } : {}),
+        ...(turnMode === "recorded" && scenarioId ? { scenarioId } : {}),
         requireToolApproval,
         // Workspace tools take the server-resolved setting instead (MJ-008).
         workspaceToolApproval: builtInToolPolicy.workspaceToolApproval,
@@ -2552,12 +2273,12 @@ chatV2.post("/", async (c) => {
     );
 
     try {
-      const sourceType = isScenarioSession ? "scenario" : "direct";
+      const sourceType = turnMode === "recorded" ? "scenario" : "direct";
       // Mirrors the sourceType branch — scenario surface stays "scenario", the
       // non-scenario case is the inspector playground. The docs agent has its
       // own route (mcpjam-agent.ts) and never lands here.
-      const origin = isScenarioSession ? "scenario" : "playground";
-      const isDirectChat = !isScenarioSession;
+      const origin = turnMode === "recorded" ? "scenario" : "playground";
+      const isDirectChat = turnMode === "interactive";
       // The turn's servers minus the ones a plugin contributed, for the
       // trace's host config (see where it is built below).
       const pluginServerIdSet = new Set(
@@ -2721,7 +2442,7 @@ chatV2.post("/", async (c) => {
           // explicit: a host default (or the slider value a client sends with
           // a host's saved effort) yields to the effort, an explicit pair is
           // refused on the direct rail.
-          ...(!isScenarioSession &&
+          ...(turnMode === "interactive" &&
           bodyEffort.effort !== undefined &&
           bodyTemperature !== undefined
             ? { explicitTemperature: bodyTemperature }
@@ -2833,7 +2554,7 @@ chatV2.post("/", async (c) => {
           projectId: hostedBody.projectId,
           sourceType,
           origin,
-          ...(isScenarioSession && surface ? { surface } : {}),
+          ...(turnMode === "recorded" && surface ? { surface } : {}),
           scenarioId,
           accessVersion,
           // Phase 3: forward the runtime-config scope into the harness path
