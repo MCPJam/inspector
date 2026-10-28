@@ -515,7 +515,7 @@ export function useConformanceRun({
         setOAuth({
           status: "error",
           error:
-            "This server's authorization URL is not an http or https address, so it was not opened. Fix the authorization endpoint in its OAuth metadata, then run again.",
+            "This server's authorization URL is not an http or https address, so it was not opened. Fix the authorization URL in its OAuth metadata, then run again.",
         });
         return;
       }
