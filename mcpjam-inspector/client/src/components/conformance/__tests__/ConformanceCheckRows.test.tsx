@@ -35,18 +35,37 @@ describe("CheckRow", () => {
   });
 });
 
+function step(
+  overrides: Partial<OAuthConformanceStepResult>,
+): OAuthConformanceStepResult {
+  return {
+    step: "token_request",
+    title: "Token request",
+    summary: "Exchange the code for a token.",
+    status: "passed",
+    durationMs: 310,
+    logs: [],
+    httpAttempts: [],
+    ...overrides,
+  };
+}
+
 describe("OAuthStepRow", () => {
+  it("shows how long a step that ran took", () => {
+    render(<OAuthStepRow step={step({})} />);
+    expect(screen.getByText("310ms")).toBeInTheDocument();
+  });
+
   it("leaves the duration off a skipped step", () => {
-    const step = {
-      step: "token_request",
-      title: "Token request",
-      summary: "Exchange the code for a token.",
-      status: "skipped",
-      durationMs: 0,
-      logs: [],
-      httpAttempts: [],
-    } as unknown as OAuthConformanceStepResult;
-    render(<OAuthStepRow step={step} />);
+    render(
+      <OAuthStepRow
+        step={step({
+          status: "skipped",
+          skipReason: "not-applicable",
+          durationMs: 0,
+        })}
+      />,
+    );
     expect(screen.queryByText("0ms")).not.toBeInTheDocument();
   });
 });
