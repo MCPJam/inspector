@@ -1,6 +1,7 @@
 import { readLocalHarnessAuthorization } from "../authorization.js";
 vi.mock("../authorization.js", () => ({ readLocalHarnessAuthorization: vi.fn(async () => ({ autoApproveAcknowledgedAt: "2026-10-04T00:00:00.000Z" })) }));
 import { toAdapterPath } from "../adapter-path.js";
+import { MCPClientManager } from "@mcpjam/sdk";
 import { resetLocalHarnessRegistryForTests } from "../session-registry.js";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -35,7 +36,7 @@ const startLocalModelGateway = vi.fn(async () => ({
   stats: () => ({ requests: 0, rejected: 0, forwarded: 0, upstreamErrors: 0 }),
 }));
 const resolveNodeLauncher = vi.fn(() => ({ command: "node", args: [] }));
-const createSupervisedLocalHarnessProvider = vi.fn(() => ({}) as never);
+const createSupervisedLocalHarnessProvider = vi.fn(() => ({ forbidNewProcesses: vi.fn() }) as never);
 
 let stateRoot = "";
 
@@ -309,6 +310,25 @@ describe("a local turn on the organization's own key", () => {
 });
 
 describe("a local setup that succeeds", () => {
+  it("owns the MCP listener through pause, rebind, and stop-all cleanup", async () => {
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const manager = new MCPClientManager({});
+    const plane = await result.prepared.bindMcpPlane({ manager, serverIds: [], turnId: "first" });
+    const strategy = { ...plane.strategy };
+    expect(result.prepared.park({ generation: "generation", pendingApprovalIds: ["approval"] })).toBe(true);
+    const request = () => fetch(`${strategy.baseUrl}/selected`, {
+      method: "POST", headers: { "x-mcpjam-proxy-token": strategy.token },
+    });
+    expect((await request()).status).toBe(403);
+    const rebound = await result.prepared.bindMcpPlane({ manager, serverIds: [], turnId: "next" });
+    expect(rebound.strategy).toEqual(strategy);
+    expect((await request()).status).toBe(404);
+    await endLocalHarnessSession(turnArgs().sessionId);
+    await expect(request()).rejects.toThrow();
+  });
+
   it("registers the session and hands back a capability, never the lease", async () => {
     const result = await prepareLocalHarnessTurn(turnArgs());
     expect(result.ok).toBe(true);
@@ -621,9 +641,13 @@ describe("local Codex", () => {
   });
 });
 
-describe("a local Codex runtime parked on an approval", () => {
+describe.each(["codex", "claude-code"] as const)("a local %s runtime parked on an approval", (harnessId) => {
+  const runtimeArgs = (overrides: Record<string, unknown> = {}) => ({
+    ...codexArgs(overrides), harnessId,
+    modelId: harnessId === "codex" ? "openai/gpt-5.5" : "claude-haiku",
+  });
   async function parkedSession() {
-    const first = await prepareLocalHarnessTurn(codexArgs());
+    const first = await prepareLocalHarnessTurn(runtimeArgs());
     if (!first.ok) throw new Error(first.message);
     expect(
       first.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] }),
@@ -657,7 +681,7 @@ describe("a local Codex runtime parked on an approval", () => {
       lease: "lease.two.value",
     });
     const adopted = await prepareLocalHarnessTurn(
-      codexArgs({
+      runtimeArgs({
         requireToolApproval: false,
         approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
       }),
@@ -665,6 +689,7 @@ describe("a local Codex runtime parked on an approval", () => {
     if (!adopted.ok) throw new Error(adopted.message);
     // The same live process: same provider, same capability and gateway.
     expect(adopted.prepared.sandbox).toBe(parked.sandbox);
+    expect(adopted.prepared.sandbox.forbidNewProcesses).toHaveBeenCalledOnce();
     expect(adopted.prepared.auth).toEqual(parked.auth);
     expect(startLocalModelGateway).toHaveBeenCalledOnce();
     expect(gatewayRebind).toHaveBeenCalledWith("lease.two.value");
@@ -682,9 +707,9 @@ describe("a local Codex runtime parked on an approval", () => {
     const continuation = {
       approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
     };
-    const first = await prepareLocalHarnessTurn(codexArgs(continuation));
+    const first = await prepareLocalHarnessTurn(runtimeArgs(continuation));
     expect(first.ok).toBe(true);
-    const again = await prepareLocalHarnessTurn(codexArgs(continuation));
+    const again = await prepareLocalHarnessTurn(runtimeArgs(continuation));
     expect(again).toMatchObject({ ok: false, status: "approval-duplicate-approval" });
   });
 
@@ -695,7 +720,7 @@ describe("a local Codex runtime parked on an approval", () => {
       error: "lease refused",
     } as never);
     const adopted = await prepareLocalHarnessTurn(
-      codexArgs({
+      runtimeArgs({
         approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
       }),
     );
@@ -709,7 +734,7 @@ describe("a local Codex runtime parked on an approval", () => {
     await parkedSession();
     supervisorFixture.live = 0;
     const adopted = await prepareLocalHarnessTurn(
-      codexArgs({
+      runtimeArgs({
         approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
       }),
     );
@@ -733,7 +758,7 @@ describe("a local Codex runtime parked on an approval", () => {
       };
     });
     const adopted = await prepareLocalHarnessTurn(
-      codexArgs({
+      runtimeArgs({
         approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
       }),
     );
@@ -748,7 +773,7 @@ describe("a local Codex runtime parked on an approval", () => {
 
   it("is ended — not re-adopted — when a new prompt arrives instead of a decision", async () => {
     await parkedSession();
-    const fresh = await prepareLocalHarnessTurn(codexArgs());
+    const fresh = await prepareLocalHarnessTurn(runtimeArgs());
     // The parked tree was stopped first, then a fresh one prepared.
     expect(supervisorFixture.stopCalls).toBe(1);
     expect(fresh.ok).toBe(true);
@@ -760,7 +785,7 @@ describe("a local Codex runtime parked on an approval", () => {
     await parkedSession();
     await endLocalHarnessSession("s_local_1");
     const adopted = await prepareLocalHarnessTurn(
-      codexArgs({
+      runtimeArgs({
         approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
       }),
     );

@@ -57,7 +57,6 @@ import { logger } from "../logger.js";
 import {
   LOCAL_BROWSER_ENABLED,
   browserSecretPlaceholdersEnabled,
-  hostedBrowserEnabled,
 } from "../../config.js";
 import {
   isHostedBrowserExposable,
@@ -480,6 +479,14 @@ export function resolveHostTools(
 
   for (const id of ids) {
     if (id === WEB_SEARCH_TOOL_NAME) {
+      // The backend refuses guest searches outside a shared scenario, so the tool would only fail.
+      if (ctx.isGuest && !ctx.scenarioId) {
+        logger.debug(
+          "[built-in-tools] web_search not advertised to guest actor outside a scenario; skipping",
+          { projectId: ctx.projectId },
+        );
+        continue;
+      }
       out[WEB_SEARCH_TOOL_NAME] = buildExaWebSearchTool({
         authHeader,
         projectId: ctx.projectId,
@@ -678,22 +685,16 @@ export function resolveHostTools(
         continue;
       }
 
-      // The three HOSTED gates. A local browser is not a hosted resource: it
-      // boots no desktop, reserves nothing, and costs no credits, so gating it
-      // on the hosted rollout's env flag and the backend's desktop-template
-      // readiness would refuse a capability neither of them describes.
-      if (!isLocalBrowser && !hostedBrowserEnabled()) {
-        logger.debug(
-          "[built-in-tools] browser requested while HOSTED_BROWSER_TOOLS_ENABLED is off; skipping",
-          { projectId: ctx.projectId },
-        );
-        ctx.onToolSuppressed?.({ id, reason: "HOSTED_BROWSER_TOOLS_ENABLED is disabled on this server." });
-        continue;
-      }
+      // The HOSTED gates. A local browser is not a hosted resource: it boots no
+      // desktop, reserves nothing, and costs no credits, so gating it on the
+      // backend's desktop-template readiness would refuse a capability that
+      // readiness does not describe. Who may use the hosted one is decided
+      // before this, by the backend's `hosted-browser` gate.
+      //
       // The backend's own gate (catalog entry + desktop template + desktop
-      // credit rate). An explicit `false` is honored even with the env flag
-      // on: the likeliest reason is an unset desktop rate, which would meter
-      // every hosted browser hour at the terminal rate. On a HOSTED replica
+      // credit rate). An explicit `false` is honored: the likeliest reason is
+      // an unset desktop rate, which would meter every hosted browser hour at
+      // the terminal rate. On a HOSTED replica
       // silence is a refusal too — see `isHostedBrowserRefused` — because the
       // gate the inspector route reads treats it the same way, and two callers
       // disagreeing about the same silence is how a browser gets exposed that
@@ -951,5 +952,10 @@ export function resolveHostTools(
     logger.warn("[built-in-tools] unknown builtInToolId; skipping", { id });
   }
 
+  for (const name of Object.keys(out)) {
+    out[name] = Object.assign({}, out[name], {
+      _toolOrigin: "builtin" as const,
+    });
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }

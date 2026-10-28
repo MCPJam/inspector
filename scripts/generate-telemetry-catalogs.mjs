@@ -2,7 +2,8 @@
 /**
  * Telemetry catalogs: the code-owned names (files, routes, error classes, log
  * messages, codes) the strict telemetry builders may forward. Everything here
- * comes from first-party source; runtime text never adds a name.
+ * comes from first-party source or `DEPENDENCY_ERRORS`; runtime text never
+ * adds a name.
  *
  * They are build outputs, not committed files. Every entry point that reads
  * them (SDK build/test/typecheck, Inspector dev, build, test and typecheck,
@@ -52,6 +53,36 @@ export const SKIP_DIRS = new Set([
 const CODE_LISTS = [
   "V1_ERROR_CODES", "AI_EXECUTION_REFUSAL_CODES", "AI_REUSED_REFUSAL_CODES",
   "PLATFORM_V1_ERROR_CODES", "ROUTINE_CODES", "ORG_POLICY_ROUTINE_CODES",
+  "DESKTOP_STARTUP_FAILURE_CODES",
+];
+// The `name` the Inspector's dependencies give their errors. Sentry and the
+// strict log row read the class from `error.name`, so an unlisted one becomes
+// `UnknownError` and every such throw from dependency code shares one group.
+const DEPENDENCY_ERRORS = [
+  // @modelcontextprotocol/sdk
+  "McpError",
+  // ai 7, @ai-sdk/provider 4, @ai-sdk/provider-utils 5: every `AI_*` name they declare
+  "AI_APICallError", "AI_DecisionRefusalError", "AI_DecisionUnsupportedQuestionTypeError",
+  "AI_DownloadError", "AI_EmptyResponseBodyError", "AI_InvalidArgumentError",
+  "AI_InvalidDataContentError", "AI_InvalidMessageRoleError", "AI_InvalidPromptError",
+  "AI_InvalidResponseDataError", "AI_InvalidStreamPartError", "AI_InvalidToolApprovalError",
+  "AI_InvalidToolApprovalSignatureError", "AI_InvalidToolInputError", "AI_JSONParseError",
+  "AI_LoadAPIKeyError", "AI_LoadSettingError", "AI_MessageConversionError",
+  "AI_MissingToolResultsError", "AI_NoContentGeneratedError", "AI_NoImageGeneratedError",
+  "AI_NoObjectGeneratedError", "AI_NoOutputGeneratedError", "AI_NoSpeechGeneratedError",
+  "AI_NoSuchModelError", "AI_NoSuchProviderError", "AI_NoSuchProviderReferenceError",
+  "AI_NoSuchToolError", "AI_NoTranscriptGeneratedError", "AI_NoTranslationGeneratedError",
+  "AI_NoVideoGeneratedError", "AI_RetryError", "AI_SerializationError", "AI_StreamProviderError",
+  "AI_TooManyEmbeddingValuesForCallError", "AI_ToolCallNotFoundForApprovalError",
+  "AI_ToolCallRepairError", "AI_ToolChoiceViolationError", "AI_TypeValidationError",
+  "AI_UIMessageStreamError", "AI_UnsupportedFunctionalityError", "AI_UnsupportedModelVersionError",
+  // zod, convex
+  "ZodError", "ConvexError",
+  // @workos-inc/node
+  "BadRequestException", "GenericServerException", "NotFoundException", "OauthException",
+  "RateLimitExceededException", "UnauthorizedException",
+  // DOMException from `AbortSignal.timeout`
+  "TimeoutError",
 ];
 const LOG_METHODS = ["error", "warn", "info", "debug"];
 export const SOURCE = /\.[cm]?tsx?$/;
@@ -224,11 +255,13 @@ export function buildTelemetryCatalogs({ root = ROOT, cache = createCatalogCache
     catalogs.inspector.routeEntries = mountedRoutes(join(root, "mcpjam-inspector/server/app.ts"), cache);
     catalogs.inspector.routes = catalogs.inspector.routeEntries.map((entry) => entry.path);
     catalogs.inspector.files.push("dist/server/index.js", ".vite/build/main.cjs");
+    catalogs.inspector.errors.push(...DEPENDENCY_ERRORS);
     outputs[OUTPUTS.inspector] = {
       ...catalogs.inspector,
       messages: [...catalogs.inspector.messages, ...events],
       slugs,
-      diagnosticFields,
+      // `event` names the typed log event that captured an error to Sentry.
+      diagnosticFields: { ...diagnosticFields, event: sortUnique(events) },
       events: sortUnique(events),
       fields,
     };

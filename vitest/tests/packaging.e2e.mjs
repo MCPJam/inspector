@@ -194,11 +194,13 @@ export function suiteOf(EvalSuite, EvalTest, cases) {
     path.join(fixtureDir, "identity.mjs"),
     `
 globalThis.fetch = async (url, init) => {
-  if (String(url) !== "https://packaging.invalid/api/v1/projects/project_fixture/eval-ingest/start-run")
+  if (!["start-run", "pay-iteration"].some(suffix => String(url) === "https://packaging.invalid/api/v1/projects/project_fixture/eval-ingest/" + suffix))
     throw new Error("Unexpected fixture request: " + url);
   if (new Headers(init.headers).get("authorization") !== "Bearer sk_packaging_fixture")
     throw new Error("Missing packaging fixture credential");
   const request = JSON.parse(init.body);
+  if (String(url).endsWith("/pay-iteration"))
+    return Response.json({ok:true,...request,paymentId:request.iterationKey});
   return Response.json({ok:true,runStartId:request.runStartId,organizationId:"org_fixture",projectId:"project_fixture"});
 };
 `
@@ -335,7 +337,7 @@ import { StubExecutor } from "./support.mjs";
 const startFetch = globalThis.fetch;
 let reportingRequests = 0;
 globalThis.fetch = async (url, init) => {
-  if (String(url).endsWith("/eval-ingest/start-run")) return startFetch(url, init);
+  if (["/eval-ingest/start-run", "/eval-ingest/pay-iteration"].some(suffix => String(url).endsWith(suffix))) return startFetch(url, init);
   if (!String(url).startsWith("https://packaging.invalid/api/v1/projects/project_fixture/eval-ingest/"))
     throw new Error("Unexpected reporting request: " + url);
   reportingRequests++;

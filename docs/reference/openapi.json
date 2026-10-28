@@ -119,6 +119,92 @@
     }
   ],
   "paths": {
+      "/projects/{projectId}/eval-ingest/pay-iteration": {
+        "post": {
+          "operationId": "payEvalIteration",
+          "tags": [
+            "Eval runs"
+          ],
+          "summary": "Pay for one local eval iteration",
+          "description": "Collect the declared prompt fee and reserve one iteration atomically before execution. Retries with the same identity reuse the receipt; changed requests conflict. Uploads claim the payment without charging again.",
+          "parameters": [
+            {
+              "name": "projectId",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Project id, or default to resolve the authenticated organization's Default project."
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "runStartId",
+                    "iterationKey",
+                    "caseId",
+                    "billableSteps"
+                  ],
+                  "properties": {
+                    "runStartId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "iterationKey": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "caseId": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                    },
+                    "billableSteps": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Iteration payment receipt with paymentId, runStartId, iterationKey and billableSteps."
+            },
+            "400": {
+              "description": "Invalid request."
+            },
+            "401": {
+              "description": "Authentication required."
+            },
+            "403": {
+              "description": "Access or payment refused."
+            },
+            "404": {
+              "description": "Owned run start not found."
+            },
+            "409": {
+              "description": "Conflicting iteration payment."
+            },
+            "413": {
+              "description": "Request exceeds 8 KiB."
+            },
+            "429": {
+              "description": "Organization limit reached."
+            },
+            "503": {
+              "description": "Billing unavailable."
+            }
+          }
+        }
+      },
     "/projects/{projectId}/eval-runs/{runId}/judge/backtest": {
       "post": {
         "operationId": "backtestEvalRunJudge",
@@ -16138,7 +16224,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). Absent when the case sets none — omitted from the response rather than sent as `null`."
           },
           "assertions": {
             "type": "object",
@@ -16294,7 +16380,7 @@
           },
           "matchOptions": {
             "type": ["object", "null"],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "assertions": {
             "type": ["object", "null"],
@@ -16503,7 +16589,7 @@
           },
           "matchOptions": {
             "type": ["object", "null"],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "assertions": {
             "type": ["object", "null"],
@@ -16914,7 +17000,8 @@
                 "description": "Suite-level floor on per-case iterations: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` clears it."
               },
               "matchOptions": {
-                "type": ["object", "null"]
+                "type": ["object", "null"],
+                "description": "Suite default tool-call match options, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. Fields you omit keep their current values; `null` clears them."
               },
               "defaultAssertions": {
                 "type": ["array", "null"],
@@ -17186,7 +17273,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). Absent when the case sets none — omitted from the response rather than sent as `null`."
           },
           "checks": {
             "type": "object",
@@ -17511,7 +17598,7 @@
               "object",
               "null"
             ],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "checks": {
             "type": [
@@ -18132,7 +18219,7 @@
               "object",
               "null"
             ],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "checks": {
             "type": [
@@ -18797,7 +18884,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+            "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
             "additionalProperties": true
           },
           "predicates": {
@@ -19056,7 +19143,7 @@
                 },
                 "matchOptions": {
                   "type": "object",
-                  "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+                  "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
                   "additionalProperties": true
                 },
                 "predicates": {
@@ -19527,7 +19614,8 @@
             "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
           },
           "matchOptions": {
-            "type": ["object", "null"]
+            "type": ["object", "null"],
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). `null` when the suite sets none."
           },
           "checks": {
             "type": "array",
@@ -19694,7 +19782,8 @@
             "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
           },
           "matchOptions": {
-            "type": ["object", "null"]
+            "type": ["object", "null"],
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). `null` when the suite sets none."
           },
           "defaultAssertions": {
             "type": "array",
@@ -24202,7 +24291,8 @@
                 "description": "Suite-level floor on per-case iterations: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` clears it."
               },
               "matchOptions": {
-                "type": ["object", "null"]
+                "type": ["object", "null"],
+                "description": "Suite default tool-call match options, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. Fields you omit keep their current values; `null` clears them."
               },
               "checks": {
                 "type": ["array", "null"],
@@ -27524,6 +27614,9 @@
             "type": "boolean",
             "description": "Whether prerequisite setup may create or modify workspace data before sessions run. Defaults to false."
           },
+          "judge": {
+            "$ref": "#/components/schemas/GoalJudge"
+          },
           "createdAt": {
             "type": "number",
             "description": "Epoch milliseconds."
@@ -27531,6 +27624,84 @@
           "updatedAt": {
             "type": "number",
             "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "GoalJudge": {
+        "type": "object",
+        "description": "The goal-completion judge that grades each session against the goal, RESOLVED over the managed defaults the way `EvalSuiteDetail.settings.judge` is — so this is what a run would actually grade with, and what to echo back on a write.",
+        "required": ["enabled", "model", "autoRun", "threshold"],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The judge is available on the goal. Does NOT by itself grade anything."
+          },
+          "model": {
+            "type": "string",
+            "description": "COMPUTED from `modelSelection` when the goal stores one, else the stored model id, else the managed default."
+          },
+          "modelSelection": {
+            "$ref": "#/components/schemas/RequestedModelSelection"
+          },
+          "modelSelectionOrigin": {
+            "type": "string",
+            "enum": ["backfill"],
+            "description": "Present when a conversion, not a person, chose `modelSelection`."
+          },
+          "autoRun": {
+            "type": "boolean",
+            "description": "The flag that makes grading HAPPEN: the judge fires as each run completes."
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Advisory pass threshold (`passed = score >= threshold`)."
+          }
+        }
+      },
+      "GoalJudgeWrite": {
+        "type": "object",
+        "additionalProperties": false,
+        "anyOf": [
+          { "required": ["enabled"] },
+          { "required": ["autoRun"] },
+          { "required": ["model"] },
+          { "required": ["modelSelection"] },
+          { "required": ["threshold"] }
+        ],
+        "description": "The goal's judge on a write: the same keys `GoalJudge` returns, so a read can be sent back as is. Each field is optional, but at least one besides `modelSelectionOrigin` is required. A create that omits the judge gets the managed defaults, and an update changes only the fields it names, merged onto the stored judge.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Make the judge available on this goal. On its own this grades nothing — `autoRun` is what makes grading happen."
+          },
+          "autoRun": {
+            "type": "boolean",
+            "description": "Grade every session automatically as each run completes. SPENDS on each run."
+          },
+          "model": {
+            "type": "string",
+            "description": "Judge model id. `mcpjam/<vendor>/<model>` names a hosted model and is stored as its catalog id."
+          },
+          "modelSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RequestedModelSelection"
+              }
+            ],
+            "description": "The judge's saved model choice (source, connection, effort). Must name `model` when both are sent — a mismatch is a `400` — and sent alone it names the model. A STORED legacy selection is accepted so a read can be sent back. A new `model` without a selection drops a stored selection unless it names the same model."
+          },
+          "modelSelectionOrigin": {
+            "type": "string",
+            "enum": ["backfill"],
+            "description": "Read-only. Accepted so a `GoalJudge` read can be sent back, and changes nothing: the marker stays only while the stored selection is sent back unchanged."
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Advisory pass threshold."
           }
         }
       },
@@ -27599,6 +27770,14 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 200
+          },
+          "judge": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GoalJudgeWrite"
+              }
+            ],
+            "description": "The goal-completion judge. Omit it for the managed defaults: enabled, automatic, the default judge model."
           }
         }
       },
@@ -27650,6 +27829,17 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 200
+          },
+          "judge": {
+            "description": "Only the judge fields named change, merged onto the stored judge; `null` clears the judge back to the managed defaults.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GoalJudgeWrite"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -31415,7 +31605,7 @@
           },
           "modelId": {
             "type": "string",
-            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required on a first turn. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
+            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Optional on a first turn: defaults to the environment model, then the client model, and pins the resolved model for continuations. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
           },
           "hostId": {
             "type": "string",
@@ -31431,7 +31621,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Target these project servers. Mutually exclusive with `environmentId`. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
+            "description": "Target these project servers; [] explicitly selects no MCP servers and remains empty on continuation. Mutually exclusive with `environmentId`, including when empty. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
           },
           "systemPrompt": {
             "type": "string",
@@ -31619,6 +31809,40 @@
           "hostId": {
             "type": "string",
             "description": "The saved host this turn executed as — the pointer the caller sent, or the host the targeted environment pins. Absent when the turn named no host."
+          },
+          "skippedServers": {
+            "type": "array",
+            "description": "Servers omitted from this turn because they could not connect. The reply still runs when every selected server is skipped.",
+            "items": {
+              "type": "object",
+              "required": [
+                "serverId",
+                "serverName",
+                "reason",
+                "message"
+              ],
+              "properties": {
+                "serverId": {
+                  "type": "string"
+                },
+                "serverName": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "hosted_requires_https",
+                    "hosted_stdio_unsupported",
+                    "needs_sign_in",
+                    "unreachable",
+                    "other"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "advertisedToolCount": {
             "type": "integer",
@@ -31914,6 +32138,9 @@
           "spanCount"
         ],
         "properties": {
+          "setupHashAtTurn": { "type": "string", "description": "Hash of a complete effective setup manifest. Absent when provenance is incomplete." },
+          "setupStatus": { "type": "string", "enum": ["complete", "incomplete"] },
+          "setupIncompleteReasons": { "type": "array", "items": { "type": "string" } },
           "turnId": {
             "type": "string"
           },

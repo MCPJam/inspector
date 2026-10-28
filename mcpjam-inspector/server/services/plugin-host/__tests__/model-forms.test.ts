@@ -21,13 +21,14 @@ import {
   createModelFormExecutor,
 } from "../model-forms.js";
 import { pluginInstances } from "../instances.js";
+import { pluginHostBindingDigest } from "../bindings.js";
 const identity = {
   actorId: "actor",
   projectId: "project",
   workspaceId: "workspace",
   subject: "subject",
 };
-function fixture() {
+function fixture(hostRevision = "host-revision") {
   const abort = new AbortController();
   const admission = { ...identity, revalidate: vi.fn(async () => {}) };
   const execute = createModelFormExecutor({
@@ -36,7 +37,7 @@ function fixture() {
     identity,
     bearer: "fixture",
     hostId: "host",
-    hostRevision: "host-revision",
+    hostRevision,
     serverIds: ["server"],
     eligibleServerIds: ["server"],
     dispatch: createModelFormDispatch(["server"]),
@@ -136,6 +137,32 @@ it("refuses a host revision that changed after the normal model approval gate", 
   const f = fixture();
   await expect(f.execute(f.input, vi.fn())).rejects.toThrow();
   expect(state.execute).not.toHaveBeenCalled();
+});
+
+it("runs a tool when chat and discovery read the same host differently", async () => {
+  // Chat binds the `/web/host/runtime-config` read, which carries the host's
+  // server selection; discovery digests the execution-context read, which does not.
+  const executionContext = {
+    hostId: "host",
+    hostConfigId: "config",
+    modelId: "openai/gpt-5.4-mini",
+    harness: "codex",
+    hostStyle: "chatgpt",
+    executionScope: { kind: "project", projectId: "project" },
+  };
+  state.resolve.mockResolvedValue({
+    ...(await state.resolve()),
+    hostRevision: pluginHostBindingDigest(executionContext),
+  });
+  const f = fixture(
+    pluginHostBindingDigest({
+      ...executionContext,
+      selectedServerIds: ["server", "other"],
+    }),
+  );
+  const original = vi.fn(async () => ({ content: [] }));
+  await expect(f.execute(f.input, original)).resolves.toEqual({ content: [] });
+  expect(original).toHaveBeenCalledTimes(1);
 });
 
 describe("model form request dispatch", () => {
