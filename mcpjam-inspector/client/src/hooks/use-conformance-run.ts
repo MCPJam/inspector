@@ -48,6 +48,7 @@ import {
   submitOAuthConformanceCode,
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
+import { resolveServerOAuthProtocolSelection } from "@/state/oauth-orchestrator";
 
 export type SuiteStatus =
   | "idle"
@@ -594,14 +595,18 @@ export function useConformanceRun({
         // server can surface the code back to the SDK runner.
         const callbackOrigin = window.location.origin;
 
-        // A run-scoped version pin beats the stored OAuth-tab profile, and
-        // must be sent even when the profile is otherwise empty (the route
-        // falls back to its own default version when no profile arrives).
-        const pinnedVersion = versionPin === "auto" ? undefined : versionPin;
+        // A run-scoped version pin wins. On Auto, pick the version the way a
+        // reconnect does (the server's OAuth setting, else the version it
+        // negotiated at connect), not the profile's 2025-11-25 default — a
+        // 2026-only server rejects that. Always sent: the route falls back to
+        // its own default version when none arrives.
+        const protocolVersion =
+          versionPin === "auto"
+            ? resolveServerOAuthProtocolSelection(currentServer).protocolVersion
+            : versionPin;
         const baseProfile = profile.serverUrl
           ? {
               serverUrl: profile.serverUrl,
-              protocolVersion: profile.protocolVersion,
               registrationStrategy: profile.registrationStrategy,
               clientId: profile.clientId || undefined,
               clientSecret: profile.clientSecret || undefined,
@@ -614,9 +619,7 @@ export function useConformanceRun({
 
         const startResult = await startOAuthConformance({
           serverNameOrId: serverName,
-          oauthProfile: pinnedVersion
-            ? { ...baseProfile, protocolVersion: pinnedVersion }
-            : baseProfile,
+          oauthProfile: { ...baseProfile, protocolVersion },
           callbackOrigin,
         });
 
