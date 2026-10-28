@@ -59,7 +59,6 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-10-28T00:00:00Z"));
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
   vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
-  vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "1");
   for (const fn of Object.values(logger)) fn.mockReset();
 });
 
@@ -164,6 +163,25 @@ describe("hosted-browser verdict freshness", () => {
       "route-missing",
     );
     expect(verdictRefreshCalls(fetchMock)).toBe(1);
+  });
+
+  it("still expires the answer when a route that answered starts returning 404", async () => {
+    // A rollback or a misrouted deploy, not an older backend.
+    const fetchMock = stubBackend(BOOT, [
+      () => respond({ ok: true, hostedBrowser: BOOT }),
+      () => respond({}, 404),
+      () => respond({}, 404),
+    ]);
+    const mod = await load(true);
+
+    await expect(mod.refreshHostedBrowserVerdict()).resolves.toBe("answered");
+    await expect(mod.refreshHostedBrowserVerdict()).resolves.toBe("failed");
+    vi.advanceTimersByTime(mod.HOSTED_BROWSER_VERDICT_MAX_AGE_MS + 1);
+
+    expect(mod.isHostedBrowserRefused()).toBe(true);
+    // And it keeps asking.
+    await mod.refreshHostedBrowserVerdict();
+    expect(verdictRefreshCalls(fetchMock)).toBe(3);
   });
 
   it("never goes stale on a local inspector", async () => {

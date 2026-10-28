@@ -58,6 +58,7 @@ import {
   toSecretEnv,
 } from "../../utils/harness/runtime-secrets.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
+import { guestBrowserProject } from "../../utils/computers/browser-rollout.js";
 import { logger } from "../../utils/logger.js";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
@@ -547,7 +548,14 @@ export async function prepareManagedTools(args: {
     // fulfilment paths, is how a model calls one of each.
     hasV1PageTools: validatedPageTools.length > 0,
     engine: localMachine?.browserEngine === "local" ? "local" : "hosted",
-    projectId: hostedBody.projectId,
+    // The browser tool's own session key: a guest's local Browser is scoped
+    // to that guest, never the project's member session on this machine.
+    projectId: localMachine?.localBrowserGuestId
+      ? guestBrowserProject(
+          hostedBody.projectId,
+          localMachine.localBrowserGuestId,
+        )
+      : hostedBody.projectId,
     bearer: bearerToken,
     ...(sandboxBinding?.sandboxRowId
       ? { sandboxRowId: sandboxBinding.sandboxRowId }

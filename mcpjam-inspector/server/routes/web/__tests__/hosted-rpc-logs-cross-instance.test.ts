@@ -44,6 +44,35 @@ function entry(
 }
 
 describe("startCrossInstanceRpcLogPoll", () => {
+  it("isolates native scopes, retains cursor identity and deduplicates remote frames", async () => {
+    const current = { ...entry("current", "srv-1", 10), scopeId: "current-turn" };
+    readMock.mockResolvedValue({
+      entries: [current, { ...entry("other", "srv-1", 10), scopeId: "other-account" }, entry("legacy", "srv-1", 10)],
+      cursors: [{ serverId: "srv-1", scopeId: "current-turn", sinceMs: 10 }],
+    });
+    const collector = createHostedRpcLogCollector({});
+    const stop = startCrossInstanceRpcLogPoll(["srv-1"], collector, { "srv-1": "current-turn" });
+    await vi.advanceTimersByTimeAsync(2000);
+    stop();
+    expect(collector.getLogs().map((log) => log.message)).toEqual([{ id: "current" }]);
+    expect(readMock).toHaveBeenLastCalledWith({
+      servers: [{ serverId: "srv-1", scopeId: "current-turn", sinceMs: 10 }],
+    });
+  });
+
+  it("never downgrades a scoped reader when a stale sink omits scope identifiers", async () => {
+    readMock.mockResolvedValue({
+      entries: [entry("unscoped", "srv-1", 10)],
+      cursors: [{ serverId: "srv-1", sinceMs: 10 }],
+    });
+    const collector = createHostedRpcLogCollector({});
+    const stop = startCrossInstanceRpcLogPoll(["srv-1"], collector, { "srv-1": "current-turn" });
+    await vi.advanceTimersByTimeAsync(2000);
+    stop();
+    expect(collector.getLogs()).toEqual([]);
+    expect(readMock.mock.calls[1][0]).toEqual(readMock.mock.calls[0][0]);
+  });
+
   it("delivers frames another instance produced into the collector", async () => {
     readMock.mockResolvedValueOnce({
       entries: [
