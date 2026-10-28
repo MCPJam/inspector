@@ -60,8 +60,8 @@ async function refreshCatalog(): Promise<CatalogResult> {
         // Our own backend answering badly is unambiguously ours.
         source: "mcp.models.backend",
         hop: "mcpjam_internal",
-        // `httpStatus`, not `status`: the strict Sentry boundary keeps only
-        // `httpStatus` and drops other numeric extras.
+        // `httpStatus`, not `status`: the strict Sentry boundary drops numeric
+        // extras that are not on its allowlist.
         context: { httpStatus: response.status },
       });
       return {
