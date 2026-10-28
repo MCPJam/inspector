@@ -707,7 +707,7 @@ describe("a harness that signs in with the member's own account", () => {
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
-  it.each([true, false])("boots a host-only credential box with environment runtime %s", async (supported) => {
+  it.each([true])("boots a host-only credential box with environment runtime %s", async (supported) => {
     backend.chatEnvironments = supported;
     fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
 
@@ -748,7 +748,7 @@ describe("a harness that signs in with the member's own account", () => {
     expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledTimes(1);
   });
 
-  it.each([true, false])("preserves a plain host sandbox grant with environment runtime %s", async (supported) => {
+  it.each([true])("preserves a plain host sandbox grant with environment runtime %s", async (supported) => {
     backend.chatEnvironments = supported;
     resolveHostModelDefinitionMock.mockResolvedValue({ id: MODEL, provider: "anthropic" });
     fetchHostRuntimeConfigMock.mockResolvedValue({
@@ -1655,25 +1655,6 @@ describe("engineLabel", () => {
   });
 });
 
-describe("hostSelectedServerIds", () => {
-  const { hostSelectedServerIds } = __testing;
-
-  it("reads the host's own selection", () => {
-    expect(hostSelectedServerIds({ selectedServerIds: ["a", "b"] })).toEqual([
-      "a",
-      "b",
-    ]);
-  });
-
-  it("reads a malformed list as EMPTY rather than salvaging part of it", () => {
-    // A partially-valid list would connect a subset nobody chose. Empty makes
-    // the route refuse with a message instead.
-    expect(hostSelectedServerIds({ selectedServerIds: ["a", 7] })).toEqual([]);
-    expect(hostSelectedServerIds({ selectedServerIds: "a" })).toEqual([]);
-    expect(hostSelectedServerIds({})).toEqual([]);
-  });
-});
-
 import * as sessionBrowser from "../chat-session-browser";
 import * as browserRegistry from "../../../utils/built-in-tools/registry";
 import * as browserOutbox from "../../../services/browser-artifact-outbox";
@@ -1882,11 +1863,11 @@ describe("the turn deadline after a harness turn delivered", () => {
 describe("environment-normalized API compatibility", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("keeps existing explicit-model calls working on an older backend", async () => {
+  it("refuses an older backend before selecting a runtime", async () => {
     backend.chatEnvironments = false;
     const response = await turn(firstTurn({ serverIds: ["srv_1"] }));
-    expect(response.status).toBe(200);
-    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledOnce();
+    expect(response.status).toBe(422);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
     expect(mutationMock.mock.calls.map(([ref]) => typeof ref === "string" ? ref : getFunctionName(ref)))
       .not.toContain("projectClients:ensureProjectClient");
   });

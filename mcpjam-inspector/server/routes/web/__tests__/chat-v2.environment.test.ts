@@ -1,6 +1,7 @@
 import { resolveExecutionContext } from "../../../utils/host-execution-context.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { getFunctionName } from "convex/server";
 
 // Covers the environment-target half of web/chat-v2 (Project Environments
 // Phase 1): ingress normalization of the execution target, and the rule that
@@ -584,7 +585,8 @@ describe("web chat-v2 — environment execution target", () => {
       )?.builtInToolIds;
 
     it("bounds an ad-hoc turn by the project default and the caller's role", async () => {
-      convexQueryMock.mockImplementation(async (ref: string) => {
+      convexQueryMock.mockImplementation(async (reference: Parameters<typeof getFunctionName>[0]) => {
+        const ref = getFunctionName(reference);
         if (ref === "hostConfigsV2:getProjectDefault") {
           return {
             builtInToolIds: [
@@ -619,10 +621,8 @@ describe("web chat-v2 — environment execution target", () => {
       // Unknown: dropped. Not in the project default: dropped. A write for
       // a role that cannot edit: dropped.
       expect(requestedIds()).toEqual(["web_search", "list_project_servers"]);
-      expect(convexQueryMock).toHaveBeenCalledWith(
-        "hostConfigsV2:getProjectDefault",
-        { projectId: "project-1" },
-      );
+      expect(convexQueryMock.mock.calls.map(([ref, args]) => [getFunctionName(ref), args]))
+        .toContainEqual(["hostConfigsV2:getProjectDefault", { projectId: "project-1" }]);
       expect(convexQueryMock).toHaveBeenCalledWith(
         "projects:getProjectCapabilities",
         { projectId: "project-1" },

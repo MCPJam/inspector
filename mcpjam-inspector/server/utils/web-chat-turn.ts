@@ -386,6 +386,8 @@ export interface WebChatTurnPersistContext {
   turnProvenance?: TurnSkillProvenance;
   setupEnvironment?: ResolvedEnvironmentRuntime;
   setupSkillProvenanceIncomplete?: boolean;
+  /** Connection overrides not represented by the saved client config hash. */
+  setupConnectionPolicyIncomplete?: boolean;
   /**
    * The page tools this turn advertised, for the turn trace.
    *

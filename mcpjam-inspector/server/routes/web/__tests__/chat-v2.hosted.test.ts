@@ -82,6 +82,29 @@ const resolvedImagePolicyMatcher = (image: boolean) =>
     }),
   });
 
+vi.mock("convex/browser", async () => {
+  const { getFunctionName } = await import("convex/server");
+  return { ConvexHttpClient: class {
+    setAuth() {}
+    async mutation() {
+      return { hostId: "chat-host", environment: { environmentId: "chat-environment" } };
+    }
+    async query(ref: Parameters<typeof getFunctionName>[0], args: { environmentId?: string; serverOverrideIds?: string[] }) {
+      const name = getFunctionName(ref);
+      if (name === "hostConfigsV2:getProjectDefault") return null;
+      if (name === "projects:getProjectCapabilities") return { projectRole: "admin" };
+      const runtime = await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
+      return {
+        specVersion: 1, environmentOrigin: "adhoc",
+        environmentRef: { environmentId: args.environmentId ?? "chat-environment", name: "Chat", revision: 1 },
+        host: { hostId: "chat-host", runtimeConfig: runtime?.config ?? {} },
+        servers: { effectiveServerIds: args.serverOverrideIds ?? [] },
+        skills: [], pluginVersions: [], selectedSecretIds: [], serverConfigHashes: {},
+      };
+    }
+  }};
+});
+
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
@@ -256,6 +279,7 @@ describe("web routes — chat-v2 hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+    vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
 
     checkHarnessRuntimeAvailableMock.mockReturnValue({ ok: true });
     prepareChatV2Mock.mockResolvedValue({
@@ -299,7 +323,7 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     global.fetch = vi.fn(async (input, init) => {
       if (String(input).endsWith("/web/authorize-project")) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), { status: 200 });
       }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
@@ -736,6 +760,23 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
+  it("does not claim complete provenance for ad-hoc connection overrides", async () => {
+    const setup = await import("../../../services/chat-turn/setup-manifest.js");
+    const capture = vi.spyOn(setup, "capturePreparedWebSetup");
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", selectedServerIds: ["server-1"],
+      chatSessionId: "chat-policy", messages: [{ role: "user", content: "hello" }],
+      model: { id: "openai/gpt-5-mini", provider: "openai" },
+      mirrorToolParamHeaders: false,
+    }, token);
+    expect(response.status).toBe(200);
+    expect(capture.mock.lastCall?.[0].persist.setupConnectionPolicyIncomplete).toBe(true);
+    capture.mockRestore();
+    expect(persistChatSessionToConvexMock.mock.lastCall?.[0].turnTrace?.setupAtTurn)
+      .toMatchObject({ status: "incomplete" });
+  });
+
   it("FAILS CLOSED when the scenario runtime-config fetch fails — never runs the engine", async () => {
     const { app, token } = createWebTestApp();
     fetchScenarioRuntimeConfigMock.mockResolvedValue({
@@ -1096,7 +1137,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         sourceType: "direct",
         directVisibility: "project",
         resumeConfig: expect.objectContaining({
-          selectedServers: ["Asana"],
+          selectedServers: ["server-1"],
           executionTarget: { kind: "adhoc" },
         }),
         hostConfig: expect.objectContaining({
@@ -1373,7 +1414,7 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     global.fetch = vi.fn(async (input, init) => {
       if (String(input).endsWith("/web/authorize-project")) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), { status: 200 });
       }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
@@ -1572,11 +1613,13 @@ describe("web routes — chat-v2 hosted mode", () => {
       // Losing the skills must not lose the turn.
       expect(response.status).toBe(200);
 
-      // No source at all is the LIVE shape: the orchestrator still composes the
-      // connected servers' skills, which never failed. Collapsing to
-      // `{ kind: "none" }` here would take those down with the project's.
+      // The shared setup retains the connected server set even if project
+      // skills are unavailable.
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource).toBeUndefined();
+      expect(args.skillsSource).toMatchObject({
+        kind: "resolved",
+        capabilities: { standaloneSkills: [], effectiveServerIds: ["server-1"] },
+      });
     });
   });
 
