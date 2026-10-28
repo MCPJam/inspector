@@ -3,6 +3,8 @@
  * work this process held when the drain began and how much was still running
  * when it ended. A non-zero remainder is work still running as the teardown
  * starts, which is what deploy-loss measurement counts. Counts only, never ids.
+ * The telemetry catalog reads payloads in this folder as it reads
+ * `log-events.ts`, so these fields reach the log row.
  */
 export type ShutdownDrainEvent = {
   drainMs: number;
