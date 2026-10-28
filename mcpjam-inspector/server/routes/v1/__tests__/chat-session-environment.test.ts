@@ -14,7 +14,6 @@ vi.mock("../../../services/environments/plugin-attribution.js", () => ({
 describe("API environment negotiation", () => {
   const client = new ConvexHttpClient("https://test.convex.cloud");
   const query = vi.spyOn(client, "query");
-  const legacy = vi.fn(async () => ({ serverIds: ["legacy-server"] }));
   beforeEach(() => {
     vi.clearAllMocks();
     query.mockResolvedValue({ chatEnvironmentVersion: 1 });
@@ -37,14 +36,12 @@ describe("API environment negotiation", () => {
       "project",
       input,
       { authHeader: "Bearer token" },
-      legacy,
     );
-  it("preserves the existing adapter on an older backend", async () => {
+  it("requires shared setup support on every API turn", async () => {
     query.mockResolvedValue({});
-    expect(await resolve({ serverIds: ["selected"] })).toEqual({
-      serverIds: ["legacy-server"],
+    await expect(resolve({ serverIds: ["selected"] })).rejects.toMatchObject({
+      status: 422, code: "FEATURE_NOT_SUPPORTED",
     });
-    expect(legacy).toHaveBeenCalledOnce();
     expect(resolveChatTurn).not.toHaveBeenCalled();
   });
   it.each([undefined, "host"])(
@@ -57,11 +54,9 @@ describe("API environment negotiation", () => {
           "project",
           { serverIds: [], ...(hostId ? { hostId } : {}) },
           { authHeader: "Bearer token" },
-          legacy,
-        ),
+            ),
       ).rejects.toMatchObject({ status: 422, code: "FEATURE_NOT_SUPPORTED" });
-      expect(legacy).not.toHaveBeenCalled();
-      expect(resolveChatTurn).not.toHaveBeenCalled();
+        expect(resolveChatTurn).not.toHaveBeenCalled();
     },
   );
   it("does not downgrade a denied project or a failed capability query", async () => {
@@ -69,7 +64,6 @@ describe("API environment negotiation", () => {
     await expect(resolve()).rejects.toMatchObject({ status: 404 });
     query.mockRejectedValueOnce(new Error("backend unavailable"));
     await expect(resolve()).rejects.toThrow("backend unavailable");
-    expect(legacy).not.toHaveBeenCalled();
   });
   it("keeps bare server lists on the emulated rail while retaining setup evidence", async () => {
     const target = await resolve();
@@ -129,8 +123,7 @@ describe("API environment negotiation", () => {
         "project",
         { hostId: "mcpjam" },
         { authHeader: "Bearer token" },
-        legacy,
-      ),
+        ),
     ).rejects.toMatchObject({
       status: 422,
       message: "That client selects no connectable MCP servers.",

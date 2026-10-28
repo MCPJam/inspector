@@ -1,32 +1,19 @@
-import { resolvePlaygroundCredentialEnvironment } from "../../utils/harness/playground-box.js";
-
-type Result =
-  | { ok: true; environmentId?: string }
-  | Extract<
-      Awaited<ReturnType<typeof resolvePlaygroundCredentialEnvironment>>,
-      { ok: false }
-    >;
-
 /** A composed trace identity must not replace an existing conversation's sandbox grant. */
-export async function resolveApiHarnessEnvironment(args: {
-  projectId: string;
-  bearer: string;
-  harnessId: string;
-  hostId?: string;
+export function resolveApiHarnessEnvironment(args: {
   pinnedEnvironmentId?: string;
   resolvedEnvironmentId?: string;
   credential: boolean;
-}): Promise<Result> {
+}):
+  | { ok: true; environmentId?: string }
+  | { ok: false; status: 409; message: string } {
   const environmentId =
     args.pinnedEnvironmentId ??
     (args.credential ? args.resolvedEnvironmentId : undefined);
-  if (environmentId || !args.credential || !args.hostId)
-    return { ok: true, environmentId };
-  // Older backends leave credential composition to this adapter.
-  return resolvePlaygroundCredentialEnvironment({
-    projectId: args.projectId,
-    hostId: args.hostId,
-    bearer: args.bearer,
-    harnessId: args.harnessId,
-  });
+  if (args.credential && !environmentId)
+    return {
+      ok: false,
+      status: 409,
+      message: "This client's credential setup is unavailable.",
+    };
+  return { ok: true, environmentId };
 }

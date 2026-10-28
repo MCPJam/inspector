@@ -30,6 +30,29 @@ const {
   };
 });
 
+vi.mock("convex/browser", async () => {
+  const { getFunctionName } = await import("convex/server");
+  return { ConvexHttpClient: class {
+    setAuth() {}
+    async mutation() {
+      return { hostId: "chat-host", environment: { environmentId: "chat-environment" } };
+    }
+    async query(ref: Parameters<typeof getFunctionName>[0], args: { serverOverrideIds?: string[] }) {
+      const name = getFunctionName(ref);
+      if (name === "hostConfigsV2:getProjectDefault") return null;
+      if (name === "projects:getProjectCapabilities") return { projectRole: "admin" };
+      const runtime = await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
+      return {
+        specVersion: 1, environmentOrigin: "adhoc",
+        environmentRef: { environmentId: "chat-environment", name: "Chat", revision: 1 },
+        host: { hostId: "chat-host", runtimeConfig: runtime?.config ?? {} },
+        servers: { effectiveServerIds: args.serverOverrideIds ?? [] },
+        skills: [], pluginVersions: [], selectedSecretIds: [], serverConfigHashes: {},
+      };
+    }
+  }};
+});
+
 vi.mock("../../../utils/pinned-fetch.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../../utils/pinned-fetch.js")>();
@@ -188,6 +211,7 @@ const body = {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+    vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
   fetchHostRuntimeConfigMock.mockResolvedValue({
     ok: true,
     config: { selectedServerIds: ["server-1"] },
@@ -210,7 +234,7 @@ beforeEach(() => {
   global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/web/authorize-project")) {
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), { status: 200 });
     }
     if (url.endsWith("/web/authorize-batch")) {
       const { serverIds = [] } = JSON.parse(String(init?.body ?? "{}"));

@@ -1,15 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveApiHarnessEnvironment } from "../chat-session-harness-environment.js";
-import { resolvePlaygroundCredentialEnvironment } from "../../../utils/harness/playground-box.js";
-
-vi.mock("../../../utils/harness/playground-box.js", () => ({
-  resolvePlaygroundCredentialEnvironment: vi.fn(),
-}));
 const base = {
-  projectId: "project",
-  bearer: "Bearer token",
-  hostId: "host",
-  harnessId: "claude-code",
   credential: false,
 };
 beforeEach(() => vi.clearAllMocks());
@@ -21,7 +12,6 @@ describe("API harness grant identity", () => {
         resolvedEnvironmentId: "composed",
       }),
     ).toEqual({ ok: true, environmentId: undefined });
-    expect(resolvePlaygroundCredentialEnvironment).not.toHaveBeenCalled();
   });
   it("retains an explicitly pinned environment", async () => {
     expect(
@@ -40,25 +30,11 @@ describe("API harness grant identity", () => {
         resolvedEnvironmentId: "credential",
       }),
     ).toEqual({ ok: true, environmentId: "credential" });
-    expect(resolvePlaygroundCredentialEnvironment).not.toHaveBeenCalled();
   });
-  it("preserves credential composition on an older backend", async () => {
-    vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValue({
-      ok: true,
-      environmentId: "legacy-credential",
-    });
-    expect(
-      await resolveApiHarnessEnvironment({
-        ...base,
-        credential: true,
-        harnessId: "cursor",
-      }),
-    ).toEqual({ ok: true, environmentId: "legacy-credential" });
-    expect(resolvePlaygroundCredentialEnvironment).toHaveBeenCalledWith({
-      projectId: "project",
-      hostId: "host",
-      bearer: "Bearer token",
-      harnessId: "cursor",
+  it("refuses a credential turn without a resolved grant before provisioning", () => {
+    expect(resolveApiHarnessEnvironment({ credential: true })).toMatchObject({
+      ok: false,
+      status: 409,
     });
   });
 });

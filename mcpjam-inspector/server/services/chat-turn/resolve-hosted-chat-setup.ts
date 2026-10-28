@@ -6,7 +6,8 @@ import {
   readScenarioEnvironment,
   type ScenarioEnvironmentRuntime,
 } from "../../utils/scenario-runtime-config.js";
-import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import { makeFunctionReference } from "convex/server";
+import type { ProjectDefaultToolConfig } from "../../utils/built-in-tools/built-in-tool-policy.js";
 import { canProvisionHarnessBoxes } from "../../utils/harness/harness-box.js";
 import {
   fetchPluginRuntimeAttribution,
@@ -134,10 +135,19 @@ export async function resolveHostedChatSetup(args: {
         }
       }
     }
-  } else if (
-    target.kind !== "scenario" &&
-    (target.kind === "environment" || access.chatEnvironments)
-  ) {
+  } else {
+    if (!access.chatEnvironments)
+      throw new WebRouteError(
+        422,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        "Chat requires a backend with saved setup support. Upgrade the backend before sending messages.",
+      );
+    if (target.kind === "scenario")
+      throw new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Scenario access is required.",
+      );
     const client = await args.getClient();
     const turn = await resolveChatTurn({
       target,
@@ -183,29 +193,6 @@ export async function resolveHostedChatSetup(args: {
           droppedSkillCount: narrowed.droppedSkillIds.length,
         });
     }
-  } else if (target.kind === "host") {
-    // Compatibility adapter for backends that have not advertised composition.
-    const runtime = await fetchHostRuntimeConfig({
-      hostId: target.hostId,
-      bearer: args.bearer,
-      signal: args.signal,
-    });
-    if (!runtime.ok) {
-      logger.warn(
-        "[chat-v2] host runtime-config fetch failed; failing closed",
-        {
-          hostId: target.hostId,
-          status: runtime.status,
-          error: runtime.error,
-        },
-      );
-      throw new WebRouteError(
-        runtime.status >= 500 ? 502 : runtime.status,
-        ErrorCode.INTERNAL_ERROR,
-        `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
-      );
-    }
-    hostRuntimeConfig = { ...runtime.config };
   }
   const environment = environmentSpec ?? scenarioEnvironment;
   const effectiveCapabilities = environment
@@ -219,16 +206,59 @@ export async function resolveHostedChatSetup(args: {
         "skillId" in p ? [p.skillId] : [],
       ),
     });
+  // Plain chat uses the project's live skill pool and default tool bounds.
+  // An explicit environment retains its own selections, even when it is ad hoc.
+  const usesLiveSkills = target.kind !== "environment";
+  let toolConfiguration: ProjectDefaultToolConfig | null = null;
+  let toolConfigurationUnavailable = false;
+  if (target.kind === "adhoc" && access.kind === "project" && !access.guest) {
+    try {
+      const projectDefault = await (
+        await args.getClient()
+      ).query(
+        makeFunctionReference<
+          "query",
+          { projectId: string },
+          ProjectDefaultToolConfig | null
+        >("hostConfigsV2:getProjectDefault"),
+        { projectId: access.projectId },
+      );
+      toolConfiguration = projectDefault
+        ? {
+            ...projectDefault,
+            builtInToolIds: projectDefault.builtInToolIds ?? [],
+          }
+        : null;
+    } catch (error) {
+      // An unreadable default must never establish access to workspace tools.
+      toolConfigurationUnavailable = true;
+      logger.warn("[chat-v2] project tool configuration unavailable", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  } else if (target.kind === "host" || target.kind === "environment") {
+    toolConfiguration = {
+      builtInToolIds: hostRuntimeConfig?.builtInToolIds ?? [],
+      requireToolApproval: hostRuntimeConfig?.requireToolApproval,
+    };
+  } else if (access.kind === "scenario") {
+    toolConfiguration = {
+      requireToolApproval: hostRuntimeConfig?.requireToolApproval,
+    };
+  }
   return {
     mode:
       access.kind === "scenario"
         ? ("recorded" as const)
         : ("interactive" as const),
-    origin: environmentSpec
-      ? "environment"
-      : scenarioEnvironment
-        ? "scenario-environment"
-        : target.kind,
+    usesLiveSkills,
+    authoritativeConnectionPolicy: target.kind !== "adhoc",
+    pinsEnvironment: target.kind === "environment",
+    authoritativeCapabilities:
+      target.kind === "environment" || access.kind === "scenario",
+    toolConfiguration,
+    toolConfigurationUnavailable,
+    workspaceToolsBarred: access.kind === "scenario" || access.guest,
     hostRuntimeConfig,
     environmentSpec,
     scenarioEnvironment,

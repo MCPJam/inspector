@@ -1,4 +1,3 @@
-import { ensureChatEnvironment } from "@/lib/plugins/ensure-chat-environment";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import {
@@ -345,7 +344,7 @@ export function usePlaygroundHiddenEnvironment(
 
   const ensureFor = useCallback(
     async (target: Composition, versionIds: string[]): Promise<string> => {
-      const result = await ensureChatEnvironment(ensureRef.current, {
+      const result = await ensureRef.current({
         projectId: target.projectId,
         purpose: "chat",
         hostId: target.hostId,

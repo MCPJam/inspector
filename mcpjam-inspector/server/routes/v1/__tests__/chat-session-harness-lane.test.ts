@@ -236,7 +236,10 @@ beforeEach(() => {
       selectedServerIds: ["srv_1"],
     },
   });
-  queryMock.mockImplementation(async (name) => name === "projectEnvironments:resolveEnvironmentForRuntime" ? {
+  queryMock.mockImplementation(async (reference) => {
+    const name = typeof reference === "string" ? reference : getFunctionName(reference);
+    if (name === "projects:getProjectCapabilities") return { chatEnvironmentVersion: 1 };
+    return name === "projectEnvironments:resolveEnvironmentForRuntime" ? {
     environmentRef: { environmentId: "chat-env", name: "Chat", revision: 1 },
     host: { hostId: HOST, runtimeConfig: { hostId: HOST, harness: "claude-code", selectedServerIds: ["srv_1"] } },
     servers: { effectiveServerIds: ["srv_1"] }, skills: [], pluginVersions: [],
@@ -249,6 +252,7 @@ beforeEach(() => {
     startedAt: 1_000,
     messagesBlobUrl: "https://blob.test/messages",
     resumeConfig: { modelId: MODEL, toolMode: "auto" },
+  };
   });
   mutationMock.mockImplementation(async (reference) => {
     const name = typeof reference === "string" ? reference : getFunctionName(reference);

@@ -187,10 +187,7 @@ import {
   resolveHostTools,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
-import {
-  resolveTurnBuiltInToolIds,
-  type ProjectDefaultToolConfig,
-} from "../../utils/built-in-tools/built-in-tool-policy.js";
+import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
 import {
   ackScenarioSandboxNotices,
   isScenarioSandboxNotice,
@@ -204,7 +201,6 @@ import {
 import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
-  resolvePlaygroundCredentialEnvironment,
   playgroundCredentialRefusal,
   playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
@@ -366,20 +362,6 @@ chatV2.post("/", async (c) => {
     // True when this turn flows through a scenario surface. sourceType +
     // accessScope decisions hinge on this.
     const isScenarioRequest = executionTarget.kind === "scenario";
-    // True when the execution context was RESOLVED SERVER-SIDE, so its host
-    // config — not the request body — is authoritative for capability
-    // declarations. Scenario (a share-link visitor controls the body) and
-    // Project Environment (the server decides what the environment resolves
-    // to) both qualify.
-    //
-    // Deliberately narrower than "the environment wins everything": model,
-    // prompt, temperature and approval stay body-overridable on an environment
-    // turn, because those are ephemeral Playground tweaks. A capability
-    // declaration is not a preference — it changes what the SDK advertises on
-    // the initialize wire — so it follows the resolved host either way.
-    const isHostAuthoritative =
-      isScenarioRequest || executionTarget.kind === "environment";
-
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new WebRouteError(
         400,
@@ -431,6 +413,13 @@ chatV2.post("/", async (c) => {
       environmentSpec,
       scenarioEnvironment,
       effectiveCapabilities: resolvedCapabilities,
+      usesLiveSkills,
+      authoritativeConnectionPolicy,
+      pinsEnvironment,
+      authoritativeCapabilities: isHostAuthoritative,
+      toolConfiguration,
+      toolConfigurationUnavailable,
+      workspaceToolsBarred,
     } = await resolveHostedChatSetup({
       target: executionTarget,
       access:
@@ -503,7 +492,7 @@ chatV2.post("/", async (c) => {
     // OAuth ladder). The body value is honored ONLY on ad-hoc turns, where
     // the caller is tampering with their own session. Both reads fail
     // closed on a malformed/unsupported policy (409, never silently off).
-    const xaaPolicy = hostRuntimeConfig
+    const xaaPolicy = authoritativeConnectionPolicy && hostRuntimeConfig
       ? xaaPolicyFromMcpProfile(
           (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
         )
@@ -523,7 +512,7 @@ chatV2.post("/", async (c) => {
     // read above refuses, and a worse one here because the connection
     // silently stops sending headers the server cross-checks. On ad-hoc
     // turns the body value stands: the caller owns that session.
-    const effectiveInitializePins = hostRuntimeConfig
+    const effectiveInitializePins = authoritativeConnectionPolicy && hostRuntimeConfig
       ? applyHostConformanceKnobs(
           applyHostParamMirroring(
             initializePins,
@@ -662,17 +651,10 @@ chatV2.post("/", async (c) => {
     // turn's own setting can raise that, never lower it.
     const builtInToolPolicy = await resolveTurnBuiltInToolIds({
       requested: resolvedExecution.builtInToolIds,
-      targetKind: executionTarget.kind,
-      hostRuntimeConfig,
-      isGuest: Boolean(c.get("guestId")),
+      configuration: toolConfiguration,
+      configurationUnavailable: toolConfigurationUnavailable,
+      workspaceToolsBarred,
       requestedToolApproval: resolvedExecution.requireToolApproval,
-      loadProjectDefaultConfig: async () =>
-        (await createConvexClient(await getConvexBearerForRequest(c)).query(
-          "hostConfigsV2:getProjectDefault" as never,
-          {
-            projectId: hostedBody.projectId,
-          } as never,
-        )) as ProjectDefaultToolConfig | null,
       loadProjectAccess: async () =>
         (await createConvexClient(await getConvexBearerForRequest(c)).query(
           "projects:getProjectCapabilities" as never,
@@ -694,7 +676,7 @@ chatV2.post("/", async (c) => {
           reasons: [
             ...new Set(builtInToolPolicy.dropped.map((entry) => entry.reason)),
           ],
-          targetKind: executionTarget.kind,
+          targetKind: turnMode === "recorded" ? "scenario" : "environment",
         },
       );
     }
@@ -1017,7 +999,7 @@ chatV2.post("/", async (c) => {
     // (`environmentOrigin` absent) is treated as named.
     const requestedProjectSkills =
       turnMode === "interactive" &&
-      (executionTarget.kind !== "environment" ||
+      (usesLiveSkills ||
         (rawBody as Record<string, unknown>).includeProjectSkills === true);
     const includeProjectSkills =
       requestedProjectSkills && environmentSpec?.environmentOrigin === "adhoc";
@@ -1941,34 +1923,10 @@ chatV2.post("/", async (c) => {
       // own account, a HIDDEN ad-hoc environment selecting the member's key
       // (the environments UI is off, so a client turn is the normal case).
       // Refused here, before any box, when the member has no usable key.
-      let playgroundEnvironmentId =
-        executionTarget.kind === "environment" ||
-        playgroundBoxReason === "credential"
+      const playgroundEnvironmentId =
+        pinsEnvironment || playgroundBoxReason === "credential"
           ? environmentSpec?.environmentRef.environmentId
           : undefined;
-      if (
-        playgroundBoxReason === "credential" &&
-        !playgroundEnvironmentId &&
-        executionTarget.kind === "host"
-      ) {
-        const hidden = await resolvePlaygroundCredentialEnvironment({
-          bearer: bearerToken,
-          projectId: hostedBody.projectId,
-          hostId: executionTarget.hostId,
-          harnessId: resolvedExecution.harness,
-        });
-        if (!hidden.ok) {
-          throw new WebRouteError(
-            hidden.status,
-            hidden.status === 409
-              ? ErrorCode.CONFLICT
-              : ErrorCode.INTERNAL_ERROR,
-            hidden.message,
-            { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
-          );
-        }
-        playgroundEnvironmentId = hidden.environmentId;
-      }
       // The credential check the harness turn would fail, run BEFORE the box
       // is booted: a refused Cursor turn must not pay for a box first. Same
       // function and inputs as `runHarnessTurn`'s own check.
@@ -2584,6 +2542,11 @@ chatV2.post("/", async (c) => {
           ...(turnProvenance ? { turnProvenance } : {}),
           ...(environmentSpec ? { setupEnvironment: environmentSpec } : {}),
           setupSkillProvenanceIncomplete: projectSkillReadFailed,
+          // Arbitrary client-info fields cannot safely be hashed as provenance.
+          setupConnectionPolicyIncomplete:
+            initializePins !== undefined ||
+            mcpProtocolVersionsByServerId !== undefined ||
+            (!authoritativeConnectionPolicy && xaaPolicy != null),
           // WHAT THIS TURN ACTUALLY ADVERTISED from the page. Written down
           // rather than re-derived, so a reopened conversation shows the tools
           // the model really had rather than the ones the browser has now.
@@ -2620,10 +2583,10 @@ chatV2.post("/", async (c) => {
           // them that user's session receives — this process cannot ask for
           // somebody else's. Absent ⇒ no grant.
           ...(environmentSpec &&
-          (executionTarget.kind === "environment" || externalAccountHarnessTurn)
+          (pinsEnvironment || externalAccountHarnessTurn)
             ? {
                 environmentId: environmentSpec.environmentRef.environmentId,
-                persistEnvironmentPin: executionTarget.kind === "environment",
+                persistEnvironmentPin: pinsEnvironment,
               }
             : {}),
           // Already resolved above, so the turn helper does not re-fetch:

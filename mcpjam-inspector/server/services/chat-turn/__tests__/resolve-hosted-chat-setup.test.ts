@@ -3,7 +3,6 @@ import { ConvexHttpClient } from "convex/browser";
 import { resolveHostedChatSetup } from "../resolve-hosted-chat-setup.js";
 import { resolveChatTurn } from "../resolve-chat-turn.js";
 import { fetchScenarioRuntimeConfig } from "../../../utils/scenario-runtime-config.js";
-import { fetchHostRuntimeConfig } from "../../../utils/host-runtime-config.js";
 
 vi.mock("../resolve-chat-turn.js", () => ({ resolveChatTurn: vi.fn() }));
 vi.mock("../../../utils/host-runtime-config.js", () => ({
@@ -41,6 +40,17 @@ const projectAccess = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.spyOn(client, "query").mockResolvedValue(null);
+  vi.mocked(resolveChatTurn).mockResolvedValue({
+    kind: "project", mode: "interactive", composed: true,
+    access: { kind: "project", projectId: "p" },
+    selection: { kind: "explicit", serverIds: [] },
+    environment: {
+      environmentRef: { environmentId: "e", name: "", revision: 1 },
+      host: { hostId: "h", runtimeConfig: {} },
+      servers: { effectiveServerIds: [] },
+    },
+  });
 });
 
 describe("hosted setup normalization", () => {
@@ -100,23 +110,25 @@ describe("hosted setup normalization", () => {
     expect(common.getClient).not.toHaveBeenCalled();
     expect(fetchScenarioRuntimeConfig).not.toHaveBeenCalled();
   });
-  it("normalizes old-backend host chat without synthesizing a setup", async () => {
-    vi.mocked(fetchHostRuntimeConfig).mockResolvedValue({
-      ok: true,
-      config: { ...runtimeConfig, hostId: "h" },
-    });
-    const result = await resolveHostedChatSetup({
-      ...common,
-      target: { kind: "host", hostId: "h" },
-      access: { ...projectAccess, chatEnvironments: false },
-    });
-    expect(result).toMatchObject({
-      mode: "interactive",
-      hostRuntimeConfig: { harness: "codex" },
-      environmentSpec: null,
-    });
-    expect(resolveChatTurn).not.toHaveBeenCalled();
-  });
+  it.each(["host", "adhoc", "environment"] as const)(
+    "requires shared setup support for %s turns",
+    async (kind) => {
+      const target =
+        kind === "host"
+          ? { kind, hostId: "h" }
+          : kind === "environment"
+            ? { kind, environmentId: "e" }
+            : { kind, projectId: "p" };
+      await expect(
+        resolveHostedChatSetup({
+          ...common,
+          target,
+          access: { ...projectAccess, chatEnvironments: false },
+        }),
+      ).rejects.toMatchObject({ status: 422 });
+      expect(resolveChatTurn).not.toHaveBeenCalled();
+    },
+  );
   it("normalizes project chat with the explicit empty override intact", async () => {
     const environment = {
       environmentRef: { environmentId: "e", name: "", revision: 1 },
@@ -143,5 +155,65 @@ describe("hosted setup normalization", () => {
         selection: { kind: "explicit", serverIds: [] },
       }),
     );
+  });
+  it.each(["adhoc", "host", "environment"] as const)(
+    "normalizes %s policy without changing skill or sandbox ownership",
+    async (kind) => {
+      const query = vi.spyOn(client, "query").mockResolvedValue({
+        builtInToolIds: ["list_projects"],
+        requireToolApproval: false,
+      });
+      const target =
+        kind === "host"
+          ? { kind, hostId: "h" }
+          : kind === "environment"
+            ? { kind, environmentId: "e" }
+            : { kind, projectId: "p" };
+      vi.mocked(resolveChatTurn).mockResolvedValue({
+        kind: "project",
+        mode: "interactive",
+        composed: true,
+        access: { kind: "project", projectId: "p" },
+        selection: { kind: "explicit", serverIds: [] },
+        environment: {
+          environmentRef: { environmentId: "e", name: "", revision: 1 },
+          host: { hostId: "h", runtimeConfig: { builtInToolIds: ["bash"] } },
+          servers: { effectiveServerIds: [] },
+        },
+      });
+      const result = await resolveHostedChatSetup({
+        ...common,
+        target,
+        access: projectAccess,
+      });
+      expect(result.usesLiveSkills).toBe(kind !== "environment");
+      expect(result.authoritativeConnectionPolicy).toBe(kind !== "adhoc");
+      expect(result.pinsEnvironment).toBe(kind === "environment");
+      expect(result.workspaceToolsBarred).toBe(false);
+      expect(result.toolConfiguration?.builtInToolIds).toEqual(
+        kind === "adhoc" ? ["list_projects"] : ["bash"],
+      );
+      expect(query).toHaveBeenCalledTimes(kind === "adhoc" ? 1 : 0);
+    },
+  );
+  it("withholds workspace tools when the project default cannot be read", async () => {
+    vi.spyOn(client, "query").mockRejectedValue(new Error("unavailable"));
+    const result = await resolveHostedChatSetup({
+      ...common,
+      target: { kind: "adhoc", projectId: "p" },
+      access: projectAccess,
+    });
+    expect(result.toolConfigurationUnavailable).toBe(true);
+    expect(result.toolConfiguration).toBeNull();
+  });
+  it("does not read private project defaults for guests", async () => {
+    const query = vi.spyOn(client, "query");
+    const result = await resolveHostedChatSetup({
+      ...common,
+      target: { kind: "adhoc", projectId: "p" },
+      access: { ...projectAccess, guest: true },
+    });
+    expect(result.workspaceToolsBarred).toBe(true);
+    expect(query).not.toHaveBeenCalled();
   });
 });
