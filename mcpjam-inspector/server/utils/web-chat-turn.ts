@@ -1,3 +1,6 @@
+import { DEFAULT_TURN_MAX_STEPS } from "../../shared/turn-step-budget.js";
+import { capturePreparedWebSetup } from "../services/chat-turn/setup-manifest.js";
+import type { ResolvedEnvironmentRuntime } from "../services/environments/runtime.js";
 import { assertConversationExecution } from './harness/conversation-execution.js';
 import { assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { preservePluginMessageTitles } from "../../shared/plugin-message-history.js";
@@ -75,6 +78,7 @@ import {
 } from "./mcpjam-stream-handler.js";
 import type { ExecutionScope } from "./execution-scope.js";
 import {
+  resolveLocalOrgMaxSteps,
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
 } from "./org-model-stream-handler.js";
@@ -342,6 +346,7 @@ export interface WebChatTurnPersistContext {
    * turn is safe.
    */
   environmentId?: string;
+  persistEnvironmentPin?: boolean;
   executionTarget?: ResumeExecutionTarget;
   /**
    * This turn's MATERIALIZED secrets, when the ROUTE already resolved them.
@@ -379,6 +384,8 @@ export interface WebChatTurnPersistContext {
    * written down. Delivery is byte-identical whether this is present or not.
    */
   turnProvenance?: TurnSkillProvenance;
+  setupEnvironment?: ResolvedEnvironmentRuntime;
+  setupSkillProvenanceIncomplete?: boolean;
   /**
    * The page tools this turn advertised, for the turn trace.
    *
@@ -1226,8 +1233,28 @@ export async function streamWebChatTurn(
   // callers preserve that by passing a closure here.
   const resolvedHostConfig: DirectHostConfig | null =
     typeof persist.hostConfig === "function"
-      ? persist.hostConfig({ resolvedTemperature }) ?? null
-      : persist.hostConfig ?? null;
+      ? (persist.hostConfig({ resolvedTemperature }) ?? null)
+      : (persist.hostConfig ?? null);
+
+  const captureSetup = (maxSteps: number, tools = preparedTools) =>
+    capturePreparedWebSetup({
+      prepare,
+      persist,
+      prepared,
+      tools,
+      maxSteps,
+      secretsUnavailable,
+      systemPrompt: effectiveEnhancedSystemPrompt,
+      serverIds: prepare.selectedServerIds.filter(
+        (id) =>
+          (typeof manager.hasServer !== "function" || manager.hasServer(id)) &&
+          !prepared.unavailableServers?.has(id),
+      ),
+    });
+
+  let setupAtTurn = await captureSetup(
+    runtime.maxSteps ?? DEFAULT_TURN_MAX_STEPS,
+  );
 
   // Build the persist callback once — it's a closure over a lot of context
   // and is identical between MCPJam-free and org-BYOK other than the modelId
@@ -1389,7 +1416,8 @@ export async function streamWebChatTurn(
                 // was nothing", which is exactly the false certainty the
                 // client's "as-run configuration unavailable" disclosure
                 // exists to avoid.
-                ...(persist.environmentId
+                ...(persist.environmentId &&
+                persist.persistEnvironmentPin !== false
                   ? { environmentId: persist.environmentId }
                   : {}),
               },
@@ -1406,12 +1434,13 @@ export async function streamWebChatTurn(
           // set its last steps had rather than the one it opened with.
           const pageToolsAtTurn = persist.pageToolsAtTurn?.();
           return {
-          ...turnTrace,
-          ...(persist.turnProvenance ?? {}),
-          // An EMPTY array is meaningful and is written: "this turn advertised
-          // no page tools" is a different fact from "we do not know", and the
-          // pane says something different about each.
-          ...(pageToolsAtTurn ? { pageToolsAtTurn } : {}),
+            ...turnTrace,
+            ...(persist.turnProvenance ?? {}),
+            setupAtTurn,
+            // An EMPTY array is meaningful and is written: "this turn advertised
+            // no page tools" is a different fact from "we do not know", and the
+            // pane says something different about each.
+            ...(pageToolsAtTurn ? { pageToolsAtTurn } : {}),
           };
         })(),
         ...(persist.expectedVersion !== undefined
@@ -1480,6 +1509,15 @@ export async function streamWebChatTurn(
         })
       : { runtimeLocation: "cloud", providerKey };
 
+    const orgMaxSteps =
+      orgRuntime.runtimeLocation === "local"
+        ? resolveLocalOrgMaxSteps(undefined)
+        : DEFAULT_TURN_MAX_STEPS;
+    setupAtTurn = await captureSetup(
+      orgMaxSteps,
+      orgRuntime.runtimeLocation === "local" ? localTools.tools : preparedTools,
+    );
+
     const onConversationComplete = buildOnConversationComplete(
       modelId,
       orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok",
@@ -1509,6 +1547,7 @@ export async function streamWebChatTurn(
         );
       }
       return handleLocalOrgChatModel({
+        maxSteps: orgMaxSteps,
         provider: orgRuntime.provider,
         admission: orgRuntime.admission,
         modelSelection: prepare.routingSelection?.source === "org" ? prepare.routingSelection : undefined,
@@ -1559,6 +1598,7 @@ export async function streamWebChatTurn(
     }
 
     return handleHostedOrgChatModel({
+      maxSteps: orgMaxSteps,
       projectId: persist.projectId,
       failureReporter,
       providerKey: orgRuntime.providerKey,
@@ -1696,6 +1736,10 @@ export async function streamWebChatTurn(
       : {}),
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
+    unavailableServerIds: [
+      ...Object.keys(prepare.isolatedServers?.refused ?? {}),
+      ...Array.from(unavailableServers?.keys() ?? []),
+    ],
     requireToolApproval: persist.requireToolApproval,
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only

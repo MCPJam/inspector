@@ -748,7 +748,7 @@ export function runDirectChatTurn(
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
       : {}),
-    prepareStep: ({ stepNumber, messages: stepMessages }) => {
+    prepareStep: async ({ stepNumber, messages: stepMessages }) => {
       currentStepIndex = stepNumber;
       registerAiSdkPrepareStep(traceContext, stepNumber, {
         modelId,
@@ -769,7 +769,7 @@ export function runDirectChatTurn(
       // stream-handler hook: names outside the default set are ignored, and a
       // throw is logged + falls back to the default set.
       if (prepareAdvertisedTools) {
-        activeToolNames = applyPrepareAdvertisedTools({
+        activeToolNames = await applyPrepareAdvertisedTools({
           defaultToolNames: activeToolNames ?? Object.keys(tools),
           stepIndex: stepNumber,
           prepareAdvertisedTools,

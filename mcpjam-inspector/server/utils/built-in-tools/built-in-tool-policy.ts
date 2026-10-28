@@ -239,7 +239,7 @@ export async function resolveTurnBuiltInToolIds(args: {
 
   let configured: readonly string[] | undefined;
   let configUnavailable = false;
-  if (args.targetKind === "host") {
+  if (args.targetKind === "host" || args.targetKind === "environment") {
     configured = readStringArray(args.hostRuntimeConfig?.builtInToolIds) ?? [];
   } else if (
     args.targetKind === "adhoc" &&

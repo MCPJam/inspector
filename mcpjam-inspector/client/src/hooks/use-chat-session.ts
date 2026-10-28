@@ -1,3 +1,6 @@
+import { dispatchAppToolCall } from "@mcpjam/widget-react";
+import { useSavedClientSendGuard } from "./use-saved-client-send-guard";
+import { stableStringifyJson } from "@/lib/client-config";
 import { prepareRestoredHarnessApproval, type ApprovalServerSelection } from "@/lib/prepare-restored-harness-approval";
 import {
   orgPolicyBlocksChatSend,
@@ -178,6 +181,8 @@ import { HOSTED_MODE } from "@/lib/config";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   prepareLocalHarnessSendRequest,
+  withSdkSendFields,
+  normalizeSendHeaders,
   type ChatSendRequestOptions,
 } from "@/lib/chat-send-request";
 import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
@@ -538,6 +543,7 @@ export interface UseChatSessionOptions {
   };
   /** Execution configuration (model, system prompt, temperature, tool approval) */
   executionConfig?: ExecutionConfig;
+  savedClientConfig?: import("@/lib/client-config-v2").HostConfigDtoV2;
   /**
    * The previewed host's real harness. A harness turn offers only the efforts
    * its adapter has verified (none today), so the chip hides rather than
@@ -3645,6 +3651,16 @@ export function useChatSession(
   // late part arrives after a project switch.
   const turnTaskScopeRef = useRef<string | undefined>(undefined);
 
+  const savedClientSendGuard = useSavedClientSendGuard(
+    options.savedClientConfig ? stableStringifyJson({
+      config: options.savedClientConfig,
+      target: hostedTargetKeyValue,
+      session: chatSessionId,
+      selectedServers,
+      requestChoice,
+    }) : undefined,
+  );
+
   const transport = useMemo(() => {
     const shouldSendClientApiKey =
       !shouldUseOrgAwareChatApi && !selectedModelUsesOrgRuntime;
@@ -3834,6 +3850,7 @@ export function useChatSession(
       api: chatApi,
       fetch: chatFetch,
       body: () => {
+        savedClientSendGuard.assertCurrent();
         if (requestChoiceRef.current.kind === "blocked") throw new Error(requestChoiceRef.current.reason);
         // Capture the task scope this turn is SUBMITTED under, next to
         // `buildHostedBody` (which hard-requires the project id): hosted
@@ -4018,48 +4035,22 @@ export function useChatSession(
         };
       },
       headers: transportHeaders,
-      /**
-       * The one place a local-harness turn's ids and capability are produced,
-       * and the one place they are produced TOGETHER.
-       *
-       * `prepareSendMessagesRequest` runs exactly once per send, after `body`
-       * and `headers` have resolved, and can rewrite both — which is what makes
-       * "one fresh snapshot" expressible at all. Splitting it across the `body`
-       * closure and the `headers` object (where it used to live) meant the ids
-       * and the token were read at different moments from different sources,
-       * and a grant minted in between produced a body claiming a target with no
-       * capability to authorize it.
-       *
-       * The refusal below is the backstop the whole design rests on. Before it,
-       * an expired grant, a sign-out, or a false `authIsMemberRef` each simply
-       * OMITTED the target — and the server, seeing no target, ran the turn
-       * hosted. A user who deliberately scoped work to their machine got a
-       * cloud sandbox and no indication of it. Failing loudly is the point.
-       */
-      //
-      // Installed ONLY on a local-harness turn. The SDK adds `messages` (and
-      // `id`/`trigger`/`messageId`) to the request itself, but only when no
-      // `prepareSendMessagesRequest` returns a body — any returned body replaces
-      // the SDK's wholesale. A hook that ran on every turn and handed back the
-      // custom fields it was given sent every chat turn out with no `messages`
-      // (400 "messages are required", both routes). Not installing it on the
-      // ordinary path leaves the SDK's own composition in charge there, and
-      // `prepareLocalHarnessSendRequest` re-adds the SDK fields on the path
-      // that does rewrite the body — `lib/chat-send-request.ts` owns that
-      // contract and pins it against the real transport.
-      ...(localHarnessRequested
+      // Validate after asynchronous headers resolve, preserving SDK fields and
+      // obtaining local consent from the live resolver at the request boundary.
+      ...(localHarnessRequested || options.savedClientConfig
         ? {
-            prepareSendMessagesRequest: (
-              options: ChatSendRequestOptions<UIMessage>,
-            ) =>
-              prepareLocalHarnessSendRequest(
-                options,
-                localHarnessExecution?.resolveSendTarget() ?? null,
-              ),
+            prepareSendMessagesRequest: (request: ChatSendRequestOptions<UIMessage>) => {
+              savedClientSendGuard.assertCurrent();
+              return localHarnessRequested
+                ? prepareLocalHarnessSendRequest(request, localHarnessExecution?.resolveSendTarget() ?? null)
+                : { body: withSdkSendFields(request), headers: normalizeSendHeaders(request.headers) };
+            },
           }
         : {}),
     });
   }, [
+    savedClientSendGuard,
+    options.savedClientConfig,
     selectedModel,
     requestChoice,
     requestEffort,
@@ -4291,25 +4282,13 @@ export function useChatSession(
       const registry = appToolsRegistryRef.current.getState();
       registry.registerPendingCall(entry.instance.bridgeId, controller);
       try {
-        const call = entry.bridge.callTool({
-          name: entry.rawName,
-          arguments:
-            tc.input && typeof tc.input === "object"
-              ? (tc.input as Record<string, unknown>)
-              : {},
-        });
-        const raw = await new Promise<
-          Awaited<ReturnType<typeof entry.bridge.callTool>>
-        >((resolve, reject) => {
-          const onAbort = () =>
-            reject(new Error("App iframe was torn down mid-dispatch"));
-          if (controller.signal.aborted) {
-            onAbort();
-            return;
-          }
-          controller.signal.addEventListener("abort", onAbort, { once: true });
-          call.then(resolve, reject);
-        });
+        const raw = await dispatchAppToolCall(
+          entry,
+          tc.input && typeof tc.input === "object"
+            ? (tc.input as Record<string, unknown>)
+            : {},
+          { signal: controller.signal }
+        );
         const sanitized = scrubAppToolResultForModel(raw);
         recordAppToolInvocation(
           {
@@ -4987,6 +4966,10 @@ export function useChatSession(
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
       if (isCurrent && !isCurrent()) return Promise.resolve(false);
+      if (hostedHiddenEnvironment?.blockingError) {
+        toast.error(hostedHiddenEnvironment.blockingError);
+        return Promise.resolve(false);
+      }
       // The organization's AI key policy leaves no model to send to. Refused
       // here, not only in the composer, so no caller can send around it.
       const orgPolicy = orgPolicySendRef.current;
@@ -4998,6 +4981,7 @@ export function useChatSession(
         toast.error(requestChoiceRef.current.reason);
         return Promise.resolve(false);
       }
+      const sendIsCurrent = savedClientSendGuard.begin();
       chatToolCallRequestIdsRef.current.clear();
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
@@ -5107,7 +5091,12 @@ export function useChatSession(
           return false;
         }
         try {
-          if (isCurrent && !isCurrent()) return false;
+          if (!sendIsCurrent() || (isCurrent && !isCurrent())) {
+            pendingWidgetModelContextRef.current = undefined;
+            resolvedHostedServersRef.current = null;
+            return false;
+          }
+          savedClientSendGuard.assertCurrent();
           const timestampedMetadata = withMessageTimestampMetadata(
             metadata,
             Date.now(),
@@ -5148,7 +5137,9 @@ export function useChatSession(
       })();
     },
     [
+      hostedHiddenEnvironment?.blockingError,
       baseSendMessage,
+      savedClientSendGuard,
       hostedEnsureServerIds,
       hostedEnvironmentId,
       selectedServers,
@@ -6147,7 +6138,9 @@ export function useChatSession(
           hostedSelectedServerIds.length !== selectedServers.length))) ||
     // A hidden environment still being composed: a send now would go out as a
     // client turn without the chat's plugins.
-    (hiddenEnvironmentActive && hiddenEnvironmentId === null);
+    (hiddenEnvironmentActive &&
+      hiddenEnvironmentId === null &&
+      !hostedHiddenEnvironment?.blockingError);
   const isStreaming = status === "streaming" || status === "submitted";
 
   // The blocked tool call cannot outlive the stream: when it ends (finished,
@@ -6203,10 +6196,11 @@ export function useChatSession(
    * a suspended operation's stream always ends while its round is pending.)
    */
   const stopChat = useCallback(() => {
+    savedClientSendGuard.cancel();
     const store = useHostedMrtrStore.getState();
     for (const round of store.rounds) void store.cancel(round.key);
     stop();
-  }, [stop]);
+  }, [stop, savedClientSendGuard]);
 
   const submitBlocked =
     disableForAuthentication ||

@@ -316,6 +316,8 @@ interface SessionResult {
 
 /** Pinned host runtime a synthetic session executes against. */
 export interface SyntheticHostRuntime {
+  /** Capabilities resolved from the immutable client snapshot. */
+  hostCapabilities?: Record<string, unknown>;
   modelDefinition: ModelDefinition;
   /**
    * The saved selection behind `modelDefinition`, already checked with
@@ -1097,8 +1099,10 @@ export async function runSyntheticHostSession(
       // agentic personas drive rendered widgets by screenshots. Evals stay
       // deterministic and never enable it.
       enableComputerUse: true,
+      enableViewTools: true,
       mcpClientManager: manager,
       logScope: "sessionSimulation",
+      hostCapabilities: runtime.hostCapabilities,
       // Live view: a frame per action, at CAPTURE time. Only wired when this
       // surface has a stream to put it on and the flag is on — absent, the
       // context does no thumbnail work at all.
@@ -1221,7 +1225,7 @@ export async function runSyntheticHostSession(
             ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
-            tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
+            tools: { ...prepared.allTools, ...browser!.computerWidgetTools, ...browser!.viewTools },
             hooks: {
               onToolCall: (event) => {
                 browser!.noteToolCallInput(event);
@@ -1238,13 +1242,13 @@ export async function runSyntheticHostSession(
                   args,
                 });
               },
-              onToolResult: (event) => {
-                void browser!.handleEngineToolResult(event);
+              onToolResult: async (event) => {
                 emit?.({
                   type: "tool_result",
                   toolCallId: event.toolCallId,
                   result: event.output,
                 });
+                await browser!.handleEngineToolResult(event);
               },
               ...(browser!.prepareAdvertisedTools
                 ? { prepareAdvertisedTools: browser!.prepareAdvertisedTools }
@@ -1376,7 +1380,10 @@ export async function runSyntheticHostSession(
 
       // Capture the execution deadline before persistence can consume more time.
       drainedTurnTimedOut = turnDeadline.firedClock() === "turn";
-      if (!drainedTurnTimedOut) emit?.({ type: "turn_finish", turnIndex: turn });
+      if (!drainedTurnTimedOut) {
+        await browser.dismissCarriedWidget();
+        emit?.({ type: "turn_finish", turnIndex: turn });
+      }
       // Track the first turn's modelSource for the per-session persist
       // calls. modelSource is stable across turns within a session because
       // scenario modelId is pinned by `fetchScenarioRuntimeConfig` at start.

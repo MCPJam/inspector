@@ -116,6 +116,14 @@ export interface ListAllServerSkillsResult {
   ttlMs?: number;
   cacheScope?: string;
   /**
+   * The cache attributes some page of the listing omitted. The stable spec
+   * requires both on every `skills/list` result, and `ttlMs` / `cacheScope`
+   * above are taken from whichever page carried them, so a listing that is
+   * only partly conformant still looks cacheable there. The doctor reports
+   * from this field.
+   */
+  omittedCacheAttributes: Array<"ttlMs" | "cacheScope">;
+  /**
    * Skill URIs the server listed MORE THAN ONCE across the drained pages.
    *
    * A self-contradictory listing is a server bug the debugger surfaces, not
@@ -125,6 +133,12 @@ export interface ListAllServerSkillsResult {
    */
   duplicateUris: string[];
 }
+
+/** A drained listing's cache attributes, and the ones some page omitted. */
+export type SkillListingCacheAttributes = Pick<
+  ListAllServerSkillsResult,
+  "ttlMs" | "cacheScope" | "omittedCacheAttributes"
+>;
 
 const MAX_PAGINATION_PAGES = 1000;
 
@@ -429,6 +443,7 @@ export async function listAllServerSkills(
 ): Promise<ListAllServerSkillsResult> {
   let ttlMs: number | undefined;
   let cacheScope: string | undefined;
+  const omitted = new Set<"ttlMs" | "cacheScope">();
 
   const skills = await drainPaginatedList<
     SkillEntry,
@@ -442,7 +457,9 @@ export async function listAllServerSkills(
         cacheOptions(params.cacheMode)
       );
       if (page.ttlMs !== undefined) ttlMs = page.ttlMs;
+      else omitted.add("ttlMs");
       if (page.cacheScope !== undefined) cacheScope = page.cacheScope;
+      else omitted.add("cacheScope");
       return page.nextCursor !== undefined
         ? { skills: page.skills, nextCursor: page.nextCursor }
         : { skills: page.skills };
@@ -461,6 +478,7 @@ export async function listAllServerSkills(
   return {
     skills,
     duplicateUris: [...duplicates],
+    omittedCacheAttributes: [...omitted],
     ...(ttlMs !== undefined ? { ttlMs } : {}),
     ...(cacheScope !== undefined ? { cacheScope } : {}),
   };

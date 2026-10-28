@@ -460,7 +460,10 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     const fake = buildFakeBrowserContext({ computerUse: true });
     createBrowserSessionContextMock.mockReturnValue(fake);
 
-    const result = await runSyntheticHostSession(baseAdapter() as never);
+    const hostCapabilities = { serverResources: {} };
+    const result = await runSyntheticHostSession(
+      baseAdapter({ runtime: { hostCapabilities } }) as never,
+    );
     expect(result.outcome).toBe("succeeded");
 
     // Context per session, surface-scoped logging, Computer Use opted in.
@@ -469,6 +472,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
       model: "anthropic/claude-haiku-4.5",
       logScope: "sessionSimulation",
       enableComputerUse: true,
+      hostCapabilities,
     });
 
     // Per-turn hygiene runs BEFORE the engine; dispose runs at session end.
@@ -476,6 +480,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
       "setActivePromptIndex:0",
       "dismissCarriedWidget",
       "runAssistantTurn",
+      "dismissCarriedWidget",
       "dispose",
     ]);
 

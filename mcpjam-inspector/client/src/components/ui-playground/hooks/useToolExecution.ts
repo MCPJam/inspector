@@ -1,3 +1,4 @@
+import { dispatchAppToolCall } from "@mcpjam/widget-react";
 /**
  * useToolExecution Hook
  *
@@ -656,21 +657,8 @@ async function executeAppTool({
   registry.registerPendingCall(entry.instance.bridgeId, controller);
 
   try {
-    const call = entry.bridge.callTool({
-      name: entry.rawName,
-      arguments: params,
-    });
-    const raw = await new Promise<
-      Awaited<ReturnType<typeof entry.bridge.callTool>>
-    >((resolve, reject) => {
-      const onAbort = () =>
-        reject(new Error("App iframe was torn down mid-dispatch"));
-      if (controller.signal.aborted) {
-        onAbort();
-        return;
-      }
-      controller.signal.addEventListener("abort", onAbort, { once: true });
-      call.then(resolve, reject);
+    const raw = await dispatchAppToolCall(entry, params, {
+      signal: controller.signal,
     });
 
     const modelOutput = await resolveModelOutputForToolResult(

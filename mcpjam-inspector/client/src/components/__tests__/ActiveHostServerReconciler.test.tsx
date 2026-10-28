@@ -145,7 +145,7 @@ describe("ActiveHostServerReconciler — auto-connect preference", () => {
       { _id: "srv-alpha", name: "alpha" },
       { _id: "srv-beta", name: "beta" },
     ];
-    localStorage.removeItem(AUTO_CONNECT_SERVERS_KEY);
+    localStorage.setItem(AUTO_CONNECT_SERVERS_KEY, "true");
   });
 
   it("connects every catalog server when Auto-connect is on, regardless of the host's serverIds", async () => {

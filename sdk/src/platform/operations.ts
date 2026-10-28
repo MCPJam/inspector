@@ -5234,7 +5234,9 @@ const evalCaseInput = z.object({
   matchOptions: z
     .record(z.string(), z.any())
     .optional()
-    .describe("Per-case matcher options (advanced)."),
+    .describe(
+      'Per-case tool-call match options, as on create_eval_case: toolCallOrder (any | in-order | exact), extraToolCalls ("unlimited" or a max count), arguments (ignore | partial | exact).'
+    ),
   // CHECK is the user-facing word for this rule: the API field name, the UI
   // section, and the SDK's own `CheckPolicy` / `checkRole` / `checkSeverity`
   // prefix. An agent that authors a suite here and then edits one of its own

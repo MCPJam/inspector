@@ -307,7 +307,7 @@ describe("hosted chat turn (MJ-001)", () => {
     ).toBe(true);
   });
 
-  it("fails a hung server's tool listing with our own 424 and drops the connect", async () => {
+  it("continues without a hung server and drops the stuck connect", async () => {
     // A server that accepts the request and never answers. The abort is the
     // evidence the stuck connect was cancelled rather than left to run out
     // the manager's own per-request timeout and retries.
@@ -344,13 +344,13 @@ describe("hosted chat turn (MJ-001)", () => {
     const { app, token } = createWebTestApp();
     const response = await postJson(app, "/api/web/chat-v2", body, token);
 
-    expect(response.status).toBe(424);
-    const payload = (await response.json()) as any;
-    expect(payload.code).toBe("TIMEOUT");
-    expect(payload.message).toMatch(/MCP server ".*" timed out/);
+    expect(response.status).toBe(200);
+    await response.json();
     expect(disconnectAll).toHaveBeenCalled();
     expect(aborted).toBe(true);
-    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({ unavailableServerIds: ["server-1"], tools: {} }),
+    );
     disconnectAll.mockRestore();
   });
 });

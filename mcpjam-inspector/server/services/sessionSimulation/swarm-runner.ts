@@ -1,6 +1,7 @@
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { readTasksPolicy } from "@mcpjam/sdk";
+import { resolveBrowserHostCapabilities } from "../../utils/browser-host-capabilities.js";
 import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
@@ -10,7 +11,7 @@ import {
 } from "../../../shared/swarm-attempt-error.js";
 import type { SpendRefusal } from "./admission-retry.js";
 import { prepareTargetGrounding } from "./target-grounding";
-import { SwarmSetupError } from "./swarm-setup-turn";
+import { SwarmSetupError, setupFailureMessage } from "./swarm-setup-turn";
 import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits";
 import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
 import { composeAbortSignals } from "@mcpjam/sdk";
@@ -1522,6 +1523,7 @@ async function runJourneyFanOut(
             chatSessionId,
             maxTurns,
             runtime: {
+              hostCapabilities: resolveBrowserHostCapabilities(target),
               modelDefinition,
               ...(modelSelection ? { modelSelection } : {}),
               systemPrompt: target.systemPrompt,
@@ -2158,7 +2160,14 @@ async function runJourneyFanOut(
       logger.error(
         "[swarm.runner] target worker failed; finalizing its attempts",
         err,
-        { runId, hostId, targetId, sessionIdx },
+        {
+          runId,
+          hostId,
+          targetId,
+          sessionIdx,
+          setupReason:
+            err instanceof SwarmSetupError ? err.partial.reason : undefined,
+        },
       );
       // Finalize this target's not-yet-terminal attempts `[sessionIdx..N)`: the
       // sweep re-claims the in-flight attempt (if the throw landed after a
@@ -2205,6 +2214,11 @@ async function runJourneyFanOut(
         typeof causeMessage === "string" && causeMessage.trim()
           ? humanizeSwarmAttemptErrorMessage(causeMessage)
           : undefined;
+      const failureMessage =
+        signInMessage ??
+        (err instanceof SwarmSetupError && !signInFailure
+          ? setupFailureMessage(err.partial)
+          : undefined);
       const failureCode =
         signInFailure ??
         (err instanceof SwarmSetupError
@@ -2226,7 +2240,7 @@ async function runJourneyFanOut(
         sessionIdx,
         sessionsPerTarget,
         failureCode,
-        signInMessage,
+        failureMessage,
       );
       // Capacity leaves them for the run-level finalize. A sponsorship refusal
       // closes only this target, preserving healthy targets. Other failures close this target's
@@ -2254,7 +2268,7 @@ async function runJourneyFanOut(
             : {
                 terminalStatus: "failed",
                 errorCode: failureCode,
-                ...(signInMessage ? { errorMessage: signInMessage } : {}),
+                ...(failureMessage ? { errorMessage: failureMessage } : {}),
               },
         );
       }
