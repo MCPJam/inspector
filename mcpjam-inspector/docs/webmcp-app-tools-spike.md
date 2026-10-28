@@ -17,6 +17,8 @@ Set `MCPJAM_EXT_APPS_FIXTURE_REPO` to an ext-apps checkout containing commit
 temporary directory and leaves the checkout unchanged.
 
 ```sh
+npm run build -w @mcpjam/sdk
+npm run bundle:sandbox-proxies -w @mcpjam/inspector
 MCPJAM_EXT_APPS_FIXTURE_REPO=/path/to/ext-apps MCPJAM_SPIKE_ELECTRON=1 node --import tsx mcpjam-inspector/server/routes/apps/mcp-apps/__tests__/webmcp-browser.e2e.mjs
 npm run build:client -w @mcpjam/inspector
 npm run electron:package -w @mcpjam/inspector
