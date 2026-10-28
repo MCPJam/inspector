@@ -292,7 +292,7 @@ describe("PromptsTab", () => {
 
       // After selection, the SelectedToolHeader shows a switch-tool control
       await waitFor(() => {
-        expect(screen.getByTitle("Switch tool")).toBeInTheDocument();
+        expect(screen.getByTitle("Switch prompt")).toBeInTheDocument();
       });
     });
   });

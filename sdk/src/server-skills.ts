@@ -36,7 +36,7 @@
  * `listAllServerSkills` from `operations.ts`, which itself imports from
  * `mcp-client-manager/`, so living there would close an import cycle.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import type { MCPClientManager } from "./mcp-client-manager/index.js";
@@ -56,7 +56,16 @@ import {
   verifySkillMarkdown,
   type SkillEntry,
 } from "./mcp-client-manager/index.js";
-import { listAllServerSkills } from "./operations.js";
+import {
+  listAllServerSkills,
+  type SkillListingCacheAttributes,
+} from "./operations.js";
+import {
+  cachedVerifiedText,
+  rememberVerifiedText,
+} from "./server-skills-cache.js";
+
+export { forgetVerifiedServerSkillReads } from "./server-skills-cache.js";
 
 /**
  * Optional sink for the one diagnostic this module emits.
@@ -108,16 +117,13 @@ export interface ServerSkillSummary {
   };
 }
 
-export interface ServerSkillListing {
+export interface ServerSkillListing extends SkillListingCacheAttributes {
   serverId: string;
   skills: ServerSkillSummary[];
   /** URIs the server listed twice — surfaced, never silently resolved. */
   duplicateUris: string[];
   /** Entries that failed the wire guard or identity checks, with reasons. */
   rejected: Array<{ skillUri: string; reason: string }>;
-  /** SEP-2549 caching attributes, when the server sent them. */
-  ttlMs?: number;
-  cacheScope?: string;
 }
 
 export interface VerifiedServerSkill {
@@ -130,67 +136,25 @@ export interface VerifiedServerSkill {
   contentSha256: string;
   frontmatter: unknown;
   resources: Array<{ uri: string; digest: string; size?: number }>;
+  /**
+   * SEP-2549 caching attributes of the `skills/get` result, when the entry
+   * came from one and the server sent them. Absent on the listing-entry path.
+   */
+  ttlMs?: number;
+  cacheScope?: string;
 }
 
-/**
- * Why a load was refused, in a shape a tool result / route response can render
- * without losing the specific violation.
- *
- * A debugger's users need to know WHICH digest, WHICH field, WHICH URI — a
- * bare "failed to load" turns a server bug into a mystery.
- */
-export interface ServerSkillRefusal {
-  kind:
-    | "no_resources"
-    | "dynamic_resources"
-    | "unlisted_resource"
-    | "digest_mismatch"
-    | "unsupported_digest"
-    | "size_mismatch"
-    | "too_many_resources"
-    | "frontmatter_drift"
-    | "identity_mismatch"
-    | "not_found"
-    | "too_large"
-    | "fetch_failed"
-    | "extension_inactive";
-  message: string;
-  skillUri?: string;
-  resourceUri?: string;
-  expected?: string;
-  actual?: string;
-  field?: string;
-}
+import {
+  ServerSkillRefusalError,
+  type ServerSkillRefusal,
+} from "./server-skills-refusal.js";
 
-/**
- * The refusal every route returns for a connection where the extension is not
- * mutually declared.
- *
- * Shared rather than written per route: the client turns a failed response with
- * NO refusal into a generic `fetch_failed`, so a route that forgot this would
- * report a network problem for what is a capability state. One definition means
- * `/get` and `/read-file`, local and hosted, cannot drift apart in that wording.
- */
-export const EXTENSION_INACTIVE_REFUSAL: ServerSkillRefusal = {
-  kind: "extension_inactive",
-  message:
-    "This connection does not have Skills over MCP active, so there is nothing to load. The server must declare the skills extension and the client must advertise it.",
-};
-
-export class ServerSkillRefusalError extends Error {
-  readonly refusal: ServerSkillRefusal;
-  constructor(refusal: ServerSkillRefusal) {
-    super(refusal.message);
-    this.name = "ServerSkillRefusalError";
-    this.refusal = refusal;
-  }
-}
-
-export function isServerSkillRefusalError(
-  error: unknown
-): error is ServerSkillRefusalError {
-  return error instanceof Error && error.name === "ServerSkillRefusalError";
-}
+export {
+  EXTENSION_INACTIVE_REFUSAL,
+  ServerSkillRefusalError,
+  isServerSkillRefusalError,
+} from "./server-skills-refusal.js";
+export type { ServerSkillRefusal } from "./server-skills-refusal.js";
 
 function toRefusal(error: unknown, skillUri: string): ServerSkillRefusal {
   if (error instanceof SkillIntegrityError) {
@@ -520,10 +484,9 @@ export async function listServerSkillCatalog(
     skills,
     duplicateUris: [...duplicates],
     rejected,
+    omittedCacheAttributes: drained.omittedCacheAttributes,
     ...(drained.ttlMs !== undefined ? { ttlMs: drained.ttlMs } : {}),
-    ...(drained.cacheScope !== undefined
-      ? { cacheScope: drained.cacheScope }
-      : {}),
+    ...(drained.cacheScope !== undefined ? { cacheScope: drained.cacheScope } : {}),
   };
 }
 
@@ -581,8 +544,20 @@ export async function getVerifiedServerSkill(
 ): Promise<VerifiedServerSkill> {
   const { serverId, uri } = args;
   let entry: SkillEntry;
+  let cache: { ttlMs?: number; cacheScope?: string } = {};
   try {
-    entry = args.entry ?? (await manager.getServerSkill(serverId, uri));
+    if (args.entry) {
+      entry = args.entry;
+    } else {
+      const result = await manager.getServerSkillResult(serverId, uri);
+      entry = result.skill;
+      cache = {
+        ...(result.ttlMs !== undefined ? { ttlMs: result.ttlMs } : {}),
+        ...(result.cacheScope !== undefined
+          ? { cacheScope: result.cacheScope }
+          : {}),
+      };
+    }
   } catch (error) {
     throw new ServerSkillRefusalError(toRefusal(error, uri));
   }
@@ -636,18 +611,26 @@ export async function getVerifiedServerSkill(
     });
   }
 
-  const markdown = await readResourceText(
-    manager,
-    serverId,
-    entry.uri,
-    MAX_SERVER_SKILL_READ_BYTES
-  );
+  const listedDigest = manifest.resources.find(
+    (resource) => resource.uri === entry.uri
+  )?.digest;
+  const markdown =
+    cachedVerifiedText(manager, serverId, entry.uri, listedDigest) ??
+    (await readResourceText(
+      manager,
+      serverId,
+      entry.uri,
+      MAX_SERVER_SKILL_READ_BYTES
+    ));
 
   let verified;
   try {
     verified = await verifySkillMarkdown({ entry, markdown });
   } catch (error) {
     throw new ServerSkillRefusalError(toRefusal(error, entry.uri));
+  }
+  if (listedDigest !== undefined) {
+    rememberVerifiedText(manager, serverId, entry.uri, listedDigest, markdown);
   }
 
   return {
@@ -659,6 +642,7 @@ export async function getVerifiedServerSkill(
     contentSha256: await sha256HexOfText(verified.body),
     frontmatter: entry.frontmatter,
     resources: manifest.resources,
+    ...cache,
   };
 }
 
@@ -710,12 +694,14 @@ export async function readVerifiedServerSkillFile(
     });
   }
 
-  const text = await readResourceText(
-    manager,
-    args.serverId,
-    args.resourceUri,
-    MAX_SERVER_SKILL_READ_BYTES
-  );
+  const text =
+    cachedVerifiedText(manager, args.serverId, args.resourceUri, listed.digest) ??
+    (await readResourceText(
+      manager,
+      args.serverId,
+      args.resourceUri,
+      MAX_SERVER_SKILL_READ_BYTES
+    ));
   const bytes = new TextEncoder().encode(text);
   // Size before digest, same order and same reasoning as `verifySkillMarkdown`:
   // a truncated read and a tampered file are different diagnoses, and only the
@@ -748,6 +734,13 @@ export async function readVerifiedServerSkillFile(
     });
   }
 
+  rememberVerifiedText(
+    manager,
+    args.serverId,
+    args.resourceUri,
+    listed.digest,
+    text
+  );
   return { uri: args.resourceUri, text, digest: listed.digest };
 }
 

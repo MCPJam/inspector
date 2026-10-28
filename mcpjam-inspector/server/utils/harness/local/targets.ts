@@ -1,3 +1,4 @@
+import { LOCAL_HARNESS_IDS } from "../../../../shared/harness-descriptors.js";
 /**
  * Execution targets for a harness turn — the three honest choices the product
  * offers, and the identities each one is authorized against.
@@ -33,10 +34,7 @@
  *  a manifest entry (`compatibility.ts`) and conformance evidence. */
 export type SupportedLocalHarnessId = "claude-code" | "codex";
 
-export const SUPPORTED_LOCAL_HARNESS_IDS: readonly SupportedLocalHarnessId[] = [
-  "claude-code",
-  "codex",
-];
+export const SUPPORTED_LOCAL_HARNESS_IDS: readonly SupportedLocalHarnessId[] = LOCAL_HARNESS_IDS;
 
 /** Platforms local execution can be attempted on. Support is per
  *  harness/platform tuple (`compatibility.ts`), never blanket. */

@@ -1,7 +1,7 @@
 /**
  * Skills over MCP (SEP-2640) — the verified read path's POLICY layer.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  *
  * `server-skills.ts` had no direct test: it was covered only transitively,
  * through the chat wrapper. These cover the decisions that are MCPJam's rather
@@ -98,6 +98,12 @@ async function makeManager(
     listServerSkills: vi.fn(async () => ({ skills: [entry] })),
     getServerSkill: vi.fn(async (_serverId: string, uri: string) => {
       if (uri === SKILL_URI) return entry;
+      const error = new Error("Invalid params") as Error & { code: number };
+      error.code = -32602;
+      throw error;
+    }),
+    getServerSkillResult: vi.fn(async (_serverId: string, uri: string) => {
+      if (uri === SKILL_URI) return { skill: entry };
       const error = new Error("Invalid params") as Error & { code: number };
       error.code = -32602;
       throw error;
@@ -301,6 +307,17 @@ describe("per-skill limits", () => {
     // server's.
     const padding = "x".repeat(200 * 1024);
     const bigMarkdown = `---\nname: refunds\ndescription: Handle refunds.\n---\n${padding}`;
+    const bigEntry = {
+      uri: SKILL_URI,
+      frontmatter: { name: "refunds", description: "Handle refunds." },
+      resources: [
+        {
+          uri: SKILL_URI,
+          digest: `sha256:${await sha256(bigMarkdown)}`,
+          size: bytesOf(bigMarkdown),
+        },
+      ],
+    };
     const manager = {
       getSkillsSupport: () => ({
         declared: true,
@@ -308,17 +325,8 @@ describe("per-skill limits", () => {
         directoryRead: false,
         active: true,
       }),
-      getServerSkill: vi.fn(async () => ({
-        uri: SKILL_URI,
-        frontmatter: { name: "refunds", description: "Handle refunds." },
-        resources: [
-          {
-            uri: SKILL_URI,
-            digest: `sha256:${await sha256(bigMarkdown)}`,
-            size: bytesOf(bigMarkdown),
-          },
-        ],
-      })),
+      getServerSkill: vi.fn(async () => bigEntry),
+      getServerSkillResult: vi.fn(async () => ({ skill: bigEntry })),
       readResource: vi.fn(async () => ({
         contents: [
           { uri: SKILL_URI, text: bigMarkdown, mimeType: "text/markdown" },
@@ -388,6 +396,10 @@ function managerWith(args: {
     getServerSkill: vi.fn(async () => {
       if (args.getSkillError) throw args.getSkillError;
       return args.entry;
+    }),
+    getServerSkillResult: vi.fn(async () => {
+      if (args.getSkillError) throw args.getSkillError;
+      return { skill: args.entry };
     }),
     readResource: vi.fn(async (_serverId: string, read: { uri: string }) => {
       const explicit = args.contents?.[read.uri];

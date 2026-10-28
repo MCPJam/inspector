@@ -30,9 +30,8 @@ const mocks = vi.hoisted(() => {
 const { FakeCommandExitError } = mocks;
 const sandboxState = mocks;
 
-vi.mock("e2b", () => ({
-  Sandbox: {
-    connect: async (id: string, opts?: Record<string, unknown>) => {
+vi.mock("../../computers/attach-sandbox.js", () => ({
+  attachRunningSandbox: async (id: string, opts?: Record<string, unknown>) => {
       await mocks.connect(id, opts);
       return {
         sandboxId: id,
@@ -41,7 +40,9 @@ vi.mock("e2b", () => ({
         getHost: (p: number) => `host-${p}.e2b.dev`,
       };
     },
-  },
+}));
+
+vi.mock("e2b", () => ({
   CommandExitError: mocks.FakeCommandExitError,
   FileNotFoundError: mocks.FakeFileNotFoundError,
   SandboxNotFoundError: mocks.FakeSandboxNotFoundError,

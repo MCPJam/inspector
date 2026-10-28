@@ -330,11 +330,8 @@ export class HostedElicitationBridge {
         // nothing for the browser to answer, so the only honest outcome is cancel.
         logger.error(
           "[elicitation] failed to create rendezvous row; cancelling",
-          {
-            error,
-            serverId,
-            mode,
-          },
+          error,
+          { serverId, mode },
         );
         return CANCEL;
       }
@@ -704,10 +701,11 @@ export class HostedElicitationBridge {
       } catch (error) {
         consecutiveFailures += 1;
         if (consecutiveFailures >= ELICITATION_POLL_MAX_FAILURES) {
-          logger.error("[elicitation] poll failed repeatedly; cancelling", {
+          logger.error(
+            "[elicitation] poll failed repeatedly; cancelling",
             error,
-            rendezvousId,
-          });
+            { rendezvousId },
+          );
           void this.cancelRow(rendezvousId);
           this.emit({ kind: "resolved", rendezvousId, outcome: "cancelled" });
           return CANCEL;

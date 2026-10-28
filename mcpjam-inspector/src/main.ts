@@ -1159,6 +1159,7 @@ async function handleServerStartFailure(
 
 // App event handlers
 app.whenReady().then(async () => {
+  if (!gotTheLock) return; // A quitting second instance still gets `ready`.
   try {
     // Best-effort cleanup of GPU/HTTP caches when the app version changes.
     // Stale caches from a previous build can crash the renderer/GPU process
@@ -1272,6 +1273,7 @@ function visibleWindows(): BrowserWindow[] {
 }
 
 async function handleActivate(): Promise<void> {
+  if (!appBootstrapped) return; // Launch emits it too; bootstrap opens that window.
   // On macOS, re-create window when the dock icon is clicked
   if (visibleWindows().length === 0) {
     // A quick reopen can arrive while the browser closed by

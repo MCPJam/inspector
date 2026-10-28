@@ -67,7 +67,7 @@ vi.mock("../registry.js", () => ({
       delivered: skills,
       skipped: [],
     }),
-    mcpDelivery: "host-executed",
+    mcpDelivery: "mcpjam",
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
