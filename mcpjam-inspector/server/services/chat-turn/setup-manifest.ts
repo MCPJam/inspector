@@ -1,6 +1,7 @@
 import { extractHostExecutionPolicy } from "@mcpjam/sdk/host-config/internal";
 import { createHash } from "node:crypto";
 import { asSchema, type ToolSet } from "ai";
+import { HOSTED_MODE } from "../../config.js";
 import type { ResolvedEnvironmentRuntime } from "../environments/runtime.js";
 import type { EffectiveCapabilitySet } from "../environments/effective-capabilities.js";
 
@@ -168,16 +169,22 @@ export type SetupAtTurn = Awaited<ReturnType<typeof buildSetupManifest>>;
 export function capturePreparedWebSetup(args: {
   prepare: import("../../utils/web-chat-turn.js").WebChatTurnPrepareInputs;
   persist: import("../../utils/web-chat-turn.js").WebChatTurnPersistContext;
-  prepared: Awaited<
-    ReturnType<
-      typeof import("../../utils/chat-v2-orchestration.js").prepareChatV2
-    >
-  >;
+  prepared: Pick<
+    import("../../utils/chat-v2-orchestration.js").PrepareChatV2Result,
+    "resolvedTemperature"
+  > &
+    Partial<
+      Pick<
+        import("../../utils/chat-v2-orchestration.js").PrepareChatV2Result,
+        "connectionsAtTurn" | "progressivePlan" | "liveServerSkills"
+      >
+    >;
   tools: ToolSet;
   maxSteps: number;
   serverIds: string[];
   systemPrompt: string;
   secretsUnavailable: boolean;
+  modelVenue?: "local" | "remote";
 }) {
   const {
     prepare,
@@ -202,7 +209,16 @@ export function capturePreparedWebSetup(args: {
         ? "mcpjam-hosted"
         : undefined,
     engine: persist.harness ?? "emulated",
-    venue: "hosted",
+    // Venue describes the engine, not the provider. A local tool loop can
+    // still call a remote model, and a local app can run a cloud harness.
+    venue: persist.harness
+      ? persist.harnessExecutionTarget
+        ? "local"
+        : "computer"
+      : HOSTED_MODE
+        ? "hosted"
+        : "local",
+    executionPolicy: { modelVenue: args.modelVenue ?? "remote" },
     systemPrompt,
     temperature: prepared.resolvedTemperature,
     reasoningEffort: prepare.reasoningEffort,
@@ -220,6 +236,9 @@ export function capturePreparedWebSetup(args: {
       mcpToolResultImageRendering: persist.mcpToolResultImageRendering,
     },
     incomplete: [
+      ...(persist.setupConnectionPolicyIncomplete
+        ? ["runtime_provenance_unavailable" as const]
+        : []),
       ...(prepared.liveServerSkills || persist.setupSkillProvenanceIncomplete
         ? ["skill_provenance_unavailable" as const]
         : []),

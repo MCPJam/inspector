@@ -401,6 +401,7 @@ import {
   useCurrentOrgRoute,
 } from "./lib/app-navigation";
 import { ScopedNavigate } from "./components/routing/scoped-navigate";
+import { HostedBrowserScopeProvider } from "./hooks/useHostedBrowserAvailability";
 import {
   AppRouteReactContext,
   useAppRouteContext,
@@ -4531,7 +4532,10 @@ export default function App() {
     previousConnectedServersRef.current = connectedServers;
   }, [activeTab, appState.servers, setSelectedServer]);
 
-  // Auto-select a connected server when navigating to tabs that need one
+  // Auto-select a connected server when navigating to tabs that need one.
+  // Conformance is left out: ConformanceTab picks its own (the server last
+  // selected there first), and this effect runs after it, so it would
+  // overwrite that.
   useEffect(() => {
     const needsServer =
       activeTab === "playground" ||
@@ -4539,7 +4543,6 @@ export default function App() {
       activeTab === "resources" ||
       activeTab === "prompts" ||
       activeTab === "tasks" ||
-      activeTab === "conformance" ||
       activeTab === "compatibility";
     if (!needsServer || selectedMCPConfig) return;
 
@@ -6763,7 +6766,16 @@ export default function App() {
                   <FeedbackReporterProvider
                     enabled={HOSTED_MODE && isFeedbackMember === true}
                   >
-                    {appContent}
+                    <HostedBrowserScopeProvider
+                      organizationId={activeOrganizationId}
+                      projectId={
+                        shouldQueryProjectId(convexProjectId)
+                          ? convexProjectId
+                          : null
+                      }
+                    >
+                      {appContent}
+                    </HostedBrowserScopeProvider>
                   </FeedbackReporterProvider>
                 )}
               </HostedShellGate>

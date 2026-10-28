@@ -4,11 +4,11 @@ import {
   streamText,
   stepCountIs,
   type ToolSet,
+  type LanguageModel,
   type ToolChoice,
   type Tool as AiTool,
 } from "ai";
 import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
-import type { createLlmModel } from "./chat-helpers";
 import {
   appendDedupedModelMessages,
   normalizeFinishReason,
@@ -291,7 +291,7 @@ export interface DirectChatTurnEngineErrorEvent {
 }
 
 export interface RunDirectChatTurnOptions {
-  llmModel: ReturnType<typeof createLlmModel>;
+  llmModel: LanguageModel;
   modelId: string;
   /**
    * Logical provider for span metadata (OTel `gen_ai.provider.name`, e.g.

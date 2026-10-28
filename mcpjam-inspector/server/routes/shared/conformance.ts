@@ -32,6 +32,7 @@ import {
 import {
   createSession,
   getSession,
+  touchSession,
   setSessionError,
   setSessionResult,
   submitAuthorizationCode,
@@ -258,12 +259,7 @@ export interface StartOAuthConformanceInput {
   /** Public callback URL that the authorization server will redirect to. */
   redirectUrl: string;
   oauthProfile?: OAuthConformanceProfile;
-  /** How long to wait for the runner to produce an auth URL before assuming it
-   * completed without needing user auth. Defaults to 3s. */
-  authorizationUrlGraceMs?: number;
 }
-
-const DEFAULT_GRACE_MS = 3_000;
 
 export async function startOAuthConformance(
   input: StartOAuthConformanceInput,
@@ -334,16 +330,11 @@ export async function startOAuthConformance(
   runnerPromise.catch(() => undefined);
 
   // Race the runner against `awaitAuthorizationUrl`: whichever settles first
-  // tells us whether user authorization is needed.
-  const graceMs = input.authorizationUrlGraceMs ?? DEFAULT_GRACE_MS;
-  const graceTimer = new Promise<"grace">((resolve) => {
-    setTimeout(() => resolve("grace"), graceMs);
-  });
-
+  // tells us whether user authorization is needed. No deadline: slow discovery
+  // must still hand back the URL, or the runner waits out the consent window.
   const outcome = await Promise.race([
     controller.awaitAuthorizationUrl.then(() => "authorization_needed" as const),
     runnerPromise.then(() => "complete" as const, () => "complete" as const),
-    graceTimer,
   ]);
 
   if (outcome === "authorization_needed" && session.authorizationUrl) {
@@ -355,9 +346,8 @@ export async function startOAuthConformance(
     };
   }
 
-  // Either the runner finished without needing user auth, or we hit the grace
-  // deadline. In either case, awaiting the runner either gives us a result or
-  // surfaces its error.
+  // The runner finished without needing user auth: awaiting it either gives us
+  // a result or surfaces its error.
   const result = await runnerPromise;
   return { phase: "complete", result };
 }
@@ -387,6 +377,10 @@ export class OAuthConformanceSessionNotFoundError extends Error {
   readonly code = "notFound" as const;
 }
 
+/** What the user sees when their session is gone: it expired while idle. */
+export const OAUTH_SESSION_EXPIRED_MESSAGE =
+  "Authorization took too long. Run the checks again.";
+
 export class OAuthConformanceSessionFailedError extends Error {
   readonly code = "runnerFailed" as const;
 }
@@ -397,9 +391,10 @@ export async function completeOAuthConformance(
   const session = getSession(input.sessionId);
   if (!session) {
     throw new OAuthConformanceSessionNotFoundError(
-      "Session not found or expired",
+      OAUTH_SESSION_EXPIRED_MESSAGE,
     );
   }
+  touchSession(input.sessionId);
   if (session.result) {
     return { phase: "complete", result: session.result };
   }
@@ -415,7 +410,9 @@ export async function completeOAuthConformance(
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     const current = getSession(input.sessionId);
     if (!current) {
-      throw new OAuthConformanceSessionNotFoundError("Session expired");
+      throw new OAuthConformanceSessionNotFoundError(
+        OAUTH_SESSION_EXPIRED_MESSAGE,
+      );
     }
     if (current.result) {
       return { phase: "complete", result: current.result };

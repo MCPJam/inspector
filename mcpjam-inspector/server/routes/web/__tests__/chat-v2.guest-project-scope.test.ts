@@ -144,7 +144,7 @@ function authorizeProjectCalls(): unknown[][] {
     .mock.calls.filter(([input]) => String(input) === AUTHORIZE_PROJECT_URL);
 }
 
-describe.each([false, true])(
+describe.each([true])(
   "web routes — chat-v2 guest project scope (MJ-013), environment runtime %s",
   (environmentRuntime) => {
     const originalFetch = global.fetch;

@@ -2,7 +2,7 @@
   "schema": 2,
   "harnesses": {
     "claude-code": {
-      "fingerprint": "sha256:d9a4b4d85b13c5f1738080e513b9d4b71efa7063645c59e253c72bee8a720515",
+      "fingerprint": "sha256:a2d7f70b54fcc40dc14d66b453f66978429235fdb809f6792de74c1793e53e7f",
       "inputs": {
         "pack-dependency-closure": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         ".github/workflows/local-harness-pack.yml": "sha256:0f3afb13d8d01806fcd36bd2a84528d1916f08612b2f73947ffbb31b8a791d97",
@@ -10,7 +10,7 @@
         "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:d5dd9ebd218430eb0cca6c705b9c94f28d03f94ea3f5b04ef158e15803e06213",
         "mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs": "sha256:89eda8f785d769cca750a58ddad4d5e954368a824e7e8916cc3c558c2b0bbeeb",
         "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code-vendor/package.json": "sha256:3977eb950e628ef222d22698ba578afadb343f54a9b1ccfbecc753bd72af7ad9",
-        "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code-vendor/pnpm-lock.yaml": "sha256:8334d5018a39116ad7e468f7e2fed06c0c19ccec1a6ea36b0e65e05995618e15",
+        "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code-vendor/pnpm-lock.yaml": "sha256:5c6fad8f08c5e1eb4c9cd3928221f56a68575839b1b573928388002a8b731266",
         "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code.mjs": "sha256:8e5767f3533b5c86a8a4b1ca38ce7147e2bd5432b948333b0d8f0f6ef6fdb496",
         "mcpjam-inspector/scripts/local-harness-toolchain.json": "sha256:621261feb62400bd29bf2e88d508ecc6ac4ace155aa19d833d6da79998ff06db",
         "mcpjam-inspector/scripts/read-local-harness-toolchain.mjs": "sha256:c15e4c3799e32e5c0daf26bde9ae58bf836e7d323788d75e5d0a788c74e59e96",
@@ -20,7 +20,7 @@
         "mcpjam-inspector/tools/mcpjam-job-launcher/main.go": "sha256:c3c5a24c16ff609cb7660845b8460d32134c4d4073928cb45b94e5cb6b93a57d",
         "mcpjam-inspector/tools/mcpjam-job-launcher/main_test.go": "sha256:a132f51debb45404e804cf7e06b2a5ab2aedea8f5b9c20cdecb2fea7ad3d1735",
         "recipe/package.json": "sha256:3977eb950e628ef222d22698ba578afadb343f54a9b1ccfbecc753bd72af7ad9",
-        "recipe/pnpm-lock.yaml": "sha256:8334d5018a39116ad7e468f7e2fed06c0c19ccec1a6ea36b0e65e05995618e15"
+        "recipe/pnpm-lock.yaml": "sha256:5c6fad8f08c5e1eb4c9cd3928221f56a68575839b1b573928388002a8b731266"
       }
     },
     "codex": {

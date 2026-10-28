@@ -15,7 +15,10 @@ import type { FormField } from "@/lib/tool-form";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 
 interface BuiltinToolDetailViewProps {
-  tool: Pick<HarnessBuiltinToolInfo, "key" | "name" | "description" | "inputSchema">;
+  tool: Pick<
+    HarnessBuiltinToolInfo,
+    "key" | "name" | "description" | "inputSchema"
+  >;
   fields: FormField[];
   onExpand: () => void;
   onFieldChange: (name: string, value: unknown) => void;
@@ -32,6 +35,7 @@ interface BuiltinToolDetailViewProps {
    */
   runHint?: string;
   headerDescription?: string;
+  status?: string;
   /** Last invoke result, when Run called the page directly. */
   result?: { ok: boolean; text: string } | null;
 }
@@ -48,6 +52,7 @@ export function BuiltinToolDetailView({
   onSwitch,
   runHint = "asks the agent to call this tool — it runs in the sandbox (see the Trace tab). Not a direct execution.",
   headerDescription,
+  status,
   result,
 }: BuiltinToolDetailViewProps) {
   const hasParameters = fields.length > 0;
@@ -82,6 +87,11 @@ export function BuiltinToolDetailView({
       <p className="px-3 pt-2 text-[10px] leading-snug text-muted-foreground">
         <span className="font-medium text-foreground">Run</span> {runHint}
       </p>
+      {status ? (
+        <p className="px-3 pt-2 text-xs text-muted-foreground" role="status">
+          {status}
+        </p>
+      ) : null}
       <ScrollArea className="flex-1 min-h-0">
         <ToolDetailsAccordion
           description={tool.description}
@@ -99,11 +109,11 @@ export function BuiltinToolDetailView({
           }
         />
         {result ? (
-          <div className="px-3 pb-3">
+          <div className="px-3 pb-3" aria-live="polite">
             <p className="text-xs font-medium text-foreground">Result</p>
             <pre
               className={cn(
-                "mt-1 overflow-x-auto rounded-md border border-border bg-muted/50 p-2 font-mono text-[11px]",
+                "mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/50 p-2 font-mono text-[11px]",
                 result.ok ? "text-foreground" : "text-destructive",
               )}
             >

@@ -31605,7 +31605,7 @@
           },
           "modelId": {
             "type": "string",
-            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required on a first turn. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
+            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Optional on a first turn: defaults to the environment model, then the client model, and pins the resolved model for continuations. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
           },
           "hostId": {
             "type": "string",
@@ -31621,7 +31621,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Target these project servers. Mutually exclusive with `environmentId`. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
+            "description": "Target these project servers; [] explicitly selects no MCP servers and remains empty on continuation. Mutually exclusive with `environmentId`, including when empty. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
           },
           "systemPrompt": {
             "type": "string",
@@ -32138,6 +32138,9 @@
           "spanCount"
         ],
         "properties": {
+          "setupHashAtTurn": { "type": "string", "description": "Hash of a complete effective setup manifest. Absent when provenance is incomplete." },
+          "setupStatus": { "type": "string", "enum": ["complete", "incomplete"] },
+          "setupIncompleteReasons": { "type": "array", "items": { "type": "string" } },
           "turnId": {
             "type": "string"
           },

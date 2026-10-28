@@ -81,7 +81,7 @@ export function ConformanceScorePreview() {
   return (
     <div
       aria-hidden="true"
-      className="flex w-75 shrink-0 select-none flex-col gap-3 rounded-lg border border-border bg-card px-4 pt-3.5 pb-3"
+      className="flex w-75 shrink-0 select-none flex-col gap-3 rounded-lg border border-border bg-popover px-4 pt-3.5 pb-3"
     >
       <div className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground">
         OVERALL SCORE

@@ -184,13 +184,14 @@ describe("web auth manager batching", () => {
         },
       }),
     ) as typeof fetch;
-    await createAuthorizedManager(
+    const authorized = await createAuthorizedManager(
       { authMethod: "jwt" } as Parameters<typeof createAuthorizedManager>[0],
       "bearer",
       "project-1",
       ["enrolled", "shared"],
       10_000,
     );
+    expect(authorized.authenticatedUserId).toBe("authenticated-user");
     expect(admissionMock).toHaveBeenCalledTimes(1);
     expect(admissionMock).toHaveBeenCalledWith(
       expect.objectContaining({
