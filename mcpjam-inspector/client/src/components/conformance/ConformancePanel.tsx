@@ -589,7 +589,17 @@ export function ConformanceTab({
   // non-connected shape as "no server selected" so the panel never runs
   // against `undefined` (which would surface as "Hosted server not found
   // for 'undefined'" when Apps conformance calls the hosted resolver).
-  if (!server || !server.name || server.name === "none" || !server.config) {
+  // With a picker, only an offered (connected) server can run. Otherwise a
+  // selection left over from before a disconnect still mounts the run view,
+  // e.g. when no server is connected and the effect above has nothing to pick.
+  const selectionIsRunnable = servers === undefined || selectionIsOffered;
+  if (
+    !server ||
+    !server.name ||
+    server.name === "none" ||
+    !server.config ||
+    !selectionIsRunnable
+  ) {
     // Same pre-run page as with a server; running just asks for one first.
     const noServerRunButton = (
       <Button

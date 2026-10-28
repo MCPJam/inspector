@@ -490,6 +490,26 @@ describe("ConformanceTab", () => {
     expect(onSelectServer).toHaveBeenCalledWith("beta");
   });
 
+  it("treats a selection that is no longer connected as no server", () => {
+    const info = vi.spyOn(toast, "info");
+    // The selected server disconnected and nothing else is connected.
+    render(
+      <ConformanceTab
+        server={createHttpServer({ name: "gamma" })}
+        servers={[]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    clickRun();
+
+    expect(info).toHaveBeenCalledWith(
+      "Connect an MCP server to run conformance checks.",
+    );
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
   it("keeps a connected selection and remembers it", () => {
     const onSelectServer = vi.fn();
     render(
