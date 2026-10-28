@@ -155,9 +155,11 @@ function LiveWidgetReplay({
   const uiType = detectUIType(effectiveToolMeta, rawOutput ?? toolOutput);
   const uiResourceUri =
     renderOverride?.resourceUri ?? getUIResourceUri(uiType, effectiveToolMeta);
+  // The caller's id already starts from the override's and names a server
+  // this app can reach (a local build's restored snapshot holds a Convex id).
   const serverId =
-    renderOverride?.serverId ??
     attributedServerId ??
+    renderOverride?.serverId ??
     readToolResultServerId(rawOutput) ??
     getToolServerId(toolName, toolServerMap);
   const hasCachedHtmlForOffline = !!renderOverride?.cachedWidgetHtmlUrl;
