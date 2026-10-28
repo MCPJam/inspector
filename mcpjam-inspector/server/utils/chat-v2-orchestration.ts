@@ -692,13 +692,6 @@ export interface PrepareChatV2Options {
    */
   serverLabels?: Record<string, string>;
   /**
-   * serverId → display name, for the suffix a tool is renamed with when two
-   * selected servers offer the same tool name (`read_me__excalidraw`).
-   * Separate from `serverLabels` so supplying names here does not move the
-   * skill-ref namespace. Falls back to `serverLabels`, then the server id.
-   */
-  serverNamesById?: Record<string, string>;
-  /**
    * The host's tool-cancellation setting for this turn, resolved server-side
    * from the host config. Passed per turn because the connection's own copy
    * is captured at connect time and goes stale the moment the user saves.
@@ -1443,10 +1436,6 @@ export async function prepareChatV2(
     wrapModelToolsets(await lister.byServer(), options.modelToolExecutor);
   let mcpTools;
   try {
-    // Every branch is collision-safe: when two servers offer the same tool
-    // name, one keeps it and the other is renamed `<tool>__<server>` rather
-    // than silently dropped (see `mergeConnectionToolsets`).
-    const toolNameServerLabels = options.serverNamesById ?? serverLabels;
     mcpTools =
       selectedGroups && Object.keys(selectedGroups).length
         ? mergeConnectionToolsets(await listByServer(), selectedGroups, {
@@ -1454,14 +1443,10 @@ export async function prepareChatV2(
             onRoute: (id, connection) => {
               toolConnections.set(id, connection);
             },
-            serverLabels: toolNameServerLabels,
           })
         : options.modelToolExecutor
-          ? mergeConnectionToolsets(await listByServer(), {}, {
-              snapshot,
-              serverLabels: toolNameServerLabels,
-            })
-          : await lister.flat(toolNameServerLabels);
+          ? Object.assign({}, ...Object.values(await listByServer()))
+          : await lister.flat();
   } catch (error) {
     // The ONE hop here that leaves MCPJam: a dead or slow user server the turn
     // did not isolate lands here, and without this mark the route's outer catch
