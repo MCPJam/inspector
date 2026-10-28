@@ -153,7 +153,9 @@ async function runSteps(steps: unknown[][]): Promise<{
     messages: [{ role: "user", content: "Hi." }] as any,
     modelId: "google/gemini-2.5-flash-lite",
     systemPrompt: "You are helpful",
-    tools: {},
+    // A turn with no tools at all scrubs every tool part from history; a
+    // model that called one was offered at least one.
+    tools: { read_me: { description: "Read me", execute: vi.fn() } },
     mcpClientManager: {
       getAllToolsMetadata: vi.fn().mockReturnValue({}),
       listServers: vi.fn().mockReturnValue([]),
