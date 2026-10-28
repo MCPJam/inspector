@@ -572,14 +572,17 @@ export function ConformanceTab({
   const selectionIsOffered = Boolean(
     server?.name && servers?.some((offered) => offered.name === server.name),
   );
+  // A selection that is reconnecting is still the user's choice: switching
+  // away would remount the run view and drop a run in flight on it.
+  const selectionIsReconnecting = server?.connectionStatus === "connecting";
   useEffect(() => {
     if (!servers || servers.length === 0 || !onSelectServer) return;
-    if (selectionIsOffered) return;
+    if (selectionIsOffered || selectionIsReconnecting) return;
     const remembered = readLastServer();
     const next =
       servers.find((offered) => offered.name === remembered) ?? servers[0]!;
     onSelectServer(next.name);
-  }, [servers, onSelectServer, selectionIsOffered]);
+  }, [servers, onSelectServer, selectionIsOffered, selectionIsReconnecting]);
   useEffect(() => {
     if (selectionIsOffered && server?.name) rememberServer(server.name);
   }, [selectionIsOffered, server?.name]);

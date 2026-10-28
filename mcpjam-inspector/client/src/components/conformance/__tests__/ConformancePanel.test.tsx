@@ -552,6 +552,26 @@ describe("ConformanceTab", () => {
     info.mockRestore();
   });
 
+  it("stays on a reconnecting selection while another server is connected", () => {
+    window.localStorage.setItem("mcpjam.conformance.lastServer.v1", "alpha");
+    const onSelectServer = vi.fn();
+    render(
+      <ConformanceTab
+        server={createHttpServer({
+          name: "alpha",
+          connectionStatus: "connecting",
+        })}
+        servers={[createHttpServer({ name: "beta" })]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+
+    expect(onSelectServer).not.toHaveBeenCalled();
+    expect(
+      window.localStorage.getItem("mcpjam.conformance.lastServer.v1"),
+    ).toBe("alpha");
+  });
+
   it("keeps a connected selection and remembers it", () => {
     const onSelectServer = vi.fn();
     render(
