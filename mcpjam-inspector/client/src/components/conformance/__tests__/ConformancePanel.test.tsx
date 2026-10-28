@@ -822,6 +822,28 @@ describe("ConformanceTab", () => {
     openSpy.mockRestore();
   });
 
+  it("never opens an authorization URL that is not http or https", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "javascript:alert(document.domain)",
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+
+    await screen.findByText(/authorization URL is not an http or https/);
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "Open authorization page" }),
+    ).toBeNull();
+    openSpy.mockRestore();
+  });
+
   it("runs the OAuth suite without a negative-checks opt-in", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);

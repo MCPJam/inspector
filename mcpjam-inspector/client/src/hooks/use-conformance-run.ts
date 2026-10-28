@@ -107,6 +107,20 @@ export interface OAuthSuiteState extends SuiteState {
   popupBlocked?: boolean;
 }
 
+/**
+ * The authorization URL comes from the target's own metadata. A `javascript:`
+ * or `data:` URL handed to `window.open` runs in this origin, so only web
+ * URLs are opened; plain `http:` stays allowed for local authorization servers.
+ */
+function isWebUrl(raw: string): boolean {
+  try {
+    const { protocol } = new URL(raw);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 /** The OAuth popup, or null when the browser blocked it. */
 function openAuthorizationPopup(authorizationUrl: string): Window | null {
   return window.open(
@@ -497,6 +511,14 @@ export function useConformanceRun({
       runToken: number,
       serverName: string
     ) => {
+      if (!isWebUrl(authorizationUrl)) {
+        setOAuth({
+          status: "error",
+          error:
+            "This server's authorization URL is not an http or https address, so it was not opened. Fix the authorization endpoint in its OAuth metadata, then run again.",
+        });
+        return;
+      }
       const popup = openAuthorizationPopup(authorizationUrl);
       setOAuth({
         status: "running",
