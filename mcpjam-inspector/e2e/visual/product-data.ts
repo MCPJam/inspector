@@ -40,7 +40,18 @@ export const memberFixture: AppFixture = {
   signedIn: true,
   mutations: { "productUpdates:initializeIfNeeded": null },
   queries: {
+    "legalAcceptance:getStatus": {
+      needsAcceptance: false,
+      termsVersion: "fixture-terms",
+      privacyVersion: "fixture-privacy",
+      minimumAge: 18,
+    },
     "organizationModelProviders:getVisibleConfig": { providers: [] },
+    // Off, as the empty flag set has always rendered it.
+    "hostedBrowser:getAvailability": {
+      inspector: { available: false, reason: "flag_false" },
+      tools: { available: false, reason: "flag_false" },
+    },
     "projectEnvironments:getCapabilities": {},
     "projectEnvironments:listEnvironments": [],
     "testSuites:getTestSuitesOverview": [],

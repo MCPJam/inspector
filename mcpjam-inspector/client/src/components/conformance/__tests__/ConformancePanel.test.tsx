@@ -15,6 +15,14 @@ import type {
 } from "@mcpjam/sdk";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
+const { enabledFlags } = vi.hoisted(() => ({
+  enabledFlags: new Set<string>(),
+}));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (key: string) => enabledFlags.has(key),
+}));
+
 const mockRunProtocol = vi.fn();
 const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
@@ -235,6 +243,8 @@ function createStdioServer(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  enabledFlags.clear();
+  window.localStorage.clear();
 });
 
 describe("ConformanceTab", () => {
@@ -447,6 +457,186 @@ describe("ConformanceTab", () => {
     info.mockRestore();
   });
 
+  it("picks the first connected server when nothing usable is selected", () => {
+    const onSelectServer = vi.fn();
+    const servers = [
+      createHttpServer({ name: "alpha" }),
+      createHttpServer({ name: "beta" }),
+    ];
+    render(
+      <ConformanceTab
+        server={null}
+        servers={servers}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    expect(onSelectServer).toHaveBeenCalledWith("alpha");
+  });
+
+  it("returns to the server last selected here when it is still connected", () => {
+    window.localStorage.setItem("mcpjam.conformance.lastServer.v1", "beta");
+    const onSelectServer = vi.fn();
+    // A selection that is not connected is not one this page can run.
+    render(
+      <ConformanceTab
+        server={createHttpServer({ name: "gamma" })}
+        servers={[
+          createHttpServer({ name: "alpha" }),
+          createHttpServer({ name: "beta" }),
+        ]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    expect(onSelectServer).toHaveBeenCalledWith("beta");
+  });
+
+  it("treats a selection that is no longer connected as no server", () => {
+    const info = vi.spyOn(toast, "info");
+    // The selected server disconnected and nothing else is connected.
+    render(
+      <ConformanceTab
+        server={createHttpServer({ name: "gamma" })}
+        servers={[]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    clickRun();
+
+    expect(info).toHaveBeenCalledWith(
+      "Connect an MCP server to run conformance checks.",
+    );
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it("keeps a run in flight when its server disconnects, but blocks a new one", async () => {
+    const pending = createDeferred<{
+      success: true;
+      result: MCPConformanceResult;
+    }>();
+    setupSuccessfulRunMocks();
+    mockRunProtocol.mockReturnValue(pending.promise);
+    const onSelectServer = vi.fn();
+    const server = createHttpServer({ name: "alpha" });
+    const { rerender } = render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    clickRun();
+    await screen.findByText(/Running \d+ checks/);
+
+    // The server drops mid-run and nothing else is connected.
+    rerender(
+      <ConformanceTab
+        server={server}
+        servers={[]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    pending.resolve({ success: true, result: createProtocolResult() });
+    await waitFor(() => {
+      expect(within(suiteHeader("protocol")).getByText("PASSED")).toBeDefined();
+    });
+
+    const info = vi.spyOn(toast, "info");
+    mockRunProtocol.mockClear();
+    clickRun();
+    expect(info).toHaveBeenCalledWith(
+      "Connect an MCP server to run conformance checks.",
+    );
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it("stays on a reconnecting selection while another server is connected", () => {
+    window.localStorage.setItem("mcpjam.conformance.lastServer.v1", "alpha");
+    const onSelectServer = vi.fn();
+    render(
+      <ConformanceTab
+        server={createHttpServer({
+          name: "alpha",
+          connectionStatus: "connecting",
+        })}
+        servers={[createHttpServer({ name: "beta" })]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+
+    expect(onSelectServer).not.toHaveBeenCalled();
+    expect(
+      window.localStorage.getItem("mcpjam.conformance.lastServer.v1"),
+    ).toBe("alpha");
+  });
+
+  it("keeps a connected selection and remembers it", () => {
+    const onSelectServer = vi.fn();
+    render(
+      <ConformanceTab
+        server={createHttpServer({ name: "beta" })}
+        servers={[
+          createHttpServer({ name: "alpha" }),
+          createHttpServer({ name: "beta" }),
+        ]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    expect(onSelectServer).not.toHaveBeenCalled();
+    expect(
+      window.localStorage.getItem("mcpjam.conformance.lastServer.v1"),
+    ).toBe("beta");
+  });
+
+  it("lists protocol versions newest first, after Auto", async () => {
+    const user = userEvent.setup();
+    render(<ConformanceTab server={createHttpServer()} />);
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    const versions = screen
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(versions[0]).toBe("Auto (negotiated)");
+    const dated = versions.slice(1);
+    expect(dated).toEqual([...dated].sort().reverse());
+    expect(dated[0]).toBe("2026-07-28");
+  });
+
+  it("shows a not-applicable reason only when its row is open, in neutral", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        checks: [
+          {
+            id: "modern-no-session-id",
+            category: "transport",
+            title: "No Session Id Minted",
+            description: "A modern server never mints an Mcp-Session-Id.",
+            status: "skipped",
+            skipReason: "not-applicable",
+            durationMs: 0,
+            error: {
+              message: "Not applicable to the legacy era (run pinned to 2025-11-25)",
+            },
+          },
+        ],
+      }),
+    });
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+    fireEvent.click(suiteHeader("protocol"));
+
+    // Shut, an era skip says nothing to act on, so it carries no box.
+    expect(screen.queryByText(/Not applicable to the legacy era/)).toBeNull();
+
+    clickRow("No Session Id Minted");
+    const reason = screen.getByText(/Not applicable to the legacy era/);
+    expect(reason).toHaveClass("text-muted-foreground");
+    expect(reason).not.toHaveClass("text-red-600");
+  });
+
   it("shows every suite once a run starts", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
@@ -459,11 +649,20 @@ describe("ConformanceTab", () => {
     }
   });
 
-  it("shows the readiness sections without a flag of their own", () => {
-    // This file mocks no feature-flag provider, so the sections appearing here
-    // IS the assertion: reaching this page already required
-    // `mcpjam-conformance`, and a second flag would have gated an audience
-    // against itself. If one is ever reintroduced, this fails.
+  it("hides the readiness sections unless mcpjam-directory-readiness is on", () => {
+    // Directory submissions are a later phase than protocol conformance, so
+    // the sections stay out of the page until the flag says otherwise.
+    render(<ConformanceTab server={createHttpServer()} />);
+    expect(
+      screen.getByText("Run your first conformance check"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Claude Directory Readiness")).toBeNull();
+    expect(screen.queryByText("OpenAI Directory Readiness")).toBeNull();
+    expect(screen.queryByText("Muse Directory Readiness")).toBeNull();
+  });
+
+  it("shows the readiness sections when mcpjam-directory-readiness is on", () => {
+    enabledFlags.add("mcpjam-directory-readiness");
     render(<ConformanceTab server={createHttpServer()} />);
 
     // Before any run, too: readiness has its own run control and recovers an
@@ -477,6 +676,7 @@ describe("ConformanceTab", () => {
   });
 
   it("keeps the readiness sections mounted when the first run starts", async () => {
+    enabledFlags.add("mcpjam-directory-readiness");
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
     const before = screen.getByText("OpenAI Directory Readiness");
@@ -666,9 +866,10 @@ describe("ConformanceTab", () => {
   });
 
   it("stays in the run for OAuth between the callback and the result", async () => {
+    // A popup that opened: this test is about the callback, not a blocker.
     const openSpy = vi
       .spyOn(window, "open")
-      .mockReturnValue(null as unknown as Window);
+      .mockReturnValue({} as unknown as Window);
     const poll = createDeferred<{ phase: string; result?: unknown }>();
     setupSuccessfulRunMocks();
     mockStartOAuth.mockResolvedValue({
@@ -704,6 +905,142 @@ describe("ConformanceTab", () => {
     await waitFor(() => {
       expect(within(suiteHeader("oauth")).getByText("PASSED")).toBeDefined();
     });
+    openSpy.mockRestore();
+  });
+
+  it("offers the authorization page and a skip when the browser blocks the popup", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue(null as unknown as Window);
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+
+    await screen.findByText(
+      "Your browser blocked the authorization window. Allow pop-ups for this site, or open the authorization page.",
+    );
+    expect(
+      screen.queryByText("Waiting for browser authorization..."),
+    ).toBeNull();
+
+    // Opening it again from a click is what a popup blocker lets through.
+    openSpy.mockReturnValue({} as unknown as Window);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open authorization page" }),
+    );
+    expect(openSpy).toHaveBeenLastCalledWith(
+      "https://auth.example.com/authorize",
+      "oauth_conformance_auth",
+      expect.any(String),
+    );
+    await screen.findByText("Waiting for browser authorization...");
+    openSpy.mockRestore();
+  });
+
+  it("skips OAuth while it waits, leaving it not scored rather than failed", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+    await screen.findByText("Waiting for browser authorization...");
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip OAuth" }));
+
+    const header = await waitFor(() =>
+      screen
+        .getByText("OAuth was skipped, so it is not scored for this run.")
+        .closest("button"),
+    );
+    expect(within(header!).getByText("NOT APPLICABLE")).toBeDefined();
+    expect(within(header!).queryByText("FAILED")).toBeNull();
+
+    // A consent that completes late cannot bring the suite back.
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "OAUTH_CALLBACK", code: "late-code" },
+      }),
+    );
+    expect(mockSubmitCode).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it("keeps OAuth skipped when a callback already submitting finishes after the skip", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    const submit = createDeferred<{ success: boolean }>();
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+    mockSubmitCode.mockReturnValue(submit.promise);
+    mockCompleteOAuth.mockResolvedValue({
+      phase: "complete",
+      result: createOAuthResult(),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+    await screen.findByText("Waiting for browser authorization...");
+
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+      }),
+    );
+    await waitFor(() => expect(mockSubmitCode).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip OAuth" }));
+    submit.resolve({ success: true });
+    await submit.promise;
+
+    const header = await waitFor(() =>
+      screen
+        .getByText("OAuth was skipped, so it is not scored for this run.")
+        .closest("button"),
+    );
+    expect(within(header!).getByText("NOT APPLICABLE")).toBeDefined();
+    expect(mockCompleteOAuth).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it("never opens an authorization URL that is not http or https", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "javascript:alert(document.domain)",
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+
+    await screen.findByText(/authorization URL is not an http or https/);
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "Open authorization page" }),
+    ).toBeNull();
     openSpy.mockRestore();
   });
 
@@ -819,10 +1156,10 @@ describe("ConformanceTab", () => {
     expect(
       screen.getByText("Missing optional output template"),
     ).toBeInTheDocument();
-    // Once in the row's summary line, once in the opened error banner.
+    // Once: the row's message box is the only place it appears, open or shut.
     expect(
       screen.getAllByText("Required tool metadata is missing"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("allows skipped protocol rows to expand", async () => {
@@ -908,7 +1245,7 @@ describe("ConformanceTab", () => {
     ).toBe(false);
     expect(
       screen.getAllByText("Server accepted the mismatched redirect URI."),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("renders warnings on a passed OAuth step without an error banner", async () => {
@@ -1066,6 +1403,58 @@ describe("ConformanceTab", () => {
     expect(within(header).queryByText("FAILED")).toBeNull();
   });
 
+  it("turns checks a server refused for credentials into one reconnect notice", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        passed: false,
+        outcome: "incomplete",
+        checks: [
+          {
+            id: "server-initialize",
+            category: "core",
+            title: "Server Initialize",
+            description: "Server responds to initialize.",
+            status: "skipped",
+            skipReason: "could-not-run",
+            durationMs: 0,
+            error: {
+              message:
+                "The server requires authorization (HTTP 401) and this run had no accepted credentials, so this check could not run.",
+            },
+            details: { authorizationRequired: true, statusCode: 401 },
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    // A 401 is the server doing its job: INCOMPLETE and the next step, never
+    // a red FAILED.
+    const header = suiteHeader("protocol");
+    expect(within(header).getByText("INCOMPLETE")).toBeDefined();
+    expect(within(header).queryByText("FAILED")).toBeNull();
+    expect(
+      screen.getByText(
+        /This server requires sign-in.*1 check\(s\) could not\s+run/s,
+      ),
+    ).toBeDefined();
+    expect(
+      screen.getByText(
+        /Reconnect the server with OAuth.*or update its access\s+token/s,
+      ),
+    ).toBeDefined();
+  });
+
+  it("shows no reconnect notice when nothing waited on authorization", async () => {
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(screen.queryByText(/This server requires sign-in/)).toBeNull();
+  });
+
   it("badges a finished-but-failing suite as failed, not passed", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({ passed: false }),
@@ -1122,11 +1511,18 @@ describe("ConformanceTab", () => {
       .closest("button");
     expect(pendingRow).toHaveTextContent("unscored");
     expect(
-      screen.getByTitle("unscored by this run's profile").closest("button"),
+      screen
+        .getByTitle(/Unscored checks don't count toward the score/)
+        .closest("button"),
     ).toBe(pendingRow);
+    // An unscored finding reads as information, not as a failure that counts.
+    expect(screen.getByText("schema mismatch")).toHaveClass(
+      "text-muted-foreground",
+    );
 
     const scoredRow = screen.getByText("Ping").closest("button");
     expect(scoredRow).not.toHaveTextContent("unscored");
+    expect(screen.getByText("pong missing")).toHaveClass("text-red-600");
   });
 
   it("badges an incomplete tasks run distinctly from a passing one", async () => {

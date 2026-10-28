@@ -1,3 +1,4 @@
+import { guardEvalViewTools } from "./view-tool-policy.js";
 import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { cloneTraceValue } from "../../utils/live-chat-trace-stream";
 import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
@@ -363,8 +364,8 @@ export async function driveLocalEvalTurn(
     );
   }
 
-  const appContext = browser.getModelContext?.();
   await browser.dismissCarriedWidget();
+  const appContext = browser.getModelContext?.();
   acc.conversationMessages.push({ role: "user", content: promptTurn.prompt });
   acc.activePromptInputMessages = [...acc.conversationMessages];
   acc.activePartialResponseMessages = [];
@@ -383,6 +384,7 @@ export async function driveLocalEvalTurn(
   const mergedTools = {
     ...prepared.allTools,
     ...browser.computerWidgetTools,
+    ...guardEvalViewTools(browser.viewTools ?? {}, toolPolicyGate),
   } as ToolSet;
   const toolsForTurn = toolPolicyGate
     ? toolPolicyGate.wrap(mergedTools)

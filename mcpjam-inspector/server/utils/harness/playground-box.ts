@@ -101,6 +101,7 @@ export async function resolvePlaygroundCredentialEnvironment(args: {
   projectId: string;
   hostId: string;
   harnessId: string;
+  chat?: boolean;
   /** Test seams. */
   listSecrets?: typeof convexListProjectSecretBindings;
   ensureAdhocEnvironment?: (input: {
@@ -162,6 +163,7 @@ export async function resolvePlaygroundCredentialEnvironment(args: {
             hostId: input.hostId,
             serverSelection: { mode: "none" },
             secretSelection: input.secretSelection,
+            ...(args.chat ? { purpose: "chat" } : {}),
           } as never,
         )) as { environment: { environmentId: string } };
         return { environmentId: result.environment.environmentId };
