@@ -54,7 +54,7 @@ describe("sign-in model notice", () => {
       </>,
     );
     expect(screen.getByTestId("sign-in-model-notice").textContent).toContain(
-      "Claude Sonnet 4.5 needs an account.",
+      "Sign in to use Claude Sonnet 4.5, or choose another model.",
     );
   });
 
@@ -67,7 +67,7 @@ describe("sign-in model notice", () => {
       </>,
     );
     expect(screen.getByTestId("sign-in-model-notice").textContent).toContain(
-      "Cursor can't run. Its model, Claude Sonnet 4.5, needs an account.",
+      "Cursor can't run Claude Sonnet 4.5. Sign in to use this model, or choose another model in Connect → Client.",
     );
   });
 

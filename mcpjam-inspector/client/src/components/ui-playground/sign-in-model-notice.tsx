@@ -34,17 +34,18 @@ export function signInModelNotice({
   const lines: ReactNode[] = (clients ?? []).map(
     ({ clientName, modelName }) => (
       <p key={clientName}>
-        <span className="font-medium">{clientName} can&apos;t run.</span> Its
-        model, {modelName}, needs an account. Sign in to send, or choose another
-        model.
+        <span className="font-medium">
+          {clientName} can&apos;t run {modelName}.
+        </span>{" "}
+        Sign in to use this model, or choose another model in Connect → Client.
       </p>
     ),
   );
   if (lines.length === 0 && model && needsSignIn(model)) {
     lines.push(
       <p key="model">
-        <span className="font-medium">{model.name} needs an account.</span> Sign
-        in to send, or choose another model.
+        <span className="font-medium">Sign in to use {model.name},</span> or
+        choose another model.
       </p>,
     );
   }

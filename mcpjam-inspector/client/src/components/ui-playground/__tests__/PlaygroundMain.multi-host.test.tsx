@@ -1517,7 +1517,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect(inputProps.submitDisabled).toBe(true);
       render(<>{inputProps.notice}</>);
       expect(screen.getByTestId("sign-in-model-notice").textContent).toContain(
-        "Its model, Claude Sonnet 4.5, needs an account.",
+        "Host B can't run Claude Sonnet 4.5.",
       );
     } finally {
       mockUseChatSession.availableModels = previousModels;
