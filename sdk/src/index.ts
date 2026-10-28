@@ -46,6 +46,8 @@ export type {
 // SEP-2243 header mirroring: CLI and conformance use the send path’s walk.
 export {
   buildMcpParamHeaders,
+  findMcpHeaderIssues,
+  deriveMirroredBodyValues,
   classifyMcpHeader,
   decodeMcpHeaderValue,
   encodeMcpHeaderValue,
