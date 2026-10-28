@@ -224,7 +224,7 @@ function SubscriptionCard({
           <p className="text-muted-foreground">
             Inbox state: <span className="font-mono">{slotState.state}</span>
             {slotState.observedSubscriptionIds?.length
-              ? ` · observed ids ${slotState.observedSubscriptionIds.join(", ")}`
+              ? ` · Seen subscription IDs: ${slotState.observedSubscriptionIds.join(", ")}`
               : ""}
           </p>
           {slotState.counts ? (
