@@ -132,6 +132,12 @@ let verdictAnsweredAtMs: number | null = null;
  * turn every older backend into a refusal five minutes after boot.
  */
 let verdictRouteMissing = false;
+/**
+ * The refresh route has answered at least once. A 404 after that is a route
+ * lost (a rollback, a misrouted deploy), not an older backend, and the verdict
+ * it last gave must still expire.
+ */
+let verdictRouteAnswered = false;
 let verdictRefreshTimer: ReturnType<typeof setInterval> | null = null;
 /** The stale-verdict error goes to Sentry once per outage, not once a minute. */
 let staleVerdictReported = false;
@@ -143,6 +149,7 @@ export function resetComputersRuntimeConfigBootstrapForTests(): void {
   hostedDesktopProvisionable = null;
   verdictAnsweredAtMs = null;
   verdictRouteMissing = false;
+  verdictRouteAnswered = false;
   staleVerdictReported = false;
   stopHostedBrowserVerdictRefresh();
 }
@@ -492,7 +499,7 @@ async function fetchHostedBrowserVerdict(
     });
     return "failed";
   }
-  if (response.status === 404) {
+  if (response.status === 404 && !verdictRouteAnswered) {
     verdictRouteMissing = true;
     stopHostedBrowserVerdictRefresh();
     logger.info(
@@ -518,6 +525,7 @@ async function fetchHostedBrowserVerdict(
     logger.warn("[computers] hosted-browser verdict payload failed validation");
     return "failed";
   }
+  verdictRouteAnswered = true;
   recordHostedBrowserVerdict(parsed.data.hostedBrowser);
   return "answered";
 }
