@@ -17,6 +17,8 @@ vi.mock("convex/react", () => ({
     return vi.fn();
   },
   useConvex: () => ({ query: vi.fn() }),
+  useQuery: vi.fn(),
+  useAction: vi.fn(),
 }));
 
 vi.mock("@/lib/local-state-migration", () => ({

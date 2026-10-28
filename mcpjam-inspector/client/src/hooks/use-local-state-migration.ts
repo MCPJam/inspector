@@ -6,8 +6,8 @@ import {
 } from "@/lib/local-state-migration";
 import { HOSTED_MODE } from "@/lib/config";
 import { importHostedOAuthTokens } from "@/lib/apis/hosted-oauth-import-tokens-api";
-import { getRenderedThemeMode } from "@/lib/theme-utils";
 import { useLogger } from "./use-logger";
+import { useProjectMutations } from "./useProjects";
 
 /**
  * localStorage key holding a short-lived lease (timestamp ms) so two
@@ -183,10 +183,9 @@ export function useLocalStateMigration({
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
   const [retryTick, setRetryTick] = useState(0);
-  const createProject = useMutation("projects:createProject" as any);
-  const ensureDefaultProject = useMutation(
-    "projects:ensureDefaultProject" as any,
-  );
+  // The sidebar's wrappers, so each migrated project is seeded with the
+  // theme this tab renders when it is created, as a sidebar project is.
+  const { createProject, ensureDefaultProject } = useProjectMutations();
   const mergeServersIntoExistingProject = useMutation(
     "projects:mergeServersIntoExistingProject" as any,
   );
@@ -245,18 +244,12 @@ export function useLocalStateMigration({
     }
 
     inFlightRef.current = true;
-    // Each migrated project is seeded with an MCPJam client in the viewer's
-    // theme, as a project created from the sidebar would be. Read the theme
-    // this tab renders at each call: the hook mounts above
-    // PreferencesStoreProvider, and the viewer can switch mid-migration.
     runLocalStateMigration({
-      createProject: (args) =>
-        createProject({ ...args, themeMode: getRenderedThemeMode() }),
+      createProject,
       ensureDefaultProject: async ({ organizationId: orgId }) => {
-        const result = await (ensureDefaultProject as any)({
-          ...(orgId ? { organizationId: orgId } : {}),
-          themeMode: getRenderedThemeMode(),
-        });
+        const result = await ensureDefaultProject(
+          orgId ? { organizationId: orgId } : {},
+        );
         if (typeof result !== "string") {
           throw new Error(
             "projects:ensureDefaultProject returned a non-string id",
