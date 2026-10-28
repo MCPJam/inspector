@@ -866,9 +866,10 @@ describe("ConformanceTab", () => {
   });
 
   it("stays in the run for OAuth between the callback and the result", async () => {
+    // A popup that opened: this test is about the callback, not a blocker.
     const openSpy = vi
       .spyOn(window, "open")
-      .mockReturnValue(null as unknown as Window);
+      .mockReturnValue({} as unknown as Window);
     const poll = createDeferred<{ phase: string; result?: unknown }>();
     setupSuccessfulRunMocks();
     mockStartOAuth.mockResolvedValue({
@@ -904,6 +905,142 @@ describe("ConformanceTab", () => {
     await waitFor(() => {
       expect(within(suiteHeader("oauth")).getByText("PASSED")).toBeDefined();
     });
+    openSpy.mockRestore();
+  });
+
+  it("offers the authorization page and a skip when the browser blocks the popup", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue(null as unknown as Window);
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+
+    await screen.findByText(
+      "Your browser blocked the authorization window. Allow pop-ups for this site, or open the authorization page.",
+    );
+    expect(
+      screen.queryByText("Waiting for browser authorization..."),
+    ).toBeNull();
+
+    // Opening it again from a click is what a popup blocker lets through.
+    openSpy.mockReturnValue({} as unknown as Window);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open authorization page" }),
+    );
+    expect(openSpy).toHaveBeenLastCalledWith(
+      "https://auth.example.com/authorize",
+      "oauth_conformance_auth",
+      expect.any(String),
+    );
+    await screen.findByText("Waiting for browser authorization...");
+    openSpy.mockRestore();
+  });
+
+  it("skips OAuth while it waits, leaving it not scored rather than failed", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+    await screen.findByText("Waiting for browser authorization...");
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip OAuth" }));
+
+    const header = await waitFor(() =>
+      screen
+        .getByText("OAuth was skipped, so it is not scored for this run.")
+        .closest("button"),
+    );
+    expect(within(header!).getByText("NOT APPLICABLE")).toBeDefined();
+    expect(within(header!).queryByText("FAILED")).toBeNull();
+
+    // A consent that completes late cannot bring the suite back.
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "OAUTH_CALLBACK", code: "late-code" },
+      }),
+    );
+    expect(mockSubmitCode).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it("keeps OAuth skipped when a callback already submitting finishes after the skip", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    const submit = createDeferred<{ success: boolean }>();
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+    mockSubmitCode.mockReturnValue(submit.promise);
+    mockCompleteOAuth.mockResolvedValue({
+      phase: "complete",
+      result: createOAuthResult(),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+    await screen.findByText("Waiting for browser authorization...");
+
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "OAUTH_CALLBACK", code: "auth-code" },
+      }),
+    );
+    await waitFor(() => expect(mockSubmitCode).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip OAuth" }));
+    submit.resolve({ success: true });
+    await submit.promise;
+
+    const header = await waitFor(() =>
+      screen
+        .getByText("OAuth was skipped, so it is not scored for this run.")
+        .closest("button"),
+    );
+    expect(within(header!).getByText("NOT APPLICABLE")).toBeDefined();
+    expect(mockCompleteOAuth).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it("never opens an authorization URL that is not http or https", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "javascript:alert(document.domain)",
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+
+    await screen.findByText(/authorization URL is not an http or https/);
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "Open authorization page" }),
+    ).toBeNull();
     openSpy.mockRestore();
   });
 
@@ -1299,10 +1436,14 @@ describe("ConformanceTab", () => {
     expect(within(header).getByText("INCOMPLETE")).toBeDefined();
     expect(within(header).queryByText("FAILED")).toBeNull();
     expect(
-      screen.getByText(/This server requires sign-in.*1 check\(s\) could not\s+run/s),
+      screen.getByText(
+        /This server requires sign-in.*1 check\(s\) could not\s+run/s,
+      ),
     ).toBeDefined();
     expect(
-      screen.getByText(/Reconnect the server with OAuth.*or update its access\s+token/s),
+      screen.getByText(
+        /Reconnect the server with OAuth.*or update its access\s+token/s,
+      ),
     ).toBeDefined();
   });
 
