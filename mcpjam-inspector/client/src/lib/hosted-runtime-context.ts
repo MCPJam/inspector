@@ -59,6 +59,7 @@ export type HiddenEnvironmentRecovery =
 export type HostedHiddenEnvironment = {
   /** The composed ad-hoc environment; null while it is being composed. */
   environmentId: string | null;
+  blockingError?: string;
   /** The servers its plugins add; kept on in every turn's override. */
   pluginServerIds: string[];
   /**

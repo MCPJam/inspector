@@ -31,6 +31,10 @@ vi.mock("convex/browser", () => ({
     return {
       setAuth: vi.fn(),
       query: convexQueryMock,
+      mutation: vi.fn(async () => ({
+        hostId: "chat-host",
+        environment: { environmentId: "chat-environment" },
+      })),
     };
   }),
 }));
@@ -123,7 +127,11 @@ import {
   toolApprovalBindingFor,
   toolApprovalClaimKey,
 } from "../../../utils/tool-approval-token.js";
-import { createWebTestApp, postJson } from "./helpers/test-app.js";
+import {
+  chatEnvironmentFixture,
+  createWebTestApp,
+  postJson,
+} from "./helpers/test-app.js";
 
 const CONVEX_URL = "https://example.convex.site";
 const PROJECT_ID = "project-1";
@@ -356,594 +364,630 @@ async function pauseOnCreate(chatSessionId: string, toolCallId: string) {
 }
 
 function savedProjectConfig(config: Record<string, unknown> | null) {
-  convexQueryMock.mockImplementation(async (ref: string) => {
-    if (ref === "hostConfigsV2:getProjectDefault") return config;
-    if (ref === "projects:getProjectCapabilities") {
-      return { projectRole: "admin" };
-    }
-    throw new Error(`Unexpected Convex query: ${ref}`);
-  });
+  convexQueryMock.mockImplementation(
+    async (ref: string, args: { serverOverrideIds?: string[] }) => {
+      if (ref === "projectEnvironments:resolveEnvironmentForRuntime") {
+        const host =
+          await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
+        return chatEnvironmentFixture(
+          { ...config, ...host?.config },
+          args.serverOverrideIds,
+        );
+      }
+      if (ref === "hostConfigsV2:getProjectDefault") return config;
+      if (ref === "projects:getProjectCapabilities") {
+        return { projectRole: "admin" };
+      }
+      throw new Error(`Unexpected Convex query: ${ref}`);
+    },
+  );
 }
 
-describe("web chat tool approval (MJ-008)", () => {
-  const originalFetch = global.fetch;
+describe.each([false, true])(
+  "web chat tool approval (MJ-008), environment runtime %s",
+  (environmentRuntime) => {
+    const originalFetch = global.fetch;
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubEnv("CONVEX_HTTP_URL", CONVEX_URL);
-    vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
-    modelSteps = [];
-    modelRequests = [];
-    v1Calls = [];
-    savedProjectConfig(null);
-    listCloudRuntimeSkillsMock.mockResolvedValue([]);
-    persistChatSessionToConvexMock.mockResolvedValue(undefined);
-    mcpToolExecuteMock.mockResolvedValue({
-      content: [{ type: "text", text: "found it" }],
-    });
-    registerSelfFetch(async (request) => {
-      const url = new URL(request.url);
-      v1Calls.push({ method: request.method, path: url.pathname });
-      return v1Response(request.method, url.pathname);
-    });
-    global.fetch = vi.fn(async (input, init) => {
-      const url = String(input);
-      if (url === `${CONVEX_URL}/web/authorize-project`) {
-        return v1Json({ ok: true });
-      }
-      if (url === `${CONVEX_URL}/web/authorize-batch`) {
-        const payload = JSON.parse(String(init?.body ?? "{}"));
-        return v1Json({
-          results: Object.fromEntries(
-            (payload.serverIds ?? []).map((serverId: string) => [
-              serverId,
-              {
-                ok: true,
-                role: "member",
-                accessLevel: "shared_chat",
-                permissions: { chatOnly: false },
-                internalLogContext: {
-                  authType: "signedIn",
-                  userId: "u-1",
-                  projectId: payload.projectId ?? null,
+    beforeEach(() => {
+      vi.clearAllMocks();
+      vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
+      vi.stubEnv("CONVEX_HTTP_URL", CONVEX_URL);
+      vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
+      modelSteps = [];
+      modelRequests = [];
+      v1Calls = [];
+      savedProjectConfig(null);
+      fetchHostRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
+      listCloudRuntimeSkillsMock.mockResolvedValue([]);
+      persistChatSessionToConvexMock.mockResolvedValue(undefined);
+      mcpToolExecuteMock.mockResolvedValue({
+        content: [{ type: "text", text: "found it" }],
+      });
+      registerSelfFetch(async (request) => {
+        const url = new URL(request.url);
+        v1Calls.push({ method: request.method, path: url.pathname });
+        return v1Response(request.method, url.pathname);
+      });
+      global.fetch = vi.fn(async (input, init) => {
+        const url = String(input);
+        if (url === `${CONVEX_URL}/web/authorize-project`) {
+          return v1Json({
+            ok: true,
+            ...(environmentRuntime ? { chatEnvironmentVersion: 1 } : {}),
+          });
+        }
+        if (url === `${CONVEX_URL}/web/authorize-batch`) {
+          const payload = JSON.parse(String(init?.body ?? "{}"));
+          return v1Json({
+            results: Object.fromEntries(
+              (payload.serverIds ?? []).map((serverId: string) => [
+                serverId,
+                {
+                  ok: true,
+                  role: "member",
+                  accessLevel: "shared_chat",
+                  permissions: { chatOnly: false },
+                  internalLogContext: {
+                    authType: "signedIn",
+                    userId: "u-1",
+                    projectId: payload.projectId ?? null,
+                  },
+                  serverConfig: {
+                    transportType: "http",
+                    url: `https://${serverId}.example.test/mcp`,
+                    headers: {},
+                    useOAuth: false,
+                  },
                 },
-                serverConfig: {
-                  transportType: "http",
-                  url: `https://${serverId}.example.test/mcp`,
-                  headers: {},
-                  useOAuth: false,
-                },
-              },
-            ]),
-          ),
-        });
-      }
-      if (url === `${CONVEX_URL}/stream`) {
-        modelRequests.push(JSON.parse(String(init?.body ?? "{}")));
-        return sse(modelSteps.shift() ?? REPLY);
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    }) as typeof fetch;
-  });
+              ]),
+            ),
+          });
+        }
+        if (url === `${CONVEX_URL}/stream`) {
+          modelRequests.push(JSON.parse(String(init?.body ?? "{}")));
+          return sse(modelSteps.shift() ?? REPLY);
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }) as typeof fetch;
+    });
 
-  afterEach(() => {
-    global.fetch = originalFetch;
-    vi.unstubAllEnvs();
-  });
+    afterEach(() => {
+      global.fetch = originalFetch;
+      vi.unstubAllEnvs();
+    });
 
-  describe("a turn that can add a project server", () => {
-    it.each([
-      ["a project with no saved default config", null],
-      [
-        "a saved default config with approval off",
-        { builtInToolIds: SERVER_TOOL_IDS, requireToolApproval: false },
-      ],
-      [
-        "a saved default config with approval on",
-        { builtInToolIds: SERVER_TOOL_IDS, requireToolApproval: true },
-      ],
-    ])(
-      "pauses create_project_server for %s and creates nothing",
-      async (_label, config) => {
-        savedProjectConfig(config);
-        modelSteps = [
-          callsTool("create_project_server", "call-create", SERVER_INPUT),
-        ];
+    describe("a turn that can add a project server", () => {
+      it.each([
+        ["a project with no saved default config", null],
+        [
+          "a saved default config with approval off",
+          { builtInToolIds: SERVER_TOOL_IDS, requireToolApproval: false },
+        ],
+        [
+          "a saved default config with approval on",
+          { builtInToolIds: SERVER_TOOL_IDS, requireToolApproval: true },
+        ],
+      ])(
+        "pauses create_project_server for %s and creates nothing",
+        async (_label, config) => {
+          savedProjectConfig(config);
+          modelSteps = [
+            callsTool("create_project_server", "call-create", SERVER_INPUT),
+          ];
+
+          const chunks = await send(turn(newChatId()));
+
+          expect(offeredTools()).toEqual(
+            expect.arrayContaining(SERVER_TOOL_IDS),
+          );
+          const request = approvalRequestFor(chunks, "call-create");
+          expect(request?.approvalId).toEqual(expect.any(String));
+          expect(outputFor(chunks, "call-create")).toBeUndefined();
+          expect(v1Calls).toEqual([]);
+          // The turn stopped at the pause: the model was asked once.
+          expect(modelRequests).toHaveLength(1);
+        },
+      );
+
+      it("runs the pure reads without a pause", async () => {
+        modelSteps = [callsTool("list_projects", "call-list"), REPLY];
 
         const chunks = await send(turn(newChatId()));
 
-        expect(offeredTools()).toEqual(expect.arrayContaining(SERVER_TOOL_IDS));
-        const request = approvalRequestFor(chunks, "call-create");
-        expect(request?.approvalId).toEqual(expect.any(String));
-        expect(outputFor(chunks, "call-create")).toBeUndefined();
+        expect(approvalRequestFor(chunks, "call-list")).toBeUndefined();
+        expect(outputFor(chunks, "call-list")?.type).toBe(
+          "tool-output-available",
+        );
+        expect(v1Calls).toEqual([{ method: "GET", path: "/api/v1/projects" }]);
+      });
+    });
+
+    describe("workspace operations that change state", () => {
+      // Every advertised workspace operation that is not read-only, read off
+      // the operations themselves rather than listed here.
+      const WRITES = MCPJAM_TOOL_IDS.filter(
+        (id) => !isReadOnlyMcpjamToolId(id),
+      );
+
+      it("include the persona, goal, swarm, finding, backtest and cancel writes", () => {
+        expect(WRITES).toEqual(
+          expect.arrayContaining([
+            "create_project_server",
+            "create_persona",
+            "update_persona",
+            "create_goal",
+            "update_goal",
+            "create_swarm",
+            "update_swarm",
+            "dismiss_swarm_finding",
+            "undismiss_swarm_finding",
+            "dismiss_study_finding",
+            "undismiss_study_finding",
+            "backtest_eval_run",
+            "cancel_eval_run",
+            "cancel_readiness_run",
+            "cancel_project_server_connection",
+          ]),
+        );
+      });
+
+      it.each(WRITES)(
+        "pause %s whatever the approval setting says",
+        async (toolName) => {
+          savedProjectConfig({
+            builtInToolIds: [toolName],
+            requireToolApproval: false,
+          });
+          modelSteps = [callsTool(toolName, "call-write")];
+
+          const chunks = await send(
+            turn(newChatId(), {
+              builtInToolIds: [toolName],
+              requireToolApproval: false,
+            }),
+          );
+
+          expect(approvalRequestFor(chunks, "call-write")).toBeDefined();
+          expect(outputFor(chunks, "call-write")).toBeUndefined();
+          expect(v1Calls).toEqual([]);
+        },
+      );
+    });
+
+    describe("reads that open a connection to a saved server", () => {
+      const DIAGNOSE_INPUT = { server: "Docs" };
+
+      async function diagnose(
+        config: Record<string, unknown> | null,
+        requireToolApproval: boolean,
+      ) {
+        savedProjectConfig(config);
+        modelSteps = [
+          callsTool("diagnose_server", "call-diagnose", DIAGNOSE_INPUT),
+          REPLY,
+        ];
+        return send(
+          turn(newChatId(), {
+            builtInToolIds: ["diagnose_server"],
+            requireToolApproval,
+          }),
+        );
+      }
+
+      it("pause when the project has no saved default config", async () => {
+        const chunks = await diagnose(null, false);
+        expect(approvalRequestFor(chunks, "call-diagnose")).toBeDefined();
         expect(v1Calls).toEqual([]);
-        // The turn stopped at the pause: the model was asked once.
-        expect(modelRequests).toHaveLength(1);
-      },
-    );
+      });
 
-    it("runs the pure reads without a pause", async () => {
-      modelSteps = [callsTool("list_projects", "call-list"), REPLY];
+      it("pause when the saved config has approval on, whatever the request says", async () => {
+        const chunks = await diagnose(
+          { builtInToolIds: ["diagnose_server"], requireToolApproval: true },
+          false,
+        );
+        expect(approvalRequestFor(chunks, "call-diagnose")).toBeDefined();
+        expect(v1Calls).toEqual([]);
+      });
 
-      const chunks = await send(turn(newChatId()));
+      it("run without a pause when the saved config has approval off", async () => {
+        const chunks = await diagnose(
+          { builtInToolIds: ["diagnose_server"], requireToolApproval: false },
+          false,
+        );
+        expect(approvalRequestFor(chunks, "call-diagnose")).toBeUndefined();
+        expect(outputFor(chunks, "call-diagnose")).toBeDefined();
+        expect(v1Calls.length).toBeGreaterThan(0);
+      });
 
-      expect(approvalRequestFor(chunks, "call-list")).toBeUndefined();
-      expect(outputFor(chunks, "call-list")?.type).toBe(
-        "tool-output-available",
-      );
-      expect(v1Calls).toEqual([{ method: "GET", path: "/api/v1/projects" }]);
-    });
-  });
+      it("pause when the request turns approval on over a saved setting that is off", async () => {
+        const chunks = await diagnose(
+          { builtInToolIds: ["diagnose_server"], requireToolApproval: false },
+          true,
+        );
+        expect(approvalRequestFor(chunks, "call-diagnose")).toBeDefined();
+        expect(v1Calls).toEqual([]);
+      });
 
-  describe("workspace operations that change state", () => {
-    // Every advertised workspace operation that is not read-only, read off
-    // the operations themselves rather than listed here.
-    const WRITES = MCPJAM_TOOL_IDS.filter((id) => !isReadOnlyMcpjamToolId(id));
-
-    it("include the persona, goal, swarm, finding, backtest and cancel writes", () => {
-      expect(WRITES).toEqual(
-        expect.arrayContaining([
-          "create_project_server",
-          "create_persona",
-          "update_persona",
-          "create_goal",
-          "update_goal",
-          "create_swarm",
-          "update_swarm",
-          "dismiss_swarm_finding",
-          "undismiss_swarm_finding",
-          "dismiss_study_finding",
-          "undismiss_study_finding",
-          "backtest_eval_run",
-          "cancel_eval_run",
-          "cancel_readiness_run",
-          "cancel_project_server_connection",
-        ]),
-      );
-    });
-
-    it.each(WRITES)(
-      "pause %s whatever the approval setting says",
-      async (toolName) => {
-        savedProjectConfig({
-          builtInToolIds: [toolName],
-          requireToolApproval: false,
+      it("follow the saved client's setting on a host-bound turn", async () => {
+        fetchHostRuntimeConfigMock.mockResolvedValue({
+          ok: true,
+          config: {
+            builtInToolIds: ["diagnose_server"],
+            requireToolApproval: true,
+          },
         });
-        modelSteps = [callsTool(toolName, "call-write")];
+        modelSteps = [
+          callsTool("diagnose_server", "call-diagnose", DIAGNOSE_INPUT),
+        ];
 
         const chunks = await send(
           turn(newChatId(), {
-            builtInToolIds: [toolName],
+            hostId: "host-1",
+            builtInToolIds: ["diagnose_server"],
             requireToolApproval: false,
           }),
         );
 
-        expect(approvalRequestFor(chunks, "call-write")).toBeDefined();
-        expect(outputFor(chunks, "call-write")).toBeUndefined();
+        expect(approvalRequestFor(chunks, "call-diagnose")).toBeDefined();
         expect(v1Calls).toEqual([]);
-      },
-    );
-  });
-
-  describe("reads that open a connection to a saved server", () => {
-    const DIAGNOSE_INPUT = { server: "Docs" };
-
-    async function diagnose(
-      config: Record<string, unknown> | null,
-      requireToolApproval: boolean,
-    ) {
-      savedProjectConfig(config);
-      modelSteps = [
-        callsTool("diagnose_server", "call-diagnose", DIAGNOSE_INPUT),
-        REPLY,
-      ];
-      return send(
-        turn(newChatId(), {
-          builtInToolIds: ["diagnose_server"],
-          requireToolApproval,
-        }),
-      );
-    }
-
-    it("pause when the project has no saved default config", async () => {
-      const chunks = await diagnose(null, false);
-      expect(approvalRequestFor(chunks, "call-diagnose")).toBeDefined();
-      expect(v1Calls).toEqual([]);
-    });
-
-    it("pause when the saved config has approval on, whatever the request says", async () => {
-      const chunks = await diagnose(
-        { builtInToolIds: ["diagnose_server"], requireToolApproval: true },
-        false,
-      );
-      expect(approvalRequestFor(chunks, "call-diagnose")).toBeDefined();
-      expect(v1Calls).toEqual([]);
-    });
-
-    it("run without a pause when the saved config has approval off", async () => {
-      const chunks = await diagnose(
-        { builtInToolIds: ["diagnose_server"], requireToolApproval: false },
-        false,
-      );
-      expect(approvalRequestFor(chunks, "call-diagnose")).toBeUndefined();
-      expect(outputFor(chunks, "call-diagnose")).toBeDefined();
-      expect(v1Calls.length).toBeGreaterThan(0);
-    });
-
-    it("pause when the request turns approval on over a saved setting that is off", async () => {
-      const chunks = await diagnose(
-        { builtInToolIds: ["diagnose_server"], requireToolApproval: false },
-        true,
-      );
-      expect(approvalRequestFor(chunks, "call-diagnose")).toBeDefined();
-      expect(v1Calls).toEqual([]);
-    });
-
-    it("follow the saved client's setting on a host-bound turn", async () => {
-      fetchHostRuntimeConfigMock.mockResolvedValue({
-        ok: true,
-        config: {
-          builtInToolIds: ["diagnose_server"],
-          requireToolApproval: true,
-        },
       });
-      modelSteps = [
-        callsTool("diagnose_server", "call-diagnose", DIAGNOSE_INPUT),
-      ];
-
-      const chunks = await send(
-        turn(newChatId(), {
-          hostId: "host-1",
-          builtInToolIds: ["diagnose_server"],
-          requireToolApproval: false,
-        }),
-      );
-
-      expect(approvalRequestFor(chunks, "call-diagnose")).toBeDefined();
-      expect(v1Calls).toEqual([]);
-    });
-  });
-
-  describe("the caller's own MCP server tools", () => {
-    async function searchDocs(requireToolApproval: boolean) {
-      savedProjectConfig({ builtInToolIds: [], requireToolApproval: true });
-      modelSteps = [
-        callsTool("search_docs", "call-search", { q: "install" }),
-        REPLY,
-      ];
-      return send(
-        turn(newChatId(), {
-          selectedServerIds: ["server-1"],
-          builtInToolIds: [],
-          requireToolApproval,
-        }),
-      );
-    }
-
-    it("run without a pause when the request turns approval off", async () => {
-      const chunks = await searchDocs(false);
-      expect(approvalRequestFor(chunks, "call-search")).toBeUndefined();
-      expect(mcpToolExecuteMock).toHaveBeenCalledTimes(1);
     });
 
-    it("pause when the request turns approval on", async () => {
-      const chunks = await searchDocs(true);
-      expect(approvalRequestFor(chunks, "call-search")).toBeDefined();
-      expect(mcpToolExecuteMock).not.toHaveBeenCalled();
+    describe("the caller's own MCP server tools", () => {
+      async function searchDocs(requireToolApproval: boolean) {
+        savedProjectConfig({ builtInToolIds: [], requireToolApproval: true });
+        modelSteps = [
+          callsTool("search_docs", "call-search", { q: "install" }),
+          REPLY,
+        ];
+        return send(
+          turn(newChatId(), {
+            selectedServerIds: ["server-1"],
+            builtInToolIds: [],
+            requireToolApproval,
+          }),
+        );
+      }
+
+      it("run without a pause when the request turns approval off", async () => {
+        const chunks = await searchDocs(false);
+        expect(approvalRequestFor(chunks, "call-search")).toBeUndefined();
+        expect(mcpToolExecuteMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("pause when the request turns approval on", async () => {
+        const chunks = await searchDocs(true);
+        expect(approvalRequestFor(chunks, "call-search")).toBeDefined();
+        expect(mcpToolExecuteMock).not.toHaveBeenCalled();
+      });
     });
-  });
 
-  describe("answering an approval", () => {
-    it("creates the server once the approval the server issued comes back", async () => {
-      const chatId = newChatId();
-      const approvalId = await pauseOnCreate(chatId, "call-create");
-      modelSteps = [REPLY];
+    describe("answering an approval", () => {
+      it("creates the server once the approval the server issued comes back", async () => {
+        const chatId = newChatId();
+        const approvalId = await pauseOnCreate(chatId, "call-create");
+        modelSteps = [REPLY];
 
-      const chunks = await send(
-        resumeTurn(chatId, {
+        const chunks = await send(
+          resumeTurn(chatId, {
+            toolName: "create_project_server",
+            toolCallId: "call-create",
+            input: SERVER_INPUT,
+            approvalId,
+          }),
+        );
+
+        expect(outputFor(chunks, "call-create")?.type).toBe(
+          "tool-output-available",
+        );
+        expect(v1Writes()).toEqual([
+          { method: "POST", path: `/api/v1/projects/${PROJECT_ID}/servers` },
+        ]);
+      });
+
+      it("does not create it again when the same approval comes back a second time", async () => {
+        const chatId = newChatId();
+        const approvalId = await pauseOnCreate(chatId, "call-create");
+        const answer = resumeTurn(chatId, {
           toolName: "create_project_server",
           toolCallId: "call-create",
           input: SERVER_INPUT,
           approvalId,
-        }),
-      );
+        });
 
-      expect(outputFor(chunks, "call-create")?.type).toBe(
-        "tool-output-available",
-      );
-      expect(v1Writes()).toEqual([
-        { method: "POST", path: `/api/v1/projects/${PROJECT_ID}/servers` },
-      ]);
-    });
+        modelSteps = [REPLY];
+        await send(answer);
+        expect(v1Writes()).toHaveLength(1);
 
-    it("does not create it again when the same approval comes back a second time", async () => {
-      const chatId = newChatId();
-      const approvalId = await pauseOnCreate(chatId, "call-create");
-      const answer = resumeTurn(chatId, {
-        toolName: "create_project_server",
-        toolCallId: "call-create",
-        input: SERVER_INPUT,
-        approvalId,
+        modelSteps = [REPLY];
+        const again = await send(answer);
+        const shown = outputFor(again, "call-create") as
+          | { type?: string; errorText?: string }
+          | undefined;
+        expect(shown?.type).toBe("tool-output-error");
+        expect(shown?.errorText).toMatch(/already used/);
+        expect(v1Writes()).toHaveLength(1);
       });
 
-      modelSteps = [REPLY];
-      await send(answer);
-      expect(v1Writes()).toHaveLength(1);
+      /** An approval this server would have issued for the call `ageMs` ago. */
+      function approvalIssuedAgo(chatSessionId: string, ageMs: number) {
+        const id = mintToolApprovalId({
+          call: {
+            toolCallId: "call-create",
+            toolName: "create_project_server",
+            input: SERVER_INPUT,
+          },
+          binding: toolApprovalBindingFor({
+            authHeader: `Bearer ${BEARER}`,
+            projectId: PROJECT_ID,
+            chatSessionId,
+          }),
+          nowMs: Date.now() - ageMs,
+        });
+        if (!id) throw new Error("test process has no approval signing key");
+        return id;
+      }
 
-      modelSteps = [REPLY];
-      const again = await send(answer);
-      const shown = outputFor(again, "call-create") as
-        { type?: string; errorText?: string } | undefined;
-      expect(shown?.type).toBe("tool-output-error");
-      expect(shown?.errorText).toMatch(/already used/);
-      expect(v1Writes()).toHaveLength(1);
-    });
+      it("creates nothing for an approval past its lifetime, and says it expired", async () => {
+        const chatId = newChatId();
+        modelSteps = [REPLY];
 
-    /** An approval this server would have issued for the call `ageMs` ago. */
-    function approvalIssuedAgo(chatSessionId: string, ageMs: number) {
-      const id = mintToolApprovalId({
-        call: {
-          toolCallId: "call-create",
-          toolName: "create_project_server",
-          input: SERVER_INPUT,
-        },
-        binding: toolApprovalBindingFor({
-          authHeader: `Bearer ${BEARER}`,
-          projectId: PROJECT_ID,
-          chatSessionId,
-        }),
-        nowMs: Date.now() - ageMs,
+        const chunks = await send(
+          resumeTurn(chatId, {
+            toolName: "create_project_server",
+            toolCallId: "call-create",
+            input: SERVER_INPUT,
+            approvalId: approvalIssuedAgo(
+              chatId,
+              TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 60_000,
+            ),
+          }),
+        );
+
+        const shown = outputFor(chunks, "call-create") as
+          | { type?: string; errorText?: string }
+          | undefined;
+        expect(shown?.type).toBe("tool-output-error");
+        expect(shown?.errorText).toMatch(/expired/);
+        expect(shown?.errorText).toMatch(/nothing was run/);
+        expect(v1Calls).toEqual([]);
       });
-      if (!id) throw new Error("test process has no approval signing key");
-      return id;
-    }
 
-    it("creates nothing for an approval past its lifetime, and says it expired", async () => {
-      const chatId = newChatId();
-      modelSteps = [REPLY];
-
-      const chunks = await send(
-        resumeTurn(chatId, {
+      it("creates the server once for an approval just inside its lifetime", async () => {
+        const chatId = newChatId();
+        const answer = resumeTurn(chatId, {
           toolName: "create_project_server",
           toolCallId: "call-create",
           input: SERVER_INPUT,
           approvalId: approvalIssuedAgo(
             chatId,
-            TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 60_000,
+            TOOL_APPROVAL_TOKEN_MAX_AGE_MS - 60_000,
           ),
-        }),
-      );
+        });
 
-      const shown = outputFor(chunks, "call-create") as
-        { type?: string; errorText?: string } | undefined;
-      expect(shown?.type).toBe("tool-output-error");
-      expect(shown?.errorText).toMatch(/expired/);
-      expect(shown?.errorText).toMatch(/nothing was run/);
-      expect(v1Calls).toEqual([]);
-    });
+        modelSteps = [REPLY];
+        const first = await send(answer);
+        expect(outputFor(first, "call-create")?.type).toBe(
+          "tool-output-available",
+        );
+        expect(v1Writes()).toHaveLength(1);
 
-    it("creates the server once for an approval just inside its lifetime", async () => {
-      const chatId = newChatId();
-      const answer = resumeTurn(chatId, {
-        toolName: "create_project_server",
-        toolCallId: "call-create",
-        input: SERVER_INPUT,
-        approvalId: approvalIssuedAgo(
-          chatId,
-          TOOL_APPROVAL_TOKEN_MAX_AGE_MS - 60_000,
-        ),
+        modelSteps = [REPLY];
+        await send(answer);
+        expect(v1Writes()).toHaveLength(1);
       });
 
-      modelSteps = [REPLY];
-      const first = await send(answer);
-      expect(outputFor(first, "call-create")?.type).toBe(
-        "tool-output-available",
-      );
-      expect(v1Writes()).toHaveLength(1);
+      it("creates nothing for an approval id the server did not issue", async () => {
+        modelSteps = [REPLY];
+        const chunks = await send(
+          resumeTurn(newChatId(), {
+            toolName: "create_project_server",
+            toolCallId: "call-create",
+            input: SERVER_INPUT,
+            approvalId: "mjap1.00000000.AAAAAAAAAAAAAAAA.UNEXPECTED_MARKER",
+          }),
+        );
 
-      modelSteps = [REPLY];
-      await send(answer);
-      expect(v1Writes()).toHaveLength(1);
-    });
-
-    it("creates nothing for an approval id the server did not issue", async () => {
-      modelSteps = [REPLY];
-      const chunks = await send(
-        resumeTurn(newChatId(), {
-          toolName: "create_project_server",
-          toolCallId: "call-create",
-          input: SERVER_INPUT,
-          approvalId: "mjap1.00000000.AAAAAAAAAAAAAAAA.UNEXPECTED_MARKER",
-        }),
-      );
-
-      expect(outputFor(chunks, "call-create")?.type).toBe("tool-output-denied");
-      expect(v1Calls).toEqual([]);
-    });
-
-    it("creates nothing when the approved arguments were for a different server", async () => {
-      const chatId = newChatId();
-      const approvalId = await pauseOnCreate(chatId, "call-create");
-      modelSteps = [REPLY];
-
-      const chunks = await send(
-        resumeTurn(chatId, {
-          toolName: "create_project_server",
-          toolCallId: "call-create",
-          input: {
-            body: {
-              ...SERVER_INPUT.body,
-              url: "https://other.example.test/mcp",
-            },
-          },
-          approvalId,
-        }),
-      );
-
-      expect(outputFor(chunks, "call-create")?.type).toBe("tool-output-denied");
-      expect(v1Calls).toEqual([]);
-    });
-
-    it("creates nothing when the approval is attached to a call the server did not pause on", async () => {
-      const chatId = newChatId();
-      const approvalId = await pauseOnCreate(chatId, "call-create");
-      modelSteps = [REPLY];
-
-      const chunks = await send(
-        resumeTurn(chatId, {
-          toolName: "create_project_server",
-          toolCallId: "call-unissued",
-          input: SERVER_INPUT,
-          approvalId,
-        }),
-      );
-
-      expect(outputFor(chunks, "call-unissued")?.type).toBe(
-        "tool-output-denied",
-      );
-      expect(v1Calls).toEqual([]);
-    });
-
-    it("creates nothing when the approval belongs to another conversation", async () => {
-      const approvalId = await pauseOnCreate(newChatId(), "call-create");
-      modelSteps = [REPLY];
-
-      const chunks = await send(
-        resumeTurn(newChatId(), {
-          toolName: "create_project_server",
-          toolCallId: "call-create",
-          input: SERVER_INPUT,
-          approvalId,
-        }),
-      );
-
-      expect(outputFor(chunks, "call-create")?.type).toBe("tool-output-denied");
-      expect(v1Calls).toEqual([]);
-    });
-
-    it("creates nothing for a call in the history that never paused at all", async () => {
-      modelSteps = [REPLY];
-      const chunks = await send(
-        turn(newChatId(), {
-          messages: [
-            userMessage(),
-            {
-              id: "a1",
-              role: "assistant",
-              parts: [
-                { type: "step-start" },
-                {
-                  type: "tool-create_project_server",
-                  toolCallId: "call-unpaused",
-                  state: "input-available",
-                  input: SERVER_INPUT,
-                },
-              ],
-            },
-          ],
-        }),
-      );
-
-      const answer = outputFor(chunks, "call-unpaused") as
-        { output?: { value?: unknown } } | undefined;
-      expect(String(answer?.output?.value)).toMatch(/did not execute it/);
-      expect(v1Calls).toEqual([]);
-    });
-  });
-
-  describe("with approvals recorded by the backend", () => {
-    const CLAIM_URL = `${CONVEX_URL}/internal/v1/tool-approvals/claim`;
-    /** Nonce digests the backend holds a claim for, from anywhere. */
-    let claimed: Set<string>;
-    let backendUp: boolean;
-
-    beforeEach(() => {
-      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token-with-enough-length");
-      claimed = new Set();
-      backendUp = true;
-      const edges = global.fetch;
-      global.fetch = vi.fn(async (input, init) => {
-        if (String(input) !== CLAIM_URL) return edges(input, init);
-        if (!backendUp) return v1Json({ ok: false });
-        const { nonceHash } = JSON.parse(String(init?.body ?? "{}"));
-        if (claimed.has(nonceHash))
-          return v1Json({ status: "already_claimed" });
-        claimed.add(nonceHash);
-        return v1Json({ status: "claimed" });
-      }) as typeof fetch;
-    });
-
-    function answerFor(chatId: string, approvalId: string) {
-      return resumeTurn(chatId, {
-        toolName: "create_project_server",
-        toolCallId: "call-create",
-        input: SERVER_INPUT,
-        approvalId,
+        expect(outputFor(chunks, "call-create")?.type).toBe(
+          "tool-output-denied",
+        );
+        expect(v1Calls).toEqual([]);
       });
-    }
 
-    it("creates the server once the backend records the claim", async () => {
-      const chatId = newChatId();
-      const approvalId = await pauseOnCreate(chatId, "call-create");
+      it("creates nothing when the approved arguments were for a different server", async () => {
+        const chatId = newChatId();
+        const approvalId = await pauseOnCreate(chatId, "call-create");
+        modelSteps = [REPLY];
 
-      modelSteps = [REPLY];
-      const chunks = await send(answerFor(chatId, approvalId));
-      expect(outputFor(chunks, "call-create")?.type).toBe(
-        "tool-output-available",
-      );
-      expect(claimed).toEqual(new Set([toolApprovalClaimKey(approvalId)]));
-      expect(v1Writes()).toHaveLength(1);
+        const chunks = await send(
+          resumeTurn(chatId, {
+            toolName: "create_project_server",
+            toolCallId: "call-create",
+            input: {
+              body: {
+                ...SERVER_INPUT.body,
+                url: "https://other.example.test/mcp",
+              },
+            },
+            approvalId,
+          }),
+        );
+
+        expect(outputFor(chunks, "call-create")?.type).toBe(
+          "tool-output-denied",
+        );
+        expect(v1Calls).toEqual([]);
+      });
+
+      it("creates nothing when the approval is attached to a call the server did not pause on", async () => {
+        const chatId = newChatId();
+        const approvalId = await pauseOnCreate(chatId, "call-create");
+        modelSteps = [REPLY];
+
+        const chunks = await send(
+          resumeTurn(chatId, {
+            toolName: "create_project_server",
+            toolCallId: "call-unissued",
+            input: SERVER_INPUT,
+            approvalId,
+          }),
+        );
+
+        expect(outputFor(chunks, "call-unissued")?.type).toBe(
+          "tool-output-denied",
+        );
+        expect(v1Calls).toEqual([]);
+      });
+
+      it("creates nothing when the approval belongs to another conversation", async () => {
+        const approvalId = await pauseOnCreate(newChatId(), "call-create");
+        modelSteps = [REPLY];
+
+        const chunks = await send(
+          resumeTurn(newChatId(), {
+            toolName: "create_project_server",
+            toolCallId: "call-create",
+            input: SERVER_INPUT,
+            approvalId,
+          }),
+        );
+
+        expect(outputFor(chunks, "call-create")?.type).toBe(
+          "tool-output-denied",
+        );
+        expect(v1Calls).toEqual([]);
+      });
+
+      it("creates nothing for a call in the history that never paused at all", async () => {
+        modelSteps = [REPLY];
+        const chunks = await send(
+          turn(newChatId(), {
+            messages: [
+              userMessage(),
+              {
+                id: "a1",
+                role: "assistant",
+                parts: [
+                  { type: "step-start" },
+                  {
+                    type: "tool-create_project_server",
+                    toolCallId: "call-unpaused",
+                    state: "input-available",
+                    input: SERVER_INPUT,
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+
+        const answer = outputFor(chunks, "call-unpaused") as
+          | { output?: { value?: unknown } }
+          | undefined;
+        expect(String(answer?.output?.value)).toMatch(/did not execute it/);
+        expect(v1Calls).toEqual([]);
+      });
     });
 
-    it("creates nothing for an approval already used elsewhere in the deployment", async () => {
-      const chatId = newChatId();
-      const approvalId = await pauseOnCreate(chatId, "call-create");
-      claimed.add(toolApprovalClaimKey(approvalId)!);
+    describe("with approvals recorded by the backend", () => {
+      const CLAIM_URL = `${CONVEX_URL}/internal/v1/tool-approvals/claim`;
+      /** Nonce digests the backend holds a claim for, from anywhere. */
+      let claimed: Set<string>;
+      let backendUp: boolean;
 
-      modelSteps = [REPLY];
-      const chunks = await send(answerFor(chatId, approvalId));
-      const shown = outputFor(chunks, "call-create") as
-        { type?: string; errorText?: string } | undefined;
-      expect(shown?.type).toBe("tool-output-error");
-      expect(shown?.errorText).toMatch(/already used/);
-      expect(v1Writes()).toEqual([]);
+      beforeEach(() => {
+        vi.stubEnv(
+          "INSPECTOR_SERVICE_TOKEN",
+          "service-token-with-enough-length",
+        );
+        claimed = new Set();
+        backendUp = true;
+        const edges = global.fetch;
+        global.fetch = vi.fn(async (input, init) => {
+          if (String(input) !== CLAIM_URL) return edges(input, init);
+          if (!backendUp) return v1Json({ ok: false });
+          const { nonceHash } = JSON.parse(String(init?.body ?? "{}"));
+          if (claimed.has(nonceHash))
+            return v1Json({ status: "already_claimed" });
+          claimed.add(nonceHash);
+          return v1Json({ status: "claimed" });
+        }) as typeof fetch;
+      });
+
+      function answerFor(chatId: string, approvalId: string) {
+        return resumeTurn(chatId, {
+          toolName: "create_project_server",
+          toolCallId: "call-create",
+          input: SERVER_INPUT,
+          approvalId,
+        });
+      }
+
+      it("creates the server once the backend records the claim", async () => {
+        const chatId = newChatId();
+        const approvalId = await pauseOnCreate(chatId, "call-create");
+
+        modelSteps = [REPLY];
+        const chunks = await send(answerFor(chatId, approvalId));
+        expect(outputFor(chunks, "call-create")?.type).toBe(
+          "tool-output-available",
+        );
+        expect(claimed).toEqual(new Set([toolApprovalClaimKey(approvalId)]));
+        expect(v1Writes()).toHaveLength(1);
+      });
+
+      it("creates nothing for an approval already used elsewhere in the deployment", async () => {
+        const chatId = newChatId();
+        const approvalId = await pauseOnCreate(chatId, "call-create");
+        claimed.add(toolApprovalClaimKey(approvalId)!);
+
+        modelSteps = [REPLY];
+        const chunks = await send(answerFor(chatId, approvalId));
+        const shown = outputFor(chunks, "call-create") as
+          | { type?: string; errorText?: string }
+          | undefined;
+        expect(shown?.type).toBe("tool-output-error");
+        expect(shown?.errorText).toMatch(/already used/);
+        expect(v1Writes()).toEqual([]);
+      });
+
+      it("creates nothing when the backend can't confirm the claim", async () => {
+        const chatId = newChatId();
+        const approvalId = await pauseOnCreate(chatId, "call-create");
+        backendUp = false;
+
+        modelSteps = [REPLY];
+        const chunks = await send(answerFor(chatId, approvalId));
+        const shown = outputFor(chunks, "call-create") as
+          | { type?: string; errorText?: string }
+          | undefined;
+        expect(shown?.type).toBe("tool-output-error");
+        expect(shown?.errorText).toMatch(/couldn't confirm/);
+        expect(v1Writes()).toEqual([]);
+      });
     });
 
-    it("creates nothing when the backend can't confirm the claim", async () => {
-      const chatId = newChatId();
-      const approvalId = await pauseOnCreate(chatId, "call-create");
-      backendUp = false;
+    describe("without an approval signing key", () => {
+      beforeEach(() => {
+        vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+        vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+      });
 
-      modelSteps = [REPLY];
-      const chunks = await send(answerFor(chatId, approvalId));
-      const shown = outputFor(chunks, "call-create") as
-        { type?: string; errorText?: string } | undefined;
-      expect(shown?.type).toBe("tool-output-error");
-      expect(shown?.errorText).toMatch(/couldn't confirm/);
-      expect(v1Writes()).toEqual([]);
+      it("does not offer create_project_server at all, and nothing can create a server", async () => {
+        modelSteps = [
+          callsTool("create_project_server", "call-create", SERVER_INPUT),
+          REPLY,
+        ];
+
+        const chunks = await send(turn(newChatId()));
+
+        expect(offeredTools()).toEqual(
+          expect.arrayContaining(["list_projects", "list_project_servers"]),
+        );
+        expect(offeredTools()).not.toContain("create_project_server");
+        expect(approvalRequestFor(chunks, "call-create")).toBeUndefined();
+        expect(v1Writes()).toEqual([]);
+      });
     });
-  });
-
-  describe("without an approval signing key", () => {
-    beforeEach(() => {
-      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
-    });
-
-    it("does not offer create_project_server at all, and nothing can create a server", async () => {
-      modelSteps = [
-        callsTool("create_project_server", "call-create", SERVER_INPUT),
-        REPLY,
-      ];
-
-      const chunks = await send(turn(newChatId()));
-
-      expect(offeredTools()).toEqual(
-        expect.arrayContaining(["list_projects", "list_project_servers"]),
-      );
-      expect(offeredTools()).not.toContain("create_project_server");
-      expect(approvalRequestFor(chunks, "call-create")).toBeUndefined();
-      expect(v1Writes()).toEqual([]);
-    });
-  });
-});
+  },
+);

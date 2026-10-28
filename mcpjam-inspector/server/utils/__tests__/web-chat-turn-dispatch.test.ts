@@ -23,6 +23,7 @@ vi.mock("../mcpjam-stream-handler.js", () => ({
 }));
 
 vi.mock("../org-model-stream-handler.js", () => ({
+  resolveLocalOrgMaxSteps: () => 30,
   handleHostedOrgChatModel: handlers.hostedOrg,
   handleLocalOrgChatModel: handlers.localOrg,
 }));
@@ -230,6 +231,8 @@ describe("streamWebChatTurn model dispatch", () => {
   // the picker's "Your providers" row: the user chose their own OpenAI key.
   // Only the explicit `hosted: false` stamp tells the two apart.
   it("routes a bare id the picker stamped hosted: false to the org-BYOK path", async () => {
+    const setup = await import("../../services/chat-turn/setup-manifest.js");
+    const capture = vi.spyOn(setup, "capturePreparedWebSetup");
     await streamWebChatTurn(
       args(
         { id: "gpt-5-nano", provider: "openai", hosted: false },
@@ -238,6 +241,11 @@ describe("streamWebChatTurn model dispatch", () => {
     );
     expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
     expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+    expect(capture.mock.lastCall?.[0].maxSteps).toBe(30);
+    expect(handlers.hostedOrg.mock.lastCall?.[0]).toMatchObject({
+      maxSteps: 30,
+    });
+    capture.mockRestore();
   });
 
   it("routes a prefixed MCPJam id to the MCPJam path (sanity)", async () => {
