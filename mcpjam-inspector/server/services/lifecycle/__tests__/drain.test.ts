@@ -32,11 +32,13 @@ describe("drain coordinator", () => {
     run.resolve();
     pass.reject(new Error("pass failed"));
 
-    await expect(drained).resolves.toMatchObject({
-      drained: true,
-      inFlightAtStart: { eval_run: 1, doorbell: 1 },
-      remaining: {},
-    });
+    // Counts compare with `toEqual`: a nested `toMatchObject` is a subset
+    // match, so it passes with a settled entry still counted, the very leak
+    // these tests exist to catch.
+    const result = await drained;
+    expect(result.drained).toBe(true);
+    expect(result.inFlightAtStart).toEqual({ eval_run: 1, doorbell: 1 });
+    expect(result.remaining).toEqual({});
     expect(drain.isDraining()).toBe(true);
   });
 
@@ -72,10 +74,9 @@ describe("drain coordinator", () => {
       const drained = drain.drain(1_000);
       await vi.advanceTimersByTimeAsync(1_000);
 
-      await expect(drained).resolves.toMatchObject({
-        drained: false,
-        remaining: { swarm_run: 1 },
-      });
+      const result = await drained;
+      expect(result.drained).toBe(false);
+      expect(result.remaining).toEqual({ swarm_run: 1 });
     } finally {
       vi.useRealTimers();
     }
@@ -87,10 +88,9 @@ describe("drain coordinator", () => {
     const drain = createDrainCoordinator(() => 0);
     drain.track("claimed_job", new Promise<void>(() => {}));
 
-    await expect(drain.drain(0)).resolves.toMatchObject({
-      drained: false,
-      waitedMs: 0,
-      remaining: { claimed_job: 1 },
-    });
+    const result = await drain.drain(0);
+    expect(result.drained).toBe(false);
+    expect(result.waitedMs).toBe(0);
+    expect(result.remaining).toEqual({ claimed_job: 1 });
   });
 });
