@@ -1,7 +1,8 @@
 /**
  * The bottom of the Confirm step: the conversation total, the sponsored split,
  * the last launch error and the Back / Continue row. The step decides every
- * number and whether Continue is allowed; this only lays them out.
+ * number and passes `launchDisabled`. A launch-blocked reason is also
+ * Continue's tooltip, so it disables Continue here too.
  */
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
