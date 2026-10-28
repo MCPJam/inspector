@@ -201,6 +201,11 @@ vi.mock("../../../utils/built-in-tools/registry.js", async (importOriginal) => {
 import { resolveHostTools } from "../../../utils/built-in-tools/registry.js";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 import { logger } from "../../../utils/logger.js";
+import localChat from "../../mcp/chat-v2.js";
+import { sessionAuthMiddleware } from "../../../middleware/session-auth.js";
+import { requestLogContextMiddleware } from "../../../middleware/request-log-context.js";
+import { generateSessionToken } from "../../../services/session-token.js";
+
 import { acquirePlaygroundHarnessBox } from "../../../utils/harness/playground-box.js";
 
 /** Two environment servers; the body will claim a DIFFERENT, single server. */
@@ -383,6 +388,64 @@ describe("web chat-v2 — environment execution target", () => {
     else process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     if (originalConvexUrl === undefined) delete process.env.CONVEX_URL;
     else process.env.CONVEX_URL = originalConvexUrl;
+  });
+
+  function localApp() {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware, sessionAuthMiddleware);
+    app.route("/api/mcp/chat-v2", localChat);
+    return app;
+  }
+
+  const localBody = () => ({
+    ...BASE_BODY,
+    executionTarget: { kind: "environment", environmentId: "env_1" },
+  });
+
+  it("keeps both local session authentication and managed bearer authentication", async () => {
+    const app = localApp();
+    const request = (headers: Record<string, string>) => app.request("/api/mcp/chat-v2", {
+      method: "POST", headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(localBody()),
+    });
+    expect((await request({ Authorization: "Bearer member" })).status).toBe(401);
+    expect((await request({ "X-MCP-Session-Auth": `Bearer ${generateSessionToken()}` })).status).toBe(401);
+    expect(convexQueryMock).not.toHaveBeenCalled();
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("runs fresh managed local turns through the same resolved environment", async () => {
+    const app = localApp();
+    const token = generateSessionToken();
+    for (let turn = 0; turn < 2; turn++) {
+      const response = await app.request("/api/mcp/chat-v2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer member",
+          "X-MCP-Session-Auth": `Bearer ${token}` },
+        body: JSON.stringify(localBody()),
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      await response.text();
+      expect(prepareChatV2Mock.mock.lastCall?.[0].selectedServers)
+        .toEqual(["env-server-1", "env-server-2"]);
+    }
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(2);
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never falls back to standalone execution after a managed refusal", async () => {
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({
+      code: "FORBIDDEN", message: "Not a member of this project",
+    }), { status: 403 }));
+    const response = await localApp().request("/api/mcp/chat-v2", {
+      method: "POST", headers: { "Content-Type": "application/json",
+        Authorization: "Bearer member",
+        "X-MCP-Session-Auth": `Bearer ${generateSessionToken()}` },
+      body: JSON.stringify(localBody()),
+    });
+    expect(response.status).toBe(403);
+    expect(prepareChatV2Mock).not.toHaveBeenCalled();
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
   it("400s scenarioId + executionTarget instead of silently picking one", async () => {

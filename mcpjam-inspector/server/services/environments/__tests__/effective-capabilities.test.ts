@@ -470,6 +470,15 @@ describe("withLiveProjectSkills — the Playground's hidden environment", () => 
       pluginVersions: [PLUGIN_A],
     });
 
+  it("merges local machine skills without discarding environment skills", () => {
+    const set = resolveEffectiveCapabilities(pluginSpec(), attribution());
+    const local = { ...live("local/review"), directory: "/fixture/review" };
+    const merged = withLiveProjectSkills(set, buildLiveEffectiveCapabilities({ localSkills: [local] }));
+    expect(merged.localSkills).toEqual([local]);
+    expect(merged.standaloneSkills).toEqual(set.standaloneSkills);
+    expect(merged.pluginSkills).toEqual(set.pluginSkills);
+  });
+
   it("adds the project's skills after the environment's own", () => {
     const set = resolveEffectiveCapabilities(pluginSpec(), attribution());
     const merged = withLiveProjectSkills(
