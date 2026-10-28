@@ -640,6 +640,8 @@ export interface WebChatTurnRuntime {
    * gets `agent_billing_rejected` in the middle of one.
    */
   maxSteps?: number;
+  /** Request owner supplied by ingress; excludes durable continuations. */
+  dispose?: () => Promise<void>;
   /** Hono context (needed for getSpendClientIp fallback / future hooks). */
   c: Context;
 }
@@ -1156,6 +1158,7 @@ export async function streamWebChatTurn(
     : null;
 
   const cleanupStream = async () => {
+    if (runtime.dispose) return runtime.dispose();
     // The turn is over: its box stops heartbeating (and is left for the
     // conversation's next turn). Idempotent, and never throws.
     await persist.scenarioBox?.release();
@@ -1240,7 +1243,11 @@ export async function streamWebChatTurn(
       ? (persist.hostConfig({ resolvedTemperature }) ?? null)
       : (persist.hostConfig ?? null);
 
-  const captureSetup = (maxSteps: number, tools = preparedTools) =>
+  const captureSetup = (
+    maxSteps: number,
+    tools = preparedTools,
+    modelVenue: "local" | "remote" = "remote",
+  ) =>
     capturePreparedWebSetup({
       prepare,
       persist,
@@ -1248,6 +1255,7 @@ export async function streamWebChatTurn(
       tools,
       maxSteps,
       secretsUnavailable,
+      modelVenue,
       systemPrompt: effectiveEnhancedSystemPrompt,
       serverIds: prepare.selectedServerIds.filter(
         (id) =>
@@ -1520,6 +1528,7 @@ export async function streamWebChatTurn(
     setupAtTurn = await captureSetup(
       orgMaxSteps,
       orgRuntime.runtimeLocation === "local" ? localTools.tools : preparedTools,
+      orgRuntime.runtimeLocation === "local" ? "local" : "remote",
     );
 
     const onConversationComplete = buildOnConversationComplete(

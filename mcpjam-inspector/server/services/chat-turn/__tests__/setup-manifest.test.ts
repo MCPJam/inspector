@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { jsonSchema, tool } from "ai";
-import { buildSetupManifest } from "../setup-manifest.js";
+import { buildSetupManifest, capturePreparedWebSetup } from "../setup-manifest.js";
 import type { ResolvedEnvironmentRuntime } from "../../environments/runtime.js";
 import { resolveEffectiveCapabilities } from "../../environments/effective-capabilities.js";
 
@@ -57,6 +57,38 @@ describe("effective setup capture", () => {
     expect(result.setup?.tools.schemaHash).toBe(
       createHash("sha256").update(expected).digest("hex"),
     );
+  });
+
+  it("records the local engine separately from the remote model", async () => {
+    const result = await capturePreparedWebSetup({
+      prepare: {
+        modelDefinition: { id: "openai/gpt-5", name: "GPT-5", provider: "openai", hosted: true },
+        selectedServerIds: ["server"],
+        uiMessages: [],
+        effectiveCapabilities: input.capabilities,
+      },
+      persist: {
+        projectId: "project",
+        chatSessionId: "chat",
+        sourceType: "direct",
+        origin: "playground",
+        originalMessages: [],
+        selectedServerIds: ["server"],
+        setupEnvironment: environment,
+      },
+      prepared: { resolvedTemperature: 0.7 },
+      tools: input.tools,
+      maxSteps: 8,
+      serverIds: ["server"],
+      systemPrompt: "Applied prompt",
+      secretsUnavailable: false,
+      modelVenue: "remote",
+    });
+    expect(result.setup?.runtime.venue).toBe("local");
+    expect(result.setup?.model).toEqual({
+      id: "openai/gpt-5", provider: "openai", routingRef: "mcpjam-hosted",
+    });
+    expect(result.setup?.settings.policyHash).toBeTruthy();
   });
 
   it("captures the prepared tool catalog and admitted servers", async () => {
