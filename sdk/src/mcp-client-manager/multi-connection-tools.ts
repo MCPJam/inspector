@@ -32,16 +32,13 @@ function canonical(value: any): string {
 /** 40 for the tool name + "__" + this stays inside the 64-character limit. */
 const SLUG_BUDGET = 20;
 function slugBase(label: string): string {
-  // The first replace leaves no two dashes in a row, so trimming needs only a
-  // single-dash pattern — and an unbounded `-+$` scans quadratically on a long
-  // run of dashes.
   return (
     label
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
+      .replace(/^-+|-+$/g, "")
       .slice(0, SLUG_BUDGET)
-      .replace(/-$/, "") || "server"
+      .replace(/-+$/g, "") || "server"
   );
 }
 function slugs(connections: readonly McpToolConnection[]) {
