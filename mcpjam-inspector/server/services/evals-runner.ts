@@ -174,6 +174,7 @@ import { buildLocalExecutionRecord } from "../utils/local-execution-record.js";
 import { postLocalUsage } from "../utils/org-model-stream-handler.js";
 import type { LocalModelCallSettled } from "./evals/drive-local-eval-turn.js";
 import {
+  extractToolErrors,
   hasSkillTools,
   mergeToolCallsByPromptIndex,
   summarizeRenderObservations,
@@ -1804,6 +1805,7 @@ function buildPromptTraceSummaries(
           ),
         };
       }),
+      ...(summary.retries?.length ? { retries: summary.retries } : {}),
     };
   });
 }
@@ -1840,6 +1842,7 @@ function toStreamToolCalls(toolCalls: ToolCall[]): EvalStreamToolCall[] {
   return toolCalls.map((toolCall) => ({
     toolName: toolCall.toolName,
     arguments: toolCall.arguments,
+    ...(toolCall.toolCallId ? { toolCallId: toolCall.toolCallId } : {}),
   }));
 }
 
@@ -6115,6 +6118,14 @@ const runLocalIteration = async ({
       acc.toolsCalledByPrompt,
       test.isNegativeTest,
       test.matchOptions,
+      // The failures the verdict path grades with, so a retried attempt reads
+      // as a retry in this failed iteration's turn summaries too.
+      {
+        toolErrors: extractToolErrors({
+          messages: failMessages,
+          spans: acc.capturedSpans,
+        }),
+      },
     );
     // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
     // The persisted iteration is hard-coded `passed: false` below, but the

@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { renderSandboxProxyHtml } from "../sandbox-proxy-html.ts";
+import { checkChessViews } from "./fixtures/webmcp/chess-checks.mjs";
 
 const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -60,6 +61,9 @@ async function bundle(entry, app, minify = false) {
     alias: {
       "spike-app": app,
       "spike-runtime": path.join(root, "sdk/src/widget-runtime/index.ts"),
+      "fixture-discovery": path.join(root, "widget-react/src/app-tool-discovery.ts"),
+      "fixture-registry": path.join(root, "widget-react/src/app-tools-registry.ts"),
+      "fixture-dispatch": path.join(root, "widget-react/src/app-tool-dispatch.ts"),
     },
     nodePaths: [path.join(root, "node_modules")],
   });
@@ -152,6 +156,30 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 async function exercise(page, runtime) {
+  await checkChessViews(page, check, assert, runtime);
+  for (const source of ["legacy", "direct"]) {
+    await check(page, runtime, `${source}/in-flight-remount`, async () => {
+      const originalAlias = await page.evaluate(async source => {
+        await window.spike.mount({ id: "A", source });
+        window.pendingRemountCall = window.spike.call("A", { kind: "wait" })
+          .then(() => false, () => true);
+        return window.spike.alias("A");
+      }, source);
+      const rootFrame = typeof page.mainFrame === "function" ? page.mainFrame() : page;
+      const view = rootFrame.childFrames()[0].childFrames()[0];
+      await view.waitForFunction(() => document.body.dataset.waiting === "true");
+      const result = await page.evaluate(async ({ source, originalAlias }) => {
+        await window.spike.close("A");
+        const rejected = await window.pendingRemountCall;
+        await window.spike.mount({ id: "A", source });
+        return { rejected, alias: window.spike.alias("A"),
+          fresh: await window.spike.callAlias(originalAlias, {}) };
+      }, { source, originalAlias });
+      assert(result.rejected, "The in-flight call survived remount");
+      assert(result.alias === originalAlias, "Remount renamed the tool");
+      assert(result.fresh.structuredContent.moves === 1, "Stable alias did not reach the fresh view");
+    });
+  }
   for (const mode of ["write", "srcdoc", "opaque"]) {
     for (const source of ["legacy", "direct", "v3", "v3-tools"]) {
       await check(page, runtime, `${mode}/${source}`, async () => {

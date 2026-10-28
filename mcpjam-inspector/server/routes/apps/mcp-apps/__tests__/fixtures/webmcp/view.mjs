@@ -17,6 +17,7 @@ async function start() {
 
   async function execute(input, extra) {
     if (input.kind === "wait") {
+      document.body.dataset.waiting = "true";
       return new Promise((resolve, reject) => {
         extra.signal.addEventListener(
           "abort",

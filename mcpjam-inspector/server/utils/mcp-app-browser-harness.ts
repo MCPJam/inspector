@@ -54,6 +54,7 @@ import {
   sanitizeProxyDomain,
 } from "./sandbox-proxy-csp";
 import { HARNESS_PAGE_BUNDLE } from "./browser-harness/HarnessPageBundle.generated";
+import type { ToolDataDelivery } from "./browser-harness/tool-data-delivery";
 import {
   ensureLocalChromiumInstalled,
   isChromiumInstalled,
@@ -1191,12 +1192,7 @@ export class McpAppBrowserHarness {
     const cspContent = buildSandboxProxyWidgetCsp(input.cspMeta);
     const policedHtml = injectCspMeta(input.html, cspContent, this.opts.enableViewTools ? `<script>${WEBMCP_VIEW_POLYFILL_JS}</script>` : "");
 
-    let pageResult: {
-      mounted: boolean;
-      bridgeInitialized: boolean;
-      blank: boolean;
-      mountError?: string;
-    };
+    let pageResult: HarnessPageRenderResult;
     try {
       pageResult = await page.evaluate(
         (opts) =>
@@ -1253,6 +1249,7 @@ export class McpAppBrowserHarness {
         elapsedMs: Date.now() - started,
       };
     }
+    const toolDataProblems = pageResult.toolData?.problems ?? [];
 
     // `pageResult.blank` is a DOM check sampled the instant the bridge
     // handshakes — but handshaking is not painting, and DOM-presence is not
@@ -1289,15 +1286,19 @@ export class McpAppBrowserHarness {
         ...base,
         status: "screenshot_failed",
         bridgeInitialized: pageResult.bridgeInitialized,
-        consoleErrors: [...this.consoleErrors],
+        consoleErrors: [...toolDataProblems, ...this.consoleErrors],
         elapsedMs: Date.now() - started,
       };
     }
 
     let status: WidgetRenderStatus;
     if (!pageResult.bridgeInitialized) status = "bridge_timeout";
+    // A widget that rejected its data, or never received it, has not rendered
+    // it, however much it painted.
+    else if (toolDataProblems.length) status = "render_error";
     else if (blank) status = "blank_screenshot";
     else status = "rendered";
+    const consoleErrors = [...toolDataProblems, ...this.consoleErrors];
 
     // Only a fully-rendered widget stays mounted for Computer Use. Any other
     // outcome is torn down IN THE PAGE too (not just removed from `mounted`),
@@ -1312,9 +1313,7 @@ export class McpAppBrowserHarness {
       status,
       bridgeInitialized: pageResult.bridgeInitialized,
       screenshotBase64,
-      consoleErrors: this.consoleErrors.length
-        ? [...this.consoleErrors]
-        : undefined,
+      consoleErrors: consoleErrors.length ? consoleErrors : undefined,
       blockedRequests: this.blockedRequests.length
         ? [...this.blockedRequests]
         : undefined,
@@ -2064,17 +2063,22 @@ export class McpAppBrowserHarness {
   }
 }
 
+/** host-page.ts's `HostPageRenderResult`, restated so Node never imports the
+ *  page module (it pulls in client code). */
+interface HarnessPageRenderResult {
+  mounted: boolean;
+  bridgeInitialized: boolean;
+  blank: boolean;
+  mountError?: string;
+  toolData?: ToolDataDelivery;
+}
+
 // Shape of the in-page harness API (defined in host-page.ts, installed on the
 // page's global after the bundle is injected). Referenced via a `globalThis`
 // cast inside `page.evaluate` callbacks — those run in the browser, where
 // `globalThis === window`, but are typechecked here in the Node context.
 interface HarnessPageApi {
-  renderWidget: (opts: unknown) => Promise<{
-    mounted: boolean;
-    bridgeInitialized: boolean;
-    blank: boolean;
-    mountError?: string;
-  }>;
+  renderWidget: (opts: unknown) => Promise<HarnessPageRenderResult>;
   dismissWidget: (widgetId: string) => boolean;
   isBlank: (widgetId: string) => boolean;
 }

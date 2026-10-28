@@ -52,6 +52,7 @@ export interface AppInstance {
   bridge: AppBridge;
   tools: AppToolDescriptor[];
   registeredAtMs: number;
+  toolSource?: "mcp-apps" | "webmcp";
   /**
    * Accessor for the iframe DOM node that hosts this app instance. Lets
    * callers (e.g. `onToolCall`) scroll the iframe into view before

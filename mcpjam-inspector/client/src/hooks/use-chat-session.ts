@@ -1,3 +1,4 @@
+import { dispatchAppToolCall } from "@mcpjam/widget-react";
 import { useSavedClientSendGuard } from "./use-saved-client-send-guard";
 import { stableStringifyJson } from "@/lib/client-config";
 import { prepareRestoredHarnessApproval, type ApprovalServerSelection } from "@/lib/prepare-restored-harness-approval";
@@ -4281,25 +4282,13 @@ export function useChatSession(
       const registry = appToolsRegistryRef.current.getState();
       registry.registerPendingCall(entry.instance.bridgeId, controller);
       try {
-        const call = entry.bridge.callTool({
-          name: entry.rawName,
-          arguments:
-            tc.input && typeof tc.input === "object"
-              ? (tc.input as Record<string, unknown>)
-              : {},
-        });
-        const raw = await new Promise<
-          Awaited<ReturnType<typeof entry.bridge.callTool>>
-        >((resolve, reject) => {
-          const onAbort = () =>
-            reject(new Error("App iframe was torn down mid-dispatch"));
-          if (controller.signal.aborted) {
-            onAbort();
-            return;
-          }
-          controller.signal.addEventListener("abort", onAbort, { once: true });
-          call.then(resolve, reject);
-        });
+        const raw = await dispatchAppToolCall(
+          entry,
+          tc.input && typeof tc.input === "object"
+            ? (tc.input as Record<string, unknown>)
+            : {},
+          { signal: controller.signal }
+        );
         const sanitized = scrubAppToolResultForModel(raw);
         recordAppToolInvocation(
           {

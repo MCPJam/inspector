@@ -5281,6 +5281,79 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       );
     });
 
+    it("grades a failed call's identical retry in the failure snapshot's turn summary", async () => {
+      const exportCall = (toolCallId: string) => ({
+        type: "tool-call",
+        toolCallId,
+        toolName: "export_scene",
+        input: { sceneId: "s1" },
+      });
+      const emitted: Array<Record<string, unknown>> = [];
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((options: any) => {
+        void options.onStepFinish?.({
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          response: {
+            messages: [
+              { role: "assistant", content: [exportCall("call-1")] },
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-result",
+                    toolCallId: "call-1",
+                    toolName: "export_scene",
+                    output: { type: "error-text", value: "timed out" },
+                  },
+                ],
+              },
+              { role: "assistant", content: [exportCall("call-2")] },
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-result",
+                    toolCallId: "call-2",
+                    toolName: "export_scene",
+                    output: { type: "json", value: { ok: true } },
+                  },
+                ],
+              },
+            ],
+          },
+        });
+        return {
+          consumeStream: async () => {
+            throw new Error("stream dropped");
+          },
+          response: Promise.resolve({ modelId: "gpt-4-turbo", messages: [] }),
+          responseMessages: Promise.resolve([]),
+          steps: Promise.resolve([]),
+          totalUsage: Promise.resolve({
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          }),
+          finishReason: Promise.resolve("stop"),
+        };
+      });
+
+      await runStreamCase({ emitCollector: emitted });
+
+      const failureSnapshot = emitted.find(
+        (e) =>
+          e?.type === "trace_snapshot" &&
+          (e as { snapshotKind?: string }).snapshotKind === "failure",
+      ) as { trace: { prompts?: Array<{ retries?: unknown[] }> } } | undefined;
+      expect(failureSnapshot?.trace.prompts?.[0]?.retries).toEqual([
+        expect.objectContaining({
+          toolName: "export_scene",
+          actualIndex: 0,
+          retriedByIndex: 1,
+        }),
+      ]);
+    });
+
     it("does NOT treat tool-error child spans (with toolCallId) as cycle failure (PR 5a review — Codex P2)", async () => {
       // Codex P2 review fix: `wrapToolSetForEvalTrace` records a failed
       // tool call as a `category:"tool"` span PLUS a child
@@ -5906,6 +5979,13 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             }),
           ]),
         );
+        // The live Tools diff joins each call to a failure by this id, so a
+        // retried attempt reads as retried before the iteration persists.
+        expect(
+          (snap as { actualToolCalls?: unknown[] }).actualToolCalls,
+        ).toEqual([
+          expect.objectContaining({ toolName: "search", toolCallId: "call-1" }),
+        ]);
       } finally {
         runAssistantTurnSpy.mockRestore();
       }
