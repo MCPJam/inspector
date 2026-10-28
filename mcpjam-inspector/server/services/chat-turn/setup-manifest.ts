@@ -220,6 +220,9 @@ export function capturePreparedWebSetup(args: {
       mcpToolResultImageRendering: persist.mcpToolResultImageRendering,
     },
     incomplete: [
+      ...(persist.setupConnectionPolicyIncomplete
+        ? ["runtime_provenance_unavailable" as const]
+        : []),
       ...(prepared.liveServerSkills || persist.setupSkillProvenanceIncomplete
         ? ["skill_provenance_unavailable" as const]
         : []),

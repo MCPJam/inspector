@@ -1,10 +1,8 @@
-import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { buildSetupManifest } from "../../services/chat-turn/setup-manifest.js";
 import {
   resolveChatSessionEnvironment,
   unappliedBuiltInToolIds,
 } from "./chat-session-environment.js";
-import type { ResolvedTarget } from "./chat-session-environment.js";
 import { resolveApiHarnessEnvironment } from "./chat-session-harness-environment.js";
 import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
@@ -122,22 +120,14 @@ import {
   type AgentTurnToolMode,
   type ResumeConfig,
 } from "../../utils/chat-ingestion.js";
-import {
-  resolveEnvironmentForRuntime,
-  runtimeServerIds,
-  runtimeServerNames,
-  runtimeSkills as environmentRuntimeSkills,
-} from "../../services/environments/runtime.js";
 import { logger } from "../../utils/logger.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
 import {
   buildLiveEffectiveCapabilities,
-  resolveEffectiveCapabilities,
   type EffectiveCapabilitySet,
 } from "../../services/environments/effective-capabilities.js";
-import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import {
@@ -151,13 +141,11 @@ import type { HarnessBox } from "../../utils/harness/harness-box.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
   assertHarnessDispatchable,
-  assertHostPointerAgreement,
   engineLabel,
   hostRoutingSelectionForModel,
   hostSelectionForModel,
   resolveChatSessionEngine,
   type ChatSessionEngine,
-  type ChatSessionHostTarget,
 } from "./chat-session-host-target.js";
 import { v1Error, v1Resource } from "./envelope.js";
 import { readJsonObjectBody } from "./adapter.js";
@@ -513,206 +501,6 @@ async function releaseTurnLease(
       error: error instanceof Error ? error.message : String(error),
     });
   }
-}
-
-// ── Target resolution ───────────────────────────────────────────────────────
-
-/**
- * Read the host's OWN server selection, for a turn that named only a host.
- *
- * Server-authoritative by construction: it comes off the fetched runtime
- * config, never the body. A malformed field reads as EMPTY rather than being
- * partially salvaged — connecting a subset of what a host declares would run a
- * configuration nobody chose.
- */
-function hostSelectedServerIds(
-  runtimeConfig: Record<string, unknown>,
-): string[] {
-  const ids = runtimeConfig.selectedServerIds;
-  if (!Array.isArray(ids)) return [];
-  return ids.every((id) => typeof id === "string" && id.length > 0)
-    ? (ids as string[])
-    : [];
-}
-
-/** Re-fetch the authoritative host config before choosing the runtime. */
-async function fetchExplicitHostTarget(
-  hostId: string,
-  context: { authHeader: string; signal?: AbortSignal },
-): Promise<ChatSessionHostTarget> {
-  const runtime = await fetchHostRuntimeConfig({
-    hostId,
-    bearer: context.authHeader,
-    ...(context.signal ? { signal: context.signal } : {}),
-  });
-  if (!runtime.ok) {
-    logger.warn("[v1/chat-session-turn] host runtime-config fetch failed", {
-      hostId,
-      status: runtime.status,
-      error: runtime.error,
-    });
-    // A 403 collapses to 404, the rule this module already applies to
-    // sessions: refusal and absence must read identically, or the endpoint
-    // becomes an existence oracle for hosts the caller cannot see.
-    const [status, code] =
-      runtime.status >= 500
-        ? ([502, ErrorCode.SERVER_UNREACHABLE] as const)
-        : runtime.status === 401
-        ? ([401, ErrorCode.UNAUTHORIZED] as const)
-        : ([404, ErrorCode.NOT_FOUND] as const);
-    throw new WebRouteError(
-      status,
-      code,
-      `Couldn't load host "${hostId}", so the turn was stopped rather than run on the wrong engine. ${runtime.error}`,
-      { reason: "HOST_UNRESOLVED", hostId },
-    );
-  }
-  return {
-    hostId,
-    runtimeConfig: runtime.config as unknown as Record<string, unknown>,
-    source: "host",
-  };
-}
-
-/**
- * Resolve which MCP servers this turn talks to, and which host it runs as.
- *
- * The caller names an environment, a list of server IDS, or a host — never raw
- * server CONFIGS. That is the same rule the eval run-start route enforces:
- * accepting configs on a public endpoint would let a caller point our egress
- * at an arbitrary host under their own project's credentials.
- *
- * A `hostId` alongside an environment is an ASSERTION, not a second target:
- * the environment pins its own host, and a pointer naming a different one is
- * refused rather than resolved by precedence.
- */
-async function resolveLegacyTarget(
-  client: ConvexHttpClient,
-  projectId: string,
-  input: { environmentId?: string; serverIds?: string[]; hostId?: string },
-  hostContext: { authHeader: string; signal?: AbortSignal },
-): Promise<ResolvedTarget> {
-  // Fetched ONCE, before either branch, so a host pointer costs the same round
-  // trip whichever way the target names its servers.
-  const explicitHost = input.hostId
-    ? await fetchExplicitHostTarget(input.hostId, hostContext)
-    : undefined;
-
-  if (input.serverIds && input.serverIds.length > 0) {
-    return {
-      serverIds: input.serverIds,
-      ...(explicitHost ? { host: explicitHost } : {}),
-      ...(explicitHost
-        ? withUnappliedCapabilities(explicitHost.runtimeConfig)
-        : {}),
-    };
-  }
-  if (!input.environmentId) {
-    if (explicitHost) {
-      // Host-only target: the servers are the ones the HOST selected. Reading
-      // them here (rather than making the caller restate them) keeps the whole
-      // execution shape server-authoritative — the same set the Playground
-      // would connect for this host.
-      const serverIds = hostSelectedServerIds(explicitHost.runtimeConfig);
-      if (serverIds.length === 0) {
-        throw new WebRouteError(
-          422,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          `Host "${input.hostId}" selects no MCP servers, so there is nothing to connect. Attach servers to the host, or pass environmentId/serverIds alongside it.`,
-        );
-      }
-      return {
-        serverIds,
-        host: explicitHost,
-        ...withUnappliedCapabilities(explicitHost.runtimeConfig),
-      };
-    }
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "A first turn must name its target: pass environmentId, serverIds, or hostId.",
-    );
-  }
-  const spec = await resolveEnvironmentForRuntime(client, {
-    projectId,
-    environmentId: input.environmentId,
-  });
-  // The environment already decided which host runs this turn. A contradicting
-  // pointer is rejected here — before any connection, any model resolution and
-  // any spend — rather than silently preferring one of the two.
-  assertHostPointerAgreement({
-    ...(input.hostId ? { requestedHostId: input.hostId } : {}),
-    environmentHostId: spec.host.hostId,
-    environmentId: input.environmentId,
-  });
-  const serverIds = runtimeServerIds(spec);
-  if (serverIds.length === 0) {
-    throw new WebRouteError(
-      422,
-      ErrorCode.FEATURE_NOT_SUPPORTED,
-      "That environment resolves to no connectable MCP servers.",
-    );
-  }
-  const serverNames = runtimeServerNames(spec);
-  const unappliedCapabilities = unappliedBuiltInToolIds(
-    spec.host?.runtimeConfig,
-  );
-  // Attribution is a SECOND read and deliberately cannot fail the turn: the
-  // environment already decided what runs, so a probe blip must degrade origin
-  // reporting rather than stop a send. Costs nothing when no plugins are
-  // pinned. Mirrors `routes/web/chat-v2.ts`, which is the surface this one has
-  // to agree with about what an environment means.
-  const attribution = await fetchPluginRuntimeAttribution(client, {
-    projectId,
-    pluginVersionIds: (spec.pluginVersions ?? []).map(
-      (plugin) => plugin.pluginVersionId,
-    ),
-  }).catch(() => null);
-  return {
-    serverIds,
-    ...(serverNames.length === serverIds.length ? { serverNames } : {}),
-    environmentId: input.environmentId,
-    environmentCapabilities: resolveEffectiveCapabilities(spec, attribution),
-    // The same resolution the emulated engine gets, in the shape the HARNESS
-    // engine reads. Set only when the resolver actually ANSWERED about skills:
-    // `skills` is one of the additive fields `assertRuntimeInvariants` calls
-    // the deploy-skew surface, so an older backend omits it entirely. Presence
-    // downstream means "the environment resolved these", and `runtimeSkills`
-    // maps an absent array to `[]` — so setting it unconditionally would turn
-    // "we were not told" into an authoritative "this environment has none" and
-    // silently strip a harness turn of every skill it should have had. Absent
-    // stays absent (the live fetch, unchanged); `[]` stays `[]`.
-    ...(Array.isArray(spec.skills)
-      ? { environmentSkills: environmentRuntimeSkills(spec) }
-      : {}),
-    // The environment's OWN host, resolved by the backend in the same atomic
-    // read as its server set. This is what makes a harness environment run its
-    // harness on a CONTINUATION too: `environmentId` is a resume pin, so every
-    // turn re-resolves the host from scratch and nothing has to be re-sent.
-    host: {
-      hostId: spec.host.hostId,
-      runtimeConfig: spec.host.runtimeConfig,
-      source: "environment",
-    },
-    ...(unappliedCapabilities.length > 0 ? { unappliedCapabilities } : {}),
-  };
-}
-
-/**
- * The `unappliedCapabilities` field, spread-only-when-present.
- *
- * Extended to the explicit-host path so a `hostId` turn reports the same gap an
- * environment turn already did. It OVER-reports on a harness turn — the harness
- * has its own shell and file tools in its sandbox, so `bash` is not really
- * missing there — and that is the safe direction for an advisory field: naming
- * a capability the turn may in fact have costs a caller a second look, whereas
- * omitting one it genuinely lacks is the silent gap this field exists to close.
- */
-function withUnappliedCapabilities(runtimeConfig: Record<string, unknown>): {
-  unappliedCapabilities?: string[];
-} {
-  const unappliedCapabilities = unappliedBuiltInToolIds(runtimeConfig);
-  return unappliedCapabilities.length > 0 ? { unappliedCapabilities } : {};
 }
 
 // ── Tool policy ─────────────────────────────────────────────────────────────
@@ -1353,7 +1141,6 @@ async function handleTurn(c: Context): Promise<Response> {
       // The turn's own controller, so a host fetch stops with the turn rather
       // than running on to its own timeout after the caller has gone.
       { authHeader, signal: abortController.signal },
-      resolveLegacyTarget,
     );
     // A host-only turn deliberately pins NOTHING here. Pinning the resolved
     // server set would look like a convenience and behave like a trap twice
@@ -1940,16 +1727,10 @@ async function handleTurn(c: Context): Promise<Response> {
           reason: "NOT_A_DATA_PLANE",
         });
       }
-      // The environment whose grant the box carries: the session's own when it
-      // pins one; otherwise, for a `credential` harness on a host, the same
-      // HIDDEN ad-hoc environment selecting the member's key that the
-      // Playground mints. Refused here, before any box, when there is no key.
-      const boxEnvironment = await resolveApiHarnessEnvironment({
-        projectId,
-        bearer: authHeader,
-        harnessId: engine.harness,
+      // A credential harness uses its resolved setup grant. Plain host
+      // conversations retain their existing sandbox identity.
+      const boxEnvironment = resolveApiHarnessEnvironment({
         credential: boxReason === "credential",
-        hostId: target.host?.hostId,
         pinnedEnvironmentId: pins.environmentId,
         resolvedEnvironmentId:
           target.resolvedEnvironment?.environmentRef.environmentId,
@@ -2633,7 +2414,6 @@ export const __testing = {
   wantsNoTools,
   computeExcludedToolNames,
   unappliedBuiltInToolIds,
-  hostSelectedServerIds,
   CONFIG_FIELDS,
   turnSchema,
 };

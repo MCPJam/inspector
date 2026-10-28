@@ -332,7 +332,7 @@ describe("usePlaygroundHiddenEnvironment", () => {
     expect(state.ensure).not.toHaveBeenCalled();
   });
 
-  it("keeps plugins on an older backend that rejects the chat-purpose argument", async () => {
+  it("reports unsupported setup creation without retrying outside the chat purpose", async () => {
     state.plugins = [plugin("bits")];
     state.ensure.mockRejectedValueOnce(
       new Error(
@@ -340,11 +340,10 @@ describe("usePlaygroundHiddenEnvironment", () => {
       ),
     );
     const { result } = render();
-    await waitFor(() => expect(result.current.environmentId).not.toBeNull());
-    expect(state.ensure).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(result.current.failed).toBe(true));
+    expect(state.ensure).toHaveBeenCalledTimes(1);
     expect(state.ensure.mock.calls[0][0].purpose).toBe("chat");
-    expect(state.ensure.mock.calls[1][0]).not.toHaveProperty("purpose");
-    expect(result.current.failed).toBe(false);
+    expect(result.current.environmentId).toBeNull();
   });
 
   it("keeps a row-cap refusal distinct from plugin fallback", async () => {

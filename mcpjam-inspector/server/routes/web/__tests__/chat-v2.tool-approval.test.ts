@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { getFunctionName } from "convex/server";
 
 /**
  * Tool approval on `POST /api/web/chat-v2`, end to end (MJ-008).
@@ -365,8 +366,9 @@ async function pauseOnCreate(chatSessionId: string, toolCallId: string) {
 
 function savedProjectConfig(config: Record<string, unknown> | null) {
   convexQueryMock.mockImplementation(
-    async (ref: string, args: { serverOverrideIds?: string[] }) => {
-      if (ref === "projectEnvironments:resolveEnvironmentForRuntime") {
+    async (ref: Parameters<typeof getFunctionName>[0], args: { serverOverrideIds?: string[] }) => {
+      const name = getFunctionName(ref);
+      if (name === "projectEnvironments:resolveEnvironmentForRuntime") {
         const host =
           await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
         return chatEnvironmentFixture(
@@ -374,8 +376,8 @@ function savedProjectConfig(config: Record<string, unknown> | null) {
           args.serverOverrideIds,
         );
       }
-      if (ref === "hostConfigsV2:getProjectDefault") return config;
-      if (ref === "projects:getProjectCapabilities") {
+      if (name === "hostConfigsV2:getProjectDefault") return config;
+      if (name === "projects:getProjectCapabilities") {
         return { projectRole: "admin" };
       }
       throw new Error(`Unexpected Convex query: ${ref}`);
@@ -383,7 +385,7 @@ function savedProjectConfig(config: Record<string, unknown> | null) {
   );
 }
 
-describe.each([false, true])(
+describe.each([true])(
   "web chat tool approval (MJ-008), environment runtime %s",
   (environmentRuntime) => {
     const originalFetch = global.fetch;

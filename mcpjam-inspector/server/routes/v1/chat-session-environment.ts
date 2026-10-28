@@ -53,34 +53,22 @@ const capabilitiesRef = makeFunctionReference<
 
 type Target = { environmentId?: string; serverIds?: string[]; hostId?: string };
 type Context = { authHeader: string; signal?: AbortSignal };
-type LegacyResolver = (
-  client: ConvexHttpClient,
-  projectId: string,
-  input: Target,
-  context: Context,
-) => Promise<ResolvedTarget>;
-
-/** Negotiate at the authenticated boundary so older deployments retain their supported API. */
+/** Require the shared resolver before choosing any runtime or billing policy. */
 export async function resolveChatSessionEnvironment(
   client: ConvexHttpClient,
   projectId: string,
   input: Target,
   context: Context,
-  legacy: LegacyResolver,
 ): Promise<ResolvedTarget> {
   const capabilities = await client.query(capabilitiesRef, { projectId });
   if (capabilities === null)
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Project not found.");
-  if (capabilities?.chatEnvironmentVersion !== 1) {
-    if (input.serverIds?.length === 0) {
-      throw new WebRouteError(
-        422,
-        ErrorCode.FEATURE_NOT_SUPPORTED,
-        "Explicit empty server selection is not supported by this backend.",
-      );
-    }
-    return legacy(client, projectId, input, context);
-  }
+  if (capabilities?.chatEnvironmentVersion !== 1)
+    throw new WebRouteError(
+      422,
+      ErrorCode.FEATURE_NOT_SUPPORTED,
+      "Chat requires a backend with saved setup support. Upgrade the backend before sending messages.",
+    );
   const args: Parameters<typeof resolveChatTurn>[0] = {
     target: input.environmentId
       ? { kind: "environment", environmentId: input.environmentId }

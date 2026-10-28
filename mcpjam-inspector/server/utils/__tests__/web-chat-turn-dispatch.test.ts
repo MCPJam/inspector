@@ -233,15 +233,31 @@ describe("streamWebChatTurn model dispatch", () => {
   it("routes a bare id the picker stamped hosted: false to the org-BYOK path", async () => {
     const setup = await import("../../services/chat-turn/setup-manifest.js");
     const capture = vi.spyOn(setup, "capturePreparedWebSetup");
-    await streamWebChatTurn(
-      args(
-        { id: "gpt-5-nano", provider: "openai", hosted: false },
-        null,
-      ) as never,
+    const environment = {
+      environmentRef: { environmentId: "e", name: "", revision: 1 },
+      host: { hostId: "h", runtimeConfig: { configHash: "a".repeat(64) } },
+      servers: { effectiveServerIds: [] },
+      skills: [], pluginVersions: [], selectedSecretIds: [], serverConfigHashes: {},
+    };
+    const { resolveEffectiveCapabilities } = await import(
+      "../../services/environments/effective-capabilities.js"
     );
+    const turn = args(
+      { id: "gpt-5-nano", provider: "openai", hosted: false }, null,
+      { effectiveCapabilities: resolveEffectiveCapabilities(environment, null) },
+    );
+    await streamWebChatTurn({
+      ...turn,
+      persist: { ...turn.persist, setupEnvironment: environment, setupConnectionPolicyIncomplete: true },
+    } as never);
     expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
     expect(handlers.mcpjamFree).not.toHaveBeenCalled();
     expect(capture.mock.lastCall?.[0].maxSteps).toBe(30);
+    const manifest = await capture.mock.results.at(-1)?.value;
+    expect(manifest).toMatchObject({
+      status: "incomplete",
+      reasons: expect.arrayContaining(["runtime_provenance_unavailable"]),
+    });
     expect(handlers.hostedOrg.mock.lastCall?.[0]).toMatchObject({
       maxSteps: 30,
     });
