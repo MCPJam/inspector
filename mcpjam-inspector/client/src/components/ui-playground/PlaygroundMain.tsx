@@ -6801,7 +6801,11 @@ export function PlaygroundMain({
                         if (resolution.status !== "ready") return (
                           <div key={resolution.compareId} role="status" className="rounded-lg border p-4 text-sm">
                             <strong>{resolution.compareLabel}</strong>
-                            <p>{resolution.reason}</p>
+                            {/* The composer's sign-in notice already explains this case. */}
+                            {resolution.status === "unavailable" &&
+                            needsSignIn(resolution.model) ? null : (
+                              <p>{resolution.reason}</p>
+                            )}
                           </div>
                         );
                         const column = resolution.column;
