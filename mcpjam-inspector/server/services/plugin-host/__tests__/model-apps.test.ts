@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { ModelAppRegistry } from "../model-apps.js";
+import { PluginContextMemory } from "../context-memory.js";
 import { PLUGIN_MODEL_APP_META } from "../../../../shared/plugin-model-app.js";
 import type { PluginFormOwner } from "../instances.js";
 const owner = {
@@ -35,6 +36,44 @@ function publish(registry: ModelAppRegistry) {
   ) as any;
 }
 describe("trusted completed model App ownership", () => {
+  it("counts an open model App's context against this process's memory", () => {
+    const registry = new ModelAppRegistry(
+      60_000,
+      new PluginContextMemory(64 * 1024, 1024 * 1024),
+    );
+    const open = (toolName: string) =>
+      (
+        registry.publish(
+          { content: [] },
+          owner,
+          toolName,
+          "tool-rev",
+          meta,
+        ) as any
+      )._meta[PLUGIN_MODEL_APP_META].instanceToken as string;
+    const update = (token: string, sequence: number, text: string) =>
+      registry.updateContext(token, actor, {
+        operationId: `op-${sequence}`,
+        sequence,
+        params: { content: [{ type: "text", text }] },
+        // After its context is removed, the person uses the App again.
+        ...(sequence > 1 ? { attach: "user" as const } : {}),
+      });
+    const first = open("first");
+    const second = open("second");
+    update(first, 1, "x".repeat(40_000));
+    expect(() => update(second, 1, "y".repeat(30_000))).toThrow(
+      "PLUGIN_CONTEXT_MEMORY_LIMIT",
+    );
+    // Removing the first App's context frees its bytes, and so does closing.
+    registry.removeContext(first, actor, { operationId: "remove", basis: 0 });
+    update(second, 1, "y".repeat(30_000));
+    expect(() => update(first, 2, "x".repeat(40_000))).toThrow(
+      "PLUGIN_CONTEXT_MEMORY_LIMIT",
+    );
+    registry.close(second, actor);
+    update(first, 2, "x".repeat(40_000));
+  });
   it("renews a retained model App past its original lifetime", () => {
     vi.useFakeTimers();
     try {
