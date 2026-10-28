@@ -159,8 +159,8 @@ export function submitAuthorizationCode(
   const session = sessions.get(sessionId);
   // No way to ask the SDK controller "are you waiting?" directly, so we rely
   // on the runner's own state-mismatch handling and treat any unknown session
-  // as a miss.
-  if (!session) return false;
+  // as a miss. A result before the code means the authorization wait ran out.
+  if (!session || session.result) return false;
   session.lastActivityAt = Date.now();
   session.controller.deliverCode({ code, state });
   return true;

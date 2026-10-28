@@ -189,6 +189,31 @@ describe("expiry", () => {
     await settled;
   });
 
+  it("refuses a code that arrives after the authorization wait ran out", async () => {
+    const session = createSession({ redirectUrl: REDIRECT });
+    const sdkSession = await session.controller.createSession();
+    const codePromise = sdkSession.authorize({
+      authorizationUrl: "https://auth.example/authorize",
+      timeoutMs: 30_000,
+    });
+    codePromise.catch(() => undefined);
+
+    await vi.advanceTimersByTimeAsync(AUTHORIZATION_WAIT_MS + 1);
+    // The runner scores the timed-out step and finishes before the code lands.
+    setSessionResult(session.id, {
+      passed: false,
+      outcome: "failed",
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "cimd",
+      serverUrl: "https://a.com",
+      steps: [],
+      summary: "Authorization timed out",
+      durationMs: AUTHORIZATION_WAIT_MS,
+    });
+
+    expect(submitAuthorizationCode(session.id, "late-code")).toBe(false);
+  });
+
   it("drops a session after 15 idle minutes", async () => {
     const session = createSession({ redirectUrl: REDIRECT });
     await vi.advanceTimersByTimeAsync(14 * 60 * 1000);
