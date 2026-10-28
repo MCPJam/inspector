@@ -12,6 +12,7 @@ import type {
 import { HOSTED_MODE } from "../config.js";
 import { isOriginCaptureHandled } from "./error-capture-stamp.js";
 import { sentryIdentityMetadata } from "./sentry-request-identity.js";
+import { withConsoleIds } from "./console-log-ids.js";
 
 function withIdentityCapture(capture: () => void): void {
   if (isTrackingDisabled()) return;
@@ -157,6 +158,8 @@ export function captureOriginErrorToSentry(
 /**
  * Centralized logger that sends errors to Sentry and only logs to console
  * in dev mode or when verbose mode is enabled (--verbose flag or VERBOSE_LOGS=true).
+ * A console line shows the message plus the context's run/session/iteration/
+ * turn/request IDs (`console-log-ids.ts`), never any other context field.
  * Sends logs with AXIOM_TOKEN to AXIOM_CLEAN_DATASET, then AXIOM_DATASET, or inspector-logs.
  */
 export const logger = {
@@ -192,7 +195,7 @@ export const logger = {
     ingestToAxiom("error", message, context, error);
 
     if (shouldLog()) {
-      console.error(message, error);
+      console.error(withConsoleIds(message, context), error);
     }
   },
 
@@ -215,7 +218,7 @@ export const logger = {
     ingestToAxiom("warn", message, context);
 
     if (shouldLog()) {
-      console.warn(message);
+      console.warn(withConsoleIds(message, context));
     }
   },
 
@@ -230,7 +233,7 @@ export const logger = {
     ingestToAxiom("info", message, context);
 
     if (shouldLog()) {
-      console.log(message);
+      console.log(withConsoleIds(message, context));
     }
   },
 

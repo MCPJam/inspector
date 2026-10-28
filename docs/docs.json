@@ -265,6 +265,18 @@
       "destination": "/inspector/playground"
     },
     {
+      "source": "/inspector/llm-playground",
+      "destination": "/inspector/playground"
+    },
+    {
+      "source": "/inspector/elicitation",
+      "destination": "/inspector/playground"
+    },
+    {
+      "source": "/inspector/server",
+      "destination": "/inspector/connecting-servers"
+    },
+    {
       "source": "/sdk/reference/test-agent",
       "destination": "/sdk/reference/host-runner"
     },

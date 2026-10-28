@@ -16,6 +16,7 @@
  * capture-before-teardown ordering is only correct if the CORE owns it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ModelMessage } from "ai";
 
 const runAssistantTurnMock = vi.fn();
 const resolveSyntheticModelSourceMock = vi.fn();
@@ -25,6 +26,12 @@ const prepareChatV2Mock = vi.fn();
 const convexMutationMock = vi.fn();
 const createBrowserSessionContextMock = vi.fn();
 const listCloudRuntimeSkillsMock = vi.fn();
+const releaseUncommittedHarnessLaneMock = vi.fn();
+
+vi.mock("../../../utils/harness/harness-session-state.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/harness/harness-session-state.js")>()),
+  releaseUncommittedHarnessLane: (...args: unknown[]) => releaseUncommittedHarnessLaneMock(...args),
+}));
 
 // The project catalog is the one skills dependency the runner reaches out to
 // itself; everything else about the skill surface is the orchestrator's, and
@@ -213,7 +220,7 @@ function baseAdapter(overrides?: {
         unitTimeoutMs: "default",
         runTimeoutMs: "default",
         turnRetries: "default",
-      },
+      } as const,
     },
     runtime: {
       modelDefinition: {
@@ -453,7 +460,10 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     const fake = buildFakeBrowserContext({ computerUse: true });
     createBrowserSessionContextMock.mockReturnValue(fake);
 
-    const result = await runSyntheticHostSession(baseAdapter() as never);
+    const hostCapabilities = { serverResources: {} };
+    const result = await runSyntheticHostSession(
+      baseAdapter({ runtime: { hostCapabilities } }) as never,
+    );
     expect(result.outcome).toBe("succeeded");
 
     // Context per session, surface-scoped logging, Computer Use opted in.
@@ -462,6 +472,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
       model: "anthropic/claude-haiku-4.5",
       logScope: "sessionSimulation",
       enableComputerUse: true,
+      hostCapabilities,
     });
 
     // Per-turn hygiene runs BEFORE the engine; dispose runs at session end.
@@ -469,6 +480,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
       "setActivePromptIndex:0",
       "dismissCarriedWidget",
       "runAssistantTurn",
+      "dismissCarriedWidget",
       "dispose",
     ]);
 
@@ -767,7 +779,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
 });
 
 /** Fake outbox that logs into the shared `callOrder`. */
-function buildFakeOutbox(overrides?: { flush?: () => Promise<unknown> }) {
+function buildFakeOutbox(overrides?: { flush?: () => Promise<{ written: number; pending: number; videoAttached: boolean }> }) {
   return {
     take: vi.fn((_browser: unknown, promptIndex: number) => {
       callOrder.push(`outbox.take:${promptIndex}`);
@@ -786,6 +798,7 @@ function buildFakeOutbox(overrides?: { flush?: () => Promise<unknown> }) {
       );
     }),
     pendingBatchCount: 0,
+    enqueueSteps: vi.fn(),
   };
 }
 
@@ -949,7 +962,7 @@ describe("runSyntheticHostSession — execution budgets", () => {
       unitTimeoutMs: "default",
       runTimeoutMs: "default",
       turnRetries: "default",
-    },
+    } as const,
   });
 
   /** A turn that never returns on its own — only its signal ends it. */
@@ -969,6 +982,142 @@ describe("runSyntheticHostSession — execution budgets", () => {
           else signal.addEventListener("abort", fail, { once: true });
         }),
     );
+
+  it("exposes the remaining turn budget to model-step admission", async () => {
+    const adapter = baseAdapter();
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 5000 });
+    await runSyntheticHostSession(adapter);
+    const remaining = runAssistantTurnMock.mock.calls[0][0].remainingTurnMs;
+    expect(remaining).toEqual(expect.any(Function));
+    expect(remaining()).toBeGreaterThan(0);
+    expect(remaining()).toBeLessThanOrEqual(5000);
+  });
+
+  const partialOnAbort = (withTrace: boolean) => async (opts: {
+    messages: ModelMessage[];
+    abortSignal: AbortSignal;
+  }) => {
+    await new Promise<void>((resolve) => {
+      if (opts.abortSignal.aborted) resolve();
+      else opts.abortSignal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return {
+      messages: [...opts.messages, { role: "assistant", content: "partial answer" }],
+      assistantMessages: [],
+      toolCalls: [],
+      toolResults: [],
+      turnTrace: withTrace ? {
+        ...TURN_TRACE,
+        spans: [{ type: "tool", name: "fixture-search", toolCallId: "call-1" }],
+      } : undefined,
+    };
+  };
+
+  it("persists partial timeout evidence before failing and flushing browser artifacts", async () => {
+    runAssistantTurnMock.mockImplementation(partialOnAbort(true));
+    const emit = vi.fn();
+    const adapter = baseAdapter({ emit });
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 20 });
+    const outbox = buildFakeOutbox();
+    const result = await runSyntheticHostSession({ ...adapter, browserArtifacts: outbox });
+    expect(result.errorReason).toBe("turn_timeout");
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
+    expect(persistChatSessionToConvexMock.mock.calls[0][0]).toMatchObject({
+      sessionMessages: [
+        { role: "user", content: "draw me a box" },
+        { role: "assistant", content: "partial answer" },
+      ],
+      turnTrace: { spans: [{ name: "fixture-search", toolCallId: "call-1" }] },
+    });
+    expect(adapter.nextPersonaTurn).toHaveBeenCalledTimes(1);
+    expect(emit.mock.calls.map(([event]) => event.type)).not.toContain("turn_finish");
+    expect(emit).toHaveBeenLastCalledWith(expect.objectContaining({ type: "session_complete", status: "failed" }));
+    expect(outbox.flush).toHaveBeenCalledTimes(1);
+    expect(callOrder.indexOf("dispose")).toBeLessThan(callOrder.indexOf("outbox.flush"));
+  });
+
+  it("saves a later timed-out turn's history without a trace or browser outbox", async () => {
+    runAssistantTurnMock.mockImplementationOnce(async (opts: { messages: ModelMessage[] }) => ({
+      messages: [...opts.messages, { role: "assistant", content: "first answer" }],
+      assistantMessages: [], toolCalls: [], toolResults: [], turnTrace: TURN_TRACE,
+    })).mockImplementation(partialOnAbort(false));
+    const adapter = baseAdapter();
+    adapter.nextPersonaTurn.mockReset().mockResolvedValue({ message: "continue", endSession: false });
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 30 });
+    const result = await runSyntheticHostSession(adapter);
+    expect(result.errorReason).toBe("turn_timeout");
+    expect(adapter.nextPersonaTurn).toHaveBeenCalledTimes(2);
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(2);
+    const saved = persistChatSessionToConvexMock.mock.calls[1][0];
+    expect(saved.sessionMessages).toHaveLength(4);
+    expect(saved.sessionMessages.at(-1).content).toBe("partial answer");
+    expect(saved.turnTrace).toBeUndefined();
+  });
+
+  it("saves timeout evidence without waiting on the server's tool list", async () => {
+    runAssistantTurnMock.mockImplementationOnce(async (opts: { messages: ModelMessage[] }) => ({
+      messages: [...opts.messages, { role: "assistant", content: "first answer" }],
+      assistantMessages: [], toolCalls: [], toolResults: [], turnTrace: TURN_TRACE,
+    })).mockImplementation(partialOnAbort(true));
+    const listTools = vi.fn().mockResolvedValue({ tools: [] });
+    const adapter = baseAdapter();
+    adapter.managerFactory = async () => ({
+      manager: { hasServer: () => true, listTools, executeTool: vi.fn(), getAllToolsMetadata: vi.fn().mockReturnValue({}) } as never,
+      connectedServerIds: ["server-1"], connectedServerNames: ["Server One"], dispose: async () => {},
+    });
+    adapter.nextPersonaTurn.mockReset().mockResolvedValue({ message: "continue", endSession: false });
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 30 });
+    const result = await runSyntheticHostSession(adapter);
+    expect(result.errorReason).toBe("turn_timeout");
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(2);
+    // Only the completed turn lists tools for its snapshot.
+    expect(listTools).toHaveBeenCalledTimes(1);
+    expect(persistChatSessionToConvexMock.mock.calls[0][0].toolSnapshot).toBeDefined();
+    expect(persistChatSessionToConvexMock.mock.calls[1][0].toolSnapshot).toBeUndefined();
+  });
+
+  it.each(["reject", "throw"])("keeps timeout classification when evidence persistence fails: %s", async (failure) => {
+    runAssistantTurnMock.mockImplementation(partialOnAbort(true));
+    if (failure === "throw") persistChatSessionToConvexMock.mockRejectedValue(new Error("fixture unavailable"));
+    else persistChatSessionToConvexMock.mockResolvedValue({ outcome: "failed", failureKind: "http" });
+    const adapter = baseAdapter();
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 20 });
+    const result = await runSyntheticHostSession(adapter);
+    expect(result).toMatchObject({ outcome: "failed", errorReason: "turn_timeout" });
+    expect(adapter.nextPersonaTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["reject", "throw"])("settles a rejected harness lane and retains timeout: %s", async (failure) => {
+    const commit = {
+      ownerType: "swarm-chat", chatSessionId: "synth_run-1_p1_0", leaseId: "lease-1",
+      expectedStateVersion: 1, harnessId: "claude-code", harnessSessionId: "hs-1",
+      resumeState: {}, computerId: "computer-1", runtimeFingerprint: "fp-1",
+    };
+    const partial = partialOnAbort(true);
+    runAssistantTurnMock.mockImplementation(async (opts: Parameters<typeof partial>[0]) => ({
+      ...await partial(opts), harnessSessionCommit: commit,
+    }));
+    if (failure === "throw") persistChatSessionToConvexMock.mockRejectedValue(new Error("fixture unavailable"));
+    else persistChatSessionToConvexMock.mockResolvedValue({ outcome: "failed", failureKind: "http" });
+    const adapter = baseAdapter();
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 20 });
+    const result = await runSyntheticHostSession(adapter);
+    expect(result.errorReason).toBe("turn_timeout");
+    expect(releaseUncommittedHarnessLaneMock).toHaveBeenCalledTimes(1);
+    expect(releaseUncommittedHarnessLaneMock).toHaveBeenCalledWith(expect.objectContaining({ commit }));
+    expect(adapter.nextPersonaTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not classify a completed turn as timed out when persistence takes longer", async () => {
+    persistChatSessionToConvexMock.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return { outcome: "saved", version: 1 };
+    });
+    const adapter = baseAdapter();
+    adapter.budgets = budgetsWith({ turnTimeoutMs: 20 });
+    const result = await runSyntheticHostSession(adapter);
+    expect(result.outcome).toBe("succeeded");
+  });
 
   it("ends the session when a turn outlives its budget", async () => {
     hangUntilAborted();

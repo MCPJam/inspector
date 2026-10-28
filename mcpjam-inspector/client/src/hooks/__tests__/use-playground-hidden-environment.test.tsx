@@ -320,6 +320,48 @@ describe("usePlaygroundHiddenEnvironment", () => {
     }));
   });
 
+  it("leaves guest turns to server composition without member plugin or secret reads", () => {
+    state.isMember = false;
+    state.hostedMode = true;
+    state.plugins = [plugin("bits")];
+    const { result } = render();
+    expect(result.current.wanted).toBe(false);
+    expect(result.current.pluginServerIds).toEqual([]);
+    expect(state.activePluginsProjectIds.every((id) => id === null)).toBe(true);
+    expect(state.secretsProjectIds.every((id) => id === null)).toBe(true);
+    expect(state.ensure).not.toHaveBeenCalled();
+  });
+
+  it("reports unsupported setup creation without retrying outside the chat purpose", async () => {
+    state.plugins = [plugin("bits")];
+    state.ensure.mockRejectedValueOnce(
+      new Error(
+        "ArgumentValidationError: Object contains extra field `purpose` that is not in the validator.",
+      ),
+    );
+    const { result } = render();
+    await waitFor(() => expect(result.current.failed).toBe(true));
+    expect(state.ensure).toHaveBeenCalledTimes(1);
+    expect(state.ensure.mock.calls[0][0].purpose).toBe("chat");
+    expect(result.current.environmentId).toBeNull();
+  });
+
+  it("keeps a row-cap refusal distinct from plugin fallback", async () => {
+    state.plugins = [plugin("bits")];
+    state.ensure.mockRejectedValueOnce({
+      data: {
+        code: "ENV_ADHOC_LIMIT",
+        message: "The setup limit was reached.",
+      },
+    });
+    const { result } = render();
+    await waitFor(() =>
+      expect(result.current.blockingError).toBe("The setup limit was reached."),
+    );
+    expect(result.current.wanted).toBe(false);
+    expect(result.current.environmentId).toBeNull();
+  });
+
   it("composes nothing without a runnable plugin", async () => {
     state.plugins = [
       plugin("bits", { status: "skipped", reason: "needs_auth" }),
@@ -346,6 +388,7 @@ describe("usePlaygroundHiddenEnvironment", () => {
     expect(state.ensure).toHaveBeenCalledTimes(1);
     expect(state.ensure).toHaveBeenCalledWith({
       projectId: PROJECT_ID,
+      purpose: "chat",
       hostId: "host_1",
       serverSelection: { mode: "none" },
       pluginVersionIds: ["ver_bits", "ver_cad"],

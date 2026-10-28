@@ -1,3 +1,4 @@
+import { PromoRedemptionPage } from "./components/promo/PromoRedemptionPage";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import { LegacyEvalCaseRedirect } from "./components/routing/legacy-eval-case-redirect";
 import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
@@ -325,6 +326,7 @@ const ROUTE_ELEMENTS: Record<
   // The WorkOS Initiate Login URL. Unlike the entries around it this renders a
   // component of its own rather than Servers: it must call `signIn()` so
   // authkit-js writes a PKCE verifier before the code lands on `/callback`.
+  redeem: { element: <PromoRedemptionPage /> },
   login: { element: <LoginInitiationRoute /> },
   callback: { element: <AppEntryLandingRoute /> },
   "oauth/callback/*": { element: <AppEntryLandingRoute /> },
@@ -478,7 +480,7 @@ function buildRouteChildren() {
   });
 
   const unscopedChildren = APP_ROUTES.filter(
-    (route) => route.scope !== "project",
+    (route) => route.scope !== "project" && !("standalone" in route && route.standalone),
   ).map((route) => routeChildFor(route, elementFor(route)));
 
   return [
@@ -515,6 +517,7 @@ export function createAppRouter(): AppRouter {
   const existing = getAppRouter();
   if (existing) return existing;
   const router = createBrowserRouter([
+    ...APP_ROUTES.filter(route => "standalone" in route && route.standalone).map(route => ({ ...routeChildFor(route, ROUTE_ELEMENTS[route.path]), errorElement: <RouteErrorScreen /> })),
     ...(import.meta.env.DEV
       ? [
           {

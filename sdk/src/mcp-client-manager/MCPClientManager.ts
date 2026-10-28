@@ -174,7 +174,7 @@ import {
 } from "./tasks-ext.js";
 import { resolveSkillsSupport, type SkillsSupport } from "./skills-dispatch.js";
 import {
-  getSkillExt,
+  getSkillResultExt,
   listSkillsExt,
   readResourceDirectoryExt,
 } from "./skills-ext.js";
@@ -182,6 +182,7 @@ import { MCPSkillsWireError } from "./skills-ext-guards.js";
 import type {
   SkillEntry,
   SkillsDirectoryReadResult,
+  SkillsExtGetResult,
   SkillsExtListResult,
 } from "./skills-ext-types.js";
 import type {
@@ -212,6 +213,7 @@ import {
 } from "./mcp-header-mirror.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 import { cancellationLeafForVersion } from "../host-config/types.js";
+import { forgetVerifiedServerSkillReads } from "../server-skills-cache.js";
 import {
   applyRuntimeClientCapabilities,
   getDefaultClientCapabilities,
@@ -1084,6 +1086,9 @@ export class MCPClientManager {
     this.mrtrInputCollectors.delete(serverId);
     this.mrtrExtensionClaims.delete(serverId);
     this.mrtrFormSchemaSelectors.delete(serverId);
+    // The Skills spec: a host removes a server's cached skill content when
+    // the user removes that server.
+    forgetVerifiedServerSkillReads(this, serverId);
   }
 
   /**
@@ -2494,21 +2499,31 @@ export class MCPClientManager {
 
   /**
    * `skills/get` — one skill by URI, including skills the listing never
-   * mentioned. A conforming server answers `-32602` for a URI it does not
-   * serve (`isSkillNotFoundError`).
+   * mentioned, with the result's SEP-2549 `ttlMs` / `cacheScope`. A
+   * conforming server answers `-32602` for a URI it does not serve
+   * (`isSkillNotFoundError`).
    */
+  async getServerSkillResult(
+    serverId: string,
+    uri: string,
+    options?: ClientRequestOptions
+  ): Promise<SkillsExtGetResult> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "skills/get");
+      return getSkillResultExt(
+        { client, options: this.withTimeout(serverId, options) },
+        uri
+      );
+    });
+  }
+
+  /** {@link getServerSkillResult}, unwrapped to the entry. */
   async getServerSkill(
     serverId: string,
     uri: string,
     options?: ClientRequestOptions
   ): Promise<SkillEntry> {
-    return this.runRetryableReadOperation(serverId, options, (client) => {
-      this.assertSkillsActive(serverId, "skills/get");
-      return getSkillExt(
-        { client, options: this.withTimeout(serverId, options) },
-        uri
-      );
-    });
+    return (await this.getServerSkillResult(serverId, uri, options)).skill;
   }
 
   /**

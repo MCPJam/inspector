@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { resolveClientBuildSurface } from "../shared/sentry-config";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
@@ -34,6 +34,13 @@ export default defineConfig({
   splitting: false,
   target: "node22",
   outDir: join(rootDir, "dist/server"),
+  onSuccess: async () => {
+    mkdirSync(join(rootDir, "dist/licenses"), { recursive: true });
+    copyFileSync(
+      join(serverDir, "utils/webmcp-view/third-party/ext-apps-LICENSE"),
+      join(rootDir, "dist/licenses/ext-apps-LICENSE"),
+    );
+  },
   clean: true,
   bundle: true,
   minify: false,

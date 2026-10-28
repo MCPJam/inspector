@@ -19,6 +19,7 @@
  * client probes then closes; no `Mcp-Session-Id` (stateless).
  */
 import { Hono } from "hono";
+import { handleNativeForwarding } from "./harness-forwarding.js";
 import "../../types/hono";
 import {
   EVIDENCE_UNAVAILABLE_MESSAGE,
@@ -214,6 +215,7 @@ function armToolCallEvidence(
 }
 
 async function handle(c: any) {
+  if (c.req.query("native") === "1") return handleNativeForwarding(c);
   const serverId = c.req.param("serverId");
 
   // Token is REQUIRED here (unlike adapter-http's validate-when-present) — it

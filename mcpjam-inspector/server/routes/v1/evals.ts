@@ -193,10 +193,14 @@ import {
   environmentServerNames,
   type ResolvedEnvironmentForLaunch,
 } from "../../services/environments/resolve.js";
+import { casePredicatesSchema } from "@/shared/eval-matching";
 import {
-  matchOptionsSchema,
-  casePredicatesSchema,
-} from "@/shared/eval-matching";
+  matchOptionsInputSchema,
+  mergeMatchOptions,
+  toInternalMatchOptions,
+  toPublicMatchOptions,
+  type MatchOptionsInput,
+} from "./eval-match-options.js";
 import {
   stepsSchema,
   normalizeSteps,
@@ -254,6 +258,11 @@ import {
   judgeModelIdSchema,
   judgeRunOverride,
 } from "./judge-model-id.js";
+import {
+  canonicalTargetModelEntry,
+  canonicalTargetModelId,
+  isUnmappedHostedTarget,
+} from "./target-model-id.js";
 import {
   hostedCatalogModelDefinitions,
   isHostedCatalogModel,
@@ -430,68 +439,6 @@ function withImplicitRenderAssertForSingleToolCall(
   ];
 }
 
-// ── Public match-option vocabulary ───────────────────────────────────
-//
-// DECLARED HERE, above every schema that references it, rather than beside the
-// other public-model translators further down: the run schemas below are built
-// at module-init time, so a later `const` would be in its temporal dead zone
-// and importing this module would throw.
-
-const PUBLIC_TOOL_CALL_ORDER = ["any", "in-order", "exact"] as const;
-// Public → internal tool-call-order vocabulary (and the inverse for DTOs).
-const ORDER_TO_INTERNAL = {
-  any: "ignore",
-  "in-order": "superset",
-  exact: "strict",
-} as const;
-const ORDER_TO_PUBLIC: Record<string, (typeof PUBLIC_TOOL_CALL_ORDER)[number]> =
-  { ignore: "any", superset: "in-order", strict: "exact" };
-
-const publicMatchOptionsSchema = z
-  .object({
-    toolCallOrder: z.enum(PUBLIC_TOOL_CALL_ORDER).optional(),
-    extraToolCalls: z
-      .union([z.literal("unlimited"), z.number().int().min(0)])
-      .optional(),
-    arguments: z.enum(["ignore", "partial", "exact"]).optional(),
-  })
-  .strict();
-type PublicMatchOptions = z.infer<typeof publicMatchOptionsSchema>;
-
-function toInternalMatchOptions(
-  mo: PublicMatchOptions,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (mo.toolCallOrder !== undefined)
-    out.toolCallOrder = ORDER_TO_INTERNAL[mo.toolCallOrder];
-  if (mo.extraToolCalls !== undefined)
-    out.maxExtraToolCalls =
-      mo.extraToolCalls === "unlimited" ? null : mo.extraToolCalls;
-  if (mo.arguments !== undefined) out.argumentMatching = mo.arguments;
-  return out;
-}
-
-/**
- * Fold a run's `matchOptionsOverride` — sent in EITHER the public or the
- * internal vocabulary — down to the internal shape the pipeline consumes.
- *
- * The two schemas are `.strict()` and their vocabularies are disjoint (public
- * `any|in-order|exact` / `extraToolCalls` / `arguments` versus internal
- * `ignore|superset|strict` / `maxExtraToolCalls` / `argumentMatching`), so a
- * body can only satisfy one of them and a re-parse is a reliable discriminant.
- * An EMPTY object parses as public and normalizes to an empty override, which
- * is the same no-op either way.
- */
-function normalizeRunMatchOptionsOverride(
-  value: unknown,
-): Record<string, unknown> | undefined {
-  if (value === undefined) return undefined;
-  const asPublic = publicMatchOptionsSchema.safeParse(value);
-  return asPublic.success
-    ? toInternalMatchOptions(asPublic.data)
-    : (value as Record<string, unknown>);
-}
-
 // ── Request schema ───────────────────────────────────────────────────
 
 const MAX_V1_TESTS = 100;
@@ -628,7 +575,7 @@ const publicInlineTestSchema = z
       })
       .passthrough()
       .optional(),
-    matchOptions: matchOptionsSchema.optional(),
+    matchOptions: matchOptionsInputSchema.optional(),
     predicates: casePredicatesSchema.optional(),
     suppressedSuiteStandardCheckIds:
       suppressedSuiteStandardCheckIdsSchema.optional(),
@@ -686,7 +633,7 @@ function publicInlineTestToRunTest(
       ? { advancedConfig: test.advancedConfig }
       : {}),
     ...(test.matchOptions !== undefined
-      ? { matchOptions: test.matchOptions }
+      ? { matchOptions: toInternalMatchOptions(test.matchOptions) }
       : {}),
     ...(test.predicates !== undefined
       ? {
@@ -739,9 +686,7 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
     // internal shape is what existing callers send and the two enums are
     // disjoint — a body can only satisfy one. Normalized to the internal shape
     // before `prepareEvalRun`, so nothing downstream learns there were two.
-    matchOptionsOverride: z
-      .union([publicMatchOptionsSchema, matchOptionsSchema])
-      .optional(),
+    matchOptionsOverride: matchOptionsInputSchema.optional(),
   })
   // STRICT on the object, before the refinements: ZodEffects has no `.strict()`.
   // An unknown key is a 400, not a silently-dropped field on a spend route.
@@ -849,7 +794,7 @@ const createEvalSuiteSchema = z.strictObject({
             })
             .passthrough()
             .optional(),
-          matchOptions: matchOptionsSchema.optional(),
+          matchOptions: matchOptionsInputSchema.optional(),
           predicates: casePredicatesSchema.optional(),
           suppressedSuiteStandardCheckIds:
             suppressedSuiteStandardCheckIdsSchema.optional(),
@@ -916,7 +861,8 @@ const syncFileOwnedSuiteSchema = z
       .optional(),
     defaultConfig: z
       .object({
-        modelId: z.string(),
+        // A suite file's `defaults.model`, in the file's vocabulary.
+        modelId: z.string().overwrite(canonicalTargetModelId),
         systemPrompt: z.string().optional(),
         temperature: z.number().optional(),
       })
@@ -976,13 +922,17 @@ function normalizeCreateTestsToRunTests(
     // `toPersistedModelEntry`: this id is what gets stored on the case and
     // handed to the provider, and an explicit `provider` would otherwise carry
     // a blank model past validation.
-    const model = requireNonBlankModelId(test.model ?? suite.model);
+    const target = canonicalTargetModelEntry({
+      model: test.model ?? suite.model,
+      provider: test.provider ?? suite.provider,
+    });
+    const model = requireNonBlankModelId(target.model);
     // The CANONICAL resolver, not a prefix split. Splitting derived
     // "meta-llama" and "mistralai" as providers (they are aliases for `meta`
     // and `mistral`) and refused every `custom:<slug>:<model>` id outright,
     // because it has no slash. It is total for a non-blank id, so there is no
     // "couldn't derive it" case left to raise here.
-    const provider = deriveProvider(model, test.provider ?? suite.provider);
+    const provider = deriveProvider(model, target.provider);
     const derived = stepsToInternalCaseFields(test.steps as TestStep[]);
     return {
       title: test.title,
@@ -1010,7 +960,7 @@ function normalizeCreateTestsToRunTests(
         ? { advancedConfig: test.advancedConfig }
         : {}),
       ...(test.matchOptions !== undefined
-        ? { matchOptions: test.matchOptions }
+        ? { matchOptions: toInternalMatchOptions(test.matchOptions) }
         : {}),
       ...(test.predicates !== undefined
         ? {
@@ -2236,54 +2186,7 @@ function toStepResultDto(step: EvalStepReplay) {
 // options, environment, hosts, execution config). These helpers translate it
 // to/from the internal Convex suite/case model. No internal field name (Convex
 // mutation names, defaultPredicates, namedHostId, …) crosses this boundary.
-
-/**
- * Merge a partial public match-options patch onto the stored (internal) object.
- * `updateTestSuite`/`updateTestCase` replace the field wholesale, so a partial
- * patch must layer onto current values. When the patch sets the extra-call
- * bound, drop the legacy `allowExtraToolCalls` so it can't shadow the modern
- * `maxExtraToolCalls` on read.
- */
-function mergeMatchOptions(
-  current: any,
-  patch: PublicMatchOptions,
-): Record<string, unknown> {
-  const partial = toInternalMatchOptions(patch);
-  const merged: Record<string, unknown> = {
-    ...(current && typeof current === "object" ? current : {}),
-    ...partial,
-  };
-  if ("maxExtraToolCalls" in partial) delete merged.allowExtraToolCalls;
-  return merged;
-}
-
-function toPublicMatchOptions(internal: any): PublicMatchOptions | null {
-  if (!internal || typeof internal !== "object") return null;
-  // `maxExtraToolCalls` is the current field and is authoritative whenever the
-  // key is PRESENT — including an explicit `null`, which means unlimited. Only
-  // fall back to the legacy boolean `allowExtraToolCalls` when the modern field
-  // is entirely absent (the SDK matcher shims true→null, false→0).
-  let extraToolCalls: "unlimited" | number;
-  if (internal.maxExtraToolCalls !== undefined) {
-    extraToolCalls =
-      internal.maxExtraToolCalls === null
-        ? "unlimited"
-        : Number(internal.maxExtraToolCalls);
-  } else if (typeof internal.allowExtraToolCalls === "boolean") {
-    extraToolCalls = internal.allowExtraToolCalls ? "unlimited" : 0;
-  } else {
-    extraToolCalls = "unlimited";
-  }
-  return {
-    toolCallOrder: ORDER_TO_PUBLIC[String(internal.toolCallOrder)] ?? "any",
-    extraToolCalls,
-    arguments: ["ignore", "partial", "exact"].includes(
-      String(internal.argumentMatching),
-    )
-      ? (internal.argumentMatching as "ignore" | "partial" | "exact")
-      : "partial",
-  };
-}
+// Match options translate in `eval-match-options.ts`.
 
 // Public "checks" are whole-run global gates (`defaultPredicates` / case
 // `predicates` envelope). Scenario checks belong in `steps` as assert steps.
@@ -2912,9 +2815,14 @@ function providerForModelId(modelId: string): string {
  * verbatim against environment and host model ids downstream, so keeping
  * `" gpt-4o "` would mint a model that resolves to the right provider and then
  * matches nothing. Same normalization as `withTrimmedModelId` on the host write
- * boundary and the backend's `normalizeModelId`; only ever a trim.
+ * boundary and the backend's `normalizeModelId`.
+ *
+ * A target written `mcpjam/<vendor>/<model>` is stored as the hosted pick it
+ * names (`canonicalTargetModelEntry`), and one whose prefixed id is not a
+ * hosted catalog id is refused here: stored, it would run as provider
+ * `mcpjam`, which no rail serves.
  */
-function toPersistedModelEntry(entry: {
+function toPersistedModelEntry(sent: {
   model: string;
   provider?: string;
   selection?: RequestedModelSelection | null;
@@ -2923,7 +2831,20 @@ function toPersistedModelEntry(entry: {
   provider: string;
   selection?: RequestedModelSelection;
 } {
+  const entry = canonicalTargetModelEntry(sent);
   const model = requireNonBlankModelId(entry.model);
+  // A non-hosted selection names its own model; the mismatch check below
+  // answers a prefixed id beside one.
+  if (
+    isUnmappedHostedTarget(model) &&
+    (!entry.selection || entry.selection.source === "hosted")
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `models[].model "${model}" is not a model MCPJam hosts. Use a hosted catalog id after "mcpjam/" (for example "mcpjam/anthropic/claude-haiku-4.5"), or drop the prefix to run on your own key.`,
+    );
+  }
   // A saved selection is FOR one model. Refuse a mismatch here rather than
   // persist a case whose chip and stored selection name different models.
   const mismatch = selectionModelMismatch(model, entry.selection);
@@ -3154,7 +3075,8 @@ const publicCaseBodyShape = {
       }),
     )
     .optional(),
-  matchOptions: publicMatchOptionsSchema.nullable().optional(),
+  // Either vocabulary, like every other body that carries match options.
+  matchOptions: matchOptionsInputSchema.nullable().optional(),
   suppressedSuiteStandardCheckIds:
     suppressedSuiteStandardCheckIdsSchema.optional(),
   checks: z
@@ -3446,7 +3368,7 @@ const suiteSettingsShape = {
   minimumIterations: z
     .union([z.number().int().min(1).max(10), z.null()])
     .optional(),
-  matchOptions: publicMatchOptionsSchema.nullable().optional(),
+  matchOptions: matchOptionsInputSchema.nullable().optional(),
   checks: z.array(publicCheckSchema).nullable().optional(),
   judge: z
     .object({
@@ -4437,7 +4359,7 @@ async function launchEvalRun(params: {
   body: Record<string, unknown> & {
     tests: PublicInlineTest[];
     suiteId?: string;
-    matchOptionsOverride?: unknown;
+    matchOptionsOverride?: MatchOptionsInput;
   };
   suiteRerun: boolean;
   environmentId: string | undefined;
@@ -4541,7 +4463,7 @@ async function launchEvalRun(params: {
       // nothing downstream learns there were ever two.
       ...(body.matchOptionsOverride !== undefined
         ? {
-            matchOptionsOverride: normalizeRunMatchOptionsOverride(
+            matchOptionsOverride: toInternalMatchOptions(
               body.matchOptionsOverride,
             ),
           }
@@ -5035,9 +4957,7 @@ const createEvalRunGroupSchema = z
     // Both vocabularies, same union and same normalization as the single-run
     // route — a knob that works on one launch shape and not the other is a knob
     // callers have to remember two rules for.
-    matchOptionsOverride: z
-      .union([publicMatchOptionsSchema, matchOptionsSchema])
-      .optional(),
+    matchOptionsOverride: matchOptionsInputSchema.optional(),
     skillsOverride: z.literal("exclude").optional(),
     notes: z.string().optional(),
     passCriteria: passCriteriaSchema.optional(),
@@ -5321,9 +5241,10 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
   // Read ONCE for the whole group: every sibling of a fan-out was launched by
   // the same process from the same CI job, so they must badge identically.
   const launchContext = readLaunchContext(c);
-  const matchOptionsOverride = normalizeRunMatchOptionsOverride(
-    body.matchOptionsOverride,
-  );
+  const matchOptionsOverride =
+    body.matchOptionsOverride === undefined
+      ? undefined
+      : toInternalMatchOptions(body.matchOptionsOverride);
 
   const entries: Array<Record<string, unknown>> = [];
   let startedCount = 0;

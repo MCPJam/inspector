@@ -56,11 +56,13 @@ export type AppRouteEntry =
   | {
       path: string;
       kind: "redirect" | "special";
+      standalone?: boolean;
       note: string;
       scope: AppRouteScope;
     };
 
 export const APP_ROUTES: readonly AppRouteEntry[] = [
+  { path: "redeem", kind: "special", scope: "public", standalone: true, note: "Conference card confirmation outside onboarding and project chrome." },
   {
     path: "settings/appearance",
     kind: "screen",

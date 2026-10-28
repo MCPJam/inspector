@@ -100,6 +100,16 @@ export interface RequestLogContext extends CommonLogContext {
 }
 
 export interface SystemLogContext extends CommonLogContext {
+  /** Code-owned setup outcomes only; arbitrary model/server text is excluded. */
+  setupReason?:
+    | "timeout"
+    | "transport_failed"
+    | "no_eligible_write_tools"
+    | "invalid_model_report"
+    | "model_reported_missing"
+    | "unsupported_claim"
+    | "entity_record_limit"
+    | "write_errored";
   requestId: null;
   route: null;
   method: null;

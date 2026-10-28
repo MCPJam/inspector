@@ -181,6 +181,7 @@ import internalChatStageDerivations from "./routes/internal/chat-stage-derivatio
 import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import internalEvents from "./routes/internal/events.js";
+import internalHostedBrowserSynthetic from "./routes/internal/hosted-browser-synthetic.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
 import {
@@ -196,6 +197,7 @@ import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
+import { registerSyntheticWebMcpPageRoutes } from "./routes/synthetic-webmcp-page.js";
 import { registerPreviewIdentityRoute } from "./routes/preview-identity";
 import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
@@ -594,6 +596,10 @@ app.route("/api/internal/agent-turns", internalAgentTurns);
 // `x-events-inbox-token`) and the executor doorbell (`/dispatch`, service
 // token). Mirror of the mount in server/app.ts.
 app.route("/api/internal/events", internalEvents);
+// Backend → inspector hourly hosted-browser check. Service-token gated like
+// the doorbells above; it reserves a desktop as the backend's synthetic user
+// and deletes it before answering. Mirror of the mount in server/app.ts.
+app.route("/api/internal/hosted-browser", internalHostedBrowserSynthetic);
 // W1 hosted-browser debug probe — mounted only when explicitly enabled (it
 // provisions a desktop and boots browserd end to end), service-token gated.
 // Mirror of the mount in server/app.ts.
@@ -737,6 +743,10 @@ app.route("/tlm", relayRoutes);
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerXaaClientMetadataRoute(app);
 registerXaaConfidentialCimdRoute(app);
+// The page the hosted-browser check opens. Outside /api for the same reason:
+// a cloud desktop's browser fetches it with no credential. Mirror of the
+// mount in server/app.ts.
+registerSyntheticWebMcpPageRoutes(app);
 // PR previews only (no-op unless PREVIEW_EDGE_SECRET is set): lets the
 // *.mcpjam.dev preview router verify it's talking to one of our previews.
 // Not mirrored in server/app.ts: Electron is never a PR preview.

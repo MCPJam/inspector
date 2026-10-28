@@ -24,6 +24,7 @@ import internalChatStageDerivations from "./routes/internal/chat-stage-derivatio
 import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import internalEvents from "./routes/internal/events.js";
+import internalHostedBrowserSynthetic from "./routes/internal/hosted-browser-synthetic.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
 import {
@@ -40,6 +41,7 @@ import surfaceLinkRoutes from "./routes/surface-link/index.js";
 import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata.js";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd.js";
+import { registerSyntheticWebMcpPageRoutes } from "./routes/synthetic-webmcp-page.js";
 import { createXaaWebRouter } from "./routes/web/xaa.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
@@ -367,6 +369,9 @@ export async function createHonoApp() {
   // `x-events-inbox-token`) and the executor doorbell (`/dispatch`, service
   // token). Mirror of the mount in server/index.ts.
   app.route("/api/internal/events", internalEvents);
+  // Backend → inspector hourly hosted-browser check, service-token gated.
+  // Mirror of the mount in server/index.ts.
+  app.route("/api/internal/hosted-browser", internalHostedBrowserSynthetic);
   // W1 hosted-browser debug probe. Mounted ONLY when explicitly enabled — it
   // provisions a desktop and boots browserd end to end — and, like the other
   // internal routes, gated by the service token. Mirror of the mount in
@@ -496,6 +501,9 @@ export async function createHonoApp() {
   // production entries must wire this up.
   registerXaaClientMetadataRoute(app);
   registerXaaConfidentialCimdRoute(app);
+  // The page the hosted-browser check opens; a cloud desktop fetches it with
+  // no credential. Mirror of the mount in server/index.ts.
+  registerSyntheticWebMcpPageRoutes(app);
 
   // Health check
   app.get("/health", (c) => {

@@ -131,6 +131,12 @@ const UNPROTECTED_PREFIXES = [
   // mode (`/api/mcp/*` is not mounted hosted). Only the hooks sub-path is
   // exempt — every other `/api/mcp/events/*` route keeps session auth.
   "/api/mcp/events/hooks/",
+  // Backend→Inspector hourly hosted-browser check. Same caller and same guard:
+  // the router mounts `internalServiceAuthMiddleware()`, so this carve-out
+  // only lets the backend's token reach it. Trailing slash for the
+  // `startsWith` reason above; the router's only path is
+  // `/api/internal/hosted-browser/synthetic`.
+  "/api/internal/hosted-browser/",
 ];
 
 /**

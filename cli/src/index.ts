@@ -30,6 +30,7 @@ import { registerRegistryCommands } from "./commands/registry.js";
 import {
   detectOutputFormatFromArgv,
   normalizeCliError,
+  routeConsoleToStderr,
   usageError,
   writeError,
 } from "./lib/output.js";
@@ -129,7 +130,12 @@ export async function main(
   }
 
   try {
-    await program.parseAsync(argv as string[]);
+    const restoreConsole = routeConsoleToStderr();
+    try {
+      await program.parseAsync(argv as string[]);
+    } finally {
+      restoreConsole();
+    }
     const normalizedExitCode =
       typeof process.exitCode === "number" ? process.exitCode : 0;
     captureCommandEvent(

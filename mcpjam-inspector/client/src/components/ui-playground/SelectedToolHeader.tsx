@@ -31,6 +31,7 @@ export interface ToolSwitchListProps {
 interface SelectedToolHeaderProps {
   toolName: string;
   onExpand: () => void;
+  listLabel?: string;
   /** When set, the tool name opens a menu to switch to another tool */
   toolSwitchList?: ToolSwitchListProps;
   // Optional description shown below tool name
@@ -45,7 +46,9 @@ export function SelectedToolHeader({
   toolSwitchList,
   description,
   onSave,
+  listLabel = "tool",
 }: SelectedToolHeaderProps) {
+  const fullListLabel = `Show full ${listLabel} list`;
   const toolNameControl =
     toolSwitchList && toolSwitchList.items.length > 0 ? (
       <DropdownMenu>
@@ -53,9 +56,9 @@ export function SelectedToolHeader({
           <button
             type="button"
             className="hover:bg-muted/50 flex min-w-0 flex-1 items-center justify-between gap-1 rounded-md px-1.5 py-0.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            title="Switch tool"
+            title={`Switch ${listLabel}`}
           >
-            <code className="block min-w-0 flex-1 truncate text-xs font-mono font-medium text-foreground">
+            <code className="block min-w-0 flex-1 break-all md:truncate text-xs font-mono font-medium text-foreground">
               {toolName}
             </code>
             <ChevronDown
@@ -99,9 +102,9 @@ export function SelectedToolHeader({
         type="button"
         onClick={onExpand}
         className="hover:bg-muted/50 min-w-0 flex-1 rounded-md px-1.5 py-0.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-        title="Show full tool list"
+        title={fullListLabel}
       >
-        <code className="block truncate text-xs font-mono font-medium text-foreground">
+        <code className="block break-all md:truncate text-xs font-mono font-medium text-foreground">
           {toolName}
         </code>
       </button>
@@ -119,8 +122,8 @@ export function SelectedToolHeader({
               size="sm"
               className="h-6 w-6 shrink-0 p-0 text-muted-foreground hover:text-foreground"
               onClick={onExpand}
-              title="Show full tool list"
-              aria-label="Show full tool list"
+              title={fullListLabel}
+              aria-label={fullListLabel}
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </Button>

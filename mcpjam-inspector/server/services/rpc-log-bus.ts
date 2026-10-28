@@ -10,6 +10,7 @@ import {
 
 /** A JSON-RPC frame. `kind` is optional so existing publishers are unchanged. */
 export type RpcMessageLogEvent = {
+  scopeId?: string;
   kind?: "rpc";
   /** Stamped by {@link RpcLogBus.publish} — publishers never set it. */
   eventId?: string;
@@ -30,6 +31,7 @@ export type RpcMessageLogEvent = {
  * headers to the wrong one.
  */
 export type HttpExchangeBusEvent = {
+  scopeId?: string;
   kind: "http";
   /** Stamped by {@link RpcLogBus.publish} — publishers never set it. */
   eventId?: string;
@@ -240,10 +242,14 @@ class RpcLogBus {
   subscribe(
     serverIds: string[],
     listener: (event: DeliveredRpcLogEvent) => void,
+    scopeIds?: Record<string, string>,
   ): () => void {
     const filter = new Set(serverIds);
     const handler = (event: DeliveredRpcLogEvent) => {
-      if (filter.size === 0 || filter.has(event.serverId)) {
+      if (
+        (filter.size === 0 || filter.has(event.serverId)) &&
+        event.scopeId === scopeIds?.[event.serverId]
+      ) {
         // Isolate subscribers: EventEmitter.emit re-throws synchronously, so
         // an unguarded listener would propagate into the PRODUCER — turning a
         // logging side-effect into an RPC failure (e.g. failing a harness-mcp
@@ -267,7 +273,9 @@ class RpcLogBus {
     const all: DeliveredRpcLogEvent[] = [];
     for (const [serverId, buf] of this.bufferByServer.entries()) {
       if (filter.size > 0 && !filter.has(serverId)) continue;
-      for (const entry of buf.entries) all.push(entry.event);
+      for (const entry of buf.entries) {
+        if (entry.event.scopeId === undefined) all.push(entry.event);
+      }
     }
     // If limit is 0, return empty array (no replay)
     if (limit === 0) return [];
