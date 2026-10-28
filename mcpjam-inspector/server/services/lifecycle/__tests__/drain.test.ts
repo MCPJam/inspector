@@ -85,11 +85,10 @@ describe("drain coordinator", () => {
     expect(drain.counts()).toEqual({ claimed_job: 1 });
     job.resolve();
 
-    await expect(drained).resolves.toMatchObject({
-      drained: true,
-      inFlightAtStart: {},
-      remaining: {},
-    });
+    const result = await drained;
+    expect(result.drained).toBe(true);
+    expect(result.inFlightAtStart).toEqual({});
+    expect(result.remaining).toEqual({});
   });
 
   it("ends the wait on a `registering` that fails or outlives the deadline", async () => {
