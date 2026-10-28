@@ -218,6 +218,7 @@ function ToolsBody({
   if (state.activeServerNames.length >= 1) {
     return (
       <MultiServerToolsPaneInner
+        previewedHarnessId={previewedHarnessId}
         activeServerNames={state.activeServerNames}
         builtinTools={harnessBuiltinTools}
         builtinToolsRunLocally={builtinToolsRunLocally}
