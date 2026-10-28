@@ -65,8 +65,7 @@ describe("RunErrorBreakdownDescription — organization AI provider refusals", (
     groups: [
       {
         cause: "orgProviders",
-        title:
-          "Your organization's AI provider settings stopped the run. An organization admin can add or reconnect the provider.",
+        title: "An organization admin needs to add or reconnect an AI provider",
         errors: [
           { message: "The anthropic provider isn't turned on", count: 1 },
         ],
