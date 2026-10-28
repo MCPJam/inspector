@@ -763,7 +763,8 @@ describe("MCPJamLimitDialog", () => {
     );
   });
 
-  const SWARM_TITLE = "You don't have enough credits to complete this run";
+  const SWARM_TITLE =
+    "You do not have enough credits to complete this run. Add credits and try again.";
 
   const openSwarmWall = (
     org: { _id: string; myRole?: string },

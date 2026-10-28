@@ -1498,7 +1498,7 @@ export function NewSwarmRunningStep({
                 >
                   <p className="font-medium">
                     {accountLimit.exhausted > 0 && allTerminal
-                      ? `Stopped after ${uncanceledTotals.succeeded} of ${uncanceledTotals.total} sessions: you don't have enough credits to complete this run.`
+                      ? `Stopped after ${uncanceledTotals.succeeded} of ${uncanceledTotals.total} sessions because you do not have enough credits to complete this run. Add credits and run it again.`
                       : "Sessions stopped at an organization usage limit."}
                   </p>
                   <p className="mt-0.5">
@@ -1519,7 +1519,7 @@ export function NewSwarmRunningStep({
                   </p>
                   <p className="mt-0.5">
                     {accountLimit.exhausted > 0
-                      ? `${SWARM_INSUFFICIENT_CREDITS_COPY}. View your credit options to continue testing. Swarm generation requires MCPJam credits even when you use your own API key.`
+                      ? `${SWARM_INSUFFICIENT_CREDITS_COPY} Swarm generation requires MCPJam credits even when you use your own API key.`
                       : (accountLimit.message ??
                         "Review your organization's usage limits before retrying.")}
                   </p>

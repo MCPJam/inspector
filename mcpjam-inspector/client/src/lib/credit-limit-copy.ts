@@ -34,4 +34,4 @@ export function creditUpgradeBenefit(plans: PlanCatalogEntry[] = []): string {
  * the two cannot drift apart at the next copy edit.
  */
 export const SWARM_INSUFFICIENT_CREDITS_COPY =
-  "You don't have enough credits to complete this run";
+  "You do not have enough credits to complete this run. Add credits and try again.";

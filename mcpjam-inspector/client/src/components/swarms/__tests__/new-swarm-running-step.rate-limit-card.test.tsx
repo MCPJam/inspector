@@ -536,7 +536,7 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       "1 completed, 0 failed, 1 stopped at an organization usage limit.",
     );
     expect(banner).toHaveTextContent(
-      "You don't have enough credits to complete this run.",
+      "You do not have enough credits to complete this run. Add credits and try again.",
     );
     expect(banner).not.toHaveTextContent("Use BYOK");
     expect(
@@ -627,7 +627,7 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       "0 completed, 0 failed, 1 stopped at an organization usage limit, 1 held.",
     );
     expect(limit).toHaveTextContent(
-      "You don't have enough credits to complete this run.",
+      "You do not have enough credits to complete this run. Add credits and try again.",
     );
     expect(
       screen.queryByTestId("new-swarm-running-failure"),
@@ -734,10 +734,10 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       "new-swarm-running-account-limit",
     );
     expect(failure).toHaveTextContent(
-      "You don't have enough credits to complete this run.",
+      "You do not have enough credits to complete this run. Add credits and try again.",
     );
     expect(failure).toHaveTextContent(
-      "Stopped after 0 of 1 sessions: you don't have enough credits to complete this run.",
+      "Stopped after 0 of 1 sessions because you do not have enough credits to complete this run. Add credits and run it again.",
     );
     expect(
       screen.queryByTestId("new-swarm-running-failure"),
