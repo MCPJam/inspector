@@ -410,7 +410,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
 
       // Each step's messages go through the presentation.
       const { prepareStep } = streamTextMock.mock.calls[0]![0];
-      const step = prepareStep({
+      const step = await prepareStep({
         stepNumber: 1,
         messages: [
           {

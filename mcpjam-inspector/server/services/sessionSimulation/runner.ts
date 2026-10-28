@@ -1098,6 +1098,7 @@ export async function runSyntheticHostSession(
       // agentic personas drive rendered widgets by screenshots. Evals stay
       // deterministic and never enable it.
       enableComputerUse: true,
+      enableViewTools: true,
       mcpClientManager: manager,
       logScope: "sessionSimulation",
       hostCapabilities: runtime.hostCapabilities,
@@ -1223,7 +1224,7 @@ export async function runSyntheticHostSession(
             ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
-            tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
+            tools: { ...prepared.allTools, ...browser!.computerWidgetTools, ...browser!.viewTools },
             hooks: {
               onToolCall: (event) => {
                 browser!.noteToolCallInput(event);
@@ -1240,13 +1241,13 @@ export async function runSyntheticHostSession(
                   args,
                 });
               },
-              onToolResult: (event) => {
-                void browser!.handleEngineToolResult(event);
+              onToolResult: async (event) => {
                 emit?.({
                   type: "tool_result",
                   toolCallId: event.toolCallId,
                   result: event.output,
                 });
+                await browser!.handleEngineToolResult(event);
               },
               ...(browser!.prepareAdvertisedTools
                 ? { prepareAdvertisedTools: browser!.prepareAdvertisedTools }
@@ -1396,6 +1397,7 @@ export async function runSyntheticHostSession(
         };
       }
 
+      await browser.dismissCarriedWidget();
       emit?.({ type: "turn_finish", turnIndex: turn });
       // Track the first turn's modelSource for the per-session persist
       // calls. modelSource is stable across turns within a session because
