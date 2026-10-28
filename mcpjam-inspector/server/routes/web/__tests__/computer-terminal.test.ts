@@ -12,7 +12,7 @@ import type { AddressInfo } from "node:net";
 import { WebSocket } from "ws";
 import { Hono } from "hono";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { Sandbox } from "e2b";
+import { attachComputerSandbox } from "../../../utils/computers/attach-computer.js";
 import { SignJWT, exportJWK, generateKeyPair } from "jose";
 import { createComputerTerminalWsHandler } from "../computer-terminal.js";
 import { resetComputerTerminalJwksCacheForTests } from "../../../utils/computers/terminal-token.js";
@@ -24,10 +24,9 @@ import { resetComputerTerminalJwksCacheForTests } from "../../../utils/computers
 // WS handshake itself: a real http.Server + a real `ws` client, since the
 // token rides the Sec-WebSocket-Protocol header.
 
-vi.mock("e2b", async () => {
-  const actual = await vi.importActual<typeof import("e2b")>("e2b");
-  return { ...actual, Sandbox: { connect: vi.fn() } };
-});
+vi.mock("../../../utils/computers/attach-computer.js", () => ({
+  attachComputerSandbox: vi.fn(),
+}));
 
 const ISSUER = "https://api.mcpjam.com/computer-terminal";
 const CONVEX_URL = "https://convex.example";
@@ -223,7 +222,7 @@ describe("GET /api/web/computers/terminal", () => {
     );
     const closed = await waitForClose(ws);
     expect(closed.code).toBe(4401);
-    expect(vi.mocked(Sandbox.connect)).not.toHaveBeenCalled();
+    expect(vi.mocked(attachComputerSandbox)).not.toHaveBeenCalled();
   });
 
   it("rejects when the sandbox-info row's project doesn't match the token's claims", async () => {
@@ -236,7 +235,7 @@ describe("GET /api/web/computers/terminal", () => {
     );
     const closed = await waitForClose(ws);
     expect(closed.code).toBe(4401);
-    expect(vi.mocked(Sandbox.connect)).not.toHaveBeenCalled();
+    expect(vi.mocked(attachComputerSandbox)).not.toHaveBeenCalled();
   });
 
   it("opens a PTY and records the terminal session for a subprotocol token", async () => {
@@ -251,7 +250,7 @@ describe("GET /api/web/computers/terminal", () => {
         kill: vi.fn().mockResolvedValue(undefined),
       },
     };
-    vi.mocked(Sandbox.connect).mockResolvedValue(fakeSandbox as never);
+    vi.mocked(attachComputerSandbox).mockResolvedValue(fakeSandbox as never);
 
     const token = await signToken();
     const ws = new WebSocket(
@@ -288,7 +287,7 @@ describe("GET /api/web/computers/terminal", () => {
         kill: vi.fn().mockResolvedValue(undefined),
       },
     };
-    vi.mocked(Sandbox.connect).mockResolvedValue(fakeSandbox as never);
+    vi.mocked(attachComputerSandbox).mockResolvedValue(fakeSandbox as never);
 
     const token = await signToken();
     const ws = new WebSocket(
