@@ -4966,6 +4966,10 @@ export function useChatSession(
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
       if (isCurrent && !isCurrent()) return Promise.resolve(false);
+      if (hostedHiddenEnvironment?.blockingError) {
+        toast.error(hostedHiddenEnvironment.blockingError);
+        return Promise.resolve(false);
+      }
       // The organization's AI key policy leaves no model to send to. Refused
       // here, not only in the composer, so no caller can send around it.
       const orgPolicy = orgPolicySendRef.current;
@@ -5133,6 +5137,7 @@ export function useChatSession(
       })();
     },
     [
+      hostedHiddenEnvironment?.blockingError,
       baseSendMessage,
       savedClientSendGuard,
       hostedEnsureServerIds,
@@ -6133,7 +6138,9 @@ export function useChatSession(
           hostedSelectedServerIds.length !== selectedServers.length))) ||
     // A hidden environment still being composed: a send now would go out as a
     // client turn without the chat's plugins.
-    (hiddenEnvironmentActive && hiddenEnvironmentId === null);
+    (hiddenEnvironmentActive &&
+      hiddenEnvironmentId === null &&
+      !hostedHiddenEnvironment?.blockingError);
   const isStreaming = status === "streaming" || status === "submitted";
 
   // The blocked tool call cannot outlive the stream: when it ends (finished,

@@ -17,11 +17,29 @@ const {
   prepareChatV2Mock,
   handleMCPJamFreeChatModelMock,
   fetchScenarioRuntimeConfigMock,
+  convexQueryMock,
 } = vi.hoisted(() => ({
   validateGuestTokenDetailedAsyncMock: vi.fn(),
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
   fetchScenarioRuntimeConfigMock: vi.fn(),
+  convexQueryMock: vi.fn(),
+}));
+
+vi.mock("convex/browser", () => ({
+  ConvexHttpClient: vi.fn(function () {
+    return {
+      setAuth: vi.fn(),
+      mutation: vi.fn(async () => ({
+        hostId: "chat-host",
+        environment: { environmentId: "chat-environment" },
+      })),
+      query: convexQueryMock,
+    };
+  }),
+}));
+vi.mock("../../../utils/host-runtime-config.js", () => ({
+  fetchHostRuntimeConfig: vi.fn(async () => ({ ok: true, config: {} })),
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
@@ -93,7 +111,11 @@ vi.mock("@/shared/types", async () => {
   return { ...actual, isMCPJamProvidedModel: vi.fn().mockReturnValue(true) };
 });
 
-import { createWebTestApp, postJson } from "./helpers/test-app.js";
+import {
+  chatEnvironmentFixture,
+  createWebTestApp,
+  postJson,
+} from "./helpers/test-app.js";
 
 // The project id from the finding's reproduction.
 const FOREIGN_PROJECT_ID = "v97b52s8zxg9jdhxvdfwdv57pn8d2r8v";
@@ -122,219 +144,278 @@ function authorizeProjectCalls(): unknown[][] {
     .mock.calls.filter(([input]) => String(input) === AUTHORIZE_PROJECT_URL);
 }
 
-describe("web routes — chat-v2 guest project scope (MJ-013)", () => {
-  const originalFetch = global.fetch;
-  const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
-  let authorizeProjectResponse: () => Response;
+describe.each([false, true])(
+  "web routes — chat-v2 guest project scope (MJ-013), environment runtime %s",
+  (environmentRuntime) => {
+    const originalFetch = global.fetch;
+    const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
+    let authorizeProjectResponse: () => Response;
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
-    validateGuestTokenDetailedAsyncMock.mockImplementation(
-      async (token: string) =>
-        token === GUEST_BEARER
-          ? { valid: true, guestId: "guest-1" }
-          : { valid: false, reason: "not_guest" },
-    );
-    prepareChatV2Mock.mockResolvedValue({
-      allTools: {},
-      enhancedSystemPrompt: "system",
-      resolvedTemperature: 0.7,
-    });
-    fetchScenarioRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
-    handleMCPJamFreeChatModelMock.mockImplementation(async (options) => {
-      options.onStreamComplete?.();
-      return new Response("ok", { status: 200 });
-    });
-    authorizeProjectResponse = () =>
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
+    beforeEach(() => {
+      vi.clearAllMocks();
+      convexQueryMock.mockImplementation(
+        async (ref: string, args: { serverOverrideIds?: string[] }) =>
+          ref === "projectEnvironments:resolveEnvironmentForRuntime"
+            ? chatEnvironmentFixture({}, args.serverOverrideIds)
+            : null,
+      );
+      vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
+      process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+      validateGuestTokenDetailedAsyncMock.mockImplementation(
+        async (token: string) =>
+          token === GUEST_BEARER
+            ? { valid: true, guestId: "guest-1" }
+            : { valid: false, reason: "not_guest" },
+      );
+      prepareChatV2Mock.mockResolvedValue({
+        allTools: {},
+        enhancedSystemPrompt: "system",
+        resolvedTemperature: 0.7,
       });
-    global.fetch = vi.fn(async (input) => {
-      if (String(input) === AUTHORIZE_PROJECT_URL) {
-        return authorizeProjectResponse();
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {},
+      });
+      handleMCPJamFreeChatModelMock.mockImplementation(async (options) => {
+        options.onStreamComplete?.();
+        return new Response("ok", { status: 200 });
+      });
+      authorizeProjectResponse = () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            ...(environmentRuntime ? { chatEnvironmentVersion: 1 } : {}),
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      global.fetch = vi.fn(async (input) => {
+        if (String(input) === AUTHORIZE_PROJECT_URL) {
+          return authorizeProjectResponse();
+        }
+        throw new Error(`Unexpected fetch: ${String(input)}`);
+      }) as typeof fetch;
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      global.fetch = originalFetch;
+      if (originalConvexHttpUrl === undefined) {
+        delete process.env.CONVEX_HTTP_URL;
+      } else {
+        process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
       }
-      throw new Error(`Unexpected fetch: ${String(input)}`);
-    }) as typeof fetch;
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
-    if (originalConvexHttpUrl === undefined) {
-      delete process.env.CONVEX_HTTP_URL;
-    } else {
-      process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
-    }
-  });
-
-  it("refuses a guest on a project it is not a member of with the MCP routes' 403", async () => {
-    authorizeProjectResponse = () =>
-      new Response(
-        JSON.stringify({
-          code: "FORBIDDEN",
-          message: "Not a member of this project",
-        }),
-        { status: 403, headers: { "Content-Type": "application/json" } },
-      );
-    const { app } = createWebTestApp();
-
-    const response = await postJson(
-      app,
-      "/api/web/chat-v2",
-      turn(FOREIGN_PROJECT_ID),
-      GUEST_BEARER,
-    );
-
-    expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({
-      code: "FORBIDDEN",
-      message: "Not a member of this project",
     });
-    expect(authorizeProjectCalls()).toEqual([
-      [
-        AUTHORIZE_PROJECT_URL,
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({ projectId: FOREIGN_PROJECT_ID }),
-        }),
-      ],
-    ]);
-    expect(prepareChatV2Mock).not.toHaveBeenCalled();
-    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
-  });
 
-  it("fails closed when the backend does not serve the route yet", async () => {
-    authorizeProjectResponse = () =>
-      new Response("No matching routes found", { status: 404 });
-    const { app } = createWebTestApp();
+    it("refuses a guest on a project it is not a member of with the MCP routes' 403", async () => {
+      authorizeProjectResponse = () =>
+        new Response(
+          JSON.stringify({
+            code: "FORBIDDEN",
+            message: "Not a member of this project",
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } },
+        );
+      const { app } = createWebTestApp();
 
-    const response = await postJson(
-      app,
-      "/api/web/chat-v2",
-      turn(FOREIGN_PROJECT_ID),
-      GUEST_BEARER,
-    );
-
-    expect(response.status).toBe(404);
-    expect(authorizeProjectCalls()).toEqual([
-      [
-        AUTHORIZE_PROJECT_URL,
-        expect.objectContaining({
-          body: JSON.stringify({ projectId: FOREIGN_PROJECT_ID }),
-        }),
-      ],
-    ]);
-    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
-  });
-
-  it("runs a guest's turn in its own project", async () => {
-    const { app } = createWebTestApp();
-
-    const response = await postJson(
-      app,
-      "/api/web/chat-v2",
-      turn("guest-project-1"),
-      GUEST_BEARER,
-    );
-
-    expect(response.status).toBe(200);
-    expect(authorizeProjectCalls()).toEqual([
-      [
-        AUTHORIZE_PROJECT_URL,
-        expect.objectContaining({
-          body: JSON.stringify({ projectId: "guest-project-1" }),
-          // Bounded, so a stalled backend cannot hold the turn open.
-          signal: expect.any(AbortSignal),
-        }),
-      ],
-    ]);
-    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "guest-project-1" }),
-    );
-  });
-
-  it("leaves a guest's scenario turn to the scenario grant", async () => {
-    const { app } = createWebTestApp();
-
-    const response = await postJson(
-      app,
-      "/api/web/chat-v2",
-      turn("host-project-1", {
-        scenarioId: "cbx_shared",
-        accessVersion: 1,
-        surface: "share_link",
-      }),
-      GUEST_BEARER,
-    );
-
-    expect(response.status).toBe(200);
-    expect(authorizeProjectCalls()).toHaveLength(0);
-    expect(fetchScenarioRuntimeConfigMock).toHaveBeenCalled();
-    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "host-project-1",
-        scenarioId: "cbx_shared",
-      }),
-    );
-  });
-
-  it("runs a signed-in member's turn after checking its project", async () => {
-    const { app } = createWebTestApp();
-
-    const response = await postJson(
-      app,
-      "/api/web/chat-v2",
-      turn("project-1"),
-      MEMBER_BEARER,
-    );
-
-    expect(response.status).toBe(200);
-    expect(authorizeProjectCalls()).toEqual([
-      [
-        AUTHORIZE_PROJECT_URL,
-        expect.objectContaining({
-          body: JSON.stringify({ projectId: "project-1" }),
-        }),
-      ],
-    ]);
-    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "project-1" }),
-    );
-  });
-
-  it("refuses a signed-in caller on a project it is not a member of", async () => {
-    authorizeProjectResponse = () =>
-      new Response(
-        JSON.stringify({
-          code: "FORBIDDEN",
-          message: "Not a member of this project",
-        }),
-        { status: 403, headers: { "Content-Type": "application/json" } },
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        turn(FOREIGN_PROJECT_ID),
+        GUEST_BEARER,
       );
-    const { app } = createWebTestApp();
 
-    const response = await postJson(
-      app,
-      "/api/web/chat-v2",
-      turn(FOREIGN_PROJECT_ID),
-      MEMBER_BEARER,
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        code: "FORBIDDEN",
+        message: "Not a member of this project",
+      });
+      expect(authorizeProjectCalls()).toEqual([
+        [
+          AUTHORIZE_PROJECT_URL,
+          expect.objectContaining({
+            method: "POST",
+            body: JSON.stringify({ projectId: FOREIGN_PROJECT_ID }),
+          }),
+        ],
+      ]);
+      expect(prepareChatV2Mock).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the backend does not serve the route yet", async () => {
+      authorizeProjectResponse = () =>
+        new Response("No matching routes found", { status: 404 });
+      const { app } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        turn(FOREIGN_PROJECT_ID),
+        GUEST_BEARER,
+      );
+
+      expect(response.status).toBe(404);
+      expect(authorizeProjectCalls()).toEqual([
+        [
+          AUTHORIZE_PROJECT_URL,
+          expect.objectContaining({
+            body: JSON.stringify({ projectId: FOREIGN_PROJECT_ID }),
+          }),
+        ],
+      ]);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it.skipIf(!environmentRuntime)(
+      "removes guest plugins without querying their attribution",
+      async () => {
+        convexQueryMock.mockImplementation(async (ref: string) => {
+          if (ref !== "projectEnvironments:resolveEnvironmentForRuntime")
+            throw new Error("Unexpected attribution probe");
+          return {
+            ...chatEnvironmentFixture({}, []),
+            pluginVersions: [
+              {
+                pluginId: "plugin",
+                pluginVersionId: "version",
+                name: "Plugin",
+              },
+            ],
+            servers: {
+              effectiveServerIds: ["plugin-server"],
+              pluginServerIds: ["plugin-server"],
+              connectable: [
+                { serverId: "plugin-server", name: "Plugin", source: "plugin" },
+              ],
+            },
+          };
+        });
+        const { app } = createWebTestApp();
+        const response = await postJson(
+          app,
+          "/api/web/chat-v2",
+          turn("guest-project-1"),
+          GUEST_BEARER,
+        );
+        expect(response.status, await response.clone().text()).toBe(200);
+        expect(convexQueryMock).toHaveBeenCalledTimes(1);
+        expect(prepareChatV2Mock.mock.calls[0]?.[0].selectedServers).toEqual(
+          [],
+        );
+      },
     );
 
-    expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({
-      code: "FORBIDDEN",
-      message: "Not a member of this project",
+    it("runs a guest's turn in its own project", async () => {
+      const { app } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        turn("guest-project-1"),
+        GUEST_BEARER,
+      );
+
+      expect(response.status).toBe(200);
+      expect(authorizeProjectCalls()).toEqual([
+        [
+          AUTHORIZE_PROJECT_URL,
+          expect.objectContaining({
+            body: JSON.stringify({ projectId: "guest-project-1" }),
+            // Bounded, so a stalled backend cannot hold the turn open.
+            signal: expect.any(AbortSignal),
+          }),
+        ],
+      ]);
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "guest-project-1" }),
+      );
     });
-    expect(authorizeProjectCalls()).toEqual([
-      [
-        AUTHORIZE_PROJECT_URL,
-        expect.objectContaining({
-          body: JSON.stringify({ projectId: FOREIGN_PROJECT_ID }),
+
+    it("leaves a guest's scenario turn to the scenario grant", async () => {
+      const { app } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        turn("host-project-1", {
+          scenarioId: "cbx_shared",
+          accessVersion: 1,
+          surface: "share_link",
         }),
-      ],
-    ]);
-    expect(prepareChatV2Mock).not.toHaveBeenCalled();
-    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
-  });
-});
+        GUEST_BEARER,
+      );
+
+      expect(response.status).toBe(200);
+      expect(authorizeProjectCalls()).toHaveLength(0);
+      expect(fetchScenarioRuntimeConfigMock).toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "host-project-1",
+          scenarioId: "cbx_shared",
+        }),
+      );
+    });
+
+    it("runs a signed-in member's turn after checking its project", async () => {
+      const { app } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        turn("project-1"),
+        MEMBER_BEARER,
+      );
+
+      expect(response.status).toBe(200);
+      expect(authorizeProjectCalls()).toEqual([
+        [
+          AUTHORIZE_PROJECT_URL,
+          expect.objectContaining({
+            body: JSON.stringify({ projectId: "project-1" }),
+          }),
+        ],
+      ]);
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "project-1" }),
+      );
+    });
+
+    it("refuses a signed-in caller on a project it is not a member of", async () => {
+      authorizeProjectResponse = () =>
+        new Response(
+          JSON.stringify({
+            code: "FORBIDDEN",
+            message: "Not a member of this project",
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } },
+        );
+      const { app } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        turn(FOREIGN_PROJECT_ID),
+        MEMBER_BEARER,
+      );
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        code: "FORBIDDEN",
+        message: "Not a member of this project",
+      });
+      expect(authorizeProjectCalls()).toEqual([
+        [
+          AUTHORIZE_PROJECT_URL,
+          expect.objectContaining({
+            body: JSON.stringify({ projectId: FOREIGN_PROJECT_ID }),
+          }),
+        ],
+      ]);
+      expect(prepareChatV2Mock).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+  },
+);

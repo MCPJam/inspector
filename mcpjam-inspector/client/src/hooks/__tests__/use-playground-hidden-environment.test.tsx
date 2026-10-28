@@ -320,6 +320,37 @@ describe("usePlaygroundHiddenEnvironment", () => {
     }));
   });
 
+  it("keeps plugins on an older backend that rejects the chat-purpose argument", async () => {
+    state.plugins = [plugin("bits")];
+    state.ensure.mockRejectedValueOnce(
+      new Error(
+        "ArgumentValidationError: Object contains extra field `purpose` that is not in the validator.",
+      ),
+    );
+    const { result } = render();
+    await waitFor(() => expect(result.current.environmentId).not.toBeNull());
+    expect(state.ensure).toHaveBeenCalledTimes(2);
+    expect(state.ensure.mock.calls[0][0].purpose).toBe("chat");
+    expect(state.ensure.mock.calls[1][0]).not.toHaveProperty("purpose");
+    expect(result.current.failed).toBe(false);
+  });
+
+  it("keeps a row-cap refusal distinct from plugin fallback", async () => {
+    state.plugins = [plugin("bits")];
+    state.ensure.mockRejectedValueOnce({
+      data: {
+        code: "ENV_ADHOC_LIMIT",
+        message: "The setup limit was reached.",
+      },
+    });
+    const { result } = render();
+    await waitFor(() =>
+      expect(result.current.blockingError).toBe("The setup limit was reached."),
+    );
+    expect(result.current.wanted).toBe(false);
+    expect(result.current.environmentId).toBeNull();
+  });
+
   it("composes nothing without a runnable plugin", async () => {
     state.plugins = [
       plugin("bits", { status: "skipped", reason: "needs_auth" }),
@@ -346,6 +377,7 @@ describe("usePlaygroundHiddenEnvironment", () => {
     expect(state.ensure).toHaveBeenCalledTimes(1);
     expect(state.ensure).toHaveBeenCalledWith({
       projectId: PROJECT_ID,
+      purpose: "chat",
       hostId: "host_1",
       serverSelection: { mode: "none" },
       pluginVersionIds: ["ver_bits", "ver_cad"],
