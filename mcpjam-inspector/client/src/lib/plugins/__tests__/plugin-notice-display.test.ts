@@ -111,7 +111,6 @@ describe("describePluginNotice", () => {
       "local_server",
       "local_model",
       "local_tools",
-      "compare",
     ] as const) {
       const line = describePluginNotice({ kind: "off", reason });
       expect(line).toMatch(/^Plugins/);

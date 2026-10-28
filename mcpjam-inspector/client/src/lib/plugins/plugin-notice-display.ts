@@ -32,10 +32,10 @@ export interface PluginNoticePlugin {
 /**
  * Why a chat with runnable plugins runs this message without them. Each is a
  * turn that has to stay on this machine's own chat route, which cannot load
- * plugins, or a comparison, whose columns run one plain client turn each.
+ * plugins.
  */
 export type PluginsOffReason =
-  "local_harness" | "local_server" | "local_model" | "local_tools" | "compare";
+  "local_harness" | "local_server" | "local_model" | "local_tools";
 
 export type PluginNoticeData =
   /** Some installed plugins were skipped; the rest of the turn ran. */
@@ -65,7 +65,6 @@ const OFF_COPY: Record<PluginsOffReason, string> = {
     "Plugins didn't run for this message: the selected model uses a key stored on this computer.",
   local_tools:
     "Plugins didn't run for this message: it uses this computer's browser or shell.",
-  compare: "Plugins don't run in comparisons yet.",
 };
 
 export const PLUGINS_UNAVAILABLE_MESSAGE =

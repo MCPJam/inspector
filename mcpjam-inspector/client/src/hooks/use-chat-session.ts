@@ -4966,7 +4966,7 @@ export function useChatSession(
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
       if (isCurrent && !isCurrent()) return Promise.resolve(false);
-      if (hostedHiddenEnvironment?.blockingError) {
+      if (hiddenEnvironmentActive && hostedHiddenEnvironment?.blockingError) {
         toast.error(hostedHiddenEnvironment.blockingError);
         return Promise.resolve(false);
       }
@@ -5138,6 +5138,7 @@ export function useChatSession(
     },
     [
       hostedHiddenEnvironment?.blockingError,
+      hiddenEnvironmentActive,
       baseSendMessage,
       savedClientSendGuard,
       hostedEnsureServerIds,

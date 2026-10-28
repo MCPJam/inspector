@@ -320,6 +320,18 @@ describe("usePlaygroundHiddenEnvironment", () => {
     }));
   });
 
+  it("leaves guest turns to server composition without member plugin or secret reads", () => {
+    state.isMember = false;
+    state.hostedMode = true;
+    state.plugins = [plugin("bits")];
+    const { result } = render();
+    expect(result.current.wanted).toBe(false);
+    expect(result.current.pluginServerIds).toEqual([]);
+    expect(state.activePluginsProjectIds.every((id) => id === null)).toBe(true);
+    expect(state.secretsProjectIds.every((id) => id === null)).toBe(true);
+    expect(state.ensure).not.toHaveBeenCalled();
+  });
+
   it("keeps plugins on an older backend that rejects the chat-purpose argument", async () => {
     state.plugins = [plugin("bits")];
     state.ensure.mockRejectedValueOnce(

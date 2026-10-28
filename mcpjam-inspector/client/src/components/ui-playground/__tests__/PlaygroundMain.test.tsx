@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -34,6 +35,7 @@ const mockThread = vi.fn();
 const mockChatInputProps = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
+const compareSetup = { ready: true, error: undefined as string | undefined };
 const mockTraceViewer = vi.fn();
 const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
@@ -638,7 +640,13 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => {
 });
 
 vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
-  MultiModelPlaygroundCard: (props: { model: { name: string } }) => {
+  MultiModelPlaygroundCard: (props: {
+    model: { name: string }; compareId: string; compareKind: string;
+    onSendReadinessChange?: (id: string, ready: boolean, error?: string) => void;
+  }) => {
+    useEffect(() => {
+      props.onSendReadinessChange?.(`${props.compareKind}:${props.compareId}`, compareSetup.ready, compareSetup.error);
+    }, [props.onSendReadinessChange, props.compareKind, props.compareId, compareSetup.ready, compareSetup.error]);
     mockMultiModelPlaygroundCard(props);
     return (
       <div data-testid="multi-model-playground-card">{props.model.name}</div>
@@ -937,6 +945,8 @@ describe("PlaygroundMain", () => {
     mockChatInputProps.mockClear();
     mockFullscreenChatOverlay.mockClear();
     mockMultiModelPlaygroundCard.mockClear();
+    compareSetup.ready = true;
+    compareSetup.error = undefined;
   });
 
   describe("installed plugins (hidden environment)", () => {
@@ -1144,7 +1154,7 @@ describe("PlaygroundMain", () => {
       }
     });
 
-    it("says plugins don't run in comparisons on each comparison's first send", async () => {
+    it("does not say that plugins are disabled in comparisons", async () => {
       vi.mocked(showPluginNotice).mockClear();
       installBits();
       const models = [
@@ -1172,34 +1182,13 @@ describe("PlaygroundMain", () => {
           });
         };
         const { rerender } = render(<PlaygroundMain {...props} />);
-        // Entering a comparison says nothing; its first send does.
-        expect(showPluginNotice).not.toHaveBeenCalled();
         await compareSend("first");
-        const compare = { kind: "off", reason: "compare" };
-        expect(showPluginNotice).toHaveBeenCalledTimes(1);
-        expect(showPluginNotice).toHaveBeenLastCalledWith(
-          expect.stringContaining("chat-session-1"),
-          compare,
-        );
-        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
-          true,
-        );
-        // Not again in the same comparison.
         await compareSend("second");
-        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
-          false,
-        );
-
-        // A later comparison in the same tab is a new chat: it says so again.
         mockUseChatSession.chatSessionId = "chat-session-2";
         rerender(<PlaygroundMain {...props} />);
         await compareSend("third");
-        expect(showPluginNotice).toHaveBeenLastCalledWith(
-          expect.stringContaining("chat-session-2"),
-          compare,
-        );
-        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
-          true,
+        expect(showPluginNotice).not.toHaveBeenCalledWith(
+          expect.anything(), { kind: "off", reason: "compare" },
         );
       } finally {
         mockUseChatSession.chatSessionId = "chat-session-1";
@@ -1207,6 +1196,62 @@ describe("PlaygroundMain", () => {
         mockUseChatSession.multiModelEnabled = false;
       }
     });
+
+    it.each([undefined, "This project has reached its setup limit."])(
+      "retains the compare draft and attachments when a lane is unavailable: %s",
+      async (error) => {
+        compareSetup.ready = false;
+        compareSetup.error = error;
+        mockUseChatSession.availableModels = [
+          { id: "openai/gpt-5-mini", name: "Mini", provider: "openai" },
+          {
+            id: "anthropic/claude-sonnet-4.5",
+            name: "Sonnet",
+            provider: "anthropic",
+          },
+        ];
+        mockUseChatSession.multiModelEnabled = true;
+        try {
+          render(<PlaygroundMain {...defaultProps} enableMultiModelChat />);
+          type Composer = {
+            onChange: (text: string) => void;
+            onSubmit: (e: { preventDefault: () => void }) => Promise<void>;
+            value: string;
+            fileAttachments: unknown[];
+            onChangeFileAttachments: (files: unknown[]) => void;
+          };
+          const latest = () =>
+            mockChatInputProps.mock.calls.at(-1)?.[0] as Composer;
+          const attachment = {
+            id: "file-1",
+            name: "notes.txt",
+            file: new File(["notes"], "notes.txt"),
+            url: "blob:notes",
+          };
+          await act(async () => {
+            latest().onChange("Keep this prompt");
+            latest().onChangeFileAttachments([attachment]);
+          });
+          const before =
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0].broadcastRequest;
+          await act(async () => latest().onSubmit({ preventDefault() {} }));
+          await act(async () => {
+            useAgentToolPromptBridge.getState().requestRun("Keep this agent prompt");
+          });
+          await act(async () => {});
+          expect(latest().value).toBe("Keep this agent prompt");
+          expect(latest().fileAttachments).toEqual([attachment]);
+          expect(
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0].broadcastRequest,
+          ).toBe(before);
+        } finally {
+          mockUseChatSession.availableModels = [];
+          mockUseChatSession.multiModelEnabled = false;
+          compareSetup.ready = true;
+          compareSetup.error = undefined;
+        }
+      },
+    );
 
     it("shows no plugin servers on a turn that runs without them", () => {
       installBits();
