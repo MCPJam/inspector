@@ -1423,7 +1423,7 @@ describe("useChatSession hosted mode", () => {
     });
   });
 
-  it("pairs preflight-resolved server ids with the names they were resolved from when the selection changes mid-preflight", async () => {
+  it("fails closed when the server selection changes mid-preflight", async () => {
     let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
     const ensureServerIds = vi.fn(
       () =>
@@ -1448,7 +1448,7 @@ describe("useChatSession hosted mode", () => {
     mockState.authFetch.mockClear();
 
     // Send starts: the async preflight is now in flight for [server-a, server-b].
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<boolean> | undefined;
     act(() => {
       sendPromise = result.current.sendMessage({ text: "hi" });
     });
@@ -1458,23 +1458,11 @@ describe("useChatSession hosted mode", () => {
     rerender({ selectedServers: ["server-a"] });
 
     resolvePreflight([{ serverId: "id-a" }, { serverId: "id-b" }]);
-    await act(async () => {
-      await sendPromise;
-    });
+    const dispatched = await act(async () => await sendPromise);
 
-    await waitFor(() => {
-      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
-    });
-    const body = JSON.parse(
-      String(
-        (mockState.authFetch.mock.calls.at(-1)?.[1] as RequestInit | undefined)
-          ?.body ?? "{}",
-      ),
-    );
-    // Ids ride with the names they were resolved from — never stale ids
-    // paired with the fresh (shrunk) selection.
-    expect(body.selectedServerIds).toEqual(["id-a", "id-b"]);
-    expect(body.selectedServerNames).toEqual(["server-a", "server-b"]);
+    // Ids resolved for the old selection never run under the new one.
+    expect(dispatched).toBe(false);
+    expect(mockState.authFetch).not.toHaveBeenCalled();
   });
 
   it.each(["session", "saved config"])("fails closed when %s changes during preparation", async (change) => {
