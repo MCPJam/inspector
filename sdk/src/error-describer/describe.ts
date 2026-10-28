@@ -25,6 +25,7 @@ import {
   type ErrorOrigin,
 } from "./catalog.js";
 import { extractNodeErrno } from "./node-errno.js";
+import { isTlsTrustFailure } from "../oauth-proxy-error.js";
 import { orgPolicyRefusal } from "./org-policy.js";
 import type { BearerChallengeSummary } from "./challenge.js";
 
@@ -237,6 +238,12 @@ function inspectorSentinelSlug(message: string): string | undefined {
   // class doc says to reword both together; a test holds them together.
   if (/which this client is pinned to/i.test(message)) {
     return "sdk/protocol_version_pin_unsupported";
+  }
+  // `tlsTrustFailure`'s sentence, written only by a route that knows the
+  // request went to the server under test. Never the TLS code itself: MCPJam's
+  // own hops fail with the same codes.
+  if (isTlsTrustFailure(message)) {
+    return "transport/tls_untrusted";
   }
   return undefined;
 }
@@ -535,6 +542,7 @@ function resolveSlug(error: unknown): {
       ? (error as { code?: unknown; data?: { code?: unknown } })
       : null;
   const platformCode = record?.data?.code ?? record?.code;
+  if (platformCode === "GENERATION_FAILED") return { slug: "generation/invalid_output", rawCode: platformCode };
   if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
   if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
   // The organization AI-key policy's refusals, ahead of the status branches:

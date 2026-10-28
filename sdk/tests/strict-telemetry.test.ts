@@ -125,7 +125,81 @@ describe("strict telemetry reconstruction", () => {
       breadcrumbs: [{ category: "http", type: "http" }],
     });
     expect(rebuildSentryEvent(dirty)).not.toHaveProperty("user");
+    expect(
+      rebuildSentryEvent(dirty, { ...catalog, release: "1.2.3", dist: "npm" })
+    ).toMatchObject({
+      release: "1.2.3",
+      dist: "npm",
+      fingerprint: ["{{ default }}", "UnknownError"],
+    });
 
+  });
+  it("groups a frameless exception by the cataloged event that captured it", () => {
+    const options = {
+      ...catalog,
+      errors: ["McpError"],
+      diagnosticFields: { event: ["process.unhandled_rejection"] },
+    };
+    const capture = (event: string) =>
+      rebuildSentryEvent(
+        {
+          exception: {
+            values: [
+              {
+                type: secret,
+                stacktrace: { frames: [{ filename: secret, lineno: 3 }] },
+              },
+            ],
+          },
+          extra: { event },
+        },
+        options
+      );
+    expect(capture("process.unhandled_rejection")).toMatchObject({
+      exception: { values: [{ type: "UnknownError", value: "UnknownError" }] },
+      fingerprint: [
+        "{{ default }}",
+        "UnknownError",
+        "process.unhandled_rejection",
+      ],
+      extra: { event: "process.unhandled_rejection", dropped_frames: 1 },
+    });
+    expect(capture(secret).fingerprint).toEqual([
+      "{{ default }}",
+      "UnknownError",
+    ]);
+    expect(JSON.stringify(capture(secret))).not.toContain(secret);
+    expect(
+      rebuildSentryEvent(
+        { exception: { values: [{ type: "McpError" }] } },
+        options
+      ).fingerprint
+    ).toEqual(["{{ default }}", "McpError"]);
+  });
+  it("leaves the fingerprint of an exception with an owned frame alone", () => {
+    const output = rebuildSentryEvent(
+      {
+        exception: {
+          values: [
+            {
+              type: "TypeError",
+              stacktrace: {
+                frames: [{ filename: "server/example.ts", lineno: 10 }],
+              },
+            },
+          ],
+        },
+        extra: { event: "process.unhandled_rejection" },
+      },
+      {
+        ...catalog,
+        diagnosticFields: { event: ["process.unhandled_rejection"] },
+      }
+    );
+    expect(output.fingerprint).toEqual(["{{ default }}", "TypeError"]);
+    expect(output.extra).toMatchObject({
+      event: "process.unhandled_rejection",
+    });
   });
   it("rebuilds transactions and child spans separately", () => {
     const span = {
@@ -155,5 +229,51 @@ describe("strict telemetry reconstruction", () => {
       rebuildSentrySpan({ ...span, description: "/api/items/:id" }, catalog)
     ).toMatchObject({ description: "/api/items/:id", data: {} });
     expect(rebuildSentryBreadcrumb({ message: secret })).toBeNull();
+  });
+});
+
+describe("XAA mint refusal tags", () => {
+  // The inspector tags a mint the customer's authorization server refused so
+  // triage can read the AS's verdict without the scrubbed message. The kind is
+  // a finite vocabulary; the status and the RFC 6749 code are open but bounded.
+  it("keeps the kind, the AS status and the RFC 6749 error code", () => {
+    const event = rebuildSentryEvent({
+      level: "warning",
+      tags: {
+        page_class: "routine",
+        xaa_failure: "authorization_rejected",
+        xaa_as_status: "400",
+        xaa_as_error: "invalid_grant",
+      },
+    });
+
+    expect(event.tags).toEqual({
+      page_class: "routine",
+      xaa_failure: "authorization_rejected",
+      xaa_as_status: "400",
+      xaa_as_error: "invalid_grant",
+    });
+  });
+
+  it("drops an unknown kind, a non-HTTP status and a code outside the RFC charset or length", () => {
+    const event = rebuildSentryEvent({
+      tags: {
+        xaa_failure: "signing_failed",
+        xaa_as_status: "abc",
+        xaa_as_error: 'bad "code"',
+      },
+    });
+    expect(event.tags).toEqual({});
+
+    expect(rebuildSentryEvent({ tags: { xaa_as_status: "999" } }).tags).toEqual({});
+    expect(rebuildSentryEvent({ tags: { xaa_as_status: "40" } }).tags).toEqual({});
+    expect(
+      rebuildSentryEvent({ tags: { xaa_as_error: "x".repeat(65) } }).tags
+    ).toEqual({});
+    expect(rebuildSentryEvent({ tags: { xaa_as_error: "" } }).tags).toEqual({});
+    expect(
+      rebuildSentryEvent({ tags: { xaa_failure: "authorization_server_unknown" } })
+        .tags
+    ).toEqual({ xaa_failure: "authorization_server_unknown" });
   });
 });

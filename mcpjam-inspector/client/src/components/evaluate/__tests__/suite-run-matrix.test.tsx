@@ -1275,7 +1275,7 @@ it("uses the same ephemeral matrix for a single case across clients", async () =
   fireEvent.click(screen.getByRole("button", { name: "Run test case" }));
   await waitFor(() => expect(onStart).toHaveBeenCalledWith(
     expect.objectContaining({ environmentIds: ["env", "second-client-env"] }),
-    { iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true },
+    { iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true, caseLaunchId: expect.any(String) },
   ));
   expect(mutation).toHaveBeenCalledWith("projectEnvironments:deriveEnvironments", {
     projectId: "project", derivations: [expect.objectContaining({
@@ -1283,4 +1283,39 @@ it("uses the same ephemeral matrix for a single case across clients", async () =
     })],
   });
   expect(suite.environmentIds).toEqual(["env"]);
+});
+
+it("saves the case before deriving the environments it runs in", async () => {
+  capabilities.value = { environmentDerivation: true };
+  mutation.mockResolvedValue([
+    { environment: { environmentId: "second-client-env" } },
+  ]);
+  const saveBeforeRun = vi.fn(async () => true);
+  const onStart = vi.fn();
+  render(
+    <SuiteRunReview
+      projectId="project"
+      suite={suite}
+      cases={cases}
+      caseTitle="Find my account"
+      environments={environments}
+      hostNamesById={new Map()}
+      saveBeforeRun={saveBeforeRun}
+      onStart={onStart}
+      onClose={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Add second client" }));
+  fireEvent.click(screen.getByRole("button", { name: "Run test case" }));
+  await waitFor(() => expect(onStart).toHaveBeenCalledOnce());
+  expect(saveBeforeRun).toHaveBeenCalledOnce();
+  const probe = query.mock.calls.findIndex(
+    ([name]) => name === "projectEnvironments:getCapabilities",
+  );
+  expect(saveBeforeRun.mock.invocationCallOrder[0]).toBeLessThan(
+    query.mock.invocationCallOrder[probe],
+  );
+  expect(saveBeforeRun.mock.invocationCallOrder[0]).toBeLessThan(
+    mutation.mock.invocationCallOrder[0],
+  );
 });

@@ -80,6 +80,7 @@ const DOCS_BASE = "/troubleshooting/error-codes";
  * A slug missing from this table fails the catalog test.
  */
 const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
+  "generation/invalid_output": "ambiguous",
   // --- The server answered, and the answer was the problem -----------------
   // This is a server-side error only when the wire evidence identifies the
   // server as the failing boundary. Keep protocol codes that can also be
@@ -132,6 +133,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
   "provider/mcpjam_limit_insufficient": "user_config",
+  // MCPJam retired the model the request names. Nothing failed: the backend
+  // refused before any provider work, and choosing a current model is the fix.
+  "provider/model_retired": "user_config",
   // The provider failed and the saved selection forbids a fallback. Whose
   // failure it was is not settled by the refusal itself — MCPJam's Gateway,
   // the upstream model provider, or a transient network fault — so it never
@@ -144,6 +148,11 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // The MCP server under test answered with an HTTP error status. Recognized
   // only from an MCP transport error, so the answer is the server's own.
   "server/http_error": "user_server",
+  // The server under test presented a certificate Node.js would not accept.
+  // Recognized only from the sentence a proxy route writes once it knows the
+  // request went to that server, never from the TLS code, which MCPJam's own
+  // hops produce too.
+  "transport/tls_untrusted": "user_server",
   // "Enable the required client capability in the connection's Client
   // settings" — a toggle the user owns.
   "jsonrpc/missing_required_client_capability": "user_config",
@@ -522,6 +531,23 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "socket-hang-up",
   ),
+  "transport/tls_untrusted": entry(
+    "transport/tls_untrusted",
+    "TLS certificate not trusted",
+    "The server presented a TLS certificate that Node.js could not verify, so no request reached it.",
+    [
+      "The certificate comes from a private or corporate CA that Node.js does not trust.",
+      "The server does not send its intermediate certificates.",
+      "The certificate is self-signed, expired, or issued for a different hostname.",
+      "A TLS-inspecting proxy or antivirus replaces the server's certificate.",
+    ],
+    [
+      "Fix the certificate on the server: renew it, send the full chain, and match the hostname.",
+      "If the error suggests `--use-system-ca`, start the inspector with `NODE_OPTIONS=--use-system-ca` so Node.js trusts your system's CAs.",
+      "Or point Node.js at the CA file with `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.",
+    ],
+    "tls-certificate-not-trusted"
+  ),
 
   // --- Auth ---
   "auth/http_401": entry(
@@ -834,6 +860,19 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     "provider-not-allowlisted",
     "warning",
   ),
+  // The backend's `model_retired` code. Retrying meets the same refusal, so
+  // the only remedy is a newer model.
+  "provider/model_retired": entry(
+    "provider/model_retired",
+    "Model retired",
+    "This model has been retired and is no longer available on MCPJam. Choose a newer model.",
+    [
+      "The model saved on this chat, eval or suite has been retired from MCPJam.",
+    ],
+    ["Choose a newer model, then run again."],
+    "model-retired",
+    "warning",
+  ),
   // The backend refuses on one of two allowances and says which in its own
   // copy, so these are two slugs rather than one that lists both and makes the
   // reader pick. The unlabelled slug below stays as the net for copy that
@@ -985,6 +1024,14 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
 
   // --- Organization AI-key policy (org-policy-catalog.ts) ---
   ...orgPolicyCatalogEntries(entry),
+
+  "generation/invalid_output": entry(
+    "generation/invalid_output", "Generation failed",
+    "Generation failed. Please try again.",
+    ["The generation response did not match the required format."],
+    ["Try generation again. If it keeps failing, contact support with the request ID."],
+    "generation-failed",
+  ),
 
   // --- Internal / unknown ---
   "internal/unknown": entry(

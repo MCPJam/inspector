@@ -10,25 +10,19 @@
  */
 
 import { readModelOutputImage } from "@mcpjam/sdk/browser";
+import { unwrapToolOutputEnvelope } from "./tool-output-envelope.js";
 
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-/** Strip up to four nested `{ type: "json", value }` envelopes. */
-export function unwrapJsonEnvelope(value: unknown): unknown {
-  let current = value;
-  for (let depth = 0; depth < 4; depth += 1) {
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      return current;
-    }
-    const record = current as Record<string, unknown>;
-    if (record.type !== "json" || !hasOwn(record, "value")) {
-      return current;
-    }
-    current = record.value;
-  }
-  return current;
+/**
+ * Strip up to four nested `{ type: "json", value }` envelopes. Four, exactly
+ * as before the shared reader: this picks the value the server signs, so the
+ * depth is part of what verifies.
+ */
+function unwrapJsonEnvelope(value: unknown): unknown {
+  return unwrapToolOutputEnvelope(value, 4).value;
 }
 
 /**

@@ -1,6 +1,6 @@
 /**
- * Resume the conversation from disk on a fresh bridge, never by reattaching to
- * the bridge the last turn left behind.
+ * Resume a completed conversation from disk on a fresh bridge. Pending
+ * approvals instead retain their live bridge through continue-turn state.
  *
  * Locally, teardown proves that bridge stopped. On a hosted computer it may
  * still be running, or another chat's bridge spawn may have reaped it as idle
@@ -16,8 +16,8 @@ export function diskResumeState<T>(state: T): T {
   // Codex's thread lives in its session-data dir (CODEX_HOME rollouts), so a
   // Codex session resumes from disk the same way: the bridge is respawned and
   // `thread/resume` reads the rollout, rather than retrying a dead socket. An
-  // approval continuation (`continue-turn`) is never stripped: its paused turn
-  // lives in the bridge, which is the one thing a respawn cannot rebuild.
+  // approval continuation (`continue-turn`) for either harness is never stripped:
+  // the paused call lives in the bridge and cannot be rebuilt by a respawn.
   if ((record.harnessId !== "claude-code" && record.harnessId !== "codex") || record.type !== "resume-session" || !record.data || typeof record.data !== "object") return state;
   const { bridge: _bridge, ...data } = record.data as Record<string, unknown>;
   return { ...record, data } as T;

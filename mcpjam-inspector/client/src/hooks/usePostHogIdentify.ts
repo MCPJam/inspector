@@ -3,14 +3,18 @@ import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { detectPlatform } from "@/lib/PosthogUtils";
+import {
+  retryPersonProfile,
+  type PersonProfileProperties,
+} from "@/lib/analytics";
 import { refreshServerFeatureFlagsForActor } from "@/lib/server-feature-flags";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActorKey } from "@/hooks/use-actor-key";
-import { IDENTIFYING_PERSON_PROPERTIES } from "@/shared/telemetry-privacy";
 import {
   subscribeTelemetryPolicy,
   currentTelemetryCaptureContext,
   currentTelemetryActor,
+  currentTelemetryProfileRetryRevision,
   telemetryIdentityFor,
 } from "@/lib/telemetry-context";
 
@@ -25,9 +29,12 @@ import {
  * occupation are sent only when it is `"full"`. Identify waits for a full
  * content grant, then names follow the identity grant — a member of an
  * organization with enterprise privacy never has them sent, even on the
- * first load. `"id_only"` also clears names
- * stored on the person earlier. This is independent of the session's replay
- * recording level. Desktop content remains strict, so identify is withheld.
+ * first load. The backend answers `"id_only"` only together with strict
+ * content, so no identify call is made while that answer holds; names sent
+ * under an earlier full answer stay on the PostHog person. This is
+ * independent of the session's replay recording level. Desktop content
+ * remains strict, so identify is withheld. A delivery-blocking permission
+ * window permits one fresh profile retry after full content returns.
  */
 export function usePostHogIdentify() {
   const posthog = usePostHog();
@@ -44,12 +51,20 @@ export function usePostHogIdentify() {
   const contentFull = useSyncExternalStore(subscribeTelemetryPolicy, () =>
     currentTelemetryCaptureContext().policy.content === "full",
   );
+  const profileRetryRevision = useSyncExternalStore(
+    subscribeTelemetryPolicy,
+    currentTelemetryProfileRetryRevision,
+  );
+  const profileAttemptRef = useRef<{
+    actor: string;
+    revision: number;
+    client: typeof posthog;
+  } | null>(null);
   const previousActorRef = useRef<{ key: string; wasAuthed: boolean } | null>(
     null,
   );
   const getAccessTokenRef = useRef(getAccessToken);
   getAccessTokenRef.current = getAccessToken;
-  const identityUnsetForActorRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!posthog) return;
@@ -79,18 +94,11 @@ export function usePostHogIdentify() {
       });
     }
 
-    if (isActorChange && previous && !previous.wasAuthed) {
-      // reset() above only covers a departing authed actor. A departing
-      // guest's server-evaluated flags must not survive into the new actor
-      // either — the refresh below can fail without replacing them.
-      posthog.updateFlags?.({});
-    }
-
     // `deployment` is a PERSON property here, not just a super property: the
     // super prop rides events, while `/flags` targeting reads person
     // properties. Set for every actor (guest included) so a cohort rule like
     // "self_hosted signed-in users" evaluates correctly.
-    let personProperties: Record<string, string | null | undefined> = {
+    let personProperties: PersonProfileProperties = {
       deployment: HOSTED_MODE ? "hosted" : "self_hosted",
     };
     if (isAuthedActor && user && currentIdentity === "full") {
@@ -114,31 +122,35 @@ export function usePostHogIdentify() {
     }
 
     // Re-read after layout effects: this render may precede an actor/context reset.
-    // A locally accepted identify cannot be retried after the relay rejects it.
+    // The SDK caches accepted profiles before compression and the live policy check.
     const canIdentify =
       contentFull &&
       currentTelemetryActor() === actorKey &&
       currentTelemetryCaptureContext().policy.content === "full";
-    if (canIdentify) posthog.identify(actorKey, personProperties);
-    // Names just sent: a later id-only answer for this actor (enterprise
-    // privacy turned on mid-session) must clear them again.
-    if (currentIdentity === "full") identityUnsetForActorRef.current = null;
-    if (
-      canIdentify &&
-      isAuthedActor &&
-      currentIdentity === "id_only" &&
-      identityUnsetForActorRef.current !== actorKey
-    ) {
-      // Person properties outlive the page: someone identified before their
-      // organization turned on enterprise privacy still carries a name and
-      // email on their PostHog person. Clear them once per actor per load —
-      // after identify, so a first-time merge has landed on the real person.
-      identityUnsetForActorRef.current = actorKey;
-      posthog.unsetPersonProperties?.([...IDENTIFYING_PERSON_PROPERTIES]);
+    if (canIdentify) {
+      posthog.identify(actorKey, personProperties);
+      const previousAttempt = profileAttemptRef.current;
+      if (
+        !isActorChange &&
+        previousAttempt?.actor === actorKey &&
+        previousAttempt.client === posthog &&
+        previousAttempt.revision !== profileRetryRevision
+      ) {
+        // Bypass SDK profile dedup after a delivery-blocking permission window.
+        // capture still enforces opt-out, capture-time grants and live send policy.
+        retryPersonProfile(posthog, personProperties);
+      }
+      profileAttemptRef.current = {
+        actor: actorKey,
+        revision: profileRetryRevision,
+        client: posthog,
+      };
     }
     if (isActorChange) {
       posthog.register({ user_id: actorKey });
       previousActorRef.current = { key: actorKey, wasAuthed: isAuthedActor };
+      // Keep this tab's last evaluation until its actor refresh replaces it.
+      // PostHog persistence is tab-local, including reset and updateFlags.
       // Flags are evaluated by our server, not by posthog-js on identify
       // (MJ-015), so fetch the new actor's values here.
       void refreshServerFeatureFlagsForActor(posthog, {
@@ -147,5 +159,13 @@ export function usePostHogIdentify() {
         getAccessToken: getAccessTokenRef.current,
       });
     }
-  }, [posthog, actorKey, user, convexUser, identity, contentFull]);
+  }, [
+    posthog,
+    actorKey,
+    user,
+    convexUser,
+    identity,
+    contentFull,
+    profileRetryRevision,
+  ]);
 }

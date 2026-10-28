@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -226,14 +226,12 @@ describe("HostConfigCompareView public mode", () => {
       document.querySelectorAll('[data-testid^="host-compare-chip-"]'),
     ).map((node) => node.getAttribute("data-testid"));
 
-    // Ranked order, grouped by vendor, with VS Code and Slackbot pinned
-    // rightmost. The inline chip limit is sized to this list — if it drops
-    // below the list length the tail stops rendering rather than overflowing.
+    // Selected clients lead; the remaining clients keep their catalog rank.
     expect(topChipIds).toEqual([
       "host-compare-chip-preset:claude",
+      "host-compare-chip-preset:chatgpt",
       "host-compare-chip-preset:claude-desktop",
       "host-compare-chip-preset:claude-code",
-      "host-compare-chip-preset:chatgpt",
       "host-compare-chip-preset:codex",
       "host-compare-chip-preset:copilot",
       "host-compare-chip-preset:cursor",
@@ -321,6 +319,30 @@ describe("HostConfigCompareView public mode", () => {
     );
 
     expect(filterButton).not.toBeDisabled();
+  });
+
+  it("groups the field filter with the view and description controls", () => {
+    render(
+      <MemoryRouter>
+        <HostConfigCompareView
+          projectId={null}
+          isAuthenticated={false}
+          presetOnly
+        />
+      </MemoryRouter>,
+    );
+
+    const controls = screen.getByRole("group", { name: "View mode" }).parentElement;
+    if (!controls) throw new Error("Missing compare controls");
+    expect(
+      within(controls).getByLabelText("Filter fields by support level"),
+    ).toBeInTheDocument();
+    expect(
+      within(controls).getByLabelText("Show field descriptions"),
+    ).toBeInTheDocument();
+    expect(
+      within(controls).getByLabelText("Show only diverging fields"),
+    ).toBeInTheDocument();
   });
 
   it("clears search filtering without changing selected clients when Can I use is clicked", async () => {
@@ -517,7 +539,7 @@ describe("HostConfigCompareView public mode", () => {
     expect(screen.queryByText("Permissions mode")).not.toBeInTheDocument();
   });
 
-  it("prevents list mode and descriptions from being active together", async () => {
+  it("switches directly to List with descriptions enabled", async () => {
     const user = userEvent.setup();
 
     render(
@@ -531,11 +553,42 @@ describe("HostConfigCompareView public mode", () => {
     );
 
     await user.click(screen.getByLabelText("Show field descriptions"));
-    expect(screen.getByTestId("compare-view-list")).toBeDisabled();
+    expect(screen.getByLabelText("Show field descriptions")).toBeChecked();
+    expect(screen.getByTestId("compare-view-list")).not.toBeDisabled();
 
-    await user.click(screen.getByLabelText("Show field descriptions"));
     await user.click(screen.getByTestId("compare-view-list"));
+    expect(screen.getByTestId("compare-view-list")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.queryByTestId("compare-matrix")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Show field descriptions")).not.toBeChecked();
     expect(screen.getByLabelText("Show field descriptions")).toBeDisabled();
+
+    await user.click(screen.getByTestId("compare-view-table"));
+    expect(screen.getByTestId("compare-matrix")).toBeInTheDocument();
+    expect(screen.getByLabelText("Show field descriptions")).not.toBeDisabled();
+  });
+
+  it("defaults the public compare page to List on a phone and allows Tables", async () => {
+    mockMobileViewport();
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <HostConfigCompareView
+          projectId={null}
+          isAuthenticated={false}
+          presetOnly
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("compare-view-list")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await user.click(screen.getByTestId("compare-view-table"));
+    expect(screen.getByTestId("compare-matrix")).toBeInTheDocument();
   });
 
   it("defaults the full MCPJam compare page to list view on phone", () => {

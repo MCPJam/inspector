@@ -51,8 +51,8 @@ const ORGANIZATION_ID = "k17telemetrye2eorganization1";
 /** Independent backend answer used by both the sync and real-relay fixtures. */
 export function standInTelemetryPolicy(context: { projectIds: string[]; organizationIds: string[] }, shareLink = false) {
   if (shareLink || (!context.projectIds.includes(PROJECT_ID) && !context.organizationIds.includes(ORGANIZATION_ID)))
-    return { recording: "off", identity: "id_only", content: "strict" };
-  return { recording: "full", identity: "id_only", content: "full", telemetryActorId: TELEMETRY_ACTOR_ID };
+    return { recording: "off", identity: "id_only", content: "strict", telemetryActorId: TELEMETRY_ACTOR_ID };
+  return { recording: "full", identity: "full", content: "full", telemetryActorId: TELEMETRY_ACTOR_ID };
 }
 
 /**
@@ -116,6 +116,12 @@ function queryResult(
       ];
     case "servers:getProjectServers":
       return [];
+    case "hostedBrowser:getAvailability":
+      // The shape the backend sends with the hosted-browser flag off.
+      return {
+        inspector: { available: false, reason: "flag_false" },
+        tools: { available: false, reason: "flag_false" },
+      };
     case "servers:listForProjects":
       // Keyed by project id.
       return Object.fromEntries(

@@ -30,6 +30,7 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
+import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
 
 /** Where a connectable server in the resolved set came from. */
 export type RuntimeServerSource = "host_or_group" | "plugin" | "override";
@@ -108,6 +109,8 @@ export interface ResolvedEnvironmentRuntime {
   /** Additive-compatibility DIAGNOSTIC only — never a substitute for the
    *  invariant checks in {@link resolveEnvironmentForRuntime}. */
   specVersion?: number;
+  serverConfigHashes?: Record<string, string>;
+  selectedSecretIds?: string[];
   environmentRef: {
     environmentId: string;
     name: string;
@@ -365,6 +368,7 @@ export async function resolveEnvironmentForRuntime(
     projectId: string;
     environmentId: string;
     overrides?: EnvironmentOverrides;
+    serverSelectionSource?: "client-default";
   }
 ): Promise<ResolvedEnvironmentRuntime> {
   const serverOverrideIds = args.overrides?.serverIds;
@@ -376,6 +380,9 @@ export async function resolveEnvironmentForRuntime(
       {
         projectId: args.projectId,
         environmentId: args.environmentId,
+        ...(args.serverSelectionSource
+          ? { serverSelectionSource: args.serverSelectionSource }
+          : {}),
         ...(serverOverrideIds !== undefined ? { serverOverrideIds } : {}),
         ...(runtimeVenue !== undefined ? { runtimeVenue } : {}),
       } as any
@@ -383,7 +390,9 @@ export async function resolveEnvironmentForRuntime(
   } catch (error) {
     throw translateEnvironmentRuntimeError(error);
   }
-  return assertRuntimeInvariants(raw);
+  const spec = assertRuntimeInvariants(raw);
+  markOnboardingPhase("admission");
+  return spec;
 }
 
 // ── Projections used by the executing caller ────────────────────────────────

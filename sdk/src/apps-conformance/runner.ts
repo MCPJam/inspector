@@ -1,4 +1,9 @@
 import {
+  AUTHORIZATION_REQUIRED_MESSAGE,
+  authorizationRequiredDetails,
+  isAuthorizationRefusal,
+} from "../conformance-authorization.js";
+import {
   buildOutcomeSummary,
   decideConformanceOutcome,
   isUnrunCheck,
@@ -401,9 +406,20 @@ function buildConnectionFailureResult(
     ? "ui-tools-present"
     : selectedCheckIds.values().next().value;
   const checks: MCPAppsCheckResult[] = [];
+  // Refused for credentials: no check reached the server, so none failed.
+  const authorizationRefused = isAuthorizationRefusal(error);
 
   for (const checkId of selectedCheckIds) {
-    if (checkId === failureCheckId) {
+    if (authorizationRefused) {
+      checks.push(
+        skippedResult(
+          checkId,
+          "could-not-run",
+          AUTHORIZATION_REQUIRED_MESSAGE,
+          authorizationRequiredDetails(error),
+        ),
+      );
+    } else if (checkId === failureCheckId) {
       checks.push(
         failedResult(
           checkId,
@@ -426,7 +442,8 @@ function buildConnectionFailureResult(
 
   // One check carries the connection failure and the rest are skipped, so the
   // shared verdict lands on "failed" — same as the hardcoded value it replaces,
-  // but derived rather than asserted.
+  // but derived rather than asserted. An authorization refusal leaves every
+  // check unrun, so the same derivation lands on "incomplete".
   const verdict = decideConformanceOutcome(checks);
 
   return {

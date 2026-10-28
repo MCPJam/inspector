@@ -895,13 +895,9 @@ export function SuiteIterationsView({
   const onRerunWithOverride = useCallback(
     (
       s: EvalSuite,
-      opts?: {
+      opts?: CaseRunLaunchOptions & {
         matchOptionsOverride?: EvalMatchOptions;
-        iterationOverride?: number;
-        ephemeralEnvironment?: boolean;
-        throwOnFailure?: boolean;
         caseIds?: string[];
-        skipJudge?: boolean;
       },
     ) => onRerun(s, opts),
     [onRerun],

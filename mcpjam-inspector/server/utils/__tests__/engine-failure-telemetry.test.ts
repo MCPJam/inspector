@@ -143,8 +143,75 @@ describe("engine failure telemetry", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     global.fetch = originalFetch;
     delete process.env.CONVEX_HTTP_URL;
+  });
+
+  it.each([true, false])("reports a busy Swarm step without replaying tools (canWait=%s)", async (canWait) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        {
+          type: "tool-input-available",
+          toolCallId: "write-1",
+          toolName: "save_doc",
+          input: { text: "Saved once" },
+        },
+        { type: "finish", finishReason: "tool-calls" },
+      ]))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: "spending_reservation_busy",
+        error: "MCPJam is temporarily busy reserving spending capacity.",
+        retryAfter: 2000,
+        isRetryable: true,
+      }), { status: 503, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(sseResponse([
+        { type: "text-start", id: "reply" },
+        { type: "text-delta", id: "reply", delta: "Saved." },
+        { type: "text-end", id: "reply" },
+        { type: "finish", finishReason: "stop" },
+      ]));
+    global.fetch = fetchMock;
+    vi.mocked(hasUnresolvedToolCalls).mockReturnValueOnce(true);
+    vi.mocked(executeToolCallsFromMessages).mockResolvedValueOnce([{
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "write-1",
+        toolName: "save_doc",
+        output: { type: "json", value: { saved: true } },
+      }],
+    }]);
+    const { reporter, calls } = makeReporter();
+    const onEngineError = vi.fn();
+    const onConversationComplete = vi.fn();
+    const turn = runTurn({
+      sourceType: "swarm",
+      remainingTurnMs: () => (canWait ? 60_000 : 1000),
+      failureReporter: reporter,
+      onEngineError,
+      onConversationComplete,
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await vi.runAllTimersAsync();
+    await turn;
+
+    expect(executeToolCallsFromMessages).toHaveBeenCalledTimes(1);
+    if (canWait) {
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls[2][1].body).toBe(fetchMock.mock.calls[1][1].body);
+      expect(calls).toEqual([]);
+      expect(onEngineError).not.toHaveBeenCalled();
+      expect(errorChunks()).toEqual([]);
+      expect(onConversationComplete).toHaveBeenCalledTimes(1);
+    } else {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      expect(errorChunks()).toHaveLength(1);
+    }
   });
 
   it("reports a backend /stream transport failure once, with the internal hop", async () => {
@@ -226,6 +293,31 @@ describe("engine failure telemetry", () => {
     // but the verdict no longer depends on it.
     expect(calls[0].hop).toBe("mcpjam_internal");
     expect(originOf(calls[0].normalized)).toBe("mcpjam");
+  });
+
+  it("does not own a 400 that refuses a retired model", async () => {
+    // The internal hop promotes an `ambiguous` verdict, and a bare 400 is
+    // `internal/unknown` — so without the code, every turn on a retired model
+    // would page.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "model_retired",
+          error:
+            "This model has been retired and is no longer available on MCPJam. Please switch to a newer model.",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].errorCode).toBe("model_retired");
+    expect(calls[0].normalized?.slug).toBe("provider/model_retired");
+    expect(originOf(calls[0].normalized)).toBe("user_config");
   });
 
   it("fails the turn on a mid-stream error chunk instead of succeeding", async () => {
@@ -322,6 +414,49 @@ describe("engine failure telemetry", () => {
       statusCode: 403,
       isRetryable: false,
       details,
+    });
+  });
+
+  it("files an empty step the provider generated nothing for on the user hop", async () => {
+    // The provider's own usage says 0 output tokens: there was no content for
+    // our rail to lose, so the empty reply must not promote to an MCPJam page.
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      {
+        type: "finish",
+        finishReason: "other",
+        totalUsage: { inputTokens: 270482, outputTokens: 0, totalTokens: 270482 },
+      },
+    ]));
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      source: "mcp.chat-v2.engine-step",
+      hop: "user_server_hop",
+      context: { outputTokens: 0, ownedByMcpjam: false },
+    });
+    expect(originOf(calls[0].normalized)).toBe("ambiguous");
+  });
+
+  it("keeps an empty step on the internal hop when the provider generated tokens we never received", async () => {
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      {
+        type: "finish",
+        finishReason: "stop",
+        totalUsage: { inputTokens: 7, outputTokens: 50, totalTokens: 57 },
+      },
+    ]));
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      source: "mcp.chat-v2.engine-step",
+      hop: "mcpjam_internal",
+      context: { outputTokens: 50, ownedByMcpjam: true },
     });
   });
 

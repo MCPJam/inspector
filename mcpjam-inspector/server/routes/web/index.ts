@@ -26,11 +26,13 @@ import resources from "./resources.js";
 import tasksWeb from "./tasks.js";
 import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
+import { onboardingTurnTraceMiddleware } from "../../services/plugin-host/onboarding-trace.js";
 import mcpjamAgent from "./mcpjam-agent.js";
 import audioTranscriptions from "../mcp/audio-transcriptions.js";
 import scenarios from "./scenarios.js";
 import swarmRuns from "./swarm-runs.js";
 import swarmGenerate from "./swarm-generate.js";
+import { harnessForwardingApprovals } from "./harness-forwarding.js";
 import { harnessMcp } from "./harness-mcp.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
@@ -89,7 +91,13 @@ web.use("/environments/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Export opens an ephemeral MCP connection per call. It had no bearer
 // middleware of its own, so no limiter below could see who was calling.
 web.use("/export/*", bearerAuthMiddleware, guestRateLimitMiddleware);
-web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use(
+  "/chat-v2",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  // A plugin onboarding turn records its phases; any other passes through.
+  onboardingTurnTraceMiddleware,
+);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/mcpjam-agent/widget-content",
@@ -278,6 +286,8 @@ web.route("/chat-v2", chatV2);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like
 // /guest-token. `sessionAuthMiddleware` already bypasses /api/web/*. The Claude
 // Code harness (in a cloud sandbox) connects its MCP through here.
+web.use("/harness-forwarding/*", bearerAuthMiddleware, denyGuests("Forwarding approval"));
+web.route("/harness-forwarding", harnessForwardingApprovals);
 web.route("/harness-mcp", harnessMcp);
 web.route("/mcpjam-agent", mcpjamAgent);
 web.route("/plugin-forms", pluginFormAnswers);

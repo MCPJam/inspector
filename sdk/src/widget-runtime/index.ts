@@ -44,6 +44,7 @@ export type { IframeSandboxPermissions } from "./iframe-sandbox-policy.js";
 export {
   createHostAppBridge,
   registerHostBridgeHandlers,
+  RESOURCE_READS_DISABLED_MESSAGE,
 } from "./host-app-bridge.js";
 export type {
   WidgetDebugDirection,
@@ -59,9 +60,23 @@ export type {
 } from "./app-tool-invocations.js";
 
 export { mcpAppToolResultSchema } from "./tool-result-schema.js";
+export { WEBMCP_APP_CONTRACT } from "./webmcp-contract.js";
+export {
+  appToolSourceFor,
+  listViewWebmcpTools,
+  callViewWebmcpTool,
+  discoverViewAppTools,
+} from "./webmcp-tools.js";
+export type {
+  AppToolDescriptor,
+  AppToolSource,
+  SandboxToolsRequester,
+} from "./webmcp-tools.js";
 
 export {
   readResourceDisplayHints,
   negotiateResourceDisplayModes,
+  openAIDisplayModes,
+  pickOpenAIDisplayMode,
 } from "./resource-display.js";
 export type { ResourceDisplayHints } from "./resource-display.js";

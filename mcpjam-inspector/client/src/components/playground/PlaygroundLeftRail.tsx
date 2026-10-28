@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Hammer, History } from "lucide-react";
+import { Hammer, History, PanelLeftClose } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { AddServerModal } from "@/components/connection/AddServerModal";
@@ -31,12 +31,15 @@ type LeftRailTab = "sessions" | "tools";
 export function PlaygroundLeftRail({
   previewedHostId,
   projectId,
+  onClose,
 }: {
   /** Resolved previewed host (from PlaygroundTab) — used to surface a harness
    *  host's native built-in tools in the Tools list. */
   previewedHostId?: string | null;
   /** Project scope, for the environment-mode Tools body (see `ToolsBody`). */
   projectId?: string | null;
+  /** Shows a Collapse panel control, as the right rail has (phone layout). */
+  onClose?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
 
@@ -70,6 +73,18 @@ export function PlaygroundLeftRail({
           isActive={activeTab === "sessions"}
           onClick={() => handleTabClick("sessions")}
         />
+        {onClose ? (
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Collapse panel"
+              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="flex-1 min-h-0">
         {activeTab === "sessions" ? (
@@ -139,6 +154,7 @@ function SessionsBody() {
       }}
       beforeResetChatAfterArchiveAll={bridge.beforeResetChatAfterArchiveAll}
       onArchiveAllComplete={bridge.onArchiveAllComplete}
+      onArchiveAllSettled={bridge.onArchiveAllSettled}
       onSessionAction={bridge.onSessionAction}
     />
   );
@@ -202,6 +218,7 @@ function ToolsBody({
   if (state.activeServerNames.length >= 1) {
     return (
       <MultiServerToolsPaneInner
+        previewedHarnessId={previewedHarnessId}
         activeServerNames={state.activeServerNames}
         builtinTools={harnessBuiltinTools}
         builtinToolsRunLocally={builtinToolsRunLocally}
@@ -214,6 +231,7 @@ function ToolsBody({
   // but suppress its inline LoggerView since the logger lives in the right rail.
   return (
     <ZeroServerToolsBody
+      previewedHarnessId={previewedHarnessId}
       builtinTools={harnessBuiltinTools}
       builtinToolsRunLocally={builtinToolsRunLocally}
       browserTools={browserTools}
@@ -229,10 +247,12 @@ function ToolsBody({
  * returns would run conditionally.
  */
 function ZeroServerToolsBody({
+  previewedHarnessId,
   builtinTools,
   builtinToolsRunLocally,
   browserTools,
 }: {
+  previewedHarnessId?: string | null;
   builtinTools: HarnessBuiltinToolInfo[];
   builtinToolsRunLocally: boolean;
   browserTools: BrowserToolsState;
@@ -244,6 +264,7 @@ function ZeroServerToolsBody({
   return (
     <>
       <PlaygroundLeft
+        previewedHarnessId={previewedHarnessId}
         tools={state.tools}
         selectedToolName={state.selectedTool}
         fetchingTools={state.fetchingTools}

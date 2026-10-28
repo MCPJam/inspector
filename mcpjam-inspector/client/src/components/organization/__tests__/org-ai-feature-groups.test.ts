@@ -18,6 +18,7 @@ const BACKEND_FEATURE_GROUPS = [
   { id: "session_map", label: "Session map" },
   { id: "harness", label: "Harness runtimes" },
   { id: "transcription", label: "Transcription" },
+  { id: "web_search", label: "Web search" },
   { id: "ask_mcpjam", label: "Ask MCPJam" },
 ] as const satisfies ReadonlyArray<{ id: AiFeatureGroupId; label: string }>;
 

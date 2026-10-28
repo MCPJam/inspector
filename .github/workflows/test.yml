@@ -38,7 +38,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
   # No CI job in this workflow launches Electron, so skip the (occasionally
   # flaky) Electron binary download during npm ci.
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -340,8 +340,7 @@ jobs:
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: E2E Smoke (Playwright)
-    # Same pinned Playwright image — Chromium + system deps are preinstalled.
-    container: mcr.microsoft.com/playwright:v1.63.0-noble
+    # Run as the host user so Local Browser keeps Chromium sandboxed.
     # This job boots the PR's build against the community backend, which runs
     # backend main, and bars the browser from production
     # (e2e/community-backend.ts). Minting a guest there takes its guest-session
@@ -362,7 +361,7 @@ jobs:
       # Rebuild the system trust store before checkout and select it explicitly.
       - name: Prepare container certificates
         run: |
-          update-ca-certificates --fresh
+          sudo update-ca-certificates --fresh
           test -s /etc/ssl/certs/ca-certificates.crt
           echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
 
@@ -388,11 +387,14 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
+
+      - name: Install pinned Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
 
       - name: Build inspector
         # Playwright's webServer boots `npm run start`, which serves built artifacts.
@@ -414,6 +416,12 @@ jobs:
 
       - name: Run OAuth Debugger e2e
         run: npm run test:e2e:oauth-debugger -w @mcpjam/inspector
+
+      - name: Run mobile layout regressions
+        working-directory: mcpjam-inspector
+        env:
+          MOBILE_LAYOUT_RESULTS_DIR: test-results/mobile-layout
+        run: npx playwright test --config playwright.mobile-layout.config.ts
 
       - name: Upload Playwright report
         if: failure()

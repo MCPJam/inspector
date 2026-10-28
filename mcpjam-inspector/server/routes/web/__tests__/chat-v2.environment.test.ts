@@ -1,6 +1,7 @@
 import { resolveExecutionContext } from "../../../utils/host-execution-context.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { getFunctionName } from "convex/server";
 
 // Covers the environment-target half of web/chat-v2 (Project Environments
 // Phase 1): ingress normalization of the execution target, and the rule that
@@ -57,7 +58,35 @@ vi.mock("convex/browser", () => ({
   ConvexHttpClient: vi.fn().mockImplementation(function () {
     return {
       setAuth: vi.fn(),
-      query: convexQueryMock,
+      mutation: async () => ({
+        hostId: "host_default",
+        environment: { environmentId: "env_composed" },
+      }),
+      query: async (...args: Parameters<typeof convexQueryMock>) => {
+        const result = await convexQueryMock(...args);
+        if (
+          args[0] !== "projectEnvironments:resolveEnvironmentForRuntime" ||
+          args[1]?.environmentId !== "env_composed"
+        )
+          return result;
+        const fetched =
+          await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
+        const ids: string[] = args[1].serverOverrideIds ?? [];
+        return {
+          ...result,
+          environmentRef: {
+            environmentId: "env_composed",
+            name: "Chat",
+            revision: 1,
+          },
+          environmentOrigin: "adhoc",
+          host: { ...result.host, runtimeConfig: fetched?.config ?? {} },
+          servers: {
+            effectiveServerIds: ids,
+            connectable: ids.map((serverId) => ({ serverId, name: serverId })),
+          },
+        };
+      },
     };
   }),
 }));
@@ -143,7 +172,8 @@ vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
     typeof import("../../../utils/harness/playground-box.js")
   >()),
   playgroundHarnessBoxUnavailableReason: () => null,
-  acquirePlaygroundHarnessBox: async () => ({
+  playgroundCredentialRefusal: async () => null,
+  acquirePlaygroundHarnessBox: vi.fn(async () => ({
     ok: true as const,
     box: {
       surface: "playground" as const,
@@ -154,7 +184,7 @@ vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
       },
       release: async () => {},
     },
-  }),
+  })),
 }));
 
 vi.mock("../apps.js", () => ({ default: new Hono() }));
@@ -171,6 +201,12 @@ vi.mock("../../../utils/built-in-tools/registry.js", async (importOriginal) => {
 import { resolveHostTools } from "../../../utils/built-in-tools/registry.js";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 import { logger } from "../../../utils/logger.js";
+import localChat from "../../mcp/chat-v2.js";
+import { sessionAuthMiddleware } from "../../../middleware/session-auth.js";
+import { requestLogContextMiddleware } from "../../../middleware/request-log-context.js";
+import { generateSessionToken } from "../../../services/session-token.js";
+
+import { acquirePlaygroundHarnessBox } from "../../../utils/harness/playground-box.js";
 
 /** Two environment servers; the body will claim a DIFFERENT, single server. */
 const ENV_SPEC = {
@@ -235,6 +271,44 @@ describe("web chat-v2 — environment execution target", () => {
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
   const originalConvexUrl = process.env.CONVEX_URL;
 
+  it.each([false, true])(
+    "preserves the existing sandbox grant boundary for named=%s",
+    async (named) => {
+      const runtimeConfig = {
+        ...ENV_SPEC.host.runtimeConfig,
+        harness: "claude-code",
+      };
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: runtimeConfig,
+      });
+      convexQueryMock.mockResolvedValue({
+        ...ENV_SPEC,
+        host: { ...ENV_SPEC.host, runtimeConfig },
+      });
+      const { app, token } = createWebTestApp();
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          ...BASE_BODY,
+          executionTarget: named
+            ? { kind: "environment", environmentId: "env_1" }
+            : { kind: "host", hostId: "host_env" },
+        },
+        token,
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+      expect(
+        vi.mocked(acquirePlaygroundHarnessBox).mock.lastCall?.[0]
+          .projectEnvironmentId,
+      ).toBe(named ? "env_1" : undefined);
+      expect(
+        handleMCPJamFreeChatModelMock.mock.lastCall?.[0].environmentId,
+      ).toBe(named ? "env_1" : undefined);
+    },
+  );
+
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
@@ -266,7 +340,10 @@ describe("web chat-v2 — environment execution target", () => {
 
     global.fetch = vi.fn(async (input, init) => {
       if (String(input).endsWith("/web/authorize-project")) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return new Response(
+          JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),
+          { status: 200 },
+        );
       }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
@@ -311,6 +388,64 @@ describe("web chat-v2 — environment execution target", () => {
     else process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     if (originalConvexUrl === undefined) delete process.env.CONVEX_URL;
     else process.env.CONVEX_URL = originalConvexUrl;
+  });
+
+  function localApp() {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware, sessionAuthMiddleware);
+    app.route("/api/mcp/chat-v2", localChat);
+    return app;
+  }
+
+  const localBody = () => ({
+    ...BASE_BODY,
+    executionTarget: { kind: "environment", environmentId: "env_1" },
+  });
+
+  it("keeps both local session authentication and managed bearer authentication", async () => {
+    const app = localApp();
+    const request = (headers: Record<string, string>) => app.request("/api/mcp/chat-v2", {
+      method: "POST", headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(localBody()),
+    });
+    expect((await request({ Authorization: "Bearer member" })).status).toBe(401);
+    expect((await request({ "X-MCP-Session-Auth": `Bearer ${generateSessionToken()}` })).status).toBe(401);
+    expect(convexQueryMock).not.toHaveBeenCalled();
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("runs fresh managed local turns through the same resolved environment", async () => {
+    const app = localApp();
+    const token = generateSessionToken();
+    for (let turn = 0; turn < 2; turn++) {
+      const response = await app.request("/api/mcp/chat-v2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer member",
+          "X-MCP-Session-Auth": `Bearer ${token}` },
+        body: JSON.stringify(localBody()),
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      await response.text();
+      expect(prepareChatV2Mock.mock.lastCall?.[0].selectedServers)
+        .toEqual(["env-server-1", "env-server-2"]);
+    }
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(2);
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never falls back to standalone execution after a managed refusal", async () => {
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({
+      code: "FORBIDDEN", message: "Not a member of this project",
+    }), { status: 403 }));
+    const response = await localApp().request("/api/mcp/chat-v2", {
+      method: "POST", headers: { "Content-Type": "application/json",
+        Authorization: "Bearer member",
+        "X-MCP-Session-Auth": `Bearer ${generateSessionToken()}` },
+      body: JSON.stringify(localBody()),
+    });
+    expect(response.status).toBe(403);
+    expect(prepareChatV2Mock).not.toHaveBeenCalled();
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
   it("400s scenarioId + executionTarget instead of silently picking one", async () => {
@@ -437,7 +572,7 @@ describe("web chat-v2 — environment execution target", () => {
     });
   });
 
-  it("still honors a legacy hostId body (unchanged host-target path)", async () => {
+  it("composes a legacy hostId body and preserves its resume target", async () => {
     const { app, token } = createWebTestApp();
     const response = await postJson(
       app,
@@ -458,9 +593,9 @@ describe("web chat-v2 — environment execution target", () => {
     // reach the turn as a live capability set rather than through a separate
     // branch of the orchestrator, so "no Convex query at all" would assert
     // something this path never promised.
-    expect(convexQueryMock).not.toHaveBeenCalledWith(
+    expect(convexQueryMock).toHaveBeenCalledWith(
       "projectEnvironments:resolveEnvironmentForRuntime",
-      expect.anything()
+      expect.objectContaining({ environmentId: "env_composed" }),
     );
   });
 
@@ -468,8 +603,10 @@ describe("web chat-v2 — environment execution target", () => {
     { configured: [], requested: ["browser"] },
     { configured: undefined, requested: ["browser"] },
     { configured: ["web_search"], requested: [] },
+    { configured: ["web_search"], requested: ["browser"] },
+    { configured: [], requested: ["web_search"] },
   ])(
-    "keeps environment built-ins authoritative: $configured / $requested",
+    "applies per-turn environment built-in selection: $configured / $requested",
     async ({ configured, requested }) => {
       convexQueryMock.mockResolvedValue({
         ...ENV_SPEC,
@@ -496,7 +633,9 @@ describe("web chat-v2 — environment execution target", () => {
       expect(
         vi.mocked(resolveExecutionContext).mock.results.at(-1)?.value
           .builtInToolIds,
-      ).toEqual(configured);
+      ).toEqual(requested);
+      expect(vi.mocked(resolveHostTools).mock.calls.at(-1)?.[0].builtInToolIds)
+        .toEqual(requested.filter((id) => id === "browser" || configured?.includes(id)));
     },
   );
 
@@ -509,7 +648,8 @@ describe("web chat-v2 — environment execution target", () => {
       )?.builtInToolIds;
 
     it("bounds an ad-hoc turn by the project default and the caller's role", async () => {
-      convexQueryMock.mockImplementation(async (ref: string) => {
+      convexQueryMock.mockImplementation(async (reference: Parameters<typeof getFunctionName>[0]) => {
+        const ref = getFunctionName(reference);
         if (ref === "hostConfigsV2:getProjectDefault") {
           return {
             builtInToolIds: [
@@ -544,10 +684,8 @@ describe("web chat-v2 — environment execution target", () => {
       // Unknown: dropped. Not in the project default: dropped. A write for
       // a role that cannot edit: dropped.
       expect(requestedIds()).toEqual(["web_search", "list_project_servers"]);
-      expect(convexQueryMock).toHaveBeenCalledWith(
-        "hostConfigsV2:getProjectDefault",
-        { projectId: "project-1" },
-      );
+      expect(convexQueryMock.mock.calls.map(([ref, args]) => [getFunctionName(ref), args]))
+        .toContainEqual(["hostConfigsV2:getProjectDefault", { projectId: "project-1" }]);
       expect(convexQueryMock).toHaveBeenCalledWith(
         "projects:getProjectCapabilities",
         { projectId: "project-1" },
@@ -624,6 +762,87 @@ describe("web chat-v2 — environment execution target", () => {
       environmentId: "env_1",
     });
     expect(JSON.stringify(persistArgs)).not.toContain("body-server-9");
+  });
+
+  describe("a server it could not authorize", () => {
+    /** The batch answers as before, except `serverId` now needs a sign-in. */
+    function needsSignIn(serverId: string) {
+      const answer = global.fetch;
+      global.fetch = vi.fn(async (input, init) => {
+        const response = await answer(input, init);
+        if (!String(input).endsWith("/web/authorize-batch")) return response;
+        const batch = await response.json();
+        batch.results[serverId].serverConfig.useOAuth = true;
+        return Response.json(batch);
+      }) as typeof fetch;
+    }
+
+    const environmentTurn = () => {
+      const { app, token } = createWebTestApp();
+      return postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          ...BASE_BODY,
+          executionTarget: { kind: "environment", environmentId: "env_1" },
+        },
+        token
+      );
+    };
+
+    it("runs the turn without a plugin's server and tells the browser why", async () => {
+      needsSignIn("env-server-2");
+      const written: unknown[] = [];
+      handleMCPJamFreeChatModelMock.mockImplementationOnce(
+        async (options: any) => {
+          options.onStreamWriterReady?.({
+            write: (chunk: unknown) => written.push(chunk),
+          });
+          options.onStreamComplete?.();
+          return new Response("ok", { status: 200 });
+        }
+      );
+
+      const response = await environmentTurn();
+
+      expect(response.status).toBe(200);
+      expect(prepareChatV2Mock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          selectedServers: ["env-server-1", "env-server-2"],
+          isolatedServers: ["env-server-1", "env-server-2"],
+        })
+      );
+      expect(written).toContainEqual({
+        type: "data-plugin-server-unavailable",
+        data: {
+          servers: [{ serverId: "env-server-2", reason: "needs_auth" }],
+          chatSessionId: "chat-session-1",
+        },
+        transient: true,
+      });
+    });
+
+    it.each(["claude-code", "codex", "cursor"])("%s omits an authorization refusal from harness delivery", async (harness) => {
+      convexQueryMock.mockResolvedValue({ ...ENV_SPEC, host: {
+        ...ENV_SPEC.host, runtimeConfig: { ...ENV_SPEC.host.runtimeConfig, harness, ...(harness === "cursor" ? { modelId: "cursor/auto" } : {}) },
+      } });
+      needsSignIn("env-server-1");
+      const response = await environmentTurn();
+      expect(response.status, await response.clone().text()).toBe(200);
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(expect.objectContaining({
+        selectedServers: ["env-server-1", "env-server-2"],
+        unavailableServerIds: ["env-server-1"],
+      }));
+    });
+
+    it("runs without an unavailable server selected by the environment", async () => {
+      needsSignIn("env-server-1");
+
+      const response = await environmentTurn();
+
+      expect(response.status).toBe(200);
+      expect(prepareChatV2Mock).toHaveBeenCalled();
+    });
   });
 
   it("injects blueprint context into the turn prompt but persists the RAW prompt in resumeConfig", async () => {
@@ -1206,7 +1425,10 @@ describe("web chat-v2 — plugin capability attribution", () => {
     );
     global.fetch = vi.fn(async (input: any, init: any) => {
       if (String(input).endsWith("/web/authorize-project")) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return new Response(
+          JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),
+          { status: 200 },
+        );
       }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
@@ -1376,7 +1598,10 @@ describe("web chat-v2 — turn provenance (P1)", () => {
     });
     global.fetch = vi.fn(async (input, init) => {
       if (String(input).endsWith("/web/authorize-project")) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return new Response(
+          JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),
+          { status: 200 },
+        );
       }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
@@ -1582,7 +1807,7 @@ describe("web chat-v2 — turn provenance (P1)", () => {
     expect(persistArgs.turnTrace.skillsAtTurn).toEqual([]);
   });
 
-  it("a direct turn with no environment records nothing", async () => {
+  it("a direct turn records its composed environment", async () => {
     convexQueryMock.mockResolvedValue(ENV_SPEC);
     const { app, token } = createWebTestApp();
     const response = await postJson(
@@ -1593,7 +1818,9 @@ describe("web chat-v2 — turn provenance (P1)", () => {
     );
     expect(response.status).toBe(200);
     const persistArgs = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
-    expect(persistArgs.turnTrace.environmentAtTurn).toBeUndefined();
-    expect(persistArgs.turnTrace.skillsAtTurn).toBeUndefined();
+    expect(persistArgs.turnTrace.environmentAtTurn).toMatchObject({
+      environmentId: "env_composed",
+    });
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([]);
   });
 });

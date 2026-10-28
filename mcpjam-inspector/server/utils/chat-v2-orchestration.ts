@@ -1,3 +1,4 @@
+import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { wrapModelToolsets, type ModelToolExecutor } from "./model-tool-executor.js";
 import {
   mergeConnectionToolsets,
@@ -30,6 +31,7 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
+import { createTurnToolLister } from "./plugin-server-isolation.js";
 import { withinToolListingBudget } from "./within-budget.js";
 import { mcpToolOptionsFor } from "./mcp-tool-options.js";
 import {
@@ -52,9 +54,8 @@ import {
 } from "./chat-helpers.js";
 import { getPinnedSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
-import {
-  withServerSkills,
-} from "./server-skill-tools.js";
+import { withServerSkills } from "./server-skill-tools.js";
+import { applyActingServerSkillGate } from "./server-skill-acting-gate.js";
 import { skillMetadataBudgetChars } from "./computers/skill-metadata-budget.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
@@ -679,6 +680,8 @@ export interface PrepareChatV2Options {
   connectionsByServerId?: ConnectionsByServerId;
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
+  /** Plugin servers whose failure leaves the turn running without them. */
+  isolatedServers?: readonly string[];
   /**
    * serverId → the user-assigned label from OUR server registry, used to
    * namespace SEP-2640 server-skill refs (`<serverSlug>/<skill>`).
@@ -1226,7 +1229,9 @@ function approvalGuidance(
   const alwaysAsks =
     "Loading a skill that a connected MCP server provides always asks for " +
     "confirmation, in either setting — it brings that server's instructions " +
-    "into this conversation.";
+    "into this conversation. While such a skill is loaded, running a shell " +
+    "command or reading a resource from a saved server also asks, in either " +
+    "setting.";
   return requireToolApproval
     ? `Tool approval is ON for this conversation: every tool call that ACTS pauses for the user's explicit approval before it runs — MCP server tools, anything driving a browser or a third-party web page, anything running on the user's own machine, and mutating \`ui_*\` actions. ${free} ${alwaysAsks} A denial is final — explain what you wanted to do instead of retrying the call.`
     : `Tool approval is OFF for this conversation: tool calls apply immediately, including anything driving a browser or a third-party web page and anything running on the user's own machine. Be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for. ${free} ${alwaysAsks}`;
@@ -1267,6 +1272,7 @@ export function applySkillToolApproval(
 }
 
 export interface PrepareChatV2Result {
+  liveServerSkills?: boolean;
   connectionsAtTurn?: Array<{
     serverId: string;
     connectionId: string;
@@ -1304,6 +1310,8 @@ export interface PrepareChatV2Result {
    * being re-derived from a partial view. See `guardPageToolRefresh`.
    */
   reservedAgainstPageTools: ReadonlySet<string>;
+  /** The `isolatedServers` this turn runs without, with their errors. */
+  unavailableServers?: ReadonlyMap<string, unknown>;
 }
 
 /**
@@ -1416,41 +1424,33 @@ export async function prepareChatV2(
         serverLabels,
       ),
     );
+  const lister = createTurnToolLister({
+    manager: mcpClientManager,
+    serverIds: knownSelectedServers,
+    isolatedServers: options.isolatedServers ?? [],
+    keysOf: (id) => selectedGroups?.[id]?.map((c) => c.key) ?? [id],
+    toolOptions,
+    within: listToolsWithinBudget,
+  });
+  const listByServer = async () =>
+    wrapModelToolsets(await lister.byServer(), options.modelToolExecutor);
   let mcpTools;
   try {
     mcpTools =
       selectedGroups && Object.keys(selectedGroups).length
-        ? mergeConnectionToolsets(
-            await listToolsWithinBudget(
-              mcpClientManager.getToolsForAiSdkByServer(
-                knownSelectedServers,
-                toolOptions,
-              ).then((groups) => wrapModelToolsets(groups, options.modelToolExecutor)),
-            ),
-            selectedGroups,
-            {
-              snapshot,
-              onRoute: (id, connection) => {
-                toolConnections.set(id, connection);
-              },
+        ? mergeConnectionToolsets(await listByServer(), selectedGroups, {
+            snapshot,
+            onRoute: (id, connection) => {
+              toolConnections.set(id, connection);
             },
-          )
+          })
         : options.modelToolExecutor
-          ? Object.assign({}, ...Object.values(wrapModelToolsets(await listToolsWithinBudget(
-              mcpClientManager.getToolsForAiSdkByServer(knownSelectedServers, toolOptions)
-            ), options.modelToolExecutor)))
-          : await listToolsWithinBudget(
-            mcpClientManager.getToolsForAiSdk(
-              knownSelectedServers,
-              toolOptions,
-            ),
-          );
+          ? Object.assign({}, ...Object.values(await listByServer()))
+          : await lister.flat();
   } catch (error) {
-    // The ONE hop in this function that leaves MCPJam: listing tools reaches
-    // into the user's own MCP servers, so a dead or slow server lands here.
-    // The chat route's outer catch declares `mcpjam_internal` — correct for
-    // everything else it wraps — and without this mark that declaration would
-    // promote every one of those to a page.
+    // The ONE hop here that leaves MCPJam: a dead or slow user server the turn
+    // did not isolate lands here, and without this mark the route's outer catch
+    // (`mcpjam_internal`, right for all else it wraps) would page on each one.
     //
     // Scoped to this await on purpose. Marking the whole of `prepareChatV2`
     // would silence a genuine bug in the preparation work that follows, which
@@ -1814,14 +1814,20 @@ export async function prepareChatV2(
   }
   // Built-ins merge last so an explicit built-in wins; the policy above has
   // already resolved (or rejected) every collision by here.
-  const realTools = {
+  //
+  // Then the acting-skill gate: while a server-served skill's SKILL.md is in
+  // the conversation, the shell and the cross-server resource read ask
+  // whatever the switch says. The gate reads the messages the AI SDK hands
+  // each approval decision, so it covers a skill loaded earlier in the same
+  // step as well as one loaded requests ago.
+  const realTools = applyActingServerSkillGate({
     ...mcpTools,
     ...appToolEntries,
     ...uiToolEntries,
     ...pageToolEntries,
     ...finalSkillTools,
     ...builtInToolEntries,
-  } as ToolSet;
+  } as ToolSet);
 
   // 2. Decide whether progressive discovery applies, then mint meta-tools if
   // it does. The catalog is built from real tools only (meta-tools aren't
@@ -1975,7 +1981,7 @@ export async function prepareChatV2(
           availableToolNames,
           // A page's tools exist only while that page is open; what the model
           // did with them is still what happened. See the parameter's doc.
-          isWebmcpPageToolName,
+          name => isWebmcpPageToolName(name) || WIDGET_TOOL_VERBS.includes(name),
         ),
         mcpClientManager,
         knownSelectedServers,
@@ -1985,6 +1991,7 @@ export async function prepareChatV2(
     );
 
   return {
+    liveServerSkills: serverSkills.buildPromptSection !== null,
     ...(selectedGroups
       ? {
           toolConnections,
@@ -2017,6 +2024,9 @@ export async function prepareChatV2(
         (name) => !advertisedPageToolNames.includes(name),
       ),
     ) as ReadonlySet<string>,
+    ...(options.isolatedServers?.length
+      ? { unavailableServers: lister.unavailable() }
+      : {}),
   };
 }
 

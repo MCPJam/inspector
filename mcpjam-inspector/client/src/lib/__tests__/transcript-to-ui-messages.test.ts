@@ -8,6 +8,69 @@ import {
 } from "../transcript-to-ui-messages";
 
 describe("transcriptToUIMessages", () => {
+  const approvalTranscript = () => [
+    { role: "user", content: "Run the command" },
+    { role: "assistant", content: [
+      { type: "tool-call", toolCallId: "call", toolName: "exec", input: { command: "pwd" }, providerExecuted: true },
+      { type: "tool-call", toolCallId: "call", toolName: "exec", input: { command: "pwd" }, providerExecuted: true },
+      { type: "tool-approval-request", approvalId: "approval", toolCallId: "call" },
+    ] },
+  ];
+
+  it("restores a pending harness approval once, with execution ownership", async () => {
+    const messages = transcriptToUIMessages(approvalTranscript());
+    expect(messages[1].parts).toEqual([expect.objectContaining({
+      type: "dynamic-tool", toolCallId: "call", providerExecuted: true,
+      state: "approval-requested", approval: { id: "approval" },
+    })]);
+    const model = await convertToModelMessages(messages);
+    expect(model[1].content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "tool-approval-request", approvalId: "approval", toolCallId: "call" }),
+    ]));
+  });
+
+  it("restores an answered approval without asking again", () => {
+    const messages = transcriptToUIMessages([
+      ...approvalTranscript(),
+      { role: "tool", content: [{ type: "tool-approval-response", approvalId: "approval", approved: true }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "call", output: { type: "text", value: "/workspace" } }] },
+    ]);
+    expect(messages[1].parts).toEqual([expect.objectContaining({
+      state: "output-available", approval: { id: "approval", approved: true },
+    })]);
+  });
+
+  it("keeps a denied approval denied after reload", () => {
+    const messages = transcriptToUIMessages([
+      ...approvalTranscript(),
+      { role: "tool", content: [{ type: "tool-approval-response", approvalId: "approval", approved: false, reason: "Declined" }] },
+    ]);
+    expect(messages[1].parts).toEqual([expect.objectContaining({
+      state: "output-denied", approval: { id: "approval", approved: false, reason: "Declined" },
+    })]);
+  });
+
+  it("keeps earlier harness calls in the message receiving continuation results", async () => {
+    const messages = transcriptToUIMessages([
+      ...approvalTranscript(),
+      { role: "tool", content: [{ type: "tool-approval-response", approvalId: "approval", approved: true }] },
+      { role: "assistant", content: [
+        { type: "tool-call", toolCallId: "mcp", toolName: "wiki", input: {}, providerExecuted: true },
+        { type: "tool-approval-request", approvalId: "mcp-approval", toolCallId: "mcp" },
+      ] },
+    ]);
+    expect(messages).toHaveLength(2);
+    expect(messages[1].parts).toEqual([
+      expect.objectContaining({ toolCallId: "call", state: "approval-responded" }),
+      expect.objectContaining({ toolCallId: "mcp", state: "approval-requested" }),
+    ]);
+    const model = await convertToModelMessages(messages);
+    expect(model[1].content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "tool-call", toolCallId: "call" }),
+      expect.objectContaining({ type: "tool-call", toolCallId: "mcp" }),
+    ]));
+  });
+
   it("converts basic user/assistant transcript to UIMessages", () => {
     const transcript = [
       { role: "user", content: "Hello" },

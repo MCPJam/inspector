@@ -491,7 +491,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
-      "elicitation": {},
+      "elicitation": {
+        "form": {},
+        "url": {},
+      },
+      "extensions": {
+        "io.modelcontextprotocol/tasks": {},
+      },
       "roots": {},
     },
     "computer": {
@@ -511,7 +517,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.259",
+          "version": "2.1.310",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -527,7 +533,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "refetches": true,
       },
     },
-    "modelId": "anthropic/claude-haiku-4.5",
+    "modelId": "anthropic/claude-haiku-5.5",
     "optionalServerIds": [],
     "progressiveToolDiscovery": false,
     "requireToolApproval": false,
@@ -542,7 +548,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
-      "elicitation": {},
+      "elicitation": {
+        "form": {},
+        "url": {},
+      },
+      "extensions": {
+        "io.modelcontextprotocol/tasks": {},
+      },
       "roots": {},
     },
     "computer": {
@@ -562,7 +574,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.259",
+          "version": "2.1.310",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -578,7 +590,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "refetches": true,
       },
     },
-    "modelId": "anthropic/claude-haiku-4.5",
+    "modelId": "anthropic/claude-haiku-5.5",
     "optionalServerIds": [],
     "progressiveToolDiscovery": false,
     "requireToolApproval": false,
@@ -628,6 +640,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostContext": {
       "availableDisplayModes": [
         "inline",
+        "fullscreen",
       ],
       "containerDimensions": {
         "maxHeight": 5000,
@@ -796,6 +809,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "mcpAppsOverrides": {
           "availableDisplayModes": [
             "inline",
+            "fullscreen",
           ],
           "cspBaseUriDomains": false,
           "cspConnectDomains": {
@@ -977,6 +991,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostContext": {
       "availableDisplayModes": [
         "inline",
+        "fullscreen",
       ],
       "containerDimensions": {
         "maxHeight": 5000,
@@ -1145,6 +1160,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "mcpAppsOverrides": {
           "availableDisplayModes": [
             "inline",
+            "fullscreen",
           ],
           "cspBaseUriDomains": false,
           "cspConnectDomains": {
@@ -2230,12 +2246,16 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "mode": "declared",
           },
           "permissions": {
-            "allow": {
-              "clipboardWrite": true,
-            },
+            "allow": {},
             "mode": "custom",
           },
           "sameOriginAppIframe": true,
+        },
+        "uiInitialize": {
+          "hostInfo": {
+            "name": "chatgpt",
+            "version": "26.1021.31345",
+          },
         },
       },
       "initialize": {
@@ -2257,7 +2277,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "refetches": false,
       },
     },
-    "modelId": "openai/gpt-5-nano",
+    "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
     "progressiveToolDiscovery": false,
     "requireToolApproval": false,
@@ -2435,12 +2455,16 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "mode": "declared",
           },
           "permissions": {
-            "allow": {
-              "clipboardWrite": true,
-            },
+            "allow": {},
             "mode": "custom",
           },
           "sameOriginAppIframe": true,
+        },
+        "uiInitialize": {
+          "hostInfo": {
+            "name": "chatgpt",
+            "version": "26.1021.31345",
+          },
         },
       },
       "initialize": {
@@ -2462,7 +2486,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "refetches": false,
       },
     },
-    "modelId": "openai/gpt-5-nano",
+    "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
     "progressiveToolDiscovery": false,
     "requireToolApproval": false,
@@ -2916,7 +2940,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Cursor",
-            "version": "3.21.16",
+            "version": "3.27.14",
           },
         },
       },
@@ -3046,7 +3070,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Cursor",
-            "version": "3.21.16",
+            "version": "3.27.14",
           },
         },
       },
@@ -3073,6 +3097,246 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "progressiveToolDiscovery": false,
     "requireToolApproval": false,
     "respectToolVisibility": false,
+    "serverConnectionOverrides": undefined,
+    "serverIds": [],
+    "systemPrompt": "",
+    "temperature": 0.7,
+  },
+  "gemini/dark": {
+    "browserProfileId": undefined,
+    "builtInToolIds": [],
+    "chatUiOverride": undefined,
+    "clientCapabilities": {
+      "extensions": {
+        "io.modelcontextprotocol/ui": {
+          "mimeTypes": [
+            "text/html;profile=mcp-app",
+          ],
+        },
+      },
+    },
+    "computer": undefined,
+    "connectionDefaults": {
+      "headers": {},
+      "requestTimeout": 10000,
+    },
+    "harness": undefined,
+    "hostCapabilitiesOverride": undefined,
+    "hostContext": {
+      "availableDisplayModes": [
+        "inline",
+        "fullscreen",
+        "pip",
+      ],
+      "containerDimensions": {
+        "maxHeight": 600,
+      },
+      "displayMode": "inline",
+      "theme": "dark",
+    },
+    "hostStyle": "gemini",
+    "mcpProfile": {
+      "apps": {
+        "compatRuntime": {
+          "openaiApps": false,
+        },
+        "mcpAppsOverrides": {
+          "availableDisplayModes": [
+            "inline",
+            "fullscreen",
+            "pip",
+          ],
+          "cspBaseUriDomains": false,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
+          "downloadFile": false,
+          "logging": true,
+          "message": true,
+          "openLinks": true,
+          "resourcePrefersBorder": true,
+          "safeAreaInsets": false,
+          "sandboxPermissions": false,
+          "serverResources": true,
+          "serverTools": false,
+          "toolInfo": true,
+          "toolResult": {
+            "structuredContent": true,
+          },
+          "updateModelContext": false,
+        },
+        "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
+          "csp": {
+            "mode": "declared",
+          },
+          "permissions": {
+            "allow": {},
+            "mode": "custom",
+          },
+          "sameOriginAppIframe": true,
+          "sandboxAttrs": [
+            "allow-forms",
+            "allow-popups",
+          ],
+        },
+        "uiInitialize": {
+          "hostInfo": {
+            "name": "UCS Widget",
+            "version": "1.0",
+          },
+        },
+      },
+      "initialize": {
+        "clientInfo": {
+          "name": "google-adk",
+          "version": "2.12.0",
+        },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
+      },
+      "profileVersion": 1,
+    },
+    "modelId": "google/gemini-3-pro",
+    "optionalServerIds": [],
+    "progressiveToolDiscovery": false,
+    "requireToolApproval": false,
+    "respectToolVisibility": true,
+    "serverConnectionOverrides": undefined,
+    "serverIds": [],
+    "systemPrompt": "",
+    "temperature": 0.7,
+  },
+  "gemini/light": {
+    "browserProfileId": undefined,
+    "builtInToolIds": [],
+    "chatUiOverride": undefined,
+    "clientCapabilities": {
+      "extensions": {
+        "io.modelcontextprotocol/ui": {
+          "mimeTypes": [
+            "text/html;profile=mcp-app",
+          ],
+        },
+      },
+    },
+    "computer": undefined,
+    "connectionDefaults": {
+      "headers": {},
+      "requestTimeout": 10000,
+    },
+    "harness": undefined,
+    "hostCapabilitiesOverride": undefined,
+    "hostContext": {
+      "availableDisplayModes": [
+        "inline",
+        "fullscreen",
+        "pip",
+      ],
+      "containerDimensions": {
+        "maxHeight": 600,
+      },
+      "displayMode": "inline",
+      "theme": "dark",
+    },
+    "hostStyle": "gemini",
+    "mcpProfile": {
+      "apps": {
+        "compatRuntime": {
+          "openaiApps": false,
+        },
+        "mcpAppsOverrides": {
+          "availableDisplayModes": [
+            "inline",
+            "fullscreen",
+            "pip",
+          ],
+          "cspBaseUriDomains": false,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
+          "downloadFile": false,
+          "logging": true,
+          "message": true,
+          "openLinks": true,
+          "resourcePrefersBorder": true,
+          "safeAreaInsets": false,
+          "sandboxPermissions": false,
+          "serverResources": true,
+          "serverTools": false,
+          "toolInfo": true,
+          "toolResult": {
+            "structuredContent": true,
+          },
+          "updateModelContext": false,
+        },
+        "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
+          "csp": {
+            "mode": "declared",
+          },
+          "permissions": {
+            "allow": {},
+            "mode": "custom",
+          },
+          "sameOriginAppIframe": true,
+          "sandboxAttrs": [
+            "allow-forms",
+            "allow-popups",
+          ],
+        },
+        "uiInitialize": {
+          "hostInfo": {
+            "name": "UCS Widget",
+            "version": "1.0",
+          },
+        },
+      },
+      "initialize": {
+        "clientInfo": {
+          "name": "google-adk",
+          "version": "2.12.0",
+        },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
+      },
+      "profileVersion": 1,
+    },
+    "modelId": "google/gemini-3-pro",
+    "optionalServerIds": [],
+    "progressiveToolDiscovery": false,
+    "requireToolApproval": false,
+    "respectToolVisibility": true,
     "serverConnectionOverrides": undefined,
     "serverIds": [],
     "systemPrompt": "",
@@ -4756,6 +5020,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "firstPageOnly",
       "profileVersion": 1,
     },
     "modelId": "openai/gpt-5-nano",
@@ -4990,6 +5255,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "firstPageOnly",
       "profileVersion": 1,
     },
     "modelId": "openai/gpt-5-nano",
@@ -5238,7 +5504,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Visual Studio Code",
-            "version": "1.136.1",
+            "version": "1.143.1",
           },
         },
       },
@@ -5506,7 +5772,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Visual Studio Code",
-            "version": "1.136.1",
+            "version": "1.143.1",
           },
         },
       },

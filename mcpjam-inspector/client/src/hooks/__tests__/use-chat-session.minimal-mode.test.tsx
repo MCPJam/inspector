@@ -966,7 +966,7 @@ describe("useChatSession minimal mode parity", () => {
     expect(withConfig.current.selectedModel.provider).toBe("anthropic");
   });
 
-  it("uses org config and the org-aware route for BYOK in non-hosted local dev", async () => {
+  it("uses org config and the local MCP route for BYOK in non-hosted local dev", async () => {
     mockModelState.selectedModelId = orgAnthropicModel.id;
     mockGetAccessToken.mockResolvedValue(null);
     mockSharedAppState.servers = {
@@ -1009,22 +1009,61 @@ describe("useChatSession minimal mode parity", () => {
       await result.current.sendMessage({ text: "hello" });
     });
 
+    // The local route, by server NAME: the tool result then names its server
+    // the way the widget endpoints look it up (they'd reject a Convex id with
+    // "Unknown MCP server"). The ids still ride along for hostConfig.
     const transport = getUsedTransport();
-    expect(transport.options.api).toBe("/api/web/chat-v2");
+    expect(transport.options.api).toBe("/api/mcp/chat-v2");
     expect(transport.requests[0]).toMatchObject({
       model: orgAnthropicModel,
       projectId: "project-1",
-      selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      accessScope: "chat_v2",
+      selectedServerIds: ["server-id-1"],
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
+    // A remote server needs no local runtime: the route resolves the org
+    // connection as usual (the key stays in Convex).
+    expect(transport.requests[0]).not.toHaveProperty("localMcpRuntimeRequired");
+    expect(transport.requests[0]).toHaveProperty("accessScope", "chat_v2");
     expect(mockAuthFetch).toHaveBeenCalledWith(
-      "/api/web/chat-v2",
+      "/api/mcp/chat-v2",
       expect.objectContaining({ method: "POST" })
     );
     const requestInit = mockAuthFetch.mock.calls.at(-1)?.[1] as RequestInit;
     expect(new Headers(requestInit.headers).has("Authorization")).toBe(false);
+  });
+
+  it("holds managed local sends until selected server IDs resolve", async () => {
+    mockModelState.selectedModelId = orgAnthropicModel.id;
+    mockGetAccessToken.mockResolvedValue(null);
+    mockSharedAppState.servers = {
+      "server-1": {
+        config: { url: "https://mcp.example.com/sse" },
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: {
+          providers: [
+            { providerKey: "anthropic", enabled: true, hasSecret: true },
+          ],
+        },
+        // The project resolved, the server's Convex id did not (and there is
+        // no send-time resolver).
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.isAuthReady).toBe(true);
+    });
+    expect(result.current.submitBlocked).toBe(true);
+    let sent: boolean | undefined;
+    await act(async () => { sent = await result.current.sendMessage({ text: "hello" }); });
+    expect(sent).toBe(false);
+    expect(mockTransportInstances.every((transport) => transport.requests.length === 0)).toBe(true);
   });
 
   it("uses the local MCP route for org BYOK when a selected server is local-only", async () => {
@@ -1074,16 +1113,17 @@ describe("useChatSession minimal mode parity", () => {
     expect(transport.requests[0]).toMatchObject({
       model: orgAnthropicModel,
       projectId: "project-1",
-      selectedServers: ["server-1"],
+      selectedServerNames: ["server-1"],
+      selectedServerIds: ["hosted-server-id"],
       localMcpRuntimeRequired: true,
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
-    expect(transport.requests[0]).not.toHaveProperty("selectedServerIds");
+    expect(transport.requests[0].selectedServerIds).toEqual(["hosted-server-id"]);
     expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/mcp/chat-v2",
       expect.objectContaining({ method: "POST" })
     );
-    expect(ensureServerIds).not.toHaveBeenCalled();
+    expect(ensureServerIds).toHaveBeenCalledWith(["server-1"]);
   });
 
   it("fails closed to the local MCP route when a selected server's config is unresolved", async () => {
@@ -1121,11 +1161,7 @@ describe("useChatSession minimal mode parity", () => {
       await result.current.sendMessage({ text: "hello" });
     });
 
-    const transport = getUsedTransport();
-    expect(transport.options.api).toBe("/api/mcp/chat-v2");
-    expect(transport.requests[0]).toMatchObject({
-      localMcpRuntimeRequired: true,
-    });
+    expect(mockTransportInstances.every((transport) => transport.requests.length === 0)).toBe(true);
   });
 
   it("falls back to local provider keys when non-hosted org config is empty", async () => {

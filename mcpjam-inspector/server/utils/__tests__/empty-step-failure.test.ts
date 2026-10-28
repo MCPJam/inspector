@@ -37,6 +37,7 @@ import {
   createEmptyTurnWatcher,
   describeEmptyStepFailure,
   EMPTY_STEP_SENTINEL,
+  isMcpjamOwnedEmptyStep,
 } from "../empty-step-failure";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 
@@ -454,6 +455,69 @@ describe("describeEmptyStepFailure", () => {
         describeEmptyStepFailure({ toolInputErrors: ["bad input"] }),
       ).slug,
     ).toBe("provider/empty_response");
+  });
+});
+
+describe("isMcpjamOwnedEmptyStep", () => {
+  it("is the provider's when the provider reported 0 output tokens", () => {
+    for (const finishReason of ["stop", "other", "tool-calls", undefined]) {
+      expect(isMcpjamOwnedEmptyStep({ finishReason, outputTokens: 0 })).toBe(
+        false,
+      );
+    }
+  });
+
+  it("is not ours when tokens were spent on a named model-side cause", () => {
+    for (const finishReason of ["length", "content-filter", "error"]) {
+      expect(
+        isMcpjamOwnedEmptyStep({ finishReason, outputTokens: 16384 }),
+      ).toBe(false);
+    }
+    expect(
+      isMcpjamOwnedEmptyStep({
+        finishReason: "length",
+        unfinishedToolNames: ["write_file"],
+        outputTokens: 8192,
+      }),
+    ).toBe(false);
+    expect(
+      isMcpjamOwnedEmptyStep({
+        finishReason: "tool-calls",
+        toolInputErrors: ["Model tried to call unavailable tool 'computer'."],
+        outputTokens: 42,
+      }),
+    ).toBe(false);
+  });
+
+  it("is ours when the provider generated tokens and nothing explains the empty step", () => {
+    for (const finishReason of ["stop", "tool-calls", "other", undefined]) {
+      expect(isMcpjamOwnedEmptyStep({ finishReason, outputTokens: 50 })).toBe(
+        true,
+      );
+    }
+    // A call cut off mid-write without the token limit: our stream may have
+    // dropped the rest.
+    expect(
+      isMcpjamOwnedEmptyStep({
+        finishReason: "stop",
+        unfinishedToolNames: ["write_file"],
+        outputTokens: 50,
+      }),
+    ).toBe(true);
+  });
+
+  it("stays ours when the provider reported no usage and nothing explains it", () => {
+    expect(isMcpjamOwnedEmptyStep({ finishReason: "other" })).toBe(true);
+    expect(isMcpjamOwnedEmptyStep({ outputTokens: Number.NaN })).toBe(true);
+  });
+
+  it("is not ours when a named cause explains it, even with no usage", () => {
+    for (const finishReason of ["length", "content-filter", "error"]) {
+      expect(isMcpjamOwnedEmptyStep({ finishReason })).toBe(false);
+    }
+    expect(
+      isMcpjamOwnedEmptyStep({ toolInputErrors: ["bad input"] }),
+    ).toBe(false);
   });
 });
 

@@ -15,7 +15,11 @@ import { join } from "node:path";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { PluginBundleCache } from "../bundle-cache.js";
 import { resolvePluginStdioLaunch } from "../plugin-root.js";
+import JSZip from "jszip";
+import { createZipPluginFileSource } from "../bundle-file-sources.js";
 import {
+  FIXTURE_SERVER_JS,
+  fixtureBundleFiles,
   fixtureBundleHash,
   fixtureBundleSource,
   makeCacheRoot,
@@ -93,6 +97,37 @@ describe("plugin stdio component (desktop)", () => {
     await manager.disconnectServer("fixture-local");
     release();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "runs a packaged executable directly once its bit survives extraction",
+    async () => {
+      const files = { ...fixtureBundleFiles(), "bin/server": FIXTURE_SERVER_JS };
+      const zip = new JSZip();
+      for (const [path, content] of Object.entries(files)) {
+        zip.file(path, content, {
+          unixPermissions: path === "bin/server" ? 0o755 : 0o644,
+        });
+      }
+      const materialized = await cache.materialize(
+        { ...IDENTITY_BASE, bundleHash: await fixtureBundleHash(files) },
+        {
+          source: await createZipPluginFileSource(
+            await zip.generateAsync({ type: "uint8array", platform: "UNIX" })
+          ),
+        }
+      );
+
+      // No interpreter in front: the file itself is the command.
+      await manager.connectToServer("fixture-exec", {
+        command: join(materialized.root, "bin", "server"),
+        args: [],
+        env: { PLUGIN_ROOT: materialized.root },
+      });
+      const tools = await manager.listTools("fixture-exec");
+      expect(tools.tools.map((tool) => tool.name)).toEqual(["plugin_root"]);
+      await manager.disconnectServer("fixture-exec");
+    }
+  );
 
   it("needs no local source path once materialized", async () => {
     // Import from a folder, then delete the folder: a launch must still work,

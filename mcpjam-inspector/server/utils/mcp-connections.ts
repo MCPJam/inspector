@@ -83,3 +83,12 @@ export async function revokeLocalConnection(
       });
   }
 }
+
+const organizations = new WeakMap<MCPClientManager, string>();
+/** Authoritative hosted batch metadata; absent on local/unscoped managers. */
+export function setManagerOrganization(manager: MCPClientManager, organizationId: string | null | undefined) {
+  if (organizationId) organizations.set(manager, organizationId);
+}
+export function getManagerOrganization(manager: MCPClientManager): string | undefined {
+  return organizations.get(manager);
+}

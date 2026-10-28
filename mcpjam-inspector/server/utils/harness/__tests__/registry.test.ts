@@ -55,7 +55,7 @@ describe("harness registry", () => {
     // the app-server adapter — and skills ARE delivered (INS-8), under its own
     // root.
     expect(a.transport).toBe("app-server");
-    expect(a.mcpDelivery).toBe("host-executed");
+    expect(a.mcpDelivery).toBe("mcpjam");
     expect(a.supportsSkills).toBe(true);
     expect(a.skillsBaseDir).toBe("/home/user/.agents/skills");
     expect(a.supportsPluginBundles).toBe(false);
@@ -75,7 +75,7 @@ describe("harness registry", () => {
       // all), so this asserts the runtime shape matches the declared mode — the
       // check the compiler makes for real adapters, made again for a
       // hand-edited one.
-      if (adapter.mcpDelivery === "native") {
+      if (adapter.mcpDelivery === "harness") {
         if (adapter.mcpNativeDelivery === "sandbox-files") {
           // Writes runtime config into the box before the process starts.
           expect(adapter.deliverMcpServers).toBeTypeOf("function");
@@ -87,7 +87,7 @@ describe("harness registry", () => {
           expect(adapter.deliverMcpServers).toBeUndefined();
         }
       } else {
-        expect(adapter.mcpDelivery).toBe("host-executed");
+        expect(adapter.mcpDelivery).toBe("mcpjam");
         expect(adapter.mcpNativeDelivery).toBeUndefined();
         expect(adapter.deliverMcpServers).toBeUndefined();
       }
@@ -185,7 +185,7 @@ describe("harness registry", () => {
     // unknown, which only Playground chat may run.
     expect(cc.modelSupport("anthropic/claude-fable-5")).toMatchObject({
       status: "unknown",
-      reason: `not verified for claude-code ${HARNESS_PINNED_VERSIONS["claude-code"]}`,
+      reason: `This model has not been verified for the Claude Code client (${HARNESS_PINNED_VERSIONS["claude-code"]}). Choose a verified model or another client.`,
     });
     expect(cc.supportsModel("anthropic/claude-fable-5")).toBe(false);
     expect(
@@ -197,18 +197,8 @@ describe("harness registry", () => {
     expect(codex.supportsModel("openai/o1")).toBe(false);
   });
 
-  // ── Tool-less model lines ────────────────────────────────────────────────
-  //
-  // These cases are VERSION-KEYED to the pinned Codex CLI and were measured,
-  // not guessed: `.spike-codex-appserver` gate P5 drove the pinned binary
-  // through every gpt-5-family id in the hosted catalog and recorded how many
-  // tools each was given. The whole gpt-5.6 line got zero. Re-measure and
-  // update `CODEX_TOOL_LESS_MODEL_LINES` when the pinned CLI moves.
-  //
-  // Why this matters more than an ordinary unsupported model: the CLI RESOLVES
-  // these ids, so there is no unknown-model warning and the turn completes
-  // normally — the user just silently gets a Codex host that cannot act. All
-  // three are in MCPJam's hosted catalog today.
+  // GPT-5.6 is unverified on this pinned runtime. Only Playground's explicit
+  // allowUnknown path may try it; eval and swarm admission stay closed.
   it.each([
     ["openai/gpt-5.6-terra"],
     ["openai/gpt-5.6-sol"],
@@ -216,14 +206,11 @@ describe("harness registry", () => {
     // The bare line id, and case-insensitively.
     ["openai/gpt-5.6"],
     ["openai/GPT-5.6-Terra"],
-  ])("refuses the tool-less %s rather than running it chat-only", (modelId) => {
-    // Refused by the evidence table at the pinned 0.149.x CLI, not by the id
-    // mapping: `toNativeModel` still maps the gpt-5 family, and an unverified
-    // newer CLI reads the pair as `unknown` rather than inheriting the refusal.
+  ])("keeps %s unverified on the pinned runtime", (modelId) => {
     const codex = getHarnessAdapter("codex");
     expect(codex.supportsModel(modelId)).toBe(false);
-    expect(codex.supportsModel(modelId, { allowUnknown: true })).toBe(false);
-    expect(codex.modelSupport(modelId).status).toBe("unsupported");
+    expect(codex.supportsModel(modelId, { allowUnknown: true })).toBe(true);
+    expect(codex.modelSupport(modelId).status).toBe("unknown");
     expect(codex.toNativeModel?.(modelId)).toBe(
       modelId.slice("openai/".length),
     );
@@ -324,6 +311,12 @@ describe("harness registry", () => {
     ).toEqual({
       modelOverrides: expect.objectContaining({
         haiku: "anthropic/claude-haiku-4.5",
+      }),
+    });
+    expect(withEnv("haiku", { ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-5-5" })).toEqual({
+      modelOverrides: expect.objectContaining({
+        haiku: "anthropic/claude-haiku-5.5",
+        "claude-haiku-5-5": "anthropic/claude-haiku-5.5",
       }),
     });
     // The query reads the profile from `start.env`, never the bridge process.
@@ -1032,7 +1025,7 @@ function addUsage(total, usage) {
       // cleanly and is still a silent no-op (the model never gets a callable
       // tool). Writing it anyway would be the trap; the relay is the mechanism.
       const codex = getHarnessAdapter("codex");
-      expect(codex.mcpDelivery).toBe("host-executed");
+      expect(codex.mcpDelivery).toBe("mcpjam");
       expect(codex.deliverMcpServers).toBeUndefined();
     });
 
@@ -1041,7 +1034,7 @@ function addUsage(total, usage) {
       // adapter must stay on the `.mcp.json` path, so `runHarnessTurn` never
       // adds MCP tools to its host-executed tool set and the model never sees
       // the same tool twice.
-      expect(getHarnessAdapter("claude-code").mcpDelivery).toBe("native");
+      expect(getHarnessAdapter("claude-code").mcpDelivery).toBe("harness");
     });
 
     it("every adapter's delivery mode IS the shared declaration the client reads", () => {
@@ -1170,7 +1163,7 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     // proxy?) and must match the shared declaration the client reads; the
     // MECHANISM decides how it is handed over. Both are asserted because they
     // are separate facts that happen to travel together here.
-    expect(cursor.mcpDelivery).toBe("native");
+    expect(cursor.mcpDelivery).toBe("harness");
     expect(cursor.mcpDelivery).toBe(HARNESS_MCP_DELIVERY.cursor);
     expect(cursor.mcpNativeDelivery).toBe("session-config");
     expect(cursor.deliverMcpServers).toBeUndefined();
@@ -1377,7 +1370,7 @@ describe("bootstrap recipes are auth-independent", () => {
     adapter: ReturnType<typeof getHarnessAdapter>,
     args: { modelId: string; auth: ReturnType<typeof auth> },
   ) =>
-    adapter.mcpDelivery === "native" &&
+    adapter.mcpDelivery === "harness" &&
     adapter.mcpNativeDelivery === "session-config"
       ? adapter.createHarness({ ...args, mcpJson: { mcpServers: {} } })
       : adapter.createHarness(args);

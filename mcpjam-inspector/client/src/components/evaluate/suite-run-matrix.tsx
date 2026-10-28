@@ -51,6 +51,8 @@ import {
   type SuiteRunReviewProps,
 } from "./suite-run-review";
 import { useSuiteRunPreflight } from "./suite-run-preflight";
+import { caseLaunchTarget } from "./case-workspace/case-launch-preview";
+import { resolveCaseLaunchEnvironments } from "./case-workspace/pending-case-launches";
 
 type PlannedCombination = {
   environmentId?: string;
@@ -639,6 +641,10 @@ export function ConfiguredSuiteRunReview(
       throw new Error(
         "Could not resolve the selected clients and models. Try again.",
       );
+    resolveCaseLaunchEnvironments(
+      options.caseLaunchId,
+      environmentIds.filter((id): id is string => Boolean(id)),
+    );
     await props.onStart(
       {
         ...suite,
@@ -670,6 +676,21 @@ export function ConfiguredSuiteRunReview(
       {...props}
       disabledReason={blocked}
       matrix={{
+        targets: (runInSaved
+          ? savedEnvironment
+            ? [savedEnvironment]
+            : []
+          : plannedPreflight(plan, environments).targets
+        ).map((target, index) => ({
+          ...caseLaunchTarget(
+            target,
+            props.hostNamesById,
+            hosts.find((host) => host.hostId === target.hostId)?.modelId,
+          ),
+          environmentId: runInSaved
+            ? savedEnvironment?.environmentId
+            : plan[index].environmentId,
+        })),
         count: runInSaved ? (savedEnvironment ? 1 : 0) : plan.length,
         signature: JSON.stringify([selections, group, runInSaved, savedId]),
         render: (starting) => (

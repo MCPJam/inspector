@@ -130,6 +130,19 @@ describe("server analytics network boundary", () => {
       })?.properties,
     ).toEqual({ outcome: "ok", tool_call_count: 3 });
   });
+  it("treats Object.prototype member names as unknown instead of throwing", () => {
+    const inherited = JSON.parse(
+      '{"constructor":"ok","toString":"x","hasOwnProperty":true,"valueOf":1,"__proto__":"ok"}',
+    );
+    expect(
+      rebuildServerAnalytics("api_agent_turn_completed", actor, {
+        ...inherited,
+        outcome: "ok",
+      })?.properties,
+    ).toEqual({ outcome: "ok" });
+    for (const event of ["constructor", "toString", "__proto__"])
+      expect(rebuildServerAnalytics(event, actor, {})).toBeNull();
+  });
 });
 
 it("retains source-owned scenario and harness runtime dimensions", () => {

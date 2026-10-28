@@ -26,6 +26,7 @@ import {
 import {
   buildIterationTranscript,
   evaluatePredicates,
+  extractToolErrors,
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
@@ -124,7 +125,12 @@ export function buildEvalIterationVerdict(
     input.toolsCalledByPrompt,
     input.isNegativeTest,
     input.matchOptions,
-    { skillToolsActive: input.skillToolsActive === true },
+    {
+      skillToolsActive: input.skillToolsActive === true,
+      // The failures the `failOnToolError` gate reads: a failed call followed
+      // by an identical one is then graded as a retry, not as an extra.
+      toolErrors: extractToolErrors(input.trace),
+    },
   );
 
   // Extracted once, outside the `effectivePredicates` guard's branch, so the

@@ -5,6 +5,7 @@ import {
 } from "@/shared/plugin-mentions";
 import { z } from "zod";
 import { waitForPluginOperation } from "@/shared/plugin-operation";
+import { appendPluginDiagnostics } from "@/lib/plugin-diagnostics";
 
 export type PluginMentionProvider = {
   projectId: string;
@@ -21,6 +22,22 @@ const openedSchema = z.strictObject({
     })
     .nullable(),
 });
+
+/** Declaration problems (an unusable `openai/mentions` capability, a tool
+ * relying on default visibility) arrive as diagnostics for the Logs panel,
+ * unless the person already left the search. */
+async function readOpenedMention(
+  response: Response,
+  serverId: string,
+  signal: AbortSignal,
+) {
+  const { diagnostics, ...rest } = z
+    .record(z.string(), z.unknown())
+    .parse(await response.json());
+  if (diagnostics !== undefined && !signal.aborted)
+    appendPluginDiagnostics(diagnostics, { serverId });
+  return openedSchema.parse(rest).mention;
+}
 
 type MentionPost = (
   action: string,
@@ -66,7 +83,7 @@ export async function probePluginMention(input: {
     );
     if (!opened.ok)
       throw new Error(`Mention discovery rejected (${opened.status})`);
-    const mention = openedSchema.parse(await opened.json()).mention;
+    const mention = await readOpenedMention(opened, provider.serverId, signal);
     // A lease returned after the caller left is still closed.
     if (mention && signal.aborted) {
       void close(mention.instanceToken);
@@ -127,7 +144,11 @@ export async function searchPluginMentions(input: {
       );
       if (!opened.ok)
         throw new Error(`Mention discovery rejected (${opened.status})`);
-      const mention = openedSchema.parse(await opened.json()).mention;
+      const mention = await readOpenedMention(
+        opened,
+        provider.serverId,
+        signal,
+      );
       if (mention && signal.aborted) {
         void close(mention.instanceToken);
         signal.throwIfAborted();

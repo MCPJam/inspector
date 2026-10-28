@@ -442,6 +442,20 @@ describe("web routes — swarm generation proxy", () => {
     expect(data.details).toBeUndefined();
   });
 
+  it("returns a cataloged generation failure without leaking failed output", async () => {
+    generateSwarmJourneysMock.mockRejectedValue(new SwarmAgentError(502,
+      JSON.stringify({ code: "GENERATION_FAILED", error: "private failed output" }),
+      "private failed output"));
+    const response = await postJson(app, "/api/web/swarm/generate/journeys", {
+      projectId: "proj-1", serverAttachmentId: "att-1", persona: { name: "P", role: "R" },
+    }, token);
+    const { status, data } = await expectJson<Record<string, unknown>>(response);
+    expect(status).toBe(502);
+    expect(data.code).toBe("GENERATION_FAILED");
+    expect(data.message).toBe("Generation failed. Please try again.");
+    expect(JSON.stringify(data)).not.toContain("private failed output");
+  });
+
   it("maps a backend 5xx onto 500 and keeps the upstream detail out of the body", async () => {
     generateSwarmJourneysMock.mockRejectedValue(
       new SwarmAgentError(502, "", "swarm-generate upstream failed (502)")

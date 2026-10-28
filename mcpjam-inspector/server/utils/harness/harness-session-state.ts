@@ -95,6 +95,7 @@ export type HarnessClaimResult =
       state: HarnessResumePayload | null;
       stateVersion: number;
       fingerprintChanged: boolean;
+      laneId?: string;
     }
   | { ok: false; status: number; error: string };
 
@@ -239,6 +240,7 @@ export async function claimHarnessSessionState(args: {
     state: res.payload.state ?? null,
     stateVersion: Number(res.payload.stateVersion ?? 0),
     fingerprintChanged: Boolean(res.payload.fingerprintChanged),
+    ...(typeof res.payload.laneId === "string" ? { laneId: res.payload.laneId } : {}),
   };
 }
 
@@ -293,6 +295,47 @@ export async function releaseHarnessSessionState(args: {
   if (!res.ok) {
     logger.warn("[harness-session-state] release failed", { error: res.error });
   }
+}
+
+/** Bounded: the caller awaits this on its terminal path. */
+const UNCOMMITTED_LANE_RELEASE_TIMEOUT_MS = 5_000;
+
+/**
+ * Release the lane a caller-persist turn's commit was minted against, without
+ * applying the commit.
+ *
+ * For a turn whose transcript did not land: its resume state must not advance
+ * past the saved conversation, and keeping the lease would refuse the next
+ * turn until its TTL. The backend checks the lease id, so a lane that was
+ * committed or claimed again since is left alone. A failed release is logged
+ * by `releaseHarnessSessionState`; the lease TTL then recovers the lane.
+ */
+export async function releaseUncommittedHarnessLane(args: {
+  commit: HarnessSessionCommitPayload;
+  projectId: string;
+  bearer: string;
+  /** A `swarm-chat` lane's key; the commit itself does not carry them. */
+  journeyRunId?: string;
+  hostId?: string;
+}): Promise<void> {
+  const { commit } = args;
+  await releaseHarnessSessionState({
+    owner: {
+      projectId: args.projectId,
+      harnessId: commit.harnessId,
+      ownerType: commit.ownerType,
+      chatSessionId: commit.chatSessionId,
+      ...(commit.scenarioId ? { scenarioId: commit.scenarioId } : {}),
+      ...(args.journeyRunId ? { journeyRunId: args.journeyRunId } : {}),
+      ...(args.hostId ? { hostId: args.hostId } : {}),
+      ...(commit.executionScope
+        ? { executionScope: commit.executionScope }
+        : {}),
+    },
+    leaseId: commit.leaseId,
+    bearer: args.bearer,
+    signal: AbortSignal.timeout(UNCOMMITTED_LANE_RELEASE_TIMEOUT_MS),
+  });
 }
 
 export async function commitHarnessSessionState(args: {

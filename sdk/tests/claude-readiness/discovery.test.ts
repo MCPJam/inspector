@@ -36,15 +36,6 @@ async function start(
   return { origin: `http://127.0.0.1:${port}`, hits };
 }
 
-/** An origin nothing listens on: opened to claim a port, then closed. */
-async function closedLoopbackOrigin(): Promise<string> {
-  const server = http.createServer(() => {});
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return `http://127.0.0.1:${port}`;
-}
-
 afterEach(async () => {
   await Promise.all(
     servers.splice(0).map(
@@ -331,11 +322,11 @@ describe("the redirect trace", () => {
   });
 
   it("returns the partial chain when a hop is unreachable", async () => {
-    // A port we listened on and then closed refuses immediately. Relying on a
-    // reserved `.invalid` name instead makes the case depend on the resolver:
-    // a wildcard or captive one answers with a routable address, and the test
-    // then waits out a timeout to reach the same assertion.
-    const deadOrigin = await closedLoopbackOrigin();
+    // Keep the port bound so another fixture cannot reuse it. Resetting the
+    // socket exercises a real fetch failure without DNS or port-allocation races.
+    const { origin: deadOrigin } = await start((req) => {
+      req.socket.destroy();
+    });
     const { origin } = await start((_req, res) => {
       res.writeHead(302, { location: `${deadOrigin}/mcp` });
       res.end();

@@ -1,6 +1,10 @@
 import { NodeClient, Scope, defaultStackParser } from "@sentry/node";
 import { fileURLToPath } from "node:url";
-import { sdkDiagnosticBoundary } from "../src/internal/sentry-boundary";
+import {
+  sdkDiagnosticBoundary,
+  sdkFrameAliases,
+} from "../src/internal/sentry-boundary";
+import { rebuildSentryEvent } from "../src/internal/telemetry.js";
 
 const original = { DO_NOT_TRACK: process.env.DO_NOT_TRACK, MCPJAM_TELEMETRY_DISABLED: process.env.MCPJAM_TELEMETRY_DISABLED };
 beforeEach(() => {
@@ -71,4 +75,65 @@ it("never coerces customer basenames or invalid line values into verified locati
   expect(JSON.stringify(sent)).not.toContain("PRIVATE_SENTINEL");
   expect(JSON.stringify(sent)).toContain('"dropped_frames":4');
   expect(JSON.stringify(sent)).toContain('"filename":"src/sentry.ts","in_app":true,"lineno":10');
+});
+
+it("aliases every Windows spelling of a verified SDK file and no same-named customer file", () => {
+  const aliases = sdkFrameAliases(
+    "C:\\Program Files\\app\\node_modules\\@mcpjam\\sdk",
+    ["dist/index.js"],
+    true
+  );
+  expect(aliases).toEqual({
+    "C:\\Program Files\\app\\node_modules\\@mcpjam\\sdk\\dist\\index.js":
+      "dist/index.js",
+    "C:/Program Files/app/node_modules/@mcpjam/sdk/dist/index.js":
+      "dist/index.js",
+    "file:///C:/Program%20Files/app/node_modules/@mcpjam/sdk/dist/index.js":
+      "dist/index.js",
+  });
+  // V8 prints an ESM frame as its module URL and a CommonJS frame as a native
+  // path; Sentry's parser turns the URL into a decoded forward-slash path.
+  const sites = (file: string, line: number) => [
+    `    at PRIVATE_SENTINEL (file:///C:/Program%20Files/${file}:${line}:1)`,
+    `    at PRIVATE_SENTINEL (C:\\Program Files\\${file.replaceAll("/", "\\")}:${line + 1}:1)`,
+  ];
+  const parsed = defaultStackParser(
+    [
+      "Error: PRIVATE_SENTINEL",
+      ...sites("app/node_modules/@mcpjam/sdk/dist/index.js", 10),
+      ...sites("app/dist/index.js", 20),
+      ...sites("other/node_modules/@mcpjam/sdk/dist/index.js", 30),
+    ].join("\n")
+  );
+  const frames = [
+    ...parsed,
+    {
+      filename:
+        "file:///C:/Program%20Files/app/node_modules/@mcpjam/sdk/dist/index.js",
+      lineno: 12,
+    },
+    { filename: "file:///C:/Program%20Files/app/dist/index.js", lineno: 22 },
+  ];
+  const event = rebuildSentryEvent(
+    { exception: { values: [{ type: "Error", stacktrace: { frames } }] } },
+    { files: ["dist/index.js"], frameAliases: aliases }
+  );
+  expect(event).toMatchObject({
+    extra: { dropped_frames: 5 },
+    exception: {
+      values: [
+        {
+          stacktrace: {
+            frames: [11, 10, 12].map((lineno) => ({
+              filename: "dist/index.js",
+              lineno,
+            })),
+          },
+        },
+      ],
+    },
+  });
+  expect(JSON.stringify(event)).not.toMatch(
+    /PRIVATE_SENTINEL|Program|app\/|other/
+  );
 });
