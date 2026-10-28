@@ -4,11 +4,14 @@
  * Mounted only when a project id is available, so ConformancePanel tests
  * (no Convex provider) stay Convex-free. Creates the run on first start,
  * upserts each suite as it settles, heartbeats while work is in flight,
- * and finalizes once every requested suite is terminal.
+ * and finalizes once every requested suite is terminal. A run the page
+ * leaves before it finalizes (navigating away, switching server, closing the
+ * tab) is cancelled, so History does not show it TIMED OUT.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useAction } from "convex/react";
+import { makeFunctionReference } from "convex/server";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { useConformanceRun } from "@/hooks/use-conformance-run";
 import { isHttpServer } from "@/hooks/use-conformance-run";
@@ -25,6 +28,12 @@ export type ConformancePersistConfig = {
 type RunSnapshot = ReturnType<typeof useConformanceRun>;
 
 const HEARTBEAT_MS = 20_000;
+
+const cancelRunMutation = makeFunctionReference<
+  "mutation",
+  { runId: string },
+  { cancelled: boolean; status: string }
+>("conformanceRuns:cancelRun");
 
 function suiteReport(
   kind: "protocol" | "apps" | "tasks" | "oauth",
@@ -154,14 +163,25 @@ export function PersistConformanceRun({
   persist,
   server,
   snapshot,
+  onSavedRun,
 }: {
   persist: ConformancePersistConfig;
   server: ServerWithName;
   snapshot: RunSnapshot;
+  /**
+   * The saved run's id once it is finalized, and null when a new run starts,
+   * so the live view can link to the run it just saved.
+   */
+  onSavedRun?: (runId: string | null) => void;
 }) {
   const startRun = useMutation("conformanceRuns:startRun" as any);
   const heartbeat = useMutation("conformanceRuns:heartbeat" as any);
   const finalizeRun = useMutation("conformanceRuns:finalizeRun" as any);
+  const cancelRun = useMutation(cancelRunMutation);
+  const cancelRunRef = useRef(cancelRun);
+  cancelRunRef.current = cancelRun;
+  const onSavedRunRef = useRef(onSavedRun);
+  onSavedRunRef.current = onSavedRun;
   const upsertReport = useAction("conformanceRuns:upsertReportAction" as any);
 
   const [runId, setRunId] = useState<string | null>(null);
@@ -207,6 +227,7 @@ export function PersistConformanceRun({
     startedVersionRef.current = runVersion;
     runIdRef.current = null;
     setRunId(null);
+    onSavedRunRef.current?.(null);
     uploadedRef.current = new Set();
     pendingUploadsRef.current = new Map();
     suiteUploadsRef.current = new Map();
@@ -357,9 +378,38 @@ export function PersistConformanceRun({
     void Promise.allSettled(uploads).then(() => {
       if (finalizedRef.current) return;
       finalizedRef.current = true;
-      void finalizeRun({ runId });
+      void finalizeRun({ runId })
+        .then(() => {
+          if (runIdRef.current === runId) onSavedRunRef.current?.(runId);
+        })
+        .catch(() => {
+          // Persistence is best-effort; the live results stay on screen.
+        });
     });
   }, [finalizeRun, isRunning, runVersion, server, runId]);
+
+  // A run this page started and never finalized is cancelled when the page
+  // goes away, instead of staying `running` until the backend sweep marks it
+  // `timed_out`. Best effort on tab close, where the request may not leave.
+  // A deployment without `cancelRun` rejects the call; the sweep still runs.
+  useEffect(() => {
+    const cancelIfOpen = () => {
+      const openRunId = runIdRef.current;
+      if (!openRunId || finalizedRef.current) return;
+      finalizedRef.current = true;
+      void Promise.resolve(cancelRunRef.current({ runId: openRunId })).catch(
+        () => {
+          // No cancel on this deployment, or the tab is closing: the stale
+          // sweep closes the run instead.
+        },
+      );
+    };
+    window.addEventListener("beforeunload", cancelIfOpen);
+    return () => {
+      window.removeEventListener("beforeunload", cancelIfOpen);
+      cancelIfOpen();
+    };
+  }, []);
 
   return null;
 }

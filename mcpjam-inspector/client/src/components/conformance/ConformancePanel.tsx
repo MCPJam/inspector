@@ -43,6 +43,7 @@ import {
   type ConformanceView,
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
+import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
 import {
   useConformanceRun,
   type ProtocolVersionPin,
@@ -232,6 +233,10 @@ function ConformanceContent({
   // hook — score.mcpjam.com runs the same four suites and must pool them the
   // same way. Rendering stays here.
   const snapshot = useConformanceRun({ server });
+  // The run `PersistConformanceRun` saved last, so the live view links to it
+  // instead of sending the user to find it in History by time.
+  const [savedRunId, setSavedRunId] = useState<string | null>(null);
+  const navigate = useAppNavigate();
   const {
     protocol,
     apps,
@@ -315,6 +320,7 @@ function ConformanceContent({
           persist={persist}
           server={server}
           snapshot={snapshot}
+          onSavedRun={setSavedRunId}
         />
       ) : null}
       <ConformanceHeader
@@ -351,6 +357,24 @@ function ConformanceContent({
                   }
                   isRunning={isRunning}
                   oauthNotScored={oauthNotScored}
+                  action={
+                    savedRunId && persist ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          navigate(
+                            buildConformanceRunPath(
+                              savedRunId,
+                              persist.projectId,
+                            ),
+                          )
+                        }
+                      >
+                        View saved run
+                      </Button>
+                    ) : null
+                  }
                 />
 
                 {waitingOnAuthorization > 0 && (

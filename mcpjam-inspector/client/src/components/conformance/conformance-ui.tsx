@@ -231,6 +231,7 @@ export function OverallScoreCard({
   version,
   isRunning = false,
   oauthNotScored = false,
+  action,
 }: {
   score: ScoreSummary | undefined;
   serverName: string;
@@ -238,6 +239,8 @@ export function OverallScoreCard({
   version: string;
   isRunning?: boolean;
   oauthNotScored?: boolean;
+  /** Shown at the end of the verdict line, e.g. a link to the saved run. */
+  action?: ReactNode;
 }) {
   const scored = score && score.score !== null ? score : undefined;
   const initials = serverName.replace(/[^a-z0-9]/gi, "").slice(0, 2) || "?";
@@ -307,14 +310,17 @@ export function OverallScoreCard({
           <span className="truncate text-base font-semibold">{serverName}</span>
         </div>
       </div>
-      <div className="text-sm font-medium">
-        {verdict}
-        {notes.length > 0 && (
-          <span className="font-normal text-muted-foreground">
-            {" "}
-            · {notes.join(" · ")}
-          </span>
-        )}
+      <div className="flex items-center justify-between gap-4">
+        <div className="text-sm font-medium">
+          {verdict}
+          {notes.length > 0 && (
+            <span className="font-normal text-muted-foreground">
+              {" "}
+              · {notes.join(" · ")}
+            </span>
+          )}
+        </div>
+        {action}
       </div>
       {scored && scored.applicable > 0 && (
         <div className="absolute inset-x-0 bottom-0 flex h-1.5">
