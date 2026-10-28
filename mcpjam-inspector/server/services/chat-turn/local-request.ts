@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { makeFunctionReference } from "convex/server";
+import { parseResumeExecutionTarget } from "@/shared/execution-target";
 import { createConvexClient } from "../evals/route-helpers.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
@@ -95,10 +96,13 @@ export async function assertStandaloneConversation(
     };
   };
   if (detail.ok !== true) throw new Error("Invalid conversation lookup response");
+  // The legacy local route saved `{ kind: "adhoc" }` on every direct chat.
+  // Without a project it names no managed setup; any other target does.
+  const savedTarget = detail.session?.resumeConfig?.executionTarget;
   if (
     detail.session?.projectId ||
     detail.session?.resumeConfig?.environmentId ||
-    detail.session?.resumeConfig?.executionTarget
+    (savedTarget && parseResumeExecutionTarget(savedTarget)?.kind !== "adhoc")
   ) {
     throw new WebRouteError(
       409,

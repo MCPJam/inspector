@@ -1,6 +1,5 @@
 import type { Context } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
-import { createHash } from "node:crypto";
 import { HOSTED_MODE, WEBMCP_INSPECTOR_ENABLED } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
@@ -150,9 +149,13 @@ export async function runStandaloneTurn(
       "Unable to authenticate this chat. Try again or sign in.",
     );
   }
-  const principal = createHash("sha256")
-    .update(authHeader ?? "local-session")
-    .digest("hex");
+  // A stable identity, never the bearer: a token refreshed between suspend and
+  // resume must still find its continuation (the legacy route's key).
+  const principal =
+    c.get("workosUserId") ??
+    c.get("guestId") ??
+    c.var.requestLogContext?.userId ??
+    "local-anonymous";
   return streamChatTurn(
     {
       manager: c.mcpClientManager,

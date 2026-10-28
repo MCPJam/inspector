@@ -81,4 +81,32 @@ describe("bounded standalone adapter", () => {
     await run();
     await m.stream.mock.calls[0][0].runtime.dispose();
   });
+  it("binds a scope step-up to the user, so a refreshed token still resumes", async () => {
+    const app = new Hono();
+    app.use(async (c, next) => {
+      c.set("workosUserId", "user_1");
+      await next();
+    });
+    app.post("/", (c) =>
+      runStandaloneTurn(c, { ...body, chatSessionId: "chat-1" }),
+    );
+    for (const token of ["Bearer before-refresh", "Bearer after-refresh"]) {
+      await app.request("/", {
+        method: "POST",
+        headers: { authorization: token },
+      });
+    }
+    const [suspend, resume] = m.stream.mock.calls.map(
+      (call) => call[0].runtime.localScopeStepUp.bindingKey as string,
+    );
+    expect(resume).toBe(suspend);
+    expect(suspend).toContain("user_1");
+    expect(suspend).not.toContain("refresh");
+  });
+  it("keeps the legacy anonymous key when no one is signed in", async () => {
+    await run({ chatSessionId: "chat-1" });
+    expect(
+      JSON.parse(m.stream.mock.calls[0][0].runtime.localScopeStepUp.bindingKey),
+    ).toEqual([expect.any(String), "local-anonymous", "chat-1"]);
+  });
 });

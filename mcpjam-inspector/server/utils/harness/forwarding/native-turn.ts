@@ -17,6 +17,7 @@ import {
   type ForwardingOwner,
 } from "./execution-control.js";
 import { startForwardingApprovalPresentation } from "./approval.js";
+import { nativeRpcLogScope } from "./native-rpc-logs.js";
 
 export type NativeForwardingSelection = {
   harnessSessionId: string;
@@ -114,6 +115,8 @@ export async function prepareNativeForwarding(args: {
   return {
     mcpJson,
     keyToServerId,
+    logScopeIds: Object.fromEntries(args.owners.map((owner) =>
+      [owner.serverId, nativeRpcLogScope(owner, args.turnId)])),
     stop: async () => {
       await Promise.all(stop.map((fn) => fn()));
     },

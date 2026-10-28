@@ -15,6 +15,7 @@ import {
   assertStandaloneConversation,
   normalizeLocalManagedRequest,
 } from "../local-request.js";
+import { WebRouteError } from "../../../routes/web/errors.js";
 function request(body: Record<string, unknown>) {
   const app = new Hono();
   app.post("/", async (c) => {
@@ -53,6 +54,36 @@ describe("local saved server identity", () => {
     vi.stubEnv("CONVEX_HTTP_URL", "https://configured.example");
     vi.stubGlobal("fetch", mocks.fetch);
     mocks.bearer.mockResolvedValue("actor-token");
+  });
+  async function standaloneOutcome(session: unknown) {
+    mocks.fetch.mockResolvedValueOnce(Response.json({ ok: true, session }));
+    const app = new Hono();
+    app.get("/", async (c) => {
+      try {
+        await assertStandaloneConversation(c, "chat");
+        return c.json({ outcome: "allowed" });
+      } catch (error) {
+        return c.json({
+          outcome: error instanceof WebRouteError ? error.status : "error",
+        });
+      }
+    });
+    return (await (await app.request("/")).json()).outcome;
+  }
+  it("resumes a pre-cutover direct chat the legacy route saved as ad hoc", async () => {
+    expect(
+      await standaloneOutcome({
+        resumeConfig: { executionTarget: { kind: "adhoc" } },
+      }),
+    ).toBe("allowed");
+  });
+  it.each([
+    { projectId: "p", resumeConfig: { executionTarget: { kind: "adhoc" } } },
+    { resumeConfig: { executionTarget: { kind: "host", hostId: "h" } } },
+    { resumeConfig: { executionTarget: { kind: "unknown" } } },
+    { resumeConfig: { environmentId: "e", executionTarget: { kind: "adhoc" } } },
+  ])("keeps a managed conversation out of standalone execution (%o)", async (session) => {
+    expect(await standaloneOutcome(session)).toBe(409);
   });
   it("allows a new conversation but refuses a backend outage", async () => {
     const app = new Hono();
