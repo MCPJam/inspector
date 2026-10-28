@@ -856,16 +856,26 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     ]);
   });
 
-  it("refuses an unmatched deny name once before starting iterations", async () => {
+  it.each(["missing", "delte_file", "view:", "veiw:make_move"])("refuses unmatched deny name %s before starting iterations", async (name) => {
     await expect(
       runEvalSuiteWithAiSdk({
         ...buildQuickRunConfig(),
-        toolPolicy: { mode: "default", deny: ["missing"] },
+        toolPolicy: { mode: "default", deny: [name] },
       } as any),
     ).rejects.toThrow(
       "TOOL_POLICY_INVALID: Tool policy deny name(s) did not match any available tool",
     );
     expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("defers an explicitly qualified view deny and reports it", async () => {
+    const { payload } = await runPolicyTool({
+      mode: "default",
+      deny: ["view:make_move"],
+    });
+    expect(payload.metadata?.policyWarnings).toEqual([
+      "Tool policy deny name(s) could not be resolved at run start: view:make_move",
+    ]);
   });
 
   it("persists a warning for an unmatched allow name", async () => {
@@ -2124,12 +2134,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
       const opts = runAssistantTurnSpy.mock.calls[0]![0] as any;
       // Computer Use is opt-in (session simulation only). Evals never opt in, so
-      // even a Claude jam driver gets NO computer tools and no advertised gate —
-      // identical to the non-Claude case below. Widget interaction in evals is
-      // expressed deterministically via Interact steps, not model-driven clicks.
+      // even a Claude jam driver gets no computer tools. View-tool discovery
+      // still refreshes before each step on every model.
       expect(opts.tools).not.toHaveProperty("computer");
       expect(opts.tools).not.toHaveProperty("finish_widget");
-      expect(opts.prepareAdvertisedTools).toBeUndefined();
+      expect(opts.prepareAdvertisedTools).toEqual(expect.any(Function));
       // Render observations are model-agnostic — the hook stays attached.
       expect(typeof opts.onToolResult).toBe("function");
     } finally {
@@ -2137,7 +2146,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     }
   });
 
-  it("PR 14: non-Claude jam models get no Computer Use tools or gate (render hook still attached)", async () => {
+  it("non-Claude jam models get view discovery without Computer Use tools", async () => {
     const assistantTurnModule = await import("../../../utils/assistant-turn");
     const runAssistantTurnSpy = vi
       .spyOn(assistantTurnModule, "runAssistantTurn")
@@ -2189,7 +2198,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const opts = runAssistantTurnSpy.mock.calls[0]![0] as any;
       expect(opts.tools).not.toHaveProperty("computer");
       expect(opts.tools).not.toHaveProperty("finish_widget");
-      expect(opts.prepareAdvertisedTools).toBeUndefined();
+      expect(opts.prepareAdvertisedTools).toEqual(expect.any(Function));
       // Render observations are model-agnostic — the hook stays attached.
       expect(typeof opts.onToolResult).toBe("function");
     } finally {

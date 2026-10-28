@@ -1,3 +1,5 @@
+import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
+import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
 import {
   InvalidClientProfileError,
   resolveBrowserHostCapabilities,
@@ -255,6 +257,7 @@ import {
   type SideEffectGate,
 } from "./evals/tool-policy-gate.js";
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
+import { deferredViewToolPolicyNames } from "./evals/view-tool-policy-name.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
@@ -2895,6 +2898,7 @@ const runHostedIteration = async (
       isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number",
   )?.pinnedToolCall?.renderTimeoutMs;
   const browser = await createBrowserSessionContext({
+    enableViewTools: true,
     model: params.test.model,
     mcpClientManager: params.mcpClientManager,
     injectOpenAiCompat: params.injectOpenAiCompat,
@@ -4301,11 +4305,13 @@ export const runEvalSuiteWithAiSdk = async ({
           "computer",
           "finish_widget",
           EVAL_BASH_TOOL_NAME,
+          "widget_tools", "widget_call_tool",
         ]);
         resolvedToolPolicyWarnings = validateToolPolicyNames({
           policy: toolPolicy,
           availableToolNames,
-          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES],
+          // Bare names must still match at launch; only view: names are deferred.
+          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES, ...deferredViewToolPolicyNames(toolPolicy)],
         });
       } catch (error) {
         if (error instanceof UnmatchedToolPolicyNameError) {
@@ -5221,6 +5227,8 @@ const runLocalIteration = async ({
   // Use. Declared BEFORE the
   // try so the finally can dispose even on a mid-stream abort.
   const browser = await createBrowserSessionContext({
+    enableViewTools: true,
+    callWidgetTool: evalWidgetServerCall(toolPolicyGate, mcpClientManager),
     getWorkspacePresentation: () => projectWorkspaceTranscript(acc.conversationMessages, test.hostConfigOverride?.hostContext ?? suiteHostConfig?.hostContext, workspacePresentationHostConfig(suiteHostConfig, test.hostConfigOverride)),
     // Model-free (pinned-only) iterations pass no model: no Computer Use, but
     // the harness still renders pinned widgets and records observations.
@@ -5730,7 +5738,7 @@ const runLocalIteration = async ({
     // matching uniformly — including counting as actuals for extras/negative
     // accounting (a click that fires a tool the case forbade SHOULD fail it).
     const toolsCalledByPromptWithWidgets = mergeToolCallsByPromptIndex(
-      acc.toolsCalledByPrompt,
+      mergeViewToolEvidence(acc.toolsCalledByPrompt, browser.viewToolCalls ?? []),
       widgetToolCallsByPromptIndex(browser.browserInteractionSteps),
     );
     // Per-turn predicate results from step assert execution facts (not a
@@ -6388,6 +6396,8 @@ const runHostedIterationWithBrowser = async (
     annotations: toolAnnotations ?? new Map(),
     ...(toolPolicyWarnings ? { warnings: toolPolicyWarnings } : {}),
   });
+  browser.setWidgetToolCallPolicy(evalWidgetServerCall(toolPolicyGate, mcpClientManager));
+
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -7508,7 +7518,7 @@ const runHostedIterationWithBrowser = async (
   // local path) so a single "tool was called" check covers widget-initiated
   // calls whether authored as an expected tool call or a predicate.
   const toolsCalledByPromptWithWidgets = mergeToolCallsByPromptIndex(
-    toolsCalledByPrompt,
+    mergeViewToolEvidence(toolsCalledByPrompt, browser.viewToolCalls ?? []),
     widgetToolCallsByPromptIndex(browser.browserInteractionSteps),
   );
   const failOnToolError =
