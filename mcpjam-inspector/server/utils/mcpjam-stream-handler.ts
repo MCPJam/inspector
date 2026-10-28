@@ -1316,6 +1316,8 @@ export interface MCPJamHandlerOptions {
     harnessSessionCommit?: HarnessSessionCommitPayload,
   ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
+  /** Starts log delivery only after the harness's MCP route and owner scopes are fixed. */
+  onHarnessMcpReady?: (scopeIds?: Record<string, string>) => void;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;

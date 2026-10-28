@@ -1861,16 +1861,20 @@ export async function streamWebChatTurn(
       // A task can be created on ANY engine path, so unlike the MRTR bridge
       // this one attaches at all three sites, following the elicitation bridge.
       runtime.taskCreatedBridge?.attachStreamWriter(writer);
+    },
+    onHarnessMcpReady: (scopeIds) => {
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
           persist.selectedServerIds,
           runtime.rpcCollector,
+          scopeIds,
         );
         // COMP-21: cross-instance frames (harness-mcp landed on another
         // instance) arrive via the shared Convex sink. No-op single-instance.
         stopCrossInstanceRpcLogPoll = startCrossInstanceRpcLogPoll(
           persist.selectedServerIds,
           runtime.rpcCollector,
+          scopeIds,
         );
       }
     },
