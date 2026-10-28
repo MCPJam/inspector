@@ -1044,7 +1044,7 @@ async function applyLocalRuntimeResolution<
     // Any workspace member can change what a stdio row runs (a plugin
     // component's env included), and it spawns here with the user's
     // privileges, so this device must have approved the exact spec as
-    // configured first (PLB-192). Checked after the secret reveal so env
+    // configured first. Checked after the secret reveal so env
     // VALUES are part of what was approved, and before materialization so a
     // refusal pins no bundle.
     const spec: StdioLaunchSpec = {

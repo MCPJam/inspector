@@ -7,7 +7,7 @@ import {
 } from "@/shared/stdio-command-approval";
 
 /**
- * Per-device approval of a STDIO server's command (PLB-192).
+ * Per-device approval of a STDIO server's command.
  *
  * The local server refuses to spawn a command this device has not approved
  * and answers with the terms it would run. `obtainStdioCommandApproval` shows

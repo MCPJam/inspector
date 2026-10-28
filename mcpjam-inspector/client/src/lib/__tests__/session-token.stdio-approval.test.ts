@@ -1,5 +1,5 @@
 /**
- * The stdio command approval route (PLB-192) re-reads the server row through
+ * The stdio command approval route re-reads the server row through
  * Convex with the caller's bearer, so `authFetch` must attach it the same way
  * it does for `/api/mcp/connect` and `/api/mcp/servers/reconnect`. The first
  * live pass shipped it without a `HOSTED_AUTH_PATH_PREFIXES` entry: the dialog

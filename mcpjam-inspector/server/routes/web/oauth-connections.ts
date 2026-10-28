@@ -84,7 +84,7 @@ for (const op of ["", "/label", "/default", "/delete", "/profile"]) {
               );
               const auth = batch.results[body.serverId];
               // Only an http server holds an OAuth profile; a stdio row would
-              // spawn here outside the command approval gate (PLB-192).
+              // spawn here outside the command approval gate.
               if (
                 !auth?.ok ||
                 !auth.oauthAccessToken ||

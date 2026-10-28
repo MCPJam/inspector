@@ -285,7 +285,7 @@ export function mapErrorToV1(
   }
   return {
     // Inspector-only, so mapped here like the two above: this device has not
-    // approved a stdio server's command (PLB-192). The credential is valid and
+    // approved a stdio server's command. The credential is valid and
     // a retry will not help until a person approves it in the UI.
     code:
       routeError.code === ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED

@@ -1684,7 +1684,7 @@ export function useServerState({
       const resolved = syncedTarget ?? tryResolveProjectServer(serverName);
       if (resolved) {
         // A form save or probe is the user's own action: manual on the check
-        // queue, so a stdio command approval can ask (PLB-192).
+        // queue, so a stdio command approval can ask.
         serverCheckQueue.markManual(resolved.projectId, serverName);
         // Re-resolve WITH the Convex serverId. Callers already applied
         // `withProjectConnectionDefaults`, but they only know the display
@@ -6176,7 +6176,7 @@ export function useServerState({
       }
       // A button's reconnect is manual whatever mark the auto-connect hook
       // left on the check queue; an automatic check never asks for a stdio
-      // command approval (PLB-192).
+      // command approval.
       const manualTarget = tryResolveProjectServer(serverName);
       if (manualTarget)
         serverCheckQueue.markManual(manualTarget.projectId, serverName);
@@ -6277,7 +6277,7 @@ export function useServerState({
         /**
          * The auto-connect hook's batch. Every other caller is an explicit
          * action (an eval Start, a quick run, opening a case) and is marked
-         * manual so a stdio command approval can ask (PLB-192).
+         * manual so a stdio command approval can ask.
          */
         automatic?: boolean;
       },

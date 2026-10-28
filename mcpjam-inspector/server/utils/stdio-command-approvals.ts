@@ -1,5 +1,5 @@
 /**
- * Per-device approval of the command a STDIO server runs (PLB-192).
+ * Per-device approval of the command a STDIO server runs.
  *
  * The approval is keyed by server id and bound to a fingerprint of the exact
  * launch spec, so an edit to the command, its args, its env (names or
@@ -236,4 +236,19 @@ export function stdioCommandApprovalRequired(args: {
     docsAnchor: "/troubleshooting/error-codes",
   };
   return error;
+}
+
+/**
+ * A pending command approval among a tolerant manager's refused servers. It is
+ * a question for the person at the chat, not a server that failed, so a turn
+ * must not quietly run without it.
+ */
+export function pendingStdioCommandApproval(
+  refused: Record<string, unknown> | undefined,
+): WebRouteError | undefined {
+  return Object.values(refused ?? {}).find(
+    (error): error is WebRouteError =>
+      error instanceof WebRouteError &&
+      error.code === ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED,
+  );
 }

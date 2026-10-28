@@ -1,5 +1,5 @@
 /**
- * Per-device approval of the command a STDIO server runs (PLB-192).
+ * Per-device approval of the command a STDIO server runs.
  *
  * A project server's `command`/`args`/`env` is editable by every workspace
  * member, and the local inspector spawns it on this machine with the user's

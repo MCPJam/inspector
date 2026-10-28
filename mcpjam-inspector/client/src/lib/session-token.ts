@@ -363,7 +363,7 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
   // Approving a stdio server's command re-reads its row the same way, with
-  // the caller's bearer (PLB-192). Without this entry Allow answers 401.
+  // the caller's bearer. Without this entry Allow answers 401.
   "/api/mcp/servers/approve-command",
   // Local chat re-calls Convex for host/scenario runtime config and
   // persistence, so resolve its bearer at request time as well.

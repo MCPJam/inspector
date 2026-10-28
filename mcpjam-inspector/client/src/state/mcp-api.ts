@@ -321,7 +321,7 @@ async function localConnectionAttempt(
 }
 
 // A connect the device has not yet approved (a project stdio server's
-// command, PLB-192) is refused with the terms it would run. The dialog runs
+// command) is refused with the terms it would run. The dialog runs
 // BETWEEN attempts, never inside one: an attempt holds a browser slot in the
 // check queue, and a dialog must not hold it (a caller that passes its own
 // `queueSignal` still holds ITS slot while the dialog is open). Auto-connect

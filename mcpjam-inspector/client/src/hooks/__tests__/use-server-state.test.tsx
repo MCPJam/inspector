@@ -5927,13 +5927,13 @@ describe("useServerState XAA identity pair — shared save semantics across all 
   });
 });
 
-// A stdio server's command is approved from a MANUAL check (PLB-192): the
+// A stdio server's command is approved from a MANUAL check: the
 // check queue flags a job automatic from a one-shot mark the auto-connect hook
 // sets, and a mark left behind (the hook marked a server `ensureServersReady`
 // found already connected) made the next explicit connect silent — Save &
 // Connect answered "Connection failed" instead of asking. User-initiated
 // paths assert manual intent themselves.
-describe("manual connect intent (PLB-192)", () => {
+describe("manual connect intent", () => {
   let markManual: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {

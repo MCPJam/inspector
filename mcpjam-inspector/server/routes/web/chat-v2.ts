@@ -238,6 +238,7 @@ import {
 } from "../../utils/harness/runtime-secrets.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { logger } from "../../utils/logger.js";
+import { pendingStdioCommandApproval } from "../../utils/stdio-command-approvals.js";
 import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
 import {
   applyPluginExtensionsToClientCapabilities,
@@ -1681,6 +1682,11 @@ chatV2.post("/", async (c) => {
         ...(executionScope ? { executionScope } : {}),
       },
     );
+    const pendingApproval = pendingStdioCommandApproval(refusedServers);
+    if (pendingApproval) {
+      await manager.disconnectAllServers();
+      throw pendingApproval;
+    }
     if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
       void refreshConnectionProfiles(
         manager,

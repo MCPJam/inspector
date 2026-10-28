@@ -7,7 +7,7 @@ import {
 } from "./helpers/index.js";
 
 // This device has approved every stdio command: the per-device approval gate
-// (PLB-192) has its own suite, local-server-resolver.stdio-approval.test.ts.
+// has its own suite, local-server-resolver.stdio-approval.test.ts.
 vi.mock("../../../utils/stdio-command-approvals.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../utils/stdio-command-approvals.js")>()),
   readStdioLaunchApproval: async () => "approved" as const,

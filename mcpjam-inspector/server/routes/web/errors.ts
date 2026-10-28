@@ -131,7 +131,7 @@ export const ErrorCode = {
   // names the status.
   UPSTREAM_HTTP_ERROR: "UPSTREAM_HTTP_ERROR",
   // A local stdio spawn refused because this device has not approved the
-  // server's current command (PLB-192). 403; the local envelope spreads
+  // server's current command. 403; the local envelope spreads
   // `details`, and the client branches on `reason:
   // "stdio_command_approval_required"` to open the approval dialog, then
   // retries.

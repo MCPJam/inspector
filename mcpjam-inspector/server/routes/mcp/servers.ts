@@ -284,7 +284,7 @@ servers.post("/reconnect", async (c) => {
   });
 });
 
-// Approve, on this device, the command a stdio server runs (PLB-192). Body:
+// Approve, on this device, the command a stdio server runs. Body:
 // {projectId, serverId, serverName, fingerprint}, the fingerprint being the
 // one the connect refusal showed. The row is re-read so the approval binds to
 // what would run NOW; a stale fingerprint gets the current terms back instead.

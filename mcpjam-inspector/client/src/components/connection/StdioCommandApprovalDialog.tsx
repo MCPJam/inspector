@@ -29,7 +29,7 @@ export function formatStdioCommandLine(command: string, args: string[]) {
 
 /**
  * Asks, once per device and per exact command, before the local inspector
- * starts a project STDIO server (PLB-192). Renders the head of the approval
+ * starts a project STDIO server. Renders the head of the approval
  * queue; `obtainStdioCommandApproval` is what enqueues, and the buttons
  * answer it. The dialog is controlled by the queue alone, so a button's own
  * close must not also answer the NEXT prompt: `onOpenChange` is a no-op and
