@@ -41,15 +41,21 @@ vi.mock("@/components/oauth/utils", () => ({
   }),
 }));
 
-vi.mock("convex/react", () => ({
-  useMutation: (name: string) => {
-    if (name === "conformanceRuns:startRun") return startRun;
-    if (name === "conformanceRuns:finalizeRun") return finalizeRun;
-    if (name === "conformanceRuns:cancelRun") return cancelRun;
-    return vi.fn().mockResolvedValue(undefined);
-  },
-  useAction: () => vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock("convex/react", async () => {
+  const { getFunctionName } = await import("convex/server");
+  return {
+    useMutation: (ref: unknown) => {
+      // String names and typed references (makeFunctionReference) both arrive.
+      const name =
+        typeof ref === "string" ? ref : getFunctionName(ref as never);
+      if (name === "conformanceRuns:startRun") return startRun;
+      if (name === "conformanceRuns:finalizeRun") return finalizeRun;
+      if (name === "conformanceRuns:cancelRun") return cancelRun;
+      return vi.fn().mockResolvedValue(undefined);
+    },
+    useAction: () => vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 vi.mock(
   "@/components/conformance/directory-readiness/DirectoryReadinessSection",
