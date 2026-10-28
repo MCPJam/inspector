@@ -1,4 +1,5 @@
-import { useState, useMemo, type ReactNode } from "react";
+import { useEffect, useState, useMemo, type ReactNode } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { Loader2, AlertTriangle } from "lucide-react";
@@ -181,8 +182,10 @@ function SuiteSection({
       onToggle={() => setOverride(!expanded)}
       notice={
         state.status === "error" && state.error ? (
-          <div className="px-4 pb-3 pl-11 text-[13px] text-red-600 dark:text-red-400">
-            {state.error}
+          <div className="px-4 pb-3 pl-11">
+            <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words">
+              {state.error}
+            </div>
           </div>
         ) : null
       }
@@ -287,13 +290,20 @@ function ConformanceContent({
   // so there is no number to pool. Each section owns its own run control and
   // recovers a run still in flight when it mounts, so it shows before the
   // suites have run, too.
-  const readiness = (
+  //
+  // Behind `mcpjam-directory-readiness` again while directory submissions are
+  // a later phase: the page ships protocol conformance first. `=== true`, so
+  // a missing flag (or one PostHog has not hydrated yet) keeps them hidden
+  // rather than flashing them for users the flag excludes.
+  const directoryReadinessEnabled =
+    useFeatureFlagEnabled("mcpjam-directory-readiness") === true;
+  const readiness = directoryReadinessEnabled ? (
     <div className="space-y-4">
       <DirectoryReadinessSection publisher="claude" server={server} />
       <DirectoryReadinessSection publisher="openai" server={server} />
       <DirectoryReadinessSection publisher="muse" server={server} />
     </div>
-  );
+  ) : null;
 
   const runButton = (
     <Button size="sm" onClick={handleRun} disabled={isRunning}>
@@ -362,7 +372,7 @@ function ConformanceContent({
                   </div>
                 )}
 
-                <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card">
+                <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
                   <SuiteSection
                     key={`${runVersion}-protocol`}
                     title={SUITE_COPY.protocol.title}
@@ -490,12 +500,31 @@ function ConformanceContent({
 
             {/* The same slot before and after the first run, so starting it
                 keeps the sections mounted and their selections intact. */}
-            <div className="mt-6">{readiness}</div>
+            {readiness ? <div className="mt-6">{readiness}</div> : null}
           </div>
         )}
       </ConformanceTabPanel>
     </div>
   );
+}
+
+/** The server last run on this page, so the next visit starts there. */
+const LAST_SERVER_KEY = "mcpjam.conformance.lastServer.v1";
+
+function readLastServer(): string | null {
+  try {
+    return window.localStorage.getItem(LAST_SERVER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberServer(name: string): void {
+  try {
+    window.localStorage.setItem(LAST_SERVER_KEY, name);
+  } catch {
+    // Unwritable storage: the page still picks the first connected server.
+  }
 }
 
 export function ConformanceTab({
@@ -524,6 +553,27 @@ export function ConformanceTab({
   // `?view=history` can outlive the History tab, e.g. a run link opened where
   // no history is passed. With the tabs hidden there would be no way back.
   const activeView: ConformanceView = showHistory ? view : "overview";
+
+  // The app-wide selection can be empty, or a server that is not connected,
+  // and the picker then reads "Select a server" while the page still names
+  // another one — two connected servers left people unsure which one ran.
+  // When the selection is not one this page can run, pick for them: the
+  // server last run here if it is connected, otherwise the first connected.
+  const selectionIsOffered = Boolean(
+    server?.name && servers?.some((offered) => offered.name === server.name),
+  );
+  useEffect(() => {
+    if (!servers || servers.length === 0 || !onSelectServer) return;
+    if (selectionIsOffered) return;
+    const remembered = readLastServer();
+    const next =
+      servers.find((offered) => offered.name === remembered) ?? servers[0]!;
+    onSelectServer(next.name);
+  }, [servers, onSelectServer, selectionIsOffered]);
+  useEffect(() => {
+    if (selectionIsOffered && server?.name) rememberServer(server.name);
+  }, [selectionIsOffered, server?.name]);
+
   const serverPicker =
     servers && onSelectServer ? (
       <ConformanceServerPicker

@@ -130,6 +130,27 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.getByText("Run not found")).toBeInTheDocument();
   });
 
+  it("labels an app run as UI, with no Client-reported tag and no Private button", () => {
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    expect(screen.getByText(/· UI$/)).toBeInTheDocument();
+    expect(screen.queryByText(/Inspector ·|· Inspector/)).toBeNull();
+    expect(screen.queryByText(/Client-reported/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Private/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
+  });
+
+  it("keeps a way to stop sharing a run that is already shared", () => {
+    useArtifactQueryMock.mockReturnValue(
+      run([report()], { sharingEnabled: true }),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+    expect(
+      screen.getByRole("button", { name: /Shareable/ }),
+    ).toBeInTheDocument();
+  });
+
   it("names the server from the project's saved servers", () => {
     useArtifactQueryMock.mockReturnValue(run([report()]));
     render(

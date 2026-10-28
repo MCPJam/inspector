@@ -15,6 +15,14 @@ import type {
 } from "@mcpjam/sdk";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
+const { enabledFlags } = vi.hoisted(() => ({
+  enabledFlags: new Set<string>(),
+}));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (key: string) => enabledFlags.has(key),
+}));
+
 const mockRunProtocol = vi.fn();
 const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
@@ -235,6 +243,8 @@ function createStdioServer(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  enabledFlags.clear();
+  window.localStorage.clear();
 });
 
 describe("ConformanceTab", () => {
@@ -447,6 +457,100 @@ describe("ConformanceTab", () => {
     info.mockRestore();
   });
 
+  it("picks the first connected server when nothing usable is selected", () => {
+    const onSelectServer = vi.fn();
+    const servers = [
+      createHttpServer({ name: "alpha" }),
+      createHttpServer({ name: "beta" }),
+    ];
+    render(
+      <ConformanceTab
+        server={null}
+        servers={servers}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    expect(onSelectServer).toHaveBeenCalledWith("alpha");
+  });
+
+  it("returns to the server last run here when it is still connected", () => {
+    window.localStorage.setItem("mcpjam.conformance.lastServer.v1", "beta");
+    const onSelectServer = vi.fn();
+    // A selection that is not connected is not one this page can run.
+    render(
+      <ConformanceTab
+        server={createHttpServer({ name: "gamma" })}
+        servers={[
+          createHttpServer({ name: "alpha" }),
+          createHttpServer({ name: "beta" }),
+        ]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    expect(onSelectServer).toHaveBeenCalledWith("beta");
+  });
+
+  it("keeps a connected selection and remembers it", () => {
+    const onSelectServer = vi.fn();
+    render(
+      <ConformanceTab
+        server={createHttpServer({ name: "beta" })}
+        servers={[
+          createHttpServer({ name: "alpha" }),
+          createHttpServer({ name: "beta" }),
+        ]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    expect(onSelectServer).not.toHaveBeenCalled();
+    expect(
+      window.localStorage.getItem("mcpjam.conformance.lastServer.v1"),
+    ).toBe("beta");
+  });
+
+  it("lists protocol versions newest first, after Auto", async () => {
+    const user = userEvent.setup();
+    render(<ConformanceTab server={createHttpServer()} />);
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    const versions = screen
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(versions[0]).toBe("Auto (negotiated)");
+    const dated = versions.slice(1);
+    expect(dated).toEqual([...dated].sort().reverse());
+    expect(dated[0]).toBe("2026-07-28");
+  });
+
+  it("boxes a not-applicable reason in neutral, never in error red", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        checks: [
+          {
+            id: "modern-no-session-id",
+            category: "transport",
+            title: "No Session Id Minted",
+            description: "A modern server never mints an Mcp-Session-Id.",
+            status: "skipped",
+            skipReason: "not-applicable",
+            durationMs: 0,
+            error: {
+              message: "Not applicable to the legacy era (run pinned to 2025-11-25)",
+            },
+          },
+        ],
+      }),
+    });
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+    fireEvent.click(suiteHeader("protocol"));
+
+    const reason = screen.getByText(/Not applicable to the legacy era/);
+    expect(reason).toHaveClass("text-muted-foreground");
+    expect(reason).not.toHaveClass("text-red-600");
+  });
+
   it("shows every suite once a run starts", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
@@ -459,11 +563,20 @@ describe("ConformanceTab", () => {
     }
   });
 
-  it("shows the readiness sections without a flag of their own", () => {
-    // This file mocks no feature-flag provider, so the sections appearing here
-    // IS the assertion: reaching this page already required
-    // `mcpjam-conformance`, and a second flag would have gated an audience
-    // against itself. If one is ever reintroduced, this fails.
+  it("hides the readiness sections unless mcpjam-directory-readiness is on", () => {
+    // Directory submissions are a later phase than protocol conformance, so
+    // the sections stay out of the page until the flag says otherwise.
+    render(<ConformanceTab server={createHttpServer()} />);
+    expect(
+      screen.getByText("Run your first conformance check"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Claude Directory Readiness")).toBeNull();
+    expect(screen.queryByText("OpenAI Directory Readiness")).toBeNull();
+    expect(screen.queryByText("Muse Directory Readiness")).toBeNull();
+  });
+
+  it("shows the readiness sections when mcpjam-directory-readiness is on", () => {
+    enabledFlags.add("mcpjam-directory-readiness");
     render(<ConformanceTab server={createHttpServer()} />);
 
     // Before any run, too: readiness has its own run control and recovers an
@@ -477,6 +590,7 @@ describe("ConformanceTab", () => {
   });
 
   it("keeps the readiness sections mounted when the first run starts", async () => {
+    enabledFlags.add("mcpjam-directory-readiness");
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
     const before = screen.getByText("OpenAI Directory Readiness");
@@ -819,10 +933,10 @@ describe("ConformanceTab", () => {
     expect(
       screen.getByText("Missing optional output template"),
     ).toBeInTheDocument();
-    // Once in the row's summary line, once in the opened error banner.
+    // Once: the row's message box is the only place it appears, open or shut.
     expect(
       screen.getAllByText("Required tool metadata is missing"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("allows skipped protocol rows to expand", async () => {
@@ -908,7 +1022,7 @@ describe("ConformanceTab", () => {
     ).toBe(false);
     expect(
       screen.getAllByText("Server accepted the mismatched redirect URI."),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("renders warnings on a passed OAuth step without an error banner", async () => {
@@ -1170,11 +1284,18 @@ describe("ConformanceTab", () => {
       .closest("button");
     expect(pendingRow).toHaveTextContent("unscored");
     expect(
-      screen.getByTitle("unscored by this run's profile").closest("button"),
+      screen
+        .getByTitle(/Unscored checks don't count toward the score/)
+        .closest("button"),
     ).toBe(pendingRow);
+    // An unscored finding reads as information, not as a failure that counts.
+    expect(screen.getByText("schema mismatch")).toHaveClass(
+      "text-muted-foreground",
+    );
 
     const scoredRow = screen.getByText("Ping").closest("button");
     expect(scoredRow).not.toHaveTextContent("unscored");
+    expect(screen.getByText("pong missing")).toHaveClass("text-red-600");
   });
 
   it("badges an incomplete tasks run distinctly from a passing one", async () => {

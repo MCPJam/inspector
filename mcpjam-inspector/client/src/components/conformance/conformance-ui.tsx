@@ -57,52 +57,47 @@ export function Collapse({
   );
 }
 
-/** A check's verdict as a small filled circle. */
+/**
+ * A check's verdict as a small filled circle. `muted` keeps the glyph but
+ * drops the color, for a result that is reported without counting (an
+ * unscored check): a red ✕ beside "unscored" read as a failure that counts.
+ */
 export function StatusIcon({
   status,
   skipReason,
+  muted = false,
 }: {
   status: string;
   skipReason?: string;
+  muted?: boolean;
 }) {
   const circle =
     "flex h-4 w-4 shrink-0 items-center justify-center rounded-full";
-  if (status === "passed") {
-    return (
-      <span
-        className={cn(
-          circle,
+  const [color, glyph] =
+    status === "passed"
+      ? [
           "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-        )}
-      >
-        <Check className="h-2.5 w-2.5" strokeWidth={3} />
-      </span>
-    );
-  }
-  if (status === "failed") {
-    return (
-      <span
-        className={cn(circle, "bg-red-500/15 text-red-600 dark:text-red-400")}
-      >
-        <X className="h-2.5 w-2.5" strokeWidth={3} />
-      </span>
-    );
-  }
-  if (skipReason === "could-not-run") {
-    return (
-      <span
-        className={cn(
-          circle,
-          "bg-amber-400/25 text-amber-700 dark:text-amber-400",
-        )}
-      >
-        <span className="text-[10px] leading-none font-bold">!</span>
-      </span>
-    );
-  }
+          <Check className="h-2.5 w-2.5" strokeWidth={3} />,
+        ]
+      : status === "failed"
+        ? [
+            "bg-red-500/15 text-red-600 dark:text-red-400",
+            <X className="h-2.5 w-2.5" strokeWidth={3} />,
+          ]
+        : skipReason === "could-not-run"
+          ? [
+              "bg-amber-400/25 text-amber-700 dark:text-amber-400",
+              <span className="text-[10px] leading-none font-bold">!</span>,
+            ]
+          : [
+              "bg-muted text-muted-foreground",
+              <Minus className="h-2.5 w-2.5" strokeWidth={3} />,
+            ];
   return (
-    <span className={cn(circle, "bg-muted text-muted-foreground")}>
-      <Minus className="h-2.5 w-2.5" strokeWidth={3} />
+    <span
+      className={cn(circle, muted ? "bg-muted text-muted-foreground" : color)}
+    >
+      {glyph}
     </span>
   );
 }
@@ -274,7 +269,7 @@ export function OverallScoreCard({
   ].filter(Boolean);
 
   return (
-    <div className="relative flex flex-col gap-4.5 overflow-hidden rounded-lg border border-border bg-card px-6 pt-6 pb-5">
+    <div className="relative flex flex-col gap-4.5 overflow-hidden rounded-lg border border-border bg-popover px-6 pt-6 pb-5">
       <div className="text-[11px] font-semibold tracking-[0.08em] text-primary">
         OVERALL SCORE · PROTOCOL {version.toUpperCase()}
       </div>

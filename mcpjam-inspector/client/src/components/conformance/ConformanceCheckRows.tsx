@@ -55,6 +55,38 @@ function formatDetailValue(value: unknown) {
   }
 }
 
+/**
+ * A check's message, once, as a box under its title. The page used to print
+ * it twice — bold red text on the row, and the same text again in a box when
+ * expanded — and boxed every message in red, so "not applicable to this era"
+ * read as an error. Red now means a failure that counts; anything else (a
+ * skip reason, an unscored check's finding) is the neutral box. Clamped while
+ * the row is shut, in full once it is open.
+ */
+function ResultMessage({
+  message,
+  tone,
+  expanded,
+}: {
+  message: string;
+  tone: "error" | "neutral";
+  expanded: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "block rounded-sm border px-2 py-1.5 text-xs whitespace-pre-wrap break-words",
+        tone === "error"
+          ? "border-red-500/20 bg-red-500/5 text-red-600 dark:text-red-400"
+          : "border-border/60 bg-muted/30 text-muted-foreground",
+        !expanded && "line-clamp-2",
+      )}
+    >
+      {message}
+    </span>
+  );
+}
+
 export function pendingIdSet(
   result: { profile?: { pendingCheckIds?: string[] } } | undefined,
 ): Set<string> {
@@ -81,11 +113,15 @@ export function CheckRow({
         aria-expanded={expanded}
       >
         <span className="mt-0.5">
-          <StatusIcon status={check.status} skipReason={check.skipReason} />
+          <StatusIcon
+            status={check.status}
+            skipReason={check.skipReason}
+            muted={pending}
+          />
         </span>
         {pending ? (
           <span
-            title="unscored by this run's profile"
+            title="Reported for information only. Unscored checks don't count toward the score or the verdict."
             className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-[10px] leading-none text-muted-foreground"
           >
             unscored
@@ -102,14 +138,14 @@ export function CheckRow({
           >
             {check.title}
           </span>
-          {check.status === "failed" && check.error ? (
-            <span className="text-[13px] font-medium text-red-600 dark:text-red-400 line-clamp-2">
-              {check.error.message}
-            </span>
-          ) : check.skipReason === "could-not-run" && check.error ? (
-            <span className="text-[13px] text-muted-foreground line-clamp-2">
-              {check.error.message}
-            </span>
+          {check.error ? (
+            <ResultMessage
+              message={check.error.message}
+              tone={
+                check.status === "failed" && !pending ? "error" : "neutral"
+              }
+              expanded={expanded}
+            />
           ) : null}
         </span>
         <span className="flex-shrink-0 pt-0.5 text-[10px] text-muted-foreground">
@@ -151,11 +187,6 @@ export function CheckRow({
             </div>
           )}
 
-          {check.error && (
-            <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-400 whitespace-pre-wrap break-words">
-              {check.error.message}
-            </div>
-          )}
         </div>
       </Collapse>
     </div>
@@ -178,14 +209,12 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="text-[13px]">{step.title}</span>
-          {step.status === "failed" && step.error ? (
-            <span className="text-[13px] font-medium text-red-600 dark:text-red-400 line-clamp-2">
-              {step.error.message}
-            </span>
-          ) : step.skipReason === "could-not-run" && step.error ? (
-            <span className="text-[13px] text-muted-foreground line-clamp-2">
-              {step.error.message}
-            </span>
+          {step.error ? (
+            <ResultMessage
+              message={step.error.message}
+              tone={step.status === "failed" ? "error" : "neutral"}
+              expanded={expanded}
+            />
           ) : null}
         </span>
         <span className="flex-shrink-0 pt-0.5 text-[10px] text-muted-foreground">
@@ -262,11 +291,6 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
             </div>
           )}
 
-          {step.error && (
-            <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-400 whitespace-pre-wrap break-words">
-              {step.error.message}
-            </div>
-          )}
         </div>
       </Collapse>
     </div>

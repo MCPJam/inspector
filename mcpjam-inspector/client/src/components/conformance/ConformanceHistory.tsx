@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAction, useQuery } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { Loader2, Lock, Share2 } from "lucide-react";
+import { Loader2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -68,7 +68,7 @@ export type ConformanceRunListItem = {
 
 /** Where a run came from, in the words the History table uses. */
 const HISTORY_SOURCE_LABEL: Record<string, string> = {
-  ui: "Inspector",
+  ui: "UI",
   sdk: "SDK",
   cli: "CLI",
   github_action: "GitHub",
@@ -363,24 +363,19 @@ export function ConformanceRunDetailPage({
               >
                 <Share2 className="size-3.5" aria-hidden /> Share
               </Button>
-            ) : (
+            ) : detail.sharingEnabled ? (
+              // No "Private" control: a private run is the default and needs
+              // no button. A run already shared keeps this one, so its link
+              // can still be turned off.
               <Button
-                variant={detail.sharingEnabled ? "secondary" : "outline"}
+                variant="secondary"
                 size="sm"
                 disabled={shareBusy || !finished}
-                onClick={() => void copyShare(!detail.sharingEnabled)}
+                onClick={() => void copyShare(false)}
               >
-                {detail.sharingEnabled ? (
-                  <>
-                    <Share2 className="size-3.5" aria-hidden /> Shareable
-                  </>
-                ) : (
-                  <>
-                    <Lock className="size-3.5" aria-hidden /> Private
-                  </>
-                )}
+                <Share2 className="size-3.5" aria-hidden /> Shareable
               </Button>
-            )}
+            ) : null}
             <Button size="sm" onClick={() => navigate("/conformance")}>
               Run again
             </Button>
@@ -389,9 +384,6 @@ export function ConformanceRunDetailPage({
         <p className="text-sm text-muted-foreground">
           {detailDateFormat.format(detail.createdAt)} ·{" "}
           {HISTORY_SOURCE_LABEL[detail.source] ?? detail.source}
-          {detail.verification === "client_reported"
-            ? " · Client-reported"
-            : ""}
         </p>
       </div>
       {unifiedShare ? (
@@ -450,7 +442,7 @@ export function ConformanceRunDetailPage({
           </p>
         ) : null}
 
-        <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card">
+        <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
           {detail.reports.map((report) => (
             <SavedSuiteRow
               key={report.suiteKind}
