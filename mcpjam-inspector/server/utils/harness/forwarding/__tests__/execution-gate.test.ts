@@ -377,3 +377,34 @@ describe("forwarded execution gate", () => {
     }
   });
 });
+
+it("observes an ask that rejects after cancellation during approval registration", async () => {
+  const f = fixture(true);
+  const abort = new AbortController();
+  f.control.requestApproval.mockImplementation(
+    async (_id, nonceHash, expiresAt) => {
+      abort.abort(new Error("cancelled during registration"));
+      return { nonceHash, expiresAt, state: "pending" };
+    },
+  );
+  await expect(
+    executeForwardedOperation({
+      ...f,
+      operation,
+      signal: abort.signal,
+      approval: {
+        binding,
+        ask: async ({ signal }) => {
+          signal.throwIfAborted();
+          throw new Error("unreachable");
+        },
+      },
+    }),
+  ).rejects.toThrow("cancelled during registration");
+  expect(f.dispatch).not.toHaveBeenCalled();
+  expect(f.control.decideApproval).toHaveBeenCalledWith(
+    "execution",
+    expect.any(String),
+    "cancelled",
+  );
+});

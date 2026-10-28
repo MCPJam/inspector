@@ -41,11 +41,6 @@ export type GateApproval = {
 function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
-    if (signal.aborted) {
-      abort();
-      return;
-    }
-    signal.addEventListener("abort", abort, { once: true });
     promise.then(
       (value) => {
         signal.removeEventListener("abort", abort);
@@ -56,6 +51,9 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
         reject(error);
       },
     );
+    // Observe an already-created ask promise even when cancellation won first.
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
   });
 }
 
