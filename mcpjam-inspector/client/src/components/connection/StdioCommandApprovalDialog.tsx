@@ -42,6 +42,10 @@ export function StdioCommandApprovalDialog() {
   const settle = useStdioCommandApprovalStore((state) => state.settle);
   if (!prompt) return null;
   const { serverName, terms } = prompt;
+  const codeLoading = Object.entries(terms.codeLoadingEnv ?? {});
+  const hiddenEnvNames = terms.envNames.filter(
+    (name) => !codeLoading.some(([shown]) => shown === name),
+  );
   // The second click of a double click lands on the NEXT prompt's button,
   // answering a command nobody read.
   const answer = (allowed: boolean) => (event: { detail: number }) => {
@@ -72,14 +76,30 @@ export function StdioCommandApprovalDialog() {
           <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-xs">
             {formatStdioCommandLine(terms.command, terms.args)}
           </pre>
-          {terms.envNames.length > 0 && (
+          {hiddenEnvNames.length > 0 && (
             <p className="text-muted-foreground">
               Environment variables:{" "}
               <span className="font-mono">
-                {terms.envNames.map(shellWord).join(", ")}
+                {hiddenEnvNames.map(shellWord).join(", ")}
               </span>{" "}
               (values hidden)
             </p>
+          )}
+          {codeLoading.length > 0 && (
+            <div className="space-y-1 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-foreground">
+              <p className="font-medium">
+                {codeLoading.length === 1
+                  ? "This variable can make the command load other code. Allow only if you expected this value."
+                  : "These variables can make the command load other code. Allow only if you expected these values."}
+              </p>
+              <pre className="whitespace-pre-wrap break-all font-mono text-xs">
+                {codeLoading
+                  .map(
+                    ([name, value]) => `${shellWord(name)}=${shellWord(value)}`,
+                  )
+                  .join("\n")}
+              </pre>
+            </div>
           )}
           {terms.changedEnvNames && terms.changedEnvNames.length > 0 && (
             <p className="font-medium">

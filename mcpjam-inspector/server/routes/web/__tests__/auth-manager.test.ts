@@ -57,7 +57,7 @@ import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../..
 // has its own suite, local-server-resolver.stdio-approval.test.ts.
 vi.mock("../../../utils/stdio-command-approvals.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../utils/stdio-command-approvals.js")>()),
-  readStdioLaunchApproval: async () => "approved" as const,
+  checkStdioLaunchApproval: async () => ({ approval: "approved" as const }),
 }));
 
 // Faithful Hono Context stub: `get`, `var`, and `set` all read/write the same

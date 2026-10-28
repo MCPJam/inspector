@@ -6,8 +6,7 @@ import { join } from "node:path";
 import { createMockMcpClientManager, createTestApp } from "./helpers/index.js";
 import {
   approveStdioLaunch,
-  readChangedEnvNames,
-  readStdioLaunchApproval,
+  checkStdioLaunchApproval,
   stdioLaunchFingerprint,
 } from "../../../utils/stdio-command-approvals.js";
 
@@ -93,13 +92,17 @@ describe("POST /api/mcp/servers/approve-command", () => {
     const res = await post({ ...validBody, fingerprint: undefined });
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ success: false });
-    expect(await readStdioLaunchApproval(SERVER_ID, FINGERPRINT)).toBe("none");
+    expect((await checkStdioLaunchApproval(SERVER_ID, SPEC)).approval).toBe(
+      "none",
+    );
   });
 
   it("returns 401 without a bearer", async () => {
     const res = await post(validBody, false);
     expect(res.status).toBe(401);
-    expect(await readStdioLaunchApproval(SERVER_ID, FINGERPRINT)).toBe("none");
+    expect((await checkStdioLaunchApproval(SERVER_ID, SPEC)).approval).toBe(
+      "none",
+    );
   });
 
   it("records the approval when the fingerprint still matches the stored command", async () => {
@@ -109,10 +112,10 @@ describe("POST /api/mcp/servers/approve-command", () => {
       success: true,
       fingerprint: FINGERPRINT,
     });
-    expect(await readStdioLaunchApproval(SERVER_ID, FINGERPRINT)).toBe(
-      "approved",
-    );
-    expect(await readChangedEnvNames(SERVER_ID, SPEC.env)).toEqual([]);
+    expect(await checkStdioLaunchApproval(SERVER_ID, SPEC)).toEqual({
+      approval: "approved",
+      fingerprint: FINGERPRINT,
+    });
   });
 
   it("returns 409 with the current terms when the command moved since the dialog was shown", async () => {
@@ -135,7 +138,9 @@ describe("POST /api/mcp/servers/approve-command", () => {
       },
     });
     expect(JSON.stringify(body)).not.toContain("bar");
-    expect(await readStdioLaunchApproval(SERVER_ID, FINGERPRINT)).toBe("none");
+    expect((await checkStdioLaunchApproval(SERVER_ID, SPEC)).approval).toBe(
+      "none",
+    );
   });
 
   it("names the env variables whose value changed since this device approved the server", async () => {
@@ -165,6 +170,8 @@ describe("POST /api/mcp/servers/approve-command", () => {
 
     const res = await post(validBody);
     expect(res.status).toBe(409);
-    expect(await readStdioLaunchApproval(SERVER_ID, FINGERPRINT)).toBe("none");
+    expect((await checkStdioLaunchApproval(SERVER_ID, SPEC)).approval).toBe(
+      "none",
+    );
   });
 });

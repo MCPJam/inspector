@@ -24,7 +24,6 @@ export interface StdioCommandApprovalPrompt {
 interface PendingPrompt extends StdioCommandApprovalPrompt {
   /** Keys the dialog, so the next prompt mounts fresh instead of in place. */
   id: number;
-  answer: Promise<boolean>;
   resolve: (allowed: boolean) => void;
 }
 
@@ -40,27 +39,12 @@ let promptSequence = 0;
 export const useStdioCommandApprovalStore = create<StdioCommandApprovalState>(
   (set, get) => ({
     queue: [],
-    request: (prompt) => {
-      // Concurrent connects or chat columns refused for the same command share
-      // one dialog rather than asking the same question again.
-      const pending = get().queue.find(
-        (queued) =>
-          queued.terms.serverId === prompt.terms.serverId &&
-          queued.terms.fingerprint === prompt.terms.fingerprint,
-      );
-      if (pending) return pending.answer;
-      let resolve!: (allowed: boolean) => void;
-      const answer = new Promise<boolean>((done) => {
-        resolve = done;
-      });
-      set((state) => ({
-        queue: [
-          ...state.queue,
-          { ...prompt, id: ++promptSequence, answer, resolve },
-        ],
-      }));
-      return answer;
-    },
+    request: (prompt) =>
+      new Promise<boolean>((resolve) => {
+        set((state) => ({
+          queue: [...state.queue, { ...prompt, id: ++promptSequence, resolve }],
+        }));
+      }),
     settle: (allowed) => {
       const [head, ...rest] = get().queue;
       if (!head) return;
@@ -73,6 +57,14 @@ export const useStdioCommandApprovalStore = create<StdioCommandApprovalState>(
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
+function readStringRecord(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string",
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
 export function readStdioCommandApprovalTerms(
   result: unknown,
 ): StdioCommandApprovalTerms | null {
@@ -80,6 +72,7 @@ export function readStdioCommandApprovalTerms(
   const record = result as Record<string, unknown>;
   if (record.reason !== STDIO_COMMAND_APPROVAL_REQUIRED_REASON) return null;
   const approval = record.approval as Record<string, unknown> | undefined;
+  const codeLoadingEnv = readStringRecord(approval?.codeLoadingEnv);
   if (
     !approval ||
     typeof approval !== "object" ||
@@ -100,6 +93,7 @@ export function readStdioCommandApprovalTerms(
     ...(isStringArray(approval.changedEnvNames)
       ? { changedEnvNames: approval.changedEnvNames }
       : {}),
+    ...(codeLoadingEnv ? { codeLoadingEnv } : {}),
     ...(typeof approval.cwd === "string" ? { cwd: approval.cwd } : {}),
     previouslyApproved: approval.previouslyApproved === true,
   };
@@ -142,8 +136,7 @@ async function approveStdioCommand(args: {
 // command in constant flux cannot loop the dialog forever.
 const MAX_APPROVAL_ROUNDS = 3;
 
-/** True when this device now holds an approval for the server's current command. */
-export async function obtainStdioCommandApproval(
+async function askAndApprove(
   prompt: StdioCommandApprovalPrompt,
 ): Promise<boolean> {
   let terms = prompt.terms;
@@ -152,52 +145,67 @@ export async function obtainStdioCommandApproval(
       .getState()
       .request({ ...prompt, terms });
     if (!allowed) return false;
-    const outcome = await approveStdioCommand({
-      projectId: prompt.projectId,
-      serverId: terms.serverId,
-      serverName: prompt.serverName,
-      fingerprint: terms.fingerprint,
-    });
+    let outcome: Awaited<ReturnType<typeof approveStdioCommand>>;
+    try {
+      outcome = await approveStdioCommand({
+        projectId: prompt.projectId,
+        serverId: terms.serverId,
+        serverName: prompt.serverName,
+        fingerprint: terms.fingerprint,
+      });
+    } catch {
+      // The request never reached the local server.
+      outcome = { ok: false, error: APPROVAL_FAILED_MESSAGE, terms: null };
+    }
     if (outcome.ok) return true;
-    if (!outcome.terms) throw new Error(outcome.error);
+    if (!outcome.terms) {
+      // The caller keeps the refusal it already holds, so the server stays
+      // marked as not approved.
+      toast.error(outcome.error);
+      return false;
+    }
     terms = outcome.terms;
   }
   return false;
 }
 
+const inFlight = new Map<string, Promise<boolean>>();
+
 /**
- * A chat turn the web route refused because this device has not approved a
- * stdio server's command. A plugin's local component spawns only there, with
- * no Connect to ask from, so the chat asks; the user then sends again.
+ * True when this device now holds an approval for the server's current
+ * command. Concurrent connects or chat columns refused for the same command
+ * share one dialog and one approval request.
+ */
+export function obtainStdioCommandApproval(
+  prompt: StdioCommandApprovalPrompt,
+): Promise<boolean> {
+  const key = `${prompt.terms.serverId}:${prompt.terms.fingerprint}`;
+  let pending = inFlight.get(key);
+  if (!pending) {
+    pending = askAndApprove(prompt).finally(() => inFlight.delete(key));
+    inFlight.set(key, pending);
+  }
+  return pending;
+}
+
+/**
+ * A chat turn refused because this device has not approved a stdio server's
+ * command. A plugin's local component spawns only in a chat, with no Connect
+ * to ask from, so the chat asks; the user then sends again. `details` is the
+ * refusal's, as the chat's error handler parsed it.
  */
 export async function askStdioCommandApprovalForChatError(
-  error: Error,
+  details: unknown,
   projectId: string,
 ): Promise<void> {
-  const start = error.message.indexOf("{");
-  if (start < 0) return;
-  let details: Record<string, unknown> | undefined;
-  try {
-    details = JSON.parse(error.message.slice(start))?.details;
-  } catch {
-    return;
-  }
   const terms = readStdioCommandApprovalTerms(details);
   if (!terms) return;
-  try {
-    const allowed = await obtainStdioCommandApproval({
-      projectId,
-      serverName:
-        typeof details?.serverName === "string"
-          ? details.serverName
-          : terms.serverId,
-      terms,
-    });
-    if (allowed)
-      toast.success("Allowed on this device. Send your message again.");
-  } catch (failure) {
-    toast.error(
-      failure instanceof Error ? failure.message : APPROVAL_FAILED_MESSAGE,
-    );
-  }
+  const serverName = (details as { serverName?: unknown }).serverName;
+  const allowed = await obtainStdioCommandApproval({
+    projectId,
+    serverName: typeof serverName === "string" ? serverName : terms.serverId,
+    terms,
+  });
+  if (allowed)
+    toast.success("Allowed on this device. Send your message again.");
 }

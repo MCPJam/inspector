@@ -3585,31 +3585,34 @@ export function useChatSession(
       reportChatFailure(chatError, lastChatResponseRef.current);
       logPluginChatFailure(chatError, appMessageTurnRef.current);
 
-      // Try to recover a structured limitKind from a JSON-shaped error message
-      // so the concurrency carve-out is honored on the SSE error path. Best
-      // effort: untouched if the message isn't JSON.
-      let limitKind: "total" | "concurrency" | undefined;
+      // Try to recover the structured body from a JSON-shaped error message:
+      // its limitKind honors the concurrency carve-out on the SSE error path,
+      // and its details carry a stdio command approval. Best effort:
+      // untouched if the message isn't JSON.
+      let parsed: { limitKind?: unknown; details?: unknown } | undefined;
       const jsonStart = chatError.message.indexOf("{");
       if (jsonStart >= 0) {
         try {
-          const parsed = JSON.parse(chatError.message.slice(jsonStart));
-          if (parsed && typeof parsed === "object") {
-            const value = (parsed as { limitKind?: unknown }).limitKind;
-            if (value === "total" || value === "concurrency") {
-              limitKind = value;
-            }
-          }
+          const value: unknown = JSON.parse(chatError.message.slice(jsonStart));
+          if (value && typeof value === "object") parsed = value;
         } catch {
           // not JSON; ignore
         }
       }
+      const limitKind =
+        parsed?.limitKind === "total" || parsed?.limitKind === "concurrency"
+          ? parsed.limitKind
+          : undefined;
       notifyMCPJamLimitError({
         message: chatError.message,
         limitKind,
         ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
       });
       if (hostedProjectId) {
-        void askStdioCommandApprovalForChatError(chatError, hostedProjectId);
+        void askStdioCommandApprovalForChatError(
+          parsed?.details,
+          hostedProjectId,
+        );
       }
     },
     [hostedScenarioId, hostedProjectId],

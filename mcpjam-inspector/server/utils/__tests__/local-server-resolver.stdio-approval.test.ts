@@ -245,6 +245,23 @@ describe("stdio command approval gate", () => {
       expect(error.message).toContain("Use it in a chat");
     });
 
+    it("points a component with no root placeholder at the chat as well", async () => {
+      stubAuthorize({
+        transportType: "stdio",
+        command: "npx",
+        args: ["some-pkg"],
+        env: {},
+        pluginComponent: true,
+      });
+      const error: any = await resolveLocalStdioServerConfig(
+        "bearer-xyz",
+        "proj-1",
+        "srv-stdio",
+      ).catch((e) => e);
+      expect(error.code).toBe("STDIO_COMMAND_APPROVAL_REQUIRED");
+      expect(error.message).toContain("Use it in a chat");
+    });
+
     it("asks again when only the env changed", async () => {
       await approveStdioLaunch("srv-stdio", { ...PLUGIN_SPEC, env: {} });
 

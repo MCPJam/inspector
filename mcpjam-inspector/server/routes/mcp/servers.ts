@@ -19,10 +19,11 @@ import {
 } from "../../utils/local-server-resolver.js";
 import {
   approveStdioLaunch,
-  readChangedEnvNames,
-  readStdioLaunchApproval,
+  checkStdioLaunchApproval,
+  FINGERPRINT_PATTERN,
   stdioCommandApprovalTerms,
   stdioLaunchFingerprint,
+  toStdioLaunchSpec,
 } from "../../utils/stdio-command-approvals.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { STDIO_COMMAND_APPROVAL_REQUIRED_REASON } from "../../../shared/stdio-command-approval.js";
@@ -308,7 +309,7 @@ servers.post("/approve-command", async (c) => {
     return respondWithLocalRouteError(c, parsed.error);
   }
   const claimed = (body as Record<string, unknown>).fingerprint;
-  if (typeof claimed !== "string" || !/^[0-9a-f]{64}$/.test(claimed)) {
+  if (typeof claimed !== "string" || !FINGERPRINT_PATTERN.test(claimed)) {
     return respondWithLocalRouteError(
       c,
       new WebRouteError(
@@ -327,17 +328,13 @@ servers.post("/approve-command", async (c) => {
       serverId,
       serverDisplayName,
     });
-    const spec = {
-      command: launch.command,
-      args: launch.args,
-      env: launch.env,
-      ...(launch.workingDirectory !== undefined
-        ? { cwd: launch.workingDirectory }
-        : {}),
-    };
+    const spec = toStdioLaunchSpec({ ...launch, cwd: launch.workingDirectory });
     const fingerprint = stdioLaunchFingerprint(spec);
     if (fingerprint !== claimed) {
-      const approval = await readStdioLaunchApproval(serverId, fingerprint);
+      const { approval, changedEnvNames } = await checkStdioLaunchApproval(
+        serverId,
+        spec,
+      );
       // Another tab may have approved the current command already.
       if (approval === "approved") {
         return c.json({ success: true, fingerprint });
@@ -356,14 +353,7 @@ servers.post("/approve-command", async (c) => {
               spec,
               fingerprint,
               approval,
-              ...(approval === "changed"
-                ? {
-                    changedEnvNames: await readChangedEnvNames(
-                      serverId,
-                      spec.env
-                    ),
-                  }
-                : {}),
+              changedEnvNames,
             }),
           }
         )

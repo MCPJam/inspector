@@ -97,11 +97,9 @@ import {
   type PluginStdioLaunchSpec,
 } from "../services/plugins/plugin-root.js";
 import {
-  readChangedEnvNames,
-  readStdioLaunchApproval,
+  checkStdioLaunchApproval,
   stdioCommandApprovalRequired,
-  stdioLaunchFingerprint,
-  type StdioLaunchSpec,
+  toStdioLaunchSpec,
 } from "./stdio-command-approvals.js";
 import {
   requireServiceCredential,
@@ -1047,30 +1045,25 @@ async function applyLocalRuntimeResolution<
     // configured first. Checked after the secret reveal so env
     // VALUES are part of what was approved, and before materialization so a
     // refusal pins no bundle.
-    const spec: StdioLaunchSpec = {
-      command: stdioConfig.command,
-      args: stdioConfig.args ?? [],
-      env: stdioConfig.env ?? {},
-      ...(stdioConfig.cwd !== undefined ? { cwd: stdioConfig.cwd } : {}),
-    };
-    const fingerprint = stdioLaunchFingerprint(spec);
-    const approval = await readStdioLaunchApproval(serverId, fingerprint);
-    if (approval !== "approved") {
+    const spec = toStdioLaunchSpec(stdioConfig);
+    const check = await checkStdioLaunchApproval(serverId, spec);
+    if (check.approval !== "approved") {
       throw stdioCommandApprovalRequired({
         serverId,
         serverDisplayName: args.serverDisplayName ?? args.managerKey,
         spec,
-        fingerprint,
-        approval,
-        ...(approval === "changed"
-          ? { changedEnvNames: await readChangedEnvNames(serverId, spec.env) }
-          : {}),
-        pluginComponent: needsPluginRoot({
-          command: spec.command,
-          args: spec.args,
-          env: spec.env,
-          workingDirectory: spec.cwd,
-        }),
+        fingerprint: check.fingerprint,
+        approval: check.approval,
+        changedEnvNames: check.changedEnvNames,
+        // The same test materialization applies below.
+        pluginComponent:
+          stdioConfig.pluginComponent === true ||
+          needsPluginRoot({
+            command: spec.command,
+            args: spec.args,
+            env: spec.env,
+            workingDirectory: spec.cwd,
+          }),
       });
     }
     const materialized = await materializePluginStdioForConnect({

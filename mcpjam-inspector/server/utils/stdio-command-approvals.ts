@@ -9,7 +9,7 @@
  * `applyLocalRuntimeResolution`, which enforces it.
  */
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { lock } from "proper-lockfile";
@@ -31,6 +31,21 @@ export interface StdioLaunchSpec {
   cwd?: string;
 }
 
+/** The one way a stdio config becomes the spec that is fingerprinted and approved. */
+export function toStdioLaunchSpec(config: {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+}): StdioLaunchSpec {
+  return {
+    command: config.command,
+    args: config.args ?? [],
+    env: config.env ?? {},
+    ...(config.cwd !== undefined ? { cwd: config.cwd } : {}),
+  };
+}
+
 export function stdioLaunchFingerprint(spec: StdioLaunchSpec): string {
   const env = Object.fromEntries(
     Object.entries(spec.env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
@@ -42,6 +57,13 @@ export function stdioLaunchFingerprint(spec: StdioLaunchSpec): string {
 
 /** `changed` means this device approved an earlier version of the command. */
 export type StdioLaunchApproval = "approved" | "changed" | "none";
+
+export interface StdioLaunchCheck {
+  approval: StdioLaunchApproval;
+  fingerprint: string;
+  /** Env names added, changed or removed since the last approval, when `changed`. */
+  changedEnvNames?: string[];
+}
 
 interface PersistedApprovals {
   version: 1;
@@ -62,7 +84,7 @@ function envValueHash(name: string, value: string): string {
     .digest("hex");
 }
 
-const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
+export const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 
 export function createStdioCommandApprovalStore(filePath: () => string) {
   const serialize = createCapabilityMutationLock();
@@ -70,7 +92,8 @@ export function createStdioCommandApprovalStore(filePath: () => string) {
   /**
    * `strict` is for `approve`, which rewrites the file from what this returns:
    * a read that failed for any reason but a missing file must not drop every
-   * other server's approval.
+   * other server's approval, and a file that does not parse is moved aside so
+   * what it held can still be recovered by hand.
    */
   async function readApprovals(
     strict = false,
@@ -83,47 +106,49 @@ export function createStdioCommandApprovalStore(filePath: () => string) {
         throw error;
       return {};
     }
+    let approvals: unknown;
     try {
-      const parsed: unknown = JSON.parse(text);
-      const approvals = (parsed as Partial<PersistedApprovals> | null)
+      approvals = (JSON.parse(text) as Partial<PersistedApprovals> | null)
         ?.approvals;
-      if (!approvals || typeof approvals !== "object") return {};
-      return Object.fromEntries(
-        Object.entries(approvals).filter(
-          ([, entry]) =>
-            typeof entry?.fingerprint === "string" &&
-            FINGERPRINT_PATTERN.test(entry.fingerprint),
-        ),
-      );
     } catch {
+      approvals = undefined;
+    }
+    if (!approvals || typeof approvals !== "object") {
+      if (strict) await rename(filePath(), `${filePath()}.unreadable`);
       return {};
     }
+    return Object.fromEntries(
+      Object.entries(approvals as PersistedApprovals["approvals"]).filter(
+        ([, entry]) =>
+          typeof entry?.fingerprint === "string" &&
+          FINGERPRINT_PATTERN.test(entry.fingerprint),
+      ),
+    );
   }
 
   async function read(
     serverId: string,
-    fingerprint: string,
-  ): Promise<StdioLaunchApproval> {
-    const stored = (await readApprovals())[serverId]?.fingerprint;
-    if (stored === undefined) return "none";
-    return stored === fingerprint ? "approved" : "changed";
-  }
-
-  /** Env names added, changed or removed since the last approval. */
-  async function changedEnvNames(
-    serverId: string,
-    env: Record<string, string>,
-  ): Promise<string[]> {
-    const stored = (await readApprovals())[serverId]?.envValueHashes;
+    spec: StdioLaunchSpec,
+  ): Promise<StdioLaunchCheck> {
+    const fingerprint = stdioLaunchFingerprint(spec);
+    const stored = (await readApprovals())[serverId];
+    if (!stored) return { approval: "none", fingerprint };
+    if (stored.fingerprint === fingerprint)
+      return { approval: "approved", fingerprint };
     const approved: Record<string, unknown> =
-      stored && typeof stored === "object" ? stored : {};
+      stored.envValueHashes && typeof stored.envValueHashes === "object"
+        ? stored.envValueHashes
+        : {};
     const has = (name: string) =>
-      Object.prototype.hasOwnProperty.call(env, name);
-    return [...new Set([...Object.keys(env), ...Object.keys(approved)])].filter(
+      Object.prototype.hasOwnProperty.call(spec.env, name);
+    const changedEnvNames = [
+      ...new Set([...Object.keys(spec.env), ...Object.keys(approved)]),
+    ].filter(
       (name) =>
         approved[name] !==
-        (has(name) ? envValueHash(name, env[name]) : undefined),
+        (has(name) ? envValueHash(name, spec.env[name]) : undefined),
     );
+    return { approval: "changed", fingerprint, changedEnvNames };
   }
 
   function approve(serverId: string, spec: StdioLaunchSpec): Promise<void> {
@@ -155,7 +180,7 @@ export function createStdioCommandApprovalStore(filePath: () => string) {
     });
   }
 
-  return { read, changedEnvNames, approve };
+  return { read, approve };
 }
 
 /** `MCPJAM_STDIO_APPROVALS_FILE` relocates the file; it never disables the check. */
@@ -169,18 +194,28 @@ export function stdioCommandApprovalsFilePath(): string {
 const defaultStore = createStdioCommandApprovalStore(
   stdioCommandApprovalsFilePath,
 );
-export const readStdioLaunchApproval = defaultStore.read;
-export const readChangedEnvNames = defaultStore.changedEnvNames;
+export const checkStdioLaunchApproval = defaultStore.read;
 export const approveStdioLaunch = defaultStore.approve;
+
+/**
+ * Variables that make the runtime load other code, so their value decides
+ * what runs. They are never credentials, so the dialog shows their value;
+ * every other value stays on this machine.
+ */
+const CODE_LOADING_ENV_NAME =
+  /^(NODE_OPTIONS|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_\w+|PATH|PYTHONPATH)$/i;
 
 export function stdioCommandApprovalTerms(args: {
   serverId: string;
   spec: StdioLaunchSpec;
   fingerprint: string;
   approval: Exclude<StdioLaunchApproval, "approved">;
-  /** From {@link readChangedEnvNames}, when the approval is `changed`. */
+  /** From {@link checkStdioLaunchApproval}, when the approval is `changed`. */
   changedEnvNames?: string[];
 }): StdioCommandApprovalTerms {
+  const codeLoading = Object.entries(args.spec.env).filter(([name]) =>
+    CODE_LOADING_ENV_NAME.test(name),
+  );
   return {
     serverId: args.serverId,
     fingerprint: args.fingerprint,
@@ -188,6 +223,9 @@ export function stdioCommandApprovalTerms(args: {
     args: args.spec.args,
     envNames: Object.keys(args.spec.env),
     ...(args.changedEnvNames ? { changedEnvNames: args.changedEnvNames } : {}),
+    ...(codeLoading.length > 0
+      ? { codeLoadingEnv: Object.fromEntries(codeLoading) }
+      : {}),
     ...(args.spec.cwd !== undefined ? { cwd: args.spec.cwd } : {}),
     previouslyApproved: args.approval === "changed",
   };

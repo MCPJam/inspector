@@ -87,6 +87,25 @@ describe("readStdioCommandApprovalTerms", () => {
     ).toEqual(TERMS);
   });
 
+  it("reads the values shown for variables that load code, dropping any that are not strings", () => {
+    const withCodeLoading = {
+      ...TERMS,
+      codeLoadingEnv: { NODE_OPTIONS: "--require=/tmp/x.js" },
+    };
+    expect(
+      readStdioCommandApprovalTerms({ ...REFUSAL, approval: withCodeLoading }),
+    ).toEqual(withCodeLoading);
+    expect(
+      readStdioCommandApprovalTerms({
+        ...REFUSAL,
+        approval: {
+          ...TERMS,
+          codeLoadingEnv: { NODE_OPTIONS: 1, PATH: "/bin" },
+        },
+      }),
+    ).toEqual({ ...TERMS, codeLoadingEnv: { PATH: "/bin" } });
+  });
+
   it.each([
     null,
     "nope",
@@ -110,6 +129,7 @@ describe("readStdioCommandApprovalTerms", () => {
 describe("obtainStdioCommandApproval", () => {
   beforeEach(() => {
     authFetchMock.mockReset();
+    toastMock.error.mockReset();
     useStdioCommandApprovalStore.setState({ queue: [] });
   });
 
@@ -158,14 +178,15 @@ describe("obtainStdioCommandApproval", () => {
     );
   });
 
-  it("surfaces an approval that fails for another reason", async () => {
+  it("reports an approval that fails for another reason and leaves the server unapproved", async () => {
     authFetchMock.mockResolvedValue(
       jsonResponse({ success: false, error: "disk full" }, 500),
     );
 
     const outcome = obtainStdioCommandApproval(PROMPT);
     await answerNextPrompt(true);
-    await expect(outcome).rejects.toThrow("disk full");
+    expect(await outcome).toBe(false);
+    expect(toastMock.error).toHaveBeenCalledWith("disk full");
   });
 
   it("falls back to its own message when the answer is not JSON", async () => {
@@ -175,9 +196,33 @@ describe("obtainStdioCommandApproval", () => {
 
     const outcome = obtainStdioCommandApproval(PROMPT);
     await answerNextPrompt(true);
-    await expect(outcome).rejects.toThrow(
+    expect(await outcome).toBe(false);
+    expect(toastMock.error).toHaveBeenCalledWith(
       "The command could not be approved on this device. Try approving it again.",
     );
+  });
+
+  it("reports an approval request that never reached the server", async () => {
+    authFetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const outcome = obtainStdioCommandApproval(PROMPT);
+    await answerNextPrompt(true);
+    expect(await outcome).toBe(false);
+    expect(toastMock.error).toHaveBeenCalledWith(
+      "The command could not be approved on this device. Try approving it again.",
+    );
+  });
+
+  it("sends one approval when several refusals of the same command wait on one dialog", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse({ success: true }));
+
+    const first = obtainStdioCommandApproval(PROMPT);
+    const second = obtainStdioCommandApproval(PROMPT);
+    await answerNextPrompt(true);
+
+    expect(await Promise.all([first, second])).toEqual([true, true]);
+    expect(useStdioCommandApprovalStore.getState().queue).toEqual([]);
+    expect(authFetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("queues prompts so one dialog shows at a time", async () => {
@@ -204,21 +249,13 @@ describe("obtainStdioCommandApproval", () => {
 });
 
 describe("askStdioCommandApprovalForChatError", () => {
-  // The web chat route answers a refused turn with this body; the transport
-  // hands it to onError as the message.
-  const refusedTurn = () =>
-    new Error(
-      JSON.stringify({
-        code: "STDIO_COMMAND_APPROVAL_REQUIRED",
-        message: "needs approval",
-        details: {
-          reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
-          serverId: "srv-1",
-          serverName: "Files",
-          approval: TERMS,
-        },
-      }),
-    );
+  // The `details` of the chat route's refusal, as `handleChatError` parses it.
+  const REFUSED_TURN = {
+    reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
+    serverId: "srv-1",
+    serverName: "Files",
+    approval: TERMS,
+  };
 
   beforeEach(() => {
     authFetchMock.mockReset();
@@ -227,18 +264,18 @@ describe("askStdioCommandApprovalForChatError", () => {
     useStdioCommandApprovalStore.setState({ queue: [] });
   });
 
-  it.each([
-    new Error("Model provider timed out"),
-    new Error(JSON.stringify({ code: "FORBIDDEN", message: "no" })),
-  ])("leaves any other failure alone (%s)", async (error) => {
-    await askStdioCommandApprovalForChatError(error, "proj-1");
-    expect(useStdioCommandApprovalStore.getState().queue).toEqual([]);
-  });
+  it.each([undefined, null, { reason: "other" }])(
+    "leaves any other failure alone (%j)",
+    async (details) => {
+      await askStdioCommandApprovalForChatError(details, "proj-1");
+      expect(useStdioCommandApprovalStore.getState().queue).toEqual([]);
+    },
+  );
 
   it("asks for the refused server's command, then says to send again", async () => {
     authFetchMock.mockResolvedValue(jsonResponse({ success: true }));
 
-    const asked = askStdioCommandApprovalForChatError(refusedTurn(), "proj-1");
+    const asked = askStdioCommandApprovalForChatError(REFUSED_TURN, "proj-1");
     expect(await answerNextPrompt(true)).toEqual(TERMS);
     expect(useStdioCommandApprovalStore.getState().queue).toEqual([]);
     await asked;
@@ -259,7 +296,7 @@ describe("askStdioCommandApprovalForChatError", () => {
       jsonResponse({ success: false, error: "disk full" }, 500),
     );
 
-    const asked = askStdioCommandApprovalForChatError(refusedTurn(), "proj-1");
+    const asked = askStdioCommandApprovalForChatError(REFUSED_TURN, "proj-1");
     await answerNextPrompt(true);
     await asked;
     expect(toastMock.error).toHaveBeenCalledWith("disk full");

@@ -493,6 +493,24 @@ describe("mcp-api local-mode stdio command approval handshake", () => {
     expect(authFetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("returns the refusal when recording the approval fails, instead of throwing", async () => {
+    authFetchMock.mockResolvedValueOnce(refusal()).mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: false, error: "disk full" }), {
+        status: 500,
+      }),
+    );
+    const answered = answerNextPrompt(true);
+
+    const result = await testConnection(config, "srv-1", options);
+    await answered;
+
+    expect(result).toMatchObject({
+      success: false,
+      reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
+    });
+    expect(authFetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("asks when a click marks an automatic connect manual mid-flight", async () => {
     serverCheckQueue.markAutomatic("project_xyz", ["Files"]);
     authFetchMock.mockImplementation(async (url: string) => {

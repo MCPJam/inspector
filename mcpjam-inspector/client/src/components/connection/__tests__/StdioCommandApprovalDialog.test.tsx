@@ -107,6 +107,29 @@ describe("StdioCommandApprovalDialog", () => {
     );
   });
 
+  it("shows the value of a variable that makes the command load other code, with a warning", () => {
+    useStdioCommandApprovalStore.getState().request({
+      projectId: "proj-1",
+      serverName: "Files",
+      terms: {
+        ...TERMS,
+        envNames: ["ACME_TOKEN", "NODE_OPTIONS"],
+        codeLoadingEnv: { NODE_OPTIONS: "--require /tmp/x.js" },
+      },
+    });
+
+    render(<StdioCommandApprovalDialog />);
+
+    expect(
+      screen.getByText('NODE_OPTIONS="--require /tmp/x.js"'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/can make the command load other code/),
+    ).toBeInTheDocument();
+    // The other values stay hidden; only their names are listed.
+    expect(screen.getByText("ACME_TOKEN")).toBeInTheDocument();
+  });
+
   it("answers one prompt at a time, in order", async () => {
     const user = userEvent.setup();
     const store = useStdioCommandApprovalStore.getState();
@@ -163,17 +186,5 @@ describe("StdioCommandApprovalDialog", () => {
       screen.getByRole("heading", { name: 'Run "Search" on this machine?' }),
     ).toBeInTheDocument();
     expect(useStdioCommandApprovalStore.getState().queue).toHaveLength(1);
-  });
-
-  it("asks once when the same command is refused twice", async () => {
-    const store = useStdioCommandApprovalStore.getState();
-    const prompt = { projectId: "proj-1", serverName: "Files", terms: TERMS };
-    const first = store.request(prompt);
-    const second = store.request(prompt);
-    expect(useStdioCommandApprovalStore.getState().queue).toHaveLength(1);
-
-    store.settle(true);
-    expect(await first).toBe(true);
-    expect(await second).toBe(true);
   });
 });

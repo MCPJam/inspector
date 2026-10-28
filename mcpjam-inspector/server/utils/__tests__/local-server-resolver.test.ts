@@ -12,7 +12,7 @@ import {
 // has its own suite, local-server-resolver.stdio-approval.test.ts.
 vi.mock("../stdio-command-approvals.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../stdio-command-approvals.js")>()),
-  readStdioLaunchApproval: async () => "approved" as const,
+  checkStdioLaunchApproval: async () => ({ approval: "approved" as const }),
 }));
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;

@@ -18,8 +18,8 @@ export interface StdioCommandApprovalTerms {
   /**
    * SHA-256 (hex) of the exact launch spec: command, args, env names AND
    * values, working directory. Env values are part of the hash because they
-   * can change what runs (`NODE_OPTIONS`, `PATH`, ...), but they never leave
-   * the server; only the names are shown.
+   * can change what runs (`NODE_OPTIONS`, `PATH`, ...); only the names are
+   * shown, except for `codeLoadingEnv`.
    */
   fingerprint: string;
   command: string;
@@ -30,6 +30,12 @@ export interface StdioCommandApprovalTerms {
    * so a value-only edit is visible. Set when `previouslyApproved`.
    */
   changedEnvNames?: string[];
+  /**
+   * Name and value of each variable that makes the runtime load other code
+   * (`NODE_OPTIONS`, `LD_PRELOAD`, `PATH`, ...): its value decides what runs,
+   * and it is never a credential, so the dialog shows it with a warning.
+   */
+  codeLoadingEnv?: Record<string, string>;
   cwd?: string;
   /** This device had approved an earlier version of the command. */
   previouslyApproved: boolean;
