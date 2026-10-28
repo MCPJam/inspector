@@ -53,6 +53,7 @@ export type Settlement = {
 export type ExecutionIntent = {
   invocationKey: string;
   policyDigest?: string;
+  nativeToolCallId?: string;
   turnId: string;
   rpcId: string | number;
   method: string;
@@ -182,6 +183,12 @@ export function createExecutionControl(args: {
       ),
     turnApprovals: (turnId: string) =>
       post({ kind: "turn_approvals", turnId }, z.array(receipt), "owner"),
+    nativeResult: (turnId: string, nativeToolCallId: string) =>
+      post(
+        { kind: "native_result", turnId, nativeToolCallId },
+        receipt,
+        "owner",
+      ),
     approvalContext: (executionId: string) =>
       post({ kind: "approval_context", executionId }, receipt, "owner"),
     answerApproval: (

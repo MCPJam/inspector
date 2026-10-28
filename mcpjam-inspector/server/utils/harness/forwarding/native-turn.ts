@@ -19,6 +19,7 @@ import {
 import { startForwardingApprovalPresentation } from "./approval.js";
 import { nativeRpcLogScope } from "./native-rpc-logs.js";
 import { nativePolicyDigest } from "./native-policy.js";
+import { readNativeToolResult } from "./native-results.js";
 
 export type NativeForwardingSelection = {
   harnessSessionId: string;
@@ -132,6 +133,18 @@ export async function prepareNativeForwarding(args: {
     mcpJson,
     policyDigest,
     keyToServerId,
+    readToolResult: async (serverId: string, toolCallId: string) => {
+      const owner = args.owners.find(
+        (candidate) => candidate.serverId === serverId,
+      );
+      if (!owner)
+        throw new Error("The MCP result does not belong to this turn.");
+      return readNativeToolResult(
+        createExecutionControl({ owner }),
+        args.turnId,
+        toolCallId,
+      );
+    },
     logScopeIds: Object.fromEntries(
       args.owners.map((owner) => [
         owner.serverId,
