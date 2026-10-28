@@ -7,17 +7,12 @@ import {
 import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
 import { describeError, describeAsSlug } from "@mcpjam/sdk";
 import type { ModelProvider } from "@/shared/types";
-import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
   ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
 import { isAbortError } from "@/shared/abort-errors";
-import type { createLlmModel } from "../../utils/chat-helpers.js";
-import type {
-  PersistChatOutcome,
-  PersistedTurnTrace,
-} from "../../utils/chat-ingestion.js";
+import type { PersistChatOutcome } from "../../utils/chat-ingestion.js";
 import { writePersistReceipt } from "../../utils/chat-ingestion.js";
 import {
   formatProviderOverloadError,
@@ -27,6 +22,8 @@ import {
   runDirectChatTurn,
   withMcpToolOriginChunkMetadata,
   type RunDirectChatTurnHandle,
+  type RunDirectChatTurnOptions,
+  type DirectChatTurnPersistEvent,
 } from "../../utils/direct-chat-turn.js";
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks.js";
 import {
@@ -130,41 +127,35 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
  * headless terminal (`consumeDirectChatTurnHeadless`).
  */
 export function streamDirectChatWithLiveTrace(options: {
-  llmModel: ReturnType<typeof createLlmModel>;
+  llmModel: RunDirectChatTurnOptions["llmModel"];
   modelId: string;
   provider?: ModelProvider;
   messageHistory: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
-  /**
-   * Provider options that apply the turn's reasoning effort (the caller
-   * resolved and validated it with `directChatEffort`). Handed to the engine
-   * as-is; absent leaves the call byte-identical.
-   */
   providerOptions?: ProviderOptions;
   tools: ToolSet;
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
-  /**
-   * Invoked with the live stream writer before the turn starts. Every
-   * dispatch path with a tasks seam must attach the task-created bridge here,
-   * BEFORE the first tool call can fire — the sink dispatches synchronously
-   * from the tool loop, so a late attach means the bridge warn-drops the part
-   * and the task is orphaned (see `server/utils/web-chat-turn.ts`).
-   */
+  maxSteps?: number;
+  onLiveTextDelta?: RunDirectChatTurnOptions["onLiveTextDelta"];
+  onEngineError?: RunDirectChatTurnOptions["onEngineError"];
+  transformStepMessages?: RunDirectChatTurnOptions["transformStepMessages"];
+  onPersistError?: RunDirectChatTurnOptions["onPersistError"];
+  onStreamComplete?: () => void | Promise<void>;
+  formatError?: (error: unknown) => string;
+  reportError?: (
+    error: unknown,
+    phase: "stream" | "direct-stream" | "empty-step",
+  ) => void;
+  mapChunk?: (chunk: UIMessageChunk) => UIMessageChunk[];
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
-  onPersist?: (event: {
-    responseMessages: ModelMessage[];
-    assistantText: string;
-    toolCalls: unknown[];
-    toolResults: unknown[];
-    usage?: LiveChatTraceUsage;
-    finishReason?: string;
-    turnTrace: PersistedTurnTrace;
-  }) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
+  onPersist?: (
+    event: DirectChatTurnPersistEvent,
+  ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   /** Session this stream persists to; required to attribute a persist receipt. */
   chatSessionId?: string;
   scopeStepUpResume?: MrtrEngineResume;
@@ -176,6 +167,11 @@ export function streamDirectChatWithLiveTrace(options: {
     abortSignal,
     onStreamWriterReady,
     onPersist,
+    onStreamComplete,
+    formatError,
+    reportError,
+    mapChunk,
+    onPersistError,
     chatSessionId: receiptChatSessionId,
     scopeStepUpResume,
     shouldPauseAfterStep,
@@ -193,7 +189,23 @@ export function streamDirectChatWithLiveTrace(options: {
   // `execute` once the helper is configured.
   let handle: RunDirectChatTurnHandle | undefined;
 
+  const report = (
+    error: unknown,
+    phase: "stream" | "direct-stream" | "empty-step",
+  ) => {
+    if (reportError) return reportError(error, phase);
+    reportRouteFailure(`[mcp/chat-v2] ${phase} error`, error, {
+      source: `mcp.chat-v2.${phase}`,
+      hop: "user_server_hop",
+      context: { provider, modelId: options.modelId },
+    });
+  };
+  const format =
+    formatError ?? ((error: unknown) => formatStreamError(error, provider));
   const stream = createUIMessageStream({
+    onFinish: async () => {
+      await onStreamComplete?.();
+    },
     onError: (error) => {
       // Cursor PR 4a review #1: the top-level `onError` can fire BEFORE
       // `execute` runs (e.g., stream creation failure), or for an
@@ -212,11 +224,8 @@ export function streamDirectChatWithLiveTrace(options: {
       // a quota wall, a model refusing a schema. That is precisely the traffic
       // that has been paging us for other people's outages, so the catalog's
       // verdict stands on its own and only MCPJam-fault slugs escalate.
-      reportRouteFailure("[mcp/chat-v2] stream error", error, {
-        source: "mcp.chat-v2.stream",
-        hop: "user_server_hop",
-      });
-      return formatStreamError(error, provider);
+      report(error, "stream");
+      return format(error);
     },
     execute: async ({ writer }) => {
       // FIRST, before `runDirectChatTurn` configures the tool loop: the
@@ -247,11 +256,13 @@ export function streamDirectChatWithLiveTrace(options: {
           : undefined,
         shouldPauseAfterStep,
         suspendedToolCallId,
-        onPersistError: (error) => {
-          logger.warn("[mcp/chat-v2] onFinish ingestion error", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        },
+        onPersistError:
+          onPersistError ??
+          ((error) => {
+            logger.warn("[mcp/chat-v2] onFinish ingestion error", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }),
         // Trace-event factory shared with route 3 (local-org BYOK) so
         // both routes emit byte-identical SSE wire output. See
         // `server/utils/direct-chat-sse-callbacks.ts`.
@@ -284,11 +295,8 @@ export function streamDirectChatWithLiveTrace(options: {
             // `createUIMessageStream` handler. Without this call, every model,
             // provider, and tool failure on the direct-stream path produced a
             // client error and no telemetry at all.
-            reportRouteFailure("[mcp/chat-v2] direct stream error", error, {
-              source: "mcp.chat-v2.direct-stream",
-              hop: "user_server_hop",
-            });
-            return formatStreamError(error, provider);
+            report(error, "direct-stream");
+            return format(error);
           },
         })) {
           if (
@@ -306,20 +314,16 @@ export function streamDirectChatWithLiveTrace(options: {
             // and is written before the report so a reporter throw cannot
             // swallow it.
             emitError(writer, emptyTurnMessage);
-            reportRouteFailure(
-              "[mcp/chat-v2] direct step returned no content",
-              new Error(emptyTurnMessage),
-              {
-                source: "mcp.chat-v2.direct-empty-step",
-                hop: "user_server_hop",
-                context: { provider, modelId: handle.modelId },
-              },
-            );
+            report(new Error(emptyTurnMessage), "empty-step");
             continue;
           }
-          writer.write(
-            withMcpToolOriginChunkMetadata(chunk, turnOptions.tools),
+          const outgoing = withMcpToolOriginChunkMetadata(
+            chunk,
+            turnOptions.tools,
           );
+          for (const mapped of mapChunk ? mapChunk(outgoing) : [outgoing]) {
+            writer.write(mapped);
+          }
         }
       } catch (error) {
         if (handle.isAborted() || isAbortError(error)) {
