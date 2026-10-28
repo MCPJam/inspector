@@ -4,11 +4,14 @@ import {
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   appToolSourceFor,
-  discoverViewAppTools,
-  callViewWebmcpTool,
   listViewWebmcpTools,
 } from "spike-runtime";
 
+import { createAppToolDiscovery } from "fixture-discovery";
+import { createAppToolsRegistry } from "fixture-registry";
+import { dispatchAppToolCall } from "fixture-dispatch";
+
+const registry = createAppToolsRegistry();
 const entries = new Map();
 const traffic = [];
 window.addEventListener("message", (event) => {
@@ -17,8 +20,19 @@ window.addEventListener("message", (event) => {
 
 const spike = {
   traffic,
-  list(id) {
-    return listViewWebmcpTools(entries.get(id).bridge);
+  alias(id, rawName = "make_move") {
+    return registry.getState().snapshotForChatBody("e2e")
+      .find(tool => tool.parentToolCallId === id && tool.rawName === rawName)?.alias;
+  },
+  callAlias(alias, input) {
+    const resolved = registry.getState().resolve(alias, "e2e");
+    if (!resolved) throw new Error("App tool is unavailable");
+    return dispatchAppToolCall(resolved, input);
+  },
+  async list(id) {
+    const entry = entries.get(id);
+    await entry.refresh(entry.bridge, id, { force: true, isLive: () => entry.frame.isConnected });
+    return listViewWebmcpTools(entry.bridge);
   },
   remount(id) {
     const entry = entries.get(id);
@@ -28,6 +42,9 @@ const spike = {
     entry.frame.contentWindow.postMessage(entry.resource, "*");
     return ready;
   },
+  notifyToolResult(id, result) {
+    return entries.get(id).bridge.sendToolResult(result);
+  },
   async mount({
     id,
     source = "direct",
@@ -35,6 +52,7 @@ const spike = {
     enabled = true,
     baseline = false,
     permissive = false,
+    html: suppliedHtml,
   }) {
     const frame = document.createElement("iframe");
     frame.dataset.id = id;
@@ -48,7 +66,7 @@ const spike = {
       initialized = resolve;
     });
     bridge.oninitialized = () => initialized();
-    const html = await fetch(`/view?source=${source}&id=${id}`).then(
+    const html = suppliedHtml ?? await fetch(`/view?source=${source}&id=${id}`).then(
       (response) => response.text(),
     );
     const proxyReady = new Promise((resolve) => {
@@ -87,35 +105,38 @@ const spike = {
     const candidate = bridge.getAppCapabilities()?.tools || enabled === true
       ? appToolSourceFor(bridge.getAppCapabilities())
       : null;
-    const discovery = candidate
-      ? await discoverViewAppTools(
-          bridge,
-          candidate,
-          enabled,
-          async () => (await bridge.listTools({})).tools,
-        )
-      : { source: null, tools: [] };
-    entries.set(id, { bridge, frame, resource, source: discovery.source });
+    const refresh = createAppToolDiscovery({
+      registry,
+      context: () => ({ chatSessionId: "e2e", parentToolCallId: id, serverId: "fixture" }),
+      onError: error => { throw error; },
+    });
+    if (candidate) await refresh(bridge, id, { isLive: () => frame.isConnected });
+    const instance = registry.getState().instancesByBridgeId.get(id);
+    const discovery = { source: instance?.toolSource ?? null, tools: instance?.tools ?? [] };
+    entries.set(id, { bridge, frame, resource, source: discovery.source, refresh });
     return discovery;
   },
-  async call(id, input = {}, cancelAfter = 0) {
+  async call(id, input = {}, cancelAfter = 0, rawName = "make_move") {
     const entry = entries.get(id);
     const controller = new AbortController();
     const timer = cancelAfter
       ? setTimeout(() => controller.abort(), cancelAfter)
       : null;
     try {
-      return entry.source === "mcp-apps"
-        ? await entry.bridge.callTool({ name: "make_move", arguments: input })
-        : await callViewWebmcpTool(entry.bridge, "make_move", input, {
-            signal: controller.signal,
-          });
+      const alias = registry.getState().snapshotForChatBody("e2e")
+        .find(tool => tool.parentToolCallId === id && tool.rawName === rawName)?.alias;
+      const resolved = alias ? registry.getState().resolve(alias, "e2e") : null;
+      if (!resolved) throw new Error("App tool is unavailable");
+      registry.getState().registerPendingCall(id, controller);
+      return await dispatchAppToolCall(resolved, input, { signal: controller.signal });
     } finally {
+      registry.getState().unregisterPendingCall(id, controller);
       if (timer) clearTimeout(timer);
     }
   },
   async close(id) {
     const entry = entries.get(id);
+    registry.getState().unregisterInstance(id);
     await entry.bridge.close();
     entry.frame.remove();
     entries.delete(id);
