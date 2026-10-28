@@ -1,5 +1,4 @@
-import { resolveManagedTurnSetup } from "./managed-setup.js";
-import { prepareManagedConnections } from "./managed-connections.js";
+import { resolveLocalMachinePolicy } from "./local-machine-policy.js";
 import type { BrowserPageToolsSnapshot } from "../../utils/built-in-tools/browser.js";
 import {
   peekPageToolsForChatTurn,
@@ -32,9 +31,9 @@ import {
   provisionScenarioSandbox,
 } from "../../utils/computers/control-plane-client.js";
 import {
+  type HarnessBox,
   acquireHarnessBox,
   canProvisionHarnessBoxes,
-  type HarnessBox,
 } from "../../utils/harness/harness-box.js";
 import {
   acquirePlaygroundHarnessBox,
@@ -59,16 +58,24 @@ import {
   toSecretEnv,
 } from "../../utils/harness/runtime-secrets.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
+import { guestBrowserProject } from "../../utils/computers/browser-rollout.js";
 import { logger } from "../../utils/logger.js";
-type Setup = Extract<
+import { resolveManagedTurnSetup } from "./managed-setup.js";
+import { prepareManagedConnections } from "./managed-connections.js";
+import { TurnResources } from "./resources.js";
+
+type ManagedSetup = Extract<
   Awaited<ReturnType<typeof resolveManagedTurnSetup>>,
   { value: unknown }
 >["value"];
 export async function prepareManagedTools(args: {
   c: Context;
+  rawBody: Record<string, unknown>;
   bearerToken: string;
+  localIngress: boolean;
+  resources: TurnResources;
   setup: Pick<
-    Setup,
+    ManagedSetup,
     | "hostedBody"
     | "body"
     | "scenarioId"
@@ -82,6 +89,7 @@ export async function prepareManagedTools(args: {
     | "environmentServers"
     | "resolvedExecution"
     | "builtInToolPolicy"
+    | "localBrowserSettingsUnavailable"
     | "turnBuiltInToolIds"
     | "systemPrompt"
     | "requireToolApproval"
@@ -93,9 +101,9 @@ export async function prepareManagedTools(args: {
     Awaited<ReturnType<typeof prepareManagedConnections>>,
     "validatedPageTools"
   >;
-  state: { scenarioBox?: HarnessBox };
 }) {
-  const { c, bearerToken, state } = args;
+  const { c, rawBody, bearerToken, localIngress, resources } = args;
+  let scenarioBox: HarnessBox | undefined;
   let {
     hostedBody,
     body,
@@ -110,6 +118,7 @@ export async function prepareManagedTools(args: {
     resolvedExecution,
     builtInToolPolicy,
     turnBuiltInToolIds,
+    localBrowserSettingsUnavailable,
     systemPrompt,
     requireToolApproval,
     harnessExecutionTarget,
@@ -119,6 +128,7 @@ export async function prepareManagedTools(args: {
   let { validatedPageTools } = args.connections;
   // ── Phase 4: the scenario's own EPHEMERAL sandbox ────────────────────────
   // An env-backed scenario whose backend says `computerSandbox: 'ephemeral'`
+  // runs bash on a per-CONVERSATION disposable box booted from the
   const secretsFetch = c.get("guestId")
     ? { ok: true as const, secrets: [] }
     : await fetchRuntimeSecrets(bearerToken, {
@@ -130,11 +140,13 @@ export async function prepareManagedTools(args: {
       });
   // A FAILED FETCH IS NOT "NO SECRETS" — IT FORKS THE SESSION.
   //
+  // The tri-state exists precisely so a transient Convex failure cannot read
   const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
   const secretsUnavailable = !secretsFetch.ok;
   const secretEnv = runtimeSecrets ? toSecretEnv(runtimeSecrets) : undefined;
   // Fired by whichever adapter actually hands the values over — a bash
   // command that carries them, or a harness session that starts holding them.
+  //
   const markSecretsDelivered =
     secretEnv && Object.keys(secretEnv).length > 0
       ? () => {
@@ -159,6 +171,7 @@ export async function prepareManagedTools(args: {
 
   // A CLOUD harness needs a machine whether or not it asks for `bash`, and
   // takes the conversation's box ONLY when the backend says its harness runs
+  // there (`computerSandbox.harness`). Without that field — an older backend,
   const harnessWantsScenarioBox =
     Boolean(resolvedExecution.harness) &&
     !harnessExecutionTarget &&
@@ -180,6 +193,7 @@ export async function prepareManagedTools(args: {
     ((delivered: SandboxNoticeReason[]) => void) | undefined;
   // Drop the personal-computer resource for every suppressing plan, so
   // `bash` is not advertised at all rather than falling back to the member's
+  // own box — which is precisely the behaviour this feature replaces:
   const sandboxPlan = planScenarioSandbox({
     mode: computerSandboxMode,
     bashRequested: (turnBuiltInToolIds ?? []).includes(BASH_TOOL_NAME),
@@ -192,6 +206,8 @@ export async function prepareManagedTools(args: {
   });
   // A HARNESS turn has no shell to quietly drop: the only other machine is
   // the member's personal computer, which a scenario conversation's harness
+  // must never run on once the backend has put it on a disposable box.
+  // Refused before anything is provisioned, with the reason the plan gave.
   if (
     harnessWantsScenarioBox &&
     computerSandboxMode !== null &&
@@ -206,6 +222,8 @@ export async function prepareManagedTools(args: {
   if (sandboxPlan.suppressReason === "no_chat_session_id") {
     // The conversation id IS the isolation boundary (`scopeKey =
     // scenario:<chatSessionId>`). Without one there is nothing to key a box
+    // to, and binding anyway would put every session that omits it on one
+    // shared box. No shell beats the wrong shell.
     logger.warn(
       "[chat-v2] ephemeral scenario sandbox requested without a chatSessionId; bash suppressed",
       { scenarioId },
@@ -213,6 +231,7 @@ export async function prepareManagedTools(args: {
   } else if (sandboxPlan.suppressReason === "secrets_unavailable") {
     // The scenario counterpart of the harness fork. A harness session that
     // cannot establish its secret state starts a fresh bridge, which holds
+    // nothing; a scenario conversation's box is keyed to the conversation and
     logger.warn(
       "[chat-v2] secret resolution failed for a conversation with a persistent sandbox; bash suppressed for this turn",
       { scenarioId },
@@ -255,7 +274,10 @@ export async function prepareManagedTools(args: {
           : { ok: false as const, refusal: provisioned };
       },
     });
-    if (acquired.ok) state.scenarioBox = acquired.box;
+    if (acquired.ok) {
+      scenarioBox = acquired.box;
+      resources.own(() => acquired.box.release());
+    }
     if (provisioned?.ok) {
       sandboxBinding = {
         sandboxId: provisioned.value.sandboxId,
@@ -264,6 +286,8 @@ export async function prepareManagedTools(args: {
           : {}),
         // Tell the model the truth about the box's lifetime. The default
         // (`run`) copy says it is destroyed after this session — a scenario
+        // box is not, and a model that believes otherwise won't build work
+        // up across turns, which is the whole point of a persistent shell.
         lifetime: "conversation",
       };
       const notices = (provisioned.value.notices ?? []).filter(
@@ -272,6 +296,7 @@ export async function prepareManagedTools(args: {
       if (notices.length > 0) sandboxNotices = notices;
       // PEEK/ACK (mcpjam-backend #829). The control plane hands the notice
       // over WITHOUT consuming it and waits for us to confirm it reached
+      // the wire, because the SSE writer does not exist yet — provisioning
       const sandboxRowId = provisioned.value.sandboxRowId;
       if (provisioned.value.noticeAckPending && notices.length > 0) {
         ackSandboxNotices = (delivered) => {
@@ -318,11 +343,12 @@ export async function prepareManagedTools(args: {
   }
   // A SCENARIO-scoped cloud harness with no box bound to it: the backend sent
   // no harness marker (a host-backed scenario, or a backend older than the
+  // `computerSandbox.harness` field), so there is nothing to provision, and
   if (
     resolvedExecution.harness &&
     !harnessExecutionTarget &&
     executionScope?.kind === "swarm" &&
-    !state.scenarioBox
+    !scenarioBox
   ) {
     throw scenarioHarnessRepublishRefusal({
       harness: resolvedExecution.harness!,
@@ -332,6 +358,7 @@ export async function prepareManagedTools(args: {
 
   // ── PLAYGROUND FALLBACK: a disposable computer for THIS conversation ──
   //
+  // A Playground harness turn runs on the member's personal computer, which
   const playgroundBoxReason = playgroundHarnessBoxReason({
     harnessId: resolvedExecution.harness,
     localExecution: Boolean(harnessExecutionTarget),
@@ -365,6 +392,7 @@ export async function prepareManagedTools(args: {
     }
     // The environment whose grant the box carries: the turn's own when it
     // targets one; otherwise, for a client that signs in with the member's
+    // own account, a HIDDEN ad-hoc environment selecting the member's key
     const playgroundEnvironmentId =
       pinsEnvironment || playgroundBoxReason === "credential"
         ? environmentSpec?.environmentRef.environmentId
@@ -436,7 +464,8 @@ export async function prepareManagedTools(args: {
           })
         : refusalError;
     }
-    state.scenarioBox = acquired.box;
+    scenarioBox = acquired.box;
+    resources.own(() => acquired.box.release());
     // The model's own `bash` rides the same machine as the harness's Shell:
     // two filesystems in one turn is a bug nobody can see.
     sandboxBinding = {
@@ -450,6 +479,7 @@ export async function prepareManagedTools(args: {
 
   // MATERIALIZED secrets resolved, and nowhere legitimate to put them.
   //
+  // `resolveHostTools` reads `secretEnv` ONLY inside its `sandboxBinding`
   if (
     shouldWarnSecretsUndelivered({
       secretCount: secretEnv ? Object.keys(secretEnv).length : 0,
@@ -470,8 +500,25 @@ export async function prepareManagedTools(args: {
     sandboxNotices = [...(sandboxNotices ?? []), "secrets_undelivered"];
   }
 
+  const localMachine =
+    localIngress && !sandboxBinding
+      ? await resolveLocalMachinePolicy({
+          c,
+          body: {
+            projectId: hostedBody.projectId,
+            chatSessionId: body.chatSessionId,
+            browserEngine: rawBody.browserEngine,
+            computerEngine: rawBody.computerEngine,
+          },
+          builtInToolIds: turnBuiltInToolIds,
+          isScenarioSession: turnMode === "recorded",
+          localBrowserSettingsUnavailable,
+        })
+      : undefined;
+
   // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built.
   //
+  // Read-only: this never starts, attaches or reserves a browser (see
   const browserSessionScope =
     body.browserScope === "conversation" &&
     body.chatSessionId &&
@@ -490,7 +537,9 @@ export async function prepareManagedTools(args: {
     ...(browserSessionScope
       ? { conversationId: browserSessionScope.sessionId }
       : {}),
-    builtInToolIds: turnBuiltInToolIds,
+    builtInToolIds: localMachine?.browserUnavailableReason
+      ? []
+      : turnBuiltInToolIds,
     browserToolId: BROWSER_BUILT_IN_TOOL_ID,
     firstClass: webmcpPageToolsMode() === "first_class",
     isHarnessTurn: Boolean(resolvedExecution.harness),
@@ -498,8 +547,15 @@ export async function prepareManagedTools(args: {
     // Advertising the same page's tools twice, under two namespaces with two
     // fulfilment paths, is how a model calls one of each.
     hasV1PageTools: validatedPageTools.length > 0,
-    engine: "hosted",
-    projectId: hostedBody.projectId,
+    engine: localMachine?.browserEngine === "local" ? "local" : "hosted",
+    // The browser tool's own session key: a guest's local Browser is scoped
+    // to that guest, never the project's member session on this machine.
+    projectId: localMachine?.localBrowserGuestId
+      ? guestBrowserProject(
+          hostedBody.projectId,
+          localMachine.localBrowserGuestId,
+        )
+      : hostedBody.projectId,
     bearer: bearerToken,
     ...(sandboxBinding?.sandboxRowId
       ? { sandboxRowId: sandboxBinding.sandboxRowId }
@@ -539,6 +595,17 @@ export async function prepareManagedTools(args: {
     {
       authHeader: bearerToken,
       projectId: hostedBody.projectId,
+      ...(localMachine
+        ? {
+            computerEngine: localMachine.computerEngine,
+            browserEngine: localMachine.browserEngine,
+            localBrowserGuestId: localMachine.localBrowserGuestId,
+            browserConsentToken: localMachine.browserConsentToken,
+            localBrowserRequested: localMachine.localBrowserRequested,
+            browserUnavailableReason: localMachine.browserUnavailableReason,
+            localComputerRequested: localMachine.localComputerRequested,
+          }
+        : {}),
       ...(executionScope ? { executionScope } : {}),
       ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
       ...(body.chatSessionId
@@ -561,6 +628,8 @@ export async function prepareManagedTools(args: {
       workspaceToolApproval: builtInToolPolicy.workspaceToolApproval,
       // Out-of-band and in-process ONLY. Never on `config.computer`:
       // `narrowHostComputer` runs at the top of `resolveHostTools` and
+      // rejects anything that isn't `personal`, so a union on the config
+      // would be either rejected or — worse — wire-forgeable.
       ...(sandboxBinding ? { sandboxBinding } : {}),
       // Read by the registry ONLY inside its `sandboxBinding` branch: a
       // project's credential reaches a box the project provisioned, never the
@@ -583,9 +652,11 @@ export async function prepareManagedTools(args: {
       ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
       // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset as
       // a constructor argument and never re-reads it, so claiming it here
+      // would build a refresher nothing consumes. NOT gated on the snapshot:
       browserDynamicPageTools: !resolvedExecution.harness,
       // KEPT HERE, dropped later. Which engine runs this turn depends on a
       // Convex-backed runtime resolution that has not happened yet, and one
+      // of them — local BYOK — does not consume refreshes; retiring the
       browserRetireInvokeVerb: false as const,
       onBrowserPageTools: ({ minted }) => {
         advertisedPageTools = minted;
@@ -598,9 +669,13 @@ export async function prepareManagedTools(args: {
 
   // Blueprint knowledge/maintenance: when this turn advertises bash, append
   // the pinned image's model-facing context to the system prompt. Tri-state
+  // fetch inside — a Convex blip degrades to "no extra context", never a
   const withEnvironmentContext = await maybeAppendEnvironmentContext({
     systemPrompt,
-    hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]) && !sandboxBinding,
+    hasBashTool:
+      Boolean(builtInTools?.[BASH_TOOL_NAME]) &&
+      !scenarioBox &&
+      localMachine?.computerEngine !== "local",
     bearer: bearerToken,
     projectId: hostedBody.projectId,
     ...(executionScope ? { executionScope } : {}),
@@ -608,17 +683,20 @@ export async function prepareManagedTools(args: {
 
   // The sandbox notices must reach the MODEL, not only the user's toast.
   //
+  // The SSE part warns the human; the model meanwhile still receives the old
   const effectiveSystemPrompt = appendSandboxNoticeContext(
     withEnvironmentContext,
     sandboxNotices,
   );
 
   return {
+    scenarioBox,
     runtimeSecrets,
     secretsUnavailable,
     markSecretsDelivered,
     sandboxNotices,
     ackSandboxNotices,
+    localMachine,
     pageToolsSnapshot,
     get advertisedPageTools() {
       return advertisedPageTools;

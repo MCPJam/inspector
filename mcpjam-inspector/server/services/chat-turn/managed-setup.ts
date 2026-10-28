@@ -6,6 +6,7 @@ import {
 import {
   ensureLocalHarnessTarget,
   LOCAL_HARNESS_DISPLAY_NAMES,
+  LocalAutoApproveConsentRequiredError,
 } from "../../utils/harness/local/readiness.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import { apiSessionWriteAllowed } from "../../routes/web/api-session-write-guard";
@@ -78,18 +79,25 @@ import {
 import {
   buildLiveEffectiveCapabilities,
   pluginOriginByServerId,
+  withLiveProjectSkills,
   type EffectiveCapabilitySet,
 } from "../environments/effective-capabilities.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
 import { logger } from "../../utils/logger.js";
+import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
+import { readLocalBrowserSetting } from "../../utils/computers/local-browser-settings.js";
+import { resolveLocalBrowserTools } from "../../../shared/local-browser-settings.js";
+
+/** Resolve authorized setup before acquiring turn-owned resources. */
 export async function resolveManagedTurnSetup(args: {
   c: Context;
   rawBody: Record<string, unknown>;
   bearerToken: string;
+  localIngress: boolean;
   rpcCollector: ReturnType<typeof createHostedRpcLogCollector>;
 }) {
-  const { c, rawBody, bearerToken, rpcCollector } = args;
+  const { c, rawBody, bearerToken, localIngress, rpcCollector } = args;
   const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
   if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
     const allowed = await apiSessionWriteAllowed(
@@ -97,15 +105,14 @@ export async function resolveManagedTurnSetup(args: {
       async (signal) => {
         const service = new BrowserSessionService();
         if (!service.enabled) return { writable: true };
-        return service.agentRequest<{ writable: boolean }>(
-          "assert_web_writable",
-          {
-            bearer: bearerToken,
-            projectId: hostedBody.projectId!,
-            body: { conversationId: hostedBody.chatSessionId },
-            signal: AbortSignal.any([signal, c.req.raw.signal]),
-          },
-        );
+        return service.agentRequest<{
+          writable: boolean;
+        }>("assert_web_writable", {
+          bearer: bearerToken,
+          projectId: hostedBody.projectId!,
+          body: { conversationId: hostedBody.chatSessionId },
+          signal: AbortSignal.any([signal, c.req.raw.signal]),
+        });
       },
     );
     if (!allowed)
@@ -120,29 +127,20 @@ export async function resolveManagedTurnSetup(args: {
         ),
       };
   }
-
   const { initializePins, mcpProtocolVersionsByServerId } =
     extractMcpInitializeOptions(rawBody);
   const body = rawBody as unknown as ChatV2Request & {
     projectId: string;
     selectedServerIds: string[];
     selectedServerNames?: string[];
-    // Clients call /api/web/scenarios/redeem on mount and pass the
-    // resolved `scenarioId` + `accessVersion` on every scenario-aware
     scenarioId?: string;
     accessVersion?: number;
     accessScope?: "project_member" | "chat_v2";
     surface?: "preview" | "share_link";
-    // Saved host being previewed (Playground / host-bound direct chat). When
-    // present and NOT a scenario session, the server re-fetches the host's
     hostId?: string;
-    // Phase 1.1 execution target. Normalized (together with the legacy
-    // `hostId` and the access-bearing `scenarioId`) into one closed internal
-    // union below; ambiguous combinations are rejected, never shadowed.
     executionTarget?: unknown;
     environmentOverrides?: unknown;
   };
-
   const {
     messages,
     model,
@@ -150,15 +148,14 @@ export async function resolveManagedTurnSetup(args: {
     temperature: bodyTemperature,
     requireToolApproval: bodyRequireToolApproval,
     respectToolVisibility: bodyRespectToolVisibility,
-    selectedServerIds,
+    selectedServerIds: requestedServerIds,
     selectedServerNames,
     scenarioId,
     accessVersion,
     surface,
     hostId,
   } = body;
-  // ONE closed execution target, resolved at ingress. `scenarioId` + an
-  // explicit `executionTarget` (and `hostId` + `executionTarget`) are
+  const selectedServerIds = requestedServerIds ?? [];
   const normalizedTarget = normalizeExecutionTarget({
     scenarioId,
     executionTarget: body.executionTarget,
@@ -174,8 +171,6 @@ export async function resolveManagedTurnSetup(args: {
     );
   }
   const executionTarget = normalizedTarget.target;
-  // True when this turn flows through a scenario surface. sourceType +
-  // accessScope decisions hinge on this.
   const isScenarioRequest = executionTarget.kind === "scenario";
   if (!Array.isArray(messages) || messages.length === 0) {
     throw new WebRouteError(
@@ -184,10 +179,7 @@ export async function resolveManagedTurnSetup(args: {
       "messages are required",
     );
   }
-
   let modelDefinition = model;
-  // The ID, not just the object. `model` arrives through an unvalidated body
-  // cast (`hostedChatSchema` does not describe it), and `ModelDefinition.id`
   if (!modelDefinition || !String(modelDefinition.id ?? "").trim()) {
     throw new WebRouteError(
       400,
@@ -195,9 +187,6 @@ export async function resolveManagedTurnSetup(args: {
       "model is not supported",
     );
   }
-
-  // The caller's `projectId` is checked here, before anything is resolved or
-  // billed against it (MJ-013). The server batch below applies the same
   let chatEnvironmentsSupported = false;
   if (!isScenarioRequest) {
     const authorized = await authorizeProject(
@@ -207,7 +196,6 @@ export async function resolveManagedTurnSetup(args: {
     );
     chatEnvironmentsSupported = authorized.chatEnvironments;
   }
-
   const {
     mode: turnMode,
     hostRuntimeConfig,
@@ -237,7 +225,7 @@ export async function resolveManagedTurnSetup(args: {
             chatEnvironments: chatEnvironmentsSupported,
           },
     projectId: hostedBody.projectId,
-    selectedServerIds,
+    selectedServerIds: requestedServerIds,
     bearer: bearerToken,
     signal: c.req.raw.signal,
     getClient: async () =>
@@ -249,15 +237,10 @@ export async function resolveManagedTurnSetup(args: {
       pluginOriginByServerId(effectiveCapabilities),
     );
   }
-
-  // ── The turn's effective server set ─────────────────────────────────────
-  // For an environment target — or an environment-backed scenario turn — this
   const environmentServers = environmentSpec ?? scenarioEnvironment;
   const effectiveServerIds = environmentServers
     ? runtimeServerIds(environmentServers)
     : selectedServerIds;
-  // Names stay index-aligned with the ids. An empty array (older backend
-  // without the name-carrying projection) makes `buildServerNamesById` return
   const environmentServerNameList = environmentServers
     ? runtimeServerNames(environmentServers)
     : undefined;
@@ -266,40 +249,43 @@ export async function resolveManagedTurnSetup(args: {
       ? environmentServerNameList
       : undefined
     : selectedServerNames;
-  // The environment's composed skill union, in the shape both engines
-  // consume. Presence — not length — is what makes it authoritative, so an
   const environmentSkills = environmentSpec
     ? environmentRuntimeSkills(environmentSpec)
     : scenarioEnvironment
       ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
       : undefined;
-
-  // Enterprise-managed authorization policy. Server-authoritative wherever
-  // a backend host config exists (scenario / host-bound turns above — the
   const xaaPolicy =
     authoritativeConnectionPolicy && hostRuntimeConfig
       ? xaaPolicyFromMcpProfile(
-          (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+          (
+            hostRuntimeConfig as {
+              mcpProfile?: unknown;
+            }
+          ).mcpProfile,
         )
       : parseXaaPolicyValue(rawBody.xaaPolicy);
-
-  // SEP-2243 mirroring, resolved the same way and for the same reason: a
-  // scenario turn carries no pins in the body (the client never sends the
   const effectiveInitializePins =
     authoritativeConnectionPolicy && hostRuntimeConfig
       ? applyHostConformanceKnobs(
           applyHostParamMirroring(
             initializePins,
             mirrorToolParamHeadersFromMcpProfile(
-              (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+              (
+                hostRuntimeConfig as {
+                  mcpProfile?: unknown;
+                }
+              ).mcpProfile,
             ),
           ),
           conformanceKnobsFromMcpProfile(
-            (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+            (
+              hostRuntimeConfig as {
+                mcpProfile?: unknown;
+              }
+            ).mcpProfile,
           ),
         )
       : initializePins;
-
   const resolvedExecution = resolveExecutionContext({
     hostConfig: hostRuntimeConfig,
     overrides: {
@@ -314,13 +300,8 @@ export async function resolveManagedTurnSetup(args: {
         body.hostStyle ?? (turnMode === "interactive" ? "claude" : undefined),
       builtInToolIds: turnMode === "recorded" ? undefined : body.builtInToolIds,
     },
-    // Scenario: the published host wins (a share-link client can't override).
-    // Host preview (Playground): the owner's in-session tweaks win, while
     precedence: turnMode === "recorded" ? "host-wins" : "override-wins",
   });
-
-  // A continuation whose step budget is already spent is refused here,
-  // before any MCP server is connected (see `utils/agent-loop-guard.ts`).
   const explicitContinuation =
     rawBody.mrtrResume !== undefined ||
     rawBody.scopeStepUpResume !== undefined ||
@@ -333,9 +314,6 @@ export async function resolveManagedTurnSetup(args: {
     if (loopVerdict)
       return { response: refuseAgentLoop(c, loopVerdict, "chat_v2") };
   }
-
-  // What this turn will RECORD about the configuration it ran with. Computed
-  // from the POST-narrowing spec (plugin overrides filtered `environmentSpec`
   const skillDeliveryMode: EnvironmentSkillDelivery = !resolvedExecution.harness
     ? "emulated"
     : harnessSupportsSkills(resolvedExecution.harness)
@@ -352,7 +330,6 @@ export async function resolveManagedTurnSetup(args: {
           { delivery: skillDeliveryMode },
         )
       : undefined;
-
   for (const entry of resolvedExecution.drift) {
     if (entry.field === "requireToolApproval") {
       logger.warn(
@@ -395,8 +372,6 @@ export async function resolveManagedTurnSetup(args: {
       );
     }
   }
-  // WHICH BUILT-IN TOOLS THIS TURN MAY HAVE (MJ-008). The body's list is
-  // bounded by the host/project configuration, unknown ids are dropped, and
   const builtInToolPolicy = await resolveTurnBuiltInToolIds({
     requested: resolvedExecution.builtInToolIds,
     configuration: toolConfiguration,
@@ -407,14 +382,14 @@ export async function resolveManagedTurnSetup(args: {
       (await createConvexClient(await getConvexBearerForRequest(c)).query(
         "projects:getProjectCapabilities" as never,
         { projectId: hostedBody.projectId } as never,
-      )) as { projectRole?: string | null } | null,
+      )) as {
+        projectRole?: string | null;
+      } | null,
   });
   if (builtInToolPolicy.dropped.length > 0) {
     getRequestLogger(c, "routes.web.chat-v2").event(
       "chat.builtin_tools.withheld",
       {
-        // Catalog ids only. An unknown id is whatever the body said, so it
-        // is counted and never echoed.
         toolIds: builtInToolPolicy.dropped
           .filter((entry) => entry.reason !== "unknown")
           .map((entry) => entry.id),
@@ -428,23 +403,46 @@ export async function resolveManagedTurnSetup(args: {
       },
     );
   }
-  const turnBuiltInToolIds = builtInToolPolicy.ids;
-  // `modelId` stays a special case — the resolver yields the resolved
-  // string, and `resolveHostModelDefinition` lifts it (catalog hit →
+  let localBrowserSettingsUnavailable = false;
+  let turnBuiltInToolIds = builtInToolPolicy.ids;
+  if (
+    localIngress &&
+    turnMode === "interactive" &&
+    rawBody.browserEngine === "local"
+  ) {
+    let enabled =
+      typeof hostRuntimeConfig?.localBrowserEnabled === "boolean"
+        ? hostRuntimeConfig.localBrowserEnabled
+        : undefined;
+    if (!hostRuntimeConfig && !c.get("guestId")) {
+      try {
+        enabled = await readLocalBrowserSetting(
+          await getConvexBearerForRequest(c),
+          hostedBody.projectId,
+        );
+      } catch (error) {
+        localBrowserSettingsUnavailable = true;
+        logger.warn("[chat-v2] local Browser settings unavailable", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    turnBuiltInToolIds = resolveLocalBrowserTools(
+      builtInToolPolicy.ids,
+      enabled,
+      true,
+    );
+  }
   const externalAccountHarnessTurn = Boolean(
     resolvedExecution.harness &&
     harnessUsesExternalAccount(resolvedExecution.harness),
   );
-  // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
-  // below resolves anything. `resolveHostModelDefinition` asks the org's
   if (resolvedExecution.harness) {
     const hostModelRefusal = externalAccountHostModelRefusalReason({
       harnessId: resolvedExecution.harness,
       modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
     });
     if (hostModelRefusal) {
-      // 422, not 503: the request is well-formed and retrying it changes
-      // nothing. This client's harness cannot run this turn.
       throw new WebRouteError(
         422,
         ErrorCode.FEATURE_NOT_SUPPORTED,
@@ -478,15 +476,13 @@ export async function resolveManagedTurnSetup(args: {
     });
     modelDefinition = hostModel;
   }
-  // THE SAVED SELECTION DECIDES THE RAIL (`selection-rail.ts`): the turn's
-  // own `modelSelection` (a Playground card's), else the selected host's
   const selected = resolveChatSelection({
     raw: rawBody.modelSelection,
     inherited: resolvedExecution.routingSelection,
     inheritedOrigin: resolvedExecution.modelSelectionOrigin,
     model: modelDefinition,
     hostWins: turnMode === "recorded",
-    allowLocal: false,
+    allowLocal: localIngress,
   });
   if (!selected.ok) {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, selected.error);
@@ -506,7 +502,6 @@ export async function resolveManagedTurnSetup(args: {
     model: modelDefinition,
   });
   const systemPrompt = resolvedExecution.systemPrompt;
-  // A picked selection owns its settings; scenarios force host settings.
   const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
   if (!bodyEffort.ok) {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, bodyEffort.error);
@@ -532,8 +527,6 @@ export async function resolveManagedTurnSetup(args: {
     resolvedExecution.progressiveToolDiscovery;
   const { modelVisibleMcpToolResults, mcpToolResultImageRendering } =
     resolvedExecution.hostPolicy;
-  // Host-config tools (web_search, bash, …) — one resolver owns which
-  // config field produces which tool and with which gates (see
   let harnessExecutionTarget: LocalHarnessExecutionTarget | undefined;
   if (
     (await shouldUseLocalHarness(
@@ -561,6 +554,7 @@ export async function resolveManagedTurnSetup(args: {
           projectId: hostedBody.projectId,
           scope: "attended",
           harnessId: localHarnessId,
+          requireToolApproval,
         })
       ).target;
     } catch (error) {
@@ -571,6 +565,10 @@ export async function resolveManagedTurnSetup(args: {
               error instanceof Error
                 ? error.message
                 : `${localHarnessName} is not ready`,
+            // The client opens its consent prompt on this status.
+            ...(error instanceof LocalAutoApproveConsentRequiredError
+              ? { status: error.status }
+              : {}),
           },
           409,
         ),
@@ -578,7 +576,9 @@ export async function resolveManagedTurnSetup(args: {
     }
   } else {
     const parsed = parseHarnessExecutionTarget({
-      body: body as { harnessTarget?: RawHarnessTargetInput },
+      body: body as {
+        harnessTarget?: RawHarnessTargetInput;
+      },
       grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
       serverEnabled: false,
       actorEligible: false,
@@ -587,44 +587,25 @@ export async function resolveManagedTurnSetup(args: {
     if (parsed.kind === "refused")
       return { response: c.json({ error: parsed.reason }, 400) };
   }
-
   if (resolvedExecution.harness) {
     const availability = checkHarnessRuntimeAvailable({
       harnessId: resolvedExecution.harness,
       localExecution: Boolean(harnessExecutionTarget),
-      // Refused before any spend when the adapter has not verified it.
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       requireToolApproval,
-      // Use the SERVER-resolved host server list, not the request body — a
-      // stale/tampered request mustn't send an empty array to bypass the
       hasSelectedMcpServers: environmentServers
         ? effectiveServerIds.length > 0
         : (resolvedExecution.selectedServerIds ?? selectedServerIds).length > 0,
-      // The RESOLVED definition — eligibility and the canonical id are both
-      // derived from it inside the gate, so no call site can compute the two
-      // inconsistently.
       model: {
         id: String(modelDefinition.id),
         provider: modelDefinition.provider,
-        // The picker's own-provider stamp. Without it the gate reads a
-        // "Your providers" row whose bare id has a hosted twin as hosted,
         hosted: modelDefinition.hosted,
       },
-      // The saved selection: an org connection on the harness's own vendor
-      // runs the real runtime on the organization's key.
       ...(routingSelection ? { selection: routingSelection } : {}),
-      // The HOST's own configured id, kept separate from the resolved model
-      // above. Only the external-account rule reads it, and only that rule
       ...(resolvedExecution.modelId
         ? { hostModelId: resolvedExecution.modelId }
         : {}),
-      // Fail closed rather than let a harness turn bypass the host's
-      // enterprise-managed policy: the harness proxy token carries no
-      // host, so that route can't enforce it (see the flag's docstring).
       xaaEnterprisePolicyOn: xaaPolicy != null,
-      // Playground chat may run a harness × model pair the evidence table
-      // has not verified (with a warning); a scenario session is an eval
-      // surface and may not.
       purpose: turnMode === "recorded" ? "eval" : "chat",
     });
     if (availability.ok && availability.warning) {
@@ -638,9 +619,6 @@ export async function resolveManagedTurnSetup(args: {
       );
     }
     if (!availability.ok) {
-      // 422 when this turn's settings are the problem (retrying changes
-      // nothing); 503 for an operator state — broker delivery off, or no
-      // computers data plane — which works once the server is fixed.
       const status = harnessUnavailableHttpStatus(availability.kind);
       throw new WebRouteError(
         status,
@@ -651,35 +629,32 @@ export async function resolveManagedTurnSetup(args: {
         {
           reason: "HARNESS_UNAVAILABLE",
           harness: resolvedExecution.harness,
-          // Branch on the kind, never on the wording.
           kind: availability.kind,
         },
       );
     }
   }
-
-  // Phase 3: the server-resolved runtime config (scenario OR host-by-id) carries
-  // an opaque executionScope; thread it into the computer-backed (bash) tool so
   const executionScope = (
-    hostRuntimeConfig as { executionScope?: ExecutionScope } | null | undefined
+    hostRuntimeConfig as
+      | {
+          executionScope?: ExecutionScope;
+        }
+      | null
+      | undefined
   )?.executionScope;
-  // A non-member participant of this scenario: the refusals they see are
-  // reworded so they never name the study's credits, budget, organization or
-  // environment (`participantSafeStudyError`). Members keep the detail.
   const scenarioParticipant =
     turnMode === "recorded" && isScenarioParticipant(hostRuntimeConfig);
-
-  // COMP-16: the host-configured computer working directory — the SAME
-  // `computer.workdir` the bash tool runs in — threaded into the harness path
-  // so its Shell roots under the same directory. Server-resolved config only.
   const rawComputerWorkdir = (
-    hostRuntimeConfig as { computer?: { workdir?: unknown } } | undefined
+    hostRuntimeConfig as
+      | {
+          computer?: {
+            workdir?: unknown;
+          };
+        }
+      | undefined
   )?.computer?.workdir;
   const harnessComputerWorkdir =
     typeof rawComputerWorkdir === "string" ? rawComputerWorkdir : undefined;
-
-  // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
-  // the emulated chat path inlines the catalog and wires `loadSkill` (+ file
   const requestedProjectSkills =
     turnMode === "interactive" &&
     (usesLiveSkills ||
@@ -702,18 +677,11 @@ export async function resolveManagedTurnSetup(args: {
       isGuest: Boolean(c.get("guestId")),
       harness: resolvedExecution.harness,
       modelId: String(modelDefinition.id),
-      // Provider is required so bare hosted ids canonicalize — without it a
-      // bare-id harness turn would be mis-detected as emulated and get the
-      // emulated skill tools on top of adapter-delivered skills.
       provider: modelDefinition.provider,
       hosted: modelDefinition.hosted,
-      // A harness on the org's own key runs the real runtime too.
       ...(routingSelection ? { selection: routingSelection } : {}),
       hasProjectId: Boolean(hostedBody.projectId),
     });
-
-  // The project pool as a live capability set. A catalog failure is logged
-  // and dropped rather than raised: losing skills must not lose the turn,
   let liveProjectCapabilities: EffectiveCapabilitySet | undefined;
   let projectSkillReadFailed = false;
   if (cloudSkillsEnabled && hostedBody.projectId) {
@@ -735,7 +703,25 @@ export async function resolveManagedTurnSetup(args: {
       );
     }
   }
-
+  // This machine's skills are an interactive extra, like
+  // `includeProjectSkills` above: a recorded scenario turn never takes them.
+  if (
+    localIngress &&
+    turnMode === "interactive" &&
+    !resolvedExecution.harness &&
+    (usesLiveSkills || includeProjectSkills)
+  ) {
+    const localSkills = await listLocalRuntimeSkills().catch((error) => {
+      logger.warn("[chat-v2] local skill scan failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    });
+    const localCapabilities = buildLiveEffectiveCapabilities({ localSkills });
+    liveProjectCapabilities = liveProjectCapabilities
+      ? withLiveProjectSkills(liveProjectCapabilities, localCapabilities)
+      : localCapabilities;
+  }
   return {
     value: {
       hostedBody,
@@ -743,6 +729,7 @@ export async function resolveManagedTurnSetup(args: {
       mcpProtocolVersionsByServerId,
       body,
       messages,
+      model,
       bodyTemperature,
       selectedServerIds,
       selectedServerNames,
@@ -770,6 +757,7 @@ export async function resolveManagedTurnSetup(args: {
       turnProvenance,
       builtInToolPolicy,
       turnBuiltInToolIds,
+      localBrowserSettingsUnavailable,
       externalAccountHarnessTurn,
       selected,
       routingSelection,
