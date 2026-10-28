@@ -523,7 +523,7 @@ describe("ConformanceTab", () => {
     expect(dated[0]).toBe("2026-07-28");
   });
 
-  it("boxes a not-applicable reason in neutral, never in error red", async () => {
+  it("shows a not-applicable reason only when its row is open, in neutral", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({
         checks: [
@@ -546,6 +546,10 @@ describe("ConformanceTab", () => {
     await runToCompletion();
     fireEvent.click(suiteHeader("protocol"));
 
+    // Shut, an era skip says nothing to act on, so it carries no box.
+    expect(screen.queryByText(/Not applicable to the legacy era/)).toBeNull();
+
+    clickRow("No Session Id Minted");
     const reason = screen.getByText(/Not applicable to the legacy era/);
     expect(reason).toHaveClass("text-muted-foreground");
     expect(reason).not.toHaveClass("text-red-600");

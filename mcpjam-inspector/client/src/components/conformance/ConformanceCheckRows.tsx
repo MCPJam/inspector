@@ -62,7 +62,15 @@ function formatDetailValue(value: unknown) {
  * read as an error. Red now means a failure that counts; anything else (a
  * skip reason, an unscored check's finding) is the neutral box. Clamped while
  * the row is shut, in full once it is open.
+ *
+ * A shut row shows the box only when it says something to act on: a failure,
+ * or why a check that applies could not run. A not-applicable reason waits
+ * for the row to open, or every era-skipped row would carry a box of noise.
  */
+function showsMessageShut(status: string, skipReason?: string): boolean {
+  return status === "failed" || skipReason === "could-not-run";
+}
+
 function ResultMessage({
   message,
   tone,
@@ -138,7 +146,8 @@ export function CheckRow({
           >
             {check.title}
           </span>
-          {check.error ? (
+          {check.error &&
+          (expanded || showsMessageShut(check.status, check.skipReason)) ? (
             <ResultMessage
               message={check.error.message}
               tone={
@@ -209,7 +218,8 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="text-[13px]">{step.title}</span>
-          {step.error ? (
+          {step.error &&
+          (expanded || showsMessageShut(step.status, step.skipReason)) ? (
             <ResultMessage
               message={step.error.message}
               tone={step.status === "failed" ? "error" : "neutral"}
