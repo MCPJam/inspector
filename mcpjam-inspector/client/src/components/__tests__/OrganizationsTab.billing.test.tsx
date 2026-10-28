@@ -156,7 +156,8 @@ function billingStatusFixture(
     organizationName: "Org One",
     plan: "free",
     effectivePlan: "free",
-    source: overrides.plan && overrides.plan !== "free" ? "subscription" : "free",
+    source:
+      overrides.plan && overrides.plan !== "free" ? "subscription" : "free",
     billingInterval: null,
     billingConfigured: true,
     subscriptionStatus: null,
