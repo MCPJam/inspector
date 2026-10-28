@@ -481,7 +481,7 @@ function ConformanceContent({
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           )}
                           {oauth.popupBlocked
-                            ? "Your browser blocked the authorization window."
+                            ? "Your browser blocked the authorization window. Allow pop-ups for this site, or open the authorization page."
                             : "Waiting for browser authorization..."}
                         </div>
                         <div className="flex gap-2">

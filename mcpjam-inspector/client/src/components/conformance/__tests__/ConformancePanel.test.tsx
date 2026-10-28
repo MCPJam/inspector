@@ -722,8 +722,12 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     clickRun();
 
-    await screen.findByText("Your browser blocked the authorization window.");
-    expect(screen.queryByText("Waiting for browser authorization...")).toBeNull();
+    await screen.findByText(
+      "Your browser blocked the authorization window. Allow pop-ups for this site, or open the authorization page.",
+    );
+    expect(
+      screen.queryByText("Waiting for browser authorization..."),
+    ).toBeNull();
 
     // Opening it again from a click is what a popup blocker lets through.
     openSpy.mockReturnValue({} as unknown as Window);
@@ -1167,10 +1171,14 @@ describe("ConformanceTab", () => {
     expect(within(header).getByText("INCOMPLETE")).toBeDefined();
     expect(within(header).queryByText("FAILED")).toBeNull();
     expect(
-      screen.getByText(/This server requires sign-in.*1 check\(s\) could not\s+run/s),
+      screen.getByText(
+        /This server requires sign-in.*1 check\(s\) could not\s+run/s,
+      ),
     ).toBeDefined();
     expect(
-      screen.getByText(/Reconnect the server with OAuth.*or update its access\s+token/s),
+      screen.getByText(
+        /Reconnect the server with OAuth.*or update its access\s+token/s,
+      ),
     ).toBeDefined();
   });
 
