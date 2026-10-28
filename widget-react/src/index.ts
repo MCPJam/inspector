@@ -121,3 +121,5 @@ export {
   WidgetFullscreenPlacementContext,
   type WidgetFullscreenPlacement,
 } from "./widget-fullscreen-placement";
+
+export * from "./app-tools-catalog";
