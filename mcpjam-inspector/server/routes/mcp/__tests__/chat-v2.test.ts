@@ -889,6 +889,39 @@ describe("POST /api/mcp/chat-v2", () => {
       } finally { resolveRollout.mockRestore(); }
     });
 
+    it.each([true, false])(
+      "asks the backend, not the flag, before a cloud Browser turn (available: %s)",
+      async (available) => {
+        // This server knows a WorkOS id, not an email, so it cannot evaluate
+        // the email-targeted rollout itself; the backend answers for the
+        // member and the project, as the desktop reservation will.
+        const availability = await import(
+          "../../../utils/computers/hosted-browser-availability.js"
+        );
+        const rollout = await import("../../../utils/computers/browser-rollout.js");
+        const ask = vi
+          .spyOn(availability, "isHostedBrowserAvailableFor")
+          .mockResolvedValue(available);
+        const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout");
+        try {
+          const res = await postAuthenticatedJson({
+            messages: [{ role: "user", content: "Hello" }],
+            model: { id: "gpt-4", provider: "openai" }, apiKey: "test-key",
+            projectId: "project-browser", builtInToolIds: ["browser"], browserEngine: "cloud",
+          });
+          expect(res.status).toBe(200);
+          await lastStreamExecution;
+          expect(ask).toHaveBeenCalledWith(
+            expect.objectContaining({ projectId: "project-browser", surface: "tools" }),
+          );
+          expect(resolveRollout).not.toHaveBeenCalled();
+        } finally {
+          ask.mockRestore();
+          resolveRollout.mockRestore();
+        }
+      },
+    );
+
     it("loads project defaults for a local chat without a selected client", async () => {
       readLocalBrowserSettingMock.mockResolvedValueOnce(true);
       const rollout = await import("../../../utils/computers/browser-rollout.js");
