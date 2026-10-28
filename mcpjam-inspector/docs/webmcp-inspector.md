@@ -367,19 +367,19 @@ a window opened.
 | ------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------ |
 | Route mount        | `/api/mcp/webmcp` (the family is `!HOSTED_MODE` only) | `/api/web/webmcp`, behind `bearerAuthMiddleware` + `requireVerifiedAuth` |
 | Server kill switch | `MCPJAM_WEBMCP_INSPECTOR_ENABLED` (default on)        | same                                                                     |
-| Reachability       | —                                                     | `MCPJAM_WEBMCP_INSPECTOR_HOSTED_ENABLED=1`                               |
-| Backend verdict    | —                                                     | `desktopProvisionable` from the runtime-config bootstrap                 |
-| Client visibility  | `local-browser-enabled` (PostHog)                     | `hosted-browser-enabled` (PostHog)                                       |
+| Who may launch     | —                                                     | the backend's `hosted-browser` gate, at desktop reservation              |
+| Backend verdict    | —                                                     | `desktopProvisionable`, refreshed every minute                           |
+| Client visibility  | `local-browser-enabled` (PostHog)                     | `hostedBrowser:getAvailability` (the flag plus readiness)                |
 
 Off means **404, not 403**: a disabled capability should not be discoverable.
 The nav item's flag key must stay in `SIDEBAR_RESOLVED_FLAG_KEYS` or the item is
 invisible forever.
 
-`MCPJAM_WEBMCP_INSPECTOR_HOSTED_ENABLED` is deliberately **not**
-`HOSTED_BROWSER_TOOLS_ENABLED`. Both switches lead to the same hosted browser,
-but one lets a person drive their own page and the other hands six `browser_*`
-tools to a model — with bash co-tenancy and approval threading behind it. One
-variable would make turning on the first turn on the second.
+There is no deployment switch for the hosted browser. The `hosted-browser-enabled`
+flag, evaluated by email on the backend, decides who may launch on every path,
+so withdrawing it is the rollback. Clearing the desktop template stops every
+desktop from booting, and `MCPJAM_WEBMCP_INSPECTOR_ENABLED=false` takes the
+inspector out entirely.
 
 ### Authentication is not inherited from the bearer middleware
 
