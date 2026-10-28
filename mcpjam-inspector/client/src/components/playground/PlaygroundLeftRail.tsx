@@ -231,6 +231,7 @@ function ToolsBody({
   // but suppress its inline LoggerView since the logger lives in the right rail.
   return (
     <ZeroServerToolsBody
+      previewedHarnessId={previewedHarnessId}
       builtinTools={harnessBuiltinTools}
       builtinToolsRunLocally={builtinToolsRunLocally}
       browserTools={browserTools}
@@ -246,10 +247,12 @@ function ToolsBody({
  * returns would run conditionally.
  */
 function ZeroServerToolsBody({
+  previewedHarnessId,
   builtinTools,
   builtinToolsRunLocally,
   browserTools,
 }: {
+  previewedHarnessId?: string | null;
   builtinTools: HarnessBuiltinToolInfo[];
   builtinToolsRunLocally: boolean;
   browserTools: BrowserToolsState;
@@ -261,6 +264,7 @@ function ZeroServerToolsBody({
   return (
     <>
       <PlaygroundLeft
+        previewedHarnessId={previewedHarnessId}
         tools={state.tools}
         selectedToolName={state.selectedTool}
         fetchingTools={state.fetchingTools}
