@@ -4531,7 +4531,9 @@ export default function App() {
     previousConnectedServersRef.current = connectedServers;
   }, [activeTab, appState.servers, setSelectedServer]);
 
-  // Auto-select a connected server when navigating to tabs that need one
+  // Auto-select a connected server when navigating to tabs that need one.
+  // Conformance is left out: ConformanceTab picks its own (the server last run
+  // there first), and this effect runs after it, so it would overwrite that.
   useEffect(() => {
     const needsServer =
       activeTab === "playground" ||
@@ -4539,7 +4541,6 @@ export default function App() {
       activeTab === "resources" ||
       activeTab === "prompts" ||
       activeTab === "tasks" ||
-      activeTab === "conformance" ||
       activeTab === "compatibility";
     if (!needsServer || selectedMCPConfig) return;
 
