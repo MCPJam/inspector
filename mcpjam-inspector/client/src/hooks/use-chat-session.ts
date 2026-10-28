@@ -3382,26 +3382,9 @@ export function useChatSession(
       return isLocalOnlyMcpServerConfig(server.config);
     });
   }, [appState, hostedProjectId, selectedServers]);
-  // ── Hidden environment (a Playground chat's plugins) ────────────────────
-  // Only the web chat route resolves an environment. On this machine a turn
-  // that must stay local (a client run here, a local-only server, a model
-  // keyed here, this machine's browser or shell) runs without its plugins and
-  // says so, unless they were composed for that client here (venue `local`).
-  const hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null =
-    !hostedHiddenEnvironment || HOSTED_MODE
-      ? null
-      : !explicitRequiresWebChatApi &&
-          localHarnessExecution?.requested === true &&
-          hostedHiddenEnvironment.venue !== "local"
-        ? "local_harness"
-        : hasLocalOnlySelectedServer
-          ? "local_server"
-          : !(isMcpJamModel || selectedModelUsesOrgRuntime)
-            ? "local_model"
-            : localBrowserRequested ||
-                (resolvedLocalEngine && Boolean(localConsentToken))
-              ? "local_tools"
-              : null;
+  // Managed local and service turns share environment composition. The
+  // process role, rather than the selected model or transport, owns execution.
+  const hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null = null;
   const hiddenEnvironmentActive =
     !!hostedHiddenEnvironment && hiddenEnvironmentOffReason === null;
   // What this turn actually sends against: set only once the environment is
@@ -3423,7 +3406,6 @@ export function useChatSession(
     explicitRequiresWebChatApi || hiddenEnvironmentActive;
   const localMcpRuntimeRequired =
     !HOSTED_MODE &&
-    !hostedRequiresWebChatApi &&
     selectedModelUsesOrgRuntime &&
     (hasLocalOnlySelectedServer || localBrowserRequested);
   /**
@@ -3443,23 +3425,18 @@ export function useChatSession(
    */
   const localHarnessRequested =
     !HOSTED_MODE &&
-    !hostedRequiresWebChatApi &&
     !hostedScenarioId &&
     localHarnessExecution?.requested === true;
-  const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi;
-  // An org-runtime model stays on the local `/api/mcp` route in a local build,
-  // like every other model. That route resolves the org connection itself (the
-  // key stays in Convex) and runs tools on this app's own MCP connections, so
-  // a tool result names its server the way the widget looks it up. The web
-  // route keys servers by Convex id — which the local widget endpoints can't
-  // resolve ("Unknown MCP server") — and reconnects every server per turn.
+  const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi || Boolean(hostedProjectId);
+  // Managed setup uses stable server IDs on either ingress. Endpoint choice
+  // remains a deployment decision below, independent of this request shape.
   const shouldUseOrgAwareChatApi = isHostedTransport;
   const requestChoice = useMemo(() => chatRequestSelection({
     intent: effectiveSelectionIntent,
     selection: savedSelection,
     model: selectedModel,
     orgConfig: hostedOrgModelConfig,
-    allowLocal: !shouldUseOrgAwareChatApi,
+    allowLocal: !HOSTED_MODE,
     temperature: temperatureOverride,
     effortLevels: reasoningEffortOptions(selectedModel,
       reasoningEffortRouteForRow(selectedModel, hostedOrgModelConfig), reasoningEffortHarness),
@@ -3668,18 +3645,21 @@ export function useChatSession(
   const turnTaskScopeRef = useRef<string | undefined>(undefined);
 
   const savedClientSendGuard = useSavedClientSendGuard(
-    options.savedClientConfig ? stableStringifyJson({
+    stableStringifyJson({
+      install: convexClient.url,
+      actor: workOsUser?.id ?? (isAuthenticated ? "guest" : "anonymous"),
+      projectId: hostedProjectId,
       config: options.savedClientConfig,
       target: hostedTargetKeyValue,
       session: chatSessionId,
       selectedServers,
       requestChoice,
-    }) : undefined,
+    }),
   );
 
   const transport = useMemo(() => {
     const shouldSendClientApiKey =
-      !shouldUseOrgAwareChatApi && !selectedModelUsesOrgRuntime;
+      !HOSTED_MODE && !selectedModelUsesOrgRuntime;
     let apiKey: string;
     if (
       selectedModel.provider === "custom" &&
@@ -3714,13 +3694,13 @@ export function useChatSession(
     // (no stray consent header on the web route) and that turn's bash
     // resolves cloud, as it must.
     const sendLocalEngine =
-      !shouldUseOrgAwareChatApi &&
+      !HOSTED_MODE &&
       resolvedLocalEngine &&
       !hostedScenarioId &&
       Boolean(localConsentToken) &&
       authIsMemberRef.current;
     const sendLocalBrowser =
-      !shouldUseOrgAwareChatApi && localBrowserRequested && !hostedScenarioId;
+      !HOSTED_MODE && localBrowserRequested && !hostedScenarioId;
     if (sendLocalBrowser && browserConsentToken)
       mergedHeaders[BROWSER_CONSENT_HEADER] = browserConsentToken;
     if (sendLocalEngine && localConsentToken) {
@@ -3737,9 +3717,7 @@ export function useChatSession(
     const transportHeaders =
       Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined;
 
-    const chatApi = shouldUseOrgAwareChatApi
-      ? "/api/web/chat-v2"
-      : "/api/mcp/chat-v2";
+    const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
 
     // Hosted dashboard guests and signed-in users both require a project id.
     // Submit is blocked until hostedProjectId and selected server ids resolve.
@@ -3753,6 +3731,9 @@ export function useChatSession(
       // pre-resolved selection for surfaces without a preflight (e.g. scenario).
       const preflight = resolvedHostedServersRef.current;
       resolvedHostedServersRef.current = null;
+      if (!hostedEnvironmentId && !preflight && hostedSelectedServerIds.length !== selectedServers.length) {
+        throw new Error("Save the selected servers before sending this message.");
+      }
       const hostedServerBatch = buildResolvedServerBatchRequest({
         projectId: hostedProjectId,
         serverIds: preflight?.serverIds ?? hostedSelectedServerIds,
@@ -3986,6 +3967,15 @@ export function useChatSession(
                   ? { azureBaseUrl: getAzureBaseUrl() }
                   : {}),
               }),
+          ...(!HOSTED_MODE ? {
+            ...(personalBrowserEngine && !hostedScenarioId ? {
+              browserEngine: sendLocalBrowser ? "local" : "cloud",
+            } : {}),
+            ...(sendLocalEngine ? { computerEngine: "local" } : {}),
+            ...((localMcpRuntimeRequired || (localHarnessRequested && selectedModelUsesOrgRuntime)) ? { localMcpRuntimeRequired: true } : {}),
+            ...(selectedModel.provider === "ollama" ? { ollamaBaseUrl: getOllamaBaseUrl() } : {}),
+            ...(selectedModel.provider === "azure" ? { azureBaseUrl: getAzureBaseUrl() } : {}),
+          } : {}),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
           ...(modelVisibleMcpToolResultsRef.current !== undefined
@@ -5021,7 +5011,7 @@ export function useChatSession(
         // Hosted preflight: resolve selected runtime server NAMES → persisted
         // Convex ids (persisting ad-hoc/App servers) BEFORE the synchronous
         // transport body builds, so the hosted send never carries a display
-        // name. Only on the web-engine path, and only when the surface provided
+        // name. On managed turns, and only when the surface provided
         // a resolver (Playground). On failure, fail the send CLOSED with a
         // visible toast (callers fire-and-forget, so don't reject).
         const usesWebEngine = shouldUseOrgAwareChatApi;
@@ -5093,6 +5083,13 @@ export function useChatSession(
             );
             return false; // fail closed — do not send with unresolved servers
           }
+        }
+        if (usesWebEngine && !hostedEnvironmentId && !hostedEnsureServerIds &&
+            hostedSelectedServerIds.length !== serverNamesSnapshot.length) {
+          pendingWidgetModelContextRef.current = undefined;
+          resolvedHostedServersRef.current = null;
+          toast.error("Save the selected servers before sending this message.");
+          return false;
         }
         try {
           await releaseBrowserForChat(browserProjectAtSend, sessionAtSend);
@@ -5166,6 +5163,7 @@ export function useChatSession(
       baseSendMessage,
       savedClientSendGuard,
       hostedEnsureServerIds,
+      hostedSelectedServerIds,
       hostedEnvironmentId,
       selectedServers,
       shouldUseOrgAwareChatApi,

@@ -2,4 +2,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Allow explicit environment chat requests through the local Inspector endpoint with project authorization, and release request-owned chat resources on cancellation and setup failure.
+Use shared chat execution for managed local and web requests while preserving their authentication boundaries and standalone local providers. Support saved local servers and environment plugins, reject stale conversation identity, and release turn-owned resources on completion, cancellation, and setup failure.
