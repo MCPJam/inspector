@@ -92,6 +92,13 @@ describe("useHostedBrowserAvailable", () => {
     expect(await render("tools")).toBe(false);
   });
 
+  it("offers nothing, without throwing, on an answer without the surface", async () => {
+    for (const answer of [{}, { inspector: null }]) {
+      state.result = answer;
+      expect(await render("inspector")).toBe(false);
+    }
+  });
+
   it("refuses a guest without asking", async () => {
     state.isMember = false;
     expect(await render("inspector")).toBe(false);

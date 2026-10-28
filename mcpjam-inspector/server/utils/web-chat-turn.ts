@@ -488,7 +488,7 @@ export interface WebChatTurnPrepareInputs {
    * client-fulfilled like `appTools` — the client invokes them through the
    * session it already owns, hosted or local, and posts the result back.
    *
-   * The CALLER validates and gates them (`webmcpInspectorReachable`), because
+   * The CALLER validates and gates them (`WEBMCP_INSPECTOR_ENABLED`), because
    * a turn must never advertise a page tool on a deployment where no session
    * can exist: the model would call it and the turn would strand.
    */
@@ -1985,16 +1985,20 @@ export async function streamChatTurn(
       // A task can be created on ANY engine path, so unlike the MRTR bridge
       // this one attaches at all three sites, following the elicitation bridge.
       runtime.taskCreatedBridge?.attachStreamWriter(writer);
+    },
+    onHarnessMcpReady: (scopeIds) => {
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
           persist.selectedServerIds,
           runtime.rpcCollector,
+          scopeIds,
         );
         // COMP-21: cross-instance frames (harness-mcp landed on another
         // instance) arrive via the shared Convex sink. No-op single-instance.
         stopCrossInstanceRpcLogPoll = startCrossInstanceRpcLogPoll(
           persist.selectedServerIds,
           runtime.rpcCollector,
+          scopeIds,
         );
       }
     },

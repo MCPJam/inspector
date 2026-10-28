@@ -36,7 +36,7 @@ import {
   ELICITATION_TIMEOUT_EXTENSION_MS,
   HOSTED_MODE,
   WEB_STREAM_TIMEOUT_MS,
-  webmcpInspectorReachable,
+  WEBMCP_INSPECTOR_ENABLED,
 } from "../../config.js";
 import {
   HostedElicitationBridge,
@@ -614,10 +614,12 @@ export async function prepareManagedConnections(args: {
   }
 
   // WebMCP page tools: same boundary treatment as the app-tool snapshot, and
-  // gated on whether a session could exist here at all. Hosted, that means
+  // gated on the inspector's kill switch: a turn must not advertise the
+  // tools of a page this deployment cannot drive, because the model would
+  // call one and the client would have no session to fulfil it with.
   let validatedPageTools: PageToolEntry[];
   try {
-    validatedPageTools = webmcpInspectorReachable()
+    validatedPageTools = WEBMCP_INSPECTOR_ENABLED
       ? validatePageToolEntries(body.pageTools)
       : [];
   } catch (error) {
