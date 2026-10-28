@@ -31,7 +31,11 @@ import {
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const contextSchema = z
-  .object({ owner: forwardingOwnerSchema, turnId: z.string().min(1).max(512) })
+  .object({
+    owner: forwardingOwnerSchema,
+    turnId: z.string().min(1).max(512),
+    policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  })
   .strict();
 const userSchema = z.object({ _id: z.string() });
 const userQuery = makeFunctionReference<"query">("users:getCurrentUser");
@@ -59,6 +63,11 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
     if (!token) return c.json({ error: "Unauthorized" }, 401);
     const control = createExecutionControl({ owner: context.owner, token });
     const caller = await control.authorize();
+    if (caller.policyDigest !== context.policyDigest)
+      return c.json(
+        { error: "The forwarded tool policy is no longer current." },
+        409,
+      );
     const allowed = (process.env.HARNESS_FORWARDING_ORGANIZATION_IDS ?? "")
       .split(",")
       .map((id) => id.trim());
@@ -120,7 +129,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
               settle,
               rpcLogger: createNativeRpcLogger({
                 owner: context.owner,
-                turnId: context.turnId,
+                turnId: caller.turnId,
                 projectId: caller.projectId,
                 organizationId: caller.organizationId,
               }),
@@ -139,7 +148,8 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
             control,
             operation: {
               invocationKey: randomUUID(),
-              turnId: context.turnId,
+              turnId: caller.turnId,
+              policyDigest: context.policyDigest,
               rpcId: message.id,
               method: message.method,
               params: message.params,

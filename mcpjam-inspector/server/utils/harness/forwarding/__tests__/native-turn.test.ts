@@ -12,6 +12,7 @@ import {
 const mocks = vi.hoisted(() => ({
   stop: vi.fn(async () => {}),
   present: vi.fn(),
+  bind: vi.fn(async () => ({ bound: true })),
   url: "https://forward.example/api/web/harness-mcp/server",
 }));
 vi.mock("../approval", () => ({
@@ -19,6 +20,10 @@ vi.mock("../approval", () => ({
     mocks.present();
     return mocks.stop;
   },
+}));
+vi.mock("../execution-control", async (original) => ({
+  ...(await original<typeof import("../execution-control")>()),
+  createExecutionControl: () => ({ bindPolicy: mocks.bind }),
 }));
 vi.mock("../../harness-proxy-strategy", () => ({
   resolveHarnessProxyUrl: async () => mocks.url,
@@ -35,6 +40,7 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://backend.example");
   mocks.present.mockClear();
   mocks.stop.mockClear();
+  mocks.bind.mockClear();
 });
 afterEach(() => vi.unstubAllEnvs());
 const owner = {
@@ -57,19 +63,28 @@ describe("native turn configuration", () => {
     const entry = prepared.mcpJson.mcpServers.server;
     expect(entry.timeout).toBeGreaterThan(59_000);
     expect(entry.timeout).toBeLessThanOrEqual(60_000);
-    expect(prepared.logScopeIds).toEqual({ server: nativeRpcLogScope(owner, "turn") });
+    expect(prepared.logScopeIds).toEqual({
+      server: nativeRpcLogScope(owner, "turn"),
+    });
     expect(new URL(entry.url).searchParams.get("native")).toBe("1");
     expect(JSON.stringify(prepared.mcpJson)).not.toContain(
       "private-user-bearer",
     );
     expect(Object.keys(entry.headers!)).toEqual([
+      "Connection",
       "X-MCPJam-Forwarding-Context",
     ]);
+    expect(entry.headers!.Connection).toBe("close");
     const opened = unsealHarnessProxyToken(
       entry.headers!["X-MCPJam-Forwarding-Context"],
       "server",
     );
-    expect(JSON.parse(opened!.token)).toEqual({ owner, turnId: "turn" });
+    expect(JSON.parse(opened!.token)).toEqual({
+      owner,
+      turnId: "turn",
+      policyDigest: prepared.policyDigest,
+    });
+    expect(mocks.bind).toHaveBeenCalledWith("turn", prepared.policyDigest);
     expect(prepared.isForwardedTool("mcp__server__read")).toBe(true);
     expect(prepared.isForwardedTool("Bash")).toBe(false);
     await prepared.stop();

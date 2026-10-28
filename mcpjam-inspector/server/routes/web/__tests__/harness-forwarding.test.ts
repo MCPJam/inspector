@@ -5,6 +5,7 @@ import { handleNativeForwarding } from "../harness-forwarding.js";
 
 const state = vi.hoisted(() => ({
   expiresAt: Date.now() + 30 * 60_000,
+  policyDigest: "a".repeat(64),
   gate: vi.fn(),
   disconnect: vi.fn(),
 }));
@@ -16,7 +17,11 @@ const owner = {
 };
 vi.mock("../../../utils/harness/harness-proxy-policy-seal.js", () => ({
   unsealHarnessProxyToken: () => ({
-    token: JSON.stringify({ owner, turnId: "turn" }),
+    token: JSON.stringify({
+      owner,
+      turnId: "turn",
+      policyDigest: "a".repeat(64),
+    }),
   }),
 }));
 vi.mock(
@@ -32,6 +37,8 @@ vi.mock(
         projectId: "project",
         organizationId: "internal",
         expiresAt: state.expiresAt,
+        turnId: "current-lease-turn",
+        policyDigest: state.policyDigest,
       }),
     }),
   }),
@@ -76,8 +83,35 @@ it("passes the authorized lease deadline to the gate without a five-minute cap",
   expect(response.status).toBe(200);
   expect(state.gate).toHaveBeenCalledWith(
     expect.objectContaining({
-      operation: expect.objectContaining({ expiresAt: state.expiresAt }),
+      operation: expect.objectContaining({
+        expiresAt: state.expiresAt,
+        turnId: "current-lease-turn",
+      }),
     }),
   );
   expect(state.disconnect).toHaveBeenCalledOnce();
+});
+
+it("refuses an old sealed policy under a newly bound grant", async () => {
+  vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
+  state.policyDigest = "b".repeat(64);
+  const calls = state.gate.mock.calls.length;
+  const app = new Hono();
+  app.post("/:serverId", handleNativeForwarding);
+  const header =
+    "x-mcpjam-forwarding-" +
+    createHash("sha256")
+      .update(JSON.stringify(["server", "server:server"]))
+      .digest("hex")
+      .slice(0, 40);
+  try {
+    const response = await app.request("/server", {
+      method: "POST",
+      headers: { [header]: "new-grant" },
+    });
+    expect(response.status).toBe(409);
+    expect(state.gate.mock.calls).toHaveLength(calls);
+  } finally {
+    state.policyDigest = "a".repeat(64);
+  }
 });
