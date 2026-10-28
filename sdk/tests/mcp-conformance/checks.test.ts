@@ -135,6 +135,72 @@ describe("mcp conformance unit checks", () => {
     });
   });
 
+  it("reports the connect handshake's duration on server-initialize", async () => {
+    vi.useFakeTimers();
+    try {
+      mockedOperations.withEphemeralClient.mockImplementation(
+        async (_config, fn) => {
+          // The handshake happens inside the connect, before the callback.
+          await vi.advanceTimersByTimeAsync(420);
+          return fn(
+            {
+              getManagedClient: vi.fn().mockReturnValue({}),
+              getInitializationInfo: vi.fn().mockReturnValue({
+                protocolVersion: "2025-11-25",
+              }),
+              listResourceTemplates: vi.fn().mockResolvedValue({
+                resourceTemplates: [],
+              }),
+            } as any,
+            "server-1",
+          );
+        },
+      );
+      mockedOperations.listTools.mockResolvedValue({ tools: [] } as any);
+      mockedOperations.listPrompts.mockResolvedValue({ prompts: [] } as any);
+      mockedOperations.listResources.mockResolvedValue({
+        resources: [],
+      } as any);
+
+      const result = await new MCPConformanceTest({
+        serverUrl: "https://example.com/mcp",
+        checkIds: ["server-initialize"],
+      }).run();
+
+      expect(result.checks[0]).toMatchObject({
+        id: "server-initialize",
+        status: "passed",
+        durationMs: 420,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports how long a failed connect took on server-initialize", async () => {
+    vi.useFakeTimers();
+    try {
+      mockedOperations.withEphemeralClient.mockImplementation(async () => {
+        await vi.advanceTimersByTimeAsync(1_500);
+        throw new Error("connect ECONNREFUSED");
+      });
+
+      const result = await new MCPConformanceTest({
+        serverUrl: "https://example.com/mcp",
+        protocolVersion: "2025-11-25",
+        checkIds: ["server-initialize"],
+      }).run();
+
+      expect(result.checks[0]).toMatchObject({
+        id: "server-initialize",
+        status: "failed",
+        durationMs: 1_500,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reports protocol checks in the protocol category", async () => {
     mockedOperations.withEphemeralClient.mockImplementation(
       async (_config, fn) =>

@@ -157,9 +157,12 @@ export function CheckRow({
             />
           ) : null}
         </span>
-        <span className="flex-shrink-0 pt-0.5 text-[10px] text-muted-foreground">
-          {check.durationMs}ms
-        </span>
+        {/* A skipped check never ran: its 0ms says nothing. */}
+        {check.status !== "skipped" && (
+          <span className="flex-shrink-0 pt-0.5 text-[10px] text-muted-foreground">
+            {check.durationMs}ms
+          </span>
+        )}
       </button>
       <Collapse open={expanded}>
         <div className="space-y-2 pb-2 pl-14 pr-1">
@@ -227,9 +230,11 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
             />
           ) : null}
         </span>
-        <span className="flex-shrink-0 pt-0.5 text-[10px] text-muted-foreground">
-          {step.durationMs}ms
-        </span>
+        {step.status !== "skipped" && (
+          <span className="flex-shrink-0 pt-0.5 text-[10px] text-muted-foreground">
+            {step.durationMs}ms
+          </span>
+        )}
       </button>
       <Collapse open={expanded}>
         <div className="space-y-2 pb-2 pl-14 pr-1">
