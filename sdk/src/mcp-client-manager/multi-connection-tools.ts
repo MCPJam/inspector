@@ -31,19 +31,23 @@ function canonical(value: any): string {
 }
 /** 40 for the tool name + "__" + this stays inside the 64-character limit. */
 const SLUG_BUDGET = 20;
+function slugBase(label: string): string {
+  return (
+    label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, SLUG_BUDGET)
+      .replace(/-+$/g, "") || "server"
+  );
+}
 function slugs(connections: readonly McpToolConnection[]) {
   const result = new Map<string, string>();
   const taken = new Set(["local"]);
   for (const c of [...connections].sort((a, b) =>
     a.connectionId.localeCompare(b.connectionId)
   )) {
-    const base =
-      c.label
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, SLUG_BUDGET)
-        .replace(/-+$/g, "") || "server";
+    const base = slugBase(c.label);
     let slug = base;
     let n = 2;
     while (taken.has(slug)) {
@@ -148,17 +152,58 @@ export function mergeConnectionToolsets(
   options: {
     snapshot: ConnectionRoutingSnapshot;
     onRoute?: (toolCallId: string, connection: McpToolConnection) => void;
+    /**
+     * Display names by server id, for the suffix a same-named tool from
+     * another server is renamed with. Falls back to the server id.
+     */
+    serverLabels?: Readonly<Record<string, string>>;
   }
 ): ToolSet {
   const output: ToolSet = {};
   const groupedKeys = new Set(
     Object.values(connectionsByServerId).flatMap((g) => g.map((c) => c.key))
   );
-  for (const [key, tools] of Object.entries(perKey))
-    if (!groupedKeys.has(key)) Object.assign(output, tools);
   const reserved = new Set(
     Object.values(perKey).flatMap((tools) => Object.keys(tools))
   );
+  const uniqueName = (root: string) => {
+    let name = root;
+    let n = 2;
+    while (reserved.has(name) || Object.hasOwn(output, name))
+      name = `${root.slice(0, 60)}-${n++}`;
+    reserved.add(name);
+    return name;
+  };
+  // Which server each output name belongs to. Two servers offering the same
+  // tool name used to overwrite each other here, and the earlier one was
+  // silently gone. Now the later one keeps the plain name — exactly what
+  // the model saw before — and the earlier one moves to
+  // `<name>__<server slug>`, so a server's tool is never dropped for sharing
+  // a name. Execution is unaffected: each tool's execute already closes
+  // over its own server and original MCP name.
+  const owner = new Map<string, string>();
+  const place = (name: string, tool: Tool, serverId: string) => {
+    const current = owner.get(name);
+    if (current !== undefined && current !== serverId) {
+      const displaced = output[name] as Tool & ConnectionToolMetadata;
+      const variant = uniqueName(
+        `${name.slice(0, 40)}__${slugBase(
+          options.serverLabels?.[current] ?? current
+        )}`
+      );
+      output[variant] = {
+        ...displaced,
+        _serverId: current,
+        _mcpToolName: displaced._mcpToolName ?? name,
+      } as Tool & ConnectionToolMetadata;
+      owner.set(variant, current);
+    }
+    output[name] = tool;
+    owner.set(name, serverId);
+  };
+  for (const [key, tools] of Object.entries(perKey))
+    if (!groupedKeys.has(key))
+      for (const [name, tool] of Object.entries(tools)) place(name, tool, key);
   for (const [serverId, group] of Object.entries(connectionsByServerId)) {
     const live = group.filter(
       (c) => options.snapshot.get(c.connectionId) === c.key && perKey[c.key]
@@ -170,14 +215,18 @@ export function mergeConnectionToolsets(
       // the credential behind that key changed would run on the new one.
       const connection = live[0];
       for (const [name, tool] of Object.entries(perKey[connection.key]))
-        output[name] = {
-          ...tool,
-          _serverId: serverId,
-          _mcpToolName: name,
-          _connectionId: connection.connectionId,
-          _connectionForInput: () => connection,
-          _connectionForCall: () => connection,
-        } as Tool & ConnectionToolMetadata;
+        place(
+          name,
+          {
+            ...tool,
+            _serverId: serverId,
+            _mcpToolName: name,
+            _connectionId: connection.connectionId,
+            _connectionForInput: () => connection,
+            _connectionForCall: () => connection,
+          } as Tool & ConnectionToolMetadata,
+          serverId
+        );
       continue;
     }
     const names = [...new Set(live.flatMap((c) => Object.keys(perKey[c.key])))];
@@ -206,36 +255,35 @@ export function mergeConnectionToolsets(
           // 40 + "__" + 20 stays inside the 64-character tool-name limit while
           // keeping the tool name legible: truncating IT collapses two distinct
           // tools that share a prefix into indistinguishable variants.
-          let variant = `${name.slice(0, 40)}__${slugById.get(
-            connection.connectionId
-          )}`;
-          const root = variant;
-          let n = 2;
-          while (reserved.has(variant) || Object.hasOwn(output, variant))
-            variant = `${root.slice(0, 60)}-${n++}`;
-          reserved.add(variant);
+          const variant = uniqueName(
+            `${name.slice(0, 40)}__${slugById.get(connection.connectionId)}`
+          );
           const tool = perKey[connection.key][name];
-          output[variant] = {
-            ...tool,
-            // A variant has no injected parameter to hang descriptors on —
-            // each one IS an account — so identity stays prose. It still has
-            // to carry more than the flattened label, or the same profile
-            // fields go missing here that went missing on the merged path.
-            description: `Account: ${accountPrefix(connection)}. ${
-              tool.description ?? ""
-            }`,
-            execute: tool.execute
-              ? (input, opts) => {
-                  options.onRoute?.(opts.toolCallId, connection);
-                  return tool.execute!(input, opts);
-                }
-              : undefined,
-            _serverId: serverId,
-            _mcpToolName: name,
-            _connectionId: connection.connectionId,
-            _connectionForInput: () => connection,
-            _connectionForCall: () => connection,
-          } as Tool & ConnectionToolMetadata;
+          place(
+            variant,
+            {
+              ...tool,
+              // A variant has no injected parameter to hang descriptors on —
+              // each one IS an account — so identity stays prose. It still has
+              // to carry more than the flattened label, or the same profile
+              // fields go missing here that went missing on the merged path.
+              description: `Account: ${accountPrefix(connection)}. ${
+                tool.description ?? ""
+              }`,
+              execute: tool.execute
+                ? (input, opts) => {
+                    options.onRoute?.(opts.toolCallId, connection);
+                    return tool.execute!(input, opts);
+                  }
+                : undefined,
+              _serverId: serverId,
+              _mcpToolName: name,
+              _connectionId: connection.connectionId,
+              _connectionForInput: () => connection,
+              _connectionForCall: () => connection,
+            } as Tool & ConnectionToolMetadata,
+            serverId
+          );
         }
         continue;
       }
@@ -244,67 +292,71 @@ export function mergeConnectionToolsets(
         { tool: Tool; connection: McpToolConnection; input: unknown }
       >();
       const baseTool = perKey[base.key][name];
-      output[name] = {
-        // The server's own description rides through untouched. The account
-        // list used to be appended to it, on every merged tool, while the enum
-        // carried bare ids. It moved onto the property below because that is
-        // where the choice is made, and because the tool description was the
-        // wrong object for it: truncate it and the model is left an enum of
-        // opaque ids with nothing to choose on, failing as a silent
-        // wrong-account call rather than as an error.
-        ...baseTool,
-        inputSchema: jsonSchema({
-          ...schemas[0],
-          properties: {
-            ...schemas[0].properties,
-            link_id: {
-              type: "string",
-              // Kept a bare enum of ids deliberately. Per-value titles via
-              // `oneOf`/`const` would read better, but the enum is the shape
-              // every provider handles without surprise, and the descriptors
-              // below already carry the labels it would encode.
-              enum: choices.map((c) => c.connectionId),
-              description: `${SELECTOR_GUIDANCE}\n\n${JSON.stringify(
-                accountDescriptors(choices),
-                null,
-                2
-              )}`,
+      place(
+        name,
+        {
+          // The server's own description rides through untouched. The account
+          // list used to be appended to it, on every merged tool, while the enum
+          // carried bare ids. It moved onto the property below because that is
+          // where the choice is made, and because the tool description was the
+          // wrong object for it: truncate it and the model is left an enum of
+          // opaque ids with nothing to choose on, failing as a silent
+          // wrong-account call rather than as an error.
+          ...baseTool,
+          inputSchema: jsonSchema({
+            ...schemas[0],
+            properties: {
+              ...schemas[0].properties,
+              link_id: {
+                type: "string",
+                // Kept a bare enum of ids deliberately. Per-value titles via
+                // `oneOf`/`const` would read better, but the enum is the shape
+                // every provider handles without surprise, and the descriptors
+                // below already carry the labels it would encode.
+                enum: choices.map((c) => c.connectionId),
+                description: `${SELECTOR_GUIDANCE}\n\n${JSON.stringify(
+                  accountDescriptors(choices),
+                  null,
+                  2
+                )}`,
+              },
             },
+            required: [...(schemas[0].required ?? []), "link_id"],
+          }),
+          execute: async (input: any, opts) => {
+            const connection = choices.find(
+              (c) =>
+                c.connectionId === input?.link_id &&
+                options.snapshot.get(c.connectionId) === c.key
+            );
+            if (!connection) return invalidAccount();
+            const { link_id: _linkId, ...args } = input;
+            const tool = perKey[connection.key][name];
+            selected.set(opts.toolCallId, { tool, connection, input: args });
+            options.onRoute?.(opts.toolCallId, connection);
+            if (!tool.execute) return invalidAccount();
+            return tool.execute(args, opts);
           },
-          required: [...(schemas[0].required ?? []), "link_id"],
-        }),
-        execute: async (input: any, opts) => {
-          const connection = choices.find(
-            (c) =>
-              c.connectionId === input?.link_id &&
-              options.snapshot.get(c.connectionId) === c.key
-          );
-          if (!connection) return invalidAccount();
-          const { link_id: _linkId, ...args } = input;
-          const tool = perKey[connection.key][name];
-          selected.set(opts.toolCallId, { tool, connection, input: args });
-          options.onRoute?.(opts.toolCallId, connection);
-          if (!tool.execute) return invalidAccount();
-          return tool.execute(args, opts);
-        },
-        toModelOutput: async (opts) => {
-          const route = selected.get(opts.toolCallId);
-          if (!route)
-            return {
-              type: "text",
-              value: "The selected account is unavailable for this tool.",
-            };
-          return route.tool.toModelOutput
-            ? route.tool.toModelOutput({ ...opts, input: route.input })
-            : { type: "json", value: opts.output as any };
-        },
-        _connectionForInput: (input: any) =>
-          choices.find((c) => c.connectionId === input?.link_id),
-        _connectionForCall: (id: string) => selected.get(id)?.connection,
-        _serverId: serverId,
-        _mcpToolName: name,
-        _connectionIds: choices.map((c) => c.connectionId),
-      } as Tool & ConnectionToolMetadata;
+          toModelOutput: async (opts) => {
+            const route = selected.get(opts.toolCallId);
+            if (!route)
+              return {
+                type: "text",
+                value: "The selected account is unavailable for this tool.",
+              };
+            return route.tool.toModelOutput
+              ? route.tool.toModelOutput({ ...opts, input: route.input })
+              : { type: "json", value: opts.output as any };
+          },
+          _connectionForInput: (input: any) =>
+            choices.find((c) => c.connectionId === input?.link_id),
+          _connectionForCall: (id: string) => selected.get(id)?.connection,
+          _serverId: serverId,
+          _mcpToolName: name,
+          _connectionIds: choices.map((c) => c.connectionId),
+        } as Tool & ConnectionToolMetadata,
+        serverId
+      );
     }
   }
   return output;

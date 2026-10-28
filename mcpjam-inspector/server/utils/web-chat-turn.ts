@@ -423,6 +423,8 @@ export interface WebChatTurnPrepareInputs {
   localMcpRuntimeRequired?: boolean;
   modelToolExecutor?: import("./model-tool-executor.js").ModelToolExecutor;
   selectedServerIds: string[];
+  /** Server display names; see `prepareChatV2`'s `serverNamesById`. */
+  serverNamesById?: Record<string, string>;
   modelDefinition: ModelDefinition;
   /**
    * The saved selection for `modelDefinition` that DECIDES THE RAIL
@@ -828,6 +830,7 @@ export async function streamChatTurn(
       mcpClientManager: manager,
       modelToolExecutor: prepare.modelToolExecutor,
       selectedServers: prepare.selectedServerIds,
+      serverNamesById: prepare.serverNamesById,
       isolatedServers: prepare.isolatedServers?.serverIds,
       modelDefinition: prepare.modelDefinition,
       systemPrompt: prepare.systemPrompt,

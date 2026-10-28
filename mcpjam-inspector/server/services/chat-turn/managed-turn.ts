@@ -170,6 +170,7 @@ export async function handleManagedChatTurn(
       modelMrtr,
       isolatedServerIds,
       manager,
+      serverNamesById,
       authenticatedUserId,
       refusedServers,
       mrtrEngineResume,
@@ -362,6 +363,7 @@ export async function handleManagedChatTurn(
         prepare: {
           ...(modelToolExecutor ? { modelToolExecutor } : {}),
           selectedServerIds: effectiveServerIds,
+          serverNamesById,
           modelDefinition,
           ...(routingSelection
             ? { routingSelection, routingSelectionOrigin: selected.origin }

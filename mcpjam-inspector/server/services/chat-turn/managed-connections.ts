@@ -505,6 +505,7 @@ export async function prepareManagedConnections(args: {
     oauthServerUrls: urls,
     authenticatedUserId,
     refusedServers,
+    serverNamesById,
   } = await createAuthorizedManager(
     callerContextFromHono(c),
     bearerToken,
@@ -687,6 +688,9 @@ export async function prepareManagedConnections(args: {
   }
 
   return {
+    // Display names for the servers, so a tool two servers share a name for
+    // is renamed `<tool>__<server name>` rather than after an opaque id.
+    serverNamesById,
     tasksSeam,
     scopeStepUpResumeRequest,
     scopeStepUpCancelRequest,

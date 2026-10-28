@@ -2,6 +2,7 @@ import {
   describeError,
   extractInsufficientScopeChallenge,
   isInsufficientScopeError,
+  mergeConnectionToolsets,
   type MCPClientManager,
 } from "@mcpjam/sdk";
 import type { UIMessageChunk } from "ai";
@@ -110,13 +111,27 @@ export function createTurnToolLister(args: {
     });
   return {
     byServer,
-    /** Every server's tools in one set, as `getToolsForAiSdk` returns them. */
-    flat: async (): ReturnType<MCPClientManager["getToolsForAiSdk"]> =>
+    /**
+     * Every server's tools in one set, as `getToolsForAiSdk` returns them: a
+     * name two servers share is kept once plainly and once renamed
+     * `<tool>__<server>`, with `serverLabels` naming the server.
+     */
+    flat: async (
+      serverLabels?: Readonly<Record<string, string>>,
+    ): ReturnType<MCPClientManager["getToolsForAiSdk"]> =>
       isolatedKeys.size === 0
         ? listing(() =>
-            within(manager.getToolsForAiSdk(serverIds, toolOptions)),
+            within(
+              manager.getToolsForAiSdk(
+                serverIds,
+                serverLabels ? { ...toolOptions, serverLabels } : toolOptions,
+              ),
+            ),
           )
-        : Object.assign({}, ...Object.values(await byServer())),
+        : mergeConnectionToolsets(await byServer(), {}, {
+            snapshot: new Map(),
+            serverLabels,
+          }),
     /** Each isolated server the turn runs without, by id, with its error. */
     unavailable: (): Map<string, unknown> => {
       const byId = new Map<string, unknown>();

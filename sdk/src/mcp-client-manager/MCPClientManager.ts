@@ -1,3 +1,4 @@
+import { mergeConnectionToolsets } from "./multi-connection-tools.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 /**
@@ -1167,10 +1168,27 @@ export class MCPClientManager {
 
   async getToolsForAiSdk(
     serverIds?: string[] | string,
-    options: Parameters<MCPClientManager["getToolsForAiSdkByServer"]>[1] = {}
+    options: Parameters<MCPClientManager["getToolsForAiSdkByServer"]>[1] & {
+      /**
+       * Display names by server id, for the suffix a tool is renamed with when
+       * two servers offer the same name. Falls back to the server id.
+       */
+      serverLabels?: Readonly<Record<string, string>>;
+    } = {}
   ): Promise<AiSdkTool> {
-    const perServer = await this.getToolsForAiSdkByServer(serverIds, options);
-    return Object.assign({}, ...Object.values(perServer));
+    const { serverLabels, ...listOptions } = options;
+    const perServer = await this.getToolsForAiSdkByServer(
+      serverIds,
+      listOptions
+    );
+    // Not a plain `Object.assign`: two servers offering the same tool name
+    // would leave only the last one's. The merge keeps that one under the
+    // plain name and renames the other `<tool>__<server>`.
+    return mergeConnectionToolsets(
+      perServer,
+      {},
+      { snapshot: new Map(), serverLabels }
+    ) as AiSdkTool;
   }
 
   /**
