@@ -486,14 +486,14 @@ describe("infra evidence reaches the turn outcome untouched", () => {
   });
 });
 
-it("uses current run-owned App state for the next turn without persisting it", async () => {
+it("does not read App state from a view dismissed before the next turn", async () => {
   const params = baseParams();
   let closed = false;
   params.browser.getModelContext = vi.fn(() => closed ? undefined : ({ role: "user" as const, content: [{ type: "text" as const, text: "Selected bolt", providerOptions: { mcpjam: { ephemeralPluginContext: true } } }] }));
   vi.mocked(params.browser.dismissCarriedWidget).mockImplementation(async () => { closed = true; });
   runAssistantTurnMock.mockImplementationOnce(async () => ({ messages: [], usage: {}, turnTrace: { spans: [] } }) as never);
   await driveHostedEvalTurn(params);
-  expect(JSON.stringify(runAssistantTurnMock.mock.calls[0])).toContain("Selected bolt");
+  expect(JSON.stringify(runAssistantTurnMock.mock.calls[0])).not.toContain("Selected bolt");
   expect(JSON.stringify(params.acc.messageHistory)).not.toContain("Selected bolt");
 });
 

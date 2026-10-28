@@ -122,16 +122,16 @@ export function targetWantsHarnessBox(
 export function targetWantsBrowser(
   target: PinnedHostExecutionSpec,
   /**
-   * Can THIS replica advertise a hosted browser at all — the env flag and the
-   * backend's own gate, exactly as `resolveHostTools` reads them? DEFAULTS TO
+   * Can THIS replica advertise a hosted browser at all — the backend's
+   * exposure verdict, exactly as `resolveHostTools` reads it? DEFAULTS TO
    * TRUE so a caller that does not know keeps the old behaviour.
    *
    * The two decisions happen in different places: the desktop box is
-   * provisioned before the tool resolver runs, so a replica with
-   * `HOSTED_BROWSER_TOOLS_ENABLED` off would pay for a desktop for the life of
+   * provisioned before the tool resolver runs, so a replica whose verdict
+   * says the browser is not exposable would pay for a desktop for the life of
    * the attempt and then suppress every tool that box exists for. The backend
    * refuses its own half (`desktop_not_advertised`, `desktop_unavailable`) but
-   * cannot see an inspector-side env flag.
+   * does not refuse a reservation on `exposable: false`.
    */
   hostedBrowserAvailable = true
 ): boolean {

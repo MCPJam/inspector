@@ -116,6 +116,12 @@ function queryResult(
       ];
     case "servers:getProjectServers":
       return [];
+    case "hostedBrowser:getAvailability":
+      // The shape the backend sends with the hosted-browser flag off.
+      return {
+        inspector: { available: false, reason: "flag_false" },
+        tools: { available: false, reason: "flag_false" },
+      };
     case "servers:listForProjects":
       // Keyed by project id.
       return Object.fromEntries(

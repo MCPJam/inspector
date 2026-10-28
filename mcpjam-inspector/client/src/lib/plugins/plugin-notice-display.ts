@@ -29,21 +29,11 @@ export interface PluginNoticePlugin {
   signIn?: PluginServerSignInRequest;
 }
 
-/**
- * Why a chat with runnable plugins runs this message without them. Each is a
- * turn that has to stay on this machine's own chat route, which cannot load
- * plugins, or a comparison, whose columns run one plain client turn each.
- */
-export type PluginsOffReason =
-  "local_harness" | "local_server" | "local_model" | "local_tools" | "compare";
-
 export type PluginNoticeData =
   /** Some installed plugins were skipped; the rest of the turn ran. */
   | { kind: "skipped"; plugins: PluginNoticePlugin[] }
   /** The chat could not be set up to run its plugins; it ran without them. */
-  | { kind: "unavailable" }
-  /** The chat's plugins are runnable, but this message ran without them. */
-  | { kind: "off"; reason: PluginsOffReason };
+  | { kind: "unavailable" };
 
 const REASON_COPY: Record<string, string> = {
   needs_auth: "sign in to its server first",
@@ -54,18 +44,6 @@ const REASON_COPY: Record<string, string> = {
   over_cap: "only 10 plugins load per message",
   server_missing: "one of its servers no longer exists",
   skill_unpinnable: "one of its skills can't be loaded",
-};
-
-const OFF_COPY: Record<PluginsOffReason, string> = {
-  local_harness:
-    "Plugins didn't run for this message: it runs the client on this computer.",
-  local_server:
-    "Plugins didn't run for this message: a selected server runs on this computer.",
-  local_model:
-    "Plugins didn't run for this message: the selected model uses a key stored on this computer.",
-  local_tools:
-    "Plugins didn't run for this message: it uses this computer's browser or shell.",
-  compare: "Plugins don't run in comparisons yet.",
 };
 
 export const PLUGINS_UNAVAILABLE_MESSAGE =
@@ -116,7 +94,6 @@ function namedPlugins(
 /** The plain line a notice reads as. */
 export function describePluginNotice(data: PluginNoticeData): string {
   if (data.kind === "unavailable") return PLUGINS_UNAVAILABLE_MESSAGE;
-  if (data.kind === "off") return OFF_COPY[data.reason];
   const named = namedPlugins(data.plugins);
   if (named.length === 0) return PLUGINS_UNAVAILABLE_MESSAGE;
   const text = named.map(describeSkip).join(" ");
@@ -139,15 +116,12 @@ export function pluginNoticeKey(
           )
           .sort()
           .join(",")
-      : data.kind === "off"
-        ? `off:${data.reason}`
-        : "unavailable";
+      : "unavailable";
   return `${chatSessionId}|${signature}`;
 }
 
 function logMethod(data: PluginNoticeData): string {
   if (data.kind === "skipped") return "plugins/skipped";
-  if (data.kind === "off") return "plugins/off";
   return "plugins/unavailable";
 }
 
@@ -234,7 +208,6 @@ export function showPluginNotice(
               })),
             }
           : {}),
-        ...(data.kind === "off" ? { reason: data.reason } : {}),
       },
     });
   } catch {

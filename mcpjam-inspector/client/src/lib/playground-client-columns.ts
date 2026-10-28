@@ -26,6 +26,8 @@ export type PlaygroundClientResolution =
       compareId: string;
       compareLabel: string;
       reason: string;
+      /** The saved model, when it resolved but is disabled (e.g. sign-in locked). */
+      model?: ModelDefinition;
     };
 
 /** Resolve only this client's saved settings; ambient composer state is not an input. */
@@ -83,6 +85,7 @@ export function resolvePlaygroundClientColumn({
       status: "unavailable",
       reason:
         "The saved model or connection is unavailable. Edit this client in Connect.",
+      ...(model ? { model } : {}),
     };
   return {
     status: "ready",

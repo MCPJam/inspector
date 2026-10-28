@@ -37,6 +37,7 @@ const MAX_BUFFER_BYTES = 256 * 1024;
 const MESSAGE_CAP_BYTES = 16 * 1024;
 
 export type HarnessRpcLogEntry = {
+  scopeId?: string;
   serverId: string;
   projectId?: string;
   organizationId?: string;
@@ -46,6 +47,7 @@ export type HarnessRpcLogEntry = {
 };
 
 export type CrossInstanceRpcLogEntry = {
+  scopeId?: string;
   id: string;
   serverId: string;
   direction: "send" | "receive";
@@ -154,27 +156,38 @@ export async function flushHarnessRpcLogs(): Promise<void> {
   buffer = [];
   bufferBytes = 0;
   if (!base || !token) return;
-  try {
-    await fetch(new URL("/harness/rpc-logs/write", base), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-inspector-service-token": token,
-      },
-      body: JSON.stringify({
-        entries: entries.map((e) => ({ ...e, instanceId: INSTANCE_ID })),
-      }),
-    });
-  } catch (err) {
-    logger.warn(
-      `[harness-rpc-log-sink] flush failed (${
-        entries.length
-      } entries dropped): ${err instanceof Error ? err.message : err}`
+  for (const scoped of [false, true]) {
+    const batch = entries.filter(
+      (entry) => (entry.scopeId !== undefined) === scoped,
     );
+    if (batch.length === 0) continue;
+    try {
+      // A dedicated path makes an older backend refuse scoped logs rather than
+      // silently storing them as legacy frames after dropping the scope field.
+      const path = scoped
+        ? "/harness/rpc-logs/scoped-write"
+        : "/harness/rpc-logs/write";
+      await fetch(new URL(path, base), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-inspector-service-token": token,
+        },
+        body: JSON.stringify({
+          entries: batch.map((e) => ({ ...e, instanceId: INSTANCE_ID })),
+        }),
+      });
+    } catch (err) {
+      logger.warn(
+        `[harness-rpc-log-sink] flush failed (${
+          batch.length
+        } entries dropped): ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 }
 
-export type RpcLogCursor = { serverId: string; sinceMs: number };
+export type RpcLogCursor = { serverId: string; sinceMs: number; scopeId?: string };
 
 export type CrossInstanceRpcLogPage = {
   entries: CrossInstanceRpcLogEntry[];
@@ -205,8 +218,11 @@ export async function readCrossInstanceRpcLogs(args: {
   const base = convexBase();
   const token = serviceToken();
   if (!base || !token || args.servers.length === 0) return unchanged;
+  const scoped = args.servers.every((cursor) => cursor.scopeId !== undefined);
+  if (!scoped && args.servers.some((cursor) => cursor.scopeId !== undefined)) return unchanged;
   try {
-    const res = await fetch(new URL("/harness/rpc-logs/read", base), {
+    const path = scoped ? "/harness/rpc-logs/scoped-read" : "/harness/rpc-logs/read";
+    const res = await fetch(new URL(path, base), {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -228,6 +244,7 @@ export async function readCrossInstanceRpcLogs(args: {
           (c): c is RpcLogCursor =>
             !!c &&
             typeof c.serverId === "string" &&
+            (c.scopeId === undefined || typeof c.scopeId === "string") &&
             typeof c.sinceMs === "number" &&
             Number.isFinite(c.sinceMs)
         )

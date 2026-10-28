@@ -1,3 +1,5 @@
+import { useCompareChatEnvironment } from "@/hooks/use-compare-chat-environment";
+import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import { SavedClientProvider } from "@/contexts/saved-client-context";
 import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
 import {
@@ -274,6 +276,9 @@ interface MultiModelPlaygroundCardProps {
    * (no per-card shadow).
    */
   hostCapsResolver?: HostConfigDtoV2 | null;
+  onSendReadinessChange?: (laneId: string, ready: boolean, error?: string) => void;
+  pluginHarnessId?: string | null;
+  pluginHostResolved?: boolean;
   showSenderAvatars?: boolean;
   resolveSenderAvatar?: (senderUserId?: string) => ProjectThreadOwnerAvatar;
   outgoingSenderMetadata?: Record<string, unknown>;
@@ -328,6 +333,9 @@ export function MultiModelPlaygroundCard({
   onTranscriptSync,
   hostSnapshot,
   hostCapsResolver,
+  onSendReadinessChange,
+  pluginHarnessId,
+  pluginHostResolved = true,
   showSenderAvatars = false,
   resolveSenderAvatar,
   outgoingSenderMetadata,
@@ -431,6 +439,11 @@ export function MultiModelPlaygroundCard({
         : [],
     [],
   );
+  const { hiddenEnvironment, columnHostedContext } = useCompareChatEnvironment({
+    hostedContext,
+    harnessId: pluginHarnessId ?? hostCapsResolver?.agentLoop ?? hostCapsResolver?.harness,
+    hostResolved: pluginHostResolved,
+  });
   const {
     messages,
     setMessages,
@@ -446,7 +459,9 @@ export function MultiModelPlaygroundCard({
     hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
+    status,
     isSessionBootstrapComplete,
+    hiddenEnvironmentActive,
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
@@ -460,7 +475,7 @@ export function MultiModelPlaygroundCard({
     comparePane: true,
     selectedServers,
     usePageTools,
-    hostedContext,
+    hostedContext: columnHostedContext,
     hostedOrgModelConfig,
     ...(personalComputerEngine ? { personalComputerEngine } : {}),
     ...(personalBrowserEngine ? { personalBrowserEngine } : {}),
@@ -486,6 +501,46 @@ export function MultiModelPlaygroundCard({
     },
   });
 
+  const readyToSend =
+    isSessionBootstrapComplete &&
+    (!hiddenEnvironmentActive ||
+      (!hiddenEnvironment.blockingError &&
+        (!hiddenEnvironment.wanted || !!hiddenEnvironment.environmentId)));
+  useEffect(() => {
+    onSendReadinessChange?.(
+      `${compareKind}:${compareId}`,
+      readyToSend,
+      hiddenEnvironmentActive ? hiddenEnvironment.blockingError : undefined,
+    );
+    return () => onSendReadinessChange?.(`${compareKind}:${compareId}`, false);
+  }, [
+    onSendReadinessChange,
+    compareKind,
+    compareId,
+    readyToSend,
+    hiddenEnvironment.blockingError,
+    hiddenEnvironmentActive,
+  ]);
+
+  const noticeStatus = useRef(status);
+  useEffect(() => {
+    const previous = noticeStatus.current;
+    noticeStatus.current = status;
+    if (
+      status === "submitted" &&
+      previous !== "submitted" &&
+      hiddenEnvironment.failed &&
+      !hiddenEnvironment.blockingError
+    ) {
+      showPluginNotice(chatSessionId, { kind: "unavailable" });
+    }
+  }, [
+    status,
+    chatSessionId,
+    hiddenEnvironment.failed,
+    hiddenEnvironment.blockingError,
+  ]);
+
   const laneScope = useMemo(() => {
     const pluginWorkspace = laneWorkspaceForSession(chatSessionId);
     return pluginWorkspace && laneIdentity
@@ -497,19 +552,17 @@ export function MultiModelPlaygroundCard({
         }
       : null;
   }, [laneWorkspaceForSession, chatSessionId, laneIdentity]);
-  const laneServers = useMemo(
-    () => extensionBinding?.servers ?? [],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      JSON.stringify(
-        (extensionBinding?.servers ?? []).map((server) => [
-          server.serverId,
-          server.name,
-          server.connection ?? null,
-        ]),
-      ),
-    ],
-  );
+  const { pluginServers } = hiddenEnvironment;
+  const laneServers = useMemo(() => {
+    const servers = extensionBinding?.servers ?? [];
+    const existing = new Set(servers.map((server) => server.serverId));
+    return [
+      ...servers,
+      ...(hiddenEnvironmentActive ? (pluginServers ?? []) : [])
+        .filter((server) => !existing.has(server.serverId))
+        .map(({ serverId, name }) => ({ serverId, name })),
+    ];
+  }, [extensionBinding?.servers, hiddenEnvironmentActive, pluginServers]);
   const laneApps = useThreadAppWorkspace(laneScope, laneServers, {
     capabilities: extensionBinding?.capabilities,
     launchProfile: extensionBinding?.profile,
