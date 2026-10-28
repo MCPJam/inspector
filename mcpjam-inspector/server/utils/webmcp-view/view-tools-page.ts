@@ -65,6 +65,7 @@ export function createViewToolsPage() {
     cancel(viewId, requestId) {
       const mount = mounts.get(viewId);
       mount?.relay.host({
+        jsonrpc: "2.0",
         method: "notifications/cancelled",
         params: { requestId },
       });
