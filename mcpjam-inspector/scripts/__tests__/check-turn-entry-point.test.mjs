@@ -27,7 +27,7 @@ function tree(files) {
   const root = mkdtempSync(join(tmpdir(), "mcpjam-turn-guard-"));
   const all = {
     ...Object.fromEntries(ENGINES.map((path) => [path, "export {};\n"])),
-    "server/routes/mcp/chat-v2.ts":
+    "server/services/chat-turn/direct-stream.ts":
       'import { runDirectChatTurn } from "../../utils/direct-chat-turn.js";\n',
     "server/utils/web-chat-turn.ts":
       'import { handleLocalOrgChatModel } from "./org-model-stream-handler";\n',

@@ -72,7 +72,7 @@ const ENGINE_LAYER = new Set([
  */
 const TEMPORARY_EXCEPTIONS = new Map([
   [
-    "server/routes/mcp/chat-v2.ts",
+    "server/services/chat-turn/direct-stream.ts",
     {
       reason:
         "local chat streams UI from the direct engine (no direct `ui` sink)",
