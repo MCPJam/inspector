@@ -389,6 +389,34 @@ describe("useChatSession hosted mode", () => {
     hostedContext: { projectId: "project-1", selectedServerIds: [] },
   });
 
+  it.each([true, false])("waits for the forwarding gate before showing its %s answer", async (approved) => {
+    mockState.addToolApprovalResponse.mockClear();
+    mockState.sendMessage.mockClear();
+    let acknowledge!: (response: Response) => void;
+    mockState.authFetch.mockImplementationOnce(() => new Promise<Response>((resolve) => { acknowledge = resolve; }));
+    const { result, unmount } = renderHook(() => useChatSession(selectionOptions()));
+    const response = { id: 'mjfg1:{"executionId":"execution"}', approved };
+    const pending = result.current.addToolApprovalResponse(response);
+    expect(mockState.authFetch).toHaveBeenCalledWith("/api/web/harness-forwarding/approval", expect.objectContaining({
+      method: "POST", body: JSON.stringify(response),
+    }));
+    expect(mockState.addToolApprovalResponse).not.toHaveBeenCalled();
+    acknowledge(Response.json({ ok: true }));
+    await act(async () => { await pending; });
+    expect(mockState.addToolApprovalResponse).toHaveBeenCalledWith(response);
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it.each([Response.json({ ok: false }), Response.json({ error: "stale" }, { status: 409 })])("does not acknowledge a rejected forwarding approval", async (reply) => {
+    mockState.addToolApprovalResponse.mockClear();
+    mockState.authFetch.mockResolvedValueOnce(reply);
+    const { result, unmount } = renderHook(() => useChatSession(selectionOptions()));
+    await act(async () => { await result.current.addToolApprovalResponse({ id: 'mjfg1:{}', approved: true }); });
+    expect(mockState.addToolApprovalResponse).not.toHaveBeenCalled();
+    unmount();
+  });
+
   it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
     const options = { ...selectionOptions(), selectionIntent: "inherit" as const };
     const { result, rerender, unmount } = renderHook(({ hostId }) => useChatSession({

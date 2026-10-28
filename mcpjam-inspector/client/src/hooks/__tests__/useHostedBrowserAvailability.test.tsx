@@ -84,8 +84,16 @@ describe("useHostedBrowserAvailable", () => {
     expect(await render("inspector")).toBe(false);
   });
 
-  it("offers nothing, without throwing, on an answer it cannot read", async () => {
-    for (const answer of [null, {}, { inspector: null }]) {
+  it("offers nothing, without throwing, when the answer is null", async () => {
+    // A stand-in or proxy that answers an unknown query with null must not
+    // crash every component that shows a browser control.
+    state.result = null;
+    expect(await render("inspector")).toBe(false);
+    expect(await render("tools")).toBe(false);
+  });
+
+  it("offers nothing, without throwing, on an answer without the surface", async () => {
+    for (const answer of [{}, { inspector: null }]) {
       state.result = answer;
       expect(await render("inspector")).toBe(false);
     }

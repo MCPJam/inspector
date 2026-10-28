@@ -198,6 +198,8 @@ export function resumableServers(persist: {
  * needs that isn't already in scope from the stream handlers.
  */
 export interface WebChatTurnPersistContext {
+  /** Saved host selector, revalidated by native forwarding admission. */
+  hostId?: string;
   executionBindingVersion?: 1;
   /** Required to enable persistence; without it, no ingest. */
   chatSessionId: string | undefined;
@@ -1715,6 +1717,7 @@ export async function streamWebChatTurn(
     modelId: mcpjamModelId,
     provider: prepare.modelDefinition.provider,
     chatSessionId: hostedChatSessionId,
+    ...(persist.hostId ? { hostId: persist.hostId } : {}),
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
     temperature: resolvedTemperature,
