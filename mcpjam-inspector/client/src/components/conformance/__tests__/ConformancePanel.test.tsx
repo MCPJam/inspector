@@ -666,9 +666,10 @@ describe("ConformanceTab", () => {
   });
 
   it("stays in the run for OAuth between the callback and the result", async () => {
+    // A popup that opened: this test is about the callback, not a blocker.
     const openSpy = vi
       .spyOn(window, "open")
-      .mockReturnValue(null as unknown as Window);
+      .mockReturnValue({} as unknown as Window);
     const poll = createDeferred<{ phase: string; result?: unknown }>();
     setupSuccessfulRunMocks();
     mockStartOAuth.mockResolvedValue({
@@ -704,6 +705,73 @@ describe("ConformanceTab", () => {
     await waitFor(() => {
       expect(within(suiteHeader("oauth")).getByText("PASSED")).toBeDefined();
     });
+    openSpy.mockRestore();
+  });
+
+  it("offers the authorization page and a skip when the browser blocks the popup", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue(null as unknown as Window);
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+
+    await screen.findByText("Your browser blocked the authorization window.");
+    expect(screen.queryByText("Waiting for browser authorization...")).toBeNull();
+
+    // Opening it again from a click is what a popup blocker lets through.
+    openSpy.mockReturnValue({} as unknown as Window);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open authorization page" }),
+    );
+    expect(openSpy).toHaveBeenLastCalledWith(
+      "https://auth.example.com/authorize",
+      "oauth_conformance_auth",
+      expect.any(String),
+    );
+    await screen.findByText("Waiting for browser authorization...");
+    openSpy.mockRestore();
+  });
+
+  it("skips OAuth while it waits, leaving it not scored rather than failed", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+    await screen.findByText("Waiting for browser authorization...");
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip OAuth" }));
+
+    const header = await waitFor(() =>
+      screen
+        .getByText("OAuth was skipped, so it is not scored for this run.")
+        .closest("button"),
+    );
+    expect(within(header!).getByText("NOT APPLICABLE")).toBeDefined();
+    expect(within(header!).queryByText("FAILED")).toBeNull();
+
+    // A consent that completes late cannot bring the suite back.
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "OAUTH_CALLBACK", code: "late-code" },
+      }),
+    );
+    expect(mockSubmitCode).not.toHaveBeenCalled();
     openSpy.mockRestore();
   });
 

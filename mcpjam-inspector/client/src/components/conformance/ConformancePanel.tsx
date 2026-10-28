@@ -248,6 +248,8 @@ function ConformanceContent({
     pooledScore,
     oauthNotScored,
     isRunning,
+    openAuthorizationWindow,
+    skipOAuth,
   } = snapshot;
 
   const protocolChecks = useMemo(
@@ -469,9 +471,35 @@ function ConformanceContent({
                     }
                   >
                     {oauth.waitingForAuth ? (
-                      <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Waiting for browser authorization...
+                      // Always offer a way forward: a blocked popup used to
+                      // leave this spinner alone until the session expired.
+                      <div className="space-y-2 px-1 py-3 text-xs">
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          {oauth.popupBlocked ? (
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                          ) : (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          )}
+                          {oauth.popupBlocked
+                            ? "Your browser blocked the authorization window."
+                            : "Waiting for browser authorization..."}
+                        </div>
+                        <div className="flex gap-2">
+                          {oauth.authorizationUrl ? (
+                            <Button
+                              size="sm"
+                              variant={
+                                oauth.popupBlocked ? "default" : "outline"
+                              }
+                              onClick={openAuthorizationWindow}
+                            >
+                              Open authorization page
+                            </Button>
+                          ) : null}
+                          <Button size="sm" variant="ghost" onClick={skipOAuth}>
+                            Skip OAuth
+                          </Button>
+                        </div>
                       </div>
                     ) : oauth.result ? (
                       <div>
