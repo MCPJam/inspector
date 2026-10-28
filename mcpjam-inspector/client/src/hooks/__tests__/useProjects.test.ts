@@ -30,7 +30,7 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
 }));
 
 vi.mock("@/lib/theme-utils", () => ({
-  getInitialThemeMode: () => mockThemeMode.current,
+  getRenderedThemeMode: () => mockThemeMode.current,
 }));
 
 function createProject(
