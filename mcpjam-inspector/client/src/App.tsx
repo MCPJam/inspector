@@ -6764,7 +6764,11 @@ export default function App() {
                   >
                     <HostedBrowserScopeProvider
                       organizationId={activeOrganizationId}
-                      projectId={activeProjectId}
+                      projectId={
+                        shouldQueryProjectId(convexProjectId)
+                          ? convexProjectId
+                          : null
+                      }
                     >
                       {appContent}
                     </HostedBrowserScopeProvider>
