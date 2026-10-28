@@ -33,6 +33,7 @@ function createWebmcpRelay(options) {
     host(data) {
       if (!webmcpWire.object(data)) return false;
       if (data.method === "notifications/cancelled") {
+        if (data.jsonrpc !== "2.0" || "id" in data) return false;
         for (const [key, pending] of requests) {
           if (pending.id !== (data.params || {}).requestId) continue;
           options.send({type: "mcpjam:webmcp/cancel", requestId: key});

@@ -139,12 +139,24 @@ describe("WebMCP relay", () => {
     );
     expect(
       w.eval(
-        `h.relay.host({method:'notifications/cancelled',params:{requestId:99}})`,
+        `h.relay.host({jsonrpc:'2.0',method:'notifications/cancelled',params:{requestId:99}})`,
+      ),
+    ).toBe(false);
+    // Not a JSON-RPC notification: a missing version or an id is ignored.
+    expect(
+      w.eval(
+        `h.relay.host({method:'notifications/cancelled',params:{requestId:1}})`,
       ),
     ).toBe(false);
     expect(
       w.eval(
-        `h.relay.host({method:'notifications/cancelled',params:{requestId:1}})`,
+        `h.relay.host({jsonrpc:'2.0',id:5,method:'notifications/cancelled',params:{requestId:1}})`,
+      ),
+    ).toBe(false);
+    expect(w.eval(`h.sent.length`)).toBe(1);
+    expect(
+      w.eval(
+        `h.relay.host({jsonrpc:'2.0',method:'notifications/cancelled',params:{requestId:1}})`,
       ),
     ).toBe(true);
     expect(w.eval(`h.sent[1].type`)).toBe("mcpjam:webmcp/cancel");
