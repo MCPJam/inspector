@@ -1,4 +1,3 @@
-import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { TurnResources } from "./resources.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
 import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
@@ -77,7 +76,9 @@ import {
   applyPluginExtensionsToClientCapabilities,
   resolvePluginExtensions,
 } from "@mcpjam/sdk/host-config/internal";
-type Setup = Extract<
+import { resolveManagedTurnSetup } from "./managed-setup.js";
+
+type ManagedSetup = Extract<
   Awaited<ReturnType<typeof resolveManagedTurnSetup>>,
   { value: unknown }
 >["value"];
@@ -88,7 +89,7 @@ export async function prepareManagedConnections(args: {
   rpcCollector: ReturnType<typeof createHostedRpcLogCollector>;
   resources: TurnResources;
   setup: Pick<
-    Setup,
+    ManagedSetup,
     | "hostedBody"
     | "initializePins"
     | "mcpProtocolVersionsByServerId"
@@ -114,7 +115,6 @@ export async function prepareManagedConnections(args: {
     | "executionScope"
   >;
   onOAuthServerUrls: (urls: Record<string, string>) => void;
-  onManager: (manager: { disconnectAllServers(): Promise<void> }) => void;
 }) {
   const {
     c,
@@ -123,7 +123,6 @@ export async function prepareManagedConnections(args: {
     rpcCollector,
     resources,
     onOAuthServerUrls,
-    onManager,
   } = args;
   let {
     hostedBody,
@@ -167,6 +166,10 @@ export async function prepareManagedConnections(args: {
 
   // ── Tasks (`com.mcpjam/tasks`) ──────────────────────────────────────────
   // Read from the RESOLVED host, never the body. Same authority rule as the
+  // elicitation gate above: a share-link visitor owns the request body, so a
+  // body-supplied opt-in must not be able to turn tasks on against a host
+  // that said off. `tasksPolicy` is absent from `ExecutionOverrides`
+  // entirely, so this holds at every precedence rather than by a check here.
   const tasksSink = new TaskCreatedSink();
   const tasksSeam = resolveToolTaskSeam({
     tasksPolicy: resolvedExecution.tasksPolicy,
@@ -177,6 +180,13 @@ export async function prepareManagedConnections(args: {
 
   // ── Hosted MRTR (input_required, §12.5) gate + resume parse ─────────────
   // Standard elicitation and saved OpenAI plugin Forms are independent
+  // declarations. Either installed consumer can drive MRTR; both require
+  // the browser version handshake so stale clients fail closed. The plugin
+  // workspace is admitted below before a manager is created. Emulated only:
+  // BYOK (AI-SDK-owned loop) and harness (separate MCP plane) do not route a
+  // suspend through this manager, so registering the collector there could
+  // strand a round. `respectToolVisibility` is preserved across the retry
+  // because the SAME manager (same advertised/gated tool set) drives it.
   const isEmulatedMcpjam =
     Boolean(modelDefinition.id) &&
     turnRail === "hosted" &&
@@ -250,6 +260,13 @@ export async function prepareManagedConnections(args: {
 
   // Resolve the Convex-valid bearer once for both bridges (NOT the raw
   // Authorization header: WorkOS API-key callers send an `sk_…` key Convex
+  // cannot verify; this resolves the delegated JWT and passes JWTs through).
+  // `tasksSeam` is in the condition because the hosted task registry needs
+  // the same bearer: the backend derives the row's owner from it. Without
+  // this, a host with Tasks on but elicitation and MRTR off would resolve no
+  // bearer, silently skip the registry consumer, and lose the cross-device
+  // recovery index for exactly the ordinary task-only turns it is meant to
+  // cover.
   const convexBearer =
     elicitationEnabled ||
     mrtrEnabled ||
@@ -292,6 +309,9 @@ export async function prepareManagedConnections(args: {
 
   // Delivery to the browser is a SEPARATE decision from whether tasks run.
   // A stale bundle that cannot render the part must not stop the host's
+  // policy from taking effect — the task still gets created, it just isn't
+  // pushed live. Absent or mismatched version ⇒ no bridge, and the turn
+  // proceeds normally. Never a 409: see `HOSTED_TASKS_VERSION`.
   const taskCreatedBridge =
     tasksSeam &&
     isCompatibleHostedTasksVersion(
@@ -314,6 +334,12 @@ export async function prepareManagedConnections(args: {
   if (tasksSeam && convexBearer) {
     // Best-effort, and registered AFTER the bridge so the durable local
     // handle always lands first — a slow registry write can never cost the
+    // user the thing they need to find the task again.
+    //
+    // Dark until the backend's owner-binding gate is switched on, at which
+    // point this starts writing rows with no change here: the disabled state
+    // answers with the same 404 envelope as "not deployed" and degrades to a
+    // single log line.
     tasksSink.register({
       name: "hosted-task-registry",
       bestEffort: true,
@@ -336,6 +362,8 @@ export async function prepareManagedConnections(args: {
   let modelMrtr: ReturnType<typeof createModelMrtrAdapter> | undefined;
   // The client's OpenAI plugin extensions setting decides whether the OpenAI
   // form extensions are advertised or handled at all.
+  // Emulated and Codex harness turns (whose MCP tools run here, in process)
+  // take the same plugin executor; see `chatPluginFormPlan`.
   const pluginPins =
     pluginWorkspace && hostRuntimeConfig && turnMode === "interactive"
       ? buildHostConnectionPins(
@@ -463,6 +491,8 @@ export async function prepareManagedConnections(args: {
   );
   // Membership chat (no share/scenario token) is the default — the backend
   // authorizes via project ownership for both guest and authed users.
+  // accessScope is only set when a token is in play (shared chat / scenario)
+  // since that's an orthogonal access path keyed on the token, not the actor.
   const {
     manager,
     oauthServerUrls: urls,
@@ -538,7 +568,7 @@ export async function prepareManagedConnections(args: {
       ...(executionScope ? { executionScope } : {}),
     },
   );
-  onManager(manager);
+  resources.own(() => manager.disconnectAllServers());
   if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
     void refreshConnectionProfiles(manager, bearerToken, hostedBody.projectId);
 
@@ -551,6 +581,8 @@ export async function prepareManagedConnections(args: {
 
   // Build the engine resume descriptor: on a fresh resume request the engine
   // drives one retry leg (with reconstructed output-schema validation) before
+  // the first model call and splices the result. `resolve` closes over the
+  // freshly-authorized manager for the bound server.
   const mrtrEngineResume: MrtrEngineResume | undefined =
     mrtrResumeRequest?.owned
       ? {
@@ -615,6 +647,10 @@ export async function prepareManagedConnections(args: {
 
   // WebMCP page tools: same boundary treatment as the app-tool snapshot, and
   // gated on whether a session could exist here at all. Hosted, that means
+  // the hosted-reachability switch as well as the kill switch — a turn must
+  // not advertise the tools of a page this deployment cannot drive, because
+  // the model would call one and the client would have no session to fulfil
+  // it with.
   let validatedPageTools: PageToolEntry[];
   try {
     validatedPageTools = webmcpInspectorReachable()
@@ -629,6 +665,9 @@ export async function prepareManagedConnections(args: {
 
   // `body.uiTools` is intentionally ignored here, not rejected: MCPJam UI
   // tools are agent-route-only (server/routes/web/mcpjam-agent.ts), but
+  // cached pre-cutover clients may still send the field. MCP server tools
+  // whose names happen to match `ui_*` come from MCPClientManager and stay
+  // ordinary executable tools.
 
   let validatedWidgetModelContext;
   try {
