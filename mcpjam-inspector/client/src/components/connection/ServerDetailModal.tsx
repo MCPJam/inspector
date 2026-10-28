@@ -254,7 +254,7 @@ function ProjectServerDetailModal({
   extensionSettingsScope = null,
   onClose,
   server,
-  defaultTab = "overview",
+  defaultTab = "configuration",
   onSubmit,
   onDisconnect,
   onReconnect,
