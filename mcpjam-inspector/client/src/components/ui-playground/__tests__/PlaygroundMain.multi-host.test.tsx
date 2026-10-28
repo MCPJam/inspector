@@ -1513,7 +1513,12 @@ describe("PlaygroundMain — multi-host render path", () => {
           "The saved model or connection is unavailable. Edit this client in Connect.",
         ),
       ).toBeNull();
-      expect(mockChatInput.mock.calls.at(-1)?.[0].submitDisabled).toBe(true);
+      const inputProps = mockChatInput.mock.calls.at(-1)![0];
+      expect(inputProps.submitDisabled).toBe(true);
+      render(<>{inputProps.notice}</>);
+      expect(screen.getByTestId("sign-in-model-notice").textContent).toContain(
+        "Its model, Claude Sonnet 4.5, needs an account.",
+      );
     } finally {
       mockUseChatSession.availableModels = previousModels;
     }
