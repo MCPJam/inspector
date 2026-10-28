@@ -57,52 +57,47 @@ export function Collapse({
   );
 }
 
-/** A check's verdict as a small filled circle. */
+/**
+ * A check's verdict as a small filled circle. `muted` keeps the glyph but
+ * drops the color, for a result that is reported without counting (an
+ * unscored check): a red ✕ beside "unscored" read as a failure that counts.
+ */
 export function StatusIcon({
   status,
   skipReason,
+  muted = false,
 }: {
   status: string;
   skipReason?: string;
+  muted?: boolean;
 }) {
   const circle =
     "flex h-4 w-4 shrink-0 items-center justify-center rounded-full";
-  if (status === "passed") {
-    return (
-      <span
-        className={cn(
-          circle,
+  const [color, glyph] =
+    status === "passed"
+      ? [
           "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-        )}
-      >
-        <Check className="h-2.5 w-2.5" strokeWidth={3} />
-      </span>
-    );
-  }
-  if (status === "failed") {
-    return (
-      <span
-        className={cn(circle, "bg-red-500/15 text-red-600 dark:text-red-400")}
-      >
-        <X className="h-2.5 w-2.5" strokeWidth={3} />
-      </span>
-    );
-  }
-  if (skipReason === "could-not-run") {
-    return (
-      <span
-        className={cn(
-          circle,
-          "bg-amber-400/25 text-amber-700 dark:text-amber-400",
-        )}
-      >
-        <span className="text-[10px] leading-none font-bold">!</span>
-      </span>
-    );
-  }
+          <Check className="h-2.5 w-2.5" strokeWidth={3} />,
+        ]
+      : status === "failed"
+        ? [
+            "bg-red-500/15 text-red-600 dark:text-red-400",
+            <X className="h-2.5 w-2.5" strokeWidth={3} />,
+          ]
+        : skipReason === "could-not-run"
+          ? [
+              "bg-amber-400/25 text-amber-700 dark:text-amber-400",
+              <span className="text-[10px] leading-none font-bold">!</span>,
+            ]
+          : [
+              "bg-muted text-muted-foreground",
+              <Minus className="h-2.5 w-2.5" strokeWidth={3} />,
+            ];
   return (
-    <span className={cn(circle, "bg-muted text-muted-foreground")}>
-      <Minus className="h-2.5 w-2.5" strokeWidth={3} />
+    <span
+      className={cn(circle, muted ? "bg-muted text-muted-foreground" : color)}
+    >
+      {glyph}
     </span>
   );
 }
@@ -231,6 +226,7 @@ export function OverallScoreCard({
   version,
   isRunning = false,
   oauthNotScored = false,
+  action,
 }: {
   score: ScoreSummary | undefined;
   serverName: string;
@@ -238,6 +234,8 @@ export function OverallScoreCard({
   version: string;
   isRunning?: boolean;
   oauthNotScored?: boolean;
+  /** Shown at the end of the verdict line, e.g. a link to the saved run. */
+  action?: ReactNode;
 }) {
   const scored = score && score.score !== null ? score : undefined;
   const initials = serverName.replace(/[^a-z0-9]/gi, "").slice(0, 2) || "?";
@@ -274,7 +272,7 @@ export function OverallScoreCard({
   ].filter(Boolean);
 
   return (
-    <div className="relative flex flex-col gap-4.5 overflow-hidden rounded-lg border border-border bg-card px-6 pt-6 pb-5">
+    <div className="relative flex flex-col gap-4.5 overflow-hidden rounded-lg border border-border bg-popover px-6 pt-6 pb-5">
       <div className="text-[11px] font-semibold tracking-[0.08em] text-primary">
         OVERALL SCORE · PROTOCOL {version.toUpperCase()}
       </div>
@@ -307,14 +305,17 @@ export function OverallScoreCard({
           <span className="truncate text-base font-semibold">{serverName}</span>
         </div>
       </div>
-      <div className="text-sm font-medium">
-        {verdict}
-        {notes.length > 0 && (
-          <span className="font-normal text-muted-foreground">
-            {" "}
-            · {notes.join(" · ")}
-          </span>
-        )}
+      <div className="flex items-center justify-between gap-4">
+        <div className="text-sm font-medium">
+          {verdict}
+          {notes.length > 0 && (
+            <span className="font-normal text-muted-foreground">
+              {" "}
+              · {notes.join(" · ")}
+            </span>
+          )}
+        </div>
+        {action}
       </div>
       {scored && scored.applicable > 0 && (
         <div className="absolute inset-x-0 bottom-0 flex h-1.5">

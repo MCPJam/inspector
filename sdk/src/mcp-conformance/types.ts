@@ -556,6 +556,8 @@ export interface MCPClientCheckContext {
   serverId: string;
   config: NormalizedMCPConformanceConfig;
   initializationInfo: ReturnType<MCPClientManager["getInitializationInfo"]>;
+  /** How long the connect (the initialize handshake) took, in ms. */
+  connectDurationMs?: number;
   availableTools: string[];
   availablePrompts: string[];
   availableResources: string[];

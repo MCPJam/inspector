@@ -93,10 +93,41 @@ export interface OAuthSuiteState extends SuiteState {
   sessionId?: string;
   waitingForAuth?: boolean;
   /**
-   * Set only while `status === "needs-authorization"`: the URL the explicit
-   * authorize step will open.
+   * The authorization URL while the suite needs or waits for the browser:
+   * the explicit authorize step opens it, and a waiting suite offers it again
+   * in case the popup never appeared.
    */
   authorizationUrl?: string;
+  /**
+   * The browser refused to open the authorization popup. Opening it runs
+   * after several awaits, outside the click that started the run, which is
+   * exactly what popup blockers refuse; without this the suite waited on a
+   * window that never existed until the session expired.
+   */
+  popupBlocked?: boolean;
+}
+
+/**
+ * The authorization URL comes from the target's own metadata. A `javascript:`
+ * or `data:` URL handed to `window.open` runs in this origin, so only web
+ * URLs are opened; plain `http:` stays allowed for local authorization servers.
+ */
+function isWebUrl(raw: string): boolean {
+  try {
+    const { protocol } = new URL(raw);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+/** The OAuth popup, or null when the browser blocked it. */
+function openAuthorizationPopup(authorizationUrl: string): Window | null {
+  return window.open(
+    authorizationUrl,
+    "oauth_conformance_auth",
+    "width=600,height=700,scrollbars=yes"
+  );
 }
 
 export function isHttpServer(server: ServerWithName): boolean {
@@ -204,6 +235,13 @@ export interface UseConformanceRunResult {
   runAll: () => Promise<void>;
   /** Open the parked OAuth authorization popup. No-op unless parked. */
   authorizeOAuth: () => void;
+  /**
+   * Open the authorization page again for a suite waiting on the browser.
+   * Called from a click, so a popup blocker lets it through.
+   */
+  openAuthorizationWindow: () => void;
+  /** Stop waiting for OAuth authorization; the suite is left not scored. */
+  skipOAuth: () => void;
   protocolScore?: ConformanceScore;
   appsScore?: ConformanceScore;
   tasksScore?: ConformanceScore;
@@ -262,6 +300,19 @@ export function useConformanceRun({
       latestRunTokenRef.current === runToken &&
       activeServerNameRef.current === serverName,
     []
+  );
+
+  /** The run whose OAuth suite the visitor skipped, if any. */
+  const skippedOAuthRunTokenRef = useRef<number | null>(null);
+
+  // A skip ends only the OAuth suite, so it cannot bump the run token the
+  // other suites report under. A callback already past its listener checks
+  // this instead, or it would overwrite the skip with a late result.
+  const isOAuthRunActive = useCallback(
+    (runToken: number, serverName: string) =>
+      isRunActive(runToken, serverName) &&
+      skippedOAuthRunTokenRef.current !== runToken,
+    [isRunActive]
   );
 
   /**
@@ -396,13 +447,13 @@ export function useConformanceRun({
       for (let i = 0; i < MAX_POLLS; i++) {
         try {
           const poll = await completeOAuthConformance(sessionId);
-          if (!isRunActive(runToken, serverName)) return;
+          if (!isOAuthRunActive(runToken, serverName)) return;
           if (poll.phase === "complete" && poll.result) {
             setOAuth(oauthStateFromResult(poll.result));
             return;
           }
         } catch (err) {
-          if (!isRunActive(runToken, serverName)) return;
+          if (!isOAuthRunActive(runToken, serverName)) return;
           setOAuth({
             status: "error",
             error: err instanceof Error ? err.message : String(err),
@@ -411,13 +462,13 @@ export function useConformanceRun({
         }
       }
 
-      if (!isRunActive(runToken, serverName)) return;
+      if (!isOAuthRunActive(runToken, serverName)) return;
       setOAuth({
         status: "error",
         error: "The OAuth checks took too long to finish. Run the checks again.",
       });
     },
-    [isRunActive]
+    [isOAuthRunActive]
   );
 
   const handleOAuthCallback = useCallback(
@@ -430,7 +481,7 @@ export function useConformanceRun({
     ) => {
       try {
         await submitOAuthConformanceCode({ sessionId, code, state });
-        if (!isRunActive(runToken, serverName)) return;
+        if (!isOAuthRunActive(runToken, serverName)) return;
         setOAuth((prev) => ({
           ...prev,
           waitingForAuth: false,
@@ -438,14 +489,14 @@ export function useConformanceRun({
         }));
         await pollOAuthComplete(sessionId, runToken, serverName);
       } catch (err) {
-        if (!isRunActive(runToken, serverName)) return;
+        if (!isOAuthRunActive(runToken, serverName)) return;
         setOAuth({
           status: "error",
           error: err instanceof Error ? err.message : String(err),
         });
       }
     },
-    [isRunActive, pollOAuthComplete]
+    [isOAuthRunActive, pollOAuthComplete]
   );
 
   /**
@@ -463,13 +514,22 @@ export function useConformanceRun({
       runToken: number,
       serverName: string
     ) => {
-      setOAuth({ status: "running", sessionId, waitingForAuth: true });
-
-      window.open(
+      if (!isWebUrl(authorizationUrl)) {
+        setOAuth({
+          status: "error",
+          error:
+            "This server's authorization URL is not an http or https address, so it was not opened. Fix the authorization URL in its OAuth metadata, then run again.",
+        });
+        return;
+      }
+      const popup = openAuthorizationPopup(authorizationUrl);
+      setOAuth({
+        status: "running",
+        sessionId,
+        waitingForAuth: true,
         authorizationUrl,
-        "oauth_conformance_auth",
-        "width=600,height=700,scrollbars=yes"
-      );
+        popupBlocked: !popup,
+      });
 
       const cleanupFns: Array<() => void> = [];
       const cleanup = () => {
@@ -618,6 +678,26 @@ export function useConformanceRun({
     );
   }, [beginOAuthAuthorization, isRunActive]);
 
+  const openAuthorizationWindow = useCallback(() => {
+    if (!oauth.waitingForAuth || !oauth.authorizationUrl) return;
+    const popup = openAuthorizationPopup(oauth.authorizationUrl);
+    setOAuth((prev) =>
+      prev.waitingForAuth ? { ...prev, popupBlocked: !popup } : prev
+    );
+  }, [oauth.authorizationUrl, oauth.waitingForAuth]);
+
+  // The listeners for the code stay unwired after a skip, so a consent that
+  // completes late in another tab cannot resurrect the suite.
+  const skipOAuth = useCallback(() => {
+    skippedOAuthRunTokenRef.current = latestRunTokenRef.current;
+    pendingOAuthRef.current = null;
+    clearOAuthListeners();
+    setOAuth({
+      status: "unavailable",
+      unavailableReason: "OAuth was skipped, so it is not scored for this run.",
+    });
+  }, [clearOAuthListeners]);
+
   const runAll = useCallback(async () => {
     const runToken = beginRun();
     const currentServer = server;
@@ -685,6 +765,8 @@ export function useConformanceRun({
     runVersion,
     runAll,
     authorizeOAuth,
+    openAuthorizationWindow,
+    skipOAuth,
     protocolScore,
     appsScore,
     tasksScore,

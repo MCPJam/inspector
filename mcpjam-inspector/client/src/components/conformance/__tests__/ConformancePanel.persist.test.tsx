@@ -8,8 +8,16 @@ const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
 const mockStartOAuth = vi.fn();
 
-const { startRun } = vi.hoisted(() => ({
+const { startRun, finalizeRun, cancelRun, navigate } = vi.hoisted(() => ({
   startRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
+  finalizeRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
+  cancelRun: vi.fn().mockResolvedValue({ cancelled: true }),
+  navigate: vi.fn(),
+}));
+
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigate,
 }));
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
@@ -33,13 +41,21 @@ vi.mock("@/components/oauth/utils", () => ({
   }),
 }));
 
-vi.mock("convex/react", () => ({
-  useMutation: (name: string) => {
-    if (name === "conformanceRuns:startRun") return startRun;
-    return vi.fn().mockResolvedValue(undefined);
-  },
-  useAction: () => vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock("convex/react", async () => {
+  const { getFunctionName } = await import("convex/server");
+  return {
+    useMutation: (ref: unknown) => {
+      // String names and typed references (makeFunctionReference) both arrive.
+      const name =
+        typeof ref === "string" ? ref : getFunctionName(ref as never);
+      if (name === "conformanceRuns:startRun") return startRun;
+      if (name === "conformanceRuns:finalizeRun") return finalizeRun;
+      if (name === "conformanceRuns:cancelRun") return cancelRun;
+      return vi.fn().mockResolvedValue(undefined);
+    },
+    useAction: () => vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 vi.mock(
   "@/components/conformance/directory-readiness/DirectoryReadinessSection",
@@ -69,9 +85,64 @@ function hang() {
   return new Promise(() => {});
 }
 
+function mockPassingSuites() {
+  const base = {
+    passed: true,
+    outcome: "passed",
+    serverUrl: "https://example.com/mcp",
+    target: "https://example.com/mcp",
+    summary: "ok",
+    durationMs: 1,
+    checks: [],
+    categorySummary: {},
+  };
+  mockRunProtocol.mockResolvedValue({ success: true, result: base });
+  mockRunApps.mockResolvedValue({
+    success: true,
+    result: {
+      ...base,
+      discovery: {
+        toolCount: 0,
+        uiToolCount: 0,
+        listedResourceCount: 0,
+        listedUiResourceCount: 0,
+        checkedUiResourceCount: 0,
+      },
+    },
+  });
+  mockRunTasks.mockResolvedValue({
+    success: true,
+    result: {
+      ...base,
+      discovery: {
+        protocolVersion: "2025-11-25",
+        wire: "legacy",
+        toolCount: 0,
+        taskCapableToolCount: 0,
+      },
+    },
+  });
+  mockStartOAuth.mockResolvedValue({
+    phase: "complete",
+    result: {
+      passed: true,
+      outcome: "passed",
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "cimd",
+      serverUrl: "https://example.com/mcp",
+      summary: "ok",
+      durationMs: 1,
+      steps: [],
+    },
+  });
+}
+
 describe("ConformanceTab persist", () => {
   beforeEach(() => {
     startRun.mockClear();
+    finalizeRun.mockClear();
+    cancelRun.mockClear();
+    navigate.mockClear();
     mockRunProtocol.mockImplementation(hang);
     mockRunApps.mockImplementation(hang);
     mockRunTasks.mockImplementation(hang);
@@ -114,5 +185,93 @@ describe("ConformanceTab persist", () => {
     await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
 
     await waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+  });
+
+  it("cancels a run the page leaves before it finalizes", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+
+    unmount();
+
+    expect(cancelRun).toHaveBeenCalledWith({ runId: "run_1" });
+    expect(finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it("cancels a run whose id arrives after the page left", async () => {
+    const user = userEvent.setup();
+    let resolveStart: (value: { runId: string }) => void = () => {};
+    startRun.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveStart = resolve)),
+    );
+    const { unmount } = render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+
+    unmount();
+    expect(cancelRun).not.toHaveBeenCalled();
+    resolveStart({ runId: "run_2" });
+
+    await waitFor(() =>
+      expect(cancelRun).toHaveBeenCalledWith({ runId: "run_2" }),
+    );
+  });
+
+  it("cancels a run whose finalize fails after the page left", async () => {
+    const user = userEvent.setup();
+    mockPassingSuites();
+    let rejectFinalize: (error: Error) => void = () => {};
+    finalizeRun.mockImplementationOnce(
+      () => new Promise((_, reject) => (rejectFinalize = reject)),
+    );
+    const { unmount } = render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() => expect(finalizeRun).toHaveBeenCalledTimes(1));
+
+    unmount();
+    expect(cancelRun).not.toHaveBeenCalled();
+    rejectFinalize(new Error("finalize failed"));
+
+    await waitFor(() =>
+      expect(cancelRun).toHaveBeenCalledWith({ runId: "run_1" }),
+    );
+  });
+
+  it("links a finished run to its saved page and does not cancel it on leave", async () => {
+    const user = userEvent.setup();
+    mockPassingSuites();
+    const { unmount } = render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+
+    const link = await screen.findByRole("button", { name: "View saved run" });
+    expect(finalizeRun).toHaveBeenCalledWith({ runId: "run_1" });
+    await user.click(link);
+    expect(navigate).toHaveBeenCalledWith(
+      expect.stringContaining("/conformance/runs/run_1"),
+    );
+
+    unmount();
+    expect(cancelRun).not.toHaveBeenCalled();
   });
 });
