@@ -102,7 +102,7 @@ export function useAppToolRun() {
   };
   const select = (key: string) => {
     const tool = catalog.find((tool) => tool.key === key);
-    if (!tool) return;
+    if (!tool || tool.key === selected?.key) return;
     clear();
     setSelection({ tool, sessionId });
   };

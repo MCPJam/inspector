@@ -107,6 +107,14 @@ describe("manual app runs", () => {
       text: "Invalid SAN. Choose a legal move.",
     });
   });
+  it("keeps the form when selecting the same row again", async () => {
+    const { result } = await mount();
+    act(() => result.current.detailProps?.onFieldChange("san", "e4"));
+    act(() => result.current.select(result.current.selectedKey!));
+    expect(
+      result.current.fields.find((field) => field.name === "san")?.value,
+    ).toBe("e4");
+  });
   it("keeps the detail and closed message after an unreasoned registry abort", async () => {
     const { result, call, instance } = await mount();
     call.mockImplementation(() => new Promise(() => {}));
