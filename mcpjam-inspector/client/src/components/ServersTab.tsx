@@ -1,5 +1,5 @@
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { loadServerOrder, saveServerOrder, serverCheckQueue } from "@/lib/server-check-queue";
+import { useServerCardOrder } from "@/hooks/use-server-card-order";
 import {
   useCallback,
   useContext,
@@ -759,12 +759,27 @@ export function ServersTab({
     return <ServersAutoConnectSwitch onToggled={handleAutoConnectToggled} />;
   };
 
+  const allNames = useMemo(() => Object.keys(projectServers), [projectServers]);
+  const orderProject = projects[activeProjectId];
+  const orderReady =
+    !!orderProject && orderProject.id === activeProjectId &&
+    areServersHydrated && !isLoadingProjects && !isAuthHydrating;
+  const { orderedServerNames, setOrderedServerNames, catalogOrder } =
+    useServerCardOrder({
+      projectId: activeProjectId,
+      queueProjectId: sharedProjectIdForHostScope ?? activeProjectId,
+      catalogNames: Object.keys(orderProject?.servers ?? {}),
+      visibleNames: allNames,
+      ready: orderReady,
+    });
+
   useAutoConnectProjectServers({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
     serverNames: projectServerNames,
-    catalogLoaded: viewProjectServersList !== undefined,
-    suspendAutoConnect,
+    catalogLoaded: orderReady && viewProjectServersList !== undefined,
+    suspendAutoConnect: suspendAutoConnect || !orderReady,
+    serverOrder: catalogOrder,
   });
 
   const appReady = useAppReady();
@@ -847,38 +862,6 @@ export function ServersTab({
     serverSnapshot: null,
   });
 
-  // --- Self-contained local ordering (localStorage only, never synced to Convex) ---
-  const allNames = useMemo(() => Object.keys(projectServers), [projectServers]);
-
-  const [orderedServerNames, setOrderedServerNames] = useState<string[]>(() => {
-    const saved = loadServerOrder(activeProjectId);
-    if (saved && saved.length > 0) {
-      const existing = saved.filter((n: string) => allNames.includes(n));
-      const added = allNames.filter((n) => !existing.includes(n));
-      return [...existing, ...added];
-    }
-    return allNames;
-  });
-
-  useEffect(() => {
-    serverCheckQueue.setOrder(
-      sharedProjectIdForHostScope ?? activeProjectId,
-      orderedServerNames,
-    );
-  }, [sharedProjectIdForHostScope, activeProjectId, orderedServerNames]);
-
-  // Reconcile when servers are added/removed or project changes
-  useEffect(() => {
-    setOrderedServerNames((prev) => {
-      const saved = loadServerOrder(activeProjectId);
-      const base = saved && saved.length > 0 ? saved : prev;
-      const existing = base.filter((n) => allNames.includes(n));
-      const added = allNames.filter((n) => !existing.includes(n));
-      return [...existing, ...added];
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allNames.join(","), activeProjectId]);
-
   useEffect(() => {
     const persistedFocus = readPersistedLoggerFocus(activeProjectId);
     setFocusedLoggerServerIds(
@@ -905,8 +888,6 @@ export function ServersTab({
       if (oldIndex !== -1 && newIndex !== -1) {
         const newOrder = arrayMove(orderedServerNames, oldIndex, newIndex);
         setOrderedServerNames(newOrder);
-        saveServerOrder(activeProjectId, newOrder);
-        if (sharedProjectIdForHostScope) serverCheckQueue.setOrder(sharedProjectIdForHostScope, newOrder);
       }
     }
     setActiveId(null);

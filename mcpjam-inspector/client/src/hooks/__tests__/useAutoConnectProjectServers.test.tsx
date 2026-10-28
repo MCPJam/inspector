@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { serverCheckQueue } from "@/lib/server-check-queue";
+import { useServerCardOrder } from "../use-server-card-order";
 import { errorToastMessage } from "@/test/utils";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -98,6 +99,33 @@ function wrapper({
 const flushMicrotasks = () => act(() => Promise.resolve());
 
 describe("useAutoConnectProjectServers", () => {
+  it("publishes Connect order before admission and never replaces live queue order with stale storage", async () => {
+    const projectId = "order-handoff-local";
+    const sharedId = "order-handoff-shared";
+    localStorage.setItem("mcp-server-order", JSON.stringify({ [projectId]: ["B", "A"] }));
+    const names = ["A", "B", "new"];
+    const appState = { ...makeAppState(names), activeProjectId: projectId };
+    const ensureServersReady = vi.fn(async () => {
+      expect(serverCheckQueue.getOrder(sharedId)).toEqual(["new", "B", "A"]);
+      return { readyServerNames: names, failedServerNames: [], missingServerNames: [], reauthServerNames: [] };
+    });
+    const provider = ({ children }: { children: ReactNode }) => wrapper({ children, appState, ensureServersReady });
+    renderHook(() => {
+      const { catalogOrder } = useServerCardOrder({
+        projectId, queueProjectId: sharedId, catalogNames: names, visibleNames: names, ready: true,
+      });
+      useAutoConnectProjectServers({ projectId: sharedId, hostScopeKey: "order-host", serverNames: names, serverOrder: catalogOrder });
+    }, { wrapper: provider });
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledOnce();
+    // A different surface has no resolved card order and an old preference key.
+    localStorage.setItem("mcp-server-order", JSON.stringify({ [projectId]: ["A", "B"] }));
+    renderHook(() => useAutoConnectProjectServers({ projectId: sharedId, hostScopeKey: "order-host", serverNames: ["A", "B"] }), { wrapper: provider });
+    await flushMicrotasks();
+    expect(serverCheckQueue.getOrder(sharedId)).toEqual(["new", "B", "A"]);
+    expect(ensureServersReady).toHaveBeenCalledOnce();
+  });
+
   beforeEach(() => {
     mocks.hosted = false;
     resetAutoConnectAttempts();
