@@ -1,3 +1,4 @@
+import { TurnResources } from "../../services/chat-turn/resources.js";
 import { stripForwardingRequestBody } from "@/shared/forwarding-approval";
 import { resolveHostedChatSetup } from "../../services/chat-turn/resolve-hosted-chat-setup.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
@@ -48,7 +49,7 @@ import {
 } from "@/shared/declared-tools";
 import { webmcpPageToolsMode } from "../../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { ranTurnSelection } from "../../utils/session-model-selection.js";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import {
@@ -241,7 +242,7 @@ const chatV2 = new Hono();
  */
 const parseMrtrResumeRequest = parseMrtrChatResumeRequest;
 
-chatV2.post("/", async (c) => {
+export async function handleManagedChatTurn(c: Context): Promise<Response> {
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
   // returns a streaming Response. Wrapping it in handleRoute → c.json() would
   // serialize the Response object as '{}' instead of forwarding the stream.
@@ -252,6 +253,20 @@ chatV2.post("/", async (c) => {
   // heartbeat runs until the turn's stream completes, or until a throw below.
   // Releasing it never tears the box down — the next turn reattaches to it.
   let scenarioBox: HarnessBox | undefined;
+  const resources = new TurnResources((error) => {
+    logger.warn("[chat-v2] turn resource cleanup failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+  let streamOwnsResources = false;
+  let managerToDispose: { disconnectAllServers(): Promise<void> } | undefined;
+  // Boxes may be assigned during setup, before a manager exists.
+  resources.own(async () => {
+    await scenarioBox?.release();
+  });
+  resources.own(async () => {
+    await managerToDispose?.disconnectAllServers();
+  });
   try {
     const bearerToken = assertBearerToken(c);
     const rawBody = JSON.parse(stripForwardingRequestBody(JSON.stringify(await readJsonBody<Record<string, unknown>>(c)))) as Record<string, unknown>;
@@ -1201,6 +1216,9 @@ chatV2.post("/", async (c) => {
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
         })
       : undefined;
+    resources.own(async () => {
+      await elicitationBridge?.dispose();
+    });
 
     const mrtrBridge =
       mrtrEnabled && convexBearer
@@ -1416,6 +1434,7 @@ chatV2.post("/", async (c) => {
         ...(executionScope ? { executionScope } : {}),
       },
     );
+    managerToDispose = manager;
     if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
       void refreshConnectionProfiles(
         manager,
@@ -2387,7 +2406,7 @@ chatV2.post("/", async (c) => {
         modelPluginAdmission,
         body.pluginMessage === undefined ? undefined : globalPluginAdmission,
       );
-      return await streamWebChatTurn({
+      const response = await streamWebChatTurn({
         manager,
         prepare: {
           ...(modelToolExecutor ? { modelToolExecutor } : {}),
@@ -2687,18 +2706,20 @@ chatV2.post("/", async (c) => {
               }
             : {}),
           c,
+          dispose: () => resources.dispose(),
         },
       });
+      streamOwnsResources = true;
+      return resources.response(response, c.req.raw.signal);
     } catch (error) {
       // The bridge can hold rows created before the throw (e.g. an elicitation
       // during a tool call that then failed); withdraw them so no answerable
       // prompt outlives the turn.
-      await elicitationBridge?.dispose();
-      await manager.disconnectAllServers();
+      await resources.dispose();
       throw error;
     }
   } catch (error) {
-    await scenarioBox?.release();
+    await resources.dispose();
     // Enrich MCPAuthError with OAuth server URL so the client can initiate OAuth
     if (isMCPAuthError(error) && Object.keys(oauthServerUrls).length > 0) {
       const firstUrl = Object.values(oauthServerUrls)[0];
@@ -2760,7 +2781,11 @@ chatV2.post("/", async (c) => {
         ? projectRouteFailure(routeError, error, envelope)
         : { routeError, logs: envelope };
     return webErrorFromRoute(c, projected.routeError, projected.logs);
+  } finally {
+    if (!streamOwnsResources) await resources.dispose();
   }
-});
+}
+
+chatV2.post("/", handleManagedChatTurn);
 
 export default chatV2;
