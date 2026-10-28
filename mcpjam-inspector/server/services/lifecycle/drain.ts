@@ -51,7 +51,9 @@ export function createDrainCoordinator(now: () => number = Date.now) {
 
     /**
      * Register accepted work so a drain waits for it. Returns the same promise,
-     * so a call site can wrap the work it already started.
+     * so a call site can wrap the work it already started. Watching `work`
+     * marks its rejection handled, so it never reaches the server's
+     * `unhandledRejection` report: the caller must attach its own `.catch`.
      */
     track<T>(kind: InFlightKind, work: Promise<T>): Promise<T> {
       const id = nextId++;
