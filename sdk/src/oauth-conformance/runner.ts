@@ -337,7 +337,7 @@ function buildSummary(
   outcome: OAuthRunOutcome,
 ): string {
   if (outcome === "not-applicable") {
-    return `OAuth conformance not applicable for ${config.serverUrl}: the server served an unauthenticated request instead of challenging, and authorization is OPTIONAL in ${config.protocolVersion}`;
+    return "No login required: the server answered without a token.";
   }
 
   if (outcome === "passed") {

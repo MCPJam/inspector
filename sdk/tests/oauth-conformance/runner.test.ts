@@ -1238,7 +1238,9 @@ describe("OAuthConformanceTest", () => {
       );
       expect(probeStep?.status).toBe("skipped");
       expect(probeStep?.skipReason).toBe("not-applicable");
-      expect(result.summary).toContain("not applicable");
+      expect(result.summary).toBe(
+        "No login required: the server answered without a token.",
+      );
 
       // The regression this fixes: the run used to march into Protected
       // Resource Metadata discovery, 404, and report a hard failure.
