@@ -2579,7 +2579,7 @@ export async function runHarnessTurn(
         reservationHeld = false;
         if (useNativeForwarding) {
           if (!broker.forwarding || !harnessMcpProxy) throw new Error("Native forwarding was not confirmed.");
-          nativeForwarding = await prepareNativeForwarding({ ...broker.forwarding, expiresAt: broker.expiresAt, turnId, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer });
+          nativeForwarding = await prepareNativeForwarding({ ...broker.forwarding, expiresAt: broker.expiresAt, turnId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer });
           ({ mcpJson, keyToServerId } = nativeForwarding);
         }
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);

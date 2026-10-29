@@ -55,6 +55,8 @@ describe("native turn configuration", () => {
       writer: { write: vi.fn() },
     });
     const entry = prepared.mcpJson.mcpServers.server;
+    expect(entry.timeout).toBeGreaterThan(59_000);
+    expect(entry.timeout).toBeLessThanOrEqual(60_000);
     expect(prepared.logScopeIds).toEqual({ server: nativeRpcLogScope(owner, "turn") });
     expect(new URL(entry.url).searchParams.get("native")).toBe("1");
     expect(JSON.stringify(prepared.mcpJson)).not.toContain(

@@ -17,6 +17,7 @@ import {
 } from "../../utils/harness/forwarding/approval.js";
 import { forwardNativeMcp } from "../../utils/harness/forwarding/native-transport.js";
 import { createNativeRpcLogger } from "../../utils/harness/forwarding/native-rpc-logs.js";
+import { nativeApprovalResponse } from "../../utils/harness/forwarding/native-approval-response.js";
 import {
   parseNativeMessage,
   readNativeBody,
@@ -88,79 +89,97 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
           : {}),
       },
     );
-    try {
-      const config = authorized.authorizedServerConfigs?.[serverId];
-      if (
-        !config ||
-        !("url" in config) ||
-        config.preferSSE ||
-        !config.baseFetch ||
-        authorized.authenticatedUserId !== caller.userId
-      )
-        throw new Error("Native endpoint is unavailable.");
-      const send = (
-        settle?: Parameters<typeof forwardNativeMcp>[0]["settle"],
-      ) =>
-        forwardNativeMcp({
-          url: String(config.url),
-          serverId,
-          request: c.req.raw,
-          body: raw,
-          message,
-          trustedHeaders: config.requestInit?.headers,
-          fetch: config.baseFetch!,
-          onUnauthorized: config.onUnauthorized,
-          settle,
-          rpcLogger: createNativeRpcLogger({
-            owner: context.owner,
-            turnId: context.turnId,
-            projectId: caller.projectId,
-            organizationId: caller.organizationId,
-          }),
-        });
-      if (
-        !message?.method ||
-        (typeof message.id !== "string" && typeof message.id !== "number")
-      )
-        return await send();
-      const approval = forwardingApproval(
-        control,
-        context.owner,
-        caller.projectId,
-      );
-      return await executeForwardedOperation({
-        control,
-        operation: {
-          invocationKey: randomUUID(),
-          turnId: context.turnId,
-          rpcId: message.id,
-          method: message.method,
-          params: message.params,
-          paramsPresent: Object.hasOwn(message, "params"),
-          expiresAt: Math.min(caller.expiresAt, Date.now() + 300_000),
-          policy: sealed.policy,
-        },
-        approval,
-        signal: c.req.raw.signal,
-        dispatch: (settle) => send(settle),
-      });
-    } finally {
-      await authorized.manager.disconnectAllServers();
-    }
+    return await nativeApprovalResponse({
+      rpcId: message?.id,
+      signal: c.req.raw.signal,
+      onError: reportNativeFailure,
+      run: async (waiting, signal) => {
+        try {
+          const config = authorized.authorizedServerConfigs?.[serverId];
+          if (
+            !config ||
+            !("url" in config) ||
+            config.preferSSE ||
+            !config.baseFetch ||
+            authorized.authenticatedUserId !== caller.userId
+          )
+            throw new Error("Native endpoint is unavailable.");
+          const send = (
+            settle?: Parameters<typeof forwardNativeMcp>[0]["settle"],
+          ) =>
+            forwardNativeMcp({
+              url: String(config.url),
+              serverId,
+              request: c.req.raw,
+              signal,
+              body: raw,
+              message,
+              trustedHeaders: config.requestInit?.headers,
+              fetch: config.baseFetch!,
+              onUnauthorized: config.onUnauthorized,
+              settle,
+              rpcLogger: createNativeRpcLogger({
+                owner: context.owner,
+                turnId: context.turnId,
+                projectId: caller.projectId,
+                organizationId: caller.organizationId,
+              }),
+            });
+          if (
+            !message?.method ||
+            (typeof message.id !== "string" && typeof message.id !== "number")
+          )
+            return await send();
+          const approval = forwardingApproval(
+            control,
+            context.owner,
+            caller.projectId,
+          );
+          return await executeForwardedOperation({
+            control,
+            operation: {
+              invocationKey: randomUUID(),
+              turnId: context.turnId,
+              rpcId: message.id,
+              method: message.method,
+              params: message.params,
+              paramsPresent: Object.hasOwn(message, "params"),
+              expiresAt: caller.expiresAt,
+              policy: sealed.policy,
+            },
+            approval: {
+              ...approval,
+              ask: (request) => {
+                waiting();
+                return approval.ask(request);
+              },
+            },
+            signal,
+            dispatch: (settle) => send(settle),
+          });
+        } finally {
+          await authorized.manager.disconnectAllServers();
+        }
+      },
+    });
   } catch (error) {
-    if (!(error instanceof NativeWireError) && !(error instanceof z.ZodError))
-      reportRouteFailure(
-        "Native MCP forwarding failed",
-        new Error(
-          error instanceof Error ? error.name : "Unknown forwarding failure",
-        ),
-        { source: "web.harness-forwarding", hop: "user_server_hop" },
-      );
+    reportNativeFailure(error);
     return c.json(
       { error: "The forwarded MCP request could not complete." },
       error instanceof NativeWireError ? 400 : 409,
     );
   }
+}
+
+function reportNativeFailure(error: unknown) {
+  if (!(error instanceof NativeWireError) && !(error instanceof z.ZodError))
+    reportRouteFailure(
+      "Native MCP forwarding failed",
+      new Error(
+        error instanceof Error ? error.name : "Unknown forwarding failure",
+      ),
+      { source: "web.harness-forwarding", hop: "user_server_hop" },
+    );
 }
 
 export const harnessForwardingApprovals = new Hono();
