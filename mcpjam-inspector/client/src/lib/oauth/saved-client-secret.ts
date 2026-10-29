@@ -9,27 +9,36 @@ export interface SavedClientSecret {
   serverId: string;
 }
 
+const SAVED_CLIENT_SECRET_TIMEOUT_MS = 10_000;
+
 /**
  * A hosted server's saved client secret lives in Convex, flagged only by
  * `hasClientSecret`, so `deriveOAuthProfileFromServer` never sees it. Load it
  * the way the OAuth debugger does (`createHostedClientSecretResolver`) — held
- * in memory for one run, never written to storage. A failed fetch throws:
+ * in memory for one run, never written to storage. Any failure throws —
+ * an unresolvable server, an error, or a fetch that outlasts the deadline:
  * running on without the secret would fail the token step with
- * `invalid_client` and blame the client's registration instead of the load.
+ * `invalid_client` and blame the client's registration instead of the load,
+ * and a hung fetch would leave the suite running with Run disabled.
  */
 export async function loadSavedClientSecret(
   server: ServerWithName
 ): Promise<SavedClientSecret | undefined> {
   if (!server.hasClientSecret) return undefined;
+  const loadFailed = new Error(
+    "Couldn't load the saved client secret. Run the checks again."
+  );
+  // Project serialization keeps `hasClientSecret` while blanking the secret,
+  // so a flagged server with no project mapping has no secret to send.
   const resolved = tryResolveProjectServer(server.name);
-  if (!resolved) return undefined;
+  if (!resolved) throw loadFailed;
   try {
-    const { clientSecret } = await fetchOAuthClientSecret(resolved);
+    const { clientSecret } = await fetchOAuthClientSecret(resolved, {
+      signal: AbortSignal.timeout(SAVED_CLIENT_SECRET_TIMEOUT_MS),
+    });
     return { clientSecret, ...resolved };
   } catch {
-    throw new Error(
-      "Couldn't load the saved client secret. Run the checks again."
-    );
+    throw loadFailed;
   }
 }
 

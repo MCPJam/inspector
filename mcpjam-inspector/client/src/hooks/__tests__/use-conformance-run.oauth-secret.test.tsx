@@ -94,10 +94,10 @@ describe("useConformanceRun OAuth client secret", () => {
 
   it("sends the secret saved in server settings", async () => {
     expect(await sentClientSecret(makeServer(true))).toBe("saved-secret");
-    expect(secrets.fetchOAuthClientSecret).toHaveBeenCalledWith({
-      projectId: "project-1",
-      serverId: "server-1",
-    });
+    expect(secrets.fetchOAuthClientSecret).toHaveBeenCalledWith(
+      { projectId: "project-1", serverId: "server-1" },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("prefers a secret already on the profile", async () => {
@@ -133,6 +133,26 @@ describe("useConformanceRun OAuth client secret", () => {
         error: "Couldn't load the saved client secret. Run the checks again.",
       }),
     );
+    expect(api.startOAuthConformance).not.toHaveBeenCalled();
+  });
+
+  it("stops the OAuth suite when a flagged server isn't in the project", async () => {
+    secrets.tryResolveProjectServer.mockReturnValue(null);
+    const view = renderHook(() =>
+      useConformanceRun({ server: makeServer(true), deferOAuthAuthorization: true }),
+    );
+
+    await act(async () => {
+      await view.result.current.runAll();
+    });
+
+    await waitFor(() =>
+      expect(view.result.current.oauth).toMatchObject({
+        status: "error",
+        error: "Couldn't load the saved client secret. Run the checks again.",
+      }),
+    );
+    expect(secrets.fetchOAuthClientSecret).not.toHaveBeenCalled();
     expect(api.startOAuthConformance).not.toHaveBeenCalled();
   });
 
