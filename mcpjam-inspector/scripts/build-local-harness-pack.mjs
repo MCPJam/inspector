@@ -42,7 +42,7 @@
 // Usage:
 //   node scripts/build-local-harness-pack.mjs \
 //     --harness claude-code \
-//     --node-tarball /tmp/node-v24.20.0-linux-x64.tar.xz \
+//     --node-tarball /tmp/node-v24.22.1-linux-x64.tar.xz \
 //     --platform linux-x64 \
 //     --out .pack-out \
 //     [--pack-version 3] [--sign-key-file key.pem] [--skip-archive]
@@ -235,7 +235,7 @@ function installBundledNode(packRoot, nodeTarball, platformKey) {
   const binDir = join(packRoot, "bin");
   mkdirSync(binDir, { recursive: true });
   const target = join(binDir, platformKey.startsWith("win32") ? "node.exe" : "node");
-  /** The archive's single top-level directory, e.g. `node-v24.20.0-linux-x64`. */
+  /** The archive's single top-level directory, e.g. `node-v24.22.1-linux-x64`. */
   let extractedRoot = null;
 
   if (statSync(nodeTarball).isFile() && /\.(tar\.(gz|xz)|zip)$/.test(nodeTarball)) {
