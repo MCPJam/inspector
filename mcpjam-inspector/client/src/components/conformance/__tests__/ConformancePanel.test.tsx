@@ -441,6 +441,29 @@ describe("ConformanceTab", () => {
     expect(overview).toHaveFocus();
   });
 
+  it("opens Overview when a run starts from History", async () => {
+    setupSuccessfulRunMocks();
+    render(
+      <ConformanceTab
+        server={createHttpServer()}
+        history={<p>History table</p>}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("History table");
+
+    // On History only the header offers Run.
+    clickRun();
+
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tabpanel")).not.toHaveTextContent("History table");
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+  });
+
   it("asks for a server instead of running when none is selected", () => {
     const info = vi.spyOn(toast, "info");
     render(<ConformanceTab server={null} />);

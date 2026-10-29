@@ -254,6 +254,9 @@ function ConformanceContent({
       return;
     }
     setStarted(true);
+    // Run sits in the header on both tabs. From History, the new run would
+    // otherwise go unseen until the user switched back by hand.
+    onViewChange("overview");
     runAll();
   };
   const hasStarted =
