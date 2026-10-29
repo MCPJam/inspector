@@ -786,7 +786,7 @@ describe("ConformanceTab", () => {
     expect(within(suiteHeader("protocol")).getByText("ERROR")).toBeDefined();
     expect(screen.getByText("protocol endpoint down")).toBeInTheDocument();
     expect(
-      screen.getByText(/checks in this suite — not run yet/),
+      screen.getByText(/checks in this suite\. Not run yet/),
     ).toBeInTheDocument();
 
     // The row shows the canonical title; the explanation stays shut until
@@ -839,7 +839,7 @@ describe("ConformanceTab", () => {
     await runToCompletion();
 
     expect(screen.getByText("Round trip")).toBeInTheDocument();
-    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+    expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
   });
 
   it("shows a running suite as running, not as the not-yet-run catalog", async () => {
@@ -857,7 +857,7 @@ describe("ConformanceTab", () => {
     // while the run is live.
     await screen.findByText(/Running \d+ checks/);
     expect(within(suiteHeader("protocol")).getByText("RUNNING")).toBeDefined();
-    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+    expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
 
     pending.resolve({ success: true, result: createProtocolResult() });
     await waitFor(() => {
@@ -899,7 +899,7 @@ describe("ConformanceTab", () => {
       expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1");
     });
     expect(within(suiteHeader("oauth")).getByText("RUNNING")).toBeDefined();
-    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+    expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
 
     poll.resolve({ phase: "complete", result: createOAuthResult() });
     await waitFor(() => {
@@ -967,6 +967,11 @@ describe("ConformanceTab", () => {
     );
     expect(within(header!).getByText("NOT APPLICABLE")).toBeDefined();
     expect(within(header!).queryByText("FAILED")).toBeNull();
+
+    // The checks were skipped, not ruled out, so the list says so.
+    fireEvent.click(header!);
+    expect(screen.getByText(/checks in this suite\. Not run\./)).toBeDefined();
+    expect(screen.queryByText(/None apply to this server/)).toBeNull();
 
     // A consent that completes late cannot bring the suite back.
     window.dispatchEvent(
@@ -1401,6 +1406,15 @@ describe("ConformanceTab", () => {
       .closest("button")!;
     expect(within(header).getByText("NOT APPLICABLE")).toBeDefined();
     expect(within(header).queryByText("FAILED")).toBeNull();
+
+    // Shut by default, but it opens to the suite's checks so the reader can
+    // see what it covers.
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      screen.getByText(/checks in this suite\. None apply to this server\./),
+    ).toBeDefined();
   });
 
   it("turns checks a server refused for credentials into one reconnect notice", async () => {
