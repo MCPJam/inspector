@@ -1498,6 +1498,103 @@ describe("OAuthConformanceTest", () => {
     expect(result.summary).toContain("Request Resource Metadata");
     expect(result.summary).not.toContain("request_resource_metadata");
   });
+
+  it("sends a preregistered secret and explains an invalid_client token rejection", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+    const tokenRequests: Array<{ authorization: string | null; body: string }> =
+      [];
+
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+        });
+      }
+
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["client_secret_basic"],
+        });
+      }
+
+      if (url === `${authServerUrl}/token`) {
+        tokenRequests.push({
+          authorization: headers.get("Authorization"),
+          body: String(init?.body ?? ""),
+        });
+        return jsonResponse(
+          {
+            error: "invalid_client",
+            error_description: "The client credentials are invalid",
+          },
+          401,
+        );
+      }
+
+      return jsonResponse({ error: "not found" }, 404);
+    }) as typeof fetch;
+
+    const test = new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "preregistered",
+        auth: { mode: "headless" },
+        client: {
+          preregistered: {
+            clientId: "prereg-client",
+            clientSecret: "prereg-secret",
+          },
+        },
+        fetchFn,
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(async () => ({
+          code: "auth-code",
+        })),
+      },
+    );
+
+    const result = await test.run();
+    const tokenStep = result.steps.find((step) => step.step === "token_request");
+
+    expect(tokenRequests).toHaveLength(1);
+    expect(tokenRequests[0]!.authorization).toBe(
+      `Basic ${btoa("prereg-client:prereg-secret")}`,
+    );
+    expect(tokenRequests[0]!.body).not.toContain("prereg-secret");
+
+    expect(result.passed).toBe(false);
+    expect(tokenStep?.status).toBe("failed");
+    expect(tokenStep?.error?.message).toBe(
+      "The authorization server rejected this run's OAuth client credentials during token exchange. Verify the client ID and secret in server settings.",
+    );
+    expect(tokenStep?.error?.details).toBe(
+      `Provider code: invalid_client\nEndpoint: ${authServerUrl}/token`,
+    );
+  });
 });
 
 describe("OAuth profile conformance", () => {

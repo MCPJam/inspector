@@ -49,6 +49,29 @@ import {
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
 import { resolveServerOAuthProtocolSelection } from "@/state/oauth-orchestrator";
+import { tryResolveProjectServer } from "@/lib/apis/web/context";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+
+/**
+ * A hosted server's saved client secret lives in Convex, flagged only by
+ * `hasClientSecret`, so `deriveOAuthProfileFromServer` never sees it. Load it
+ * the way the OAuth debugger does (`createHostedClientSecretResolver`) — held
+ * in memory for this run, never written to storage. A failed fetch sends no
+ * secret; the token step's rejection then shows in the run instead.
+ */
+async function loadSavedClientSecret(
+  server: ServerWithName
+): Promise<string | undefined> {
+  if (!server.hasClientSecret) return undefined;
+  const resolved = tryResolveProjectServer(server.name);
+  if (!resolved) return undefined;
+  try {
+    const { clientSecret } = await fetchOAuthClientSecret(resolved);
+    return clientSecret;
+  } catch {
+    return undefined;
+  }
+}
 
 export type SuiteStatus =
   | "idle"
@@ -609,12 +632,17 @@ export function useConformanceRun({
           versionPin === "auto"
             ? resolveServerOAuthProtocolSelection(currentServer).protocolVersion
             : versionPin;
+        const clientSecret =
+          profile.clientSecret ||
+          (profile.clientId
+            ? await loadSavedClientSecret(currentServer)
+            : undefined);
         const baseProfile = profile.serverUrl
           ? {
               serverUrl: profile.serverUrl,
               registrationStrategy: profile.registrationStrategy,
               clientId: profile.clientId || undefined,
-              clientSecret: profile.clientSecret || undefined,
+              clientSecret: clientSecret || undefined,
               scopes: profile.scopes || undefined,
               customHeaders: profile.customHeaders.length
                 ? profile.customHeaders

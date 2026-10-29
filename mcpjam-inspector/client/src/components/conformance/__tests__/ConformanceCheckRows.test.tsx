@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { MCPCheckResult, OAuthConformanceStepResult } from "@mcpjam/sdk";
 import { CheckRow, OAuthStepRow } from "../ConformanceCheckRows";
 
@@ -67,5 +67,23 @@ describe("OAuthStepRow", () => {
       />,
     );
     expect(screen.queryByText("0ms")).not.toBeInTheDocument();
+  });
+
+  it("shows a failed step's text details when expanded", () => {
+    render(
+      <OAuthStepRow
+        step={step({
+          status: "failed",
+          error: {
+            message: "The authorization server rejected this run's OAuth client credentials.",
+            details:
+              "Provider code: invalid_client\nEndpoint: https://auth.example/token",
+          },
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByText("Details")).toBeInTheDocument();
+    expect(screen.getByText(/Provider code: invalid_client/)).toBeInTheDocument();
   });
 });
