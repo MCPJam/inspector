@@ -12,6 +12,7 @@ import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import type { useServerForm } from "./hooks/use-server-form";
+import { headerNamesWithoutBearer } from "./server-auth";
 import { HOSTED_MODE } from "@/lib/config";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import {
@@ -96,26 +97,16 @@ export function EditServerFormContent({
     }
   }, [hostedServerId, projectId]);
 
-  // A stored Authorization header only stops being a header row when the
-  // reveal would route it into the bearer field, and `revealStoredHeaders`
-  // does that for a bearer server whose stored Authorization actually carries
-  // a `Bearer ` token — which is exactly what `hasStoredBearerToken` flags.
-  // An OAuth/none server can hold an Authorization header of its own (Basic
-  // auth, say); dropping that from the names would hide a row that reappears
-  // the moment the values land. Derived rather than filtered at fetch time, so
-  // changing the auth type re-answers the question without another request.
-  const authorizationBecomesBearerToken =
-    formState.authType === "bearer" && formState.hasStoredBearerToken;
+  // Derived rather than filtered at fetch time, so changing the auth type
+  // re-answers the question without another request.
   const storedHeaderKeys = useMemo(
     () =>
-      storedHeaderNames.filter(
-        (key) =>
-          !(
-            authorizationBecomesBearerToken &&
-            key.trim().toLowerCase() === "authorization"
-          )
+      headerNamesWithoutBearer(
+        formState.authType,
+        formState.hasStoredBearerToken,
+        storedHeaderNames
       ),
-    [storedHeaderNames, authorizationBecomesBearerToken]
+    [storedHeaderNames, formState.authType, formState.hasStoredBearerToken]
   );
 
   const revealSecrets = useCallback(

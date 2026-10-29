@@ -53,6 +53,8 @@ import {
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
+import { ServerAuthSummary } from "./ServerAuthSummary";
+import { resolveServerAuth } from "./server-auth";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
 import { ServerUrlChangeHistory } from "./ServerUrlChangeHistory";
@@ -281,6 +283,7 @@ function ProjectServerDetailModal({
   // to stay reachable. The sections inside hide themselves when there is
   // nothing to show.
   const showAuthorization = "url" in server.config;
+  const serverAuth = useMemo(() => resolveServerAuth(server), [server]);
   // Reconnects overlap: two quick wire-mode changes start a second one while
   // the first is still running. A boolean would be cleared by whichever
   // finished first and let a configuration save through mid-reconnect, so the
@@ -1013,6 +1016,10 @@ function ProjectServerDetailModal({
                   className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
                 >
                   <div className="space-y-4 pl-1 pr-6">
+                  <ServerAuthSummary
+                    auth={serverAuth}
+                    onEditInConfig={() => setActiveTab("configuration")}
+                  />
                   <ConnectionAccountsSection
                     projectId={projectId}
                     serverId={hostedServerId}
