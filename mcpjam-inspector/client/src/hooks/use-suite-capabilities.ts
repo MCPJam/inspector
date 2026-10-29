@@ -103,7 +103,6 @@ export type SuiteCapabilities = {
     "claude-code-harness": SuiteFeatureGate;
     "codex-harness": SuiteFeatureGate;
     "cursor-harness": SuiteFeatureGate;
-    "grading-engine-mode": SuiteFeatureGate;
     /** An env-var kill switch, not a per-org flag: no reason vocabulary. */
     scheduledEvals: { enabled: boolean };
   };

@@ -37,7 +37,6 @@ function readyCapabilities(
       "claude-code-harness": { enabled: true },
       "codex-harness": { enabled: true },
       "cursor-harness": { enabled: true },
-      "grading-engine-mode": { enabled: true },
       scheduledEvals: { enabled: true },
     },
     verdictPolicyV2: {
