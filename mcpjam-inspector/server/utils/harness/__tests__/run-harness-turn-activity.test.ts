@@ -83,7 +83,8 @@ vi.mock("../registry.js", async () => {
   };
 });
 
-vi.mock("../forwarding/native-turn.js", () => ({
+vi.mock("../forwarding/native-turn.js", async (original) => ({
+  ...(await original<typeof import("../forwarding/native-turn.js")>()),
   hasForwardingOrganization: () => true,
   nativeForwardingSelection: () => ({
     harnessSessionId: "lane",

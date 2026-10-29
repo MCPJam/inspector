@@ -30,12 +30,17 @@ import {
   verifyToolApprovalId,
 } from "../../utils/tool-approval-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import {
+  enhancedMcpResponse,
+  enhancedToolPolicy,
+} from "../../utils/harness/forwarding/enhanced-mcp.js";
 
 const contextSchema = z
   .object({
     owner: forwardingOwnerSchema,
     turnId: z.string().min(1).max(512),
     policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    delivery: z.enum(["native", "bridge"]).optional(),
   })
   .strict();
 const userSchema = z.object({ _id: z.string() });
@@ -89,11 +94,25 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
       "",
       caller.projectId,
       [serverId],
-      300_000,
+      sealed.profile?.timeout ?? 300_000,
       undefined,
-      undefined,
+      context.delivery === "bridge"
+        ? sealed.profile?.clientCapabilities
+        : undefined,
       {
         lazyConnect: true,
+        ...(context.delivery === "bridge" && sealed.profile
+          ? { initializePins: sealed.profile }
+          : {}),
+        rpcLogger:
+          context.delivery === "bridge"
+            ? createNativeRpcLogger({
+                owner: context.owner,
+                turnId: caller.turnId,
+                projectId: caller.projectId,
+                organizationId: caller.organizationId,
+              })
+            : undefined,
         ...(context.owner.connectionId
           ? { connectionIds: { [serverId]: context.owner.connectionId } }
           : {}),
@@ -114,37 +133,105 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
             authorized.authenticatedUserId !== caller.userId
           )
             throw new Error("Native endpoint is unavailable.");
-          const send = (
-            settle?: Parameters<typeof forwardNativeMcp>[0]["settle"],
-          ) =>
-            forwardNativeMcp({
-              url: String(config.url),
-              serverId,
-              request: c.req.raw,
+          if (context.delivery === "bridge") {
+            if (!sealed.profile)
+              throw new Error("Enhanced profile is unavailable.");
+            await authorized.manager.connectToServer(serverId, config, {
               signal,
-              body: raw,
-              message,
-              trustedHeaders: config.requestInit?.headers,
-              fetch: config.baseFetch!,
-              onUnauthorized: config.onUnauthorized,
-              settle,
-              rpcLogger: createNativeRpcLogger({
-                owner: context.owner,
-                turnId: caller.turnId,
-                projectId: caller.projectId,
-                organizationId: caller.organizationId,
-              }),
             });
-          if (
-            !message?.method ||
-            (typeof message.id !== "string" && typeof message.id !== "number")
-          )
-            return await send();
+          }
           const approval = forwardingApproval(
             control,
             context.owner,
             caller.projectId,
           );
+          const readProjectionResource = async ({ uri }: { uri: string }) => {
+            const rpcId = randomUUID();
+            return executeForwardedOperation({
+              control,
+              signal,
+              approval,
+              operation: {
+                invocationKey: randomUUID(),
+                turnId: caller.turnId,
+                policyDigest: context.policyDigest,
+                rpcId,
+                method: "resources/read",
+                params: { uri },
+                paramsPresent: true,
+                expiresAt: caller.expiresAt,
+                policy: sealed.policy,
+              },
+              dispatch: async (settle) => {
+                const result = await authorized.manager.readResource(
+                  serverId,
+                  { uri },
+                  { signal },
+                );
+                await settle({
+                  outcome: "success",
+                  resultJson: JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: rpcId,
+                    result,
+                  }),
+                });
+                return result;
+              },
+            });
+          };
+          const send = (
+            settle?: Parameters<typeof forwardNativeMcp>[0]["settle"],
+          ) =>
+            context.delivery === "bridge"
+              ? enhancedMcpResponse({
+                  manager: authorized.manager,
+                  serverId,
+                  message,
+                  signal,
+                  respectVisibility:
+                    sealed.profile?.respectToolVisibility !== false,
+                  settle,
+                  modelOutput: {
+                    modelVisibleMcpToolResults:
+                      sealed.profile?.modelVisibleMcpToolResults,
+                    readResource: readProjectionResource,
+                  },
+                })
+              : forwardNativeMcp({
+                  url: String(config.url),
+                  serverId,
+                  request: c.req.raw,
+                  signal,
+                  body: raw,
+                  message,
+                  trustedHeaders: config.requestInit?.headers,
+                  fetch: config.baseFetch!,
+                  onUnauthorized: config.onUnauthorized,
+                  settle,
+                  rpcLogger: createNativeRpcLogger({
+                    owner: context.owner,
+                    turnId: caller.turnId,
+                    projectId: caller.projectId,
+                    organizationId: caller.organizationId,
+                  }),
+                });
+          if (
+            !message?.method ||
+            (typeof message.id !== "string" && typeof message.id !== "number")
+          )
+            return await send();
+          const policy =
+            context.delivery === "bridge"
+              ? await enhancedToolPolicy(
+                  authorized.manager,
+                  serverId,
+                  message,
+                  sealed.policy,
+                  sealed.profile?.respectToolVisibility !== false,
+                  signal,
+                )
+              : sealed.policy;
           return await executeForwardedOperation({
             control,
             operation: {
@@ -159,7 +246,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
               params: message.params,
               paramsPresent: Object.hasOwn(message, "params"),
               expiresAt: caller.expiresAt,
-              policy: sealed.policy,
+              policy,
             },
             approval: {
               ...approval,

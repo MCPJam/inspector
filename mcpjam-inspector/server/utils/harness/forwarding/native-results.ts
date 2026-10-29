@@ -15,6 +15,7 @@ export async function readNativeToolResult(
   control: Pick<ExecutionControl, "nativeResult">,
   turnId: string,
   toolCallId: string,
+  onReceipt?: (executionId: string) => void,
 ): Promise<unknown> {
   const receipt = await control.nativeResult(turnId, toolCallId);
   if (receipt.outcome === "incomplete")
@@ -51,5 +52,6 @@ export async function readNativeToolResult(
     !isRecord(message.result)
   )
     throw new Error("The original MCP tool result is invalid.");
+  onReceipt?.(receipt._id);
   return message.result;
 }
