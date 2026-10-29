@@ -40,10 +40,7 @@ function formatBillingDate(timestampMs: number | null): string {
 function getScheduledCancellationDateMs(
   billingStatus: OrganizationBillingStatus,
 ): number | null {
-  if (
-    !canShowSubscriptionNotices(billingStatus) ||
-    !billingStatus.stripeCancelAtPeriodEnd
-  ) {
+  if (!billingStatus.stripeCancelAtPeriodEnd) {
     return null;
   }
 
@@ -485,7 +482,10 @@ export function OrganizationCurrentPlanPanel({
         ) : null}
       </div>
       {scheduledCancellationDetailLine || scheduledChangeDetailLine ? (
-        <div className="rounded-lg border border-border bg-muted/40 p-3">
+        <div
+          className="rounded-lg border border-border bg-muted/40 p-3"
+          data-testid="current-plan-subscription-notice"
+        >
           {scheduledCancellationDetailLine ? (
             <p
               className="text-xs font-medium text-amber-900 dark:text-amber-100"

@@ -149,7 +149,7 @@ function createPlanCatalog() {
 }
 
 function billingStatusFixture(
-  overrides: Record<string, unknown> = {},
+  overrides: Partial<OrganizationBillingStatus> = {},
 ): OrganizationBillingStatus {
   return {
     organizationId: "org-1",
@@ -1093,7 +1093,7 @@ describe("OrganizationsTab billing", () => {
     );
   });
 
-  it.each(["v1", "v2"])(
+  it.each(["v1", "v2"] as const)(
     "labels only legacy Team while V2 offers are enabled (subscription %s)",
     (pricingVersion) => {
       const legacy = createPlanCatalog();
@@ -1843,14 +1843,16 @@ describe("OrganizationsTab billing", () => {
         const view = render(
           <OrganizationsTab organizationId="org-1" section="billing" />,
         );
-        const element = screen.getByTestId("current-plan-panel");
-        const panel = within(element);
+        const panel = within(screen.getByTestId("current-plan-panel"));
         expect(
           panel.queryByTestId("current-plan-non-renewing-badge"),
         ).toBeNull();
         expect(panel.queryByTestId("current-plan-scheduled-cancel")).toBeNull();
         expect(panel.queryByTestId("current-plan-scheduled-change")).toBeNull();
         expect(panel.queryByTestId("current-plan-past-due-banner")).toBeNull();
+        expect(
+          panel.queryByTestId("current-plan-subscription-notice"),
+        ).toBeNull();
         expect(
           panel.queryByText(
             /Service ends|Will not renew|Payment failed|Renews|Changes|Dec 26/,
@@ -1861,9 +1863,6 @@ describe("OrganizationsTab billing", () => {
             name: /Manage billing|Change to|Keep .* plan|Update payment method/,
           }),
         ).toBeNull();
-        expect(element.children).toHaveLength(
-          state.source === "simulation" ? 3 : 2,
-        );
         expect(
           getCurrentPlanRenewalLine(
             billingStatus,
@@ -1960,7 +1959,24 @@ describe("OrganizationsTab billing", () => {
       },
     );
 
-    it.each(["loading", "error", "catalog loading"])(
+    it("shows the billing loading state before mounting the current-plan panel (smoke)", () => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            ...staleFields,
+            stripeCancelAtPeriodEnd: true,
+          }),
+          isLoadingBilling: true,
+        }),
+      );
+      render(<OrganizationsTab organizationId="org-1" section="billing" />);
+      expect(
+        screen.getByText("Loading billing details..."),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("current-plan-panel")).toBeNull();
+    });
+
+    it.each(["error", "catalog loading"])(
       "does not leak deadlines while %s",
       (state) => {
         mockUseOrganizationBilling.mockReturnValue(
@@ -1969,7 +1985,6 @@ describe("OrganizationsTab billing", () => {
               ...staleFields,
               stripeCancelAtPeriodEnd: true,
             }),
-            isLoadingBilling: state === "loading",
             isLoadingPlanCatalog: state === "catalog loading",
             error: state === "error" ? "Billing unavailable" : null,
           }),
@@ -1978,10 +1993,6 @@ describe("OrganizationsTab billing", () => {
         expect(
           screen.queryByText(/Service ends|Will not renew|access ends|Dec 26/),
         ).toBeNull();
-        if (state === "loading")
-          expect(
-            screen.getByText("Loading billing details..."),
-          ).toBeInTheDocument();
         if (state === "error")
           expect(screen.getByText("Billing unavailable")).toBeInTheDocument();
       },
