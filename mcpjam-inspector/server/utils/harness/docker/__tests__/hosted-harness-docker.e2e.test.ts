@@ -442,6 +442,7 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
 
       beforeAll(async () => {
         vi.stubEnv("HARNESS_SANDBOX_PROVIDER", "docker");
+        vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", randomUUID() + randomUUID());
         upstream = await startMockUpstream(spec.mock);
         mocks.upstreamBaseUrl = upstream.url;
         if (harness === "claude-code") {

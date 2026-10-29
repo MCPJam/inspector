@@ -162,6 +162,7 @@ import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
+import { preserveNativeUiPresentations } from "./harness/forwarding/native-transcript.js";
 import { ranTurnSelection } from "./session-model-selection";
 import type { HarnessBox } from "./harness/harness-box.js";
 import {
@@ -1361,11 +1362,13 @@ export async function streamChatTurn(
         ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
         // Backfill origin cannot be stored on a session selection.
-        modelSelection: prepare.routingSelectionOrigin ? undefined : ranTurnSelection({
-          selection: prepare.routingSelection,
-          model: prepare.modelDefinition,
-          reasoningEffort: prepare.reasoningEffort,
-        }),
+        modelSelection: prepare.routingSelectionOrigin
+          ? undefined
+          : ranTurnSelection({
+              selection: prepare.routingSelection,
+              model: prepare.modelDefinition,
+              reasoningEffort: prepare.reasoningEffort,
+            }),
         modelSource,
         ...(persist.projectId ? { projectId: persist.projectId } : {}),
         sourceType: persist.sourceType,
@@ -1399,7 +1402,12 @@ export async function streamChatTurn(
               // and history that verified on the way in (MJ-009).
               provenance
                 ? signHistoryForPersistence(
-                    stripPluginModelContext(fullHistory),
+                    stripPluginModelContext(
+                      preserveNativeUiPresentations(
+                        fullHistory,
+                        uiMessagesForTurn,
+                      ),
+                    ),
                     provenance,
                     allTools as ToolSet,
                   )
