@@ -1,4 +1,5 @@
 import type { OAuthFlowState } from "../../oauth/state-machines/types.js";
+import { mergeHeaders } from "../../oauth/state-machines/shared/headers.js";
 import {
   buildInitializeRequestBody,
   buildStatelessVerifyRequestBody,
@@ -190,14 +191,28 @@ export function buildUnauthenticatedMcpRequest(
 } {
   // Deliberately no Authorization header — this is the unauthenticated probe.
   // Mirrors buildInvalidTokenMcpRequest (oauth-negative.ts) minus the bearer.
-  const headers: Record<string, string> = {
-    ...(config.customHeaders ?? {}),
+  // Merged case-insensitively, as the OAuth machines do: a custom
+  // `mcp-method` or `mcp-protocol-version` would otherwise ride alongside
+  // ours, the two values get joined, and a 2026-07-28 server rejects the
+  // disagreement with 400 (-32020).
+  const headers = mergeHeaders(config.customHeaders, {
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
-  };
+    ...(config.protocolVersion !== "2025-03-26"
+      ? { "MCP-Protocol-Version": config.protocolVersion }
+      : {}),
+    // 2026-07-28 has no initialize handshake: a modern server rejects an
+    // `initialize` body with 400 (-32020), which the authorization pre-flight
+    // reads as inconclusive — so a server that needs no auth would run the
+    // whole flow instead of reporting not applicable. Probe with the same
+    // stateless `tools/list` the debug-oauth-2026-07-28 machine sends.
+    ...(config.protocolVersion === "2026-07-28"
+      ? { "Mcp-Method": "tools/list" }
+      : {}),
+  });
 
   // customHeaders may carry credentials (e.g. a gateway bypass token). If any
-  // Authorization variant survives the spread, the probe is silently
+  // Authorization variant survives the merge, the probe is silently
   // authenticated and the check false-fails on the resulting 2xx.
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === "authorization") {
@@ -205,17 +220,7 @@ export function buildUnauthenticatedMcpRequest(
     }
   }
 
-  if (config.protocolVersion !== "2025-03-26") {
-    headers["MCP-Protocol-Version"] = config.protocolVersion;
-  }
-
-  // 2026-07-28 has no initialize handshake: a modern server rejects an
-  // `initialize` body with 400 (-32020), which the authorization pre-flight
-  // reads as inconclusive — so a server that needs no auth would run the whole
-  // flow instead of reporting not applicable. Probe with the same stateless
-  // `tools/list` the debug-oauth-2026-07-28 machine sends.
   if (config.protocolVersion === "2026-07-28") {
-    headers["Mcp-Method"] = "tools/list";
     return {
       method: "POST",
       url: config.serverUrl,

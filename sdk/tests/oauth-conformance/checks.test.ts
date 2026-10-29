@@ -541,6 +541,40 @@ describe("oauth server obligation checks", () => {
       });
     });
 
+    it("sends one Mcp-Method and one MCP-Protocol-Version when customHeaders use another case", async () => {
+      const trackedRequest = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: { "www-authenticate": BEARER_WITH_METADATA },
+        body: { error: "unauthorized" },
+      });
+
+      await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...baseObligationInput.config,
+          protocolVersion: "2026-07-28",
+          customHeaders: {
+            "mcp-method": "initialize",
+            "mcp-protocol-version": "2025-11-25",
+            "X-Gateway": "bypass",
+          },
+        },
+        trackedRequest,
+      });
+
+      const headers: Record<string, string> =
+        trackedRequest.mock.calls[0][0].headers;
+      const valuesFor = (name: string) =>
+        Object.entries(headers)
+          .filter(([key]) => key.toLowerCase() === name)
+          .map(([, value]) => value);
+      expect(valuesFor("mcp-method")).toEqual(["tools/list"]);
+      expect(valuesFor("mcp-protocol-version")).toEqual(["2026-07-28"]);
+      expect(headers["X-Gateway"]).toBe("bypass");
+    });
+
     it("fails when the server returns 500 instead of 401", async () => {
       const result = await runUnauthenticatedChallengeCheck({
         ...(baseObligationInput as any),
