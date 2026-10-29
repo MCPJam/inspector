@@ -451,7 +451,7 @@ describe("ConformanceTab", () => {
     clickRun();
 
     expect(info).toHaveBeenCalledWith(
-      "Connect an MCP server to run conformance checks.",
+      "Add a server to run conformance checks.",
     );
     expect(mockRunProtocol).not.toHaveBeenCalled();
     info.mockRestore();
@@ -490,9 +490,9 @@ describe("ConformanceTab", () => {
     expect(onSelectServer).toHaveBeenCalledWith("beta");
   });
 
-  it("treats a selection that is no longer connected as no server", () => {
+  it("treats a selection the page no longer offers as no server", () => {
     const info = vi.spyOn(toast, "info");
-    // The selected server disconnected and nothing else is connected.
+    // The selected server was removed and the project has no other.
     render(
       <ConformanceTab
         server={createHttpServer({ name: "gamma" })}
@@ -504,13 +504,13 @@ describe("ConformanceTab", () => {
     clickRun();
 
     expect(info).toHaveBeenCalledWith(
-      "Connect an MCP server to run conformance checks.",
+      "Add a server to run conformance checks.",
     );
     expect(mockRunProtocol).not.toHaveBeenCalled();
     info.mockRestore();
   });
 
-  it("keeps a run in flight when its server disconnects, but blocks a new one", async () => {
+  it("keeps a run in flight when its server is removed, but blocks a new one", async () => {
     const pending = createDeferred<{
       success: true;
       result: MCPConformanceResult;
@@ -529,7 +529,7 @@ describe("ConformanceTab", () => {
     clickRun();
     await screen.findByText(/Running \d+ checks/);
 
-    // The server drops mid-run and nothing else is connected.
+    // The server is removed mid-run and the project has no other.
     rerender(
       <ConformanceTab
         server={server}
@@ -546,7 +546,7 @@ describe("ConformanceTab", () => {
     mockRunProtocol.mockClear();
     clickRun();
     expect(info).toHaveBeenCalledWith(
-      "Connect an MCP server to run conformance checks.",
+      "Add a server to run conformance checks.",
     );
     expect(mockRunProtocol).not.toHaveBeenCalled();
     info.mockRestore();
@@ -588,6 +588,144 @@ describe("ConformanceTab", () => {
     expect(
       window.localStorage.getItem("mcpjam.conformance.lastServer.v1"),
     ).toBe("beta");
+  });
+
+  it("prefers a connected server over the first when nothing is remembered", () => {
+    const onSelectServer = vi.fn();
+    render(
+      <ConformanceTab
+        server={null}
+        servers={[
+          createHttpServer({ name: "alpha", connectionStatus: "disconnected" }),
+          createHttpServer({ name: "beta" }),
+        ]}
+        onSelectServer={onSelectServer}
+      />,
+    );
+    expect(onSelectServer).toHaveBeenCalledWith("beta");
+  });
+
+  it("offers the server picker beside the run button before the first run", () => {
+    const server = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    // One in the header, one beside the pre-run prompt's run button.
+    expect(screen.getAllByRole("combobox", { name: "Server" })).toHaveLength(2);
+  });
+
+  it("connects a server that is not connected, then runs", async () => {
+    setupSuccessfulRunMocks();
+    const disconnected = createHttpServer({
+      name: "alpha",
+      connectionStatus: "disconnected",
+    });
+    const onConnectServer = vi.fn(async () => "ready" as const);
+    const { rerender } = render(
+      <ConformanceTab
+        server={disconnected}
+        servers={[disconnected]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
+
+    clickRun();
+    expect(onConnectServer).toHaveBeenCalledWith("alpha");
+    expect(
+      (await screen.findAllByRole("button", { name: /Connecting/ }))[0],
+    ).toBeDisabled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+
+    // The connect lands: the page re-renders with the connected server.
+    const connected = createHttpServer({ name: "alpha" });
+    rerender(
+      <ConformanceTab
+        server={connected}
+        servers={[connected]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+  });
+
+  it("names the server and offers Retry or Edit when the connect fails", async () => {
+    const info = vi.spyOn(toast, "info");
+    const server = createHttpServer({
+      name: "alpha",
+      connectionStatus: "failed",
+      lastError: "connect ECONNREFUSED 127.0.0.1:3000",
+    });
+    const onConnectServer = vi.fn(async () => "failed" as const);
+    const onEditServer = vi.fn();
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+        onEditServer={onEditServer}
+      />,
+    );
+
+    clickRun();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(`Couldn't connect to "alpha"`);
+    expect(alert).toHaveTextContent("connect ECONNREFUSED 127.0.0.1:3000");
+    expect(info).not.toHaveBeenCalled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      within(alert).getByRole("button", { name: "Edit connection" }),
+    );
+    expect(onEditServer).toHaveBeenCalledWith("alpha");
+    fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(onConnectServer).toHaveBeenCalledTimes(2));
+    info.mockRestore();
+  });
+
+  it("asks to sign in again when the connect needs reauthorization", async () => {
+    const server = createHttpServer({
+      name: "alpha",
+      connectionStatus: "disconnected",
+    });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        onConnectServer={vi.fn(async () => "reauth" as const)}
+      />,
+    );
+
+    clickRun();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "It needs you to sign in again.",
+    );
+  });
+
+  it("asks to add a server when the project has none", () => {
+    const onAddServer = vi.fn();
+    render(
+      <ConformanceTab
+        server={null}
+        servers={[]}
+        onSelectServer={vi.fn()}
+        onAddServer={onAddServer}
+      />,
+    );
+
+    expect(
+      screen.getByText("Add a server to run conformance checks."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Add server" }));
+    expect(onAddServer).toHaveBeenCalledTimes(1);
   });
 
   it("lists protocol versions newest first, after Auto", async () => {

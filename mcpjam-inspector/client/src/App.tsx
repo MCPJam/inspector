@@ -77,7 +77,12 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspectorTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import { ConformanceTab } from "./components/conformance/ConformancePanel";
+import {
+  ConformanceTab,
+  type ConformanceConnectOutcome,
+} from "./components/conformance/ConformancePanel";
+import { AddServerModal } from "./components/connection/AddServerModal";
+import { ServerDetailModal } from "./components/connection/ServerDetailModal";
 import {
   ConformanceHistory,
   ConformanceRunDetailPage,
@@ -339,6 +344,7 @@ import {
 import {
   buildElectronMcpCallbackUrl,
   resolveEffectiveWireProtocolVersion,
+  type EnsureServersReadyResult,
 } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import {
@@ -1675,38 +1681,86 @@ export function ConformanceRoute() {
     setSelectedServer,
     convexProjectId,
     isAuthenticated,
+    ensureServersReady,
+    handleConnect,
+    handleUpdate,
+    handleDisconnect,
+    handleReconnect,
   } = useAppRouteContext();
   const { serversByName, serversById } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
+  const [isAddingServer, setIsAddingServer] = useState(false);
+  const [editingServerName, setEditingServerName] = useState<string | null>(
+    null,
+  );
   const savedServerId = selectedServerEntry?.name
     ? (serversByName.get(selectedServerEntry.name) ?? null)
     : null;
-  // The page picks its server from its own select, not the header tabs.
-  const connectedServers = Object.values<ServerWithName>(
-    appState.servers,
-  ).filter((s) => s.connectionStatus === "connected");
+  // The page picks its server from its own select, not the header tabs, and
+  // offers every server: Run connects one that is not connected.
+  const servers = Object.values<ServerWithName>(appState.servers);
+  const editingServer = editingServerName
+    ? appState.servers[editingServerName]
+    : undefined;
+  const connectServer = async (
+    name: string,
+  ): Promise<ConformanceConnectOutcome> => {
+    const result: EnsureServersReadyResult = await ensureServersReady([name]);
+    if (result.readyServerNames.includes(name)) return "ready";
+    return result.reauthServerNames.includes(name) ? "reauth" : "failed";
+  };
   return (
-    <ConformanceTab
-      server={selectedServerEntry ?? null}
-      servers={connectedServers}
-      onSelectServer={setSelectedServer}
-      persist={
-        convexProjectId
-          ? { projectId: convexProjectId, serverId: savedServerId }
-          : undefined
-      }
-      history={
-        convexProjectId ? (
-          <ConformanceHistory
-            key={convexProjectId}
-            projectId={convexProjectId}
-            serverNames={serversById}
-          />
-        ) : undefined
-      }
-    />
+    <>
+      <ConformanceTab
+        server={selectedServerEntry ?? null}
+        servers={servers}
+        onSelectServer={setSelectedServer}
+        onConnectServer={connectServer}
+        onAddServer={() => setIsAddingServer(true)}
+        onEditServer={setEditingServerName}
+        persist={
+          convexProjectId
+            ? { projectId: convexProjectId, serverId: savedServerId }
+            : undefined
+        }
+        history={
+          convexProjectId ? (
+            <ConformanceHistory
+              key={convexProjectId}
+              projectId={convexProjectId}
+              serverNames={serversById}
+            />
+          ) : undefined
+        }
+      />
+      {/* Added and edited here, not on Connect: the page keeps its place. */}
+      <AddServerModal
+        isOpen={isAddingServer}
+        onClose={() => setIsAddingServer(false)}
+        onSubmit={(formData) => {
+          track("connecting_server", { location: "conformance" });
+          handleConnect(formData);
+          setIsAddingServer(false);
+        }}
+      />
+      {editingServer ? (
+        <ServerDetailModal
+          isOpen
+          onClose={() => setEditingServerName(null)}
+          server={editingServer}
+          defaultTab="configuration"
+          onSubmit={(formData, originalServerName) =>
+            handleUpdate(originalServerName, formData)
+          }
+          onDisconnect={handleDisconnect}
+          onReconnect={handleReconnect}
+          existingServerNames={Object.keys(appState.servers)}
+          projectId={convexProjectId ?? null}
+        />
+      ) : null}
+    </>
   );
 }
 

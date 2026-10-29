@@ -35,10 +35,12 @@ import {
   type CatalogEntry,
 } from "./ConformanceCheckRows";
 import {
+  ConformanceConnectError,
   ConformanceHeader,
   ConformancePreRun,
   ConformanceServerPicker,
   ConformanceTabPanel,
+  NO_SERVERS_MESSAGE,
   ProtocolVersionSelect,
   RUN_LABEL,
   type ConformanceView,
@@ -55,7 +57,8 @@ import {
   type ConformancePersistConfig,
 } from "@/components/conformance/PersistConformanceRun";
 
-const NO_SERVER_MESSAGE = "Connect an MCP server to run conformance checks.";
+/** What a background connect from Run came back with. */
+export type ConformanceConnectOutcome = "ready" | "reauth" | "failed";
 
 /**
  * The protocol suite is era-gated: a pinned version runs only its own era's
@@ -225,7 +228,10 @@ function ConformanceContent({
   showHistory,
   history,
   serverPicker,
+  centerServerPicker,
   canRun,
+  onConnectServer,
+  onEditServer,
 }: {
   server: ServerWithName;
   persist?: ConformancePersistConfig;
@@ -234,8 +240,12 @@ function ConformanceContent({
   showHistory: boolean;
   history?: ReactNode;
   serverPicker: ReactNode;
-  /** False while the selected server is not connected: Run asks for one. */
+  /** The same picker, beside the pre-run prompt's run button. */
+  centerServerPicker?: ReactNode;
+  /** False when the selection is not one of the page's servers. */
   canRun: boolean;
+  onConnectServer?: (name: string) => Promise<ConformanceConnectOutcome>;
+  onEditServer?: (name: string) => void;
 }) {
   // Run state, per-suite scores and the pooled headline all live in the shared
   // hook — score.mcpjam.com runs the same four suites and must pool them the
@@ -284,14 +294,50 @@ function ConformanceContent({
   // The page opens on the "run your first check" state and only swaps to the
   // suites once a run has begun. Keyed by server, so a server switch resets it.
   const [started, setStarted] = useState(false);
+  // Run on a server that is not connected connects it first, in the
+  // background. The run starts from the effect below, once the connected
+  // server has rendered: the suites read the server from this render.
+  const [connect, setConnect] = useState<
+    | { status: "idle" | "connecting" | "ready" }
+    | { status: "failed"; needsSignIn: boolean }
+  >({ status: "idle" });
+  const connectAndRun = async () => {
+    if (!onConnectServer) return;
+    setConnect({ status: "connecting" });
+    let outcome: ConformanceConnectOutcome;
+    try {
+      outcome = await onConnectServer(server.name);
+    } catch {
+      outcome = "failed";
+    }
+    setConnect(
+      outcome === "ready"
+        ? { status: "ready" }
+        : { status: "failed", needsSignIn: outcome === "reauth" },
+    );
+  };
+  const isConnected = server.connectionStatus === "connected";
+  useEffect(() => {
+    if (connect.status !== "ready" || !isConnected) return;
+    setConnect({ status: "idle" });
+    setStarted(true);
+    runAll();
+  }, [connect.status, isConnected, runAll]);
   const handleRun = () => {
     if (!canRun) {
-      toast.info(NO_SERVER_MESSAGE);
+      toast.info(NO_SERVERS_MESSAGE);
       return;
     }
+    if (!isConnected && onConnectServer) {
+      void connectAndRun();
+      return;
+    }
+    setConnect({ status: "idle" });
     setStarted(true);
     runAll();
   };
+  const isConnecting =
+    connect.status === "connecting" || connect.status === "ready";
   const hasStarted =
     started ||
     isRunning ||
@@ -322,17 +368,26 @@ function ConformanceContent({
   ) : null;
 
   const runButton = (
-    <Button size="sm" onClick={handleRun} disabled={isRunning}>
-      {isRunning ? (
+    <Button size="sm" onClick={handleRun} disabled={isRunning || isConnecting}>
+      {isRunning || isConnecting ? (
         <>
           <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-          Running...
+          {isConnecting ? "Connecting..." : "Running..."}
         </>
       ) : (
         RUN_LABEL
       )}
     </Button>
   );
+  const connectError =
+    connect.status === "failed" ? (
+      <ConformanceConnectError
+        server={server}
+        needsSignIn={connect.needsSignIn}
+        onRetry={() => void connectAndRun()}
+        onEdit={onEditServer ? () => onEditServer(server.name) : undefined}
+      />
+    ) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -365,8 +420,12 @@ function ConformanceContent({
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">
+            {connectError}
             {!hasStarted ? (
-              <ConformancePreRun runButton={runButton} />
+              <ConformancePreRun
+                runButton={runButton}
+                serverPicker={centerServerPicker}
+              />
             ) : (
               <div>
                 <OverallScoreCard
@@ -593,13 +652,25 @@ export function ConformanceTab({
   persist,
   servers,
   onSelectServer,
+  onConnectServer,
+  onAddServer,
+  onEditServer,
   history,
 }: {
   server?: ServerWithName | null;
   persist?: ConformancePersistConfig;
-  /** Servers offered in the page's picker. Omit to hide the picker. */
+  /**
+   * The project's servers, offered in the page's picker whether or not they
+   * are connected: Run connects the selection first. Omit to hide the picker.
+   */
   servers?: ServerWithName[];
   onSelectServer?: (name: string) => void;
+  /** Connects a server in the background when Run is clicked on it. */
+  onConnectServer?: (name: string) => Promise<ConformanceConnectOutcome>;
+  /** Opens the Add server form here; offered when there are no servers. */
+  onAddServer?: () => void;
+  /** Opens a server's connection settings, after a failed connect. */
+  onEditServer?: (name: string) => void;
   /** The History tab's content. Omit to hide the tab. */
   history?: ReactNode;
 }) {
@@ -615,12 +686,11 @@ export function ConformanceTab({
   // no history is passed. With the tabs hidden there would be no way back.
   const activeView: ConformanceView = showHistory ? view : "overview";
 
-  // The app-wide selection can be empty, or a server that is not connected,
-  // and the picker then reads "Select a server" while the page still names
-  // another one — two connected servers left people unsure which one ran.
-  // When the selection is not one this page can run, pick for them: the
-  // server last selected here if it is connected, otherwise the first
-  // connected.
+  // The app-wide selection can be empty, or a server this page does not
+  // offer, and the picker then reads "Select a server" while the page still
+  // names another one — two servers left people unsure which one ran. When
+  // the selection is not one this page offers, pick for them: the server
+  // last selected here, otherwise the first connected, otherwise the first.
   const selectionIsOffered = Boolean(
     server?.name && servers?.some((offered) => offered.name === server.name),
   );
@@ -632,14 +702,17 @@ export function ConformanceTab({
     if (selectionIsOffered || selectionIsReconnecting) return;
     const remembered = readLastServer();
     const next =
-      servers.find((offered) => offered.name === remembered) ?? servers[0]!;
+      servers.find((offered) => offered.name === remembered) ??
+      servers.find((offered) => offered.connectionStatus === "connected") ??
+      servers[0]!;
     onSelectServer(next.name);
   }, [servers, onSelectServer, selectionIsOffered, selectionIsReconnecting]);
   useEffect(() => {
     if (selectionIsOffered && server?.name) rememberServer(server.name);
   }, [selectionIsOffered, server?.name]);
 
-  const serverPicker =
+  // Rendered twice: in the header and beside the pre-run prompt's run button.
+  const renderServerPicker = () =>
     servers && onSelectServer ? (
       <ConformanceServerPicker
         servers={servers}
@@ -647,6 +720,10 @@ export function ConformanceTab({
         onSelect={onSelectServer}
       />
     ) : null;
+  const serverPicker = renderServerPicker();
+  // No servers at all: the prompt adds one rather than offering a run.
+  const addServerInstead =
+    servers?.length === 0 && onAddServer ? onAddServer : undefined;
 
   // In hosted mode `selectedMCPConfig` can arrive as a stub with falsy name
   // and/or missing config while the project is still hydrating — treat any
@@ -656,7 +733,11 @@ export function ConformanceTab({
   if (!server || !server.name || server.name === "none" || !server.config) {
     // Same pre-run page as with a server; running just asks for one first.
     const noServerRunButton = (
-      <Button size="sm" onClick={() => toast.info(NO_SERVER_MESSAGE)}>
+      <Button
+        size="sm"
+        disabled={Boolean(addServerInstead)}
+        onClick={() => toast.info(NO_SERVERS_MESSAGE)}
+      >
         {RUN_LABEL}
       </Button>
     );
@@ -678,7 +759,11 @@ export function ConformanceTab({
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">
-              <ConformancePreRun runButton={noServerRunButton} />
+              <ConformancePreRun
+                runButton={noServerRunButton}
+                serverPicker={renderServerPicker()}
+                onAddServer={addServerInstead}
+              />
             </div>
           )}
         </ConformanceTabPanel>
@@ -686,10 +771,11 @@ export function ConformanceTab({
     );
   }
 
-  // With a picker, only an offered (connected) server can start a run: a
-  // selection left from before a disconnect must not. The run view stays
-  // mounted, so a run in flight when the server drops or reconnects keeps its
-  // results and still finishes persisting.
+  // With a picker, only an offered server can start a run (connecting it
+  // first when it is not connected): a selection the page no longer offers,
+  // such as a removed server, must not. The run view stays mounted, so a run
+  // in flight when the server drops or reconnects keeps its results and
+  // still finishes persisting.
   const canRun = servers === undefined || selectionIsOffered;
   return (
     <ConformanceContent
@@ -701,7 +787,10 @@ export function ConformanceTab({
       showHistory={showHistory}
       history={history}
       serverPicker={serverPicker}
+      centerServerPicker={renderServerPicker()}
       canRun={canRun}
+      onConnectServer={onConnectServer}
+      onEditServer={onEditServer}
     />
   );
 }
