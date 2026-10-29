@@ -15,6 +15,7 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
+import { OrganizationProjects } from "./home/OrganizationProjects";
 import { RecommendedServers } from "./home/RecommendedServers";
 import { RecommendedHosts } from "./home/RecommendedHosts";
 import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
@@ -366,6 +367,8 @@ export function HomeTab({
             messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
           />
         </header>
+
+        <OrganizationProjects projects={data?.projects} />
 
           <McpjamAgentHero
             surface="home"

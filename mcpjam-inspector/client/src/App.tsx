@@ -201,6 +201,7 @@ import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
 import { usePreviewedHostId } from "./hooks/use-previewed-client-id";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
+import { WorkOrganizationNotice } from "./components/organization/WorkOrganizationNotice";
 import { useOrganizationBilling } from "./hooks/useOrganizationBilling";
 import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 
@@ -3026,6 +3027,9 @@ export default function App() {
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
   const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
+  const workSignupEntry = useRef(
+    window.location.pathname + window.location.search + window.location.hash,
+  );
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   // The org list once it is authoritative. Its membership key resets the
@@ -6525,6 +6529,15 @@ export default function App() {
               headerHidden={appChromeHeaderHidden || settingsShellActive}
             >
               <PendingOrganizationDeletions />
+              <WorkOrganizationNotice
+                key={currentUser?._id}
+                enabled={isAuthenticated && isUserReady && !!currentUser && currentUser.isAnonymous !== true}
+                activeOrganizationId={activeOrganizationId}
+                entry={workSignupEntry.current}
+                organizations={sortedOrganizations}
+                projects={allMembershipProjects}
+                hidden={settingsShellActive}
+              />
               {showTrialDecisionNotice ? (
                 <div className="border-b border-border/60 px-4 py-3">
                   <Alert>
