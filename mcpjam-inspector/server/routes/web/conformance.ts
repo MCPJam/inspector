@@ -72,11 +72,20 @@ async function assertConformanceTarget(
   }
 }
 
-/** Resolve HTTP server URL and headers for conformance from authorized config. */
+/**
+ * Resolve HTTP server URL and headers for conformance from authorized config.
+ *
+ * `withLogin` adds the user's login as `Authorization: Bearer`: the one saved
+ * in Convex when they connected (`authorizeServer` hands it back), else the
+ * one the browser sent. Saved first, as the hosted doctor and Connect do —
+ * hosted connects rarely leave a token in the page, so the body alone sent
+ * every OAuth server an unauthenticated request and the suite saw only 401s.
+ */
 async function resolveHostedHttpConfig(
   c: any,
   bearerToken: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  options: { withLogin: boolean }
 ): Promise<{
   serverUrl: string;
   accessToken?: string;
@@ -111,10 +120,9 @@ async function resolveHostedHttpConfig(
     );
   }
 
-  const oauthToken =
-    typeof wsBody.oauthAccessToken === "string"
-      ? wsBody.oauthAccessToken
-      : undefined;
+  const oauthToken = options.withLogin
+    ? (auth.oauthAccessToken ?? wsBody.oauthAccessToken)
+    : undefined;
   const headers: Record<string, string> = {
     ...(auth.serverConfig.headers ?? {}),
   };
@@ -150,12 +158,11 @@ async function resolveHostedServerConfig(
     }
   );
 
+  // Saved login first, then the browser's — see `resolveHostedHttpConfig`.
   const httpConfig = toHttpConfig(
     auth,
     WEB_CALL_TIMEOUT_MS,
-    typeof wsBody.oauthAccessToken === "string"
-      ? wsBody.oauthAccessToken
-      : undefined,
+    auth.oauthAccessToken ?? wsBody.oauthAccessToken,
     wsBody.clientCapabilities as Record<string, unknown> | undefined
   );
 
@@ -231,7 +238,9 @@ conformanceWeb.post("/protocol", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
+      withLogin: true,
+    });
     const parsed = parseWithSchema(protocolSchema, body);
 
     try {
@@ -346,7 +355,13 @@ conformanceWeb.post("/oauth/start", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
+    // No login here: the OAuth suite grades the server from an
+    // unauthenticated request and runs its own fresh authorization. Its probes
+    // merge these headers, so a bearer would make the server answer 200 and
+    // the suite would grade OAuth as not required.
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
+      withLogin: false,
+    });
     const parsed = parseWithSchema(oauthStartSchema, body);
 
     if (!parsed.callbackOrigin) {
