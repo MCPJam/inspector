@@ -94,15 +94,36 @@ describe("OverallScoreCard", () => {
         score={signInBlocked}
         serverName="Asana"
         version="Auto"
-        blockedBySignIn
+        blockedBySignIn={66}
       />,
     );
     expect(
       screen.getByText(
-        "Incomplete. 51 checks could not run because sign-in failed. 1 check failed.",
+        "Incomplete. 51 checks could not run because sign-in failed. 1 check failed. Reconnect the server and run again.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Not conformant/)).toBeNull();
+  });
+
+  it("counts only the checks sign-in blocked, and the rest on their own", () => {
+    render(
+      <OverallScoreCard
+        score={{
+          ...signInBlocked,
+          couldNotRun: 2,
+          failed: 0,
+          outcome: "incomplete",
+        }}
+        serverName="Asana"
+        version="Auto"
+        blockedBySignIn={1}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Incomplete. 1 check could not run because sign-in failed. 1 more could not run. Reconnect the server and run again.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("lists every count on its own and marks a score with unrun checks partial", () => {

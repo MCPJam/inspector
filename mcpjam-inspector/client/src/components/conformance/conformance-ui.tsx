@@ -229,7 +229,7 @@ export function OverallScoreCard({
   version,
   isRunning = false,
   oauthNotScored = false,
-  blockedBySignIn = false,
+  blockedBySignIn = 0,
   action,
 }: {
   score: ScoreSummary | undefined;
@@ -239,11 +239,12 @@ export function OverallScoreCard({
   isRunning?: boolean;
   oauthNotScored?: boolean;
   /**
-   * The checks that could not run were refused for credentials. The run then
-   * says nothing definitive about the server, so the verdict names the
-   * sign-in instead of calling the server not conformant.
+   * How many checks were refused for credentials. A run blocked that way says
+   * nothing definitive about the server, so the verdict names the sign-in
+   * instead of calling the server not conformant. It can count checks the
+   * score leaves out, so the verdict clamps it to `couldNotRun`.
    */
-  blockedBySignIn?: boolean;
+  blockedBySignIn?: number;
   /** Shown at the end of the verdict line, e.g. a link to the saved run. */
   action?: ReactNode;
 }) {
@@ -257,10 +258,17 @@ export function OverallScoreCard({
     // A partial score is no verdict: a clean Protocol would read "Fully
     // conformant." until a suite still running fails.
     if (isRunning) return "Running conformance checks...";
-    if (blockedBySignIn && score && score.couldNotRun > 0) {
-      const failed =
-        score.failed > 0 ? ` ${plural(score.failed, "check")} failed.` : "";
-      return `Incomplete. ${plural(score.couldNotRun, "check")} could not run because sign-in failed.${failed}`;
+    const signInBlocked = Math.min(blockedBySignIn, score?.couldNotRun ?? 0);
+    if (score && signInBlocked > 0) {
+      const otherUnrun = score.couldNotRun - signInBlocked;
+      return [
+        `Incomplete. ${plural(signInBlocked, "check")} could not run because sign-in failed.`,
+        otherUnrun > 0 ? `${otherUnrun} more could not run.` : null,
+        score.failed > 0 ? `${plural(score.failed, "check")} failed.` : null,
+        "Reconnect the server and run again.",
+      ]
+        .filter(Boolean)
+        .join(" ");
     }
     if (!scored) {
       // A run that ended before any check was scored, such as one that timed

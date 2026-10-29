@@ -1457,7 +1457,7 @@ describe("ConformanceTab", () => {
     // The headline names the sign-in rather than judging the server.
     expect(
       screen.getByText(
-        "Incomplete. 1 check could not run because sign-in failed.",
+        "Incomplete. 1 check could not run because sign-in failed. Reconnect the server and run again.",
       ),
     ).toBeDefined();
     expect(

@@ -327,7 +327,7 @@ function ConformanceContent({
                   }
                   isRunning={isRunning}
                   oauthNotScored={oauthNotScored}
-                  blockedBySignIn={waitingOnAuthorization > 0}
+                  blockedBySignIn={waitingOnAuthorization}
                   action={
                     savedRunId && persist ? (
                       <Button
