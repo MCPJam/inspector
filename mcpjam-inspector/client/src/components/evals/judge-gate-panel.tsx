@@ -67,28 +67,20 @@ export function describeAgreement(
     : withBound;
 }
 
-/**
- * Why the gate switch cannot be used, or `undefined` when it can.
- *
- * The one refusal is CALIBRATION: it is about this suite and names exactly
- * what would clear it.
- */
+/** Why Required cannot be chosen yet, or `undefined` when it can. */
 export function gateSwitchDisabledReason(
   judge: SuiteCapabilities["judge"] | undefined,
   /** Set once the capabilities read has FAILED, so "checking" is not a lie. */
   unavailableReason?: string,
 ): string | undefined {
-  if (!judge) {
-    return unavailableReason ?? "Checking the judge's calibration…";
-  }
+  if (!judge) return unavailableReason ?? "Checking calibration…";
   if (judge.agreement.eligible || judge.acknowledgement?.current) {
     return undefined;
   }
-  return `Needs ${
-    judge.agreement.minReviews
-  } blind reviewer labels agreeing at ${Math.round(
-    judge.agreement.threshold * 100,
-  )}% or better`;
+  const { minReviews, threshold, reviews } = judge.agreement;
+  return `Needs ${minReviews} reviews at ${Math.round(
+    threshold * 100,
+  )}% agreement (${reviews} so far)`;
 }
 
 export function JudgeGatePanel({

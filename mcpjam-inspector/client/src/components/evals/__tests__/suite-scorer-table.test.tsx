@@ -379,7 +379,7 @@ describe("SuiteScorerTable", () => {
       within(judgeRole).getByRole("button", { name: "Required" }),
     ).toBeDisabled();
     expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
-      "Needs 20 blind reviewer labels agreeing at 80% or better",
+      "Needs 20 reviews at 80% agreement (0 so far)",
     );
     // The threshold stays editable.
     expect(screen.getByRole("spinbutton", { name: "Judge threshold" })).toBeTruthy();

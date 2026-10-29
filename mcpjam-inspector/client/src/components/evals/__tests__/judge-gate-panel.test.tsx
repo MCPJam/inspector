@@ -119,7 +119,7 @@ describe("describeAgreement", () => {
 describe("gateSwitchDisabledReason", () => {
   it("names what would clear an uncalibrated judge", () => {
     expect(gateSwitchDisabledReason(uncalibrated())).toBe(
-      "Needs 20 blind reviewer labels agreeing at 80% or better",
+      "Needs 20 reviews at 80% agreement (3 so far)",
     );
   });
 
@@ -154,7 +154,7 @@ describe("JudgeGatePanel", () => {
     });
     expect(gate).toBeDisabled();
     expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
-      "Needs 20 blind reviewer labels agreeing at 80% or better",
+      "Needs 20 reviews at 80% agreement (3 so far)",
     );
   });
 
@@ -255,7 +255,7 @@ describe("JudgeGatePanel", () => {
     expect(gate).toBeEnabled();
     // The reason is still said, so the reader knows why it cannot go back up.
     expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
-      "Needs 20 blind reviewer labels agreeing at 80% or better",
+      "Needs 20 reviews at 80% agreement (3 so far)",
     );
     await user.click(gate);
     expect(onJudgeConfigChange).toHaveBeenCalledWith({
