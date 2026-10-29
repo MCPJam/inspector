@@ -327,6 +327,7 @@ function ConformanceContent({
                   }
                   isRunning={isRunning}
                   oauthNotScored={oauthNotScored}
+                  blockedBySignIn={waitingOnAuthorization > 0}
                   action={
                     savedRunId && persist ? (
                       <Button
@@ -350,9 +351,9 @@ function ConformanceContent({
                 {waitingOnAuthorization > 0 && (
                   <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs leading-relaxed">
                     This server requires sign-in, and this run had no valid
-                    session, so {waitingOnAuthorization} check(s) could not
-                    run. Reconnect the server with OAuth from the server menu,
-                    or update its access token, then run again.
+                    session, so the checks that need it could not run.
+                    Reconnect the server with OAuth from the server menu, or
+                    update its access token, then run again.
                   </div>
                 )}
 

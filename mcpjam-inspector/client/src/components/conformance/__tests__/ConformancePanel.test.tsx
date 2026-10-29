@@ -1451,7 +1451,13 @@ describe("ConformanceTab", () => {
     expect(within(header).queryByText("FAILED")).toBeNull();
     expect(
       screen.getByText(
-        /This server requires sign-in.*1 check\(s\) could not\s+run/s,
+        /This server requires sign-in.*the checks that need it could not\s+run/s,
+      ),
+    ).toBeDefined();
+    // The headline names the sign-in rather than judging the server.
+    expect(
+      screen.getByText(
+        "Incomplete. 1 check could not run because sign-in failed.",
       ),
     ).toBeDefined();
     expect(
