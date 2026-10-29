@@ -305,6 +305,8 @@ A run needs three things, all picked from the suite header:
 
 When you click **Run** on a suite from the **Suites** landing list, a review sheet opens before the run launches. It shows the suite's current configuration — clients, iteration count, and settings — so you can confirm or adjust before committing. The run only starts when you confirm in the sheet; closing it leaves the suite unchanged.
 
+**Suites without environments** — suites created before the "Where it runs" feature and suites whose runs are reported by the SDK — show a **Servers + Client + Models** picker in the review sheet instead of a fixed configuration row. The picker pre-fills from the suite's own server group, its attached clients (or the project's default client when none are attached), and the models its cases use. Changing the picker is for this run only; the suite itself is not modified. SDK suites can also run in a saved project environment: when the project has at least one environment with servers, a **New setup / Saved environment** toggle appears and lets you switch to the saved-environment list instead.
+
 ### Pre-run credit estimate
 
 When enabled on your account, an **ⓘ** icon appears beside run controls before you launch. Hovering it shows an estimated credit cost for the run about to start — priced against the exact models, cases, and iteration count the button will execute.
