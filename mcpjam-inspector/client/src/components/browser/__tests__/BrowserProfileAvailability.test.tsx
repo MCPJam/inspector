@@ -87,15 +87,17 @@ describe("saving a browser profile", () => {
     availability.available = true;
   });
 
-  it("warns that chats using the profile act as you before saving", async () => {
+  it("warns that chats using the profile sign in as you before saving", async () => {
     const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
 
     await userEvent.click(renderSave());
 
     expect(prompt).toHaveBeenCalledOnce();
     const [message] = prompt.mock.calls[0];
-    expect(message).toMatch(/act as you on the sites this browser visited/);
-    expect(message).toMatch(/leaves out saved passwords, autofill and history/);
+    expect(message).toMatch(/sign in as you on the sites it visited/);
+    expect(message).toMatch(
+      /Saved passwords, autofill and history aren't included/,
+    );
     prompt.mockRestore();
   });
 });
