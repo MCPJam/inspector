@@ -184,7 +184,7 @@ describe("applyHostConfigToPlayground", () => {
     // Empty/whitespace skips the configured id, then the resolver
     // tries the host style's template default.
     expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
-      "anthropic/claude-haiku-4.5"
+      "anthropic/claude-haiku-5.5"
     );
   });
 
@@ -220,7 +220,7 @@ describe("applyHostConfigToPlayground", () => {
 
     expect(setHostStyle).toHaveBeenCalledWith("claude");
     expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
-      "anthropic/claude-haiku-4.5"
+      "anthropic/claude-haiku-5.5"
     );
     expect(applyHostTemplateSpy).toHaveBeenCalledWith({});
     expect(setCustomViewportSpy).not.toHaveBeenCalled();

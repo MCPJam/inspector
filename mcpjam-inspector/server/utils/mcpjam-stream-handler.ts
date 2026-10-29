@@ -1,9 +1,11 @@
+import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
 import { withSwarmStepAdmissionRetry } from "./swarm-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
 /**
  * MCPJam Stream Handler
  *
@@ -127,6 +129,8 @@ import {
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
 import {
+  isRejectedToolCallMetadata,
+  markRejectedToolCallMetadata,
   mergeMcpToolOriginMetadata,
   mergeMcpToolConnectionMetadata,
   toolConnectionAttribution,
@@ -166,23 +170,8 @@ export {
 
 let warnedLegacyUnsignedApproval = false;
 
-function unwrapJsonEnvelope(value: unknown): unknown {
-  let current = value;
-  for (let depth = 0; depth < 4; depth += 1) {
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      return current;
-    }
-    const record = current as Record<string, unknown>;
-    if (record.type !== "json" || !("value" in record)) {
-      return current;
-    }
-    current = record.value;
-  }
-  return current;
-}
-
 function isModelVisibleImageOutput(value: unknown): boolean {
-  const output = unwrapJsonEnvelope(value);
+  const output = unwrapToolOutputEnvelope(value, 4).value;
   if (!output || typeof output !== "object" || Array.isArray(output)) {
     return false;
   }
@@ -330,6 +319,8 @@ import { normalizeFinishReason } from "@/shared/eval-trace";
 import {
   describeEmptyStepFailure,
   hasSettledToolCallThisPrompt,
+  isMcpjamOwnedEmptyStep,
+  type EmptyStepFacts,
 } from "./empty-step-failure.js";
 import {
   mergeLiveChatTraceUsage,
@@ -1327,6 +1318,8 @@ export interface MCPJamHandlerOptions {
     harnessSessionCommit?: HarnessSessionCommitPayload,
   ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
+  /** Starts log delivery only after the harness's MCP route and owner scopes are fixed. */
+  onHarnessMcpReady?: (scopeIds?: Record<string, string>) => void;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
@@ -1573,7 +1566,27 @@ interface StepContext {
   remainingTurnMs?: () => number;
 }
 
-type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
+type PersistedAssistantPart =
+  | TextPart
+  | ToolCallPart
+  // `providerOptions` is where a model message carries what the provider said
+  // about the part — on the OpenAI Responses API, the reply's `rs_…` item id,
+  // which the next request needs. The UI reasoning part has no such field.
+  | (ReasoningUIPart & { providerOptions?: TextPart["providerOptions"] });
+
+/**
+ * What a backend chunk said about the part it belongs to, in the shape a model
+ * message carries it. The chunk type here is loose (`[key: string]: unknown`),
+ * so this is the one place that narrows it.
+ */
+function chunkProviderOptions(chunk: {
+  providerMetadata?: unknown;
+}): TextPart["providerOptions"] | undefined {
+  const metadata = chunk.providerMetadata;
+  return metadata !== null && typeof metadata === "object"
+    ? (metadata as TextPart["providerOptions"])
+    : undefined;
+}
 
 interface LiveTraceTurnContext {
   recordedRequestPayloads: LiveChatTraceRequestPayloadEntry[];
@@ -1600,6 +1613,14 @@ interface StreamResult {
    */
   toolInputErrors: string[];
   /**
+   * Every tool call this step emitted that was rejected before it ran (the
+   * `tool-input-error` chunks). Each one is ALSO a `tool-call` entry in
+   * `contentParts`, so the step records it; the caller answers each with an
+   * error result so the model reads why and can retry, as the AI SDK's own
+   * loop does. `errorText` is the plain sentence, already unwrapped.
+   */
+  rejectedToolCalls: RejectedToolCall[];
+  /**
    * Name of every tool call this step STARTED but never finished: a
    * `tool-input-start` with no `tool-input-available` or `tool-input-error`
    * after it, which is what a stream cut off mid-call leaves behind. Like a
@@ -1613,6 +1634,46 @@ interface StreamResult {
    * if the stream produced no chunks.
    */
   firstChunkAt?: number;
+}
+
+interface RejectedToolCall {
+  toolCallId: string;
+  toolName: string;
+  errorText: string;
+}
+
+/**
+ * The name a rejected call is recorded under in history. Usually the name the
+ * model wrote; but a rejected call is exactly the one that may carry a name no
+ * provider accepts (a model once called `<serverId>::read_me`), and the record
+ * is replayed to the provider on the next step. Characters outside the
+ * provider-safe set become `_` — the error result still quotes the original.
+ */
+function historyNameForRejectedToolCall(toolName: string): string {
+  if (/^[a-zA-Z0-9_-]{1,64}$/.test(toolName)) return toolName;
+  return toolName.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) || "unknown_tool";
+}
+
+/**
+ * Names of rejected tool calls in `messages`. Their tools are by definition
+ * not in the tool set, so the unavailable-tool scrub would drop the call and
+ * its error result — and with them the only thing telling the model why its
+ * call failed.
+ */
+function rejectedToolCallNames(messages: ModelMessage[]): Set<string> {
+  const names = new Set<string>();
+  for (const msg of messages) {
+    if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    for (const part of msg.content) {
+      if (
+        part.type === "tool-call" &&
+        isRejectedToolCallMetadata(part.providerOptions)
+      ) {
+        names.add(part.toolName);
+      }
+    }
+  }
+  return names;
 }
 
 /**
@@ -1927,11 +1988,49 @@ function normalizePreservedReasoning(messages: ModelMessage[]): ModelMessage[] {
 }
 
 /**
+ * Org provider keys the backend builds with `provider(modelId)` on
+ * `@ai-sdk/openai` / `@ai-sdk/azure` — i.e. the OpenAI RESPONSES API
+ * (`convex/stream/buildOrgModel.ts`, `call: "model"`).
+ */
+const OPENAI_RESPONSES_PROVIDER_KEYS = new Set(["openai", "azure"]);
+
+/**
+ * Whether this turn's backend call lands on the OpenAI Responses API, where
+ * reasoning must NOT be pruned.
+ *
+ * With `store` on — the provider's default — that API replays an earlier reply
+ * by item id: the reply's text goes back as
+ * `{ type: "item_reference", id: "msg_…" }`, and OpenAI refuses a message item
+ * whose reasoning item is missing ("Item 'msg_…' of type 'message' was
+ * provided without its required 'reasoning' item: 'rs_…'"), which ends the
+ * conversation on the next turn. Dropping old reasoning saves real tokens on
+ * every other provider, which resends it as full text; here it saves none,
+ * because the reasoning rides back as an id too.
+ *
+ * `/stream` never qualifies: MCPJam's own models go through the gateway or
+ * OpenRouter, neither of which carries OpenAI item ids.
+ */
+function usesOpenAiResponsesApi(
+  endpointPath: string,
+  extraBodyFields: Record<string, unknown> | undefined,
+): boolean {
+  if (endpointPath !== "/stream/org") return false;
+  const providerKey = extraBodyFields?.providerKey;
+  return (
+    typeof providerKey === "string" &&
+    OPENAI_RESPONSES_PROVIDER_KEYS.has(providerKey)
+  );
+}
+
+/**
  * Scrub messages for sending to the backend LLM.
  * Removes UI-specific metadata that shouldn't be sent to the model.
  *
  * `preserveReasoningFromIndex` starts the current user turn. Reasoning from
- * that index survives tool steps; reasoning from earlier turns is pruned.
+ * that index survives tool steps; reasoning from earlier turns is pruned —
+ * unless `keepAllReasoning` says the turn runs on the OpenAI Responses API
+ * ({@link usesOpenAiResponsesApi}), which rejects a reply whose reasoning item
+ * is gone.
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
@@ -1939,9 +2038,14 @@ function scrubMessagesForBackend(
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
   preserveReasoningFromIndex?: number,
+  keepAllReasoning?: boolean,
 ): ModelMessage[] {
   let pruned: ModelMessage[];
-  if (
+  if (keepAllReasoning) {
+    // Same UI-only `state` strip the current-turn slice gets below, applied to
+    // the whole history since all of it now reaches the provider.
+    pruned = normalizePreservedReasoning(messages);
+  } else if (
     typeof preserveReasoningFromIndex === "number" &&
     preserveReasoningFromIndex > 0 &&
     preserveReasoningFromIndex < messages.length
@@ -1987,12 +2091,17 @@ function scrubMessagesForBackend(
     return msg;
   });
 
+  const rejectedNames = rejectedToolCallNames(stripped);
   const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
     stripped,
     Object.keys(tools as Record<string, unknown>),
     // A page's tools exist only while that page is open; what the model did
-    // with them is still what happened. See the parameter's doc.
-    isWebmcpPageToolName,
+    // with them is still what happened. See the parameter's doc. A rejected
+    // call is kept for the same reason: its error is how the model retries.
+    name =>
+      isWebmcpPageToolName(name) ||
+      WIDGET_TOOL_VERBS.includes(name) ||
+      rejectedNames.has(name),
   );
 
   const scrubbed = scrubChatGPTAppsToolResultsForBackend(
@@ -2387,10 +2496,13 @@ async function processStream(
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
+  const rejectedToolCalls: RejectedToolCall[] = [];
   const unfinishedTools = new Map<string, string>();
   let pendingText = "";
+  let pendingTextMetadata: TextPart["providerOptions"] | undefined;
   let pendingReasoning = "";
   let pendingReasoningId: string | null = null;
+  let pendingReasoningMetadata: TextPart["providerOptions"] | undefined;
   let hasToolCalls = false;
   let finishChunk: UIMessageChunk | null = null;
   let firstChunkAt: number | undefined;
@@ -2398,21 +2510,38 @@ async function processStream(
 
   const flushText = () => {
     if (pendingText) {
-      contentParts.push({ type: "text", text: pendingText });
+      contentParts.push({
+        type: "text",
+        text: pendingText,
+        ...(pendingTextMetadata
+          ? { providerOptions: pendingTextMetadata }
+          : {}),
+      });
       pendingText = "";
     }
+    pendingTextMetadata = undefined;
   };
 
   const flushReasoning = () => {
-    if (pendingReasoning) {
+    // An empty reasoning block is kept when the provider NAMED it. On the
+    // OpenAI Responses API a reply is replayed by item id, and a message item
+    // whose reasoning item is missing is refused outright, so a `rs_…` with no
+    // summary text still has to survive into the next request. Without an id
+    // there is nothing to reference and an empty part would only render a
+    // "Reasoning" header with nothing under it, so that case is still dropped.
+    if (pendingReasoning || pendingReasoningMetadata) {
       contentParts.push({
         type: "reasoning",
         text: pendingReasoning,
         state: "done",
+        ...(pendingReasoningMetadata
+          ? { providerOptions: pendingReasoningMetadata }
+          : {}),
       });
       pendingReasoning = "";
     }
     pendingReasoningId = null;
+    pendingReasoningMetadata = undefined;
   };
 
   const parsedStream = parseJsonEventStream({
@@ -2495,11 +2624,13 @@ async function processStream(
         case "text-start":
           flushReasoning();
           flushText();
+          pendingTextMetadata = chunkProviderOptions(chunk);
           writer.write(chunk);
           break;
 
         case "text-delta":
           flushReasoning();
+          pendingTextMetadata = chunkProviderOptions(chunk) ?? pendingTextMetadata;
           pendingText += chunk.delta ?? "";
           if (chunk.delta) {
             safelyEmitLiveTextDelta(onLiveTextDelta, chunk.delta);
@@ -2517,6 +2648,8 @@ async function processStream(
           break;
 
         case "text-end":
+          pendingTextMetadata =
+            chunkProviderOptions(chunk) ?? pendingTextMetadata;
           flushText();
           writer.write(chunk);
           break;
@@ -2525,6 +2658,7 @@ async function processStream(
           flushText();
           flushReasoning();
           pendingReasoningId = chunk.id;
+          pendingReasoningMetadata = chunkProviderOptions(chunk);
           writer.write(chunk);
           break;
 
@@ -2534,6 +2668,8 @@ async function processStream(
             flushReasoning();
           }
           pendingReasoningId = chunk.id;
+          pendingReasoningMetadata =
+            chunkProviderOptions(chunk) ?? pendingReasoningMetadata;
           pendingReasoning += chunk.delta ?? "";
           writer.write(chunk);
           break;
@@ -2543,6 +2679,8 @@ async function processStream(
             flushReasoning();
             pendingReasoningId = chunk.id;
           }
+          pendingReasoningMetadata =
+            chunkProviderOptions(chunk) ?? pendingReasoningMetadata;
           flushReasoning();
           writer.write(chunk);
           break;
@@ -2554,8 +2692,12 @@ async function processStream(
           flushReasoning();
           // A tool call the model DID emit, rejected before it could run —
           // `NoSuchToolError` / `InvalidToolInputError` on the backend's
-          // `streamText`. It is forwarded to the client but pushes nothing
-          // onto `contentParts`, so record why for the empty-step classifier.
+          // `streamText`. It is recorded as a `tool-call` part and listed in
+          // `rejectedToolCalls`, which the caller answers with an error result
+          // so the model can read why and retry — what the AI SDK's own loop
+          // does. Before, it pushed nothing, and the turn ended: with a red
+          // empty-step error when the step had nothing else, and silently
+          // when the model had written text first.
           // A call that starts and never resolves either way was cut off
           // mid-input; remember its name until one of the two arrives.
           if (chunk.type === "tool-input-start") {
@@ -2563,16 +2705,39 @@ async function processStream(
           } else if (chunk.type === "tool-input-error") {
             unfinishedTools.delete(String(chunk.toolCallId));
           }
+          const toolCallId = normalizeToolCallId(chunk.toolCallId);
           if (chunk.type === "tool-input-error") {
             const toolInputErrorText = (chunk as { errorText?: unknown })
               .errorText;
-            toolInputErrors.push(
+            const errorText =
               typeof toolInputErrorText === "string" && toolInputErrorText
                 ? toolInputErrorText
-                : "the model's tool input failed schema validation",
-            );
+                : "the model's tool input failed schema validation";
+            toolInputErrors.push(errorText);
+            const rejectedInput = (chunk as { input?: unknown }).input;
+            const historyName = historyNameForRejectedToolCall(chunk.toolName);
+            contentParts.push({
+              type: "tool-call",
+              toolCallId,
+              toolName: historyName,
+              // The provider replays this input; a rejected one may not even
+              // be an object. Same fallback as the AI SDK's own history.
+              input:
+                rejectedInput !== null &&
+                typeof rejectedInput === "object" &&
+                !Array.isArray(rejectedInput)
+                  ? rejectedInput
+                  : {},
+              providerOptions: markRejectedToolCallMetadata(undefined),
+            });
+            rejectedToolCalls.push({
+              toolCallId,
+              toolName: historyName,
+              // The backend serializes its error chunks as JSON; the model
+              // should read the sentence, not the envelope.
+              errorText: parseStreamErrorChunkText(errorText).message,
+            });
           }
-          const toolCallId = normalizeToolCallId(chunk.toolCallId);
           const providerMetadata =
             "toolName" in chunk && typeof chunk.toolName === "string"
               ? withPageToolAttributionMetadata(
@@ -2793,6 +2958,7 @@ async function processStream(
     finishChunk,
     firstChunkAt,
     toolInputErrors,
+    rejectedToolCalls,
     unfinishedToolNames: [...unfinishedTools.values()],
   };
 }
@@ -3677,7 +3843,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // and the Convex `/stream` request see the same narrowed set.
   if (prepareAdvertisedTools) {
     const advertised = new Set(
-      applyPrepareAdvertisedTools({
+      await applyPrepareAdvertisedTools({
         defaultToolNames: activeToolDefs.map((def) => def.name),
         stepIndex,
         prepareAdvertisedTools,
@@ -3720,6 +3886,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       mcpClientManager,
       selectedServers,
       traceTurn.promptMessageStartIndex,
+      usesOpenAiResponsesApi(ctx.endpointPath, ctx.extraBodyFields),
     ),
     modelId,
     provider,
@@ -4104,6 +4271,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     finishChunk,
     firstChunkAt,
     toolInputErrors,
+    rejectedToolCalls,
     unfinishedToolNames,
   } = await processStream(
     res.body,
@@ -4131,6 +4299,22 @@ async function processOneStep(ctx: StepContext): Promise<{
     messageHistory.push({
       role: "assistant",
       content: contentParts,
+    } as ModelMessage);
+  }
+  // Answer each rejected call with its error, as the AI SDK's own loop does,
+  // so the next step shows the model why it failed. Written here rather than
+  // by the executor: a call whose INPUT was refused names a real tool, and
+  // the executor would run it with that input. Nothing goes to the client —
+  // its part already shows the error from the forwarded chunk.
+  if (rejectedToolCalls.length > 0) {
+    messageHistory.push({
+      role: "tool",
+      content: rejectedToolCalls.map((rejected) => ({
+        type: "tool-result",
+        toolCallId: rejected.toolCallId,
+        toolName: rejected.toolName,
+        output: { type: "error-text", value: rejected.errorText },
+      })),
     } as ModelMessage);
   }
   if (contentParts.length > 0)
@@ -4684,6 +4868,41 @@ async function processOneStep(ctx: StepContext): Promise<{
     return { shouldContinue: true, didEmitFinish: false };
   }
 
+  // A REJECTED CALL IS A STEP THE MODEL GETS TO RETRY. Its error result is
+  // already in history (above), so another step lets the model read it and
+  // call the right tool — whether the step also had text or nothing else.
+  // `maxSteps` still bounds a model that keeps getting it wrong.
+  if (rejectedToolCalls.length > 0) {
+    pushBackendStepSuccessSpans(
+      traceTurn.turnSpans,
+      traceTurn.turnStartedAt,
+      traceTurn.promptIndex,
+      stepIndex,
+      stepStartAbs,
+      { startAbs: llmStartAbs, endAbs: llmEndAbs },
+      undefined,
+      {
+        modelId,
+        inputTokens: stepUsage?.inputTokens,
+        outputTokens: stepUsage?.outputTokens,
+        totalTokens: stepUsage?.totalTokens,
+        messageStartIndex: stepMessageStartIndex,
+        messageEndIndex: stepMessageEndIndex,
+        status: "ok",
+        ...harnessSpanMeta,
+      },
+    );
+    setStepSpanMessageRanges(
+      traceTurn.turnSpans,
+      traceTurn.promptIndex,
+      stepIndex,
+      stepMessageStartIndex,
+      stepMessageEndIndex,
+    );
+    emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
+    return { shouldContinue: true, didEmitFinish: false };
+  }
+
   // AN EMPTY STEP IS A FAILURE — UNLESS THE TURN ALREADY ACTED.
   //
   // This point is reached only when nothing is left to execute — every path
@@ -4738,13 +4957,15 @@ async function processOneStep(ctx: StepContext): Promise<{
   // chunk: `didEmitFinish: false` with `shouldContinue: false` is the pair the
   // agentic loop reads as `settledWithError`.
   if (contentParts.length === 0 && !quietFinishAfterToolCall) {
-    const emptyStepMessage = describeEmptyStepFailure({
+    const emptyStepFacts: EmptyStepFacts = {
       finishReason: harnessSpanMeta.finishReason,
       toolInputErrors,
       unfinishedToolNames,
       outputTokens: stepUsage?.outputTokens,
-    });
+    };
+    const emptyStepMessage = describeEmptyStepFailure(emptyStepFacts);
     const emptyStepNormalized = describeError(emptyStepMessage);
+    const emptyStepOwnedByMcpjam = isMcpjamOwnedEmptyStep(emptyStepFacts);
     pushBackendStepLlmFailureSpans(
       traceTurn.turnSpans,
       traceTurn.turnStartedAt,
@@ -4780,10 +5001,16 @@ async function processOneStep(ctx: StepContext): Promise<{
           message: "[mcpjam-stream-handler] backend step returned no content",
           error: new Error(emptyStepMessage),
           source: "mcp.chat-v2.engine-step",
-          // The model rail is MCPJam's own hosted provider, not the user's MCP
-          // server. Filing this against `user_server_hop` would blame the server
-          // under test for its host's outage.
-          hop: "mcpjam_internal",
+          // The hop is chosen on the provider's own usage report, like the
+          // recognized-denial split at the backend-stream site. The catalog
+          // files the slug `ambiguous`; `mcpjam_internal` promotes it to a
+          // page. That is right only when the provider generated content our
+          // rail failed to deliver (see `isMcpjamOwnedEmptyStep`). A provider
+          // that reports 0 output tokens, or a named model-side cause (the
+          // token limit, a rejected tool input, a safety filter), stays
+          // `ambiguous` on `user_server_hop`, the same hop the agentic loop
+          // files provider errors on — unpromoted, not blamed on the server.
+          hop: emptyStepOwnedByMcpjam ? "mcpjam_internal" : "user_server_hop",
           transport: "http_stream",
           normalized: emptyStepNormalized,
           context: {
@@ -4796,14 +5023,17 @@ async function processOneStep(ctx: StepContext): Promise<{
             // budget reasoning from a provider outage, or say which model.
             modelId,
             outputTokens: stepUsage?.outputTokens,
+            ownedByMcpjam: emptyStepOwnedByMcpjam,
           },
           ...(failureCapture
             ? {
-                // An empty stream is malformed output from our model rail — an
-                // incident, grouped apart from throws on the same source.
+                // Ask MCPJam captures every failure. Content our rail lost is
+                // an incident, grouped apart from throws on the same source;
+                // an empty reply the provider owns pings only on a spike.
                 capture: failureCapture.policyFor({
                   source: "mcp.chat-v2.engine-step",
                   code: "provider_empty_response",
+                  ...(emptyStepOwnedByMcpjam ? {} : { pageClass: "routine" }),
                 }),
               }
             : {}),

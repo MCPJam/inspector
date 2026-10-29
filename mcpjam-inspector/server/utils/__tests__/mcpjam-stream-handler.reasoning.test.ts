@@ -138,3 +138,114 @@ describe("mcpjam-stream-handler reasoning", () => {
     });
   });
 });
+
+/**
+ * What an earlier turn's reasoning does on the way OUT to the backend.
+ *
+ * The OpenAI Responses API replays a stored reply by item id, so an assistant
+ * reply sent without its reasoning item is refused outright ("Item 'msg_…' of
+ * type 'message' was provided without its required 'reasoning' item: 'rs_…'")
+ * and the conversation dies on the next turn. Everywhere else the reasoning
+ * comes back as full text and dropping it is a real token saving.
+ */
+describe("mcpjam-stream-handler reasoning sent to the backend", () => {
+  const originalFetch = global.fetch;
+
+  const priorTurn: ModelMessage[] = [
+    { role: "user", content: "List my servers" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "reasoning",
+          text: "",
+          providerOptions: { openai: { itemId: "rs_1" } },
+        },
+        {
+          type: "text",
+          text: "Here they are:",
+          providerOptions: { openai: { itemId: "msg_1" } },
+        },
+      ],
+    },
+    { role: "user", content: "And the second one?" },
+  ];
+
+  async function sentMessages(
+    options: Record<string, unknown>,
+  ): Promise<ModelMessage[]> {
+    const fetchMock = vi.fn().mockResolvedValue(sseResponse(answer));
+    global.fetch = fetchMock;
+    await handleMCPJamFreeChatModel({
+      messages: priorTurn,
+      modelId: "gpt-5",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: new MCPClientManager({}),
+      ...options,
+    });
+    await lastExecution;
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    return JSON.parse(body.messages as string) as ModelMessage[];
+  }
+
+  const reasoningParts = (messages: ModelMessage[]) =>
+    messages
+      .filter((message) => message.role === "assistant")
+      .flatMap((message) =>
+        Array.isArray(message.content) ? message.content : [],
+      )
+      .filter((part) => part.type === "reasoning");
+
+  beforeEach(() => {
+    lastExecution = null;
+    writtenChunks = [];
+    process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    delete process.env.CONVEX_HTTP_URL;
+  });
+
+  it("keeps an earlier turn's reasoning for an org OpenAI key", async () => {
+    const messages = await sentMessages({
+      endpointPath: "/stream/org",
+      extraBodyFields: { providerKey: "openai" },
+    });
+
+    expect(reasoningParts(messages)).toEqual([
+      {
+        type: "reasoning",
+        text: "",
+        providerOptions: { openai: { itemId: "rs_1" } },
+      },
+    ]);
+  });
+
+  it("keeps it for an org Azure key, which is the same API", async () => {
+    const messages = await sentMessages({
+      endpointPath: "/stream/org",
+      extraBodyFields: { providerKey: "azure" },
+    });
+
+    expect(reasoningParts(messages)).toHaveLength(1);
+  });
+
+  it("still prunes it for an org key on another provider", async () => {
+    const messages = await sentMessages({
+      endpointPath: "/stream/org",
+      extraBodyFields: { providerKey: "anthropic" },
+    });
+
+    expect(reasoningParts(messages)).toEqual([]);
+  });
+
+  it("still prunes it for MCPJam's own models", async () => {
+    // `/stream` goes through the gateway or OpenRouter, which carry no OpenAI
+    // item ids, so there is nothing for a missing reasoning item to break.
+    const messages = await sentMessages({});
+
+    expect(reasoningParts(messages)).toEqual([]);
+  });
+});

@@ -543,6 +543,124 @@ describe("EvaluateTab", () => {
     });
   });
 
+  describe("Add case and Setup Run with no suite yet", () => {
+    function withSuites(sortedSuites: unknown[], isOverviewLoading = false) {
+      mocks.useEvalQueries.mockImplementation(
+        ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
+          ...makeQueryState(selectedSuiteId),
+          suiteOverview: sortedSuites,
+          sortedSuites,
+          selectedSuiteEntry: null,
+          selectedSuite: null,
+          isOverviewLoading,
+        }),
+      );
+    }
+
+    beforeEach(() => {
+      mocks.route.current = { type: "list" };
+    });
+
+    it("Setup Run goes straight to creating a suite instead of an empty picker", async () => {
+      withSuites([]);
+      render(<EvaluateTab projectId="ws-1" />);
+
+      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+        type: "create",
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("Add test case goes straight to creating a suite too", async () => {
+      withSuites([]);
+      render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "More evaluate actions" }),
+      );
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "Add test case" }),
+      );
+
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+        type: "create",
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("still opens the picker when a suite exists", async () => {
+      render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "More evaluate actions" }),
+      );
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "Add test case" }),
+      );
+
+      expect(
+        screen.getByText("Choose a suite for the new case."),
+      ).toBeInTheDocument();
+      expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    });
+
+    it("waits for suites to load before deciding there are none", async () => {
+      withSuites([], true);
+      const view = render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+      expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+      expect(screen.getByText("Loading suites…")).toBeInTheDocument();
+
+      withSuites([]);
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+        type: "create",
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("opens the picker once suites arrive, without sending anyone to create one", async () => {
+      withSuites([], true);
+      const view = render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+
+      mocks.useEvalQueries.mockImplementation(
+        ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+          makeQueryState(selectedSuiteId),
+      );
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+
+      expect(
+        screen.getByText("Choose a suite to configure its next run."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Loading suites…")).toBeNull();
+      expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    });
+
+    it("drops a pending action when the route leaves the list", async () => {
+      withSuites([], true);
+      const view = render(<EvaluateTab projectId="ws-1" />);
+      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+
+      // Back to another page while suites load, then the overview answers.
+      mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+      withSuites([]);
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+
+      // (The overview's own redirect for a suite that no longer exists may
+      // run; Create suite must not.)
+      expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith({
+        type: "create",
+      });
+    });
+  });
+
   it("defaults the bare Evaluate route to Runs, with Runs first", () => {
     mocks.route.current = { type: "list" };
     render(<EvaluateTab projectId="ws-1" />);
@@ -1151,7 +1269,65 @@ describe("EvaluateTab", () => {
       });
       expect(mocks.handleRerun).toHaveBeenCalledWith(
         expect.objectContaining({ _id: "suite-b" }),
+        { iterationOverride: 5, throwOnFailure: true },
       );
+    });
+
+    it("runEvalSuite launches the count Setup Run would start at, not each case's saved runs", async () => {
+      localStorage.setItem("mcpjam:suite-run-iterations:suite-b", "1");
+      try {
+        render(<EvaluateTab projectId="ws-1" />);
+
+        const response = await dispatch({
+          type: "runEvalSuite",
+          payload: { suite: "Suite suite-b" },
+        });
+
+        expect(response).toMatchObject({
+          status: "success",
+          result: { iterations: 1 },
+        });
+        expect(mocks.handleRerun).toHaveBeenCalledWith(
+          expect.objectContaining({ _id: "suite-b" }),
+          { iterationOverride: 1, throwOnFailure: true },
+        );
+      } finally {
+        localStorage.removeItem("mcpjam:suite-run-iterations:suite-b");
+      }
+    });
+
+    it("runEvalSuite uses the agent's iterations and rejects an out-of-range count", async () => {
+      render(<EvaluateTab projectId="ws-1" />);
+
+      await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Suite suite-b", iterations: 3 },
+      });
+      expect(mocks.handleRerun).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "suite-b" }),
+        { iterationOverride: 3, throwOnFailure: true },
+      );
+
+      mocks.handleRerun.mockClear();
+      const invalid = await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Suite suite-b", iterations: 11 },
+      });
+      expect(invalid).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+      expect(mocks.handleRerun).not.toHaveBeenCalled();
+    });
+
+    it("runEvalSuite returns an error when the launch refuses the count", async () => {
+      mocks.handleRerun.mockRejectedValueOnce(new Error("Replay cannot honor the requested iteration count"));
+      render(<EvaluateTab projectId="ws-1" />);
+      const response = await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Suite suite-b", iterations: 1 },
+      });
+      expect(response).toMatchObject({ status: "error" });
     });
 
     it("runEvalSuite refuses when the eval iteration quota is exhausted — never a bypass", async () => {

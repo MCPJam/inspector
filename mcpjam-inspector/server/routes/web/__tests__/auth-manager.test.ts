@@ -53,6 +53,13 @@ import {
 import { ErrorCode, WebRouteError } from "../errors.js";
 import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
 
+// This device has approved every stdio command: the per-device approval gate
+// has its own suite, local-server-resolver.stdio-approval.test.ts.
+vi.mock("../../../utils/stdio-command-approvals.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/stdio-command-approvals.js")>()),
+  checkStdioLaunchApproval: async () => ({ approval: "approved" as const }),
+}));
+
 // Faithful Hono Context stub: `get`, `var`, and `set` all read/write the same
 // store (in real Hono `c.get(k)` === `c.var[k]`). The delegated-auth header
 // builder reads `c.get("authMethod")`, so the mock must implement `get`.
@@ -177,13 +184,14 @@ describe("web auth manager batching", () => {
         },
       }),
     ) as typeof fetch;
-    await createAuthorizedManager(
+    const authorized = await createAuthorizedManager(
       { authMethod: "jwt" } as Parameters<typeof createAuthorizedManager>[0],
       "bearer",
       "project-1",
       ["enrolled", "shared"],
       10_000,
     );
+    expect(authorized.authenticatedUserId).toBe("authenticated-user");
     expect(admissionMock).toHaveBeenCalledTimes(1);
     expect(admissionMock).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -4,6 +4,10 @@ import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { PartSwitch } from "../thread/part-switch";
 import { callTool, executeToolApi } from "@/lib/apis/mcp-tools-api";
 import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
+import {
+  injectHostedServerMapping,
+  setApiContext,
+} from "@/lib/apis/web/context";
 import type { UIMessage } from "@ai-sdk/react";
 
 const { mockDetectUIType, mockToolPart, mockWidgetReplay } = vi.hoisted(() => ({
@@ -517,6 +521,41 @@ describe("PartSwitch", () => {
         "data-server-id",
         "qa-server",
       );
+    });
+
+    it("addresses a managed turn's server by its local name", () => {
+      // A local managed turn tags the call with the Convex id; this app's
+      // own connections are keyed by name.
+      injectHostedServerMapping("qa-server", "convex-server-1");
+      try {
+        const part = {
+          type: "dynamic-tool",
+          toolName: "qa_return_linked_image_resource",
+          toolCallId: "call-1",
+          state: "output-available",
+          input: {},
+          output: { content: [] },
+          callProviderMetadata: {
+            mcpjam: { serverId: "convex-server-1" },
+          },
+        };
+
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={part as any}
+            toolsMetadata={{}}
+            toolServerMap={{}}
+          />,
+        );
+
+        expect(screen.getByTestId("tool-part")).toHaveAttribute(
+          "data-server-id",
+          "qa-server",
+        );
+      } finally {
+        setApiContext(null);
+      }
     });
 
     it("passes raw MCP result to tool parts instead of model-visible output", () => {
