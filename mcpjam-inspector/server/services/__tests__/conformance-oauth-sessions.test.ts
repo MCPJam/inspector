@@ -34,6 +34,13 @@ describe("createSession", () => {
     expect(s1.id).not.toBe(s2.id);
   });
 
+  it("mints IDs that can't be guessed from the time", () => {
+    const session = createSession({ redirectUrl: REDIRECT });
+    expect(session.id).toMatch(
+      /^oauth-conf-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
   it("mirrors the auth URL onto the session once the runner surfaces it", async () => {
     const session = createSession({ redirectUrl: REDIRECT });
     const sdkSession = await session.controller.createSession();
@@ -78,6 +85,14 @@ describe("deleteSession", () => {
 describe("submitAuthorizationCode", () => {
   it("returns false for nonexistent session", () => {
     expect(submitAuthorizationCode("nonexistent", "code123")).toBe(false);
+  });
+
+  it("refuses a code from a caller that did not start the session", () => {
+    const session = createSession({ redirectUrl: REDIRECT, owner: "user:a" });
+    expect(
+      submitAuthorizationCode(session.id, "code", undefined, "user:b"),
+    ).toBe(false);
+    expect(submitAuthorizationCode(session.id, "code")).toBe(false);
   });
 
   it("delivers code through the SDK controller to a pending authorize", async () => {
@@ -229,5 +244,20 @@ describe("expiry", () => {
       touchSession(session.id);
     }
     expect(getSession(session.id)).toBeDefined();
+  });
+});
+
+describe("session owner", () => {
+  it("returns an owned session only to its owner", () => {
+    const session = createSession({ redirectUrl: REDIRECT, owner: "user:a" });
+    expect(getSession(session.id, "user:a")).toBe(session);
+    expect(getSession(session.id, "user:b")).toBeUndefined();
+    expect(getSession(session.id)).toBeUndefined();
+  });
+
+  it("keeps a local session (no owner) readable without one", () => {
+    const session = createSession({ redirectUrl: REDIRECT });
+    expect(getSession(session.id)).toBe(session);
+    expect(getSession(session.id, "user:a")).toBeUndefined();
   });
 });

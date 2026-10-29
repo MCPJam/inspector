@@ -32,6 +32,8 @@ import {
   EgressResolutionError,
   assertAllowedHostedTargetUrl,
 } from "../../utils/hosted-egress-guard.js";
+import { principalKey } from "../../utils/request-principal.js";
+import { toBrowserOAuthResult } from "../../utils/oauth-conformance-browser-result.js";
 
 const conformanceWeb = new Hono();
 
@@ -368,7 +370,7 @@ conformanceWeb.post("/oauth/start", async (c) =>
     }
 
     try {
-      return await startOAuthConformance({
+      const started = await startOAuthConformance({
         defaultServerUrl: resolved.serverUrl,
         defaultCustomHeaders: resolved.customHeaders,
         redirectUrl: `${parsed.callbackOrigin.replace(
@@ -376,7 +378,11 @@ conformanceWeb.post("/oauth/start", async (c) =>
           ""
         )}/oauth/callback/debug`,
         oauthProfile: parsed.oauthProfile,
+        owner: principalKey(c),
       });
+      return started.phase === "complete"
+        ? { ...started, result: toBrowserOAuthResult(started.result) }
+        : started;
     } catch (error) {
       throw toWebError(error);
     }
@@ -396,7 +402,10 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthAuthorizeSchema, body);
 
-    const delivered = submitOAuthConformanceCode(parsed);
+    const delivered = submitOAuthConformanceCode({
+      ...parsed,
+      owner: principalKey(c),
+    });
     if (!delivered) {
       throw new WebRouteError(
         404,
@@ -419,7 +428,13 @@ conformanceWeb.post("/oauth/complete", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthCompleteSchema, body);
     try {
-      return await completeOAuthConformance(parsed);
+      const completed = await completeOAuthConformance({
+        ...parsed,
+        owner: principalKey(c),
+      });
+      return completed.phase === "complete"
+        ? { ...completed, result: toBrowserOAuthResult(completed.result) }
+        : completed;
     } catch (error) {
       throw toWebError(error);
     }
