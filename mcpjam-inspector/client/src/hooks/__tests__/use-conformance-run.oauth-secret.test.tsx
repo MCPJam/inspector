@@ -138,26 +138,20 @@ describe("useConformanceRun OAuth client secret", () => {
     expect(api.startOAuthConformance).not.toHaveBeenCalled();
   });
 
-  it("never fetches the secret for a test URL on another site", async () => {
+  it("tests the Connect URL when the profile URL is on another site", async () => {
     profile.serverUrl = "https://other.example/mcp";
-    const view = renderHook(() =>
-      useConformanceRun({ server: makeServer(true), deferOAuthAuthorization: true }),
-    );
-
-    await act(async () => {
-      await view.result.current.runAll();
-    });
-
-    await waitFor(() =>
-      expect(view.result.current.oauth.status).toBe("error"),
-    );
-    expect(secrets.fetchOAuthClientSecret).not.toHaveBeenCalled();
-    expect(api.startOAuthConformance).not.toHaveBeenCalled();
+    expect(await sentClientSecret(makeServer(true))).toBe("saved-secret");
+    expect(
+      api.startOAuthConformance.mock.calls[0][0].oauthProfile.serverUrl,
+    ).toBe("https://server.example/mcp");
   });
 
-  it("allows the same site with a different path", async () => {
-    profile.serverUrl = "https://server.example/other/";
+  it("keeps the profile URL's path on the same site", async () => {
+    profile.serverUrl = "https://server.example/mcp/v/2026-07-28";
     expect(await sentClientSecret(makeServer(true))).toBe("saved-secret");
+    expect(
+      api.startOAuthConformance.mock.calls[0][0].oauthProfile.serverUrl,
+    ).toBe("https://server.example/mcp/v/2026-07-28");
   });
 
   it("stops the OAuth suite when a flagged server isn't in the project", async () => {

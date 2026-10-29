@@ -52,6 +52,7 @@ import { resolveServerOAuthProtocolSelection } from "@/state/oauth-orchestrator"
 import {
   assertSavedSecretTargets,
   loadSavedClientSecret,
+  oauthTargetUrl,
 } from "@/lib/oauth/saved-client-secret";
 
 export type SuiteStatus =
@@ -616,16 +617,16 @@ export function useConformanceRun({
         const saved =
           profile.clientSecret || !profile.clientId
             ? undefined
-            : await loadSavedClientSecret(currentServer, profile.serverUrl);
+            : await loadSavedClientSecret(currentServer);
         if (!isRunActive(runToken, serverName)) return;
         if (saved) assertSavedSecretTargets(serverName, saved);
-        const clientSecret = profile.clientSecret || saved?.clientSecret;
-        const baseProfile = profile.serverUrl
+        const serverUrl = oauthTargetUrl(currentServer, profile.serverUrl);
+        const baseProfile = serverUrl
           ? {
-              serverUrl: profile.serverUrl,
+              serverUrl,
               registrationStrategy: profile.registrationStrategy,
               clientId: profile.clientId || undefined,
-              clientSecret: clientSecret || undefined,
+              clientSecret: profile.clientSecret || saved?.clientSecret,
               scopes: profile.scopes || undefined,
               customHeaders: profile.customHeaders.length
                 ? profile.customHeaders
