@@ -12,6 +12,7 @@ import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useOrganizationDeletionStore } from "@/stores/organization-deletion-store";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
+  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -41,20 +42,51 @@ import {
   subscribeGuestSessionChanges,
 } from "./lib/guest-session";
 import { HomeTab } from "./components/HomeTab";
+import {
+  ApiKeysRoute,
+  BenchResultsPage,
+  BenchRunnerPage,
+  CaniuseCapabilityPage,
+  CiEvalsTab,
+  ComputerTabView,
+  ConformanceHistory,
+  ConformanceRunDetailPage,
+  ConformanceSharedPage,
+  ConformanceTab,
+  EvalRunSharedPage,
+  EvalsTab,
+  EvaluateTab,
+  GithubChecksRoute,
+  GithubInstallCallbackRoute,
+  HostCompatPage,
+  HostConfigCompareView,
+  IntegrationsRoute,
+  LearningTab,
+  OAuthFlowTab,
+  OrganizationsTab,
+  ProfileTab,
+  ProjectEnvironmentsRoute,
+  ProjectSettingsTab,
+  RegistryTab,
+  ScoreResultsPage,
+  ScoreRunnerPage,
+  SessionsPanel,
+  SettingsTab,
+  SkillsTab,
+  SupportTab,
+  SwarmsTab,
+  TasksTab,
+  TracingTab,
+  UserTestingTab,
+  WebmcpInspectorTab,
+  XAAFlowTab,
+} from "./lazy-route-tabs";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
-import { SkillsTab } from "./components/SkillsTab";
-import { LearningTab } from "./components/LearningTab";
-import { TasksTab } from "./components/TasksTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
-import { EvalsTab } from "./components/EvalsTab";
-import { EvaluateTab } from "./components/EvaluateTab";
-import { CiEvalsTab } from "./components/CiEvalsTab";
-import { UserTestingTab } from "./components/UserTestingTab";
-import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
 import {
   canManageAsOwnerOrAdmin,
@@ -65,28 +97,8 @@ import {
   useProjectQueries,
   useViewerProjectRole,
 } from "./hooks/useProjects";
-import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
-import { SessionsPanel } from "./components/sessions/SessionsPanel";
-import { SettingsTab } from "./components/SettingsTab";
-import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
-import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
-import { GithubInstallCallbackRoute } from "./components/settings/GithubInstallCallbackRoute";
-import { IntegrationsRoute } from "./components/settings/IntegrationsRoute";
-import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
-import { TracingTab } from "./components/TracingTab";
-import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspectorTab";
-import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import { ConformanceTab } from "./components/conformance/ConformancePanel";
-import {
-  ConformanceHistory,
-  ConformanceRunDetailPage,
-  ConformanceSharedPage,
-} from "./components/conformance/ConformanceHistory";
-import { EvalRunSharedPage } from "./components/evals/EvalRunSharedPage";
-import { HostCompatPage } from "./components/compat/HostCompatPage";
-import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
 import { PLAYGROUND_FIRST_RUN_PROMPT } from "./components/ui-playground/hooks/use-playground-state";
@@ -117,17 +129,10 @@ import {
 } from "@/lib/server-form-validation";
 import { parseCommandInput } from "@/lib/command-input";
 import { listTools } from "@/lib/apis/mcp-tools-api";
-import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
-import { OrganizationsTab } from "./components/OrganizationsTab";
-import { SupportTab } from "./components/SupportTab";
-import { RegistryTab } from "./components/RegistryTab";
 import { HostsTab } from "./components/HostsTab";
-import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigCompareView";
-import { CaniuseCapabilityPage } from "./components/hosts/comparison/CaniuseCapabilityPage";
 import { HostSectionTabs } from "./components/hosts/HostSectionTabs";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
-import { ComputerTabView } from "./components/computer/ComputerTabView";
 import { useComputersEnabledState } from "./hooks/useComputersEnabled";
 import { useWebmcpInspectorEnabledState } from "./hooks/useWebmcpInspectorEnabled";
 import { useSkillsEnabledState } from "./hooks/useSkillsEnabled";
@@ -447,6 +452,12 @@ const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 // users always keep the Home landing.
 const FIRST_RUN_PLAYGROUND_ROLLOUT_MS = Date.parse("2026-06-16T00:00:00.000Z");
 const AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS = 2_500;
+// Shown while a lazily loaded route body downloads (see lazy-route-tabs.ts).
+const ROUTE_CHUNK_FALLBACK = (
+  <div className="flex h-full items-center justify-center">
+    <Loader2 className="size-5 animate-spin text-muted-foreground" />
+  </div>
+);
 
 function firstRunAuthentication(source: {
   authMethod?: unknown;
@@ -660,11 +671,6 @@ function AppChromeHeader({ hidden, settings, ...props }: AppChromeHeaderProps) {
 
   return <Header {...props} />;
 }
-
-import { ScoreRunnerPage } from "@/components/score/ScoreRunnerPage";
-import { ScoreResultsPage } from "@/components/score/ScoreResultsPage";
-import { BenchRunnerPage } from "@/components/score/BenchRunnerPage";
-import { BenchResultsPage } from "@/components/score/BenchResultsPage";
 
 /**
  * The no-router render path.
@@ -6538,11 +6544,13 @@ export default function App() {
                 </div>
               ) : null}
               <AppRouteReactContext.Provider value={routeContext}>
-                {locationContext ? (
-                  <Outlet context={routeContext} />
-                ) : (
-                  <NoRouterRouteBody activeTab={activeTab} />
-                )}
+                <Suspense fallback={ROUTE_CHUNK_FALLBACK}>
+                  {locationContext ? (
+                    <Outlet context={routeContext} />
+                  ) : (
+                    <NoRouterRouteBody activeTab={activeTab} />
+                  )}
+                </Suspense>
               </AppRouteReactContext.Provider>
             </AppChromePanel>
           </SidebarInset>
@@ -6622,11 +6630,13 @@ export default function App() {
     <div className="flex h-[100dvh] min-w-0 max-w-full flex-col overflow-hidden bg-background">
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <AppRouteReactContext.Provider value={routeContext}>
-          {locationContext ? (
-            <Outlet context={routeContext} />
-          ) : (
-            <NoRouterRouteBody activeTab={activeTab} />
-          )}
+          <Suspense fallback={ROUTE_CHUNK_FALLBACK}>
+            {locationContext ? (
+              <Outlet context={routeContext} />
+            ) : (
+              <NoRouterRouteBody activeTab={activeTab} />
+            )}
+          </Suspense>
         </AppRouteReactContext.Provider>
       </div>
     </div>
