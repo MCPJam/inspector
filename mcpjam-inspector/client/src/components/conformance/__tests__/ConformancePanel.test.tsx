@@ -603,6 +603,18 @@ describe("ConformanceTab", () => {
       "Server · alpha",
     );
 
+    // Servers to pick from, none selected yet.
+    rerender(
+      <ConformanceTab
+        server={null}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Server" })).toHaveTextContent(
+      "Server · Select",
+    );
+
     rerender(
       <ConformanceTab server={null} servers={[]} onSelectServer={vi.fn()} />,
     );
