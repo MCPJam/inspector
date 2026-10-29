@@ -41,7 +41,7 @@ vi.mock("../registry.js", () => ({
     supportedReasoningEfforts: [],
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
-    mcpDelivery: "host-executed",
+    mcpDelivery: "mcpjam",
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
@@ -227,7 +227,7 @@ describe("runHarnessTurn reasoning effort backstop (refuse, never drop)", () => 
       );
       expect(onEngineError).toHaveBeenCalledTimes(1);
       const err = onEngineError.mock.calls[0]![0] as { message: string };
-      expect(err.message).toMatch(/can't apply a reasoning effort yet/);
+      expect(err.message).toMatch(/does not support.*reasoning effort/);
       expect(startHarnessModelBroker).not.toHaveBeenCalled();
     }
   );

@@ -1472,6 +1472,44 @@ describe("TestTemplateEditor run view from route", () => {
     );
   });
 
+  it("reads a replayed traceless trial's own run for its stage results", async () => {
+    // A timed-out trial has no trace, so it is not the traced detail run, but
+    // it IS the trial on screen: its stage chain is keyed on its own run.
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    const newest = {
+      ...baseIteration,
+      suiteRunId: "newest-run",
+      blob: "newest-blob",
+    };
+    const timedOut = {
+      ...baseIteration,
+      _id: "timed-out",
+      suiteRunId: "timed-out-run",
+    };
+    const query = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: any) =>
+      name === "testSuites:getTestIteration" &&
+      args?.iterationId === timedOut._id
+        ? timedOut
+        : query(name, args),
+    );
+    renderGoldenCase({
+      observeFirst: true,
+      suiteIterations: [newest, timedOut],
+    });
+    fireEvent.click((await screen.findAllByTestId("case-run-row"))[1]);
+    await waitFor(() => {
+      const runIds = useQueriesMock.mock.calls.map(
+        (call) => call[0]?.selectedRun?.args?.runId,
+      );
+      expect(runIds).toContain("timed-out-run");
+    });
+    // The detail run is still the newest traced one.
+    expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      selectedRun: { args: { runId: "newest-run" } },
+    });
+  });
+
   it("keeps every summary run's client label in the case editor Runs tab", async () => {
     activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
     const user = userEvent.setup();

@@ -309,3 +309,20 @@ test("sessions send --effort reaches the request body", async () => {
   assert.equal((post.body as Record<string, unknown>).reasoningEffort, "high");
   assert.ok(!("temperature" in (post.body as Record<string, unknown>)));
 });
+
+test("sessions send --no-servers preserves an empty target and omits an unspecified model", async () => {
+  const requests = stubApi({
+    "^POST /chat-sessions/messages$": { sessionId: "s1", turnId: "t1", projectId: "project-1", persisted: { outcome: "saved" } },
+  });
+  await run(["sessions", "send", "--project", "Acme", "--no-servers", "--message", "hi", "--idempotency-key", "empty"]);
+  const post = requests.find((request) => request.method === "POST");
+  assert.ok(post);
+  assert.deepEqual((post.body as Record<string, unknown>).serverIds, []);
+  assert.ok(!("modelId" in (post.body as Record<string, unknown>)));
+});
+
+test("sessions send refuses conflicting server flags before sending", async () => {
+  const requests = stubApi({});
+  await assert.rejects(run(["sessions", "send", "--project", "Acme", "--no-servers", "--server", "s1", "--message", "hi", "--idempotency-key", "conflict"]), /either --server or --no-servers/);
+  assert.equal(requests.filter((r) => r.method === "POST").length, 0);
+});

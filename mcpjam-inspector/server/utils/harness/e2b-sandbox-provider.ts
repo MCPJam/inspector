@@ -1,3 +1,4 @@
+import { attachRunningSandbox } from "../computers/attach-sandbox.js";
 /**
  * E2B-backed `HarnessV1SandboxProvider` for running the AI SDK **Claude Code
  * harness** inside a host's existing MCPJam computer (an E2B sandbox).
@@ -18,7 +19,6 @@
  *   stop / destroy                          → no-op (control plane owns teardown)
  */
 import {
-  Sandbox,
   FileNotFoundError,
   CommandExitError,
   SandboxNotFoundError,
@@ -37,6 +37,7 @@ import {
   reapHarnessBridgesCommand,
 } from "./bridge-reaper.js";
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
+import { closeModelProxyConnections } from "./model-proxy-connections.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
@@ -57,7 +58,7 @@ export interface E2BHarnessSandboxProviderOptions {
   /** E2B sandbox id of the host's computer — resolved via the control plane
    *  (`ensureComputerReady` → `getComputerSandboxInfo.providerComputerId`, see
    *  `resolve-sandbox.ts`). The box must already be AWAKE: `ensureComputerReady`
-   *  wakes it; `Sandbox.connect` will not resume a hibernated box on its own. */
+   *  wakes it; attachment cannot wake a hibernated box. */
   sandboxId: string;
   /** E2B API key. Defaults to the `E2B_API_KEY` env the data plane already
    *  holds (same as `server/utils/computers/run-command.ts`). */
@@ -72,7 +73,7 @@ export interface E2BHarnessSandboxProviderOptions {
    *  possibly holding a paused approval — block every other chat's on the
    *  same computer. E2B's `getHost` reaches any listening port. */
   bridgePort?: number;
-  /** Connect/keep-alive timeout handed to `Sandbox.connect`. */
+  /** Request timeout for read-only sandbox discovery. */
   connectTimeoutMs?: number;
   /** Per-command exec timeout for `run`. E2B commands default to ~60s — too
    *  short for the harness bootstrap (`pnpm install`) on a larger dep tree.
@@ -97,6 +98,12 @@ export interface E2BHarnessSandboxProviderOptions {
    * every process in the box through `/proc` and lands in shell history.
    */
   sessionEnv?: Record<string, string>;
+  /**
+   * The model proxy base URL this turn's lease is installed for. Read on
+   * RESUME, after the turn minted its lease, to close connections that still
+   * carry the previous turn's lease (`model-proxy-connections.ts`).
+   */
+  proxyUrl?: () => string | undefined;
 }
 
 const enc = new TextEncoder();
@@ -297,13 +304,14 @@ export function createE2BHarnessSandboxProvider(
   // has to supply the sandbox connection.
   const connectSession = async (
     connectSignal?: AbortSignal,
+    resuming = false,
   ): Promise<HarnessV1NetworkSandboxSession> => {
     // Reuse the host's existing computer. It must already be awake — the
     // caller wakes it via the control plane (`ensureComputerReady`) before
     // resolving the sandboxId. We never create or kill a box here.
-    const sandbox = await Sandbox.connect(opts.sandboxId, {
+    const sandbox = await attachRunningSandbox(opts.sandboxId, {
       apiKey: opts.apiKey,
-      timeoutMs: opts.connectTimeoutMs,
+      requestTimeoutMs: opts.connectTimeoutMs,
       ...(connectSignal ? { signal: connectSignal } : {}),
     }).catch((error: unknown) => {
       // TYPED by the vendor SDK: the box is gone (killed on its timeout, or
@@ -353,6 +361,13 @@ export function createE2BHarnessSandboxProvider(
         );
       }
       throw err;
+    }
+    if (resuming) {
+      await closeModelProxyConnections(
+        sandbox,
+        opts.proxyUrl?.(),
+        connectSignal,
+      );
     }
 
     // Housekeeping, so best-effort: a failure here never blocks the spawn.
@@ -688,6 +703,6 @@ export function createE2BHarnessSandboxProvider(
     // otherwise). We ignore the harness `sessionId` — the box is the project's
     // single computer resolved per-turn via the control plane — and reconnect;
     // the Claude Code adapter restores the thread from the workdir.
-    resumeSession: (options) => connectSession(options?.abortSignal),
+    resumeSession: (options) => connectSession(options?.abortSignal, true),
   };
 }

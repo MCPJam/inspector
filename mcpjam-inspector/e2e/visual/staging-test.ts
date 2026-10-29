@@ -7,10 +7,11 @@ export const test = base.extend({
     try {
       await use(context);
     } finally {
-      // Stop new browser traffic, then finish proxy callbacks before Playwright
-      // disposes the request context they use for background reads.
+      // Block browser traffic before removing guards, then close the context
+      // to cancel proxy reads instead of waiting on an unanswered upstream.
       await context.setOffline(true);
-      await context.unrouteAll({ behavior: "wait" });
+      await context.unrouteAll({ behavior: "ignoreErrors" });
+      await context.close();
     }
   },
 });

@@ -134,6 +134,19 @@ test("without the Inspector server only the SDK catalog is written", () => {
   }
 });
 
+test("the Inspector catalog names dependency errors and keeps the capturing event as a fact", () => {
+  const root = fixture();
+  try {
+    const outputs = buildTelemetryCatalogs({ root });
+    assert.ok(inspector(outputs).errors.includes("McpError"));
+    assert.ok(JSON.parse(outputs[OUTPUTS.browser]).errors.includes("AI_APICallError"));
+    assert.deepEqual(inspector(outputs).diagnosticFields.event, ["probe.request"]);
+    assert.ok(!JSON.parse(outputs[OUTPUTS.sdk]).errors.includes("McpError"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a second scan in one process sees edited, renamed and deleted routes", () => {
   const root = fixture();
   try {
@@ -150,6 +163,22 @@ test("a second scan in one process sees edited, renamed and deleted routes", () 
       assert.ok(!routeKeys(next).includes("GET /api/before"));
       assert.ok(!routeKeys(next).some((key) => key.includes("/gone")));
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a LogConvexId field gets the context-only convexId rule, a plain string none", () => {
+  const root = fixture();
+  try {
+    edit(root, "mcpjam-inspector/shared/log-events.ts", [
+      "interface CommonLogContext { orgId?: LogConvexId | null; sessionId?: string | null }",
+      'export type RequestEventMap = { "probe.request": { statusCode: number; orgId: string } };',
+    ].join("\n"));
+    assert.deepEqual(inspector(buildTelemetryCatalogs({ root })).fields, {
+      orgId: { kind: "convexId" },
+      statusCode: { kind: "number" },
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -161,11 +161,17 @@ export async function createZipPluginFileSource(
         // identifies one. Any populated type other than a regular file or a
         // directory is surfaced as a link, which the parser rejects, as the
         // browser and backend ZIP readers do; some writers leave the type 0.
-        // The extracted copy is also re-listed from disk before it is accepted.
+        // The type is read before `entry.dir`, which JSZip also sets for any
+        // name ending in `/`, so a link named that way is still a link. The
+        // extracted copy is also re-listed from disk before it is accepted.
         const mode = entry.unixPermissions;
         const type = typeof mode === "number" ? mode & S_IFMT : 0;
-        if (!entry.dir && type !== 0 && type !== S_IFREG && type !== S_IFDIR) {
-          out.push({ path, size: 0, kind: "symlink" });
+        if (type !== 0 && type !== S_IFREG && type !== S_IFDIR) {
+          out.push({
+            path: path.replace(/\/+$/, ""),
+            size: 0,
+            kind: "symlink",
+          });
           return;
         }
         out.push({

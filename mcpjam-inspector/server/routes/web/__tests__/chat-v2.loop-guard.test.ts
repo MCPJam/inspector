@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { getFunctionName } from "convex/server";
 
 /**
  * The loop guard on `POST /api/web/chat-v2` (the Playground).
@@ -27,7 +28,7 @@ const {
 
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: vi.fn(function () {
-    return { setAuth: vi.fn(), query: convexQueryMock };
+    return { setAuth: vi.fn(), query: convexQueryMock, mutation: async () => ({ hostId: "chat-host", environment: { environmentId: "chat-environment" } }) };
   }),
 }));
 
@@ -168,11 +169,18 @@ describe("web chat-v2 loop guard", () => {
     vi.clearAllMocks();
     vi.stubEnv("CONVEX_HTTP_URL", CONVEX_URL);
     vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
+    fetchHostRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
     managerConstructions.count = 0;
     streamRequests = 0;
-    convexQueryMock.mockImplementation(async (ref: string) => {
-      if (ref === "hostConfigsV2:getProjectDefault") return null;
-      if (ref === "projects:getProjectCapabilities") {
+    convexQueryMock.mockImplementation(async (ref: Parameters<typeof getFunctionName>[0]) => {
+      const name = getFunctionName(ref);
+      if (name === "projectEnvironments:resolveEnvironmentForRuntime") return {
+        environmentRef: { environmentId: "chat-environment", name: "Chat", revision: 1 },
+        host: { hostId: "chat-host", runtimeConfig: {} },
+        servers: { effectiveServerIds: [] }, skills: [], pluginVersions: [],
+      };
+      if (name === "hostConfigsV2:getProjectDefault") return null;
+      if (name === "projects:getProjectCapabilities") {
         return { projectRole: "admin" };
       }
       throw new Error(`Unexpected Convex query: ${ref}`);
@@ -182,7 +190,7 @@ describe("web chat-v2 loop guard", () => {
     global.fetch = vi.fn(async (input) => {
       const url = String(input);
       if (url === `${CONVEX_URL}/web/authorize-project`) {
-        return new Response(JSON.stringify({ ok: true }), {
+        return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });

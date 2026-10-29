@@ -56,6 +56,7 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { localServerNameForId } from "@/lib/apis/web/context";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
 import { useScenarioHostStyle } from "@/contexts/scenario-client-style-context";
@@ -380,7 +381,7 @@ function LivePartSwitch({
 
     const approvalId = toolPart.approval?.id;
     const approvalProps =
-      interactive && approvalId
+      interactive && approvalId && onToolApprovalResponse
         ? {
             approvalId,
             onApprove: (id: string) =>
@@ -413,11 +414,15 @@ function LivePartSwitch({
       readMcpToolConnectionId((toolPart as any).callProviderMetadata) ??
       readMcpToolConnectionId((toolPart as any).providerMetadata) ??
       readMcpToolConnectionId((toolPart as any).providerOptions);
-    const serverId =
+    const toolServerId =
       renderOverride?.serverId ??
       providerMetadataServerId ??
       getToolServerId(toolInfo.toolName, toolServerMap) ??
       readToolResultServerId(rawToolOutput);
+    const serverId =
+      toolServerId && !appState.servers[toolServerId]
+        ? (localServerNameForId(toolServerId) ?? toolServerId)
+        : toolServerId;
     const hasRenderOverrideToolOutput =
       renderOverride !== undefined &&
       Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");

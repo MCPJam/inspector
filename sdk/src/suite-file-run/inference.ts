@@ -325,7 +325,7 @@ export async function resolveInferenceCredentials(args: {
       problems,
     });
   }
-  if (!needsPlatform) return { providerKeys: keys };
+  if (!needsPlatform && !args.inference.resolveMcpjam) return { providerKeys: keys };
 
   let connection: McpjamInferenceConnection;
   try {

@@ -30,9 +30,8 @@ const mocks = vi.hoisted(() => {
 const { FakeCommandExitError } = mocks;
 const sandboxState = mocks;
 
-vi.mock("e2b", () => ({
-  Sandbox: {
-    connect: async (id: string, opts?: Record<string, unknown>) => {
+vi.mock("../../computers/attach-sandbox.js", () => ({
+  attachRunningSandbox: async (id: string, opts?: Record<string, unknown>) => {
       await mocks.connect(id, opts);
       return {
         sandboxId: id,
@@ -41,13 +40,16 @@ vi.mock("e2b", () => ({
         getHost: (p: number) => `host-${p}.e2b.dev`,
       };
     },
-  },
+}));
+
+vi.mock("e2b", () => ({
   CommandExitError: mocks.FakeCommandExitError,
   FileNotFoundError: mocks.FakeFileNotFoundError,
   SandboxNotFoundError: mocks.FakeSandboxNotFoundError,
 }));
 
 import { reapHarnessBridgesCommand } from "../bridge-reaper.js";
+import { logger } from "../../logger.js";
 import {
   createBridgeStderrRedactor,
   createE2BHarnessSandboxProvider,
@@ -479,5 +481,73 @@ describe("exec result normalization", () => {
       stdout: "out",
       stderr: "err",
     });
+  });
+});
+
+describe("model-proxy connections on resume", () => {
+  // E2B stamps the lease header per connection (see
+  // model-proxy-connections.ts), so a resume must close the box's connections
+  // to the proxy before the surviving runtime continues on them.
+  const isClose = (call: unknown[]) =>
+    typeof call[0] === "string" && call[0].includes("ss -K");
+
+  it("closes the proxy host's connections as root when a session resumes", async () => {
+    let url: string | undefined;
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => url,
+    });
+    // The turn mints its lease after building the provider.
+    url = "https://proxy.convex.site/model";
+
+    await p.resumeSession!({ sessionId: "s" });
+
+    const close = sandboxState.run.mock.calls.find(isClose);
+    expect(close?.[0]).toContain("getent ahosts proxy.convex.site");
+    expect(close?.[0]).toContain('ss -K dst "$ip" dport = :443');
+    // `ss` reads a bare IPv6 address as address:port.
+    expect(close?.[0]).toContain('*:*) ip="[$ip]"');
+    expect(close?.[1]).toMatchObject({ user: "root" });
+  });
+
+  it("leaves a new session's connections alone", async () => {
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => "https://proxy.convex.site/model",
+    });
+
+    await p.createSession();
+
+    expect(sandboxState.run.mock.calls.some(isClose)).toBe(false);
+  });
+
+  it("still resumes when the close fails, and refuses a host it cannot quote", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    sandboxState.run.mockImplementation(async (command: string) => {
+      if (command.includes("ss -K")) {
+        throw new FakeCommandExitError(1, "", "Error: cannot close");
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const failing = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => "https://proxy.convex.site/model",
+    });
+    await expect(
+      failing.resumeSession!({ sessionId: "s" }),
+    ).resolves.toBeDefined();
+    expect(warn).toHaveBeenCalledWith(
+      "[harness] could not close model-proxy connections: exit status 1",
+    );
+
+    sandboxState.run.mockClear();
+    for (const unsafe of ["https://proxy.site;reboot/", "not a url"]) {
+      const p = createE2BHarnessSandboxProvider({
+        sandboxId: "sbx_1",
+        proxyUrl: () => unsafe,
+      });
+      await p.resumeSession!({ sessionId: "s" });
+    }
+    expect(sandboxState.run.mock.calls.some(isClose)).toBe(false);
   });
 });

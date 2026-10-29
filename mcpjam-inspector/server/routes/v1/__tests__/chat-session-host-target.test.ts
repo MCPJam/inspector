@@ -1,3 +1,5 @@
+import { getFunctionName } from "convex/server";
+import { ErrorCode, WebRouteError } from "../../web/errors.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
@@ -46,6 +48,7 @@ const {
   releaseBoxMock,
   resolvePlaygroundCredentialEnvironmentMock,
   playgroundCredentialRefusalMock,
+  backend,
 } = vi.hoisted(() => ({
   queryMock: vi.fn(),
   mutationMock: vi.fn(),
@@ -62,6 +65,7 @@ const {
   releaseBoxMock: vi.fn(),
   resolvePlaygroundCredentialEnvironmentMock: vi.fn(),
   playgroundCredentialRefusalMock: vi.fn(),
+  backend: { chatEnvironments: true },
 }));
 
 // The box is the conversation's throwaway machine: a harness turn here binds
@@ -83,6 +87,8 @@ vi.mock("convex/browser", () => ({
   ConvexHttpClient: class {
     setAuth() {}
     query(...args: unknown[]) {
+      const name = typeof args[0] === "string" ? args[0] : getFunctionName(args[0] as Parameters<typeof getFunctionName>[0]);
+      if (name === "projects:getProjectCapabilities") return Promise.resolve(backend.chatEnvironments ? { chatEnvironmentVersion: 1 } : {});
       return queryMock(...args);
     }
     mutation(...args: unknown[]) {
@@ -100,18 +106,24 @@ vi.mock("../../../utils/host-runtime-config.js", () => ({
     fetchHostRuntimeConfigMock(...args),
 }));
 
-vi.mock("../../../services/environments/runtime.js", () => ({
-  resolveEnvironmentForRuntime: (...args: unknown[]) =>
-    resolveEnvironmentForRuntimeMock(...args),
-  runtimeServerIds: (spec: { servers: { effectiveServerIds: string[] } }) =>
-    spec.servers.effectiveServerIds,
-  runtimeServerNames: () => [],
-  // Identity stands in for the real projection, which is `runtimeSkills`'s own
-  // contract: what these tests are about is WIRING — whether the environment's
-  // resolved set reaches the harness engine at all, or is silently replaced by
-  // the live project-wide catalog.
-  runtimeSkills: (spec: { skills?: unknown[] }) => spec.skills ?? [],
-}));
+vi.mock(
+  "../../../services/environments/runtime.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../services/environments/runtime.js")
+    >()),
+    resolveEnvironmentForRuntime: (...args: unknown[]) =>
+      resolveEnvironmentForRuntimeMock(...args),
+    runtimeServerIds: (spec: { servers: { effectiveServerIds: string[] } }) =>
+      spec.servers.effectiveServerIds,
+    runtimeServerNames: () => [],
+    // Identity stands in for the real projection, which is `runtimeSkills`'s own
+    // contract: what these tests are about is WIRING — whether the environment's
+    // resolved set reaches the harness engine at all, or is silently replaced by
+    // the live project-wide catalog.
+    runtimeSkills: (spec: { skills?: unknown[] }) => spec.skills ?? [],
+  }),
+);
 
 vi.mock("../../web/auth.js", () => ({
   createManualHostedConnection: (...args: unknown[]) =>
@@ -220,6 +232,7 @@ const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  backend.chatEnvironments = true;
   process.env.CONVEX_URL = "https://convex.test";
   process.env.CONVEX_HTTP_URL = "https://convex.test";
   // Everything `isComputersDataPlaneConfigured()` reads. Set here rather than
@@ -230,11 +243,38 @@ beforeEach(() => {
   delete process.env.MCPJAM_HARNESS_BROKER_DELIVERY;
   __setHostedCatalogForTests([MODEL]);
 
-  mutationMock.mockImplementation(async (name: string) =>
-    name === "chatSessions:claimTurnLease"
-      ? { status: "claimed", turnId: "turn_1" }
-      : null,
-  );
+  mutationMock.mockImplementation(async (ref) => {
+    const name = typeof ref === "string" ? ref : getFunctionName(ref);
+    if (name === "chatSessions:claimTurnLease")
+      return { status: "claimed", turnId: "turn_1" };
+    if (name === "projectClients:ensureProjectClient") return { hostId: HOST };
+    if (name === "projectEnvironments:ensureAdhocEnvironment")
+      return { environment: { environmentId: "env_hidden" } };
+    return null;
+  });
+  fetchHostRuntimeConfigMock.mockResolvedValue({
+    ok: true,
+    config: { hostId: HOST, modelId: MODEL, selectedServerIds: ["srv_1"] },
+  });
+  resolveEnvironmentForRuntimeMock.mockImplementation(async (_client, args) => {
+    const runtime = await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
+    const config = runtime?.config ?? {
+      modelId: MODEL,
+      selectedServerIds: ["srv_1"],
+    };
+    return {
+      ...environmentSpec(config),
+      environmentRef: {
+        environmentId: args.environmentId,
+        name: "",
+        revision: 1,
+      },
+      servers: {
+        effectiveServerIds:
+          args.overrides?.serverIds ?? config.selectedServerIds ?? [],
+      },
+    };
+  });
   resolveHostModelDefinitionMock.mockResolvedValue({
     id: MODEL,
     provider: "anthropic",
@@ -294,7 +334,17 @@ afterEach(() => {
 });
 
 describe("host targeting dispatches the real harness", () => {
-  it("runs the harness an ENVIRONMENT's host declares, with an MCP proxy", async () => {
+  it("continues with deleted pinned servers reported as skipped", async () => {
+    resolveEnvironmentForRuntimeMock.mockRejectedValueOnce(new WebRouteError(
+      400, ErrorCode.VALIDATION_ERROR, "Server gone is not an available server in this project.",
+    ));
+    queryMock.mockImplementation(async (ref) => getFunctionName(ref) === "servers:getProjectServers" ? [] : null);
+    const response = await turn(firstTurn({ serverIds: ["gone"] }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ skippedServers: [{ serverId: "gone" }] });
+    expect(createManualHostedConnectionMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ serverIds: [] }), expect.anything(), expect.anything());
+  });
+  it("runs the environment's harness with its selected MCP servers", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({ harness: "claude-code", modelId: MODEL }),
     );
@@ -315,12 +365,43 @@ describe("host targeting dispatches the real harness", () => {
         harnessMcpProxy: expect.objectContaining({
           plane: "web-authorized",
         }),
+        selectedServerIds: ["srv_1"],
       }),
     );
     // The response SAYS which engine ran. This is the field whose absence let
     // a silently emulated turn look identical to a harness one.
     expect(body.engine).toBe("harness:claude-code");
     expect(body.hostId).toBe(HOST);
+  });
+
+  it("returns a reply and skipped servers even when the entire environment is refused", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ harness: "claude-code", modelId: MODEL }));
+    createManualHostedConnectionMock.mockResolvedValue({
+      manager: { getTools: getToolsMock, disconnectAllServers: async () => {} },
+      refusedServers: { srv_1: new WebRouteError(400, ErrorCode.FEATURE_NOT_SUPPORTED, "Hosted mode requires HTTPS server URLs", { refusalReason: "hosted_requires_https" }) },
+    });
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.skippedServers).toEqual([expect.objectContaining({ serverId: "srv_1", reason: "hosted_requires_https" })]);
+    expect(body.skippedServers[0].message).toContain("Use an https:// URL");
+    expect(getToolsMock).not.toHaveBeenCalled();
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(expect.objectContaining({ selectedServers: [] }));
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(expect.objectContaining({ selectedServerIds: ["srv_1"], unavailableServerIds: ["srv_1"] }));
+    expect(createManualHostedConnectionMock.mock.calls[0][3]).toMatchObject({ tolerateServerRefusals: true });
+  });
+
+  it("uses authorized names when an ID-only target cannot connect", async () => {
+    createManualHostedConnectionMock.mockResolvedValue({
+      manager: { getTools: getToolsMock, disconnectAllServers: async () => {} },
+      serverNamesById: { srv_1: "Saved server" },
+      refusedServers: { srv_1: new WebRouteError(400, ErrorCode.FEATURE_NOT_SUPPORTED, "Hosted mode requires HTTPS server URLs", { refusalReason: "hosted_requires_https" }) },
+    });
+    const response = await turn(firstTurn({ serverIds: ["srv_1"] }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.skippedServers[0]).toMatchObject({ serverName: "Saved server", reason: "hosted_requires_https" });
+    expect(body.skippedServers[0].message).toContain('"Saved server"');
   });
 
   it("binds the conversation's throwaway box to a harness turn and releases it", async () => {
@@ -626,7 +707,8 @@ describe("a harness that signs in with the member's own account", () => {
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
-  it("boots a host-only turn's box under the hidden environment that selects the key", async () => {
+  it.each([true])("boots a host-only credential box with environment runtime %s", async (supported) => {
+    backend.chatEnvironments = supported;
     fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
 
     const response = await turn(firstTurn({ hostId: HOST }));
@@ -664,6 +746,18 @@ describe("a harness that signs in with the member's own account", () => {
     expect(resolvePlaygroundCredentialEnvironmentMock).not.toHaveBeenCalled();
     expect(playgroundCredentialRefusalMock).not.toHaveBeenCalled();
     expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true])("preserves a plain host sandbox grant with environment runtime %s", async (supported) => {
+    backend.chatEnvironments = supported;
+    resolveHostModelDefinitionMock.mockResolvedValue({ id: MODEL, provider: "anthropic" });
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true, config: { hostId: HOST, harness: "claude-code", modelId: MODEL, selectedServerIds: ["srv_1"] },
+    });
+    const response = await turn(firstTurn({ hostId: HOST }));
+    expect(response.status).toBe(200);
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledOnce();
+    expect(acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0].projectEnvironmentId).toBeUndefined();
   });
 });
 
@@ -1219,6 +1313,20 @@ describe("continuing a session a HOST established", () => {
     expect(args.resumeConfig).not.toHaveProperty("environmentId");
   });
 
+  it("resumes pinned deleted servers without repinning the session", async () => {
+    const session = hostEstablishedSession({ resumeConfig: { modelId: MODEL, toolMode: "auto", serverIds: ["gone"] } });
+    queryMock.mockImplementation(async (ref) => getFunctionName(ref) === "servers:getProjectServers" ? [] : session);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })));
+    resolveEnvironmentForRuntimeMock.mockRejectedValueOnce(new WebRouteError(
+      400, ErrorCode.VALIDATION_ERROR, "Server gone is not an available server in this project.",
+    ));
+    const response = await turn(continuation());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ skippedServers: [{ serverId: "gone" }] });
+    expect(createManualHostedConnectionMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ serverIds: [] }), expect.anything(), expect.anything());
+    expect(persistChatSessionToConvexMock.mock.calls.at(-1)?.[0].resumeConfig.serverIds).toEqual(["gone"]);
+  });
+
   it("REFUSES a bare continuation instead of quietly emulating it", async () => {
     queryMock.mockResolvedValue(hostEstablishedSession());
 
@@ -1519,7 +1627,7 @@ describe("assertHarnessDispatchable", () => {
         engine: { kind: "harness", harness: "claude-code", hostId: HOST },
         runtimeKind: "direct",
       }),
-    ).toThrow(/refused rather than run on the emulated engine/);
+    ).toThrow(/Claude Code client cannot use a locally hosted model/);
   });
 
   it("is a no-op for a hosted harness and for an emulated turn", () => {
@@ -1544,25 +1652,6 @@ describe("engineLabel", () => {
     expect(
       engineLabel({ kind: "harness", harness: "codex", hostId: HOST }),
     ).toBe("harness:codex");
-  });
-});
-
-describe("hostSelectedServerIds", () => {
-  const { hostSelectedServerIds } = __testing;
-
-  it("reads the host's own selection", () => {
-    expect(hostSelectedServerIds({ selectedServerIds: ["a", "b"] })).toEqual([
-      "a",
-      "b",
-    ]);
-  });
-
-  it("reads a malformed list as EMPTY rather than salvaging part of it", () => {
-    // A partially-valid list would connect a subset nobody chose. Empty makes
-    // the route refuse with a message instead.
-    expect(hostSelectedServerIds({ selectedServerIds: ["a", 7] })).toEqual([]);
-    expect(hostSelectedServerIds({ selectedServerIds: "a" })).toEqual([]);
-    expect(hostSelectedServerIds({})).toEqual([]);
   });
 });
 
@@ -1768,5 +1857,105 @@ describe("the turn deadline after a harness turn delivered", () => {
     );
     const failed = await response.json();
     expect(failed.code, JSON.stringify(failed)).toBe("TIMEOUT");
+  });
+});
+
+describe("environment-normalized API compatibility", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("refuses an older backend before selecting a runtime", async () => {
+    backend.chatEnvironments = false;
+    const response = await turn(firstTurn({ serverIds: ["srv_1"] }));
+    expect(response.status).toBe(422);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+    expect(mutationMock.mock.calls.map(([ref]) => typeof ref === "string" ? ref : getFunctionName(ref)))
+      .not.toContain("projectClients:ensureProjectClient");
+  });
+
+  it("resolves an omitted first model and preserves an explicit empty target on continuation", async () => {
+    const first = await turn(firstTurn({ serverIds: [], modelId: undefined }));
+    expect(first.status).toBe(200);
+    const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)?.[0];
+    expect(persisted.resumeConfig).toMatchObject({
+      serverIds: [],
+      modelId: MODEL,
+    });
+    expect(persisted.resumeConfig.environmentId).toBeUndefined();
+    queryMock.mockResolvedValue({
+      _id: "session_empty",
+      chatSessionId: "chat_empty",
+      projectId: PROJECT,
+      origin: "api",
+      version: 2,
+      startedAt: 1,
+      messagesBlobUrl: "https://blob.test/messages",
+      resumeConfig: persisted.resumeConfig,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("[]", { status: 200 })),
+    );
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        hostId: HOST,
+        modelId: "openai/another",
+        selectedServerIds: ["new-server"],
+      },
+    });
+    const next = await turn({
+      sessionId: "session_empty",
+      idempotencyKey: "next-empty",
+      message: "again",
+    });
+    expect(next.status).toBe(200);
+    expect(resolveHostModelDefinitionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelId: MODEL }),
+    );
+    expect(createManualHostedConnectionMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ serverIds: [] }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("rejects a named environment combined with even an empty server list", async () => {
+    const response = await turn(
+      firstTurn({ environmentId: ENVIRONMENT, serverIds: [] }),
+    );
+    expect(response.status).toBe(400);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("still refuses an omitted empty host selection", async () => {
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: HOST, modelId: MODEL, selectedServerIds: [] },
+    });
+    const response = await turn(firstTurn({ hostId: HOST }));
+    expect(response.status).toBe(422);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves a default model when configuring a previously created session", async () => {
+    queryMock.mockResolvedValue({
+      _id: "session_new",
+      chatSessionId: "chat_new",
+      projectId: PROJECT,
+      origin: "api",
+      version: 1,
+      apiConfigState: "unconfigured",
+    });
+    const response = await turn({
+      sessionId: "session_new",
+      idempotencyKey: "configure-new",
+      message: "hi",
+      serverIds: [],
+    });
+    expect(response.status).toBe(200);
+    expect(
+      persistChatSessionToConvexMock.mock.calls.at(-1)?.[0].resumeConfig,
+    ).toMatchObject({ modelId: MODEL, serverIds: [] });
   });
 });

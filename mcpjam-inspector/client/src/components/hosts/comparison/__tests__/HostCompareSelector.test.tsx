@@ -94,6 +94,36 @@ describe("HostCompareSelector", () => {
     expect(screen.getByText("Cursor #2")).toBeInTheDocument();
   });
 
+  it.each([3, 11])("puts selected clients first with %i available clients", (count) => {
+    const hosts = Array.from({ length: count }, (_, index) =>
+      makeHost(`h_${index}`, `Host ${index}`),
+    );
+    const props = {
+      hosts,
+      subjectsByHost: {},
+      onToggleHost: vi.fn(),
+      divergingOnly: false,
+      onDivergingOnlyChange: vi.fn(),
+      showDescriptions: false,
+      onShowDescriptionsChange: vi.fn(),
+    };
+    const { container, rerender } = render(
+      <HostCompareSelector {...props} selectedHostIds={[hosts[count - 1].hostId]} />,
+    );
+    const chipIds = () =>
+      Array.from(
+        container.querySelectorAll('[data-testid^="host-compare-chip-"]'),
+        (node) => node.getAttribute("data-testid"),
+      );
+
+    expect(chipIds()[0]).toBe(`host-compare-chip-h_${count - 1}`);
+    expect(chipIds()[1]).toBe("host-compare-chip-h_0");
+
+    rerender(<HostCompareSelector {...props} selectedHostIds={["h_1"]} />);
+    expect(chipIds()[0]).toBe("host-compare-chip-h_1");
+    expect(chipIds()[1]).toBe("host-compare-chip-h_0");
+  });
+
   it("shows a More menu once there are more hosts than fit inline", () => {
     // One past INITIAL_INLINE_CHIP_LIMIT, which is derived from the ranked
     // caniuse list. Deliberately not a bare number: this asserts the overflow

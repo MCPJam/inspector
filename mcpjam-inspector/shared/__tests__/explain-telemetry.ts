@@ -44,6 +44,8 @@ function ruleReason(rule: Rule | undefined, value: unknown, declareIn: string) {
     return `${show(value)} is not an allowed value (${allowed})`;
   }
   if (rule.kind === "boolean") return `expects a boolean, got ${typeof value}`;
+  if (rule.kind === "convexId")
+    return "kept only as a 32-character Convex ID in the server's request context (a LogConvexId), never from an event payload";
   return `expects a finite number from 0 to ${rule.max}, got ${show(value)}`;
 }
 

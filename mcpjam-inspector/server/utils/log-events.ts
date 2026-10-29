@@ -1,6 +1,7 @@
 import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
+import type { LogConvexId } from "./log-convex-id.js";
 
 export type Environment =
   | "prod"
@@ -57,14 +58,15 @@ interface CommonLogContext {
   userExternalId?: string | null;
   guestExternalId?: string | null;
   emailDomain?: string | null;
-  orgId?: string | null;
+  orgId?: LogConvexId | null;
   orgPlan?: string | null;
   orgSeatQuantity?: number | null;
   orgCreatedBy?: string | null;
-  projectId?: string | null;
+  projectId?: LogConvexId | null;
   projectRole?: ProjectRole | null;
   accessLevel?: AccessLevel | null;
-  serverId?: string | null;
+  serverId?: LogConvexId | null;
+  /** Not logged until a verified producer writes it. */
   sessionId?: string | null;
   scenarioId?: string | null;
   surface?: Surface | null;
@@ -98,6 +100,16 @@ export interface RequestLogContext extends CommonLogContext {
 }
 
 export interface SystemLogContext extends CommonLogContext {
+  /** Code-owned setup outcomes only; arbitrary model/server text is excluded. */
+  setupReason?:
+    | "timeout"
+    | "transport_failed"
+    | "no_eligible_write_tools"
+    | "invalid_model_report"
+    | "model_reported_missing"
+    | "unsupported_claim"
+    | "entity_record_limit"
+    | "write_errored";
   requestId: null;
   route: null;
   method: null;

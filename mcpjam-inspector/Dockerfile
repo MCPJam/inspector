@@ -1,14 +1,14 @@
 # Use specific Node.js version to match local/CI runtimes and dependency engines.
-# 24.21 runs ahead of CI's 24.14, and the Container Scan workflow's gate
-# verifies the Debian layer on every change. UNPINNED build-time apt/npm
+# Keep it equal to .nvmrc and CI's NODE_VERSION. The Container Scan workflow's
+# gate verifies the Debian layer on every change. UNPINNED build-time apt/npm
 # upgrades are not the way to fix base-image CVEs here — Railway caches that
 # layer while CI rebuilds cold, so the scanned image silently drifts from the
-# deployed one. A pinned version (the perl-base step below) is deterministic
+# deployed one. A pinned version (the ca-certificates step below) is deterministic
 # either way. There are two pins to re-evaluate when the weekly Container Scan
 # fails on a fixable CRITICAL: this one for the Debian/Node base, and the npm
 # pin plus its overlays in the base stage for npm's bundled dependencies (the
 # node-tar fix for CVE-2026-59873 now comes from that npm pin).
-ARG NODE_VERSION=24.21.0
+ARG NODE_VERSION=24.22.1
 
 # Debian (glibc) base, not Alpine (musl): Playwright's Chromium is built
 # against glibc and will not launch on musl. Widget-probe rendering (synthetic
@@ -41,14 +41,10 @@ RUN node -e 'const d="/usr/local/lib/node_modules/npm",v=require(d+"/package.jso
 
 # sentry-cli uses the system trust store, absent from bookworm-slim. Install
 # it for both build-time uploads and runtime HTTPS without disabling TLS checks.
-# The newest node:24 bookworm-slim build ships perl-base 5.36.0-7+deb12u3,
-# which carries CRITICAL CVE-2026-13221, CVE-2026-42496 and CVE-2026-8376.
-# bookworm-security has the fix. Pinned, as the header above explains; the
-# install fails loudly once a later security update replaces this version in
-# the archive. Delete this step once the NODE_VERSION image ships deb12u4.
+# Pinned, as the header above explains; the install fails loudly once a later
+# security update replaces this version in the archive.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u1 \
-    && apt-get install -y --no-install-recommends --only-upgrade perl-base=5.36.0-7+deb12u4 \
+    && apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u2 \
     && test -s /etc/ssl/certs/ca-certificates.crt \
     && rm -rf /var/lib/apt/lists/*
 
@@ -103,10 +99,6 @@ ARG VITE_WORKOS_CLIENT_ID
 ARG VITE_MCPJAM_SANDBOX_ORIGIN
 ARG VITE_MCPJAM_VIEW_MOUNT
 ARG VITE_MCPJAM_VIEW_SUBDOMAINS
-# Public, read-only Meticulous recording token, read at BUILD time by
-# client/vite.config.ts. Absent, no recorder is injected. Set it as a Railway
-# service variable only on the environments that should record sessions.
-ARG METICULOUS_RECORDING_TOKEN
 # Not a VITE_ var — it is never bundled. `sentryVitePlugin` in
 # client/vite.config.ts reads it at BUILD time to upload source maps for the
 # release, and without it every hosted prod stack trace stays minified
@@ -213,7 +205,6 @@ RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABL
     if [ -n "$VITE_MCPJAM_SANDBOX_ORIGIN" ]; then export VITE_MCPJAM_SANDBOX_ORIGIN; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_MOUNT" ]; then export VITE_MCPJAM_VIEW_MOUNT; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_SUBDOMAINS" ]; then export VITE_MCPJAM_VIEW_SUBDOMAINS; fi; \
-    if [ -n "$METICULOUS_RECORDING_TOKEN" ]; then export METICULOUS_RECORDING_TOKEN; fi; \
     MCPJAM_BUILD_SURFACE="$MCPJAM_BUILD_SURFACE" npm run build:client -w @mcpjam/inspector
 
 ################################################################################

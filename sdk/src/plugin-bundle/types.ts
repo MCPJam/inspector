@@ -173,7 +173,9 @@ export interface ParsedPluginBundle {
    * Identity of what a runtime materializes and runs: the bundle hash, the
    * executable files, and the interpretation's profile and revision. Two
    * parses that agree on all of these may share a version and a cache entry;
-   * ZIP timestamps and compression take no part.
+   * ZIP timestamps and compression take no part. A source that can't see
+   * modes, such as a browser folder selection, lists no executable files, so
+   * its digest matches only another such source's.
    */
   executionDigest: string;
   /** SHA-256 hex of the raw bytes of the manifest file (`interpretation.manifestPath`). */

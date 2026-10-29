@@ -19,8 +19,8 @@
  * picked hosted judge not under the org-key policy) is the backend's
  * decision, not this helper's. This is NOT a general model-id rewrite and
  * must not become one: an eval TARGET's prefix chooses between hosted and
- * BYOK, and how a hosted run routes a `mcpjam/` target is a separate question
- * from what a judge stores.
+ * BYOK, and how a hosted run routes a `mcpjam/` target is decided beside the
+ * target's provider and selection (`canonicalTargetModelEntry`), not here.
  *
  * Rewritten ONLY when what follows the prefix is, exactly, a hosted catalog
  * id. Anything else is returned trimmed but otherwise as sent, so the backend
@@ -43,16 +43,11 @@
  * the rewrite moves into the backend's judge-write path.
  */
 import { z } from "zod";
-import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
-
-const HOSTED_PREFIX = "mcpjam/";
+import { hostedIdBehindPrefix } from "./target-model-id.js";
 
 export function canonicalJudgeModelId(model: string): string {
-  const trimmed = model.trim();
-  if (!trimmed.startsWith(HOSTED_PREFIX)) return trimmed;
-  const rest = trimmed.slice(HOSTED_PREFIX.length);
-  return rest === rest.trim() && isHostedCatalogModel(rest) ? rest : trimmed;
+  return hostedIdBehindPrefix(model) ?? model.trim();
 }
 
 /**
