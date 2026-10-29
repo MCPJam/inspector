@@ -53,6 +53,7 @@ import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool } from "ai";
+import { unsealHarnessProxyToken } from "../../harness-proxy-policy-seal";
 
 const IMAGE = process.env.HARNESS_DOCKER_IMAGE?.trim() ?? "";
 const ENABLED = IMAGE.length > 0;
@@ -689,10 +690,10 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
           if (mcp) {
             // The proxy token and the correlation the hosted `.mcp.json`
             // carries reached the server with the call.
-            expect(mcp.received.at(-1)).toEqual({
-              proxyToken: "e2e-proxy-token",
-              correlated: true,
-            });
+            const received = mcp.received.at(-1)!;
+            expect(received.correlated).toBe(true);
+            expect(unsealHarnessProxyToken(received.proxyToken, spec.mcpServerId))
+              .toEqual(expect.objectContaining({ token: "e2e-proxy-token", serverId: spec.mcpServerId }));
           }
           // Evidence attribution: the MCP call names its server; nothing else does.
           const attributed = (
