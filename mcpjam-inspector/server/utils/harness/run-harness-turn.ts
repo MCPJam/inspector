@@ -1,4 +1,5 @@
 import { nativeForwardingSelection, prepareNativeForwarding, hasForwardingOrganization } from "./forwarding/native-turn.js";
+import { nativeForwardingGaps } from "./forwarding/native-admission.js";
 import { withHarnessTurnContext, unavailableAppToolsSpan } from "./harness-turn-input.js";
 import { resolveAgentLoop, hasAccountRouting } from "./agent-loop-dispatch.js";
 import { harnessToolOrigin, type ToolOrigin } from "@/shared/tool-origin";
@@ -1594,7 +1595,11 @@ export async function runHarnessTurn(
           ? { pluginOrigins: pluginServerOrigins }
           : {}),
       });
-      const useNativeForwarding = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && nativeMcpDelivery && harnessAdapter.id === "claude-code" && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
+      const nativeCandidate = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && nativeMcpDelivery && harnessAdapter.id === "claude-code" && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
+      const nativeGaps = nativeCandidate ? nativeForwardingGaps({ manager: mcpClientManager, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined }) : [];
+      const useNativeForwarding = nativeCandidate && nativeGaps.length === 0;
+      if (nativeCandidate && nativeGaps.length)
+        logger.info("[harness] retaining configured bridge", { gaps: nativeGaps });
       if (!useNativeForwarding) onHarnessMcpReady?.();
       const proxyConfig = nativeMcpDelivery && !harnessExecutionTarget && !useNativeForwarding
         ? await buildNativeProxyConfig()
