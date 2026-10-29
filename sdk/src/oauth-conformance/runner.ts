@@ -249,7 +249,7 @@ async function probeAuthorizationRequirement(
     if (response.status >= 200 && response.status < 300) {
       return {
         requirement: "not-required",
-        detail: `the server answered an unauthenticated initialize with HTTP ${response.status} instead of challenging`,
+        detail: `the server answered a request without a token with HTTP ${response.status}`,
       };
     }
 
@@ -262,7 +262,7 @@ async function probeAuthorizationRequirement(
 
     return {
       requirement: "inconclusive",
-      detail: `the server answered an unauthenticated initialize with HTTP ${response.status}`,
+      detail: `the server answered a request without a token with HTTP ${response.status}`,
     };
   } catch (error) {
     // A transport failure says nothing about authorization. Fall through to
