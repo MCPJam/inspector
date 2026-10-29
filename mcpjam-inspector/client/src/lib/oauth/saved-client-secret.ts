@@ -22,9 +22,19 @@ const SAVED_CLIENT_SECRET_TIMEOUT_MS = 10_000;
  * and a hung fetch would leave the suite running with Run disabled.
  */
 export async function loadSavedClientSecret(
-  server: ServerWithName
+  server: ServerWithName,
+  targetUrl: string
 ): Promise<SavedClientSecret | undefined> {
   if (!server.hasClientSecret) return undefined;
+  // The run tests the OAuth profile's URL, which can differ from the server's
+  // own URL. The secret was saved for the server's site, so never fetch it
+  // for a run aimed at another one.
+  const serverUrl = "url" in server.config ? server.config.url : undefined;
+  if (!serverUrl || !isSameOrigin(String(serverUrl), targetUrl)) {
+    throw new Error(
+      "The OAuth test URL is on a different site than the server URL, so the saved client secret wasn't sent. Match the URLs, then run the checks again."
+    );
+  }
   const loadFailed = new Error(
     "Couldn't load the saved client secret. Run the checks again."
   );
@@ -39,6 +49,14 @@ export async function loadSavedClientSecret(
     return { clientSecret, ...resolved };
   } catch {
     throw loadFailed;
+  }
+}
+
+function isSameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
   }
 }
 

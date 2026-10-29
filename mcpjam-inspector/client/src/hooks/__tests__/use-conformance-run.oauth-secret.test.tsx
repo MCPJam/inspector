@@ -18,6 +18,7 @@ const secrets = vi.hoisted(() => ({
 }));
 
 const profile = vi.hoisted(() => ({
+  serverUrl: "https://server.example/mcp",
   clientId: "prereg-client",
   clientSecret: "",
 }));
@@ -34,7 +35,7 @@ vi.mock("@/lib/apis/web/context", () => ({
 // `hasClientSecret` flag on the server says one exists in Convex.
 vi.mock("@/components/oauth/utils", () => ({
   deriveOAuthProfileFromServer: () => ({
-    serverUrl: "https://server.example/mcp",
+    serverUrl: profile.serverUrl,
     protocolVersion: "2025-11-25",
     registrationStrategy: "preregistered",
     clientId: profile.clientId,
@@ -69,6 +70,7 @@ describe("useConformanceRun OAuth client secret", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    profile.serverUrl = "https://server.example/mcp";
     profile.clientId = "prereg-client";
     profile.clientSecret = "";
     secrets.tryResolveProjectServer.mockReturnValue({
@@ -134,6 +136,28 @@ describe("useConformanceRun OAuth client secret", () => {
       }),
     );
     expect(api.startOAuthConformance).not.toHaveBeenCalled();
+  });
+
+  it("never fetches the secret for a test URL on another site", async () => {
+    profile.serverUrl = "https://other.example/mcp";
+    const view = renderHook(() =>
+      useConformanceRun({ server: makeServer(true), deferOAuthAuthorization: true }),
+    );
+
+    await act(async () => {
+      await view.result.current.runAll();
+    });
+
+    await waitFor(() =>
+      expect(view.result.current.oauth.status).toBe("error"),
+    );
+    expect(secrets.fetchOAuthClientSecret).not.toHaveBeenCalled();
+    expect(api.startOAuthConformance).not.toHaveBeenCalled();
+  });
+
+  it("allows the same site with a different path", async () => {
+    profile.serverUrl = "https://server.example/other/";
+    expect(await sentClientSecret(makeServer(true))).toBe("saved-secret");
   });
 
   it("stops the OAuth suite when a flagged server isn't in the project", async () => {

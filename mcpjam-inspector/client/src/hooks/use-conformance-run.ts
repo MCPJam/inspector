@@ -616,7 +616,7 @@ export function useConformanceRun({
         const saved =
           profile.clientSecret || !profile.clientId
             ? undefined
-            : await loadSavedClientSecret(currentServer);
+            : await loadSavedClientSecret(currentServer, profile.serverUrl);
         if (!isRunActive(runToken, serverName)) return;
         if (saved) assertSavedSecretTargets(serverName, saved);
         const clientSecret = profile.clientSecret || saved?.clientSecret;
