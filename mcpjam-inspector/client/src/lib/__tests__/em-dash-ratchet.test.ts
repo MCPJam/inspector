@@ -62,7 +62,7 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/computer/LocalComputerConsentGate.tsx", 1],
   ["components/computer/LocalComputerView.tsx", 2],
   ["components/computer/SandboxImagesDrawer.tsx", 2],
-  ["components/conformance/ConformancePanel.tsx", 2],
+  ["components/conformance/ConformancePanel.tsx", 1],
   [
     "components/conformance/directory-readiness/DirectoryReadinessSection.tsx",
     4,
