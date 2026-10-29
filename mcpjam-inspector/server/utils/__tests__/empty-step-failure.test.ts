@@ -138,6 +138,48 @@ async function runTurn(
   return { events, spans, settledWithError };
 }
 
+/** Like `runTurn`, but one backend response per step, and the requests sent. */
+async function runSteps(steps: unknown[][]): Promise<{
+  events: EngineErrorEvent[];
+  settledWithError: boolean[];
+  requests: Array<Record<string, unknown>>;
+}> {
+  const events: EngineErrorEvent[] = [];
+  const settledWithError: boolean[] = [];
+  const fetchMock = vi.fn();
+  for (const chunks of steps) fetchMock.mockResolvedValueOnce(sseOf(chunks));
+  global.fetch = fetchMock;
+  await handleMCPJamFreeChatModel({
+    messages: [{ role: "user", content: "Hi." }] as any,
+    modelId: "google/gemini-2.5-flash-lite",
+    systemPrompt: "You are helpful",
+    // A turn with no tools at all scrubs every tool part from history; a
+    // model that called one was offered at least one.
+    tools: { read_me: { description: "Read me", execute: vi.fn() } },
+    mcpClientManager: {
+      getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      listServers: vi.fn().mockReturnValue([]),
+    } as any,
+    heartbeatIntervalMs: 0,
+    onEngineError: (event: EngineErrorEvent) => events.push(event),
+    onStepFinish: (event: any) => {
+      settledWithError.push(event.settledWithError);
+    },
+  } as any);
+  await lastExecution;
+  const requests = fetchMock.mock.calls.map((call) => {
+    const body = JSON.parse((call[1]?.body as string) ?? "{}");
+    return {
+      ...body,
+      messages:
+        typeof body.messages === "string"
+          ? JSON.parse(body.messages)
+          : body.messages,
+    };
+  });
+  return { events, settledWithError, requests };
+}
+
 const finishChunk = (finishReason: string) => ({
   type: "finish",
   finishReason,
@@ -204,24 +246,105 @@ describe("an empty model step fails instead of passing as an ok step", () => {
     );
   });
 
-  it("names a rejected tool input over the finish reason, because it is actionable", async () => {
-    // The OTHER road to an empty step: the model DID emit a tool call and the
-    // SDK rejected its input, so `tool-input-error` arrives carrying no
-    // content part. Indistinguishable from silence before this.
-    const { events } = await runTurn([
-      {
-        type: "tool-input-error",
-        toolCallId: "call_1",
-        toolName: "get_capabilities",
-        input: {},
-        errorText: "Invalid arguments: expected string, received number",
-      },
-      finishChunk("tool-calls"),
-    ]);
+  it("sends a rejected tool call back to the model instead of ending the turn", async () => {
+    // The model DID emit a tool call and the backend's SDK refused it before
+    // it ran. That used to end the turn with an empty-step error. Now the
+    // call and its error go into history and the model gets another step —
+    // what the AI SDK's own loop does.
+    const steps = [
+      [
+        {
+          type: "tool-input-error",
+          toolCallId: "call_1",
+          // The prod shape: the model called the tool by its catalog id.
+          toolName: "srv123::read_me",
+          input: {},
+          errorText: JSON.stringify({
+            code: "unknown_error",
+            message:
+              "Model tried to call unavailable tool 'srv123::read_me'. Available tools: read_me.",
+          }),
+        },
+        finishChunk("tool-calls"),
+      ],
+      [
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "Retried with read_me." },
+        { type: "text-end", id: "t1" },
+        finishChunk("stop"),
+      ],
+    ];
+    const { events, settledWithError, requests } = await runSteps(steps);
 
-    expect(events).toHaveLength(1);
-    expect(events[0].message).toContain("expected string, received number");
-    expect(events[0].message?.startsWith(EMPTY_STEP_SENTINEL)).toBe(true);
+    expect(events).toHaveLength(0);
+    expect(requests).toHaveLength(2);
+    expect(settledWithError).toEqual([false, false]);
+
+    const retryMessages = requests[1].messages as any[];
+    const call = retryMessages
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .find((part: any) => part.type === "tool-call");
+    const result = retryMessages
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .find((part: any) => part.type === "tool-result");
+    // Recorded under a provider-safe name; the error still quotes the original.
+    expect(call?.toolName).toBe("srv123__read_me");
+    expect(result?.toolCallId).toBe(call?.toolCallId);
+    expect(result?.output).toEqual({
+      type: "error-text",
+      value:
+        "Model tried to call unavailable tool 'srv123::read_me'. Available tools: read_me.",
+    });
+  });
+
+  it("retries a rejected call that came after text, instead of ending silently", async () => {
+    // Seen in prod with a BYOK model: "Now I'll call it…" then a call by id.
+    // The text made the step non-empty, so the turn used to finish quietly
+    // with the failed call never shown to the model.
+    const steps = [
+      [
+        { type: "text-start", id: "t1" },
+        { type: "text-delta", id: "t1", delta: "Now I'll call it:" },
+        { type: "text-end", id: "t1" },
+        {
+          type: "tool-input-error",
+          toolCallId: "call_1",
+          toolName: "get_capabilities",
+          input: { depth: 2 },
+          errorText: "Invalid arguments: expected string, received number",
+        },
+        finishChunk("tool-calls"),
+      ],
+      [
+        { type: "text-start", id: "t2" },
+        { type: "text-delta", id: "t2", delta: "Fixed." },
+        { type: "text-end", id: "t2" },
+        finishChunk("stop"),
+      ],
+    ];
+    const { events, requests } = await runSteps(steps);
+
+    expect(events).toHaveLength(0);
+    expect(requests).toHaveLength(2);
+    const retryParts = (requests[1].messages as any[]).flatMap((m) =>
+      Array.isArray(m.content) ? m.content : [],
+    );
+    expect(retryParts).toContainEqual(
+      expect.objectContaining({
+        type: "tool-call",
+        toolName: "get_capabilities",
+        input: { depth: 2 },
+      }),
+    );
+    expect(retryParts).toContainEqual(
+      expect.objectContaining({
+        type: "tool-result",
+        output: {
+          type: "error-text",
+          value: "Invalid arguments: expected string, received number",
+        },
+      }),
+    );
   });
 
   it("names the tool a `length` finish cut off mid-call, instead of claiming there was no tool call", async () => {

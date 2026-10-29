@@ -184,7 +184,8 @@ export function ProtocolVersionSelect({
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="auto">Auto (negotiated)</SelectItem>
-        {MCP_PROTOCOL_VERSIONS.map((version) => (
+        {/* Newest first: the revision most servers are moving to leads. */}
+        {[...MCP_PROTOCOL_VERSIONS].reverse().map((version) => (
           <SelectItem key={version} value={version}>
             {version}
           </SelectItem>

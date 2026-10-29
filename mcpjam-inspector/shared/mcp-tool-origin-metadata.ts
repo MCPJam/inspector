@@ -22,6 +22,31 @@ export function mergePageToolAttributionMetadata(
   };
 }
 
+/**
+ * Marks a tool call the model emitted but that was rejected before it ran
+ * (an unknown name, or input the schema refused). The engine keeps the call
+ * and its error result in history so the model can read the error and retry;
+ * the mark is how the backend-history scrub tells such a call from one whose
+ * tool has since disappeared.
+ */
+export function markRejectedToolCallMetadata(
+  metadata: unknown,
+): McpToolOriginProviderMetadata {
+  const base = toProviderMetadata(metadata);
+  return {
+    ...base,
+    mcpjam: { ...base.mcpjam, rejectedToolCall: true },
+  };
+}
+
+export function isRejectedToolCallMetadata(metadata: unknown): boolean {
+  return (
+    isRecord(metadata) &&
+    isRecord(metadata.mcpjam) &&
+    metadata.mcpjam.rejectedToolCall === true
+  );
+}
+
 export type McpToolOriginProviderMetadata = Record<string, JSONObject>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

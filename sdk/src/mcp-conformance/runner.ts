@@ -318,10 +318,14 @@ async function runClientChecks(
     return { checks: [], config, readiness: [] };
   }
 
+  // The connect is the initialize handshake, so `server-initialize` reports
+  // its duration rather than the near-zero time to read the stored result.
+  const connectStartedAt = Date.now();
   try {
     return await withEphemeralClient(
       createServerConfig(config, recorder),
       async (manager, serverId) => {
+        const connectDurationMs = Date.now() - connectStartedAt;
         // `getManagedClient()` works for every era — the modern pin and the
         // legacy path both resolve to a `ManagedMcpClient` (the stateless
         // preview adapter was removed in Phase 1C; both go through the
@@ -377,6 +381,7 @@ async function runClientChecks(
           serverId,
           config: effectiveConfig,
           initializationInfo,
+          connectDurationMs,
           availableTools: surface.toolNames,
           availablePrompts: surface.promptNames,
           availableResources: surface.resourceUris,
@@ -485,6 +490,7 @@ async function runClientChecks(
     }
 
     const checks: MCPCheckResult[] = [];
+    const connectDurationMs = Date.now() - connectStartedAt;
 
     // Era gate applies even when the connection could not be established: an
     // era-inapplicable check is a deterministic era-skip, never a failure. On a
@@ -535,7 +541,13 @@ async function runClientChecks(
       return {
         checks: selectedClientChecks.map((check, index) =>
           index === 0
-            ? failedResult(check, 0, errorMessage(error), undefined, error)
+            ? failedResult(
+                check,
+                connectDurationMs,
+                errorMessage(error),
+                undefined,
+                error,
+              )
             : (eraGate(check, config.era, config.protocolVersion) ??
               couldNotRunResult(
                 check,
@@ -561,7 +573,7 @@ async function runClientChecks(
         checks.push(
           failedResult(
             check,
-            0,
+            connectDurationMs,
             errorMessage(error),
             undefined,
             error,

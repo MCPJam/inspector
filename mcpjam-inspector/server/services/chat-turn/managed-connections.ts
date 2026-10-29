@@ -77,6 +77,7 @@ import {
   resolvePluginExtensions,
 } from "@mcpjam/sdk/host-config/internal";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
+import { pendingStdioCommandApproval } from "../../utils/stdio-command-approvals.js";
 
 type ManagedSetup = Extract<
   Awaited<ReturnType<typeof resolveManagedTurnSetup>>,
@@ -576,6 +577,8 @@ export async function prepareManagedConnections(args: {
     },
   );
   connectedManager = manager;
+  const pendingApproval = pendingStdioCommandApproval(refusedServers);
+  if (pendingApproval) throw pendingApproval;
   if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
     void refreshConnectionProfiles(manager, bearerToken, hostedBody.projectId);
 
