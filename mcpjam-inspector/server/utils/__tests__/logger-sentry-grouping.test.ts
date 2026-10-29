@@ -5,6 +5,7 @@ import { telemetryRecord } from "@mcpjam/sdk/internal/telemetry";
 import { withSentryBoundary } from "../../../shared/strict-sentry.js";
 import { strictServerSentryOptions } from "../strict-sentry-options.js";
 import { logger } from "../logger.js";
+import { runWithSentryIdentity } from "../sentry-request-identity.js";
 
 afterEach(async () => {
   await Sentry.close(1000);
@@ -55,4 +56,39 @@ it("groups real logger captures by approved messages while denying runtime prose
       /"filename":"server\/utils\/logger.ts","in_app":true,"lineno":\d+/,
     );
   expect(JSON.stringify(events)).not.toContain("PRIVATE_SENTINEL");
+});
+
+it("keeps the caller's frame when a request identity scopes the capture", async () => {
+  vi.stubEnv("AXIOM_TOKEN", "");
+  vi.stubEnv("DO_NOT_TRACK", "");
+  const frames: { function?: string }[][] = [];
+  Sentry.init({
+    dsn: "https://public@example.invalid/1",
+    defaultIntegrations: false,
+    transport: () => ({
+      send: async (envelope: Envelope) => {
+        for (const [header, payload] of envelope[1])
+          if (header.type === "event")
+            frames.push(
+              (payload as Sentry.ErrorEvent).exception?.values?.[0]?.stacktrace
+                ?.frames ?? [],
+            );
+        return { statusCode: 200 };
+      },
+      flush: async () => true,
+    }),
+  });
+  function reportFromCaller(path: string) {
+    logger.error(`[computers] ${path} network error`);
+  }
+  runWithSentryIdentity(
+    () => ({ id: "user_01", kind: "signedIn" }),
+    () => reportFromCaller("/runtime-config"),
+  );
+  await Sentry.flush(1000);
+
+  expect(frames).toHaveLength(1);
+  expect(frames[0].map((frame) => frame.function)).toContain(
+    "reportFromCaller",
+  );
 });
