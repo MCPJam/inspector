@@ -35,6 +35,13 @@ export function isSpendBudgetReachedCode(code: string | undefined): boolean {
  */
 export const SPEND_BUDGET_REACHED_MESSAGE =
   "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Billing.";
+
+/** The code chat gives a refusal after a declined card paused auto-reload. */
+export const AUTO_TOPUP_DECLINED_CODE = "auto_topup_declined";
+
+/** What every surface says for it: the card, not a limit, is what to fix. */
+export const AUTO_TOPUP_DECLINED_MESSAGE =
+  "Your card was declined, so auto-reload is paused. Update your payment method in Organization \u2192 Billing, or add credits to keep going.";
 export type MCPJamLimitKind = "total" | "concurrency";
 
 /** Which allowance ran out. Free orgs draw on a daily bucket, Team orgs on a

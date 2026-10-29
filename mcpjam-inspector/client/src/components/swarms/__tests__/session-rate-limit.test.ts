@@ -390,3 +390,31 @@ describe("describeSwarmAttemptFailure organization AI-key refusals", () => {
     });
   });
 });
+
+describe("describeSwarmAttemptFailure declined card", () => {
+  // What the runner stores after a declined card paused auto-reload: the
+  // backend's sentence under the generic code, with the refusal reason gone.
+  const DECLINED =
+    "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.";
+
+  it("names the card instead of an empty balance or a hold", () => {
+    const result = describeSwarmAttemptFailure(
+      DECLINED,
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Card declined");
+    expect(result.oneLine).toMatch(/update your payment method/i);
+    expect(result.slug).toBe(ERROR_CATALOG["provider/mcpjam_limit"].slug);
+    expect(result.rawMessage).toBe(DECLINED);
+  });
+
+  it("reads the structured reason over a held-credits sentence", () => {
+    const result = describeSwarmAttemptFailure(
+      'Backend stream error: 429 {"code":"user_rate_limit","refusalReason":"auto_topup_declined","error":"MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits."}',
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Card declined");
+  });
+});

@@ -2,6 +2,11 @@ import { messagePartPlainText } from "@/shared/plugin-message";
 import { looksLikeErrorPage } from "@/shared/error-page";
 import { PROVIDER_NOT_ALLOWLISTED_CODE } from "@/lib/provider-not-allowlisted";
 import {
+  AUTO_TOPUP_DECLINED_CODE,
+  AUTO_TOPUP_DECLINED_MESSAGE,
+} from "@/lib/mcpjam-limit";
+import { isDeclinedCardRefusal } from "@/shared/swarm-attempt-error";
+import {
   formatOrgKeysRefusalEnvelope,
   formatPrefixedOrgKeysRefusal,
 } from "./org-keys-error";
@@ -492,6 +497,15 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         details,
       );
       if (orgKeysRefusal) return orgKeysRefusal;
+
+      // A declined card, not a spent allowance: the top-up dialog would hide it.
+      if (isDeclinedCardRefusal(parsed.refusalReason, message))
+        return {
+          code: AUTO_TOPUP_DECLINED_CODE,
+          message: AUTO_TOPUP_DECLINED_MESSAGE,
+          isRetryable: false,
+          isMCPJamPlatformError: true,
+        };
 
       if (isMCPJamModelLimit(code, message, details)) {
         return formatMCPJamModelLimit(

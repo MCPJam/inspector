@@ -2,6 +2,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ErrorBox } from "../error";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import {
+  AUTO_TOPUP_DECLINED_CODE,
+  AUTO_TOPUP_DECLINED_MESSAGE,
+} from "@/lib/mcpjam-limit";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 beforeEach(() => {
@@ -365,3 +369,22 @@ it("keeps reset and omits upgrade advice when no upgrade action is available", (
   fireEvent.click(screen.getByRole("button", { name: "Reset chat" }));
   expect(reset).toHaveBeenCalledOnce();
 });
+
+describe("ErrorBox declined card", () => {
+  it("names the card and offers no retry or credits dialog", () => {
+    render(
+      <ErrorBox
+        message={AUTO_TOPUP_DECLINED_MESSAGE}
+        code={AUTO_TOPUP_DECLINED_CODE}
+        isRetryable={false}
+        onRetry={vi.fn()}
+        onResetChat={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Card declined")).toBeInTheDocument();
+    expect(screen.getByText(AUTO_TOPUP_DECLINED_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+});
+

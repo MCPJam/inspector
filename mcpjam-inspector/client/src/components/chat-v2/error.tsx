@@ -15,6 +15,8 @@ import {
 } from "@mcpjam/design-system/collapsible";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
+  AUTO_TOPUP_DECLINED_CODE,
+  AUTO_TOPUP_DECLINED_MESSAGE,
   isMCPJamModelLimitError,
   isSpendBudgetReachedCode,
   SPEND_BUDGET_REACHED_MESSAGE,
@@ -390,7 +392,11 @@ export function ErrorBox({
     );
   }
 
-  if (isSpendBudgetReached) {
+  // A declined card stopped auto-reload. Retrying meets the same refusal, so
+  // like a budget the banner names the fix (the card, or adding credits)
+  // rather than offering a retry.
+  const isDeclinedCard = code === AUTO_TOPUP_DECLINED_CODE;
+  if (isSpendBudgetReached || isDeclinedCard) {
     // An owner or admin capped what this organization may spend per billing
     // window, and the window is spent. Buying credits does not clear it and
     // retrying sends the same request into the same cap, so this banner
@@ -400,9 +406,13 @@ export function ErrorBox({
         <div className="flex items-start gap-3">
           <ShieldAlert className="h-6 w-6 flex-shrink-0 text-warning" />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium leading-6">Spend budget reached</p>
+            <p className="text-sm font-medium leading-6">
+              {isDeclinedCard ? "Card declined" : "Spend budget reached"}
+            </p>
             <p className="text-sm leading-6 opacity-90">
-              {SPEND_BUDGET_REACHED_MESSAGE}
+              {isDeclinedCard
+                ? AUTO_TOPUP_DECLINED_MESSAGE
+                : SPEND_BUDGET_REACHED_MESSAGE}
             </p>
           </div>
           {onResetChat ? (
