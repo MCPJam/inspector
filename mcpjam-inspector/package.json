@@ -254,7 +254,7 @@
   },
   "devDependencies": {
     "@chromatic-com/playwright": "1.0.0",
-    "@electron-forge/cli": "^7.11.1",
+    "@electron-forge/cli": "^8.0.0",
     "@electron-forge/maker-deb": "^7.11.1",
     "@electron-forge/maker-dmg": "^7.11.1",
     "@electron-forge/maker-rpm": "^7.11.1",
@@ -309,7 +309,7 @@
     "typescript": "^5",
     "vite": "^8.3.0",
     "vite-tsconfig-paths": "^6.0.4",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   },
   "overrides": {
     "tmp": "0.2.5",
