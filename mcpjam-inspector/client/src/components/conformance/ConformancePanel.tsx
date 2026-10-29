@@ -41,13 +41,21 @@ import {
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
-import { useConformanceRun, type SuiteState } from "@/hooks/use-conformance-run";
+import {
+  useConformanceRun,
+  type ProtocolVersionPin,
+  type SuiteState,
+} from "@/hooks/use-conformance-run";
 import {
   PersistConformanceRun,
   type ConformancePersistConfig,
 } from "@/components/conformance/PersistConformanceRun";
 
 const NO_SERVER_MESSAGE = "Connect an MCP server to run conformance checks.";
+
+function pinLabel(pin: ProtocolVersionPin): string {
+  return pin === "auto" ? "Auto" : pin;
+}
 
 function SuiteBadge({ state }: { state: SuiteState }) {
   if (state.status === "running") {
@@ -202,6 +210,7 @@ function ConformanceContent({
     versionPin,
     setVersionPin,
     runVersion,
+    runVersionPin,
     runAll,
     protocolScore,
     appsScore,
@@ -214,9 +223,12 @@ function ConformanceContent({
     skipOAuth,
   } = snapshot;
 
+  // Labels and the catalog describe the results on screen, so they follow the
+  // pin those results were run with; the dropdown only sets the next run.
+  const resultsPin = runVersionPin ?? versionPin;
   const protocolChecks = useMemo(
-    () => protocolCatalog(versionPin),
-    [versionPin],
+    () => protocolCatalog(resultsPin),
+    [resultsPin],
   );
   const protocolPendingIds = pendingIdSet(protocol.result);
   const tasksPendingIds = pendingIdSet(tasks.result);
@@ -241,6 +253,8 @@ function ConformanceContent({
     setStarted(true);
     runAll();
   };
+  const staleResults =
+    runVersionPin !== null && !isRunning && runVersionPin !== versionPin;
   const hasStarted =
     started ||
     isRunning ||
@@ -322,8 +336,7 @@ function ConformanceContent({
                   score={pooledScore}
                   serverName={server.name}
                   version={
-                    pooledScore?.protocolVersion ??
-                    (versionPin === "auto" ? "Auto" : versionPin)
+                    pooledScore?.protocolVersion ?? pinLabel(resultsPin)
                   }
                   isRunning={isRunning}
                   oauthNotScored={oauthNotScored}
@@ -347,6 +360,17 @@ function ConformanceContent({
                   }
                 />
 
+                {staleResults && (
+                  <div
+                    role="status"
+                    className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed"
+                  >
+                    These results are from the previous run with protocol{" "}
+                    {pinLabel(resultsPin)}. Run again to check{" "}
+                    {pinLabel(versionPin)}.
+                  </div>
+                )}
+
                 {waitingOnAuthorization > 0 && (
                   <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs leading-relaxed">
                     This server requires sign-in, and this run had no valid
@@ -365,7 +389,7 @@ function ConformanceContent({
                     score={protocolScore}
                     catalog={protocolChecks}
                     catalogNote={
-                      versionPin === "auto"
+                      resultsPin === "auto"
                         ? "The negotiated version decides which era's checks run."
                         : undefined
                     }

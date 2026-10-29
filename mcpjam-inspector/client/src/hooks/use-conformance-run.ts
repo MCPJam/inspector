@@ -238,6 +238,11 @@ export interface UseConformanceRunResult {
   setVersionPin: (pin: ProtocolVersionPin) => void;
   /** Bumped on every fresh run — a render key for per-suite disclosure state. */
   runVersion: number;
+  /**
+   * The pin the current results were run with; null before the first run.
+   * `versionPin` is the next run's setting and can drift from this.
+   */
+  runVersionPin: ProtocolVersionPin | null;
   runAll: () => Promise<void>;
   /** Open the parked OAuth authorization popup. No-op unless parked. */
   authorizeOAuth: () => void;
@@ -277,6 +282,8 @@ export function useConformanceRun({
   );
   const [versionPin, setVersionPin] = useState<ProtocolVersionPin>("auto");
   const [runVersion, setRunVersion] = useState(0);
+  const [runVersionPin, setRunVersionPin] =
+    useState<ProtocolVersionPin | null>(null);
 
   const activeServerNameRef = useRef(server.name);
   const latestRunTokenRef = useRef(0);
@@ -341,6 +348,7 @@ export function useConformanceRun({
       pendingOAuthRef.current = null;
       clearOAuthListeners();
       setRunVersion((value) => value + 1);
+      setRunVersionPin(null);
       setProtocol(createProtocolState(currentServer));
       setApps(createAppsState(currentServer));
       setTasks(createTasksState(currentServer));
@@ -713,6 +721,7 @@ export function useConformanceRun({
     const httpServerNow = isHttpServer(currentServer);
 
     setRunVersion((value) => value + 1);
+    setRunVersionPin(versionPin);
     setProtocol(createProtocolState(currentServer));
     setApps(createAppsState(currentServer));
     setTasks(createTasksState(currentServer));
@@ -729,7 +738,7 @@ export function useConformanceRun({
     }
 
     await Promise.allSettled(promises);
-  }, [beginRun, runApps, runOAuth, runProtocol, runTasks, server]);
+  }, [beginRun, runApps, runOAuth, runProtocol, runTasks, server, versionPin]);
 
   // Scores are derived, never stored: each finished suite contributes, and
   // the headline pools their COUNTS (not an average of suite scores), so a
@@ -772,6 +781,7 @@ export function useConformanceRun({
     versionPin,
     setVersionPin,
     runVersion,
+    runVersionPin,
     runAll,
     authorizeOAuth,
     openAuthorizationWindow,
