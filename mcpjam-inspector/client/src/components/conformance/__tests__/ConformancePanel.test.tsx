@@ -1387,7 +1387,7 @@ describe("ConformanceTab", () => {
         passed: false,
         outcome: "not-applicable",
         summary:
-          "OAuth conformance not applicable for https://example.com/mcp: the server served an unauthenticated request instead of challenging, and authorization is OPTIONAL in 2025-11-25",
+          "No login required: the server answered without a token.",
       }),
     });
 
@@ -1397,7 +1397,7 @@ describe("ConformanceTab", () => {
     // The reason replaces the suite's description, under a neutral chip
     // rather than a red failure.
     const header = screen
-      .getByText(/OAuth conformance not applicable/)
+      .getByText(/No login required/)
       .closest("button")!;
     expect(within(header).getByText("NOT APPLICABLE")).toBeDefined();
     expect(within(header).queryByText("FAILED")).toBeNull();
