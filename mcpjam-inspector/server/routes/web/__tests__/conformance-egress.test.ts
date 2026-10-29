@@ -14,6 +14,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 const runProtocolConformanceMock = vi.hoisted(() => vi.fn());
 const startOAuthConformanceMock = vi.hoisted(() => vi.fn());
 const authorizeServerMock = vi.hoisted(() => vi.fn());
+const runAppsConformanceMock = vi.hoisted(() => vi.fn());
+const toHttpConfigMock = vi.hoisted(() => vi.fn());
 const serverUrlRef = vi.hoisted(() => ({
   current: "https://mcp.example.test/mcp",
 }));
@@ -33,11 +35,7 @@ vi.mock("../auth.js", async () => {
     },
     projectServerSchema: z.object({}).passthrough(),
     authorizeServer: authorizeServerMock,
-    toHttpConfig: (_auth: unknown, timeoutMs: number) => ({
-      url: serverUrlRef.current,
-      requestInit: { headers: {} },
-      timeout: timeoutMs,
-    }),
+    toHttpConfig: toHttpConfigMock,
   };
 });
 
@@ -45,7 +43,7 @@ vi.mock("../../shared/conformance", () => ({
   runProtocolConformance: runProtocolConformanceMock,
   startOAuthConformance: startOAuthConformanceMock,
   runTasksConformance: vi.fn(),
-  runAppsConformance: vi.fn(),
+  runAppsConformance: runAppsConformanceMock,
   completeOAuthConformance: vi.fn(),
   submitOAuthConformanceCode: vi.fn(),
   UnsupportedTransportError: class extends Error {},
@@ -99,6 +97,14 @@ beforeEach(() => {
     result: { outcome: "passed", checks: [] },
   });
   startOAuthConformanceMock.mockResolvedValue({ phase: "complete" });
+  runAppsConformanceMock.mockResolvedValue({
+    result: { outcome: "passed", checks: [] },
+  });
+  toHttpConfigMock.mockImplementation((_auth: unknown, timeoutMs: number) => ({
+    url: serverUrlRef.current,
+    requestInit: { headers: {} },
+    timeout: timeoutMs,
+  }));
 });
 
 afterEach(() => {
@@ -188,6 +194,68 @@ describe("hosted conformance — oauthProfile.serverUrl", () => {
       );
       expect(res.status).toBe(200);
       expect(startOAuthConformanceMock).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+/**
+ * Hosted OAuth keeps the token server-side, so the browser usually has no
+ * copy. The suites must use the token the backend saved for the row, and never
+ * one the browser sends.
+ */
+describe("hosted conformance — credentials", () => {
+  const withSavedToken = (token: string | null) =>
+    authorizeServerMock.mockImplementation(async () => ({
+      serverConfig: { transportType: "http", url: serverUrlRef.current },
+      oauthAccessToken: token,
+    }));
+  const body = {
+    projectId: "p1",
+    serverId: "s1",
+    oauthAccessToken: "browser-token",
+  };
+
+  it("protocol sends the saved token, not the browser one", async () => {
+    withSavedToken("saved-token");
+    await withHostedMode(true, async () => {
+      const res = await post("/protocol", body);
+      expect(res.status).toBe(200);
+      const config = runProtocolConformanceMock.mock.calls[0][0];
+      expect(config.customHeaders).toEqual({
+        Authorization: "Bearer saved-token",
+      });
+    });
+  });
+
+  it("protocol sends no token when none is saved, even if the browser sends one", async () => {
+    withSavedToken(null);
+    await withHostedMode(true, async () => {
+      const res = await post("/protocol", body);
+      expect(res.status).toBe(200);
+      const config = runProtocolConformanceMock.mock.calls[0][0];
+      expect(config.customHeaders).toBeUndefined();
+    });
+  });
+
+  it("the OAuth suite starts with no token, so it can see the 401", async () => {
+    withSavedToken("saved-token");
+    await withHostedMode(true, async () => {
+      const res = await post("/oauth/start", {
+        ...body,
+        callbackOrigin: "https://app.mcpjam.com",
+      });
+      expect(res.status).toBe(200);
+      const input = startOAuthConformanceMock.mock.calls[0][0];
+      expect(input.defaultCustomHeaders).toBeUndefined();
+    });
+  });
+
+  it("apps passes the saved token to the connection config", async () => {
+    withSavedToken("saved-token");
+    await withHostedMode(true, async () => {
+      const res = await post("/apps", body);
+      expect(res.status).toBe(200);
+      expect(toHttpConfigMock.mock.calls[0][2]).toBe("saved-token");
     });
   });
 });

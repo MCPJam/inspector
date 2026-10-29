@@ -72,11 +72,19 @@ async function assertConformanceTarget(
   }
 }
 
-/** Resolve HTTP server URL and headers for conformance from authorized config. */
+/**
+ * Resolve HTTP server URL and headers for conformance from authorized config.
+ *
+ * The credential is the one the backend saved for this server row, never one
+ * the browser sends: hosted OAuth keeps tokens server-side, so a browser copy
+ * is usually absent. `attachSavedToken: false` is for the OAuth suite, which
+ * runs its own flow and must start unauthenticated to see the 401.
+ */
 async function resolveHostedHttpConfig(
   c: any,
   bearerToken: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  options: { attachSavedToken: boolean }
 ): Promise<{
   serverUrl: string;
   accessToken?: string;
@@ -111,10 +119,9 @@ async function resolveHostedHttpConfig(
     );
   }
 
-  const oauthToken =
-    typeof wsBody.oauthAccessToken === "string"
-      ? wsBody.oauthAccessToken
-      : undefined;
+  const oauthToken = options.attachSavedToken
+    ? auth.oauthAccessToken ?? undefined
+    : undefined;
   const headers: Record<string, string> = {
     ...(auth.serverConfig.headers ?? {}),
   };
@@ -131,7 +138,10 @@ async function resolveHostedHttpConfig(
   };
 }
 
-/** Resolve any-transport server config for Apps/Tasks conformance on hosted. */
+/**
+ * Resolve any-transport server config for Apps/Tasks conformance on hosted.
+ * Uses the backend's saved token, as `resolveHostedHttpConfig` does.
+ */
 async function resolveHostedServerConfig(
   c: any,
   bearerToken: string,
@@ -153,9 +163,7 @@ async function resolveHostedServerConfig(
   const httpConfig = toHttpConfig(
     auth,
     WEB_CALL_TIMEOUT_MS,
-    typeof wsBody.oauthAccessToken === "string"
-      ? wsBody.oauthAccessToken
-      : undefined,
+    auth.oauthAccessToken ?? undefined,
     wsBody.clientCapabilities as Record<string, unknown> | undefined
   );
 
@@ -231,7 +239,9 @@ conformanceWeb.post("/protocol", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
+      attachSavedToken: true,
+    });
     const parsed = parseWithSchema(protocolSchema, body);
 
     try {
@@ -346,7 +356,9 @@ conformanceWeb.post("/oauth/start", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
+      attachSavedToken: false,
+    });
     const parsed = parseWithSchema(oauthStartSchema, body);
 
     if (!parsed.callbackOrigin) {
