@@ -77,7 +77,7 @@ it("passes the authorized lease deadline to the gate without a five-minute cap",
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
-      params: { name: "read" },
+      params: { name: "read", _meta: { "claudecode/toolUseId": "toolu_native" } },
     }),
   });
   expect(response.status).toBe(200);
@@ -86,6 +86,7 @@ it("passes the authorized lease deadline to the gate without a five-minute cap",
       operation: expect.objectContaining({
         expiresAt: state.expiresAt,
         turnId: "current-lease-turn",
+        nativeToolCallId: "toolu_native",
       }),
     }),
   );

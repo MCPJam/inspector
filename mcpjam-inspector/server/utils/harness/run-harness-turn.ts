@@ -2582,6 +2582,7 @@ export async function runHarnessTurn(
           if (!broker.forwarding || !harnessMcpProxy) throw new Error("Native forwarding was not confirmed.");
           nativeForwarding = await prepareNativeForwarding({ ...broker.forwarding, expiresAt: broker.expiresAt, turnId: turnRunId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer });
           ({ mcpJson, keyToServerId } = nativeForwarding);
+          harnessKeyToServerId = keyToServerId;
         }
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
         modelEndpoint = org.brokeredEndpoint;
@@ -3865,7 +3866,10 @@ export async function runHarnessTurn(
               break harnessStream;
             }
             // Provider-executed (in-sandbox) — see tool-input-available above.
-            if (errorEvent) {
+            const rawNativeResult = nativeForwarding && meta.serverId && !policyBlock
+              ? await nativeForwarding.readToolResult(meta.serverId, toolCallId)
+              : undefined;
+            if (errorEvent && rawNativeResult === undefined) {
               emitToolOutputError(writer, {
                 toolCallId,
                 errorText: harnessToolErrorText(part),
@@ -3874,7 +3878,7 @@ export async function runHarnessTurn(
             } else {
               emitToolOutput(writer, {
                 toolCallId,
-                output,
+                output: rawNativeResult ?? output,
                 providerMetadata: mergeMcpToolConnectionMetadata(
                   undefined,
                   accountByCall.get(toolCallId),
@@ -3892,6 +3896,7 @@ export async function runHarnessTurn(
                 toolCallId,
                 toolName: meta.toolName,
                 output,
+                ...(rawNativeResult !== undefined ? { rawResult: rawNativeResult } : {}),
                 isError,
                 stepIndex,
                 promptIndex,

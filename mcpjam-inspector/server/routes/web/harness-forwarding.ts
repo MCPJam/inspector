@@ -17,6 +17,7 @@ import {
 } from "../../utils/harness/forwarding/approval.js";
 import { forwardNativeMcp } from "../../utils/harness/forwarding/native-transport.js";
 import { createNativeRpcLogger } from "../../utils/harness/forwarding/native-rpc-logs.js";
+import { nativeToolCallId } from "../../utils/harness/forwarding/native-results.js";
 import { nativeApprovalResponse } from "../../utils/harness/forwarding/native-approval-response.js";
 import {
   parseNativeMessage,
@@ -148,6 +149,9 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
             control,
             operation: {
               invocationKey: randomUUID(),
+              ...(message.method === "tools/call"
+                ? { nativeToolCallId: nativeToolCallId(message.params) }
+                : {}),
               turnId: caller.turnId,
               policyDigest: context.policyDigest,
               rpcId: message.id,
