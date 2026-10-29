@@ -26,7 +26,9 @@ export function CopyValueButton({ value, subject }: CopyValueButtonProps) {
         if (await copyToClipboard(value)) {
           setCopied(true);
         } else {
-          toast.error(`Could not copy the value for ${subject}.`);
+          toast.error(
+            `Could not copy the value for ${subject}. Show it and copy it from the field.`,
+          );
         }
       }}
       aria-label={`Copy value for ${subject}`}
