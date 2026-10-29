@@ -52,6 +52,8 @@ export type Settlement = {
 };
 export type ExecutionIntent = {
   invocationKey: string;
+  policyDigest?: string;
+  nativeToolCallId?: string;
   turnId: string;
   rpcId: string | number;
   method: string;
@@ -160,6 +162,12 @@ export function createExecutionControl(args: {
     return parsed.data;
   }
   return {
+    bindPolicy: (turnId: string, policyDigest: string) =>
+      post(
+        { kind: "bind_policy", turnId, policyDigest },
+        z.object({ bound: z.literal(true) }),
+        "owner",
+      ),
     authorize: () =>
       post(
         { kind: "authorize" },
@@ -169,10 +177,18 @@ export function createExecutionControl(args: {
           organizationId: z.string(),
           projectId: z.string(),
           expiresAt: z.number(),
+          turnId: z.string().min(1),
+          policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
         }),
       ),
     turnApprovals: (turnId: string) =>
       post({ kind: "turn_approvals", turnId }, z.array(receipt), "owner"),
+    nativeResult: (turnId: string, nativeToolCallId: string) =>
+      post(
+        { kind: "native_result", turnId, nativeToolCallId },
+        receipt,
+        "owner",
+      ),
     approvalContext: (executionId: string) =>
       post({ kind: "approval_context", executionId }, receipt, "owner"),
     answerApproval: (
