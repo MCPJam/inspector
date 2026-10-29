@@ -629,7 +629,6 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       "import_eval_cases",
       "run_eval_case",
-      "run_eval_suite",
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "ensure_adhoc_environment",
@@ -664,9 +663,6 @@ describe("platform tool registration", () => {
       "update_project",
       "archive_goal",
     ]);
-    // Writes whose effect leaves the caller's organization.
-    const EXTERNAL_COMMUNICATION = new Set(["send_feedback"]);
-
     const names = new Set(registrations.map((registration) => registration.name));
     for (const name of [...ADDITIVE_WRITES, ...IDEMPOTENT_WRITES]) {
       expect(names, `${name} is not a registered tool`).toContain(name);
@@ -678,6 +674,7 @@ describe("platform tool registration", () => {
         .annotations;
     for (const name of [
       "call_server_tool",
+      "run_eval_suite",
       "send_chat_message",
       "update_project",
       "update_project_server",
@@ -720,16 +717,18 @@ describe("platform tool registration", () => {
       );
 
       if (hints.readOnlyHint === true) {
-        expect(hints, registration.name).toEqual({ readOnlyHint: true });
+        expect(hints, registration.name).toEqual({
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: true,
+        });
         continue;
       }
       expect(hints, registration.name).toEqual({
         readOnlyHint: false,
         destructiveHint: !ADDITIVE_WRITES.has(registration.name),
         idempotentHint: IDEMPOTENT_WRITES.has(registration.name),
-        ...(EXTERNAL_COMMUNICATION.has(registration.name)
-          ? { openWorldHint: true }
-          : {}),
+        openWorldHint: true,
       });
     }
   });

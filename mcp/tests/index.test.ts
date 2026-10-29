@@ -516,7 +516,7 @@ describe("the served catalog meets Claude's directory criteria", () => {
     };
   }
 
-  it("gives every tool a title annotation, a short name and an explicit hint", async () => {
+  it("gives every tool a title, a short name and explicit directory safety hints", async () => {
     const { tools } = await servedCatalog();
     expect(tools.length).toBeGreaterThan(0);
     for (const tool of tools) {
@@ -525,6 +525,11 @@ describe("the served catalog meets Claude's directory criteria", () => {
         ""
       );
       expect(tool.annotations?.title, tool.name).toBe(tool.title);
+      for (const hint of ["readOnlyHint", "destructiveHint", "openWorldHint"]) {
+        expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe(
+          "boolean"
+        );
+      }
       if (tool.annotations?.readOnlyHint === true) continue;
       // Not left to the spec's "assume destructive" default: the directory
       // wants the hint stated on every tool that is not read-only.
