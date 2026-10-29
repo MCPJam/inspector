@@ -106,6 +106,11 @@ export interface OAuthSuiteState extends SuiteState {
    * window that never existed until the session expired.
    */
   popupBlocked?: boolean;
+  /**
+   * The user chose Skip OAuth. The suite reads "unavailable" like a server
+   * that needs no auth, but its checks were never run, not ruled out.
+   */
+  skipped?: boolean;
 }
 
 /**
@@ -698,6 +703,7 @@ export function useConformanceRun({
     setOAuth({
       status: "unavailable",
       unavailableReason: "OAuth was skipped, so it is not scored for this run.",
+      skipped: true,
     });
   }, [clearOAuthListeners]);
 

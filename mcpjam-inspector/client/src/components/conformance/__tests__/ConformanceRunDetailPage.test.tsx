@@ -252,6 +252,28 @@ describe("ConformanceRunDetailPage", () => {
     expect(fetchArtifactMock).not.toHaveBeenCalled();
   });
 
+  it("says a skipped suite was not run, not that nothing applies", () => {
+    useArtifactQueryMock.mockReturnValue(
+      run([
+        report(),
+        report({
+          suiteKind: "oauth",
+          status: "skipped",
+          score: null,
+          applicable: 0,
+          passed: 0,
+          incompleteReason: "OAuth was skipped.",
+        }),
+      ]),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    const oauth = screen.getByText("OAuth was skipped.").closest("button")!;
+    fireEvent.click(oauth);
+    expect(screen.getByText(/checks in this suite\. Not run\./)).toBeInTheDocument();
+    expect(screen.queryByText(/None apply to this server/)).toBeNull();
+  });
+
   it("opens a failed suite and loads its checks from the report", async () => {
     fetchArtifactMock.mockResolvedValue(
       reportBody([

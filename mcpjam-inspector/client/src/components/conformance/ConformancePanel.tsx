@@ -104,6 +104,7 @@ function SuiteSection({
   const waitingForAuth = Boolean(
     (state as { waitingForAuth?: boolean }).waitingForAuth,
   );
+  const skipped = Boolean((state as { skipped?: boolean }).skipped);
   const autoOpen =
     waitingForAuth ||
     state.status === "error" ||
@@ -142,7 +143,10 @@ function SuiteSection({
       }
     >
       {unavailable ? (
-        <CatalogList catalog={catalog} note=". None apply to this server." />
+        <CatalogList
+          catalog={catalog}
+          note={skipped ? ". Not run." : ". None apply to this server."}
+        />
       ) : hasResult ? (
         children
       ) : running ? (

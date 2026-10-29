@@ -968,6 +968,11 @@ describe("ConformanceTab", () => {
     expect(within(header!).getByText("NOT APPLICABLE")).toBeDefined();
     expect(within(header!).queryByText("FAILED")).toBeNull();
 
+    // The checks were skipped, not ruled out, so the list says so.
+    fireEvent.click(header!);
+    expect(screen.getByText(/checks in this suite\. Not run\./)).toBeDefined();
+    expect(screen.queryByText(/None apply to this server/)).toBeNull();
+
     // A consent that completes late cannot bring the suite back.
     window.dispatchEvent(
       new MessageEvent("message", {
