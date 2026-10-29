@@ -3391,9 +3391,8 @@ const suiteSettingsShape = {
        * `required` is the canonical spelling and `gating` its legacy one;
        * under vocabulary 1 only `gating` is accepted, because that is what
        * today's contract takes. The platform still refuses the value
-       * itself unless the suite is calibrated and the deployment allows a
-       * judge gate — this only makes the field reach the place that can
-       * refuse it.
+       * itself unless the suite is calibrated or an owner acknowledged the
+       * gap — this only makes the field reach the place that can refuse it.
        */
       role: z.enum(["advisory", "gating", "required"]).optional(),
       /**

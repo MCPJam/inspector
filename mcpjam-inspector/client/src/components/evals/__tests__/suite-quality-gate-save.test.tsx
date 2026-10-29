@@ -136,7 +136,6 @@ function readyCapabilities() {
         canUpgrade: true,
       },
       judge: {
-        gating: { enabled: false, reason: "not_enabled_on_deployment" },
         role: "advisory",
         hasRubric: false,
         agreement: {

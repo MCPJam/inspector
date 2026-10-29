@@ -22,7 +22,6 @@ function judgeCapabilities(
   patch: Partial<SuiteCapabilities["judge"]> = {},
 ): SuiteCapabilities["judge"] {
   return {
-    gating: { enabled: false, reason: "not_enabled_on_deployment" },
     role: "advisory",
     hasRubric: false,
     agreement: {
@@ -250,7 +249,6 @@ describe("SuiteScorerTable", () => {
           canUpgrade: true,
         },
         judge: judgeCapabilities({
-          gating: { enabled: true },
           agreement: {
             reviews: 20,
             agreements: 18,
@@ -311,7 +309,6 @@ describe("SuiteScorerTable", () => {
           canUpgrade: true,
         },
         judge: judgeCapabilities({
-          gating: { enabled: true },
           agreement: {
             reviews: 20,
             agreements: 18,
@@ -350,7 +347,7 @@ describe("SuiteScorerTable", () => {
     expect(within(row).queryByRole("group", { name: "Judge role" })).toBeNull();
   });
 
-  it("hides the judge's role switch when the deployment has no judge gating", () => {
+  it("offers the judge's role, holding Required until the judge is calibrated", () => {
     renderTable({
       capabilities: {
         suiteId: "s",
@@ -376,9 +373,14 @@ describe("SuiteScorerTable", () => {
       },
     });
     fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
-    // Required can never be picked here, so no switch is offered at all.
-    expect(screen.queryByRole("group", { name: "Judge role" })).toBeNull();
-    expect(screen.queryByTestId("judge-gate-disabled-reason")).toBeNull();
+    // The role is offered on every deployment; only calibration holds it.
+    const judgeRole = screen.getByRole("group", { name: "Judge role" });
+    expect(
+      within(judgeRole).getByRole("button", { name: "Required" }),
+    ).toBeDisabled();
+    expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
+      "Needs 20 blind reviewer labels agreeing at 80% or better",
+    );
     // The threshold stays editable.
     expect(screen.getByRole("spinbutton", { name: "Judge threshold" })).toBeTruthy();
   });

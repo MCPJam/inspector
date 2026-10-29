@@ -4,9 +4,8 @@
  * Everything here is rendered FROM SERVER FIELDS. The one number a client must
  * never derive is the agreement rate: `rate` is `null` at zero reviews, and
  * "0%" would report a judge that disagrees with every reviewer rather than one
- * nobody has reviewed. The two refusals are also not interchangeable — a
- * deployment that cannot gate is not a suite that is not calibrated, and only
- * the second one names something a reader can do about it.
+ * nobody has reviewed. The one refusal, calibration, names what a reader can
+ * do about it.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -36,7 +35,6 @@ type Judge = SuiteCapabilities["judge"];
 
 function judge(overrides: Partial<Judge> = {}): Judge {
   return {
-    gating: { enabled: true },
     role: "advisory",
     hasRubric: true,
     agreement: {
@@ -52,6 +50,20 @@ function judge(overrides: Partial<Judge> = {}): Judge {
     acknowledgement: null,
     ...overrides,
   } as Judge;
+}
+
+/** Short of the label count, with no acknowledgement to cover the gap. */
+function uncalibrated(): Judge {
+  return judge({
+    agreement: {
+      ...judge().agreement,
+      reviews: 3,
+      agreements: 3,
+      rate: 1,
+      eligible: false,
+      reasons: ["insufficient_reviews"],
+    },
+  });
 }
 
 function renderPanel(
@@ -105,31 +117,10 @@ describe("describeAgreement", () => {
 });
 
 describe("gateSwitchDisabledReason", () => {
-  it("distinguishes a deployment that cannot gate from a suite that is not calibrated", () => {
-    expect(
-      gateSwitchDisabledReason(
-        judge({
-          gating: { enabled: false, reason: "not_enabled_on_deployment" },
-        }),
-      ),
-    ).toBe("Not available on this deployment");
-
-    // The calibration refusal names what would clear it; the deployment one
-    // cannot, because no amount of reviewing changes it.
-    expect(
-      gateSwitchDisabledReason(
-        judge({
-          agreement: {
-            ...judge().agreement,
-            reviews: 3,
-            agreements: 3,
-            rate: 1,
-            eligible: false,
-            reasons: ["insufficient_reviews"],
-          },
-        }),
-      ),
-    ).toBe("Needs 20 blind reviewer labels agreeing at 80% or better");
+  it("names what would clear an uncalibrated judge", () => {
+    expect(gateSwitchDisabledReason(uncalibrated())).toBe(
+      "Needs 20 blind reviewer labels agreeing at 80% or better",
+    );
   });
 
   it("clears once calibrated, or once an owner has acknowledged", () => {
@@ -156,19 +147,14 @@ describe("gateSwitchDisabledReason", () => {
 
 describe("JudgeGatePanel", () => {
   it("renders the switch disabled rather than hiding it", () => {
-    renderPanel({
-      judge: judge({
-        gating: { enabled: false, reason: "not_enabled_on_deployment" },
-      }),
-    });
-    // Hiding it would make "this deployment cannot gate" and "this suite is
-    // not calibrated" the same empty space.
+    renderPanel({ judge: uncalibrated() });
+    // Hiding it would leave an empty space where the next step belongs.
     const gate = screen.getByRole("switch", {
       name: "Let the judge decide pass or fail",
     });
     expect(gate).toBeDisabled();
     expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
-      "Not available on this deployment",
+      "Needs 20 blind reviewer labels agreeing at 80% or better",
     );
   });
 
@@ -221,16 +207,10 @@ describe("JudgeGatePanel", () => {
     ).toBeNull();
     unmount();
 
-    renderPanel({
-      judge: judge({
-        gating: { enabled: false, reason: "not_enabled_on_deployment" },
-        agreement: { ...judge().agreement, eligible: false },
-      }),
-    });
-    // A deployment that cannot gate cannot be acknowledged past either.
+    renderPanel({ judge: uncalibrated() });
     expect(
-      screen.queryByRole("button", { name: /Acknowledge and gate anyway/ }),
-    ).toBeNull();
+      screen.getByRole("button", { name: /Acknowledge and gate anyway/ }),
+    ).toBeTruthy();
   });
 
   it("requires a reason, and warns that it is stored with a name", async () => {
@@ -260,13 +240,11 @@ describe("JudgeGatePanel", () => {
   });
 
   it("lets a gate that has gone stale be lowered, never raised", async () => {
-    // The draft already gates and the deployment (or calibration) no longer
-    // allows it. Disabling the switch outright would trap the suite in a state
-    // the page itself says is not allowed; only turning it ON needs evidence.
+    // The draft already gates and calibration no longer allows it. Disabling
+    // the switch outright would trap the suite in a state the page itself
+    // says is not allowed; only turning it ON needs evidence.
     const user = userEvent.setup();
-    const stale = judge({
-      gating: { enabled: false, reason: "not_enabled_on_deployment" },
-    });
+    const stale = uncalibrated();
     const { onJudgeConfigChange, unmount } = renderPanel({
       judge: stale,
       role: "gating",
@@ -277,7 +255,7 @@ describe("JudgeGatePanel", () => {
     expect(gate).toBeEnabled();
     // The reason is still said, so the reader knows why it cannot go back up.
     expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
-      "Not available on this deployment",
+      "Needs 20 blind reviewer labels agreeing at 80% or better",
     );
     await user.click(gate);
     expect(onJudgeConfigChange).toHaveBeenCalledWith({

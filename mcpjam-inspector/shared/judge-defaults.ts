@@ -28,8 +28,9 @@ export type ResolvedGoalCompletionConfig = {
   /**
    * Whether this judge's verdict may DECIDE a trial or only describe it.
    *
-   * `advisory` is what every suite means unless it has been calibrated and the
-   * deployment allows gating, so it is the default here and in the backend.
+   * `advisory` is what every suite means unless it has been calibrated or an
+   * owner has acknowledged the gap, so it is the default here and in the
+   * backend.
    * `gating` is a different product: the run holds until the judge lands, a
    * failing judge can only make a trial stricter, and a judge error becomes an
    * evaluator error.

@@ -13,10 +13,9 @@
  * how 0/0 becomes a number. The switch's eligibility is `agreement.eligible`
  * as the server decided it, beside the acknowledgement it decided too.
  *
- * THE SWITCH IS NEVER HIDDEN. A deployment that does not run the gate renders
- * it disabled, saying so — hiding it makes "this deployment cannot gate" and
- * "this suite is not calibrated" the same empty space, which is the failure S3
- * exists to stop.
+ * THE SWITCH IS NEVER HIDDEN. A suite that is not calibrated renders it
+ * disabled, saying what would clear it — hiding it would leave the reader with
+ * an empty space and no next step, which is the failure S3 exists to stop.
  */
 
 import { useState } from "react";
@@ -34,7 +33,6 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useMutation } from "convex/react";
 import { toast } from "@/lib/toast";
-import { DEPLOYMENT_REASON_COPY } from "./capability-reasons";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import type { EvalJudgeConfig } from "./types";
 
@@ -72,9 +70,8 @@ export function describeAgreement(
 /**
  * Why the gate switch cannot be used, or `undefined` when it can.
  *
- * Two refusals, and they are not interchangeable. The DEPLOYMENT one is about
- * the environment and no amount of reviewing changes it; the CALIBRATION one is
- * about this suite and names exactly what would clear it.
+ * The one refusal is CALIBRATION: it is about this suite and names exactly
+ * what would clear it.
  */
 export function gateSwitchDisabledReason(
   judge: SuiteCapabilities["judge"] | undefined,
@@ -82,12 +79,8 @@ export function gateSwitchDisabledReason(
   unavailableReason?: string,
 ): string | undefined {
   if (!judge) {
-    return (
-      unavailableReason ??
-      "Checking whether this deployment allows judge gating…"
-    );
+    return unavailableReason ?? "Checking the judge's calibration…";
   }
-  if (!judge.gating.enabled) return DEPLOYMENT_REASON_COPY;
   if (judge.agreement.eligible || judge.acknowledgement?.current) {
     return undefined;
   }
@@ -137,7 +130,7 @@ export function JudgeGatePanel({
   // who is not an organization owner, and rendering that refusal is more
   // honest than guessing at rank in the client.
   const canOfferAcknowledgement =
-    judge?.gating.enabled === true &&
+    judge !== undefined &&
     !judge.agreement.eligible &&
     !judge.acknowledgement?.current;
 
@@ -196,8 +189,8 @@ export function JudgeGatePanel({
         <Switch
           checked={isGating}
           // Only turning the gate ON needs the evidence. A draft that already
-          // gates while calibration has lapsed (or the deployment turned the
-          // gate off) must still be able to come back down to advisory.
+          // gates while calibration has lapsed must still be able to come back
+          // down to advisory.
           disabled={disabledReason !== undefined && !isGating}
           aria-label="Let the judge decide pass or fail"
           onCheckedChange={(checked) => {

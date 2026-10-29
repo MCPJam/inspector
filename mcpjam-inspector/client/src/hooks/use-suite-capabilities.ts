@@ -109,7 +109,6 @@ export type SuiteCapabilities = {
     scheduledEvals: { enabled: boolean };
   };
   judge: {
-    gating: { enabled: boolean; reason?: "not_enabled_on_deployment" };
     role: "advisory" | "gating";
     hasRubric: boolean;
     agreement: SuiteJudgeAgreement;
