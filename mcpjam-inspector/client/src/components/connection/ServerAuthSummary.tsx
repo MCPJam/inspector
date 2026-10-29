@@ -1,10 +1,21 @@
+import { useEffect, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import { Pencil } from "lucide-react";
 import type { ServerAuth } from "./server-auth";
+import type { ServerAuthReveal } from "./hooks/use-server-auth-reveal";
+import { useMaskedValues } from "./hooks/use-masked-values";
 import { AUTH_METHOD_LABELS } from "./shared/auth-method-labels";
+import { CopyValueButton } from "./shared/CopyValueButton";
+import { HiddenValuesField } from "./shared/HiddenValuesField";
+import { MaskedValueInput } from "./shared/MaskedValueInput";
+import { StoredKeyRows } from "./shared/StoredKeyRows";
 
 interface ServerAuthSummaryProps {
   auth: ServerAuth;
+  reveal: ServerAuthReveal;
+  /** Binds show/hide state to one server, see `useMaskedValues`. */
+  serverKey: string;
   /** Switches the modal to the Config tab, where auth is edited. */
   onEditInConfig: () => void;
 }
@@ -26,15 +37,77 @@ function methodNote(auth: ServerAuth): string {
   }
 }
 
+const NOT_SAVED_TO_PROJECT =
+  "Save this server to a project to see its saved values.";
+
+/** Keeps a hidden field level with the rows beside it, which end in an 8x8
+ * action button. */
+function ActionSpacer() {
+  return <div aria-hidden="true" className="h-8 w-8 shrink-0" />;
+}
+
 /**
- * The read-only top of the Auth tab: which auth method the server uses and
- * where to change it. Every HTTP server gets one, so the tab is never blank for
- * servers that don't use OAuth.
+ * The read-only top of the Auth tab: which auth method the server uses, where
+ * to change it, and the token and headers it sends. Every HTTP server gets one,
+ * so the tab is never blank for servers that don't use OAuth.
+ *
+ * The rows are the Config form's own: `MaskedValueInput` in the header
+ * editor's name/value layout, with `StoredKeyRows` and `HiddenValuesField` for
+ * values still on the server. Copy takes the slot where the editor puts its
+ * remove button.
  */
 export function ServerAuthSummary({
   auth,
+  reveal,
+  serverKey,
   onEditInConfig,
 }: ServerAuthSummaryProps) {
+  const maskedBearer = useMaskedValues(`${serverKey}:bearer`);
+  const maskedHeaders = useMaskedValues(`${serverKey}:headers`);
+  const [pendingRevealKey, setPendingRevealKey] = useState<string | null>(null);
+
+  const bearerToken =
+    auth.bearer?.kind === "value"
+      ? auth.bearer.token
+      : reveal.revealed?.bearerToken;
+  const headerEntries =
+    auth.headers?.kind === "values"
+      ? auth.headers.entries
+      : (reveal.revealed?.entries ?? []);
+  const headersHidden = auth.headers?.kind === "stored" && !reveal.revealed;
+
+  // Same as the header editor: the eye on a stored row fetches the whole set,
+  // then uncovers only the row that was clicked.
+  useEffect(() => {
+    if (!pendingRevealKey) return;
+    const index = headerEntries.findIndex(([key]) => key === pendingRevealKey);
+    if (index === -1) return;
+    maskedHeaders.show(index);
+    setPendingRevealKey(null);
+  }, [headerEntries, maskedHeaders, pendingRevealKey]);
+
+  // One fetch reveals the token and the headers together, so its error shows
+  // once: under the token when there is one, else under the headers.
+  const revealError = reveal.error?.message ?? null;
+  const onReveal =
+    reveal.canReveal && reveal.error?.retryable !== false
+      ? () => void reveal.reveal()
+      : undefined;
+
+  const showBearer = auth.method === "bearer" && auth.bearer !== null;
+  const bearerHidden = showBearer && bearerToken === undefined;
+  // A synced bearer token is saved as an Authorization header, so until the
+  // names say otherwise, the hidden headers may be that token alone.
+  const headerNamesPending =
+    headersHidden && reveal.headerNames === null && reveal.canReveal;
+  const showHiddenHeaders =
+    headersHidden &&
+    (reveal.headerNames === null
+      ? !(bearerHidden && headerNamesPending)
+      : reveal.headerNames.length > 0);
+  const showHeaders = headerEntries.length > 0 || showHiddenHeaders;
+  const cannotReveal = (bearerHidden || headersHidden) && !reveal.canReveal;
+
   return (
     <div className="space-y-3 pt-2 text-xs">
       <div className="flex items-center justify-between gap-3">
@@ -59,6 +132,114 @@ export function ServerAuthSummary({
           </div>
           <p className="text-muted-foreground">{methodNote(auth)}</p>
         </div>
+
+        {showBearer && (
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-foreground">Token</div>
+            {bearerToken !== undefined ? (
+              <div className="flex items-center gap-1.5">
+                <MaskedValueInput
+                  value={bearerToken}
+                  onChange={() => {}}
+                  readOnly
+                  visible={maskedBearer.isVisible(0)}
+                  onToggleVisibility={() => maskedBearer.toggle(0)}
+                  inputLabel="Bearer token value"
+                  subject="bearer token"
+                  className="flex-1"
+                />
+                <CopyValueButton value={bearerToken} subject="bearer token" />
+              </div>
+            ) : (
+              <div className="flex items-start gap-1.5">
+                <div className="flex-1">
+                  <HiddenValuesField
+                    subject="bearer token"
+                    isRevealing={reveal.isRevealing}
+                    error={revealError}
+                    onReveal={
+                      onReveal &&
+                      (async () => {
+                        if (await reveal.reveal()) maskedBearer.show(0);
+                      })
+                    }
+                  />
+                </div>
+                <ActionSpacer />
+              </div>
+            )}
+          </div>
+        )}
+
+        {showHeaders && (
+          <div className="space-y-1.5 border-t border-border/60 pt-3">
+            <div className="text-xs font-medium text-foreground">
+              Custom headers
+            </div>
+            {headerEntries.length > 0 ? (
+              headerEntries.map(([key, value], index) => (
+                <div key={key} className="flex items-center gap-1.5">
+                  <Input
+                    value={key}
+                    readOnly
+                    aria-readonly
+                    spellCheck={false}
+                    aria-label={`Header ${index + 1} name`}
+                    className="h-8 flex-1 font-mono text-xs"
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="shrink-0 select-none text-xs text-muted-foreground/70"
+                  >
+                    :
+                  </span>
+                  <MaskedValueInput
+                    value={value}
+                    onChange={() => {}}
+                    readOnly
+                    visible={maskedHeaders.isVisible(index)}
+                    onToggleVisibility={() => maskedHeaders.toggle(index)}
+                    inputLabel={`Header ${index + 1} value`}
+                    subject={key}
+                    className="flex-[1.4]"
+                  />
+                  <CopyValueButton value={value} subject={key} />
+                </div>
+              ))
+            ) : reveal.headerNames && reveal.headerNames.length > 0 ? (
+              <StoredKeyRows
+                keys={reveal.headerNames}
+                separator=":"
+                rowNoun="Header"
+                isRevealing={reveal.isRevealing}
+                error={bearerHidden ? null : revealError}
+                onReveal={
+                  onReveal &&
+                  ((key) => {
+                    setPendingRevealKey(key);
+                    void reveal.reveal();
+                  })
+                }
+              />
+            ) : (
+              <div className="flex items-start gap-1.5">
+                <div className="flex-1">
+                  <HiddenValuesField
+                    subject="headers"
+                    isRevealing={reveal.isRevealing}
+                    error={bearerHidden ? null : revealError}
+                    onReveal={onReveal}
+                  />
+                </div>
+                <ActionSpacer />
+              </div>
+            )}
+          </div>
+        )}
+
+        {cannotReveal && (
+          <p className="text-muted-foreground">{NOT_SAVED_TO_PROJECT}</p>
+        )}
       </div>
     </div>
   );
