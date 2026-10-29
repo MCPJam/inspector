@@ -4,11 +4,11 @@ import {
   streamText,
   stepCountIs,
   type ToolSet,
+  type LanguageModel,
   type ToolChoice,
   type Tool as AiTool,
 } from "ai";
 import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
-import type { createLlmModel } from "./chat-helpers";
 import {
   appendDedupedModelMessages,
   normalizeFinishReason,
@@ -291,7 +291,7 @@ export interface DirectChatTurnEngineErrorEvent {
 }
 
 export interface RunDirectChatTurnOptions {
-  llmModel: ReturnType<typeof createLlmModel>;
+  llmModel: LanguageModel;
   modelId: string;
   /**
    * Logical provider for span metadata (OTel `gen_ai.provider.name`, e.g.
@@ -748,7 +748,7 @@ export function runDirectChatTurn(
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
       : {}),
-    prepareStep: ({ stepNumber, messages: stepMessages }) => {
+    prepareStep: async ({ stepNumber, messages: stepMessages }) => {
       currentStepIndex = stepNumber;
       registerAiSdkPrepareStep(traceContext, stepNumber, {
         modelId,
@@ -769,7 +769,7 @@ export function runDirectChatTurn(
       // stream-handler hook: names outside the default set are ignored, and a
       // throw is logged + falls back to the default set.
       if (prepareAdvertisedTools) {
-        activeToolNames = applyPrepareAdvertisedTools({
+        activeToolNames = await applyPrepareAdvertisedTools({
           defaultToolNames: activeToolNames ?? Object.keys(tools),
           stepIndex: stepNumber,
           prepareAdvertisedTools,

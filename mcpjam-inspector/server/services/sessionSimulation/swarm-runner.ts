@@ -1,6 +1,7 @@
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { readTasksPolicy } from "@mcpjam/sdk";
+import { resolveBrowserHostCapabilities } from "../../utils/browser-host-capabilities.js";
 import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
@@ -10,7 +11,7 @@ import {
 } from "../../../shared/swarm-attempt-error.js";
 import type { SpendRefusal } from "./admission-retry.js";
 import { prepareTargetGrounding } from "./target-grounding";
-import { SwarmSetupError } from "./swarm-setup-turn";
+import { SwarmSetupError, setupFailureMessage } from "./swarm-setup-turn";
 import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits";
 import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
 import { composeAbortSignals } from "@mcpjam/sdk";
@@ -1124,12 +1125,8 @@ async function runJourneyFanOut(
           (err instanceof Error ? err.message : String(err));
         logger.error(
           "[swarm.runner] harness admission threw; refusing target",
-          {
-            runId,
-            hostId,
-            targetId,
-            error: err instanceof Error ? err.message : String(err),
-          },
+          err,
+          { runId, hostId, targetId },
         );
       }
 
@@ -1247,13 +1244,8 @@ async function runJourneyFanOut(
         } catch (err) {
           logger.error(
             "[swarm.runner] attempt claim failed; skipping session",
-            {
-              runId,
-              hostId,
-              targetId,
-              sessionIdx,
-              error: err instanceof Error ? err.message : String(err),
-            },
+            err,
+            { runId, hostId, targetId, sessionIdx },
           );
           continue;
         }
@@ -1350,6 +1342,7 @@ async function runJourneyFanOut(
               `session cannot run ${sandboxConsumer.label} its target requires.`;
             logger.error(
               "[swarm.runner] a target needs a disposable sandbox but the data plane is unconfigured",
+              undefined,
               {
                 runId,
                 targetId,
@@ -1381,12 +1374,8 @@ async function runJourneyFanOut(
             }).catch((err) => {
               logger.error(
                 "[swarm.runner] failed to report sandbox-unavailable terminal",
-                {
-                  runId,
-                  targetId,
-                  sessionIdx,
-                  error: err instanceof Error ? err.message : String(err),
-                },
+                err,
+                { runId, targetId, sessionIdx },
               );
             });
             logEvent("attempt.finish", {
@@ -1480,12 +1469,8 @@ async function runJourneyFanOut(
               }).catch((err) => {
                 logger.error(
                   "[swarm.runner] failed to report sandbox-failure terminal",
-                  {
-                    runId,
-                    targetId,
-                    sessionIdx,
-                    error: err instanceof Error ? err.message : String(err),
-                  },
+                  err,
+                  { runId, targetId, sessionIdx },
                 );
               });
               // Same terminal accounting as every other exit, so attempts that
@@ -1538,6 +1523,7 @@ async function runJourneyFanOut(
             chatSessionId,
             maxTurns,
             runtime: {
+              hostCapabilities: resolveBrowserHostCapabilities(target),
               modelDefinition,
               ...(modelSelection ? { modelSelection } : {}),
               systemPrompt: target.systemPrompt,
@@ -1792,14 +1778,17 @@ async function runJourneyFanOut(
               sessionIdx,
               status: terminal.status,
             });
-            logger.error("[swarm.runner] terminal attempt report failed", {
-              runId,
-              hostId,
-              targetId,
-              sessionIdx,
-              status: terminal.status,
-              error: err instanceof Error ? err.message : String(err),
-            });
+            logger.error(
+              "[swarm.runner] terminal attempt report failed",
+              err,
+              {
+                runId,
+                hostId,
+                targetId,
+                sessionIdx,
+                status: terminal.status,
+              },
+            );
           }
 
           // Deterministic rubric grading, AWAITED and non-fatal.
@@ -1850,12 +1839,11 @@ async function runJourneyFanOut(
                 targetId,
                 sessionIdx,
               });
-              logger.error("[swarm.runner] rubric grading threw", {
+              logger.error("[swarm.runner] rubric grading threw", err, {
                 runId,
                 hostId,
                 targetId,
                 sessionIdx,
-                error: err instanceof Error ? err.message : String(err),
               });
             }
           }
@@ -2171,12 +2159,14 @@ async function runJourneyFanOut(
       logEvent("target.worker_failed", { runId, hostId, targetId, sessionIdx });
       logger.error(
         "[swarm.runner] target worker failed; finalizing its attempts",
+        err,
         {
           runId,
           hostId,
           targetId,
           sessionIdx,
-          error: err instanceof Error ? err.message : String(err),
+          setupReason:
+            err instanceof SwarmSetupError ? err.partial.reason : undefined,
         },
       );
       // Finalize this target's not-yet-terminal attempts `[sessionIdx..N)`: the
@@ -2195,6 +2185,7 @@ async function runJourneyFanOut(
       if (!cleanupBearer) {
         logger.error(
           "[swarm.runner] no credential to finalize this target's attempts; leaving them for the stale-run sweep",
+          undefined,
           { runId, hostId, targetId, sessionIdx },
         );
         return;
@@ -2223,6 +2214,11 @@ async function runJourneyFanOut(
         typeof causeMessage === "string" && causeMessage.trim()
           ? humanizeSwarmAttemptErrorMessage(causeMessage)
           : undefined;
+      const failureMessage =
+        signInMessage ??
+        (err instanceof SwarmSetupError && !signInFailure
+          ? setupFailureMessage(err.partial)
+          : undefined);
       const failureCode =
         signInFailure ??
         (err instanceof SwarmSetupError
@@ -2244,7 +2240,7 @@ async function runJourneyFanOut(
         sessionIdx,
         sessionsPerTarget,
         failureCode,
-        signInMessage,
+        failureMessage,
       );
       // Capacity leaves them for the run-level finalize. A sponsorship refusal
       // closes only this target, preserving healthy targets. Other failures close this target's
@@ -2272,7 +2268,7 @@ async function runJourneyFanOut(
             : {
                 terminalStatus: "failed",
                 errorCode: failureCode,
-                ...(signInMessage ? { errorMessage: signInMessage } : {}),
+                ...(failureMessage ? { errorMessage: failureMessage } : {}),
               },
         );
       }
@@ -2383,11 +2379,8 @@ async function runJourneyFanOut(
       const finalizeBearer = await getBearer().catch((error: unknown) => {
         logger.error(
           "[swarm.runner] could not mint a credential for the run-level finalize; attempts stay pending for the stale-run sweep",
-          {
-            runId,
-            reason: finalizeCalls[0]!.terminal.errorCode,
-            error: error instanceof Error ? error.message : String(error),
-          },
+          error,
+          { runId, reason: finalizeCalls[0]!.terminal.errorCode },
         );
         return undefined;
       });
@@ -2406,10 +2399,7 @@ async function runJourneyFanOut(
   } catch (error) {
     // Defensive: per-host/per-session work is already guarded, so this only
     // catches unexpected pool/heartbeat-adjacent failures.
-    logger.error("[swarm.runner] journey run failed", {
-      runId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error("[swarm.runner] journey run failed", error, { runId });
   } finally {
     heartbeatActive = false;
     clearInterval(heartbeat);

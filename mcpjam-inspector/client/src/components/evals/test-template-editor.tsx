@@ -92,6 +92,8 @@ import { ReplayedScenarioPane } from "./runs/replayed-scenario-pane";
 import { IterationDetails } from "./iteration-details";
 import { TrialChainPanel } from "@/components/evaluate/trial-chain-panel";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
+import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
+import { trialChainDisplay } from "@/components/evaluate/case-scorecard/trial-chain-state";
 import {
   JudgeVerdictPanel,
   resolveIterationJudge,
@@ -1358,7 +1360,23 @@ export function TestTemplateEditor({
       !!iteration && !!(iteration.blob || iteration.chatSessionId),
   )?.suiteRunId;
   const detailRunId = tracedRunId ?? recentIterations[0]?.suiteRunId ?? null;
-  const detailRun = useSelectedRun(suiteId ?? "", detailRunId).run;
+  // The run whose stage chain the drill-in reads (see `openTrialRun`). It is
+  // the detail run unless a replayed trial without a trace is on screen;
+  // only then does it need a read of its own.
+  const chainRunId = replayIteration?.suiteRunId ?? tracedRunId ?? null;
+  const chainOnlyRun = useSelectedRun(
+    suiteId ?? "",
+    chainRunId !== detailRunId &&
+      !listedSuiteRuns.some((run) => run._id === chainRunId)
+      ? chainRunId
+      : null,
+  );
+  const detailRunSelection = useSelectedRun(suiteId ?? "", detailRunId);
+  const detailRun = detailRunSelection.run;
+  const chainRunLoading =
+    chainRunId === detailRunId
+      ? detailRunSelection.isLoading
+      : chainOnlyRun.isLoading;
   const suiteRuns = useMemo(
     () =>
       detailRun
@@ -1628,14 +1646,18 @@ export function TestTemplateEditor({
    * The run is resolved here for the same reason `replayHostId` is: an
    * iteration knows its `suiteRunId` and nothing else about the run, and the
    * chain read needs the run's status and revision to know whether there is
-   * anything to read and when to re-read it. The candidate order mirrors
-   * `latestTracedIteration` below — the replayed trial first, then whichever
-   * traced iteration the drill-in would fall back to.
+   * anything to read and when to re-read it. A replayed trial is the one on
+   * screen even when it has no trace (a timed-out trial), so its own run
+   * wins; otherwise the traced iteration the drill-in falls back to.
    */
   const openTrialRun = useMemo(() => {
-    if (!tracedRunId) return null;
-    return suiteRuns.find((run) => run._id === tracedRunId) ?? null;
-  }, [tracedRunId, suiteRuns]);
+    if (!chainRunId) return null;
+    return (
+      suiteRuns.find((run) => run._id === chainRunId) ??
+      chainOnlyRun.run ??
+      null
+    );
+  }, [chainRunId, suiteRuns, chainOnlyRun.run]);
 
   const chainSlotEnabled = trialChainEnabled || simpleCaseEditorEnabled;
   const trialChains = useEvalRunIterationChains({
@@ -4296,6 +4318,23 @@ export function TestTemplateEditor({
       recentIterations.find((it) => it._id === iteration._id) ?? iteration;
     return chainForQuickRunIteration(live);
   })();
+  /**
+   * Whether a missing run-backed chain is "absent" or still about the read.
+   * The scorecard's no-chain fallback says every stage was not measured,
+   * which is a claim about the run, not about the network.
+   */
+  const workspaceTrialChainDisplay =
+    chainSlotEnabled && projectId
+      ? trialChainDisplay({
+          trialRunId: workspacePersistedIteration?.suiteRunId,
+          hasChain: Boolean(workspaceTrialChain),
+          readRunId: chainRunId,
+          readRun: openTrialRun,
+          readRunLoading: chainRunLoading,
+          isTerminalRunStatus: isTerminalEvalRunStatus,
+          chains: trialChains,
+        })
+      : ("settled" as const);
 
   /** What the LEFT pane is showing, as the scorecard model's input. */
   const workspaceDraftScorecardInput = {
@@ -5664,7 +5703,6 @@ export function TestTemplateEditor({
                           workspacePersistedIteration,
                           suiteRuns,
                         )}
-                        enableJudgeReview
                         trialChainSlot={trialChainSlotFor(
                           workspacePersistedIteration,
                         )}
@@ -5695,6 +5733,8 @@ export function TestTemplateEditor({
                                 []
                               }
                               chain={workspaceTrialChain}
+                              chainDisplay={workspaceTrialChainDisplay}
+                              onRetryChain={trialChains.retry}
                               judgeCase={resolveIterationJudge(
                                 workspacePersistedIteration,
                                 suiteRuns,
@@ -5898,11 +5938,6 @@ export function TestTemplateEditor({
                         serverNames={effectiveSuiteServers}
                         layoutMode="full"
                         judgeCase={replayJudgeCase}
-                        // A trial from a real suite run: labellable. The
-                        // backend refuses a quick-run trial anyway
-                        // (`JUDGE_REVIEW_NO_RUN`), and the panel renders that
-                        // refusal rather than pretending.
-                        enableJudgeReview
                         trialChainSlot={trialChainSlotFor(replayIteration)}
                       />
                     </div>
@@ -6010,7 +6045,6 @@ export function TestTemplateEditor({
                           serverNames={effectiveSuiteServers}
                           layoutMode="full"
                           judgeCase={latestTracedJudgeCase}
-                          enableJudgeReview
                           trialChainSlot={trialChainSlotFor(
                             latestTracedIteration,
                           )}

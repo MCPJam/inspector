@@ -226,6 +226,9 @@ export function SuiteScorerTable({
     capabilities?.judge,
     unavailableReason,
   );
+  // A deployment without judge gating can never make the judge Required, so
+  // the role is shown, not offered.
+  const judgeGatingOff = capabilities?.judge?.gating.enabled === false;
 
   /** A rule this page may edit in place: its own list, not an inherited one. */
   const editable = (rule: EffectiveRule | undefined) =>
@@ -494,6 +497,7 @@ export function SuiteScorerTable({
                         }}
                         checkPolicy={checkPolicy}
                         judgeDisabledReason={judgeDisabledReason}
+                        judgeGatingOff={judgeGatingOff}
                         judgeConfig={judgeConfig}
                         expanded={editMode}
                         editable={
@@ -628,6 +632,7 @@ function ScorerRow({
   onEnabledChange,
   checkPolicy,
   judgeDisabledReason,
+  judgeGatingOff,
   judgeConfig,
   expanded,
   editable,
@@ -644,6 +649,7 @@ function ScorerRow({
   onEnabledChange: (enabled: boolean) => void;
   checkPolicy: boolean;
   judgeDisabledReason: string | undefined;
+  judgeGatingOff: boolean;
   judgeConfig: EvalJudgeConfig | undefined;
   expanded: boolean;
   /** This page may change the row's threshold, role and body in place. */
@@ -794,6 +800,7 @@ function ScorerRow({
             predicate={predicate}
             checkPolicy={checkPolicy}
             judgeDisabledReason={judgeDisabledReason}
+            judgeGatingOff={judgeGatingOff}
             judgeEditable={judgeEditable}
             editable={editable}
             onPredicateChange={onPredicateChange}
@@ -872,6 +879,7 @@ function RoleCell({
   predicate,
   checkPolicy,
   judgeDisabledReason,
+  judgeGatingOff,
   judgeEditable,
   editable,
   onPredicateChange,
@@ -881,6 +889,7 @@ function RoleCell({
   predicate: Predicate | undefined;
   checkPolicy: boolean;
   judgeDisabledReason: string | undefined;
+  judgeGatingOff: boolean;
   /** The suite page edits the judge's role; a case only reads it. */
   judgeEditable: boolean;
   /** This page owns the assertion; an inherited one reads its role. */
@@ -896,7 +905,7 @@ function RoleCell({
     return <RoleChip role={row.role} />;
   }
   if (row.kind === "judge") {
-    if (row.judgeSlot === "groundedness" || !judgeEditable) {
+    if (row.judgeSlot === "groundedness" || !judgeEditable || judgeGatingOff) {
       return <RoleChip role={row.role} />;
     }
     const requiredEnabled = judgeDisabledReason === undefined;

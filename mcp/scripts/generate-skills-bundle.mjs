@@ -30,7 +30,7 @@
  * matches 30+ paths in this repo because `worktrees/` holds full checkouts, and
  * a glob would bundle six stale copies of `mcp-inspector`.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import { createHash } from "node:crypto";

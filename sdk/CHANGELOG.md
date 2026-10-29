@@ -1,5 +1,51 @@
 # `@mcpjam/sdk` changelog
 
+## 10.2.0
+
+### Minor Changes
+
+- [#6856](https://github.com/MCPJam/inspector/pull/6856) [`34b740d`](https://github.com/MCPJam/inspector/commit/34b740dd00d8978ec0fe31f1ceca1e03390bb6f7) Thanks [@ZeHuari](https://github.com/ZeHuari)! - Report a server that answers 401 to a run without accepted credentials as `incomplete`, not `failed`, in the protocol, apps and tasks conformance suites. Refused checks are `could-not-run` with a message to connect and run again, carry `details.authorizationRequired: true` (read it with the new `isAuthorizationRequiredCheck`), and the Conformance page shows one reconnect notice. `mcpjam protocol conformance` and `mcpjam conformance run` exit 3 instead of 1 for such a server. Other connection failures still fail.
+
+- [#6879](https://github.com/MCPJam/inspector/pull/6879) [`6c62260`](https://github.com/MCPJam/inspector/commit/6c6226026b8bc9412cd7643345145eec2ded1e93) Thanks [@chelojimenez](https://github.com/chelojimenez)! - A tool call that failed and was then made again with the same arguments now counts as one call. `evaluateToolCalls` grades the failed attempt as part of its retry: it is never an extra under `maxExtraToolCalls`, and it takes no position under `toolCallOrder: "strict"`. Two successful identical calls still count as two. Mark a failed actual call with `failed: true` (or use `markFailedToolCalls` with the run's tool errors); the result lists each retried attempt in the new `retries` field, and `findToolCallRetries` returns the same list on its own. Inspector eval runs read failures from the run's trace, record the retries on each turn's trace summary, and show them as "retried" in the tool-call diff instead of "unexpected".
+
+- [#6845](https://github.com/MCPJam/inspector/pull/6845) [`105b626`](https://github.com/MCPJam/inspector/commit/105b62626c08116ddaba0e5acbc7cec4333d7000) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add shared WebMCP app-tool request helpers and an opt-in sandbox relay for app views.
+
+### Patch Changes
+
+- [#6876](https://github.com/MCPJam/inspector/pull/6876) [`160e002`](https://github.com/MCPJam/inspector/commit/160e00273a50974c4ad0a9af1b9bc015bd3c2aae) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Case match options now take the same names everywhere in the v1 eval API. Inline cases on `POST /eval-runs` and `POST /eval-suites`, case create and update, batch case create and suite defaults all accept the public names (`toolCallOrder: any | in-order | exact`, `extraToolCalls`, `arguments`) as well as the internal ones (`ignore | superset | strict`, `maxExtraToolCalls`, `argumentMatching`), the way run-level `matchOptionsOverride` already did. Before, `toolCallOrder: "exact"` worked on a run and was refused on an inline case. A body that mixes the two vocabularies in one object is still a 400, and responses keep returning the public names.
+
+- [#6803](https://github.com/MCPJam/inspector/pull/6803) [`584117c`](https://github.com/MCPJam/inspector/commit/584117c76cabb860fd3391546204b3291b557caf) Thanks [@prathmeshpatel](https://github.com/prathmeshpatel)! - When a host doesn't advertise `serverResources`, an MCP App's `resources/read` now fails with "This host does not allow resource reads." instead of "Method not found". The error code stays -32601, and the message is exported as `RESOURCE_READS_DISABLED_MESSAGE` from `@mcpjam/sdk/widget-runtime`.
+
+- [#6872](https://github.com/MCPJam/inspector/pull/6872) [`befe8c7`](https://github.com/MCPJam/inspector/commit/befe8c79fc83658e45e96acf776a80d75eb39156) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Evals can discover and call MCP App view tools under the suite tool policy. Dispatched view tools count toward assertions by their original names. Views stay mounted for a turn and views with tools carry across prompts; suites may therefore observe new calls or changed outcomes. Use `view:make_move` to allow or deny a view tool in a suite policy; unqualified server tool names are still validated before the run.
+  
+  Do not warn about unmatched allow names that the runner explicitly defers until tools become available.
+
+- [#6844](https://github.com/MCPJam/inspector/pull/6844) [`4dbef72`](https://github.com/MCPJam/inspector/commit/4dbef72d18e15e24316b090e853ec1123d7be53f) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Keep chat running when a saved server cannot connect, and name the server and remedy when a recorded run is blocked. Chat-session API responses now list skipped servers.
+
+- [#6906](https://github.com/MCPJam/inspector/pull/6906) [`2c5f17b`](https://github.com/MCPJam/inspector/commit/2c5f17bc91bf8304e429c435ebc1964582014ea6) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Release the latest Inspector, CLI, and SDK improvements together.
+
+- [#6832](https://github.com/MCPJam/inspector/pull/6832) [`e0b2724`](https://github.com/MCPJam/inspector/commit/e0b2724c5d7c1e91cfeb4c027c0feac47622f046) Thanks [@weimar-torres-herrera](https://github.com/weimar-torres-herrera)! - When the server under test presents a TLS certificate that Node.js does not trust, the local inspector's OAuth proxy now answers 502 with "The server's TLS certificate could not be verified" followed by Node's own message, instead of a 500. The OAuth Debugger shows that message without "Backend debug proxy error" and no longer reports it as an MCPJam error. The SDK adds `tlsTrustFailure`, `isTlsTrustFailure` and the `transport/tls_untrusted` error code.
+
+- [#6883](https://github.com/MCPJam/inspector/pull/6883) [`8f0c006`](https://github.com/MCPJam/inspector/commit/8f0c0061557269a3402fb1ac37e60e7dd7cedf81) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Resolve API chat turns through reusable environments while preserving empty selections and continuation pins.
+
+- [#6846](https://github.com/MCPJam/inspector/pull/6846) [`c80698f`](https://github.com/MCPJam/inspector/commit/c80698f945f03368fcefa74f830bf4e7664d984e) Thanks [@prathmeshpatel](https://github.com/prathmeshpatel)! - Forward renewable MCPJam authentication, billing project, and caller-owned lease scope to goal-completion judges.
+
+- [#6873](https://github.com/MCPJam/inspector/pull/6873) [`b04d738`](https://github.com/MCPJam/inspector/commit/b04d73842b43cb72f8759820aadc6745957a39be) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Start new Claude and Cursor clients on Haiku 5.5, and say in the Playground composer when a client's saved model needs sign-in instead of only disabling Send.
+
+- [#6796](https://github.com/MCPJam/inspector/pull/6796) [`19b28fd`](https://github.com/MCPJam/inspector/commit/19b28fd17c247cfc92c7787fe526bd2ff070d4cf) Thanks [@olaservo](https://github.com/olaservo)! - `server doctor` reports a skills server that omits the `ttlMs` and `cacheScope` the stable Skills extension spec requires on `skills/list` and `skills/get`, lists a file without its `size`, or declares the extension without the `resources` capability. The skills check is `error` for such a server, the doctor's status is `partial`, and `mcpjam server doctor` exits 1, so a CI step that runs the doctor fails for a server built against the draft spec until it sends the required fields. The skills check also carries its findings as data (`checks.skills.findings`), which the hosted doctor uses instead of its sentence.
+
+- [#6796](https://github.com/MCPJam/inspector/pull/6796) [`19b28fd`](https://github.com/MCPJam/inspector/commit/19b28fd17c247cfc92c7787fe526bd2ff070d4cf) Thanks [@olaservo](https://github.com/olaservo)! - Preserve `ttlMs` and `cacheScope` on `skills/get` and `resources/directory/read` results. `getServerSkillResult` and `assertSkillsGetEnvelope` return the `skills/get` envelope with them, and a verified skill loaded by URI carries them.
+
+- [#6797](https://github.com/MCPJam/inspector/pull/6797) [`c5cbf41`](https://github.com/MCPJam/inspector/commit/c5cbf4116ac498d8f1953444273facd829f57968) Thanks [@olaservo](https://github.com/olaservo)! - Bring the host side of Skills over MCP in line with the stable spec: `bash` and `read_server_resource` always ask while a server-provided skill is loaded, and an org provider on the local runtime, which cannot resume after an approval, refuses such a turn; file reads are held to the manifest the skill was loaded under, read only from the load that wrote it; captured server skills carry the origin banner and are re-checked against their stored digest; verification uses the spec's 16 MiB budget while one tool result is capped at 256 KiB; a URI two servers serve resolves with the `server` hint; a colliding captured ref is disambiguated instead of dropped; relative references resolve like paths; verified reads are cached in memory per manager and dropped when the server is removed.
+- Updated dependencies [[`6c62260`](https://github.com/MCPJam/inspector/commit/6c6226026b8bc9412cd7643345145eec2ded1e93)]:
+  - @mcpjam/evaluators@0.6.0
+
+## 10.1.0
+
+### Minor Changes
+
+- [#6788](https://github.com/MCPJam/inspector/pull/6788) [`5e5b326`](https://github.com/MCPJam/inspector/commit/5e5b32613bf19bdf4158f1ef4ae762b5ae5e7bf5) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add an agentLoop host setting to select a vendor harness while retaining the host's MCP client. Preserve existing config hashes when the setting is absent.
+
 ## 10.0.0
 
 ### Major Changes
