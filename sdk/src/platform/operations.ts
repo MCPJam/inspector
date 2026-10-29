@@ -6040,7 +6040,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature, plus modelSelection or the reasoningEffort shorthand for a saved model choice and its effort), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — and a read's settings.policy says which one the suite uses. The operation reads the current criterion first and refuses repetitions (including the repetitions/passThreshold pair) on a suite-wide suite, and minimumIterations on a per-case suite. Changing criterion is API-only for now. Only the fields you pass change.",
+    "Update selected settings of an existing eval suite; omitted fields stay unchanged. Supports name, description, servers, computer image, execution configuration, client attachments, match options, checks and grading settings. Does not start a run. minimumAccuracy is a suite-wide percentage; passThreshold is a per-case fraction. The current grading criterion determines which edits are valid: repetitions and passThreshold cannot change a suite-wide criterion, and minimumIterations cannot change a per-case criterion. Changing criterion is API-only. Judge autoRun controls automatic grading; enabled alone only makes the judge available. Supply either clients or the deprecated hosts alias, never both.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
@@ -16752,7 +16752,7 @@ export const publishStudyOperation: PlatformOperation<
   risk: "exposure",
   title: "Publish a project environment as a study",
   description:
-    "Publish a project environment so people outside the project can talk to it through a share link. Optional name, description and mode apply atomically at create time, so the study is never briefly live in a wider mode than asked for. Each call creates a new study with its own share link — an environment can back several — and a name the project already uses is refused with a conflict rather than reusing that study. Requires project admin.",
+    "Publish a project environment as a study with a share link, subject to its access mode. Requires project admin. Accepts optional name, description and mode; the returned study contains the actual settings. If overridesIgnored is true, the backend did not apply those optional settings: a requested restricted mode is not proof that the returned link is restricted. A conflicting study name is refused. Publishing exposes the environment to people allowed by the returned study's access mode.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     // The study's own page. `result.study.link` is the token-bearing GUEST
