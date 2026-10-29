@@ -29,6 +29,7 @@ import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { useAuthExitCleanup } from "./hooks/use-sign-out";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
@@ -1679,6 +1680,7 @@ export function ConformanceRoute() {
     appState,
     selectedServerEntry,
     setSelectedServer,
+    activeProject,
     convexProjectId,
     isAuthenticated,
     ensureServersReady,
@@ -1744,6 +1746,12 @@ export function ConformanceRoute() {
           handleConnect(formData);
           setIsAddingServer(false);
         }}
+        // Same project defaults as the Servers tab's form. No `projectId`:
+        // its protocol-version pin is only persisted by the Servers tab.
+        projectClientConfig={activeProject?.clientConfig}
+        projectXaaDefaultIdentity={
+          activeProject?.xaaTestDefaults?.defaultIdentity ?? null
+        }
       />
       {editingServer ? (
         <ServerDetailModal
@@ -6759,6 +6767,7 @@ export default function App() {
             <Toaster />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <StdioCommandApprovalDialog />
             <UnavailableOrganizationDialog
               isAuthenticated={isAuthenticated}
               routeTab={activeTab}

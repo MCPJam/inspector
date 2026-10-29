@@ -689,6 +689,31 @@ describe("ConformanceTab", () => {
     info.mockRestore();
   });
 
+  it("clears the connect alert once the server connects some other way", async () => {
+    const server = createHttpServer({
+      name: "alpha",
+      connectionStatus: "failed",
+    });
+    const props = {
+      onSelectServer: vi.fn(),
+      onConnectServer: vi.fn(async () => "failed" as const),
+      onEditServer: vi.fn(),
+    };
+    const { rerender } = render(
+      <ConformanceTab server={server} servers={[server]} {...props} />,
+    );
+
+    clickRun();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+    // Fixed from Edit connection, which reconnects without going through Run.
+    const connected = { ...server, connectionStatus: "connected" as const };
+    rerender(
+      <ConformanceTab server={connected} servers={[connected]} {...props} />,
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("asks to sign in again when the connect needs reauthorization", async () => {
     const server = createHttpServer({
       name: "alpha",
@@ -723,7 +748,10 @@ describe("ConformanceTab", () => {
     expect(
       screen.getByText("Add a server to run conformance checks."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+    // Run stays beside Add server, disabled, as well as in the header.
+    const runButtons = screen.getAllByRole("button", { name: RUN_LABEL });
+    expect(runButtons).toHaveLength(2);
+    for (const button of runButtons) expect(button).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Add server" }));
     expect(onAddServer).toHaveBeenCalledTimes(1);
   });
@@ -756,7 +784,8 @@ describe("ConformanceTab", () => {
             skipReason: "not-applicable",
             durationMs: 0,
             error: {
-              message: "Not applicable to the legacy era (run pinned to 2025-11-25)",
+              message:
+                "Not applicable to the legacy era (run pinned to 2025-11-25)",
             },
           },
         ],
@@ -924,7 +953,7 @@ describe("ConformanceTab", () => {
     expect(within(suiteHeader("protocol")).getByText("ERROR")).toBeDefined();
     expect(screen.getByText("protocol endpoint down")).toBeInTheDocument();
     expect(
-      screen.getByText(/checks in this suite — not run yet/),
+      screen.getByText(/checks in this suite\. Not run yet/),
     ).toBeInTheDocument();
 
     // The row shows the canonical title; the explanation stays shut until
@@ -977,7 +1006,7 @@ describe("ConformanceTab", () => {
     await runToCompletion();
 
     expect(screen.getByText("Round trip")).toBeInTheDocument();
-    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+    expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
   });
 
   it("shows a running suite as running, not as the not-yet-run catalog", async () => {
@@ -995,7 +1024,7 @@ describe("ConformanceTab", () => {
     // while the run is live.
     await screen.findByText(/Running \d+ checks/);
     expect(within(suiteHeader("protocol")).getByText("RUNNING")).toBeDefined();
-    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+    expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
 
     pending.resolve({ success: true, result: createProtocolResult() });
     await waitFor(() => {
@@ -1037,7 +1066,7 @@ describe("ConformanceTab", () => {
       expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1");
     });
     expect(within(suiteHeader("oauth")).getByText("RUNNING")).toBeDefined();
-    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+    expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
 
     poll.resolve({ phase: "complete", result: createOAuthResult() });
     await waitFor(() => {
@@ -1105,6 +1134,11 @@ describe("ConformanceTab", () => {
     );
     expect(within(header!).getByText("NOT APPLICABLE")).toBeDefined();
     expect(within(header!).queryByText("FAILED")).toBeNull();
+
+    // The checks were skipped, not ruled out, so the list says so.
+    fireEvent.click(header!);
+    expect(screen.getByText(/checks in this suite\. Not run\./)).toBeDefined();
+    expect(screen.queryByText(/None apply to this server/)).toBeNull();
 
     // A consent that completes late cannot bring the suite back.
     window.dispatchEvent(
@@ -1524,8 +1558,7 @@ describe("ConformanceTab", () => {
       oauth: createOAuthResult({
         passed: false,
         outcome: "not-applicable",
-        summary:
-          "OAuth conformance not applicable for https://example.com/mcp: the server served an unauthenticated request instead of challenging, and authorization is OPTIONAL in 2025-11-25",
+        summary: "No login required: the server answered without a token.",
       }),
     });
 
@@ -1534,11 +1567,18 @@ describe("ConformanceTab", () => {
 
     // The reason replaces the suite's description, under a neutral chip
     // rather than a red failure.
-    const header = screen
-      .getByText(/OAuth conformance not applicable/)
-      .closest("button")!;
+    const header = screen.getByText(/No login required/).closest("button")!;
     expect(within(header).getByText("NOT APPLICABLE")).toBeDefined();
     expect(within(header).queryByText("FAILED")).toBeNull();
+
+    // Shut by default, but it opens to the suite's checks so the reader can
+    // see what it covers.
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      screen.getByText(/checks in this suite\. None apply to this server\./),
+    ).toBeDefined();
   });
 
   it("turns checks a server refused for credentials into one reconnect notice", async () => {
@@ -1575,12 +1615,65 @@ describe("ConformanceTab", () => {
     expect(within(header).queryByText("FAILED")).toBeNull();
     expect(
       screen.getByText(
-        /This server requires sign-in.*1 check\(s\) could not\s+run/s,
+        /This server requires sign-in.*the checks that need it could not\s+run/s,
+      ),
+    ).toBeDefined();
+    // The headline names the sign-in rather than judging the server.
+    expect(
+      screen.getByText(
+        "Incomplete. 1 check could not run because sign-in failed. Reconnect the server and run again.",
       ),
     ).toBeDefined();
     expect(
       screen.getByText(
         /Reconnect the server with OAuth.*or update its access\s+token/s,
+      ),
+    ).toBeDefined();
+  });
+
+  it("blames sign-in only for the scored checks it blocked", async () => {
+    const refused = {
+      category: "core",
+      description: "Needs a session.",
+      status: "skipped",
+      skipReason: "could-not-run",
+      durationMs: 0,
+      details: { authorizationRequired: true, statusCode: 401 },
+    } as const;
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        passed: false,
+        outcome: "incomplete",
+        checks: [
+          { ...refused, id: "server-initialize", title: "Server Initialize" },
+          // Refused too, but unscored, so it is not in `couldNotRun`.
+          { ...refused, id: "wire-schema-valid", title: "Wire schema" },
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Ping.",
+            status: "skipped",
+            skipReason: "could-not-run",
+            durationMs: 0,
+          },
+        ],
+        profile: {
+          profileId: "mcp-protocol",
+          profileVersion: "1",
+          manifestDigest: "digest",
+          checkerVersion: "1",
+          pendingCheckIds: ["wire-schema-valid"],
+        },
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(
+      screen.getByText(
+        "Incomplete. 1 check could not run because sign-in failed. 1 more could not run. Reconnect the server and run again.",
       ),
     ).toBeDefined();
   });

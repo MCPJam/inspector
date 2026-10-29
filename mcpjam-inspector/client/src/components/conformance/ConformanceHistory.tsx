@@ -29,6 +29,8 @@ import {
   SuiteRow,
   VerdictBadge,
 } from "./conformance-ui";
+import { CatalogList } from "./ConformanceCheckRows";
+import { suiteCatalog } from "./conformance-catalogs";
 
 export type ConformanceRunListItem = {
   _id: string;
@@ -46,6 +48,8 @@ export type ConformanceRunListItem = {
   passed: number;
   failed: number;
   couldNotRun: number;
+  /** Absent on rows read from a build that predates the field. */
+  notApplicable?: number;
   requestedSuites: string[];
   protocolVersion: string | null;
   actorLabel: string | null;
@@ -435,6 +439,7 @@ export function ConformanceRunDetailPage({
                   passed: detail.passed,
                   failed: detail.failed,
                   couldNotRun: detail.couldNotRun,
+                  notApplicable: detail.notApplicable,
                 }
               : undefined
           }
@@ -512,11 +517,13 @@ function SavedSuiteRow({
     report.status === "skipped" ||
     (settled && report.score == null && report.applicable === 0);
   const [override, setOverride] = useState<boolean | null>(null);
+  // A suite that did not apply stays shut but still opens on click, to its
+  // list of checks.
   const expanded =
-    !notApplicable &&
     !noResult &&
     (override ??
-      (report.outcome === "failed" || report.outcome === "incomplete"));
+      (!notApplicable &&
+        (report.outcome === "failed" || report.outcome === "incomplete")));
 
   const badge = noResult ? (
     <VerdictBadge label="NO RESULT" tone="neutral" />
@@ -554,14 +561,25 @@ function SavedSuiteRow({
             }
       }
       expanded={expanded}
-      collapsible={!notApplicable && !noResult}
+      collapsible={!noResult}
       onToggle={() => setOverride(!expanded)}
     >
-      <SuiteReportCases
-        reportUrl={report.reportUrl}
-        incompleteReason={notApplicable ? null : report.incompleteReason}
-        load={expanded || override !== null}
-      />
+      {notApplicable ? (
+        <CatalogList
+          catalog={suiteCatalog(report.suiteKind)}
+          note={
+            report.status === "skipped"
+              ? ". Not run."
+              : ". None apply to this server."
+          }
+        />
+      ) : (
+        <SuiteReportCases
+          reportUrl={report.reportUrl}
+          incompleteReason={report.incompleteReason}
+          load={expanded || override !== null}
+        />
+      )}
     </SuiteRow>
   );
 }

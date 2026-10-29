@@ -36,7 +36,7 @@ export function ConformancePreRun({
   runButton: ReactNode;
   /** Shown left of the run button, so the server is picked where you run. */
   serverPicker?: ReactNode;
-  /** Set when there is no server to pick: the prompt adds one instead. */
+  /** Set when there is no server to pick: the prompt offers to add one. */
   onAddServer?: () => void;
 }) {
   return (
@@ -56,17 +56,17 @@ export function ConformancePreRun({
               : "We assess protocol, apps, tasks, and OAuth on the server of your choice."}
           </p>
           <div className="flex items-center gap-2 pt-4">
+            {/* With no servers the run button stays, disabled, beside Add
+                server, so the page shows where a run starts once one exists. */}
             {onAddServer ? (
               <Button size="sm" onClick={onAddServer}>
                 <Plus className="mr-1.5 h-3.5 w-3.5" />
                 Add server
               </Button>
             ) : (
-              <>
-                {serverPicker}
-                {runButton}
-              </>
+              serverPicker
             )}
+            {runButton}
           </div>
         </div>
       </div>
@@ -278,7 +278,7 @@ function connectionNote(server: ServerWithName): string | null {
     case "oauth-flow":
       return "Connecting";
     case "failed":
-      return "Failed to connect";
+      return "Could not connect. Run to retry";
     default:
       return "Not connected";
   }

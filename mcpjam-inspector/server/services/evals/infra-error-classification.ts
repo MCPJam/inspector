@@ -121,6 +121,12 @@ const BACKEND_CODE_TABLE: Readonly<Record<string, Row>> = {
     layer: MODEL,
     retryable: false,
   },
+  // The organization has no such provider turned on (`/stream/org`).
+  provider_not_configured: {
+    class: "configuration",
+    layer: MODEL,
+    retryable: false,
+  },
   // The policy's two transient refusals: the org's provider is throttling or
   // failing, or the backend could not read the policy and failed closed
   // before any model ran (our platform).
