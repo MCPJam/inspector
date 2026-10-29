@@ -7,6 +7,8 @@ import {
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
+import { withClaudeForwardingResume } from "./forwarding/claude-resume.js";
+import { stampNativeForwardingPolicy } from "./forwarding/native-policy.js";
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalRuntimeBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
@@ -1938,7 +1940,7 @@ export async function runHarnessTurn(
 
       const runtimeFingerprint = harnessRuntimeFingerprint({
         harnessId: harnessAdapter.id,
-        ...(useNativeForwarding ? { nativeForwarding: "v1" } : {}),
+        ...(useNativeForwarding ? { nativeForwarding: "v2" } : {}),
         modelId,
         selectedServers: selectedServers ?? [],
         unavailableServerIds: options.unavailableServerIds,
@@ -2533,7 +2535,6 @@ export async function runHarnessTurn(
         // stays true and the turn's own teardown releases it.
         auth = externalAccountAuth;
       } else {
-        if (useNativeForwarding && continuity?.state?.awaitingApproval) throw new Error("Native forwarding cannot resume a paused built-in approval yet. Start a new chat to continue.");
         brokerRunId = turnRunId;
         const broker = await org.start({
           ...(useNativeForwarding ? { nativeForwarding: nativeForwardingSelection({ laneId: continuity?.laneId, hostId, serverIds: selectedServers ?? [], connections: accountGroups }) } : {}),
@@ -2579,7 +2580,7 @@ export async function runHarnessTurn(
         reservationHeld = false;
         if (useNativeForwarding) {
           if (!broker.forwarding || !harnessMcpProxy) throw new Error("Native forwarding was not confirmed.");
-          nativeForwarding = await prepareNativeForwarding({ ...broker.forwarding, expiresAt: broker.expiresAt, turnId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer });
+          nativeForwarding = await prepareNativeForwarding({ ...broker.forwarding, expiresAt: broker.expiresAt, turnId: turnRunId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer });
           ({ mcpJson, keyToServerId } = nativeForwarding);
         }
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
@@ -2635,7 +2636,7 @@ export async function runHarnessTurn(
                 ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
             });
-      if (nativeForwarding) harnessRuntime = withAutoApprovedNativeRequests(harnessRuntime, undefined, new Set(), nativeForwarding.isForwardedTool);
+      if (nativeForwarding) harnessRuntime = withAutoApprovedNativeRequests(withClaudeForwardingResume(harnessRuntime, mcpJson.mcpServers, nativeForwarding.policyDigest), undefined, new Set(), nativeForwarding.isForwardedTool);
       if (nativeForwarding) onHarnessMcpReady?.(nativeForwarding.logScopeIds);
       if (localPrepared) {
         harnessRuntime = await withLocalRuntimeBootstrap(harnessRuntime, localPrepared.plan.runtime);
@@ -4496,7 +4497,7 @@ export async function runHarnessTurn(
               leaseId: continuity.leaseId,
               expectedStateVersion: continuity.stateVersion,
               harnessSessionId: session.sessionId,
-              resumeState: org.commitState(continueState),
+              resumeState: org.commitState(nativeForwarding ? stampNativeForwardingPolicy(continueState, nativeForwarding.policyDigest) : continueState),
               computerId,
               runtimeFingerprint,
               awaitingApproval: true,

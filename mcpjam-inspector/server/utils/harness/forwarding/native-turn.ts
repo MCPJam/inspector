@@ -18,6 +18,7 @@ import {
 } from "./execution-control.js";
 import { startForwardingApprovalPresentation } from "./approval.js";
 import { nativeRpcLogScope } from "./native-rpc-logs.js";
+import { nativePolicyDigest } from "./native-policy.js";
 
 export type NativeForwardingSelection = {
   harnessSessionId: string;
@@ -87,15 +88,26 @@ export async function prepareNativeForwarding(args: {
   );
   const mcpJson = buildHarnessProxyMcpJson(inputs);
   const keyToServerId = harnessServerKeyToName(inputs);
+  const policyDigest = nativePolicyDigest(args.policies);
   for (const [key, serverId] of Object.entries(keyToServerId)) {
     // The native HTTP request includes the human approval wait at the gate.
-    mcpJson.mcpServers[key].timeout = Math.max(1000, args.expiresAt - Date.now());
+    mcpJson.mcpServers[key].timeout = Math.max(
+      1000,
+      args.expiresAt - Date.now(),
+    );
     const owner = args.owners.find(
       (candidate) => candidate.serverId === serverId,
     )!;
+    await createExecutionControl({ owner }).bindPolicy(
+      args.turnId,
+      policyDigest,
+    );
     mcpJson.mcpServers[key].headers = {
+      // E2B pins injected credentials to the outbound connection. A resumed
+      // query must open a new connection after the credential lease rotates.
+      Connection: "close",
       "X-MCPJam-Forwarding-Context": sealHarnessProxyToken({
-        token: JSON.stringify({ owner, turnId: args.turnId }),
+        token: JSON.stringify({ owner, turnId: args.turnId, policyDigest }),
         serverId,
         policy: args.policies?.[serverId] ?? {
           mode: "default",
@@ -118,9 +130,14 @@ export async function prepareNativeForwarding(args: {
   );
   return {
     mcpJson,
+    policyDigest,
     keyToServerId,
-    logScopeIds: Object.fromEntries(args.owners.map((owner) =>
-      [owner.serverId, nativeRpcLogScope(owner, args.turnId)])),
+    logScopeIds: Object.fromEntries(
+      args.owners.map((owner) => [
+        owner.serverId,
+        nativeRpcLogScope(owner, args.turnId),
+      ]),
+    ),
     stop: async () => {
       await Promise.all(stop.map((fn) => fn()));
     },
