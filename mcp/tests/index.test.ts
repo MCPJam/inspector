@@ -454,6 +454,25 @@ describe("routes that need no token", () => {
     }
   });
 
+  it("serves the configured OpenAI ownership challenge without authentication", async () => {
+    const response = await worker.fetch(
+      new Request(`${ORIGIN}/.well-known/openai-apps-challenge`),
+      { ...makeEnv(), OPENAI_APPS_CHALLENGE: "review-challenge" }
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await response.text()).toBe("review-challenge");
+  });
+
+  it("does not publish an unconfigured challenge or accept writes to it", async () => {
+    const url = `${ORIGIN}/.well-known/openai-apps-challenge`;
+    expect((await worker.fetch(new Request(url), makeEnv())).status).toBe(404);
+    expect((await worker.fetch(
+      new Request(url, { method: "POST" }),
+      { ...makeEnv(), OPENAI_APPS_CHALLENGE: "review-challenge" }
+    )).status).toBe(404);
+  });
+
   it("answers the discovery preflight", async () => {
     stubOutboundFetch();
     const response = await worker.fetch(

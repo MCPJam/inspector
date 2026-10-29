@@ -200,6 +200,7 @@ import {
 } from "../shared/platform-widgets.js";
 import type { PlatformToolContext } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
+import { isClosedWorldOperation } from "./closedWorldOperations.js";
 
 /**
  * Catalog tools HELD off this surface while their feature is in beta.
@@ -815,6 +816,8 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
  *   access someone revoked.
  * - `run_eval_suite`: `refreshSnapshot` replaces the suite's saved snapshot,
  *   and the run can invoke third-party tools with destructive effects.
+ * - `run_eval_case` and `launch_goal_run`: their agents can invoke the same
+ *   third-party write tools, even though the run records themselves are new.
  */
 const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "create_project",
@@ -824,7 +827,6 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "create_eval_cases",
   "generate_eval_cases",
   "import_eval_cases",
-  "run_eval_case",
   "backtest_eval_run",
   "backtest_eval_run_judge",
   "ensure_adhoc_environment",
@@ -832,7 +834,6 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "generate_personas",
   "create_goal",
   "generate_goals",
-  "launch_goal_run",
   "create_swarm",
   // Each call mints a new study with its own share link; a taken name is
   // refused rather than overwritten.
@@ -1067,7 +1068,7 @@ function behaviorAnnotations(
     return {
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: !isClosedWorldOperation(operation.name),
     };
   }
   // `mayBeDestructive` operations (call_server_tool, send_chat_message) run
@@ -1082,9 +1083,7 @@ function behaviorAnnotations(
     readOnlyHint: false,
     destructiveHint: !additive,
     idempotentHint: IDEMPOTENT_WRITE_NAMES.has(operation.name),
-    // OpenAI requires explicit hints. Preserve MCP's conservative default;
-    // claiming a closed world requires a separate review of each operation.
-    openWorldHint: true,
+    openWorldHint: !isClosedWorldOperation(operation.name),
   };
 }
 
