@@ -1467,6 +1467,53 @@ describe("ConformanceTab", () => {
     ).toBeDefined();
   });
 
+  it("blames sign-in only for the scored checks it blocked", async () => {
+    const refused = {
+      category: "core",
+      description: "Needs a session.",
+      status: "skipped",
+      skipReason: "could-not-run",
+      durationMs: 0,
+      details: { authorizationRequired: true, statusCode: 401 },
+    } as const;
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        passed: false,
+        outcome: "incomplete",
+        checks: [
+          { ...refused, id: "server-initialize", title: "Server Initialize" },
+          // Refused too, but unscored, so it is not in `couldNotRun`.
+          { ...refused, id: "wire-schema-valid", title: "Wire schema" },
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Ping.",
+            status: "skipped",
+            skipReason: "could-not-run",
+            durationMs: 0,
+          },
+        ],
+        profile: {
+          profileId: "mcp-protocol",
+          profileVersion: "1",
+          manifestDigest: "digest",
+          checkerVersion: "1",
+          pendingCheckIds: ["wire-schema-valid"],
+        },
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(
+      screen.getByText(
+        "Incomplete. 1 check could not run because sign-in failed. 1 more could not run. Reconnect the server and run again.",
+      ),
+    ).toBeDefined();
+  });
+
   it("shows no reconnect notice when nothing waited on authorization", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);

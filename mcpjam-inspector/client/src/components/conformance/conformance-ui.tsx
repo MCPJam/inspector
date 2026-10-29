@@ -242,7 +242,8 @@ export function OverallScoreCard({
    * How many checks were refused for credentials. A run blocked that way says
    * nothing definitive about the server, so the verdict names the sign-in
    * instead of calling the server not conformant. It can count checks the
-   * score leaves out, so the verdict clamps it to `couldNotRun`.
+   * score counts, so pass only scored refusals; the verdict also clamps it to
+   * `couldNotRun`.
    */
   blockedBySignIn?: number;
   /** Shown at the end of the verdict line, e.g. a link to the saved run. */

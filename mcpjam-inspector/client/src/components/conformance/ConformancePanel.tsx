@@ -229,6 +229,21 @@ function ConformanceContent({
       (suite.result?.checks.filter(isAuthorizationRequiredCheck).length ?? 0),
     0,
   );
+  // The verdict compares this to the score's `couldNotRun`, which leaves out
+  // unscored checks, so it counts only the scored refusals. Otherwise the
+  // headline could blame sign-in for checks that stopped for another reason.
+  const scoredRefusals = (
+    checks: Array<{ id: string; details?: unknown }> | undefined,
+    pendingIds: Set<string>,
+  ) =>
+    checks?.filter(
+      (check) =>
+        isAuthorizationRequiredCheck(check) && !pendingIds.has(check.id),
+    ).length ?? 0;
+  const blockedBySignIn =
+    scoredRefusals(protocol.result?.checks, protocolPendingIds) +
+    scoredRefusals(apps.result?.checks, new Set()) +
+    scoredRefusals(tasks.result?.checks, tasksPendingIds);
 
   // The page opens on the "run your first check" state and only swaps to the
   // suites once a run has begun. Keyed by server, so a server switch resets it.
@@ -327,7 +342,7 @@ function ConformanceContent({
                   }
                   isRunning={isRunning}
                   oauthNotScored={oauthNotScored}
-                  blockedBySignIn={waitingOnAuthorization}
+                  blockedBySignIn={blockedBySignIn}
                   action={
                     savedRunId && persist ? (
                       <Button
