@@ -184,7 +184,8 @@ export function ProtocolVersionSelect({
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="auto">Auto (negotiated)</SelectItem>
-        {MCP_PROTOCOL_VERSIONS.map((version) => (
+        {/* Newest first: the revision most servers are moving to leads. */}
+        {[...MCP_PROTOCOL_VERSIONS].reverse().map((version) => (
           <SelectItem key={version} value={version}>
             {version}
           </SelectItem>
@@ -215,11 +216,13 @@ export function ConformanceServerPicker({
       disabled={servers.length === 0}
     >
       <SelectTrigger aria-label="Server" className="h-8 w-auto gap-2 text-sm">
-        <SelectValue
-          placeholder={
-            servers.length === 0 ? "No connected servers" : "Select a server"
-          }
-        />
+        {/* Labelled like the protocol select beside it: "Server · <name>". */}
+        <span>
+          Server ·{" "}
+          <SelectValue
+            placeholder={servers.length === 0 ? "None connected" : "Select"}
+          />
+        </span>
       </SelectTrigger>
       <SelectContent>
         {servers.map((server) => (

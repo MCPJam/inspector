@@ -14,6 +14,7 @@ import {
   parseWithSchema,
 } from "./errors.js";
 import {
+  OAUTH_SESSION_EXPIRED_MESSAGE,
   OAuthConformanceSessionFailedError,
   OAuthConformanceSessionNotFoundError,
   UnsupportedTransportError,
@@ -400,7 +401,7 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
       throw new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        "Session not found or not waiting for authorization"
+        OAUTH_SESSION_EXPIRED_MESSAGE
       );
     }
     return { success: true };

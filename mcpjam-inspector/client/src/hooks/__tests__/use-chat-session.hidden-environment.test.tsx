@@ -212,12 +212,11 @@ describe("useChatSession — hidden environment on this machine", () => {
     vi.mocked(isMCPJamProvidedModelMenuItem).mockReturnValue(true);
   });
 
-  it("forces the web chat route and sends the environment, as environment mode does", async () => {
+  it("sends the environment through local ingress", async () => {
     const { result } = await renderHidden();
     expect(result.current.hiddenEnvironmentActive).toBe(true);
-    expect(result.current.hiddenEnvironmentOffReason).toBeNull();
     const { api, body } = lastTransport();
-    expect(api).toBe("/api/web/chat-v2");
+    expect(api).toBe("/api/mcp/chat-v2");
     expect(body).toMatchObject({
       executionTarget: { kind: "environment", environmentId: "env_hidden" },
       environmentOverrides: { serverIds: ["server-id-1", "srv_plugin"] },
@@ -225,27 +224,25 @@ describe("useChatSession — hidden environment on this machine", () => {
     expect(body).not.toHaveProperty("hostId");
   });
 
-  it("keeps a model keyed on this machine on the local route, without plugins", async () => {
+  it("keeps a locally keyed model and its plugins on local ingress", async () => {
     vi.mocked(isMCPJamProvidedModelMenuItem).mockReturnValue(false);
     const { result } = await renderHidden({ selectionIntent: "picked" });
-    expect(result.current.hiddenEnvironmentActive).toBe(false);
-    expect(result.current.hiddenEnvironmentOffReason).toBe("local_model");
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
     const { api, body } = lastTransport();
     expect(api).toBe("/api/mcp/chat-v2");
-    expect(body.hostId).toBe("host_1");
-    expect(body).not.toHaveProperty("executionTarget");
+    expect(body.executionTarget).toEqual({ kind: "environment", environmentId: "env_hidden" });
     // Nothing held back waiting for a composition this turn won't use.
     expect(result.current.submitBlocked).toBe(false);
   });
 
-  it("ignores a composition cap when the selected model runs locally", async () => {
+  it("stops before sending when local composition reaches its cap", async () => {
     vi.mocked(isMCPJamProvidedModelMenuItem).mockReturnValue(false);
     const { result } = await renderHidden({ selectionIntent: "picked", hostedContext: {
       ...hiddenContext, hiddenEnvironment: { ...hiddenContext.hiddenEnvironment, environmentId: null, blockingError: "Setup limit reached" },
     } });
-    expect(result.current.hiddenEnvironmentActive).toBe(false);
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
     await act(async () => { await result.current.sendMessage({ text: "hello" }); });
-    expect(mockState.sendMessage).toHaveBeenCalledOnce();
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
   it("keeps a turn with a local-only server on the local route", async () => {
     mockState.appState = {
@@ -255,7 +252,7 @@ describe("useChatSession — hidden environment on this machine", () => {
       },
     };
     const { result } = await renderHidden();
-    expect(result.current.hiddenEnvironmentOffReason).toBe("local_server");
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
     expect(lastTransport().api).toBe("/api/mcp/chat-v2");
   });
 
@@ -266,8 +263,8 @@ describe("useChatSession — hidden environment on this machine", () => {
         resolveSendTarget: () => null,
       },
     });
-    expect(result.current.hiddenEnvironmentOffReason).toBe("local_harness");
-    expect(lastTransport().body).not.toHaveProperty("executionTarget");
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
+    expect(lastTransport().body.executionTarget).toEqual({ kind: "environment", environmentId: "env_hidden" });
   });
 
   it("keeps plugins composed for a client run here on the environment", async () => {
@@ -284,15 +281,15 @@ describe("useChatSession — hidden environment on this machine", () => {
         resolveSendTarget: () => null,
       },
     });
-    expect(result.current.hiddenEnvironmentOffReason).toBeNull();
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
     const { api, body } = lastTransport();
-    expect(api).toBe("/api/web/chat-v2");
+    expect(api).toBe("/api/mcp/chat-v2");
     expect(body).toMatchObject({
       executionTarget: { kind: "environment", environmentId: "env_hidden" },
     });
   });
 
-  it("still runs a client here without plugins when a selected server is local-only", async () => {
+  it("retains plugins when the selected server is local-only", async () => {
     mockState.appState = {
       projects: {},
       servers: {
@@ -312,15 +309,15 @@ describe("useChatSession — hidden environment on this machine", () => {
         resolveSendTarget: () => null,
       },
     });
-    expect(result.current.hiddenEnvironmentOffReason).toBe("local_server");
-    expect(lastTransport().body).not.toHaveProperty("executionTarget");
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
+    expect(lastTransport().body.executionTarget).toEqual({ kind: "environment", environmentId: "env_hidden" });
   });
 
   it("keeps a turn using this machine's shell local", async () => {
     const { result } = await renderHidden({
       personalComputerEngine: { engine: "local", consentToken: "consent" },
     });
-    expect(result.current.hiddenEnvironmentOffReason).toBe("local_tools");
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
     expect(lastTransport().api).toBe("/api/mcp/chat-v2");
   });
 
@@ -335,7 +332,7 @@ describe("useChatSession — hidden environment on this machine", () => {
     await waitFor(() =>
       expect(mockState.transportOptions.length).toBeGreaterThan(1),
     );
-    expect(rendered.result.current.hiddenEnvironmentOffReason).toBeNull();
+    expect(rendered.result.current.hiddenEnvironmentActive).toBe(false);
     expect(lastTransport().api).toBe("/api/mcp/chat-v2");
     expect(lastTransport().body.hostId).toBe("host_1");
   });

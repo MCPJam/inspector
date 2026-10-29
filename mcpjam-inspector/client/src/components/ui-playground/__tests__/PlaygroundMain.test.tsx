@@ -382,7 +382,6 @@ const mockUseChatSession = {
   disableForAuthentication: false,
   submitBlocked: false,
   hiddenEnvironmentActive: false,
-  hiddenEnvironmentOffReason: null,
 } as any;
 let capturedChatSessionOptions: any = null;
 
@@ -992,7 +991,6 @@ describe("PlaygroundMain", () => {
       mockHiddenEnvironment.state = { ...nothing };
       mockHiddenEnvironment.calls = [];
       mockUseChatSession.hiddenEnvironmentActive = false;
-      mockUseChatSession.hiddenEnvironmentOffReason = null;
       resetShownPluginNotices();
     });
 
@@ -1188,7 +1186,7 @@ describe("PlaygroundMain", () => {
         rerender(<PlaygroundMain {...props} />);
         await compareSend("third");
         expect(showPluginNotice).not.toHaveBeenCalledWith(
-          expect.anything(), { kind: "off", reason: "compare" },
+          expect.anything(), expect.objectContaining({ reason: "compare" }),
         );
       } finally {
         mockUseChatSession.chatSessionId = "chat-session-1";
@@ -1256,7 +1254,6 @@ describe("PlaygroundMain", () => {
     it("shows no plugin servers on a turn that runs without them", () => {
       installBits();
       mockUseChatSession.hiddenEnvironmentActive = false;
-      mockUseChatSession.hiddenEnvironmentOffReason = "local_model";
       render(<PlaygroundMain {...defaultProps} />);
       const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
       expect(composer.pluginServers).toEqual([]);

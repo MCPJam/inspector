@@ -29,6 +29,7 @@ import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { useAuthExitCleanup } from "./hooks/use-sign-out";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
@@ -4531,7 +4532,10 @@ export default function App() {
     previousConnectedServersRef.current = connectedServers;
   }, [activeTab, appState.servers, setSelectedServer]);
 
-  // Auto-select a connected server when navigating to tabs that need one
+  // Auto-select a connected server when navigating to tabs that need one.
+  // Conformance is left out: ConformanceTab picks its own (the server last
+  // selected there first), and this effect runs after it, so it would
+  // overwrite that.
   useEffect(() => {
     const needsServer =
       activeTab === "playground" ||
@@ -4539,7 +4543,6 @@ export default function App() {
       activeTab === "resources" ||
       activeTab === "prompts" ||
       activeTab === "tasks" ||
-      activeTab === "conformance" ||
       activeTab === "compatibility";
     if (!needsServer || selectedMCPConfig) return;
 
@@ -6703,6 +6706,7 @@ export default function App() {
             <Toaster />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <StdioCommandApprovalDialog />
             <UnavailableOrganizationDialog
               isAuthenticated={isAuthenticated}
               routeTab={activeTab}
@@ -6764,7 +6768,11 @@ export default function App() {
                   >
                     <HostedBrowserScopeProvider
                       organizationId={activeOrganizationId}
-                      projectId={activeProjectId}
+                      projectId={
+                        shouldQueryProjectId(convexProjectId)
+                          ? convexProjectId
+                          : null
+                      }
                     >
                       {appContent}
                     </HostedBrowserScopeProvider>

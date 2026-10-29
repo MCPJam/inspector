@@ -423,6 +423,17 @@ function findHostedServerName(serverId: string): string | undefined {
 }
 
 /**
+ * A local build's managed turns tag tool calls with the Convex server id, but
+ * this app's own MCP connections are keyed by name. Returns the current
+ * project's name for that id so widget and Rerun requests reach the
+ * connection that exists here. Hosted builds address servers by id.
+ */
+export function localServerNameForId(serverId: string): string | undefined {
+  if (HOSTED_MODE) return undefined;
+  return findHostedServerName(serverId);
+}
+
+/**
  * Resolves a hosted server display name or Convex server document ID to a
  * user-facing label when the server still exists in the current
  * `serverIdsByName` mapping. Returns undefined when the ref cannot be resolved

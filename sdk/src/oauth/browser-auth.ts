@@ -893,7 +893,20 @@ export async function discoverOAuthProtectedResourceMetadata(
     );
   }
 
-  return (await response.json()) as OAuthProtectedResourceMetadata;
+  // A 200 is not proof of a document: catch-all servers answer every unknown
+  // path with their HTML landing page. Name what came back instead of
+  // surfacing the parser's "Unexpected token '<'".
+  const body = await response.text();
+  try {
+    return JSON.parse(body) as OAuthProtectedResourceMetadata;
+  } catch {
+    const contentType =
+      response.headers.get("content-type")?.split(";")[0]?.trim() ||
+      "no content type";
+    throw new Error(
+      `Protected resource metadata is not valid JSON (got ${contentType}).`,
+    );
+  }
 }
 
 export async function discoverOAuthMetadata(
