@@ -121,4 +121,22 @@ describe("useConformanceRun OAuth client secret", () => {
     secrets.fetchOAuthClientSecret.mockRejectedValue(new Error("forbidden"));
     expect(await sentClientSecret(makeServer(true))).toBeUndefined();
   });
+
+  it("stops instead of sending the secret when the project changed during the fetch", async () => {
+    secrets.tryResolveProjectServer
+      .mockReturnValueOnce({ projectId: "project-1", serverId: "server-1" })
+      .mockReturnValue({ projectId: "project-2", serverId: "server-9" });
+    const view = renderHook(() =>
+      useConformanceRun({ server: makeServer(true), deferOAuthAuthorization: true }),
+    );
+
+    await act(async () => {
+      await view.result.current.runAll();
+    });
+
+    await waitFor(() =>
+      expect(view.result.current.oauth.status).toBe("error"),
+    );
+    expect(api.startOAuthConformance).not.toHaveBeenCalled();
+  });
 });

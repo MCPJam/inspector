@@ -190,23 +190,29 @@ const INVALID_CLIENT_TOKEN_FAILURE = /^Token request failed: \d{3}: invalid_clie
  * `invalid_client`): a wrong client ID or secret, or a secret that never
  * reached the request. The raw "Token request failed: 401 …" line reads as if
  * the user's own login failed, so lead with what to check and keep the
- * provider's code and endpoint under Details. `undefined` for any other
+ * provider's code, endpoint and own reason under Details. Only a run that
+ * sent a secret is pointed at it: a CIMD or public client sent none, so its
+ * client ID and registration are what to check. `undefined` for any other
  * failure, which keeps its message as-is.
  */
 function describeTokenClientRejection(
   message: string,
   tokenEndpoint: string | undefined,
+  sentClientSecret: boolean,
 ): StepResult["error"] | undefined {
   const key = responseFailureFindingKey(message);
   if (!key || !INVALID_CLIENT_TOKEN_FAILURE.test(key)) {
     return undefined;
   }
   return {
-    message:
-      "The authorization server rejected this run's OAuth client credentials during token exchange. Verify the client ID and secret in server settings.",
+    message: sentClientSecret
+      ? "The authorization server rejected this run's OAuth client credentials during token exchange. Verify the client ID and secret in server settings."
+      : "The authorization server rejected this run's OAuth client during token exchange. Verify the client ID and how the client is registered.",
     details: [
       "Provider code: invalid_client",
       ...(tokenEndpoint ? [`Endpoint: ${tokenEndpoint}`] : []),
+      // Already redacted and capped by describeTokenRequestFailure.
+      `Provider response: ${message}`,
     ].join("\n"),
   };
 }
@@ -787,6 +793,7 @@ export class OAuthConformanceTest {
                 describeTokenClientRejection(
                   message,
                   state.authorizationServerMetadata?.token_endpoint,
+                  Boolean(tokenClientSecret),
                 ) ?? { message, details: error },
               ),
             );
@@ -905,6 +912,9 @@ export class OAuthConformanceTest {
               ? describeTokenClientRejection(
                   message,
                   state.authorizationServerMetadata?.token_endpoint,
+                  // Mirrors buildTokenRequestClientAuth: "none" drops the secret.
+                  Boolean(state.clientSecret) &&
+                    state.tokenEndpointAuthMethod !== "none",
                 )
               : undefined) ?? { message },
           );

@@ -49,29 +49,10 @@ import {
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
 import { resolveServerOAuthProtocolSelection } from "@/state/oauth-orchestrator";
-import { tryResolveProjectServer } from "@/lib/apis/web/context";
-import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
-
-/**
- * A hosted server's saved client secret lives in Convex, flagged only by
- * `hasClientSecret`, so `deriveOAuthProfileFromServer` never sees it. Load it
- * the way the OAuth debugger does (`createHostedClientSecretResolver`) — held
- * in memory for this run, never written to storage. A failed fetch sends no
- * secret; the token step's rejection then shows in the run instead.
- */
-async function loadSavedClientSecret(
-  server: ServerWithName
-): Promise<string | undefined> {
-  if (!server.hasClientSecret) return undefined;
-  const resolved = tryResolveProjectServer(server.name);
-  if (!resolved) return undefined;
-  try {
-    const { clientSecret } = await fetchOAuthClientSecret(resolved);
-    return clientSecret;
-  } catch {
-    return undefined;
-  }
-}
+import {
+  assertSavedSecretTargets,
+  loadSavedClientSecret,
+} from "@/lib/oauth/saved-client-secret";
 
 export type SuiteStatus =
   | "idle"
@@ -632,11 +613,13 @@ export function useConformanceRun({
           versionPin === "auto"
             ? resolveServerOAuthProtocolSelection(currentServer).protocolVersion
             : versionPin;
-        const clientSecret =
-          profile.clientSecret ||
-          (profile.clientId
-            ? await loadSavedClientSecret(currentServer)
-            : undefined);
+        const saved =
+          profile.clientSecret || !profile.clientId
+            ? undefined
+            : await loadSavedClientSecret(currentServer);
+        if (!isRunActive(runToken, serverName)) return;
+        if (saved) assertSavedSecretTargets(serverName, saved);
+        const clientSecret = profile.clientSecret || saved?.clientSecret;
         const baseProfile = profile.serverUrl
           ? {
               serverUrl: profile.serverUrl,

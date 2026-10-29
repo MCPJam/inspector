@@ -1499,7 +1499,8 @@ describe("OAuthConformanceTest", () => {
     expect(result.summary).not.toContain("request_resource_metadata");
   });
 
-  it("sends a preregistered secret and explains an invalid_client token rejection", async () => {
+  // A preregistered client whose token endpoint answers invalid_client.
+  async function runInvalidClientTokenRejection(clientSecret?: string) {
     const serverUrl = "https://mcp.example.com/mcp";
     const resourceMetadataUrl =
       "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
@@ -1565,7 +1566,7 @@ describe("OAuthConformanceTest", () => {
         client: {
           preregistered: {
             clientId: "prereg-client",
-            clientSecret: "prereg-secret",
+            ...(clientSecret ? { clientSecret } : {}),
           },
         },
         fetchFn,
@@ -1579,6 +1580,12 @@ describe("OAuthConformanceTest", () => {
 
     const result = await test.run();
     const tokenStep = result.steps.find((step) => step.step === "token_request");
+    return { authServerUrl, result, tokenRequests, tokenStep };
+  }
+
+  it("sends a preregistered secret and explains an invalid_client token rejection", async () => {
+    const { authServerUrl, result, tokenRequests, tokenStep } =
+      await runInvalidClientTokenRejection("prereg-secret");
 
     expect(tokenRequests).toHaveLength(1);
     expect(tokenRequests[0]!.authorization).toBe(
@@ -1591,8 +1598,20 @@ describe("OAuthConformanceTest", () => {
     expect(tokenStep?.error?.message).toBe(
       "The authorization server rejected this run's OAuth client credentials during token exchange. Verify the client ID and secret in server settings.",
     );
-    expect(tokenStep?.error?.details).toBe(
-      `Provider code: invalid_client\nEndpoint: ${authServerUrl}/token`,
+    const details = String(tokenStep?.error?.details).split("\n");
+    expect(details[0]).toBe("Provider code: invalid_client");
+    expect(details[1]).toBe(`Endpoint: ${authServerUrl}/token`);
+    expect(details[2]).toMatch(
+      /^Provider response: Token request failed: 401.*invalid_client: The client credentials are invalid$/,
+    );
+  });
+
+  it("does not point a client that sent no secret at one", async () => {
+    const { tokenRequests, tokenStep } = await runInvalidClientTokenRejection();
+
+    expect(tokenRequests[0]!.authorization).toBeNull();
+    expect(tokenStep?.error?.message).toBe(
+      "The authorization server rejected this run's OAuth client during token exchange. Verify the client ID and how the client is registered.",
     );
   });
 });
