@@ -363,12 +363,13 @@ export function CatalogList({
   note,
 }: {
   catalog: CatalogEntry[];
+  /** The rest of the line after "N checks in this suite", punctuation included. */
   note: string;
 }) {
   return (
     <div className="pl-7">
       <div className="py-1 text-[11px] text-muted-foreground">
-        {catalog.length} checks in this suite — {note}
+        {catalog.length} checks in this suite{note}
       </div>
       {catalog.map((entry) => (
         <CatalogRow key={entry.id} entry={entry} />

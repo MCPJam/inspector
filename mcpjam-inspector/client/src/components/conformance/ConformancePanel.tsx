@@ -142,7 +142,7 @@ function SuiteSection({
       }
     >
       {unavailable ? (
-        <CatalogList catalog={catalog} note="not applicable to this server." />
+        <CatalogList catalog={catalog} note=". None apply to this server." />
       ) : hasResult ? (
         children
       ) : running ? (
@@ -155,7 +155,7 @@ function SuiteSection({
       ) : (
         <CatalogList
           catalog={catalog}
-          note={`not run yet.${catalogNote ? ` ${catalogNote}` : ""}`}
+          note={` — not run yet.${catalogNote ? ` ${catalogNote}` : ""}`}
         />
       )}
     </SuiteRow>

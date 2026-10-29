@@ -1408,7 +1408,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(header);
     expect(header.getAttribute("aria-expanded")).toBe("true");
     expect(
-      screen.getByText(/checks in this suite — not applicable to this server\./),
+      screen.getByText(/checks in this suite\. None apply to this server\./),
     ).toBeDefined();
   });
 

@@ -564,7 +564,7 @@ function SavedSuiteRow({
       {notApplicable ? (
         <CatalogList
           catalog={suiteCatalog(report.suiteKind)}
-          note="not applicable to this server."
+          note=". None apply to this server."
         />
       ) : (
         <SuiteReportCases

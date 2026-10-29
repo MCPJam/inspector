@@ -247,7 +247,7 @@ describe("ConformanceRunDetailPage", () => {
     fireEvent.click(oauth);
     expect(oauth).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByText(/checks in this suite — not applicable to this server\./),
+      screen.getByText(/checks in this suite\. None apply to this server\./),
     ).toBeInTheDocument();
     expect(fetchArtifactMock).not.toHaveBeenCalled();
   });
