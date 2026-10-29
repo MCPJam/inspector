@@ -94,7 +94,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/evals/harness-system-tools.ts", 1],
   ["components/evals/helpers.ts", 2],
   ["components/evals/import-evidence-card.tsx", 1],
-  ["components/evals/judge-gate-panel.tsx", 1],
   ["components/evals/judge-rubric-editor.tsx", 2],
   ["components/evals/judges-section.tsx", 2],
   ["components/evals/live-trace-raw-empty.tsx", 1],

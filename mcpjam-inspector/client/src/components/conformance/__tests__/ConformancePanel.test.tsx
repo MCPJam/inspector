@@ -756,6 +756,39 @@ describe("ConformanceTab", () => {
     expect(onAddServer).toHaveBeenCalledTimes(1);
   });
 
+  it("labels the server select like the protocol select", () => {
+    const server = createHttpServer({ name: "alpha" });
+    const { rerender } = render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getAllByRole("combobox", { name: "Server" })[0],
+    ).toHaveTextContent("Server · alpha");
+
+    // Servers to pick from, none selected yet.
+    rerender(
+      <ConformanceTab
+        server={null}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getAllByRole("combobox", { name: "Server" })[0],
+    ).toHaveTextContent("Server · Select");
+
+    rerender(
+      <ConformanceTab server={null} servers={[]} onSelectServer={vi.fn()} />,
+    );
+    expect(
+      screen.getAllByRole("combobox", { name: "Server" })[0],
+    ).toHaveTextContent("Server · None");
+  });
+
   it("lists protocol versions newest first, after Auto", async () => {
     const user = userEvent.setup();
     render(<ConformanceTab server={createHttpServer()} />);
