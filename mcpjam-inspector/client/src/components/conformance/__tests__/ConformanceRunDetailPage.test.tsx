@@ -241,7 +241,15 @@ describe("ConformanceRunDetailPage", () => {
       .getByText("This server does not require authorization.")
       .closest("button")!;
     expect(within(oauth).getByText("NOT APPLICABLE")).toBeInTheDocument();
-    expect(oauth).toBeDisabled();
+    // Shut by default, but it opens to the suite's checks so the reader can
+    // see what it covers. There is no report to fetch for it.
+    expect(oauth).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(oauth);
+    expect(oauth).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByText(/checks in this suite — not applicable to this server\./),
+    ).toBeInTheDocument();
+    expect(fetchArtifactMock).not.toHaveBeenCalled();
   });
 
   it("opens a failed suite and loads its checks from the report", async () => {

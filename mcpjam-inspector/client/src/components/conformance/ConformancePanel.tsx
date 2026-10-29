@@ -8,18 +8,8 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 // Node-only transitive deps (MCP client SDK uses `node:stream`, etc.) which
 // break the Vite browser bundle.
 import {
-  APPS_CHECK_CATALOG,
-  CHECK_ERAS,
-  CONFORMANCE_CHECK_METADATA,
-  MCP_APPS_CHECK_IDS,
-  MCP_CHECK_IDS,
-  MCP_TASKS_CHECK_IDS,
-  PROTOCOL_CHECK_CATALOG,
-  PROTOCOL_VERSION_ERAS,
-  TASKS_CHECK_CATALOG,
   isAuthorizationRequiredCheck,
   type ConformanceScore,
-  type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
 import {
   OverallScoreCard,
@@ -28,12 +18,18 @@ import {
   VerdictBadge,
 } from "./conformance-ui";
 import {
-  CatalogRow,
+  CatalogList,
   CheckRow,
   OAuthStepRow,
   pendingIdSet,
   type CatalogEntry,
 } from "./ConformanceCheckRows";
+import {
+  APPS_CATALOG,
+  OAUTH_CATALOG,
+  TASKS_CATALOG,
+  protocolCatalog,
+} from "./conformance-catalogs";
 import {
   ConformanceHeader,
   ConformancePreRun,
@@ -45,62 +41,13 @@ import {
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
-import {
-  useConformanceRun,
-  type ProtocolVersionPin,
-  type SuiteState,
-} from "@/hooks/use-conformance-run";
+import { useConformanceRun, type SuiteState } from "@/hooks/use-conformance-run";
 import {
   PersistConformanceRun,
   type ConformancePersistConfig,
 } from "@/components/conformance/PersistConformanceRun";
 
 const NO_SERVER_MESSAGE = "Connect an MCP server to run conformance checks.";
-
-/**
- * The protocol suite is era-gated: a pinned version runs only its own era's
- * checks. With a pin we filter to exactly what will run; on "auto" the era is
- * unknown until the connection negotiates, so we list everything and tag the
- * checks that are era-restricted rather than implying they all apply.
- */
-function protocolCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
-  const pinnedEra = pin === "auto" ? undefined : PROTOCOL_VERSION_ERAS[pin];
-  return MCP_CHECK_IDS.filter((id) => {
-    const eras = CHECK_ERAS[id] as readonly string[];
-    return pinnedEra === undefined || eras.includes(pinnedEra);
-  }).map((id) => {
-    const eras = CHECK_ERAS[id] as readonly string[];
-    return {
-      id,
-      ...PROTOCOL_CHECK_CATALOG[id],
-      note:
-        pinnedEra === undefined && eras.length === 1
-          ? `${eras[0]} only`
-          : undefined,
-    };
-  });
-}
-
-const APPS_CATALOG: CatalogEntry[] = MCP_APPS_CHECK_IDS.map((id) => ({
-  id,
-  ...APPS_CHECK_CATALOG[id],
-}));
-
-const TASKS_CATALOG: CatalogEntry[] = MCP_TASKS_CHECK_IDS.map((id) => ({
-  id,
-  ...TASKS_CHECK_CATALOG[id],
-}));
-
-// Only the post-flow checks have static identities. The authorization flow
-// steps themselves depend on the server's registration strategy and protocol
-// version, so they are discovered during the run rather than listed here.
-const OAUTH_CATALOG: CatalogEntry[] = (
-  Object.keys(CONFORMANCE_CHECK_METADATA) as OAuthConformanceCheckId[]
-).map((id) => ({
-  id,
-  title: CONFORMANCE_CHECK_METADATA[id].title,
-  description: CONFORMANCE_CHECK_METADATA[id].summary,
-}));
 
 function SuiteBadge({ state }: { state: SuiteState }) {
   if (state.status === "running") {
@@ -149,10 +96,11 @@ function SuiteSection({
   // `null` follows the suite: a finished suite that did not pass opens itself
   // so the failures are visible; a passing or running one stays shut. OAuth
   // waiting on the browser opens too, so its prompt is not hidden. Clicking
-  // pins an explicit choice until the next run remounts.
+  // pins an explicit choice until the next run remounts. A suite that does not
+  // apply stays shut but still opens on click, to its list of checks.
   const [override, setOverride] = useState<boolean | null>(null);
   const running = state.status === "running";
-  const collapsible = state.status !== "unavailable";
+  const unavailable = state.status === "unavailable";
   const waitingForAuth = Boolean(
     (state as { waitingForAuth?: boolean }).waitingForAuth,
   );
@@ -160,13 +108,13 @@ function SuiteSection({
     waitingForAuth ||
     state.status === "error" ||
     (state.status === "done" && state.verdict !== "passed");
-  const expanded = collapsible && (override ?? autoOpen);
+  const expanded = override ?? autoOpen;
 
   return (
     <SuiteRow
       title={title}
       subtitle={
-        state.status === "unavailable" && state.unavailableReason
+        unavailable && state.unavailableReason
           ? state.unavailableReason
           : description
       }
@@ -181,7 +129,7 @@ function SuiteSection({
           : null
       }
       expanded={expanded}
-      collapsible={collapsible}
+      collapsible
       onToggle={() => setOverride(!expanded)}
       notice={
         state.status === "error" && state.error ? (
@@ -193,7 +141,9 @@ function SuiteSection({
         ) : null
       }
     >
-      {hasResult ? (
+      {unavailable ? (
+        <CatalogList catalog={catalog} note="not applicable to this server." />
+      ) : hasResult ? (
         children
       ) : running ? (
         // Mid-run with nothing to show yet: the catalog would read as
@@ -203,15 +153,10 @@ function SuiteSection({
           Running {catalog.length} checks...
         </div>
       ) : (
-        <div className="pl-7">
-          <div className="py-1 text-[11px] text-muted-foreground">
-            {catalog.length} checks in this suite — not run yet.
-            {catalogNote ? ` ${catalogNote}` : ""}
-          </div>
-          {catalog.map((entry) => (
-            <CatalogRow key={entry.id} entry={entry} />
-          ))}
-        </div>
+        <CatalogList
+          catalog={catalog}
+          note={`not run yet.${catalogNote ? ` ${catalogNote}` : ""}`}
+        />
       )}
     </SuiteRow>
   );

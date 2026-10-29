@@ -1401,6 +1401,15 @@ describe("ConformanceTab", () => {
       .closest("button")!;
     expect(within(header).getByText("NOT APPLICABLE")).toBeDefined();
     expect(within(header).queryByText("FAILED")).toBeNull();
+
+    // Shut by default, but it opens to the suite's checks so the reader can
+    // see what it covers.
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      screen.getByText(/checks in this suite — not applicable to this server\./),
+    ).toBeDefined();
   });
 
   it("turns checks a server refused for credentials into one reconnect notice", async () => {
