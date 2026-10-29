@@ -55,7 +55,10 @@ export type SuiteFeatureGate = {
   reason?: SuiteFeatureDenialReason;
 };
 
-/** Calibration evidence for the suite's CURRENT rubric and judge template. */
+/**
+ * Reviewer agreement for the suite's CURRENT rubric and judge template.
+ * Reported as judge-quality data; it gates nothing.
+ */
 export type SuiteJudgeAgreement = {
   reviews: number;
   agreements: number;
@@ -70,10 +73,6 @@ export type SuiteJudgeAgreement = {
    * predates it.
    */
   kappa?: number | null;
-  threshold: number;
-  minReviews: number;
-  eligible: boolean;
-  reasons: Array<"insufficient_reviews" | "agreement_below_threshold">;
 };
 
 /**
@@ -112,12 +111,6 @@ export type SuiteCapabilities = {
     role: "advisory" | "gating";
     hasRubric: boolean;
     agreement: SuiteJudgeAgreement;
-    acknowledgement: {
-      acknowledgedBy: string;
-      acknowledgedAt: number;
-      judgeTemplateVersion: number;
-      current: boolean;
-    } | null;
   };
   /**
    * Per-judge identity from C1. Absent on an older backend — every caller
@@ -224,8 +217,8 @@ const UNAVAILABLE: SuiteCapabilitiesState = {
  * Read one suite's capabilities.
  *
  * `refreshKey` re-asks. The sheet passes the suite's revision number, so a
- * save that changes what the person may do next — acknowledging a judge gate,
- * upgrading the verdict policy — updates the rows rather than leaving them
+ * save that changes what the person may do next, such as upgrading the
+ * verdict policy, updates the rows rather than leaving them
  * describing the suite as it was when the page loaded.
  */
 export function useSuiteCapabilities(

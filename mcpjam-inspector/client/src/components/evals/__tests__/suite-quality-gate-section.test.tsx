@@ -53,12 +53,7 @@ function readyCapabilities(
         agreements: 0,
         rate: null,
         lowerBound: null,
-        threshold: 0.8,
-        minReviews: 20,
-        eligible: false,
-        reasons: ["insufficient_reviews"],
       },
-      acknowledgement: null,
     },
     qualityGate: {
       storage: true,

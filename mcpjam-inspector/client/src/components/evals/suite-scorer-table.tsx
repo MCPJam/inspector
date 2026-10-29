@@ -43,7 +43,6 @@ import {
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
-import { gateSwitchDisabledReason } from "./judge-gate-panel";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import { JudgeModelControl } from "./judges-section";
@@ -107,7 +106,6 @@ export function SuiteScorerTable({
   scenarioMigrationNotice,
   stageFacts,
   capabilities,
-  unavailableReason,
   passOrFailHint,
   headerContent,
   headerDescription,
@@ -129,11 +127,9 @@ export function SuiteScorerTable({
    */
   onManageOrgProviders?: () => void;
   scenarioMigrationNotice?: React.ReactNode;
-  judgeAccessory?: React.ReactNode;
   rubricEditor?: React.ReactNode;
   stageFacts?: Partial<Record<UserValueStage, React.ReactNode>>;
   capabilities?: SuiteCapabilities | null;
-  unavailableReason?: string;
   passOrFailHint: string;
   judgeHint: string;
   groundednessEvidence?: GroundednessRunEvidence;
@@ -215,10 +211,6 @@ export function SuiteScorerTable({
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
   const authorableKinds = authorablePredicateKinds(
     capabilities?.scorers?.predicateKinds,
-  );
-  const judgeDisabledReason = gateSwitchDisabledReason(
-    capabilities?.judge,
-    unavailableReason,
   );
 
   /** A rule this page may edit in place: its own list, not an inherited one. */
@@ -487,7 +479,6 @@ export function SuiteScorerTable({
                           openAllEditors();
                         }}
                         checkPolicy={checkPolicy}
-                        judgeDisabledReason={judgeDisabledReason}
                         judgeConfig={judgeConfig}
                         expanded={editMode}
                         editable={
@@ -620,7 +611,6 @@ function ScorerRow({
   onDisabledReason,
   onEnabledChange,
   checkPolicy,
-  judgeDisabledReason,
   judgeConfig,
   expanded,
   editable,
@@ -636,7 +626,6 @@ function ScorerRow({
   onDisabledReason: string | undefined;
   onEnabledChange: (enabled: boolean) => void;
   checkPolicy: boolean;
-  judgeDisabledReason: string | undefined;
   judgeConfig: EvalJudgeConfig | undefined;
   expanded: boolean;
   /** This page may change the row's threshold, role and body in place. */
@@ -786,7 +775,6 @@ function ScorerRow({
             row={row}
             predicate={predicate}
             checkPolicy={checkPolicy}
-            judgeDisabledReason={judgeDisabledReason}
             judgeEditable={judgeEditable}
             editable={editable}
             onPredicateChange={onPredicateChange}
@@ -864,7 +852,6 @@ function RoleCell({
   row,
   predicate,
   checkPolicy,
-  judgeDisabledReason,
   judgeEditable,
   editable,
   onPredicateChange,
@@ -873,7 +860,6 @@ function RoleCell({
   row: ScorerTableRow;
   predicate: Predicate | undefined;
   checkPolicy: boolean;
-  judgeDisabledReason: string | undefined;
   /** The suite page edits the judge's role; a case only reads it. */
   judgeEditable: boolean;
   /** This page owns the assertion; an inherited one reads its role. */
@@ -892,29 +878,17 @@ function RoleCell({
     if (row.judgeSlot === "groundedness" || !judgeEditable) {
       return <RoleChip role={row.role} />;
     }
-    const requiredEnabled = judgeDisabledReason === undefined;
-    // Two segments unconditionally. The judge-severity capability used to
-    // decide whether a third segment, Warn, could be offered; with Warn and
-    // Report collapsed into Advisory there is no third tier for it to gate.
+    // Two segments unconditionally, both always offered: Required is the
+    // author's choice. With Warn and Report collapsed into Advisory there is
+    // no third tier.
     const roles: ScorerUiRole[] = ["required", "advisory"];
     return (
-      <div className="space-y-1">
-        <RoleSegmentGroup
-          value={row.role}
-          roles={roles}
-          disabledRoles={requiredEnabled ? undefined : ["required"]}
-          ariaLabel="Judge role"
-          onChange={onJudgeRoleChange}
-        />
-        {judgeDisabledReason ? (
-          <p
-            className="text-[11px] text-muted-foreground"
-            data-testid="judge-gate-disabled-reason"
-          >
-            {judgeDisabledReason}
-          </p>
-        ) : null}
-      </div>
+      <RoleSegmentGroup
+        value={row.role}
+        roles={roles}
+        ariaLabel="Judge role"
+        onChange={onJudgeRoleChange}
+      />
     );
   }
   if (

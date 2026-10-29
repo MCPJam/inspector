@@ -29,12 +29,7 @@ function judgeCapabilities(
       agreements: 0,
       rate: null,
       lowerBound: null,
-      threshold: 0.8,
-      minReviews: 20,
-      eligible: false,
-      reasons: ["insufficient_reviews"],
     },
-    acknowledgement: null,
     ...patch,
   };
 }
@@ -44,7 +39,6 @@ function renderTable(
     predicates?: Predicate[];
     judgeConfig?: Parameters<typeof SuiteScorerTable>[0]["judgeConfig"];
     capabilities?: SuiteCapabilities | null;
-    unavailableReason?: string;
     requireOrgKeys?: boolean;
     availableModels?: Parameters<typeof SuiteScorerTable>[0]["availableModels"];
     onManageOrgProviders?: () => void;
@@ -70,7 +64,6 @@ function renderTable(
       onManageOrgProviders={overrides.onManageOrgProviders}
       stageFacts={overrides.stageFacts}
       capabilities={overrides.capabilities}
-      unavailableReason={overrides.unavailableReason}
       passOrFailHint={PASS_OR_FAIL_HINT}
       judgeHint={JUDGE_HINT}
     />,
@@ -254,10 +247,6 @@ describe("SuiteScorerTable", () => {
             agreements: 18,
             rate: 0.9,
             lowerBound: 0.8,
-            threshold: 0.8,
-            minReviews: 20,
-            eligible: true,
-            reasons: [],
           },
         }),
         judges: {
@@ -314,10 +303,6 @@ describe("SuiteScorerTable", () => {
             agreements: 18,
             rate: 0.9,
             lowerBound: 0.8,
-            threshold: 0.8,
-            minReviews: 20,
-            eligible: true,
-            reasons: [],
           },
         }),
         scorers: { checkPolicy: true },
@@ -347,7 +332,7 @@ describe("SuiteScorerTable", () => {
     expect(within(row).queryByRole("group", { name: "Judge role" })).toBeNull();
   });
 
-  it("offers the judge's role, holding Required until the judge is calibrated", () => {
+  it("offers Required with no reviewer labels at all", () => {
     renderTable({
       capabilities: {
         suiteId: "s",
@@ -373,14 +358,11 @@ describe("SuiteScorerTable", () => {
       },
     });
     fireEvent.click(screen.getByRole("button", { name: "Edit evaluators" }));
-    // The role is offered on every deployment; only calibration holds it.
+    // Required is the author's choice: zero reviews hold nothing back.
     const judgeRole = screen.getByRole("group", { name: "Judge role" });
     expect(
       within(judgeRole).getByRole("button", { name: "Required" }),
-    ).toBeDisabled();
-    expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
-      "Needs 20 reviews at 80% agreement (0 so far)",
-    );
+    ).toBeEnabled();
     // The threshold stays editable.
     expect(screen.getByRole("spinbutton", { name: "Judge threshold" })).toBeTruthy();
   });

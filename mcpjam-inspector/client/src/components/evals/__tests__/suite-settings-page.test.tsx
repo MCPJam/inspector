@@ -74,12 +74,7 @@ vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
                 agreements: 0,
                 rate: null,
                 lowerBound: null,
-                threshold: 0.8,
-                minReviews: 20,
-                eligible: false,
-                reasons: ["insufficient_reviews"],
               },
-              acknowledgement: null,
             },
             revisionNumber: 1,
           }

@@ -66,7 +66,6 @@ describe("useSuiteCapabilities", () => {
         role: "advisory",
         hasRubric: false,
         agreement: { reviews: 0, agreements: 0, rate: null },
-        acknowledgement: null,
       },
       revisionNumber: 4,
     };
