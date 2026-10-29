@@ -107,8 +107,10 @@ export function ConformanceConnectError({
         </div>
       </div>
       <div className="flex shrink-0 gap-2">
+        {/* A plain retry would hit the same missing sign-in, so this one
+            opens it. */}
         <Button size="sm" variant="outline" onClick={onRetry}>
-          Retry
+          {needsSignIn ? "Sign in" : "Retry"}
         </Button>
         {onEdit ? (
           <Button size="sm" variant="ghost" onClick={onEdit}>
@@ -315,11 +317,14 @@ export function ConformanceServerPicker({
         {servers.map((server) => {
           const note = connectionNote(server);
           return (
-            <SelectItem key={server.name} value={server.name}>
+            // The note goes in `description`, which stays in the menu: the
+            // closed trigger repeats only the item text.
+            <SelectItem
+              key={server.name}
+              value={server.name}
+              description={note ?? undefined}
+            >
               {server.name}
-              {note ? (
-                <span className="text-muted-foreground"> · {note}</span>
-              ) : null}
             </SelectItem>
           );
         })}

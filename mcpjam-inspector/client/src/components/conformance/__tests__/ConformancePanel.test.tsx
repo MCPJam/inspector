@@ -635,7 +635,7 @@ describe("ConformanceTab", () => {
     );
 
     clickRun();
-    expect(onConnectServer).toHaveBeenCalledWith("alpha");
+    expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false });
     expect(
       (await screen.findAllByRole("button", { name: /Connecting/ }))[0],
     ).toBeDisabled();
@@ -686,6 +686,9 @@ describe("ConformanceTab", () => {
     expect(onEditServer).toHaveBeenCalledWith("alpha");
     fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(onConnectServer).toHaveBeenCalledTimes(2));
+    expect(onConnectServer).toHaveBeenLastCalledWith("alpha", {
+      signIn: false,
+    });
     info.mockRestore();
   });
 
@@ -712,6 +715,13 @@ describe("ConformanceTab", () => {
       <ConformanceTab server={connected} servers={[connected]} {...props} />,
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // A later drop is a new state, not the old failure coming back.
+    const dropped = { ...server, connectionStatus: "disconnected" as const };
+    rerender(
+      <ConformanceTab server={dropped} servers={[dropped]} {...props} />,
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("asks to sign in again when the connect needs reauthorization", async () => {
@@ -719,18 +729,29 @@ describe("ConformanceTab", () => {
       name: "alpha",
       connectionStatus: "disconnected",
     });
+    const onConnectServer = vi.fn(async () => "reauth" as const);
     render(
       <ConformanceTab
         server={server}
         servers={[server]}
         onSelectServer={vi.fn()}
-        onConnectServer={vi.fn(async () => "reauth" as const)}
+        onConnectServer={onConnectServer}
       />,
     );
 
     clickRun();
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "It needs you to sign in again.",
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("It needs you to sign in again.");
+
+    // Retrying would hit the same missing sign-in, so the button opens it.
+    expect(
+      within(alert).queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(within(alert).getByRole("button", { name: "Sign in" }));
+    await waitFor(() =>
+      expect(onConnectServer).toHaveBeenLastCalledWith("alpha", {
+        signIn: true,
+      }),
     );
   });
 
@@ -754,6 +775,30 @@ describe("ConformanceTab", () => {
     for (const button of runButtons) expect(button).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Add server" }));
     expect(onAddServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a server's connection note in the menu, not the closed select", async () => {
+    const user = userEvent.setup();
+    const server = createHttpServer({
+      name: "alpha",
+      connectionStatus: "disconnected",
+    });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    const trigger = screen.getAllByRole("combobox", { name: "Server" })[0];
+    expect(trigger).toHaveTextContent("Server · alpha");
+    expect(trigger).not.toHaveTextContent("Not connected");
+
+    await user.click(trigger);
+    expect(screen.getByRole("option", { name: /alpha/ })).toHaveTextContent(
+      "Not connected",
+    );
   });
 
   it("labels the server select like the protocol select", () => {

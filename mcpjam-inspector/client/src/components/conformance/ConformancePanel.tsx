@@ -55,6 +55,15 @@ import {
 /** What a background connect from Run came back with. */
 export type ConformanceConnectOutcome = "ready" | "reauth" | "failed";
 
+/**
+ * Connects a server in the background. `signIn` lets the connect open the
+ * server's sign-in, for a server whose last connect needed one.
+ */
+export type ConformanceConnectServer = (
+  name: string,
+  options?: { signIn?: boolean },
+) => Promise<ConformanceConnectOutcome>;
+
 function SuiteBadge({ state }: { state: SuiteState }) {
   if (state.status === "running") {
     return <VerdictBadge label="RUNNING" tone="neutral" spinning />;
@@ -196,7 +205,7 @@ function ConformanceContent({
   centerServerPicker?: ReactNode;
   /** False when the selection is not one of the page's servers. */
   canRun: boolean;
-  onConnectServer?: (name: string) => Promise<ConformanceConnectOutcome>;
+  onConnectServer?: ConformanceConnectServer;
   onEditServer?: (name: string) => void;
 }) {
   // Run state, per-suite scores and the pooled headline all live in the shared
@@ -268,12 +277,12 @@ function ConformanceContent({
     | { status: "idle" | "connecting" | "ready" }
     | { status: "failed"; needsSignIn: boolean }
   >({ status: "idle" });
-  const connectAndRun = async () => {
+  const connectAndRun = async (signIn = false) => {
     if (!onConnectServer) return;
     setConnect({ status: "connecting" });
     let outcome: ConformanceConnectOutcome;
     try {
-      outcome = await onConnectServer(server.name);
+      outcome = await onConnectServer(server.name, { signIn });
     } catch {
       outcome = "failed";
     }
@@ -284,6 +293,13 @@ function ConformanceContent({
     );
   };
   const isConnected = server.connectionStatus === "connected";
+  // A server reconnected another way (Edit connection, the server menu) ends
+  // the failure, so a later disconnect does not bring the old alert back.
+  useEffect(() => {
+    if (connect.status === "failed" && isConnected) {
+      setConnect({ status: "idle" });
+    }
+  }, [connect.status, isConnected]);
   useEffect(() => {
     if (connect.status !== "ready" || !isConnected) return;
     setConnect({ status: "idle" });
@@ -346,13 +362,14 @@ function ConformanceContent({
       )}
     </Button>
   );
-  // A server reconnected from Edit connection clears the alert on its own.
+  // `!isConnected` hides the alert in the render before the effect above
+  // resets the failure.
   const connectError =
     connect.status === "failed" && !isConnected ? (
       <ConformanceConnectError
         server={server}
         needsSignIn={connect.needsSignIn}
-        onRetry={() => void connectAndRun()}
+        onRetry={() => void connectAndRun(connect.needsSignIn)}
         onEdit={onEditServer ? () => onEditServer(server.name) : undefined}
       />
     ) : null;
@@ -635,7 +652,7 @@ export function ConformanceTab({
   servers?: ServerWithName[];
   onSelectServer?: (name: string) => void;
   /** Connects a server in the background when Run is clicked on it. */
-  onConnectServer?: (name: string) => Promise<ConformanceConnectOutcome>;
+  onConnectServer?: ConformanceConnectServer;
   /** Opens the Add server form here; offered when there are no servers. */
   onAddServer?: () => void;
   /** Opens a server's connection settings, after a failed connect. */
