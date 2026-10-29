@@ -590,6 +590,27 @@ describe("ConformanceTab", () => {
     ).toBe("beta");
   });
 
+  it("labels the server select like the protocol select", () => {
+    const server = createHttpServer({ name: "alpha" });
+    const { rerender } = render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Server" })).toHaveTextContent(
+      "Server · alpha",
+    );
+
+    rerender(
+      <ConformanceTab server={null} servers={[]} onSelectServer={vi.fn()} />,
+    );
+    expect(screen.getByRole("combobox", { name: "Server" })).toHaveTextContent(
+      "Server · None connected",
+    );
+  });
+
   it("lists protocol versions newest first, after Auto", async () => {
     const user = userEvent.setup();
     render(<ConformanceTab server={createHttpServer()} />);

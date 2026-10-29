@@ -216,11 +216,13 @@ export function ConformanceServerPicker({
       disabled={servers.length === 0}
     >
       <SelectTrigger aria-label="Server" className="h-8 w-auto gap-2 text-sm">
-        <SelectValue
-          placeholder={
-            servers.length === 0 ? "No connected servers" : "Select a server"
-          }
-        />
+        {/* Labelled like the protocol select beside it: "Server · <name>". */}
+        <span>
+          Server ·{" "}
+          <SelectValue
+            placeholder={servers.length === 0 ? "None connected" : "Select"}
+          />
+        </span>
       </SelectTrigger>
       <SelectContent>
         {servers.map((server) => (
