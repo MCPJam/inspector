@@ -386,8 +386,7 @@ describe("useAvailableModels", () => {
   });
 
   it("says null, not undefined, when the organization offers this viewer no handoff", () => {
-    // A scoped picker passes it on as is, so it never falls back to the
-    // active project's organization.
+    // `ModelSelector` requires `null` here: no other organization stands in.
     viewer.isAdmin = false;
     try {
       const { result } = renderHook(() => useAvailableModels());

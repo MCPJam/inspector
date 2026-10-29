@@ -109,12 +109,11 @@ interface ModelSelectorProps {
   onManageOrgProviders?: () => void;
   /**
    * Opens the org's AI providers from a search with no match, under any key
-   * policy. A picker scoped to its own project passes its project's handoff
-   * from `useAvailableModels`, or `null` when that organization offers this
-   * viewer none. Omitted only by pickers on the active project (chat, the
-   * client builder), which then use the active project's organization.
+   * policy: the handoff from `useAvailableModels` for the project the picker
+   * serves, or `null` when that organization offers this viewer none.
+   * `onManageOrgProviders` wins when both are set, so chat passes `null`.
    */
-  onAddProvider?: (() => void) | null;
+  onAddProvider: (() => void) | null;
   /**
    * The organization requires its own provider keys for AI features: MCPJam
    * models are not offered, so the "Free models" / "Your providers" split is

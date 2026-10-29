@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ModelSelector } from "../chat-input/model-selector";
@@ -12,24 +12,6 @@ vi.mock("../chat-input/model/provider-logo", () => ({
   ProviderLogo: ({ provider }: { provider: string }) => (
     <span aria-hidden="true">{provider}</span>
   ),
-}));
-// The active project's organization handoff, for pickers no caller wired one into.
-const active = vi.hoisted(() => ({
-  appState: null as null | {
-    activeProjectId: string;
-    projects: Record<string, { id: string; organizationId: string }>;
-  },
-  handoff: undefined as (() => void) | undefined,
-  orgId: vi.fn(),
-}));
-vi.mock("@/state/app-state-context", () => ({
-  useOptionalSharedAppState: () => active.appState,
-}));
-vi.mock("@/hooks/use-org-models-handoff", () => ({
-  useOrgModelsHandoff: (organizationId: string | null) => {
-    active.orgId(organizationId);
-    return active.handoff;
-  },
 }));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (
@@ -52,6 +34,7 @@ async function searchFor(
       currentModel={models[0]}
       availableModels={models}
       onModelChange={() => {}}
+      onAddProvider={null}
       {...props}
     />,
   );
@@ -61,90 +44,6 @@ async function searchFor(
 }
 
 describe("ModelSelector — a search with no match", () => {
-  beforeEach(() => {
-    active.appState = null;
-    active.handoff = undefined;
-    active.orgId.mockClear();
-  });
-
-  it("offers Add a provider from the active project's organization when the picker passes none", async () => {
-    const handoff = vi.fn();
-    active.appState = {
-      activeProjectId: "p1",
-      projects: { p1: { id: "p1", organizationId: "org_1" } },
-    };
-    active.handoff = handoff;
-    const user = await searchFor("mixtral");
-
-    await user.click(
-      await screen.findByRole("button", { name: "Add a provider" }),
-    );
-    expect(active.orgId).toHaveBeenCalledWith("org_1");
-    expect(handoff).toHaveBeenCalledTimes(1);
-    // The menu closes before handing off, like the picker's other links.
-    expect(
-      screen.queryByPlaceholderText("Search models"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("prefers the handoff the picker passes over the active project's", async () => {
-    const onAddProvider = vi.fn();
-    active.appState = {
-      activeProjectId: "p1",
-      projects: { p1: { id: "p1", organizationId: "org_1" } },
-    };
-    active.handoff = vi.fn();
-    const user = await searchFor("mixtral", { onAddProvider });
-
-    await user.click(
-      await screen.findByRole("button", { name: "Add a provider" }),
-    );
-    expect(onAddProvider).toHaveBeenCalledTimes(1);
-    expect(active.handoff).not.toHaveBeenCalled();
-    expect(
-      screen.queryByPlaceholderText("Search models"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("keeps a picker scoped to another project off the active project's organization", async () => {
-    active.appState = {
-      activeProjectId: "p1",
-      projects: { p1: { id: "p1", organizationId: "org_1" } },
-    };
-    active.handoff = vi.fn();
-    await searchFor("mixtral", { onAddProvider: null });
-
-    expect(
-      await screen.findByText('No models match "mixtral".'),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Add a provider" }),
-    ).not.toBeInTheDocument();
-    // The fallback isn't even mounted.
-    expect(active.orgId).not.toHaveBeenCalled();
-  });
-
-  it("offers nothing from an active organization the viewer can't manage", async () => {
-    // The viewer isn't an admin there, or the organizations are still loading.
-    active.appState = {
-      activeProjectId: "p1",
-      projects: { p1: { id: "p1", organizationId: "org_1" } },
-    };
-    active.handoff = undefined;
-    await searchFor("mixtral");
-
-    expect(
-      await screen.findByText('No models match "mixtral".'),
-    ).toBeInTheDocument();
-    expect(active.orgId).toHaveBeenCalledWith("org_1");
-    expect(
-      screen.queryByRole("button", { name: "Add a provider" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("Ask an organization admin to add one."),
-    ).not.toBeInTheDocument();
-  });
-
   it("says why the model isn't listed and offers to add its provider", async () => {
     const onAddProvider = vi.fn();
     const user = await searchFor("mixtral", { onAddProvider });
@@ -164,6 +63,19 @@ describe("ModelSelector — a search with no match", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers chat's Manage AI providers handoff when the picker passes null", async () => {
+    const onManageOrgProviders = vi.fn();
+    const user = await searchFor("mixtral", { onManageOrgProviders });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add a provider" }),
+    );
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByPlaceholderText("Search models"),
+    ).not.toBeInTheDocument();
+  });
+
   it("sends a member under the key policy to an admin", async () => {
     await searchFor("mixtral", { requireOrgKeys: true });
 
@@ -177,7 +89,7 @@ describe("ModelSelector — a search with no match", () => {
     ).toBeInTheDocument();
   });
 
-  it("only explains when it can't tell whether the viewer can add providers", async () => {
+  it("only explains when the picker's organization offers nothing", async () => {
     await searchFor("mixtral");
 
     expect(

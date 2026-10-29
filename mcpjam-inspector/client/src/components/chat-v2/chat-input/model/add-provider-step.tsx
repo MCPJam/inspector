@@ -1,8 +1,5 @@
 import { ArrowUpRight } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
-import { useOptionalSharedAppState } from "@/state/app-state-context";
-import { findProjectByAnyId } from "@/state/app-types";
 
 /**
  * The next step when the model someone wants isn't in the picker: "Add a
@@ -27,26 +24,11 @@ export function AddProviderStep({ onAdd }: { onAdd?: () => void }) {
   );
 }
 
-/** Add a provider through the active project's organization, if the viewer may. */
-function ActiveOrgAddProvider({
-  organizationId,
-  leaveTo,
-}: {
-  organizationId: string;
-  leaveTo: (handoff: () => void) => void;
-}) {
-  const handoff = useOrgModelsHandoff(organizationId);
-  return handoff ? <AddProviderStep onAdd={() => leaveTo(handoff)} /> : null;
-}
-
 /**
  * A search that matched no model: says why it isn't listed and, when known,
- * what to do. Only a picker on the active project (chat, the client builder)
- * passes no `onAdd`, and it falls back to the active project's organization.
- * `null` comes from a picker scoped to its own project whose organization
- * offers this viewer none, and gets no fallback: another organization's
- * providers can't fill its list. Off the key policy, nothing known about the
- * viewer means no admin pointer either.
+ * what to do. `onAdd` is the picker's own organization's handoff, or `null`
+ * when that organization offers this viewer none. Off the key policy, nothing
+ * known about the viewer means no admin pointer either.
  */
 export function ModelSearchEmpty({
   query,
@@ -56,15 +38,10 @@ export function ModelSearchEmpty({
 }: {
   query: string;
   requireOrgKeys?: boolean;
-  onAdd?: (() => void) | null;
+  onAdd: (() => void) | null;
   /** Closes the picker, then runs the handoff. */
   leaveTo: (handoff?: () => void) => void;
 }) {
-  const appState = useOptionalSharedAppState();
-  const organizationId = findProjectByAnyId(
-    appState?.projects ?? {},
-    appState?.activeProjectId ?? null,
-  )?.organizationId;
   return (
     <div className="space-y-2 px-3">
       <p>No models match "{query.trim()}".</p>
@@ -77,11 +54,6 @@ export function ModelSearchEmpty({
         <AddProviderStep onAdd={() => leaveTo(onAdd)} />
       ) : requireOrgKeys ? (
         <AddProviderStep />
-      ) : onAdd === undefined && organizationId ? (
-        <ActiveOrgAddProvider
-          organizationId={organizationId}
-          leaveTo={leaveTo}
-        />
       ) : null}
     </div>
   );
