@@ -1,9 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useChatSession } from "../use-chat-session";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { GUEST_LOCKED_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
+import { useStdioCommandApprovalStore } from "@/lib/stdio-command-approval";
+import { STDIO_COMMAND_APPROVAL_REQUIRED_REASON } from "@/shared/stdio-command-approval";
 
 const mockGetToolsMetadata = vi.fn();
 const mockCountTextTokens = vi.fn();
@@ -779,6 +781,87 @@ describe("useChatSession minimal mode parity", () => {
     });
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  describe("a chat turn refused for an unapproved stdio command", () => {
+    // The chat route's 403 body, as the transport hands it to onError.
+    const refusedTurn = () =>
+      new Error(
+        JSON.stringify({
+          code: "STDIO_COMMAND_APPROVAL_REQUIRED",
+          message: "needs approval",
+          details: {
+            reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
+            serverId: "srv-1",
+            serverName: "Files",
+            approval: {
+              serverId: "srv-1",
+              fingerprint: "ab".repeat(32),
+              command: "node",
+              args: ["server.js"],
+              envNames: [],
+              previouslyApproved: false,
+            },
+          },
+        }),
+      );
+
+    async function failTurn(
+      error: Error,
+      hostedContext?: { projectId: string; selectedServerIds: string[] },
+    ) {
+      renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          minimalMode: true,
+          executionConfig: { systemPrompt: "Prompt" },
+          ...(hostedContext ? { hostedContext } : {}),
+        }),
+      );
+      await waitFor(() => {
+        expect(mockUseChatErrorHandlers.length).toBeGreaterThan(0);
+      });
+      act(() => {
+        mockUseChatErrorHandlers.at(-1)?.(error);
+      });
+    }
+
+    beforeEach(() => {
+      useStdioCommandApprovalStore.setState({ queue: [] });
+    });
+
+    afterEach(() => {
+      useStdioCommandApprovalStore.getState().settle(false);
+    });
+
+    it("asks for the refused command in the chat's project", async () => {
+      await failTurn(refusedTurn(), {
+        projectId: "project-1",
+        selectedServerIds: [],
+      });
+      await waitFor(() => {
+        expect(useStdioCommandApprovalStore.getState().queue).toHaveLength(1);
+      });
+      expect(useStdioCommandApprovalStore.getState().queue[0]).toMatchObject({
+        projectId: "project-1",
+        serverName: "Files",
+      });
+    });
+
+    it("does not ask for any other failure", async () => {
+      await failTurn(new Error("Model provider timed out"), {
+        projectId: "project-1",
+        selectedServerIds: [],
+      });
+      await Promise.resolve();
+      expect(useStdioCommandApprovalStore.getState().queue).toEqual([]);
+    });
+
+    it("does not ask without a project to approve it in", async () => {
+      await failTurn(refusedTurn());
+      await Promise.resolve();
+      expect(useStdioCommandApprovalStore.getState().queue).toEqual([]);
+    });
   });
 
   it("opens the topup variant for signed-in user_rate_limit responses", async () => {
