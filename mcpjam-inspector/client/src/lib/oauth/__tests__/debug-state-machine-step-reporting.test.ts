@@ -396,13 +396,25 @@ describe("OAuth debugger step-failure reporting", () => {
   );
 
   it("still reports the debug proxy failing on registration", async () => {
-    await replayRegistrationFailure(async () => {
-      throw new Error("Backend debug proxy error: 500 Internal Server Error");
-    });
+    vi.mocked(authFetch).mockResolvedValue(new Response("", { status: 500 }));
+    await replayRegistrationFailure(wrappedUpdateState().execute);
 
     // Once per message: the bare failure and its hinted twin both report.
     expect(reportCaught).toHaveBeenCalledTimes(2);
   });
+
+  // A proxy answer without the target's status is our contract breaking.
+  it.each([undefined, 0])(
+    "still reports a proxy answer with status %s",
+    async (status) => {
+      vi.mocked(authFetch).mockResolvedValue(
+        new Response(JSON.stringify({ status, body: {} })),
+      );
+      await replayRegistrationFailure(wrappedUpdateState().execute);
+
+      expect(reportCaught).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("still reports a registration answer that is not a client", async () => {
     await replayRegistrationFailure(registrationAnswer(201, "not json"));
