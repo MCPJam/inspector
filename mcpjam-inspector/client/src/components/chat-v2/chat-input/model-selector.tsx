@@ -546,8 +546,7 @@ export function ModelSelector({
     setIsOpen(false);
     handoff?.();
   };
-  const handleManageOrgProviders = () =>
-    leaveTo(onManageOrgProviders ?? onAddProvider);
+  const handleManageOrgProviders = () => leaveTo(onManageOrgProviders);
 
   const selectedModelsData = allowEmptySelection
     ? (selectedModels ?? [])
