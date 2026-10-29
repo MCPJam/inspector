@@ -32,7 +32,8 @@ const test = new OAuthConformanceTest({
 
 const result = await test.run();
 
-console.log(result.passed);   // true
+console.log(result.outcome);  // "passed" | "failed" | "incomplete" | "not-applicable"
+console.log(result.passed);   // true only when outcome === "passed"
 console.log(result.summary);  // "OAuth conformance passed for ..."
 console.log(result.steps);    // Step-by-step results with HTTP traces
 ```
@@ -186,7 +187,11 @@ const result = await suite.run();
 console.log(result.passed);   // true
 console.log(result.summary);  // "All 2 flows passed for ..."
 for (const flow of result.results) {
-  console.log(`${flow.passed ? "PASS" : "FAIL"} ${flow.label}`);
+  console.log(`${flow.outcome} ${flow.label}`);
+  // outcome is "passed" | "failed" | "incomplete" | "not-applicable"
+  if (flow.outcome === "incomplete") {
+    console.log("  Reason:", flow.incompleteReason);
+  }
 }
 ```
 
@@ -198,7 +203,9 @@ for (const flow of result.results) {
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `passed` | `boolean` | Whether the flow completed successfully |
+| `passed` | `boolean` | `true` only when `outcome` is `"passed"` |
+| `outcome` | `"passed" \| "failed" \| "incomplete" \| "not-applicable"` | Run verdict. `"incomplete"` means applicable steps could not run — conformance was never established. `"not-applicable"` means the server does not require OAuth. |
+| `incompleteReason` | `string` | Present when `outcome` is `"incomplete"`: which steps could not run and what must change for them to run. |
 | `protocolVersion` | `string` | Protocol version tested |
 | `registrationStrategy` | `string` | Registration strategy tested |
 | `serverUrl` | `string` | Server URL tested |
@@ -241,9 +248,9 @@ for (const flow of result.results) {
 |----------|------|-------------|
 | `name` | `string` | Suite name |
 | `serverUrl` | `string` | Shared server URL |
-| `passed` | `boolean` | `true` iff every flow passed |
+| `passed` | `boolean` | `true` only when every flow is `"passed"` or `"not-applicable"`. An incomplete flow is not a pass. |
 | `results` | `Array<ConformanceResult & { label }>` | Per-flow results |
-| `summary` | `string` | Human-readable suite summary |
+| `summary` | `string` | Human-readable suite summary. Names failed flows and incomplete flows separately. |
 | `durationMs` | `number` | Total suite duration |
 
 ---
