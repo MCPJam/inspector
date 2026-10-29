@@ -110,6 +110,21 @@ describe("RunErrorBreakdownDescription — organization AI provider refusals", (
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
+
+  it("reaches the toast with the run's project", () => {
+    toastWarning.mockClear();
+    handoff.manage = vi.fn();
+    renderHook(() => useRunErrorBreakdownToast("run_p1", refused, "p1"));
+    const { description } = toastWarning.mock.calls[0][1] as {
+      description: React.ReactNode;
+    };
+    render(<>{description}</>);
+    // Without the project there is no organization, and no button for anyone.
+    expect(handoff.orgId).toHaveBeenCalledWith("org_1");
+    expect(
+      screen.getByRole("button", { name: "Manage AI providers" }),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("useRunErrorBreakdownToast", () => {

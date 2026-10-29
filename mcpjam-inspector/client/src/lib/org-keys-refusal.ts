@@ -81,7 +81,7 @@ function envelopeCode(text: string | null | undefined): unknown {
   try {
     return (JSON.parse(trimmed) as { code?: unknown })?.code;
   } catch {
-    // Not JSON: safe to ignore, a caller still reads the `"<code>:"` lead.
+    // Not JSON: safe to ignore, the text simply states no envelope code.
     // The text itself is not logged; it can carry a provider's message.
     console.debug("[org-keys-refusal] Error text is not JSON");
     return undefined;

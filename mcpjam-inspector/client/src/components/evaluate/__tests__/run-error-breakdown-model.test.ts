@@ -60,6 +60,17 @@ const providerErrorChain = chain(
   },
   { selection: "providerError" },
 );
+const setupAbortedChain = chain(
+  {
+    connection: "notMeasured",
+    discovery: "notMeasured",
+    selection: "notMeasured",
+    call: "notMeasured",
+    response: "notMeasured",
+    userValue: "notMeasured",
+  },
+  { connection: "setupAborted" },
+);
 
 function iteration(
   id: string,
@@ -252,6 +263,40 @@ describe("organization AI provider refusals", () => {
         toolErrorChain,
       ),
     ).toBe("serverError");
+  });
+
+  it("keeps a failure the chain pins on the MCP server there, whatever code was recorded", () => {
+    for (const code of ["credential_missing", "provider_not_configured"]) {
+      expect(
+        classifyIterationError(
+          iteration("a", {
+            error: "set GITHUB_TOKEN",
+            errorDetails: JSON.stringify({ ok: false, code }),
+            infraError: {
+              class: "configuration",
+              layer: "model",
+              retryable: false,
+              code,
+            },
+          } as Partial<EvalIteration>),
+          toolErrorChain,
+        ),
+      ).toBe("serverError");
+    }
+  });
+
+  it("reads a stated refusal from the text when the chain stops on the provider or on setup", () => {
+    for (const stop of [providerErrorChain, setupAbortedChain]) {
+      expect(
+        classifyIterationError(
+          iteration("a", {
+            status: "failed",
+            error: "provider_not_configured: anthropic is not enabled",
+          }),
+          stop,
+        ),
+      ).toBe("orgProviders");
+    }
   });
 
   it("reads the typed code on a refused turn recorded as a configuration error", () => {
