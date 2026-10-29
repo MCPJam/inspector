@@ -13,8 +13,9 @@ export interface SavedClientSecret {
  * A hosted server's saved client secret lives in Convex, flagged only by
  * `hasClientSecret`, so `deriveOAuthProfileFromServer` never sees it. Load it
  * the way the OAuth debugger does (`createHostedClientSecretResolver`) — held
- * in memory for one run, never written to storage. A failed fetch sends no
- * secret; the token step's rejection then shows in the run instead.
+ * in memory for one run, never written to storage. A failed fetch throws:
+ * running on without the secret would fail the token step with
+ * `invalid_client` and blame the client's registration instead of the load.
  */
 export async function loadSavedClientSecret(
   server: ServerWithName
@@ -26,7 +27,9 @@ export async function loadSavedClientSecret(
     const { clientSecret } = await fetchOAuthClientSecret(resolved);
     return { clientSecret, ...resolved };
   } catch {
-    return undefined;
+    throw new Error(
+      "Couldn't load the saved client secret. Run the checks again."
+    );
   }
 }
 

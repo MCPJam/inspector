@@ -117,9 +117,23 @@ describe("useConformanceRun OAuth client secret", () => {
     expect(secrets.fetchOAuthClientSecret).not.toHaveBeenCalled();
   });
 
-  it("sends no secret when the fetch fails", async () => {
+  it("stops the OAuth suite when the saved secret can't be loaded", async () => {
     secrets.fetchOAuthClientSecret.mockRejectedValue(new Error("forbidden"));
-    expect(await sentClientSecret(makeServer(true))).toBeUndefined();
+    const view = renderHook(() =>
+      useConformanceRun({ server: makeServer(true), deferOAuthAuthorization: true }),
+    );
+
+    await act(async () => {
+      await view.result.current.runAll();
+    });
+
+    await waitFor(() =>
+      expect(view.result.current.oauth).toMatchObject({
+        status: "error",
+        error: "Couldn't load the saved client secret. Run the checks again.",
+      }),
+    );
+    expect(api.startOAuthConformance).not.toHaveBeenCalled();
   });
 
   it("stops instead of sending the secret when the project changed during the fetch", async () => {
