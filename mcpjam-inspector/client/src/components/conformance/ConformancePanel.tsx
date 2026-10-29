@@ -159,7 +159,7 @@ function SuiteSection({
       ) : (
         <CatalogList
           catalog={catalog}
-          note={` — not run yet.${catalogNote ? ` ${catalogNote}` : ""}`}
+          note={`. Not run yet.${catalogNote ? ` ${catalogNote}` : ""}`}
         />
       )}
     </SuiteRow>

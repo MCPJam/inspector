@@ -786,7 +786,7 @@ describe("ConformanceTab", () => {
     expect(within(suiteHeader("protocol")).getByText("ERROR")).toBeDefined();
     expect(screen.getByText("protocol endpoint down")).toBeInTheDocument();
     expect(
-      screen.getByText(/checks in this suite — not run yet/),
+      screen.getByText(/checks in this suite\. Not run yet/),
     ).toBeInTheDocument();
 
     // The row shows the canonical title; the explanation stays shut until
@@ -839,7 +839,7 @@ describe("ConformanceTab", () => {
     await runToCompletion();
 
     expect(screen.getByText("Round trip")).toBeInTheDocument();
-    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+    expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
   });
 
   it("shows a running suite as running, not as the not-yet-run catalog", async () => {
@@ -857,7 +857,7 @@ describe("ConformanceTab", () => {
     // while the run is live.
     await screen.findByText(/Running \d+ checks/);
     expect(within(suiteHeader("protocol")).getByText("RUNNING")).toBeDefined();
-    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+    expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
 
     pending.resolve({ success: true, result: createProtocolResult() });
     await waitFor(() => {
@@ -899,7 +899,7 @@ describe("ConformanceTab", () => {
       expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1");
     });
     expect(within(suiteHeader("oauth")).getByText("RUNNING")).toBeDefined();
-    expect(screen.queryByText(/checks in this suite — not run yet/)).toBeNull();
+    expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
 
     poll.resolve({ phase: "complete", result: createOAuthResult() });
     await waitFor(() => {
