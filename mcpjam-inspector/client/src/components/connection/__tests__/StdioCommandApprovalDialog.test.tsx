@@ -123,9 +123,7 @@ describe("StdioCommandApprovalDialog", () => {
     expect(
       screen.getByText('NODE_OPTIONS="--require /tmp/x.js"'),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/can make the command load other code/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/It can run other code/)).toBeInTheDocument();
     // The other values stay hidden; only their names are listed.
     expect(screen.getByText("ACME_TOKEN")).toBeInTheDocument();
   });

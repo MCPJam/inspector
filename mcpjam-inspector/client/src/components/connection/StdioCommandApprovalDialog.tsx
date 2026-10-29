@@ -89,8 +89,8 @@ export function StdioCommandApprovalDialog() {
             <div className="space-y-1 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-foreground">
               <p className="font-medium">
                 {codeLoading.length === 1
-                  ? "This variable can make the command load other code. Allow only if you expected this value."
-                  : "These variables can make the command load other code. Allow only if you expected these values."}
+                  ? "Allow only if you expected this value. It can run other code."
+                  : "Allow only if you expected these values. They can run other code."}
               </p>
               <pre className="whitespace-pre-wrap break-all font-mono text-xs">
                 {codeLoading
