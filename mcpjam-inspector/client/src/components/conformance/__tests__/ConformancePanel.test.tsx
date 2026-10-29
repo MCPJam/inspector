@@ -590,6 +590,39 @@ describe("ConformanceTab", () => {
     ).toBe("beta");
   });
 
+  it("labels the server select like the protocol select", () => {
+    const server = createHttpServer({ name: "alpha" });
+    const { rerender } = render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Server" })).toHaveTextContent(
+      "Server · alpha",
+    );
+
+    // Servers to pick from, none selected yet.
+    rerender(
+      <ConformanceTab
+        server={null}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Server" })).toHaveTextContent(
+      "Server · Select",
+    );
+
+    rerender(
+      <ConformanceTab server={null} servers={[]} onSelectServer={vi.fn()} />,
+    );
+    expect(screen.getByRole("combobox", { name: "Server" })).toHaveTextContent(
+      "Server · None connected",
+    );
+  });
+
   it("lists protocol versions newest first, after Auto", async () => {
     const user = userEvent.setup();
     render(<ConformanceTab server={createHttpServer()} />);
@@ -1491,12 +1524,65 @@ describe("ConformanceTab", () => {
     expect(within(header).queryByText("FAILED")).toBeNull();
     expect(
       screen.getByText(
-        /This server requires sign-in.*1 check\(s\) could not\s+run/s,
+        /This server requires sign-in.*the checks that need it could not\s+run/s,
+      ),
+    ).toBeDefined();
+    // The headline names the sign-in rather than judging the server.
+    expect(
+      screen.getByText(
+        "Incomplete. 1 check could not run because sign-in failed. Reconnect the server and run again.",
       ),
     ).toBeDefined();
     expect(
       screen.getByText(
         /Reconnect the server with OAuth.*or update its access\s+token/s,
+      ),
+    ).toBeDefined();
+  });
+
+  it("blames sign-in only for the scored checks it blocked", async () => {
+    const refused = {
+      category: "core",
+      description: "Needs a session.",
+      status: "skipped",
+      skipReason: "could-not-run",
+      durationMs: 0,
+      details: { authorizationRequired: true, statusCode: 401 },
+    } as const;
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        passed: false,
+        outcome: "incomplete",
+        checks: [
+          { ...refused, id: "server-initialize", title: "Server Initialize" },
+          // Refused too, but unscored, so it is not in `couldNotRun`.
+          { ...refused, id: "wire-schema-valid", title: "Wire schema" },
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Ping.",
+            status: "skipped",
+            skipReason: "could-not-run",
+            durationMs: 0,
+          },
+        ],
+        profile: {
+          profileId: "mcp-protocol",
+          profileVersion: "1",
+          manifestDigest: "digest",
+          checkerVersion: "1",
+          pendingCheckIds: ["wire-schema-valid"],
+        },
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(
+      screen.getByText(
+        "Incomplete. 1 check could not run because sign-in failed. 1 more could not run. Reconnect the server and run again.",
       ),
     ).toBeDefined();
   });

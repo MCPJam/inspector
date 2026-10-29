@@ -8,6 +8,7 @@ import {
   mintToolApprovalId,
   toolApprovalClaimKey,
   verifyToolApprovalId,
+  TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
   type ToolApprovalBinding,
 } from "../../tool-approval-token.js";
 import {
@@ -143,6 +144,10 @@ export async function executeForwardedOperation<T>(args: {
       throw new ExecutionControlError("approval_unavailable");
     }
     const call = { toolCallId: prepared.executionId, toolName, input };
+    const approvalExpiresAt = Math.min(
+      intent.expiresAt,
+      Date.now() + TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
+    );
     const approvalId = mintToolApprovalId({
       call,
       binding: args.approval.binding,
@@ -157,14 +162,14 @@ export async function executeForwardedOperation<T>(args: {
     await control.requestApproval(
       prepared.executionId,
       nonceHash,
-      intent.expiresAt,
+      approvalExpiresAt,
       approvalId,
     );
     let answer: ApprovalAnswer;
     try {
       const signal = AbortSignal.any([
         ...(args.signal ? [args.signal] : []),
-        AbortSignal.timeout(Math.max(0, intent.expiresAt - Date.now())),
+        AbortSignal.timeout(Math.max(0, approvalExpiresAt - Date.now())),
       ]);
       answer = await withAbort(
         args.approval.ask({
@@ -172,7 +177,7 @@ export async function executeForwardedOperation<T>(args: {
           approvalId,
           toolName,
           input,
-          expiresAt: intent.expiresAt,
+          expiresAt: approvalExpiresAt,
           signal,
         }),
         signal,
