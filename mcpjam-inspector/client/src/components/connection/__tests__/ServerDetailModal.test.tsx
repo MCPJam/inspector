@@ -713,9 +713,8 @@ describe("ServerDetailModal", () => {
       .getAllByRole("tabpanel", { hidden: true })
       .find((panel) => panel.getAttribute("data-state") === "active");
     expect(within(authPanel!).getByText("Bearer Token")).toBeInTheDocument();
-    expect(
-      within(authPanel!).getByLabelText("Bearer token value")
-    ).toHaveValue("••••••••••••");
+    expect(within(authPanel!).getByText("****************")).toBeInTheDocument();
+    expect(within(authPanel!).queryByText("secret-token")).toBeNull();
 
     fireEvent.click(
       within(authPanel!).getByRole("button", { name: "Edit in Config" })

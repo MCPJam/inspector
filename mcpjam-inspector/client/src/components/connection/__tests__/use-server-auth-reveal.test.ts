@@ -130,4 +130,52 @@ describe("useServerAuthReveal", () => {
     expect(result.current.canReveal).toBe(false);
     expect(mockFetchKeys).not.toHaveBeenCalled();
   });
+
+  it("looks the names and values up again after a reset", async () => {
+    // A save in Config can rotate the token and add headers while the modal
+    // stays open; the tab must not keep showing what it revealed before.
+    const { result } = renderReveal();
+    await waitFor(() =>
+      expect(result.current.headerNames).toEqual(["X-Tenant"]),
+    );
+    await act(async () => {
+      await result.current.reveal();
+    });
+    expect(result.current.revealed?.bearerToken).toBe("abc");
+
+    mockFetchKeys.mockResolvedValue({
+      envKeys: [],
+      headerKeys: ["Authorization", "X-Tenant", "X-New"],
+    });
+    act(() => result.current.reset());
+    expect(result.current.revealed).toBeNull();
+    expect(result.current.headerNames).toBeNull();
+    await waitFor(() =>
+      expect(result.current.headerNames).toEqual(["X-Tenant", "X-New"]),
+    );
+    expect(mockFetchKeys).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a reveal that lands after a reset", async () => {
+    let resolveSecrets: (value: unknown) => void = () => {};
+    mockFetchSecrets.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSecrets = resolve;
+      }),
+    );
+    const { result } = renderReveal();
+    let revealing: Promise<boolean> = Promise.resolve(false);
+    act(() => {
+      revealing = result.current.reveal();
+    });
+    expect(result.current.isRevealing).toBe(true);
+
+    act(() => result.current.reset());
+    await act(async () => {
+      resolveSecrets({ env: null, headers: { Authorization: "Bearer old" } });
+      expect(await revealing).toBe(false);
+    });
+    expect(result.current.revealed).toBeNull();
+    expect(result.current.isRevealing).toBe(false);
+  });
 });

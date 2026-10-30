@@ -13,6 +13,8 @@ import type { ServerAuthReveal } from "../hooks/use-server-auth-reveal";
 import type { ServerAuth } from "../server-auth";
 
 const HIDDEN = "••••••••••••";
+/** The OAuth token rows' mask, which the bearer token shares. */
+const MASK = "****************";
 
 function revealStub(
   overrides: Partial<ServerAuthReveal> = {},
@@ -71,53 +73,63 @@ describe("ServerAuthSummary", () => {
     mockCopy.mockClear();
   });
 
-  it("shows a local bearer token masked, with show and copy", async () => {
+  it("shows a local bearer token like an OAuth token: masked, with show and copy", async () => {
     renderSummary(bearerLocal);
 
     expect(screen.getByText("Bearer Token")).toBeInTheDocument();
     expect(
       screen.getByText("Sends the saved token in the Authorization header."),
     ).toBeInTheDocument();
-    const token = screen.getByLabelText("Bearer token value");
-    expect(token).toHaveValue(HIDDEN);
-    expect(token).toHaveAttribute("readonly");
+    expect(screen.getByText(MASK)).toBeInTheDocument();
+    expect(screen.queryByText("secret-token")).not.toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Show value for bearer token" }),
-    );
-    expect(token).toHaveValue("secret-token");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal Token" }));
+    expect(screen.getByText("secret-token")).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Copy value for bearer token" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Copy Token" }));
     await waitFor(() => expect(mockCopy).toHaveBeenCalledWith("secret-token"));
+  });
+
+  it("decodes a JWT bearer token once it is shown", () => {
+    const jwt = [
+      btoa(JSON.stringify({ alg: "HS256", typ: "JWT" })),
+      btoa(JSON.stringify({ sub: "user-1" })),
+      "signature",
+    ].join(".");
+    renderSummary({
+      method: "bearer",
+      bearer: { kind: "value", token: jwt },
+      headers: null,
+    });
+    expect(screen.queryByText("View Decoded JWT")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal Token" }));
+    expect(screen.getByText("View Decoded JWT")).toBeInTheDocument();
   });
 
   it("shows a synced bearer-only server's token once, not also as a header", () => {
     const { rerenderWith } = renderSummary(bearerSynced);
-    // Names still loading: only the token field.
+    // Names still loading: only the token's reveal.
     expect(
-      screen.getAllByRole("button", { name: /^Reveal saved/ }),
-    ).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: "Reveal saved bearer token" }),
+      screen.getByRole("button", { name: "Reveal token" }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Reveal saved/ }),
+    ).not.toBeInTheDocument();
 
     // Names loaded and the only one was the token's Authorization header.
     rerenderWith(revealStub({ headerNames: [] }));
     expect(
-      screen.getAllByRole("button", { name: /^Reveal saved/ }),
-    ).toHaveLength(1);
+      screen.queryByRole("button", { name: /^Reveal saved/ }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("Custom headers")).not.toBeInTheDocument();
   });
 
-  it("uncovers the token after its reveal lands", async () => {
+  it("shows the token masked once its reveal lands", async () => {
     const reveal = revealStub({ headerNames: [] });
     const { rerenderWith } = renderSummary(bearerSynced, reveal);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Reveal saved bearer token" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Reveal token" }));
     await waitFor(() => expect(reveal.reveal).toHaveBeenCalled());
 
     rerenderWith(
@@ -126,14 +138,14 @@ describe("ServerAuthSummary", () => {
         revealed: { bearerToken: "abc", entries: [] },
       }),
     );
-    expect(screen.getByLabelText("Bearer token value")).toHaveValue("abc");
+    expect(screen.getByText(MASK)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reveal Token" }));
+    expect(screen.getByText("abc")).toBeInTheDocument();
   });
 
   it("shows the reveal loading state", () => {
     renderSummary(bearerSynced, revealStub({ isRevealing: true }));
-    expect(
-      screen.getByRole("button", { name: "Reveal saved bearer token" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Revealing..." })).toBeDisabled();
   });
 
   it("offers a retry after a failed reveal", () => {
@@ -149,9 +161,7 @@ describe("ServerAuthSummary", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Could not load the saved value. Try again.",
     );
-    expect(
-      screen.getByRole("button", { name: "Reveal saved bearer token" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reveal token" })).toBeEnabled();
   });
 
   it("shows a refused reveal's reason and offers no retry", () => {
@@ -167,9 +177,7 @@ describe("ServerAuthSummary", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Only someone who can manage this credential can reveal it.",
     );
-    expect(
-      screen.getByRole("button", { name: "Reveal saved bearer token" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reveal token" })).toBeDisabled();
   });
 
   it("lists hidden headers by name and uncovers only the clicked row", async () => {
@@ -241,7 +249,7 @@ describe("ServerAuthSummary", () => {
     [
       "auto",
       "Auto",
-      "Connected without credentials. Switches to OAuth if the server asks for it.",
+      "Tries without credentials first, then OAuth if the server asks for it.",
     ],
     ["oauth", "OAuth", "Accounts, tokens and the last OAuth trace are below."],
     [
@@ -266,9 +274,7 @@ describe("ServerAuthSummary", () => {
         "Save this server to a project to see its saved values.",
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Reveal saved bearer token" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reveal token" })).toBeDisabled();
   });
 
   it("switches to Config from Edit in Config", () => {

@@ -13,6 +13,7 @@ import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import type { useServerForm } from "./hooks/use-server-form";
 import { headerNamesWithoutBearer } from "./server-auth";
+import { describeRevealFailure } from "./hooks/use-server-auth-reveal";
 import { HOSTED_MODE } from "@/lib/config";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import {
@@ -145,9 +146,12 @@ export function EditServerFormContent({
         } else {
           formState.revealStoredHeaders(result.headers);
         }
-      } catch {
+      } catch (caught) {
         setError(
-          "Couldn't reveal saved secrets. Try again, or re-save this server's env vars/headers."
+          describeRevealFailure(
+            caught,
+            "Couldn't reveal saved secrets. Try again, or re-save this server's env vars/headers."
+          ).message
         );
       } finally {
         setRevealing(false);

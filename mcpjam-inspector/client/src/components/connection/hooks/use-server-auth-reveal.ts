@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import {
   fetchServerSecretKeys,
   fetchServerSecrets,
@@ -32,9 +38,40 @@ export interface ServerAuthReveal {
   error: ServerAuthRevealError | null;
   /** Fetches every stored value at once. Resolves true when they landed. */
   reveal: () => Promise<boolean>;
+  /** Drops the names and values, e.g. after a save replaced them, so the tab
+   * looks them up again instead of showing the old ones. */
+  reset: () => void;
 }
 
 const REVEAL_FAILED = "Could not load the saved value. Try again.";
+
+/**
+ * What a failed `fetchServerSecrets` tells the user. A 403 is the credential
+ * broker refusing (not a manager of this credential, or an export-deny
+ * policy): its message says why and who can change it, and asking again gets
+ * the same answer. Anything else shows `fallback` and can be retried.
+ */
+export function describeRevealFailure(
+  caught: unknown,
+  fallback: string,
+): ServerAuthRevealError {
+  return caught instanceof WebApiError && caught.status === 403
+    ? { message: caught.message, retryable: false }
+    : { message: fallback, retryable: true };
+}
+
+/** Snapshots which server and reset a request started under, and answers
+ * whether its result still belongs on the tab when it lands. */
+function startRequest(
+  subject: RefObject<string | null>,
+  generation: RefObject<number>,
+): () => boolean {
+  const requestedFor = subject.current;
+  const requestGeneration = generation.current;
+  return () =>
+    subject.current === requestedFor &&
+    generation.current === requestGeneration;
+}
 
 /**
  * Saved credentials for the Auth tab of one server, fetched only when asked.
@@ -43,7 +80,8 @@ const REVEAL_FAILED = "Could not load the saved value. Try again.";
  * it is selected: the header names are looked up at most once per modal open
  * (the lookup decrypts the whole secret set on the backend, see
  * `server-secrets.ts`), and revealed values survive a trip to another tab.
- * Everything is dropped when the modal closes or the server changes.
+ * Everything is dropped when the modal closes, the server changes, or a save
+ * calls `reset`.
  */
 export function useServerAuthReveal({
   projectId,
@@ -67,11 +105,14 @@ export function useServerAuthReveal({
   const [isRevealing, setIsRevealing] = useState(false);
   const [error, setError] = useState<ServerAuthRevealError | null>(null);
   const [stateSubject, setStateSubject] = useState(subject);
+  // Reruns the names lookup after a reset while the Auth tab is showing.
+  const [resetCount, setResetCount] = useState(0);
   const namesRequestedFor = useRef<string | null>(null);
-  // Guards results that land after the modal closed or moved to another
-  // server, so one server's secrets never appear on another's tab.
+  // Guards results that land after the modal closed, moved to another server
+  // or was reset by a save, so stale or foreign secrets never reach the tab.
   const currentSubject = useRef(subject);
   currentSubject.current = subject;
+  const generation = useRef(0);
 
   if (subject !== stateSubject) {
     setStateSubject(subject);
@@ -91,43 +132,46 @@ export function useServerAuthReveal({
     if (!needsNames || !projectId || !serverId) return;
     if (namesRequestedFor.current === serverId) return;
     namesRequestedFor.current = serverId;
-    const requestedFor = serverId;
+    const isCurrent = startRequest(currentSubject, generation);
     fetchServerSecretKeys({ projectId, serverId })
       .then(({ headerKeys }) => {
-        if (currentSubject.current !== requestedFor) return;
+        if (!isCurrent()) return;
         setHeaderNames(headerKeys);
       })
       .catch(() => {
         // Leaves the names unknown: the tab falls back to the single masked
         // field, whose eye fetches the values instead.
       });
-  }, [needsNames, projectId, serverId]);
+  }, [needsNames, projectId, serverId, resetCount]);
 
   const reveal = useCallback(async () => {
     if (!projectId || !serverId) return false;
-    const requestedFor = serverId;
+    const isCurrent = startRequest(currentSubject, generation);
     setIsRevealing(true);
     setError(null);
     try {
       const secrets = await fetchServerSecrets({ projectId, serverId });
-      if (currentSubject.current !== requestedFor) return false;
+      if (!isCurrent()) return false;
       setRevealed(splitAuthorizationHeader(auth.method, secrets.headers));
       return true;
     } catch (caught) {
-      if (currentSubject.current !== requestedFor) return false;
-      // A 403 is the credential broker refusing (not a manager of this
-      // credential, or an export-deny policy); its message says why and who
-      // can change it.
-      setError(
-        caught instanceof WebApiError && caught.status === 403
-          ? { message: caught.message, retryable: false }
-          : { message: REVEAL_FAILED, retryable: true },
-      );
+      if (!isCurrent()) return false;
+      setError(describeRevealFailure(caught, REVEAL_FAILED));
       return false;
     } finally {
-      if (currentSubject.current === requestedFor) setIsRevealing(false);
+      if (isCurrent()) setIsRevealing(false);
     }
   }, [auth.method, projectId, serverId]);
+
+  const reset = useCallback(() => {
+    generation.current += 1;
+    namesRequestedFor.current = null;
+    setHeaderNames(null);
+    setRevealed(null);
+    setIsRevealing(false);
+    setError(null);
+    setResetCount((count) => count + 1);
+  }, []);
 
   return {
     canReveal,
@@ -142,5 +186,6 @@ export function useServerAuthReveal({
     isRevealing,
     error,
     reveal,
+    reset,
   };
 }

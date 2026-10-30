@@ -10,6 +10,11 @@ import { CopyValueButton } from "./shared/CopyValueButton";
 import { HiddenValuesField } from "./shared/HiddenValuesField";
 import { MaskedValueInput } from "./shared/MaskedValueInput";
 import { StoredKeyRows } from "./shared/StoredKeyRows";
+import {
+  RevealTokensButton,
+  TokenRevealError,
+  TokenValue,
+} from "./shared/TokenValue";
 
 interface ServerAuthSummaryProps {
   auth: ServerAuth;
@@ -29,7 +34,7 @@ function methodNote(auth: ServerAuth): string {
         ? "Sends only the custom headers below."
         : "Sends requests without credentials.";
     case "auto":
-      return "Connected without credentials. Switches to OAuth if the server asks for it.";
+      return "Tries without credentials first, then OAuth if the server asks for it.";
     case "oauth":
       return "Accounts, tokens and the last OAuth trace are below.";
     case "xaa":
@@ -51,10 +56,11 @@ function ActionSpacer() {
  * to change it, and the token and headers it sends. Every HTTP server gets one,
  * so the tab is never blank for servers that don't use OAuth.
  *
- * The rows are the Config form's own: `MaskedValueInput` in the header
- * editor's name/value layout, with `StoredKeyRows` and `HiddenValuesField` for
- * values still on the server. Copy takes the slot where the editor puts its
- * remove button.
+ * The token row is the OAuth tokens' own (`TokenValue`), so a bearer token
+ * masks, copies and decodes like an access token. Header rows are the Config
+ * form's: `MaskedValueInput` in the header editor's name/value layout, with
+ * `StoredKeyRows` and `HiddenValuesField` for values still on the server, and
+ * copy in the slot where the editor puts its remove button.
  */
 export function ServerAuthSummary({
   auth,
@@ -62,7 +68,6 @@ export function ServerAuthSummary({
   serverKey,
   onEditInConfig,
 }: ServerAuthSummaryProps) {
-  const maskedBearer = useMaskedValues(`${serverKey}:bearer`);
   const maskedHeaders = useMaskedValues(`${serverKey}:headers`);
   const [pendingRevealKey, setPendingRevealKey] = useState<string | null>(null);
 
@@ -133,43 +138,20 @@ export function ServerAuthSummary({
           <p className="text-muted-foreground">{methodNote(auth)}</p>
         </div>
 
-        {showBearer && (
-          <div className="space-y-1.5">
-            <div className="text-xs font-medium text-foreground">Token</div>
-            {bearerToken !== undefined ? (
-              <div className="flex items-center gap-1.5">
-                <MaskedValueInput
-                  value={bearerToken}
-                  onChange={() => {}}
-                  readOnly
-                  visible={maskedBearer.isVisible(0)}
-                  onToggleVisibility={() => maskedBearer.toggle(0)}
-                  inputLabel="Bearer token value"
-                  subject="bearer token"
-                  className="flex-1"
-                />
-                <CopyValueButton value={bearerToken} subject="bearer token" />
-              </div>
-            ) : (
-              <div className="flex items-start gap-1.5">
-                <div className="flex-1">
-                  <HiddenValuesField
-                    subject="bearer token"
-                    isRevealing={reveal.isRevealing}
-                    error={revealError}
-                    onReveal={
-                      onReveal &&
-                      (async () => {
-                        if (await reveal.reveal()) maskedBearer.show(0);
-                      })
-                    }
-                  />
-                </div>
-                <ActionSpacer />
-              </div>
-            )}
-          </div>
-        )}
+        {showBearer &&
+          (bearerToken !== undefined ? (
+            <TokenValue label="Token" value={bearerToken} maskedByDefault />
+          ) : (
+            <div className="space-y-3">
+              {revealError && <TokenRevealError message={revealError} />}
+              <RevealTokensButton
+                label="Reveal token"
+                isRevealing={reveal.isRevealing}
+                disabled={!onReveal}
+                onClick={() => void reveal.reveal()}
+              />
+            </div>
+          ))}
 
         {showHeaders && (
           <div className="space-y-1.5 border-t border-border/60 pt-3">
@@ -203,7 +185,7 @@ export function ServerAuthSummary({
                     subject={key}
                     className="flex-[1.4]"
                   />
-                  <CopyValueButton value={value} subject={key} />
+                  <CopyValueButton value={value} subject={`value for ${key}`} />
                 </div>
               ))
             ) : reveal.headerNames && reveal.headerNames.length > 0 ? (

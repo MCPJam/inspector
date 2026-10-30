@@ -646,6 +646,9 @@ function ProjectServerDetailModal({
         ...(revealedHeaders ? { revealedHeaders } : {}),
       });
       await onSubmit(finalFormData, server.name);
+      // The modal stays open after a save, and the save may have replaced the
+      // token or headers the Auth tab revealed; make it look them up again.
+      serverAuthReveal.reset();
     } finally {
       setIsSaving(false);
     }
