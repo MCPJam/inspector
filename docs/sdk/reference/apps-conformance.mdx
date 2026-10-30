@@ -221,6 +221,6 @@ The current runner checks:
 
 - The runner always advertises the MCP Apps UI extension capability so servers do not hide their MCP Apps surface when custom `clientCapabilities` are supplied.
 - Deprecated `_meta["ui/resourceUri"]` is accepted but surfaced as a warning.
-- Tool name SHOULD validations (length, character set, uniqueness) surface as warnings, not failures.
+- Tool name conventions (length, character set, uniqueness) are core MCP rules, so this suite does not check them. The protocol suite reports them on every tool as the advice item `readiness-tool-name-conventions`.
 - HTML validation is intentionally lightweight. It verifies the expected MIME type and document-style HTML payload, not the full browser lifecycle.
 - For a runnable project that writes JUnit XML from Vitest, see [`examples/conformance/basic/`](https://github.com/MCPJam/inspector/tree/main/examples/conformance/basic).

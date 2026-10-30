@@ -137,43 +137,42 @@ function toolNameConventionsWarning(
   ctx: MCPClientCheckContext,
   tools: Tool[]
 ): MCPReadinessWarning | undefined {
-  const negotiated = ctx.initializationInfo?.protocolVersion;
   if (
     ctx.config.era !== "modern" &&
-    (negotiated === undefined || negotiated < "2025-11-25")
+    negotiatedBefore(ctx, "2025-11-25") !== false
   ) {
     return undefined;
   }
 
-  const badLength = tools
-    .filter((tool) => tool.name.length < 1 || tool.name.length > 128)
-    .map((tool) => tool.name);
-  const badCharacters = tools
-    .filter((tool) => !/^[A-Za-z0-9_\-.]+$/.test(tool.name))
-    .map((tool) => tool.name);
-  const seen = new Set<string>();
-  const duplicates = new Set<string>();
-  for (const tool of tools) {
-    if (seen.has(tool.name)) {
-      duplicates.add(tool.name);
-    }
-    seen.add(tool.name);
-  }
+  // A server can hand back a tool whose name is not a string; advice must
+  // never throw, so those are left to the checks that judge tool shape.
+  const names = tools
+    .map((tool) => tool.name as unknown)
+    .filter((name): name is string => typeof name === "string");
+  const unique = [...new Set(names)];
+  const badLength = unique.filter(
+    (name) => name.length < 1 || name.length > 128
+  );
+  // An empty name is already a length problem; the character rule is about
+  // what a name contains.
+  const badCharacters = unique.filter(
+    (name) => name.length > 0 && !/^[A-Za-z0-9_\-.]+$/.test(name)
+  );
+  const duplicates = unique.filter(
+    (name) => names.indexOf(name) !== names.lastIndexOf(name)
+  );
 
-  const problems: string[] = [];
-  if (badLength.length > 0) {
-    problems.push(
-      `${badLength.length} tool name(s) are not between 1 and 128 characters`
-    );
-  }
-  if (badCharacters.length > 0) {
-    problems.push(
-      `${badCharacters.length} tool name(s) use characters other than A-Z, a-z, 0-9, underscore, hyphen, or dot`
-    );
-  }
-  if (duplicates.size > 0) {
-    problems.push(`${duplicates.size} tool name(s) appear more than once`);
-  }
+  const problems = [
+    badLength.length > 0
+      ? `not between 1 and 128 characters: ${listNames(badLength)}`
+      : null,
+    badCharacters.length > 0
+      ? `characters other than A-Z, a-z, 0-9, underscore, hyphen, or dot: ${listNames(badCharacters)}`
+      : null,
+    duplicates.length > 0
+      ? `used more than once: ${listNames(duplicates)}`
+      : null,
+  ].filter((problem): problem is string => problem !== null);
 
   if (problems.length === 0) {
     return undefined;
@@ -184,8 +183,34 @@ function toolNameConventionsWarning(
     "Tool Name Conventions",
     "SHOULD",
     `Tool names break the spec's naming conventions: ${problems.join("; ")}`,
-    { badLength, badCharacters, duplicates: [...duplicates] }
+    { badLength, badCharacters, duplicates }
   );
+}
+
+/** Names the user has to rename, quoted, with a count for any beyond three. */
+function listNames(names: string[]): string {
+  const shown = names
+    .slice(0, 3)
+    .map((name) => JSON.stringify(name))
+    .join(", ");
+  return names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
+}
+
+/**
+ * Whether the negotiated revision is older than `revision`, or undefined when
+ * there is no date-shaped revision to compare (a draft label, or none at all).
+ * Revisions are ISO dates, so string order is date order once the shape is
+ * known.
+ */
+function negotiatedBefore(
+  ctx: MCPClientCheckContext,
+  revision: string
+): boolean | undefined {
+  const negotiated = ctx.initializationInfo?.protocolVersion;
+  if (negotiated === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(negotiated)) {
+    return undefined;
+  }
+  return negotiated < revision;
 }
 
 function deprecatedFeatureWarning(
@@ -210,12 +235,9 @@ function deprecatedFeatureWarning(
         "resources.subscribe advertises the removed resources/subscribe flow; modern clients subscribe through subscriptions/listen"
       );
     }
-  } else if (
-    ctx.initializationInfo?.protocolVersion !== undefined &&
-    ctx.initializationInfo.protocolVersion < "2025-11-25"
-  ) {
+  } else if (negotiatedBefore(ctx, "2025-11-25") === true) {
     findings.push(
-      `the negotiated revision ${ctx.initializationInfo.protocolVersion} is superseded; newer clients negotiate a later revision`
+      `the negotiated revision ${ctx.initializationInfo?.protocolVersion} is superseded; newer clients negotiate a later revision`
     );
   }
 
