@@ -1118,6 +1118,65 @@ describe("ConformanceTab", () => {
     expect(screen.getByText("NOT SELECTED")).toBeInTheDocument();
   });
 
+  it("keeps at least one check in Settings", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const onSaveServerDefaults = vi.fn(async () => {});
+    const error = vi.spyOn(toast, "error");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={onSaveServerDefaults}
+      />,
+    );
+    await runToCompletion();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    onSaveServerDefaults.mockClear();
+
+    for (const suite of ["Protocol", "Apps", "Tasks", "OAuth"]) {
+      fireEvent.click(screen.getByRole("checkbox", { name: `Run ${suite}` }));
+    }
+
+    // The last box would leave nothing to run: refused, not saved.
+    expect(error).toHaveBeenCalledWith("Keep at least one check selected.");
+    expect(onSaveServerDefaults).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole("checkbox", { name: "Run OAuth" })).toHaveAttribute(
+      "data-state",
+      "checked",
+    );
+    error.mockRestore();
+  });
+
+  it("opens step 2 on the Settings defaults, not the last run's picks", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={vi.fn(async () => {})}
+        history={<p>History table</p>}
+      />,
+    );
+    await runToCompletion();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    // From History, Run opens the setup steps again.
+    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
+      "data-state",
+      "unchecked",
+    );
+  });
+
   it("opens a server's Settings from the run, saves each change, and keeps the run", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });

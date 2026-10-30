@@ -7,7 +7,11 @@ import { useEffect, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import type { ConformanceSelection } from "@/hooks/use-conformance-run";
 import { toast } from "@/lib/toast";
-import { ConformanceCheckPicker } from "./ConformanceCheckPicker";
+import {
+  ConformanceCheckPicker,
+  checkCatalogs,
+  nothingPicked,
+} from "./ConformanceCheckPicker";
 
 export function ConformanceSettings({
   serverName,
@@ -31,6 +35,12 @@ export function ConformanceSettings({
   }, [defaults, touched]);
 
   const change = (next: ConformanceSelection) => {
+    // Run again and the server list's Run use these as they are: with nothing
+    // picked they would start a run that checks nothing.
+    if (nothingPicked(next, checkCatalogs("auto"))) {
+      toast.error("Keep at least one check selected.");
+      return;
+    }
     setTouched(true);
     setSelection(next);
     onSave(next).catch((error: unknown) => {

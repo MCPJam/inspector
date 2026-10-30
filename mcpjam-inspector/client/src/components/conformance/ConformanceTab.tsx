@@ -209,7 +209,11 @@ export function ConformanceTab({
         servers={servers}
         initialServerName={selectionIsOffered ? (server?.name ?? null) : null}
         initialVersionPin={start?.versionPin ?? "auto"}
-        initialSelection={start?.selection}
+        // Saved defaults win, as they do for Run again: they already hold the
+        // last setup run's picks, plus any Settings change since.
+        initialSelection={
+          start && !defaultsFor(start.serverName) ? start.selection : undefined
+        }
         defaultsFor={defaultsFor}
         onCancel={() => setSetupOpen(false)}
         onRun={(serverName, versionPin, selection) => {
