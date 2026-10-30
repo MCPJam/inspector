@@ -38,6 +38,10 @@ import {
   isToolPolicyDecisionReason,
   type ToolPolicySnapshot,
 } from "@mcpjam/sdk/contract";
+import {
+  harnessConnectionProfileSchema,
+  type HarnessConnectionProfile,
+} from "./harness-connection-profile.js";
 
 /** Versioned prefix: an envelope shape change must be a new prefix, never a
  *  reinterpretation of these bytes. */
@@ -55,7 +59,8 @@ export const MAX_SEALED_DENIED_TOOL_NAMES = 500;
 
 /** The sealed plaintext. Short keys because it rides an HTTP header. */
 interface SealedPolicyEnvelope {
-  v: 1;
+  v: 1 | 2;
+  profile?: HarnessConnectionProfile;
   /** The Convex-minted proxy token, verbatim. */
   t: string;
   /** The serverId this envelope was sealed for. */
@@ -70,6 +75,7 @@ export interface SealedHarnessProxyPolicy {
   token: string;
   serverId: string;
   policy: ToolPolicySnapshot;
+  profile?: HarnessConnectionProfile;
 }
 
 export class HarnessProxyPolicySealTooLargeError extends Error {
@@ -114,7 +120,8 @@ export function isHarnessProxyPolicySealAvailable(): boolean {
 export function isSealedHarnessProxyToken(value: string | undefined): boolean {
   return (
     typeof value === "string" &&
-    value.startsWith(`${HARNESS_PROXY_POLICY_SEAL_PREFIX}.`)
+    (value.startsWith(`${HARNESS_PROXY_POLICY_SEAL_PREFIX}.`) ||
+      value.startsWith("mcpjps2."))
   );
 }
 
@@ -129,16 +136,20 @@ export function sealHarnessProxyToken(args: {
   serverId: string;
   policy: ToolPolicySnapshot;
   expiresAtMs: number;
+  profile?: HarnessConnectionProfile;
 }): string {
   const secret = readSecret();
   const deniedCount = Object.keys(args.policy.denied).length;
   if (deniedCount > MAX_SEALED_DENIED_TOOL_NAMES) {
     throw new HarnessProxyPolicySealTooLargeError(
-      `TOOL_POLICY_TOO_LARGE: tool policy resolves to ${deniedCount} denied tools for server ${args.serverId}, above the ${MAX_SEALED_DENIED_TOOL_NAMES} the harness proxy envelope carries`
+      `TOOL_POLICY_TOO_LARGE: tool policy resolves to ${deniedCount} denied tools for server ${args.serverId}, above the ${MAX_SEALED_DENIED_TOOL_NAMES} the harness proxy envelope carries`,
     );
   }
   const envelope: SealedPolicyEnvelope = {
-    v: 1,
+    v: args.profile ? 2 : 1,
+    ...(args.profile
+      ? { profile: harnessConnectionProfileSchema.parse(args.profile) }
+      : {}),
     t: args.token,
     s: args.serverId,
     exp: Math.floor(args.expiresAtMs / 1000),
@@ -147,7 +158,7 @@ export function sealHarnessProxyToken(args: {
   const plaintext = Buffer.from(JSON.stringify(envelope), "utf8");
   if (plaintext.byteLength > MAX_SEALED_PLAINTEXT_BYTES) {
     throw new HarnessProxyPolicySealTooLargeError(
-      `TOOL_POLICY_TOO_LARGE: sealed harness policy envelope for server ${args.serverId} is ${plaintext.byteLength} bytes, above the ${MAX_SEALED_PLAINTEXT_BYTES}-byte cap`
+      `TOOL_POLICY_TOO_LARGE: sealed harness policy envelope for server ${args.serverId} is ${plaintext.byteLength} bytes, above the ${MAX_SEALED_PLAINTEXT_BYTES}-byte cap`,
     );
   }
   const iv = randomBytes(IV_LENGTH);
@@ -155,7 +166,7 @@ export function sealHarnessProxyToken(args: {
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const sealed = Buffer.concat([ciphertext, cipher.getAuthTag()]);
   return [
-    HARNESS_PROXY_POLICY_SEAL_PREFIX,
+    args.profile ? "mcpjps2" : HARNESS_PROXY_POLICY_SEAL_PREFIX,
     iv.toString("base64url"),
     sealed.toString("base64url"),
   ].join(".");
@@ -206,7 +217,12 @@ export function unsealHarnessProxyToken(
   } catch {
     return null;
   }
-  if (envelope?.v !== 1) return null;
+  if (envelope?.v !== (parts[0] === "mcpjps2" ? 2 : 1)) return null;
+  const profile =
+    envelope.v === 2
+      ? harnessConnectionProfileSchema.safeParse(envelope.profile)
+      : undefined;
+  if (profile && !profile.success) return null;
   if (typeof envelope.t !== "string" || envelope.t.length === 0) return null;
   if (typeof envelope.s !== "string" || envelope.s !== serverId) return null;
   if (typeof envelope.exp !== "number") return null;
@@ -238,5 +254,10 @@ export function unsealHarnessProxyToken(
     if (typeof entry.classification !== "string") return null;
   }
 
-  return { token: envelope.t, serverId: envelope.s, policy };
+  return {
+    token: envelope.t,
+    serverId: envelope.s,
+    policy,
+    ...(profile?.success ? { profile: profile.data } : {}),
+  };
 }

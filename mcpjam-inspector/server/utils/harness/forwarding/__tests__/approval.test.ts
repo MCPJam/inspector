@@ -2,7 +2,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { startForwardingApprovalPresentation } from "../approval";
 import { createExecutionControl } from "../execution-control";
 import { readForwardingApprovalId } from "@/shared/forwarding-approval";
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 it("flushes final authorization without creating a second model tool call", async () => {
   vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "approval-presentation-test-secret");
   const owner = {
@@ -51,6 +54,7 @@ it("flushes final authorization without creating a second model tool call", asyn
     control,
     owner,
     turnId: "turn",
+    promptIndex: 3,
     writer: { write },
   });
   await vi.waitFor(() =>
@@ -66,6 +70,14 @@ it("flushes final authorization without creating a second model tool call", asyn
     owner,
     approvalId: "signed",
   });
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 20_000);
+  await vi.waitFor(() =>
+    expect(write).toHaveBeenCalledWith({
+      type: "data-trace-event",
+      data: { type: "heartbeat", turnId: "turn", promptIndex: 3 },
+      transient: true,
+    }),
+  );
   Object.assign(row, { state: "settled", outcome: "success" });
   await stop();
   expect(
@@ -79,4 +91,7 @@ it("flushes final authorization without creating a second model tool call", asyn
     toolCallId: "mcpjam-forwarding:execution",
     output: { authorization: "success" },
   });
+  expect(
+    write.mock.calls.filter(([part]) => part.type === "data-trace-event"),
+  ).toHaveLength(1);
 });

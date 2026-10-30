@@ -76,6 +76,7 @@ import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.j
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
+import type { HarnessElicitationHandler } from "./harness/with-harness-elicitation.js";
 import type { ScopeStepUpRequiredEvent } from "@/shared/scope-step-up";
 import {
   buildFinishChunk,
@@ -1320,6 +1321,7 @@ export interface MCPJamHandlerOptions {
   onStreamComplete?: () => Promise<void> | void;
   /** Starts log delivery only after the harness's MCP route and owner scopes are fixed. */
   onHarnessMcpReady?: (scopeIds?: Record<string, string>) => void;
+  onHarnessElicitation?: HarnessElicitationHandler;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;

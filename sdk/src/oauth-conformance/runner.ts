@@ -15,6 +15,7 @@ import {
 } from "../oauth/client-identity.js";
 import { createOAuthStateMachine } from "../oauth/state-machines/factory.js";
 import { classifyUnauthenticatedProbe } from "../oauth/state-machines/shared/challenges.js";
+import { responseFailureFindingKey } from "../oauth/state-machines/shared/response-error.js";
 import { isLoopbackOAuthUrl } from "../oauth/ssrf-guard.js";
 import {
   getStepInfo,
@@ -180,6 +181,40 @@ function resolveStepInfo(step: ConformanceStepId): OAuthStepInfo {
     return CONFORMANCE_CHECK_METADATA[step];
   }
   return getStepInfo(step);
+}
+
+const INVALID_CLIENT_TOKEN_FAILURE = /^Token request failed: \d{3}: invalid_client$/;
+
+/**
+ * The token endpoint refused the client itself (RFC 6749 §5.2
+ * `invalid_client`): a wrong client ID or secret, or a secret that never
+ * reached the request. The raw "Token request failed: 401 …" line reads as if
+ * the user's own login failed, so lead with what to check and keep the
+ * provider's code, endpoint and own reason under Details. Only a run that
+ * sent a secret is pointed at it: a CIMD or public client sent none, so its
+ * client ID and registration are what to check. `undefined` for any other
+ * failure, which keeps its message as-is.
+ */
+function describeTokenClientRejection(
+  message: string,
+  tokenEndpoint: string | undefined,
+  sentClientSecret: boolean,
+): StepResult["error"] | undefined {
+  const key = responseFailureFindingKey(message);
+  if (!key || !INVALID_CLIENT_TOKEN_FAILURE.test(key)) {
+    return undefined;
+  }
+  return {
+    message: sentClientSecret
+      ? "The authorization server rejected this run's OAuth client credentials during token exchange. Verify the client ID and secret in server settings."
+      : "The authorization server rejected this run's OAuth client during token exchange. Verify the client ID and how the client is registered.",
+    details: [
+      "Provider code: invalid_client",
+      ...(tokenEndpoint ? [`Endpoint: ${tokenEndpoint}`] : []),
+      // Already redacted and capped by describeTokenRequestFailure.
+      `Provider response: ${message}`,
+    ].join("\n"),
+  };
 }
 
 function buildStepResult(
@@ -746,12 +781,21 @@ export class OAuthConformanceTest {
             const durationMs = Date.now() - stepStartedAt;
             const logs = (state.infoLogs ?? []).slice(beforeLogs);
             const attempts = resolveAttempts(activeCollector, beforeHistory, state);
+            const message =
+              error instanceof Error ? error.message : String(error);
             steps.push(
-              buildStepResult("token_request", "failed", durationMs, logs, attempts, {
-                message:
-                  error instanceof Error ? error.message : String(error),
-                details: error,
-              }),
+              buildStepResult(
+                "token_request",
+                "failed",
+                durationMs,
+                logs,
+                attempts,
+                describeTokenClientRejection(
+                  message,
+                  state.authorizationServerMetadata?.token_endpoint,
+                  Boolean(tokenClientSecret),
+                ) ?? { message, details: error },
+              ),
             );
             break;
           } finally {
@@ -857,15 +901,22 @@ export class OAuthConformanceTest {
         activeCollector = undefined;
 
         if (state.currentStep === startStep) {
+          const message = state.error || `Step ${startStep} did not advance`;
           const failure = buildStepResult(
             startStep,
             "failed",
             durationMs,
             logs,
             attempts,
-            {
-              message: state.error || `Step ${startStep} did not advance`,
-            },
+            (startStep === "token_request"
+              ? describeTokenClientRejection(
+                  message,
+                  state.authorizationServerMetadata?.token_endpoint,
+                  // Mirrors buildTokenRequestClientAuth: "none" drops the secret.
+                  Boolean(state.clientSecret) &&
+                    state.tokenEndpointAuthMethod !== "none",
+                )
+              : undefined) ?? { message },
           );
 
           // A successful iteration is named for the state it REACHED, so the

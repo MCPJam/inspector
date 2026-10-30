@@ -443,6 +443,79 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     );
   });
 
+  it("skips the untouched row of a case that starts with a tool call once credits run out", async () => {
+    const success = streamTextMock.getMockImplementation()!;
+    streamTextMock
+      .mockImplementationOnce(success)
+      .mockImplementationOnce(() => {
+        throw new Error("Credits exhausted");
+      });
+    const config = buildQuickRunConfig();
+    const test = config.config.tests[0];
+    test.runs = 3;
+    test.promptTurns = [
+      {
+        id: "turn-1",
+        prompt: "",
+        expectedToolCalls: [],
+        pinnedToolCall: {
+          serverName: "Asana",
+          toolName: "list_tasks",
+          arguments: {},
+        },
+      } as any,
+      { id: "turn-2", prompt: "Hello", expectedToolCalls: [] },
+    ];
+    // Rows as the backend pre-creates them: the snapshot query is the case's
+    // first prompt, not the runner's "Pinned tool call: …". Another case's
+    // row for iteration 3, this case's row for iteration 2 and another
+    // model's row for this case's iteration 3 come first.
+    const row = (
+      _id: string,
+      testCaseId: string,
+      iterationNumber: number,
+      model = test.model,
+    ) => ({
+      _id,
+      testCaseId,
+      iterationNumber,
+      status: "pending",
+      testCaseSnapshot: {
+        title: "Case",
+        query: "Hello",
+        model,
+        provider: test.provider,
+      },
+    });
+    convexClient.query.mockImplementation(async (name: string) =>
+      name === "testSuites:getTestSuiteRunDetails"
+        ? {
+            iterations: [
+              row("other-row-3", "case-2", 3),
+              row("row-2", "case-1", 2),
+              row("other-model-3", "case-1", 3, "other-model"),
+              row("row-3", "case-1", 3),
+            ],
+          }
+        : { status: "running" },
+    );
+    const recorder = {
+      startIteration: vi.fn().mockResolvedValue("iteration"),
+      finishIteration: vi.fn().mockResolvedValue(undefined),
+      finalize: vi.fn().mockResolvedValue(undefined),
+    };
+    await runEvalSuiteWithAiSdk({
+      ...config,
+      runId: "suite-run",
+      recorder,
+    } as any);
+    const skipped = convexClient.action.mock.calls.filter(
+      ([name, args]) =>
+        name === "testSuites:updateTestIteration" && args.status === "skipped",
+    );
+    expect(skipped.map(([, args]) => args.iterationId)).toEqual(["row-3"]);
+  });
+
   it("hands the run's bearer to finalize so evidence uploads as the launching user", async () => {
     const config = buildQuickRunConfig();
     const recorder = {

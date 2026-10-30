@@ -322,3 +322,30 @@ it("preserves the empty 202 acknowledgement for native notifications", async () 
   expect(response.status).toBe(202);
   expect(await response.text()).toBe("");
 });
+
+it.each([
+  { result: { action: "accept", content: { color: "blue" } } },
+  { error: { code: -32603, message: "Client could not answer" } },
+])("preserves empty acknowledgements of client responses: %j", async (payload) => {
+  const message = { jsonrpc: "2.0" as const, id: "server-request", ...payload };
+  const raw = JSON.stringify(message);
+  const send = vi.fn(async () => new Response("", { status: 202 }));
+  const response = await forwardNativeMcp({
+    url: "https://upstream.example/mcp",
+    serverId: "server",
+    request: new Request("https://forwarder.example/mcp", {
+      method: "POST",
+      body: raw,
+    }),
+    body: raw,
+    message,
+    fetch: send,
+  });
+  expect(send).toHaveBeenCalledOnce();
+  expect(send.mock.calls[0]).toEqual([
+    "https://upstream.example/mcp",
+    expect.objectContaining({ body: raw }),
+  ]);
+  expect(response.status).toBe(202);
+  expect(await response.text()).toBe("");
+});
