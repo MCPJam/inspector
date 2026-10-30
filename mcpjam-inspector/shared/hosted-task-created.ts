@@ -48,6 +48,8 @@ export interface TaskCreatedPayload {
    * pass a Convex document id here.
    */
   serverId: string;
+  connectionId?: string;
+  sourceExecutionId?: string;
   /**
    * The server's display NAME, and load-bearing rather than decorative.
    *
@@ -94,6 +96,15 @@ export function isTaskCreatedPayload(
   }
   if (value.wire !== "legacy" && value.wire !== "extension") return false;
   if (!isOptionalString(value.serverName)) return false;
+  for (const key of ["connectionId", "sourceExecutionId"] as const) {
+    if (
+      value[key] !== undefined &&
+      (typeof value[key] !== "string" ||
+        !value[key] ||
+        value[key].includes("\u0000"))
+    )
+      return false;
+  }
   if (!isOptionalString(value.createdAt)) return false;
   if (!isOptionalString(value.status)) return false;
   if (!isOptionalString(value.toolName)) return false;

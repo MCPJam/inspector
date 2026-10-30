@@ -1,78 +1,31 @@
 /**
- * Durable task tracker for MCP Tasks.
+ * Durable Task bookmarks, scoped by project, server, account and wire.
+ * Store scheduling hints and acknowledged input keys, never prompts, answers
+ * or results. The server remains the source of live state.
  *
- * Tasks are tracked locally because servers are not required to remember them:
- * legacy servers may forget them across sessions, and the extension wire has
- * no `tasks/list` at all — there the tracker IS the list. For anonymous and
- * local use it is the only copy; for authenticated users it is still the
- * immediate write path, with the hosted registry as a best-effort recovery
- * index behind it rather than a replacement.
- *
- * Identity is the composite `(scope, serverId, wire, taskId)`: task IDs are
- * only unique within a server, the same ID can exist on both wires while a
- * developer flips protocol versions, and hosted task IDs are bearer-ish
- * handles that must not leak between accounts or organizations sharing a
- * browser — hence the auth/org `scope` segment.
- *
- * ## What is stored, and what is deliberately not
- *
- * Enough to RESUME a task, and nothing more: the handle, its identity, its
- * latest scheduling hints, and which input keys have been answered. Never the
- * elicitation prompts, the sampling content, the roots, the responses, or the
- * task's result. A tracker entry is a bookmark, not a transcript.
- *
- * ## Why an entry is dropped
- *
- * Only ever for storage bounds — count, age, string length, serialized size —
- * and never from a TTL. `ttlMs` is the SERVER's licence to discard a task, not
- * ours (`tasks.md:136-140`), it may change over the task's lifetime
- * (`tasks.md:340`), and `null` means unlimited. So an elapsed TTL raises a
- * handle's poll priority and does nothing else. The age bound is measured and
- * documented as a localStorage cap, not as an expiry.
+ * Count, size and age bound local storage. Server TTL controls server retention,
+ * not whether this client discards a handle that the user may still need.
+ * Bound handles use a separate format; older tabs retain ordinary handles.
  */
 
 import { TRACKED_TASK_MAX_AGE_MS } from "@/shared/hosted-tasks";
 import type { TasksWire } from "./apis/mcp-tasks-api";
-
-export type PrimitiveType = "tool" | "prompt" | "resource";
-
-export interface TrackedTask {
-  taskId: string;
-  serverId: string;
-  wire: TasksWire;
-  createdAt: string;
-  toolName?: string;
-  primitiveType?: PrimitiveType;
-  primitiveName?: string;
-  dismissed?: boolean;
-  /** Server no longer knows this task (JSON-RPC -32602 on a read). */
-  expired?: boolean;
-  /**
-   * Auth/org context the handle was created under (hosted projectId).
-   * Undefined for purely local entries, which have no cross-account risk.
-   */
-  scope?: string;
-
-  // ---- v3: resumable scheduling state -------------------------------------
-  /** Last `lastUpdatedAt` observed from the server. Never inferred locally. */
-  lastUpdatedAt?: string;
-  /** Latest observed status, so a reload can render before the first poll. */
-  status?: string;
-  /** Latest `ttlMs`. `null` means the server said "no expiry". */
-  ttlMs?: number | null;
-  /** Latest server-advertised poll floor. MAY change in either direction. */
-  pollIntervalMs?: number;
-  /** Epoch ms this handle may next be polled; survives a reload. */
-  nextPollAt?: number;
-  /** Epoch ms a live read last answered for this handle, any status. */
-  lastObservedAt?: number;
-  /**
-   * Input keys whose `tasks/update` was acknowledged. KEYS ONLY — never the
-   * request, the prompt, or the response. This is what stops a reload from
-   * re-prompting for something the user already answered.
-   */
-  respondedInputKeys?: string[];
-}
+import { taskLifecycleKey, type LiveTasksWire } from "@mcpjam/sdk/browser";
+import type {
+  TrackedTask,
+  TaskObservationPatch,
+  TaskIdentityRef,
+  TrackedTaskRestoreState,
+  TaskAccountSelection,
+} from "./task-tracker-types";
+export type {
+  PrimitiveType,
+  TrackedTask,
+  TaskObservationPatch,
+  TaskIdentityRef,
+  TrackedTaskRestoreState,
+  TaskAccountSelection,
+} from "./task-tracker-types";
 
 /**
  * Current auth/org context. Set from the API context so a logout or an
@@ -89,16 +42,28 @@ export function getTrackedTaskScope(): string | undefined {
   return activeScope;
 }
 
+function sameAccount(
+  task: TrackedTask,
+  selection?: TaskAccountSelection,
+): boolean {
+  return (
+    task.connectionId === selection?.connectionId &&
+    (selection?.wire === undefined || task.wire === selection.wire)
+  );
+}
+
 function inScope(task: TrackedTask): boolean {
   return (task.scope ?? undefined) === activeScope;
 }
 
-const STORAGE_KEY = "mcp-tracked-tasks";
+const LEGACY_STORAGE_KEY = "mcp-tracked-tasks";
+const STORAGE_KEY = "mcp-tracked-tasks-v4";
 /**
  * v1: bare array, no wire tag. v2: `{version, tasks}` with `wire`.
  * v3: adds resumable scheduling state and responded input keys.
+ * v4: account pins, isolated from older tabs that would discard them.
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const MAX_TRACKED_TASKS = 50;
 
 /** Bounds on untrusted, server-influenced strings before they are persisted. */
@@ -112,15 +77,8 @@ interface StoredShape {
   tasks: TrackedTask[];
 }
 
-export function taskIdentity(task: {
-  serverId: string;
-  wire: TasksWire;
-  taskId: string;
-  scope?: string;
-}): string {
-  return [task.scope ?? "", task.serverId, task.wire, task.taskId].join(
-    "\u0000"
-  );
+export function taskIdentity(task: TaskIdentityRef): string {
+  return taskLifecycleKey(task);
 }
 
 function isFresh(task: TrackedTask, now: number): boolean {
@@ -190,6 +148,13 @@ function sanitize(raw: unknown): TrackedTask | undefined {
   // absent, and the two are not the same: an absent scope is the default
   // scope, while an over-length one is a scope we cannot represent — reading
   // it as "default" would file another account's handle under this one.
+  const connectionId = identityString(record.connectionId);
+  const sourceExecutionId = identityString(record.sourceExecutionId);
+  if (
+    (record.connectionId !== undefined && !connectionId) ||
+    (record.sourceExecutionId !== undefined && !sourceExecutionId)
+  )
+    return undefined;
   const scope = identityString(record.scope);
   if (record.scope !== undefined && scope === undefined) return undefined;
   // Reject rather than default to `""`. Every other unrecognized field here is
@@ -202,7 +167,7 @@ function sanitize(raw: unknown): TrackedTask | undefined {
 
   // A stored entry without a wire tag predates the extension; defaulting keeps
   // `wire` non-optional at runtime (identity depends on it).
-  const wire: TasksWire =
+  const wire: LiveTasksWire =
     record.wire === "extension" || record.wire === "legacy"
       ? record.wire
       : "legacy";
@@ -234,6 +199,11 @@ function sanitize(raw: unknown): TrackedTask | undefined {
     ...(record.dismissed === true ? { dismissed: true } : {}),
     ...(record.expired === true ? { expired: true } : {}),
     ...(scope !== undefined ? { scope } : {}),
+    ...(connectionId !== undefined ? { connectionId } : {}),
+    ...(sourceExecutionId !== undefined ? { sourceExecutionId } : {}),
+    ...(clampString(record.serverName)
+      ? { serverName: clampString(record.serverName) }
+      : {}),
     ...(clampString(record.lastUpdatedAt)
       ? { lastUpdatedAt: clampString(record.lastUpdatedAt) }
       : {}),
@@ -256,8 +226,8 @@ function sanitize(raw: unknown): TrackedTask | undefined {
 }
 
 /**
- * v1 → v3 and v2 → v3 are both pure widenings: every added field is optional,
- * so an older record is already a valid v3 record once its `wire` is defaulted.
+ * v1–v3 records retain their original identity. Missing account pins stay
+ * absent; migration must not fill them from today's selected account.
  *
  * A FUTURE version is ignored entirely rather than best-effort parsed. A newer
  * tab may have written fields whose meaning we would get wrong, and a wrong
@@ -283,18 +253,32 @@ function migrate(parsed: unknown): TrackedTask[] {
     .filter((task): task is TrackedTask => task !== undefined);
 }
 
-/** Every entry on disk, regardless of scope — writes must not drop other actors' handles. */
-function loadAllTasks(): TrackedTask[] {
+/** Old tabs keep owning ordinary handles; only bound handles use the new format. */
+function isBoundHandle(task: TrackedTask): boolean {
+  return task.connectionId !== undefined || task.sourceExecutionId !== undefined;
+}
+
+function readStoredTasks(key: string): TrackedTask[] {
   try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    if (!data) return [];
-    const now = Date.now();
-    return migrate(JSON.parse(data)).filter((task) => isFresh(task, now));
+    const data = localStorage.getItem(key);
+    return data
+      ? migrate(JSON.parse(data)).filter((task) => isFresh(task, Date.now()))
+      : [];
   } catch {
-    // Corrupt JSON is indistinguishable from a hostile write; start clean
-    // rather than throwing on every page load.
     return [];
   }
+}
+
+/** Read both formats on every tick, so a still-open older tab can create tasks. */
+function loadAllTasks(): TrackedTask[] {
+  const legacy = readStoredTasks(LEGACY_STORAGE_KEY).filter(
+    (task) => !isBoundHandle(task),
+  );
+  const current = readStoredTasks(STORAGE_KEY);
+  const byIdentity = new Map(
+    [...legacy, ...current].map((task) => [taskIdentity(task), task]),
+  );
+  return [...byIdentity.values()];
 }
 
 function loadTasks(): TrackedTask[] {
@@ -337,7 +321,20 @@ function saveTasks(tasks: TrackedTask[]): void {
         tasks: payload,
       } satisfies StoredShape);
     }
-    localStorage.setItem(STORAGE_KEY, serialized);
+    localStorage.setItem(
+      LEGACY_STORAGE_KEY,
+      JSON.stringify({
+        version: 3,
+        tasks: payload.filter((task) => !isBoundHandle(task)),
+      }),
+    );
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: SCHEMA_VERSION,
+        tasks: payload.filter(isBoundHandle),
+      }),
+    );
   } catch {
     // localStorage might be full or unavailable
   }
@@ -349,23 +346,27 @@ export function getTrackedTasks(): TrackedTask[] {
 
 export function getTrackedTasksForServer(
   serverId: string,
-  wire?: TasksWire
+  wire?: TasksWire,
+  connectionId?: string,
 ): TrackedTask[] {
   return loadTasks().filter(
     (t) =>
       t.serverId === serverId &&
       !t.dismissed &&
-      (wire === undefined || t.wire === wire)
+      sameAccount(t, { wire, connectionId }),
   );
 }
 
 export function getTrackedTaskById(
   taskId: string,
-  serverId?: string
+  serverId?: string,
+  selection?: TaskAccountSelection,
 ): TrackedTask | undefined {
   return loadTasks().find(
     (t) =>
-      t.taskId === taskId && (serverId === undefined || t.serverId === serverId)
+      t.taskId === taskId &&
+      (serverId === undefined || t.serverId === serverId) &&
+      sameAccount(t, selection),
   );
 }
 
@@ -378,7 +379,12 @@ export function trackTask(task: Omit<TrackedTask, "dismissed">): void {
   if (
     identityString(scoped.taskId) === undefined ||
     identityString(scoped.serverId) === undefined ||
-    (scoped.scope !== undefined && identityString(scoped.scope) === undefined)
+    (scoped.scope !== undefined &&
+      identityString(scoped.scope) === undefined) ||
+    (scoped.connectionId !== undefined &&
+      !identityString(scoped.connectionId)) ||
+    (scoped.sourceExecutionId !== undefined &&
+      !identityString(scoped.sourceExecutionId))
   ) {
     return;
   }
@@ -414,13 +420,6 @@ export function trackTask(task: Omit<TrackedTask, "dismissed">): void {
 }
 
 /**
- * Folds an observation into a tracked handle so a reload resumes where the
- * poller left off rather than restarting every task at its floor.
- *
- * A no-op for an untracked handle: this must never resurrect an entry the user
- * cleared or that belongs to another actor.
- */
-/**
  * Applies one observation to a loaded entry. Shared by the single and batch
  * write paths so their field semantics — notably `null` `ttlMs` meaning "no
  * expiry" and therefore overwriting a number — cannot drift apart.
@@ -445,22 +444,6 @@ function applyObservation(
   if (observation.lastObservedAt !== undefined) {
     entry.lastObservedAt = observation.lastObservedAt;
   }
-}
-
-export interface TaskObservationPatch {
-  status?: string;
-  lastUpdatedAt?: string;
-  ttlMs?: number | null;
-  pollIntervalMs?: number;
-  nextPollAt?: number;
-  lastObservedAt?: number;
-}
-
-export interface TaskIdentityRef {
-  taskId: string;
-  serverId: string;
-  wire: TasksWire;
-  scope?: string;
 }
 
 /**
@@ -493,16 +476,6 @@ export function recordTaskObservations(
     changed = true;
   }
   if (changed) saveInScope(tasks);
-}
-
-/** Everything the lifecycle engine needs to restore one handle after a reload. */
-export interface TrackedTaskRestoreState {
-  nextPollAt?: number;
-  lastObservedAt?: number;
-  pollIntervalMs?: number;
-  ttlMs?: number | null;
-  status?: string;
-  respondedInputKeys: string[];
 }
 
 /**
@@ -550,15 +523,9 @@ export function getTrackedTaskRestoreStates(
  * The persisted scheduling state for a handle, for seeding the lifecycle
  * engine after a reload. `undefined` when the handle is not tracked.
  */
-export function getTrackedTaskSchedule(identity: TaskIdentityRef):
-  | {
-      nextPollAt?: number;
-      lastObservedAt?: number;
-      pollIntervalMs?: number;
-      ttlMs?: number | null;
-      status?: string;
-    }
-  | undefined {
+export function getTrackedTaskSchedule(
+  identity: TaskIdentityRef,
+): Omit<TrackedTaskRestoreState, "respondedInputKeys"> | undefined {
   const key = taskIdentity({
     ...identity,
     scope: identity.scope ?? activeScope,
@@ -575,20 +542,8 @@ export function getTrackedTaskSchedule(identity: TaskIdentityRef):
 }
 
 export function recordTaskObservation(
-  identity: {
-    taskId: string;
-    serverId: string;
-    wire: TasksWire;
-    scope?: string;
-  },
-  observation: {
-    status?: string;
-    lastUpdatedAt?: string;
-    ttlMs?: number | null;
-    pollIntervalMs?: number;
-    nextPollAt?: number;
-    lastObservedAt?: number;
-  }
+  identity: TaskIdentityRef,
+  observation: TaskObservationPatch,
 ): void {
   const scoped = { ...identity, scope: identity.scope ?? activeScope };
   const key = taskIdentity(scoped);
@@ -605,13 +560,8 @@ export function recordTaskObservation(
  * succeeded. Keys only — the request and the response are never persisted.
  */
 export function recordRespondedInputKeys(
-  identity: {
-    taskId: string;
-    serverId: string;
-    wire: TasksWire;
-    scope?: string;
-  },
-  keys: readonly string[]
+  identity: TaskIdentityRef,
+  keys: readonly string[],
 ): void {
   if (keys.length === 0) return;
   const scoped = { ...identity, scope: identity.scope ?? activeScope };
@@ -627,12 +577,7 @@ export function recordRespondedInputKeys(
   saveInScope(tasks);
 }
 
-export function getRespondedInputKeys(identity: {
-  taskId: string;
-  serverId: string;
-  wire: TasksWire;
-  scope?: string;
-}): string[] {
+export function getRespondedInputKeys(identity: TaskIdentityRef): string[] {
   const scoped = { ...identity, scope: identity.scope ?? activeScope };
   const key = taskIdentity(scoped);
   return (
@@ -640,24 +585,34 @@ export function getRespondedInputKeys(identity: {
   );
 }
 
-export function untrackTask(taskId: string, serverId?: string): void {
+export function untrackTask(
+  taskId: string,
+  serverId?: string,
+  selection?: TaskAccountSelection,
+): void {
   saveInScope(
     loadTasks().filter(
       (t) =>
         !(
           t.taskId === taskId &&
-          (serverId === undefined || t.serverId === serverId)
-        )
-    )
+          (serverId === undefined || t.serverId === serverId) &&
+          sameAccount(t, selection)
+        ),
+    ),
   );
 }
 
-export function markTaskExpired(taskId: string, serverId?: string): void {
+export function markTaskExpired(
+  taskId: string,
+  serverId?: string,
+  selection?: TaskAccountSelection,
+): void {
   const tasks = loadTasks();
   for (const task of tasks) {
     if (
       task.taskId === taskId &&
-      (serverId === undefined || task.serverId === serverId)
+      (serverId === undefined || task.serverId === serverId) &&
+      sameAccount(task, selection)
     ) {
       task.expired = true;
     }
@@ -665,12 +620,17 @@ export function markTaskExpired(taskId: string, serverId?: string): void {
   saveInScope(tasks);
 }
 
-export function dismissTask(taskId: string, serverId?: string): void {
+export function dismissTask(
+  taskId: string,
+  serverId?: string,
+  selection?: TaskAccountSelection,
+): void {
   const tasks = loadTasks();
   for (const task of tasks) {
     if (
       task.taskId === taskId &&
-      (serverId === undefined || task.serverId === serverId)
+      (serverId === undefined || task.serverId === serverId) &&
+      sameAccount(task, selection)
     ) {
       task.dismissed = true;
     }
@@ -680,12 +640,17 @@ export function dismissTask(taskId: string, serverId?: string): void {
 
 export function dismissTasksForServer(
   serverId: string,
-  taskIds: string[]
+  taskIds: string[],
+  selection?: TaskAccountSelection,
 ): void {
   const idsToDissmiss = new Set(taskIds);
   const tasks = loadTasks();
   for (const task of tasks) {
-    if (task.serverId === serverId && idsToDissmiss.has(task.taskId)) {
+    if (
+      task.serverId === serverId &&
+      idsToDissmiss.has(task.taskId) &&
+      sameAccount(task, selection)
+    ) {
       task.dismissed = true;
     }
   }
@@ -706,8 +671,14 @@ export function dismissTasksForServer(
 const DISMISSED_REGISTRY_KEY = "mcp-dismissed-registry-tasks";
 const MAX_DISMISSED_REGISTRY_IDS_PER_SERVER = 200;
 
-function dismissedRegistryKey(serverId: string): string {
-  return `${activeScope ?? ""}\u0000${serverId}`;
+function dismissedRegistryKey(
+  serverId: string,
+  selection?: TaskAccountSelection,
+): string {
+  const base = `${activeScope ?? ""}\u0000${serverId}`;
+  return selection?.wire !== undefined || selection?.connectionId !== undefined
+    ? `${base}\u0000${selection.wire ?? ""}\u0000${selection.connectionId ?? ""}`
+    : base;
 }
 
 function loadDismissedRegistry(): Record<string, string[]> {
@@ -752,12 +723,13 @@ function saveDismissedRegistry(store: Record<string, string[]>): void {
  */
 export function dismissRegistryTasks(
   serverId: string,
-  taskIds: readonly string[]
+  taskIds: readonly string[],
+  selection?: TaskAccountSelection,
 ): void {
   const ids = taskIds.filter((id) => identityString(id) !== undefined);
   if (ids.length === 0) return;
   const store = loadDismissedRegistry();
-  const key = dismissedRegistryKey(serverId);
+  const key = dismissedRegistryKey(serverId, selection);
   const merged = [...new Set([...(store[key] ?? []), ...ids])];
   // Keep the NEWEST dismissals when the bound trims: the oldest are the ones
   // most likely to have been pruned from the registry already.
@@ -765,16 +737,23 @@ export function dismissRegistryTasks(
   saveDismissedRegistry(store);
 }
 
-export function getDismissedTaskIds(serverId: string): Set<string> {
+export function getDismissedTaskIds(
+  serverId: string,
+  selection?: TaskAccountSelection,
+): Set<string> {
   const dismissed = new Set(
     loadTasks()
-      .filter((t) => t.serverId === serverId && t.dismissed)
-      .map((t) => t.taskId)
+      .filter(
+        (t) =>
+          t.serverId === serverId && t.dismissed && sameAccount(t, selection),
+      )
+      .map((t) => t.taskId),
   );
-  for (const id of loadDismissedRegistry()[dismissedRegistryKey(serverId)] ??
-    []) {
-    dismissed.add(id);
-  }
+  const store = loadDismissedRegistry();
+  const keys = [dismissedRegistryKey(serverId, selection)];
+  if (selection?.connectionId === undefined)
+    keys.push(dismissedRegistryKey(serverId));
+  for (const key of keys) for (const id of store[key] ?? []) dismissed.add(id);
   return dismissed;
 }
 
@@ -809,6 +788,7 @@ export function clearTrackedTasksForScope(
 export function clearAllTrackedTasks(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     localStorage.removeItem(DISMISSED_REGISTRY_KEY);
   } catch {
     // Ignore errors

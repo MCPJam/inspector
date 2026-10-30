@@ -52,6 +52,7 @@ export type RegistryTaskStatus =
  * and the live `tasks/get` read stays the source of truth.
  */
 export interface RegistryTaskEntry {
+  connectionId?: string;
   wire: "legacy" | "extension";
   taskId: string;
   lastKnownStatus: RegistryTaskStatus;
