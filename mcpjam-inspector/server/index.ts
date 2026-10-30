@@ -204,6 +204,7 @@ import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
+import { shutdownInFlightHarnessTurns } from "./utils/harness/harness-turn-shutdown.js";
 import {
   isScheduledEvalsWorkerEnabled,
   startScheduledEvalsWorker,
@@ -1077,6 +1078,8 @@ async function shutdown() {
   }
 
   appLogger.info("Shutting down gracefully...");
+  // Started first so each turn's teardown, which frees its backend locks, gets the most time.
+  const harnessTurnsStopped = shutdownInFlightHarnessTurns();
   try {
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
@@ -1086,12 +1089,9 @@ async function shutdown() {
     await benchWorker?.stop();
     await productionChecksWorker.stop();
     stopRevokedSessionCache();
-    // Abort active synthetic-session runs and write a terminal "failed"
-    // status so the dialog/UI doesn't see a stuck "running" run. Bounded
-    // by an internal timeout; the outer `forceExitTimer` still wins.
     // Abort active swarm (journey-execution) runs — stops each run's heartbeat
     // and lets in-flight sessions report a terminal attempt. Bounded internally.
-    await shutdownRunningJourneyRuns();
+    await Promise.all([shutdownRunningJourneyRuns(), harnessTurnsStopped]);
     await tunnelManager.closeAll();
     // Kill local PTYs BEFORE server.close(): close() stops new connections but
     // does NOT tear down established sockets, so a live shell would otherwise
