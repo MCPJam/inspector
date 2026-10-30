@@ -178,6 +178,21 @@ export function describeSwarmAttemptFailure(
 ): NormalizedError {
   const info = humanizeSwarmAttemptError(rawMessage, errorCode);
   const code = errorCode ?? info.code;
+  // Setup stopped the target before any conversation. The stored sentence
+  // already names what stopped it and what to do, so the card adds no list.
+  if (errorCode === "prerequisites_unavailable") {
+    return {
+      ...describeAsSlug("internal/unknown"),
+      slug: "swarm/attempt_failed",
+      title: "Setup stopped this target",
+      oneLine: info.message,
+      likelyCauses: [],
+      nextSteps: [],
+      severity: "warning",
+      rawMessage: rawMessage ?? info.message,
+      rawCode: errorCode,
+    };
+  }
   // The organization's AI key policy (or its own provider) refused the
   // session's model. Checked first: read by status it would card as a
   // provider credential failure or an MCPJam limit, and offer a top-up for

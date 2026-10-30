@@ -43,13 +43,27 @@ export class SwarmSetupError extends Error {
     this.name = "SwarmSetupError";
   }
 }
+/**
+ * Stored on a target's credit-funded attempts when the platform stopped its
+ * sponsored setup. Like every sponsored-platform message, it never mentions
+ * credits.
+ */
+export const SETUP_PLATFORM_STOPPED_MESSAGE =
+  "MCPJam couldn't run setup for this target, so its conversations didn't run. Run it again later.";
 /** The sentence stored on a target's attempts when its setup turn stopped them. */
-export function setupFailureMessage(setup: SetupRecord): string {
+export function setupFailureMessage(
+  setup: SetupRecord,
+  platformFailure?: SponsoredPlatformFailure,
+): string {
+  if (platformFailure) return SETUP_PLATFORM_STOPPED_MESSAGE;
   if (setup.reason === "timeout")
     return "Setup ran out of time before this target's test data was ready, so its conversations didn't run. Run it again.";
   if (setup.reason === "transport_failed")
     return "Setup couldn't reach the MCP server, so this target's conversations didn't run. Check the server's connection, then run it again.";
-  return "Setup couldn't confirm the test data this target needs, so its conversations didn't run. Check the setup instructions, then run it again.";
+  // No re-run advice: another run would create another batch.
+  if (setup.reason === "entity_record_limit")
+    return "Setup created more test data than it can track, so this target's conversations didn't run.";
+  return "Setup couldn't create this target's test data, so its conversations didn't run. Run it again.";
 }
 export function swarmSetupChatSessionId(
   runId: string,

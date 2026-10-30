@@ -89,21 +89,22 @@ export function judgeReadiness(
 ): Pick<SetupRecord, "readiness" | "reason"> {
   if (setup.status === "skipped" && setup.reason === "no_eligible_write_tools")
     return { readiness: "not_assessed", reason: setup.reason };
+  if (setup.createdEntitiesTruncated)
+    return { readiness: "unavailable", reason: "entity_record_limit" };
+  if (setup.toolCalls.some((c) => c.isWrite && !c.ok))
+    return { readiness: "unavailable", reason: "write_errored" };
+  // Only what setup did can stop the target. The persona is seeded from write
+  // results, never from the model's report, so an unreadable, "missing" or
+  // overclaiming report is kept as the reason without blocking.
   const reason = !report
     ? "invalid_model_report"
     : !report.ready || report.missing.length
     ? "model_reported_missing"
     : setup.unsupportedClaims
     ? "unsupported_claim"
-    : setup.createdEntitiesTruncated
-    ? "entity_record_limit"
-    : setup.toolCalls.some((c) => c.isWrite && !c.ok)
-    ? "write_errored"
     : undefined;
-  if (reason) return { readiness: "unavailable", reason };
-  if (setup.writeCallsDispatched === 0 && report!.created.length === 0)
-    return { readiness: "not_needed" };
-  return setup.writeCallsDispatched > 0
-    ? { readiness: "ready" }
-    : { readiness: "unavailable", reason: "unsupported_claim" };
+  return {
+    readiness: setup.writeCallsDispatched > 0 ? "ready" : "not_needed",
+    ...(reason ? { reason } : {}),
+  };
 }
