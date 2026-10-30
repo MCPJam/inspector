@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FunctionReference } from "convex/server";
 
 /**
  * Prod runs several replicas with no sticky sessions, so the browser's
@@ -26,7 +27,9 @@ vi.mock("convex/browser", () => ({
     setAuth(token: string) {
       this.owner = token;
     }
-    async mutation(name: string, args: any) {
+    async mutation(ref: FunctionReference<"mutation">, args: any) {
+      const { getFunctionName } = await import("convex/server");
+      const name = getFunctionName(ref);
       const row = fakeConvex.rows.get(args.sessionId);
       if (name === "conformanceOAuthRendezvous:create") {
         fakeConvex.rows.set(args.sessionId, {
@@ -50,7 +53,9 @@ vi.mock("convex/browser", () => ({
       }
       throw new Error(`unexpected mutation ${name}`);
     }
-    async query(name: string, args: any) {
+    async query(ref: FunctionReference<"query">, args: any) {
+      const { getFunctionName } = await import("convex/server");
+      const name = getFunctionName(ref);
       if (name !== "conformanceOAuthRendezvous:get") {
         throw new Error(`unexpected query ${name}`);
       }
@@ -126,12 +131,17 @@ vi.mock("../auth.js", async () => {
 });
 
 // Fast loops so the round trip takes milliseconds.
-vi.mock("../../../config.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../config.js")>()),
-  CONFORMANCE_OAUTH_POLL_INTERVAL_MS: 5,
-  CONFORMANCE_OAUTH_POLL_JITTER_MS: 0,
-  CONFORMANCE_OAUTH_COMPLETE_INTERVAL_MS: 5,
-}));
+vi.mock(
+  "../../../services/conformance-oauth-rendezvous-config.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../services/conformance-oauth-rendezvous-config.js")
+    >()),
+    CONFORMANCE_OAUTH_POLL_INTERVAL_MS: 5,
+    CONFORMANCE_OAUTH_POLL_JITTER_MS: 0,
+    CONFORMANCE_OAUTH_COMPLETE_INTERVAL_MS: 5,
+  }),
+);
 
 /** The service-token legs, served from the same fake Convex. */
 function stubConvexHttp() {

@@ -22,6 +22,7 @@
  */
 
 import { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
 import type { ConformanceResult } from "@mcpjam/sdk";
 import {
   CONFORMANCE_OAUTH_COMPLETE_INTERVAL_MS,
@@ -31,7 +32,7 @@ import {
   CONFORMANCE_OAUTH_POLL_JITTER_MS,
   CONFORMANCE_OAUTH_POLL_MAX_FAILURES,
   CONFORMANCE_OAUTH_SHUTDOWN_BUDGET_MS,
-} from "../config.js";
+} from "./conformance-oauth-rendezvous-config.js";
 import { OAUTH_SESSION_EXPIRED_MESSAGE } from "../routes/shared/conformance.js";
 import { logger } from "../utils/logger.js";
 import { toBrowserOAuthResult } from "../utils/oauth-conformance-browser-result.js";
@@ -64,6 +65,24 @@ type RendezvousStatus =
   | "complete"
   | "failed"
   | "expired";
+
+// Backend `conformanceOAuthRendezvous.ts`, referenced by name (no generated
+// `api` object is mirrored into this repo).
+const createRef = makeFunctionReference<
+  "mutation",
+  { sessionId: string; codeWaitMs: number },
+  { sessionId: string; expiresAt: number }
+>("conformanceOAuthRendezvous:create");
+const submitCodeRef = makeFunctionReference<
+  "mutation",
+  { sessionId: string; code: string; state?: string },
+  { ok: boolean; reason?: string }
+>("conformanceOAuthRendezvous:submitCode");
+const getRef = makeFunctionReference<
+  "query",
+  { sessionId: string },
+  { status: RendezvousStatus; resultJson?: string; error?: string } | null
+>("conformanceOAuthRendezvous:get");
 
 // ── Convex plumbing ─────────────────────────────────────────────────────
 
@@ -165,10 +184,10 @@ export async function createRendezvous(
   sessionId: string,
 ): Promise<void> {
   await withDeadline((signal) =>
-    userClient(bearer, signal).mutation(
-      "conformanceOAuthRendezvous:create" as any,
-      { sessionId, codeWaitMs: AUTHORIZATION_WAIT_MS },
-    ),
+    userClient(bearer, signal).mutation(createRef, {
+      sessionId,
+      codeWaitMs: AUTHORIZATION_WAIT_MS,
+    }),
   );
 }
 
@@ -183,16 +202,12 @@ export async function submitRendezvousCode(
   input: { sessionId: string; code: string; state?: string },
 ): Promise<"accepted" | "gone"> {
   const submit = () =>
-    withDeadline(
-      (signal) =>
-        userClient(bearer, signal).mutation(
-          "conformanceOAuthRendezvous:submitCode" as any,
-          {
-            sessionId: input.sessionId,
-            code: input.code,
-            ...(input.state !== undefined ? { state: input.state } : {}),
-          },
-        ) as Promise<{ ok: boolean; reason?: string }>,
+    withDeadline((signal) =>
+      userClient(bearer, signal).mutation(submitCodeRef, {
+        sessionId: input.sessionId,
+        code: input.code,
+        ...(input.state !== undefined ? { state: input.state } : {}),
+      }),
     );
   let result: { ok: boolean; reason?: string };
   try {
@@ -231,10 +246,7 @@ export async function awaitRendezvousResult(
       | undefined;
     try {
       view = await withDeadline((signal) =>
-        userClient(bearer, signal).query(
-          "conformanceOAuthRendezvous:get" as any,
-          { sessionId },
-        ),
+        userClient(bearer, signal).query(getRef, { sessionId }),
       );
     } catch (error) {
       logger.warn("[conformance-oauth] result read failed", {

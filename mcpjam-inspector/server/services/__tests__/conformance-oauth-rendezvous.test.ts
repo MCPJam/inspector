@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getFunctionName } from "convex/server";
 import type { ConformanceResult } from "@mcpjam/sdk";
 import type { OAuthConformanceSession } from "../conformance-oauth-sessions.js";
 
@@ -293,13 +294,13 @@ describe("any replica: the browser's calls", () => {
       }),
     ).toBe("accepted");
     expect(setAuth).toHaveBeenCalledWith("user-jwt");
-    expect(mutation).toHaveBeenCalledWith(
+    expect(getFunctionName(mutation.mock.calls[0][0])).toBe(
       "conformanceOAuthRendezvous:submitCode",
-      {
-        sessionId: "oauth-conf-1",
-        code: "auth-code",
-      },
     );
+    expect(mutation).toHaveBeenCalledWith(expect.anything(), {
+      sessionId: "oauth-conf-1",
+      code: "auth-code",
+    });
 
     mutation.mockResolvedValueOnce({ ok: false, reason: "not_found" });
     expect(
