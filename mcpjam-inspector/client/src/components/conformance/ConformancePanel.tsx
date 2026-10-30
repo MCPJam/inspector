@@ -42,6 +42,7 @@ import {
   type ConformanceView,
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
+import { useAppNavigate, useCurrentLocationParts } from "@/lib/app-navigation";
 import { useConformanceRun, type SuiteState } from "@/hooks/use-conformance-run";
 import {
   PersistConformanceRun,
@@ -309,6 +310,9 @@ function ConformanceContent({
     }
     setConnect({ status: "idle" });
     setStarted(true);
+    // Run sits in the header on both tabs. From History, the new run would
+    // otherwise go unseen until the user switched back by hand.
+    onViewChange("overview");
     runAll();
   };
   const isConnecting =
@@ -633,13 +637,26 @@ export function ConformanceTab({
   /** The History tab's content. Omit to hide the tab. */
   history?: ReactNode;
 }) {
-  // A run's detail page links back with `?view=history`.
-  const [view, setView] = useState<ConformanceView>(() =>
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("view") === "history"
+  // The tab lives in the URL (`?view=history`, which a run's page links back
+  // with), so a refresh, Back/Forward and the sidebar's plain `/conformance`
+  // all land on the tab the address names. Both hooks work with or without a
+  // router.
+  const location = useCurrentLocationParts();
+  const navigate = useAppNavigate();
+  const view: ConformanceView =
+    new URLSearchParams(location.search).get("view") === "history"
       ? "history"
-      : "overview",
-  );
+      : "overview";
+  const changeView = (next: ConformanceView) => {
+    if (next === view) return;
+    const params = new URLSearchParams(location.search);
+    if (next === "history") params.set("view", "history");
+    else params.delete("view");
+    const query = params.toString();
+    navigate(`${location.pathname}${query ? `?${query}` : ""}${location.hash}`, {
+      replace: true,
+    });
+  };
   const showHistory = history !== undefined;
   // `?view=history` can outlive the History tab, e.g. a run link opened where
   // no history is passed. With the tabs hidden there would be no way back.
@@ -706,7 +723,7 @@ export function ConformanceTab({
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <ConformanceHeader
           view={activeView}
-          onViewChange={setView}
+          onViewChange={changeView}
           showHistory={showHistory}
         >
           {serverPicker}
@@ -744,7 +761,7 @@ export function ConformanceTab({
       server={server}
       persist={persist}
       view={activeView}
-      onViewChange={setView}
+      onViewChange={changeView}
       showHistory={showHistory}
       history={history}
       serverPicker={serverPicker}

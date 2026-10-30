@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  act,
   render,
   screen,
   fireEvent,
@@ -248,6 +249,11 @@ beforeEach(() => {
 });
 
 describe("ConformanceTab", () => {
+  // The page writes the active tab to `?view=`; start each test without it.
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
   it("shows a pooled score headline with denominator, and readiness advice that costs points", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({
@@ -439,6 +445,87 @@ describe("ConformanceTab", () => {
     // Wraps around at either end.
     await user.keyboard("{ArrowRight}");
     expect(overview).toHaveFocus();
+  });
+
+  it("opens Overview when a run starts from History", async () => {
+    setupSuccessfulRunMocks();
+    render(
+      <ConformanceTab
+        server={createHttpServer()}
+        history={<p>History table</p>}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("History table");
+
+    // On History only the header offers Run.
+    clickRun();
+
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tabpanel")).not.toHaveTextContent("History table");
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+  });
+
+  it("keeps the URL on the tab, so a refresh after Run lands on Overview", () => {
+    setupSuccessfulRunMocks();
+    // Arrived from a run's page, which links back with `?view=history`.
+    window.history.replaceState(null, "", "/conformance?view=history");
+    render(
+      <ConformanceTab
+        server={createHttpServer()}
+        history={<p>History table</p>}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    clickRun();
+    expect(window.location.search).toBe("");
+
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
+    expect(window.location.search).toBe("?view=history");
+
+    // The sidebar's plain `/conformance` link: the page follows the address.
+    act(() => {
+      window.history.pushState({}, "", "/conformance");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("stays on History when Run has no server to run", () => {
+    const info = vi.spyOn(toast, "info");
+    // A selection the page does not offer: Run asks for a server instead.
+    render(
+      <ConformanceTab
+        server={createHttpServer({ name: "removed" })}
+        servers={[]}
+        onSelectServer={vi.fn()}
+        history={<p>History table</p>}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
+
+    clickRun();
+
+    expect(info).toHaveBeenCalledWith(
+      "Add a server to run conformance checks.",
+    );
+    expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    info.mockRestore();
   });
 
   it("asks for a server instead of running when none is selected", () => {
