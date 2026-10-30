@@ -144,9 +144,12 @@ vi.mock("@/lib/ollama-utils", () => ({
 // test says otherwise.
 const manageOrgProviders = vi.hoisted(() => vi.fn());
 const viewer = vi.hoisted(() => ({ isAdmin: true }));
+const handoffOrgIds = vi.hoisted(() => [] as (string | null)[]);
 vi.mock("@/hooks/use-org-models-handoff", () => ({
-  useOrgModelsHandoff: () =>
-    viewer.isAdmin ? manageOrgProviders : undefined,
+  useOrgModelsHandoff: (organizationId: string | null) => {
+    handoffOrgIds.push(organizationId);
+    return viewer.isAdmin ? manageOrgProviders : undefined;
+  },
 }));
 
 import { useAvailableModels } from "../use-available-models";
@@ -395,4 +398,21 @@ describe("useAvailableModels", () => {
       viewer.isAdmin = true;
     }
   });
+
+  // Every scoped picker gets its handoff from here, so this covers them all.
+  it.each(["p2", "convex-project-2"])(
+    "builds the handoff for the organization of the project it is given (%s), not the active one",
+    (projectId) => {
+      sharedAppState.projects.p1.organizationId = "org_1";
+      sharedAppState.projects.p2.organizationId = "org_2";
+      handoffOrgIds.length = 0;
+      try {
+        renderHook(() => useAvailableModels({ projectId }));
+        expect(handoffOrgIds.at(-1)).toBe("org_2");
+      } finally {
+        sharedAppState.projects.p1.organizationId = undefined;
+        sharedAppState.projects.p2.organizationId = undefined;
+      }
+    },
+  );
 });
