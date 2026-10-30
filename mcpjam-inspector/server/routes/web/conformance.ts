@@ -78,10 +78,10 @@ async function assertConformanceTarget(
  * Resolve HTTP server URL and headers for conformance from authorized config.
  *
  * `withLogin` adds the user's login as `Authorization: Bearer`: the one saved
- * in Convex when they connected (`authorizeServer` hands it back), else the
- * one the browser sent. Saved first, as the hosted doctor and Connect do —
- * hosted connects rarely leave a token in the page, so the body alone sent
- * every OAuth server an unauthenticated request and the suite saw only 401s.
+ * in Convex when they connected (`authorizeServer` hands it back). A token in
+ * the request body is ignored. Hosted OAuth never leaves a token in the page,
+ * and when the backend withholds its saved token on purpose (a repointed URL,
+ * an export policy), a body token must not get past that refusal.
  */
 async function resolveHostedHttpConfig(
   c: any,
@@ -123,7 +123,7 @@ async function resolveHostedHttpConfig(
   }
 
   const oauthToken = options.withLogin
-    ? (auth.oauthAccessToken ?? wsBody.oauthAccessToken)
+    ? (auth.oauthAccessToken ?? undefined)
     : undefined;
   const headers: Record<string, string> = {
     ...(auth.serverConfig.headers ?? {}),
@@ -165,11 +165,11 @@ async function resolveHostedServerConfig(
     }
   );
 
-  // Saved login first, then the browser's — see `resolveHostedHttpConfig`.
+  // Saved login only — see `resolveHostedHttpConfig`.
   const httpConfig = toHttpConfig(
     auth,
     WEB_CALL_TIMEOUT_MS,
-    auth.oauthAccessToken ?? wsBody.oauthAccessToken,
+    auth.oauthAccessToken ?? undefined,
     wsBody.clientCapabilities as Record<string, unknown> | undefined
   );
 

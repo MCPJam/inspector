@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * Hosted connects keep the user's OAuth login in Convex and rarely leave a
  * token in the page, so these routes must take the saved login that
  * `authorizeServer` hands back — the browser's token alone left protocol,
- * apps and tasks unauthenticated on every OAuth server. The OAuth suite is the
+ * apps and tasks unauthenticated on every OAuth server. A token in the request
+ * body is never used, so it cannot get past a login the backend withheld on
+ * purpose. The OAuth suite is the
  * exception: it grades the server from an unauthenticated request and runs its
  * own fresh authorization, so it must never be handed a login.
  */
@@ -125,7 +127,7 @@ describe("hosted conformance — saved login", () => {
     ).toBe("Bearer saved-token");
   });
 
-  it("protocol falls back to the browser's login when none is saved", async () => {
+  it("protocol ignores the browser's login when none is saved", async () => {
     authorizeServerMock.mockResolvedValue(authorizedServer());
 
     await post("/protocol", {
@@ -136,7 +138,7 @@ describe("hosted conformance — saved login", () => {
 
     expect(
       runProtocolConformanceMock.mock.calls[0][0].customHeaders.Authorization,
-    ).toBe("Bearer browser-token");
+    ).toBeUndefined();
   });
 
   it("protocol replaces a saved authorization header in any case", async () => {
@@ -166,6 +168,22 @@ describe("hosted conformance — saved login", () => {
     expect(res.status).toBe(200);
     expect(toHttpConfigMock.mock.calls[0][2]).toBe("saved-token");
   });
+
+  it.each(["/apps", "/tasks"])(
+    "%s ignores the browser's login when none is saved",
+    async (path) => {
+      authorizeServerMock.mockResolvedValue(authorizedServer());
+
+      const res = await post(path, {
+        projectId: "p1",
+        serverId: "s1",
+        oauthAccessToken: "browser-token",
+      });
+
+      expect(res.status).toBe(200);
+      expect(toHttpConfigMock.mock.calls[0][2]).toBeUndefined();
+    },
+  );
 
   it("the OAuth suite gets no login, saved or sent", async () => {
     const res = await post("/oauth/start", {
