@@ -1255,16 +1255,20 @@ describe("ConformanceTab", () => {
     clickRun();
 
     await screen.findByText(
-      "Your browser blocked the authorization window. Allow pop-ups for this site, or open the authorization page.",
+      "Your browser blocked the sign-in window. Allow pop-ups for this site, or open the sign-in page.",
     );
     expect(
       screen.queryByText("Waiting for browser authorization..."),
     ).toBeNull();
 
-    // Opening it again from a click is what a popup blocker lets through.
+    // Opening it again from a click is what a popup blocker lets through. The
+    // blocked-window dialog sits over the page, so its button is the one in
+    // reach.
     openSpy.mockReturnValue({} as unknown as Window);
     fireEvent.click(
-      screen.getByRole("button", { name: "Open authorization page" }),
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Open sign-in page",
+      }),
     );
     expect(openSpy).toHaveBeenLastCalledWith(
       "https://auth.example.com/authorize",
@@ -1272,6 +1276,7 @@ describe("ConformanceTab", () => {
       expect.any(String),
     );
     await screen.findByText("Waiting for browser authorization...");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     openSpy.mockRestore();
   });
 
@@ -1376,7 +1381,7 @@ describe("ConformanceTab", () => {
     await screen.findByText(/authorization URL is not an http or https/);
     expect(openSpy).not.toHaveBeenCalled();
     expect(
-      screen.queryByRole("button", { name: "Open authorization page" }),
+      screen.queryByRole("button", { name: "Open sign-in page" }),
     ).toBeNull();
     openSpy.mockRestore();
   });
@@ -2033,5 +2038,85 @@ describe("ConformanceTab", () => {
     expect(
       within(row!).getByText("The authorization server timed out."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("ConformanceTab blocked sign-in window", () => {
+  const AUTH_URL = "https://auth.example.com/authorize?client_id=c";
+  const DIALOG_TITLE = "Your browser blocked the sign-in window";
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function setupAuthorizationNeeded() {
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: AUTH_URL,
+    });
+  }
+
+  it("asks in a dialog when the browser blocks the sign-in window", async () => {
+    setupAuthorizationNeeded();
+    vi.spyOn(window, "open").mockReturnValue(null);
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(DIALOG_TITLE)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "OAuth checks need you to sign in to http-server. The other checks keep running.",
+      ),
+    ).toBeInTheDocument();
+    // It opens on its own, so a stray key must not land on Skip OAuth.
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Open sign-in page" }),
+      ).toHaveFocus(),
+    );
+  });
+
+  it("keeps the dialog open when the browser blocks the window again", async () => {
+    setupAuthorizationNeeded();
+    vi.spyOn(window, "open").mockReturnValue(null);
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+    const dialog = await screen.findByRole("alertdialog");
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Open sign-in page" }),
+    );
+
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  });
+
+  it("skips OAuth from the dialog", async () => {
+    setupAuthorizationNeeded();
+    vi.spyOn(window, "open").mockReturnValue(null);
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+    const dialog = await screen.findByRole("alertdialog");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Skip OAuth" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(
+      screen.getByText("OAuth was skipped, so it is not scored for this run."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no dialog when the sign-in window opens", async () => {
+    setupAuthorizationNeeded();
+    vi.spyOn(window, "open").mockReturnValue({} as Window);
+    render(<ConformanceTab server={createHttpServer()} />);
+    clickRun();
+
+    expect(
+      await screen.findByText("Waiting for browser authorization..."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });
