@@ -419,7 +419,6 @@ export const MCP_READINESS_IDS = [
   "readiness-deprecated-feature-use",
   "readiness-cache-ttl-useful",
   "readiness-oauth-iss-advertised",
-  "readiness-x-mcp-header-declarations",
   // No revision maps an unparseable POST body to any HTTP status or JSON-RPC
   // error — the transports docs are silent — so answering garbage with a
   // success status is ADVICE (JSON-RPC 2.0 names -32700 for it), never a
