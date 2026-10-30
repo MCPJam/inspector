@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo, type ReactNode } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
+import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
 import { Loader2, AlertTriangle, Settings, Share2 } from "lucide-react";
 import type { ServerWithName } from "@/hooks/use-app-state";
 // Import from the browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls
@@ -664,7 +665,7 @@ export function ConformanceContent({
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           )}
                           {oauth.popupBlocked
-                            ? "Your browser blocked the authorization window. Allow pop-ups for this site, or open the authorization page."
+                            ? "Your browser blocked the sign-in window. Allow pop-ups for this site, or open the sign-in page."
                             : "Waiting for browser authorization..."}
                         </div>
                         <div className="flex gap-2">
@@ -676,7 +677,7 @@ export function ConformanceContent({
                               }
                               onClick={openAuthorizationWindow}
                             >
-                              Open authorization page
+                              Open sign-in page
                             </Button>
                           ) : null}
                           <Button size="sm" variant="ghost" onClick={skipOAuth}>
@@ -705,6 +706,12 @@ export function ConformanceContent({
           </div>
         )}
       </ConformanceTabPanel>
+      <OAuthPopupBlockedDialog
+        open={Boolean(oauth.waitingForAuth && oauth.popupBlocked)}
+        serverName={server.name}
+        onOpen={openAuthorizationWindow}
+        onSkip={skipOAuth}
+      />
     </div>
   );
 }

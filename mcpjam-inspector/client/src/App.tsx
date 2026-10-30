@@ -297,7 +297,6 @@ import {
   writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
-import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
   formatBillingFeatureName,
@@ -4987,15 +4986,6 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
   ]);
 
-  const oauthTokensByServerId = useMemo(
-    () =>
-      buildOAuthTokensByServerId(
-        Object.keys(hostedServerIdsByName),
-        (name) => hostedServerIdsByName[name],
-        (name) => appState.servers[name]?.oauthTokens?.access_token,
-      ),
-    [hostedServerIdsByName, appState.servers],
-  );
   const hostedMcpProfilePins = useMemo(() => {
     const rawClientInfo = activeMcpProfile?.initialize?.clientInfo;
     const clientInfo =
@@ -5143,7 +5133,6 @@ export default function App() {
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,
     getAccessToken,
-    oauthTokensByServerId,
     // `ApiContext.isAuthenticated` means "WorkOS user is signed in",
     // not "Convex is authenticated". Convex reports authenticated for guest
     // sessions too (because `useUnifiedConvexAuth` returns a placeholder user

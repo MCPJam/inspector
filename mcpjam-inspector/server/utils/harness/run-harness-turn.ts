@@ -20,6 +20,8 @@ import {
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
+import { withHarnessElicitation } from "./with-harness-elicitation.js";
+import { isNativeElicitationProfile } from "./forwarding/native-elicitation-profile.js";
 import { withClaudeForwardingResume } from "./forwarding/claude-resume.js";
 import { stampNativeForwardingPolicy,
   forwardingToolPolicy,
@@ -774,6 +776,7 @@ export async function runHarnessTurn(
     onStreamComplete,
     onStreamWriterReady,
     onHarnessMcpReady,
+    onHarnessElicitation,
     onToolCall,
     onToolResult,
     onStepFinish,
@@ -1578,6 +1581,7 @@ export async function runHarnessTurn(
       });
       const nativeCandidate = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && nativeMcpDelivery && harnessAdapter.id === "claude-code" && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
       const admission = nativeCandidate ? forwardingAdmission({ manager: mcpClientManager, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
+            elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
           })
         : { delivery: undefined, gaps: [] };
       const nativeGaps = admission.gaps;
@@ -2625,6 +2629,15 @@ export async function runHarnessTurn(
       // take it at all. Writing the branch here is what makes "the servers
       // cannot be silently dropped at construction" a compile-time fact instead
       // of a convention.
+      const elicitationServerIds = new Set(
+        onHarnessElicitation && nativeForwarding
+          ? (selectedServers ?? []).filter((id) => {
+              const info = mcpClientManager.getInitializationInfo(id);
+              return info?.protocolVersion === "2025-11-25" &&
+                isNativeElicitationProfile(info.clientCapabilities, harnessAdapter.pinnedRuntimeVersion);
+            })
+          : [],
+      );
       let harnessRuntime =
         harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
@@ -2633,6 +2646,7 @@ export async function runHarnessTurn(
               auth,
               mcpJson,
               permissionMode,
+              elicitationHandler: elicitationServerIds.size > 0,
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
@@ -2650,6 +2664,14 @@ export async function runHarnessTurn(
                 ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
             });
+      if (elicitationServerIds.size > 0 && onHarnessElicitation) {
+        harnessRuntime = withHarnessElicitation(harnessRuntime, {
+          keyToServerId: harnessKeyToServerId,
+          allowedServerIds: elicitationServerIds,
+          handle: onHarnessElicitation,
+          signal: effectiveAbortSignal,
+        });
+      }
       if (nativeForwarding) harnessRuntime = withAutoApprovedNativeRequests(withClaudeForwardingResume(harnessRuntime, mcpJson.mcpServers, nativeForwarding.policyDigest), undefined, new Set(), nativeForwarding.isForwardedTool);
       if (nativeForwarding) onHarnessMcpReady?.(nativeForwarding.logScopeIds);
       if (localPrepared) {

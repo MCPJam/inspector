@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MCPServerConfig } from "@mcpjam/sdk";
+import { DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS } from "@mcpjam/sdk";
+import { harnessPinnedVersion } from "@/shared/harness-model-support";
 import { nativeForwardingGaps } from "../native-admission";
 
 function candidate(
@@ -27,8 +29,54 @@ function candidate(
 }
 
 describe("native profile admission", () => {
+  it("requires new elicitation qualification when the installed runtime pin changes", () => {
+    expect(harnessPinnedVersion("claude-code")).toBe("2.1.245");
+  });
+  const formConfig = () => ({
+    url: "https://mcp.example/mcp",
+    clientCapabilities: { elicitation: { form: {} }, roots: { listChanged: true } },
+  });
+  it("admits the measured native form profile only with its owned runtime handler", () => {
+    const form = candidate(formConfig());
+    expect(nativeForwardingGaps(form)).toContain("client-capabilities");
+    expect(nativeForwardingGaps({ ...form, elicitationRuntimeVersion: "2.1.245" })).toEqual([]);
+    expect(nativeForwardingGaps({ ...form, elicitationRuntimeVersion: "2.1.310" })).toContain("client-capabilities");
+  });
+  it("honors exact-set precedence over duplicated or conflicting inactive overlays", () => {
+    const config = formConfig();
+    for (const overlay of [config.clientCapabilities, { extensions: { "future.test/ignored": {} } }]) {
+      expect(nativeForwardingGaps({ ...candidate({ ...config, capabilities: overlay, eraCapabilities: { modern: overlay } }), elicitationRuntimeVersion: "2.1.245" })).toEqual([]);
+    }
+    const effective = candidate(config).manager.getInitializationInfo();
+    expect(nativeForwardingGaps({ ...candidate({ url: config.url, capabilities: config.clientCapabilities }, effective), elicitationRuntimeVersion: "2.1.245" })).toContain("capability-overrides");
+  });
+  it.each([
+    { elicitation: { form: {}, url: {} } },
+    { extensions: { "io.modelcontextprotocol/tasks": {} } },
+    { futureCapability: {} },
+  ])("retains unqualified additions to the form profile: %j", (addition) => {
+    const config = formConfig();
+    Object.assign(config.clientCapabilities, addition);
+    expect(nativeForwardingGaps({ ...candidate(config), elicitationRuntimeVersion: "2.1.245" })).toContain("client-capabilities");
+  });
+  it("does not qualify modern input_required with a legacy callback", () => {
+    const config = formConfig();
+    const form = candidate(config);
+    expect(nativeForwardingGaps({
+      ...form,
+      elicitationRuntimeVersion: "2.1.245",
+      manager: { ...form.manager, getInitializationInfo: () => ({ ...form.manager.getInitializationInfo(), protocolVersion: "2026-07-28" }) },
+    })).toContain("client-capabilities");
+  });
   it("admits only the qualified plain HTTP profile", () => {
     expect(nativeForwardingGaps(candidate())).toEqual([]);
+  });
+  it("admits the same default policy before and after host normalization", () => {
+    expect(nativeForwardingGaps({ ...candidate(), modelVisibleMcpToolResults: DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS })).toEqual([]);
+    expect(nativeForwardingGaps({ ...candidate(), modelVisibleMcpToolResults: {} })).toEqual([]);
+    expect(nativeForwardingGaps({ ...candidate(), modelVisibleMcpToolResults: { directContent: { image: false } } })).toContain("model-result-policy");
+    const unknownPolicy = { directContent: { text: true, unknown: true } };
+    expect(nativeForwardingGaps({ ...candidate(), modelVisibleMcpToolResults: unknownPolicy })).toContain("model-result-policy");
   });
   it.each([
     ["Apps", { extensions: { "io.modelcontextprotocol/ui": {} } }],
