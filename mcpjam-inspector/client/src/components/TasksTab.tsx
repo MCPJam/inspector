@@ -1807,7 +1807,7 @@ function TaskPanel({
                 <p className="mt-1 text-[11px] text-muted-foreground">
                   {unanswerableInputCount} pending request
                   {unanswerableInputCount === 1 ? "" : "s"} this UI cannot
-                  answer (sampling/roots) — visible in the raw request JSON
+                  answer — visible in the raw request JSON
                   below.
                 </p>
               )}
