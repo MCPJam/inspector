@@ -12861,19 +12861,32 @@ export const getProjectServerOperation: PlatformOperation<
 > = {
   name: "get_project_server",
   title: "Get a project MCP server",
-  description: "Read one saved MCP server by project and server id.",
+  description: "Read one saved MCP server by project and server name or ID.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     { type: "project_server", id: result.id, ...projectIdOf(result) },
   ]),
-  inputSchema: projectServerSelectorInput,
+  inputSchema: projectScopedInput.extend({
+    serverId: z.string().trim().min(1).describe(SERVER_SELECTOR_DESCRIPTION),
+  }),
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
     );
+    // Every sibling server tool takes a name, so callers pass one here too.
+    const page = await client.listProjectServers(
+      { projectId: project.id },
+      { signal }
+    );
+    const server = resolveByIdOrName(
+      page.items,
+      input.serverId,
+      "Server",
+      `project "${project.name}"`
+    );
     return client.getProjectServer(
-      { projectId: project.id, serverId: input.serverId },
+      { projectId: project.id, serverId: server.id },
       { signal }
     );
   },
