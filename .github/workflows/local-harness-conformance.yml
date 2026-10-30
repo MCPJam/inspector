@@ -169,12 +169,12 @@ jobs:
       # From `mcpjam-inspector/`, not the worktree root: the root breaks the
       # `@/shared` path alias and the suite fails for a reason that has nothing
       # to do with the code under test.
-      # The SDK first: the browser harness bundle in `pretest` pulls in
+      # The SDK first: the browser harness bundle in `test:prepare` pulls in
       # widget-react, which resolves `@mcpjam/sdk` subpaths from dist.
       - name: Build shared contracts and adapter fixtures
         run: |
           npm run build:sdk -w @mcpjam/inspector
-          npm run pretest -w @mcpjam/inspector
+          npm run test:prepare -w @mcpjam/inspector
 
       - name: Run the local harness suite
         working-directory: mcpjam-inspector
@@ -255,7 +255,7 @@ jobs:
       - name: Build Inspector adapter dependencies
         run: |
           npm run build:sdk -w @mcpjam/inspector
-          npm run pretest -w @mcpjam/inspector
+          npm run test:prepare -w @mcpjam/inspector
 
       - name: Full turn
         working-directory: mcpjam-inspector
@@ -504,7 +504,7 @@ jobs:
       - name: Build Inspector adapter dependencies
         run: |
           npm run build:sdk -w @mcpjam/inspector
-          npm run pretest -w @mcpjam/inspector
+          npm run test:prepare -w @mcpjam/inspector
 
       - name: Full turn
         working-directory: mcpjam-inspector
@@ -733,7 +733,7 @@ jobs:
       - name: Build Inspector adapter dependencies
         run: |
           npm run build:sdk -w @mcpjam/inspector
-          npm run pretest -w @mcpjam/inspector
+          npm run test:prepare -w @mcpjam/inspector
 
       # Playground profile: a command pauses for approval and runs only once
       # approved; a host-executed MCP tool runs through MCPJam's relay; the

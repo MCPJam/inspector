@@ -14,7 +14,7 @@
 // (`layer/launcher.mjs` enforces that).
 //
 // Output is gitignored (`*.bundled.ts`) and rebuilt by `build`, `bundle:all`
-// and `pretest`, like the other generated bundles.
+// and `test:prepare`, like the other generated bundles.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

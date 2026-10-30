@@ -112,5 +112,5 @@ checked-in daemon bundle. After any flag change:
 npm run bundle:browserd -w @mcpjam/inspector
 ```
 
-and commit both files in `server/services/browserd/dist/`. `pretest` runs
+and commit both files in `server/services/browserd/dist/`. `test:prepare` runs
 `node scripts/bundle-browserd.mjs --check`, which fails if you forget.

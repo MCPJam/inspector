@@ -36,8 +36,10 @@ jobs:
         run: npm ci --legacy-peer-deps
         shell: powershell
 
+      # The root .npmrc skips install scripts. Squirrel needs
+      # electron-winstaller's, which picks the 7z binary for this arch.
       - name: Rebuild native modules for Windows
-        run: npm rebuild esbuild --verbose
+        run: npm rebuild --ignore-scripts=false esbuild electron-winstaller --verbose
         shell: powershell
 
       - name: Restore code signing cert

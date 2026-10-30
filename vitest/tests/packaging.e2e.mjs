@@ -29,7 +29,8 @@
  *
  * `prepack` builds before packing. `npm pack` does NOT run `prepublishOnly`
  * (only `publish` does), so on a clean checkout the tarball would otherwise
- * contain package.json and README and nothing else.
+ * contain package.json and README and nothing else. The root .npmrc turns
+ * lifecycle scripts off, so `pack` turns them back on for itself.
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -75,7 +76,13 @@ function run(command, args, options = {}) {
 function pack(workspaceDir, destination) {
   const stdout = execFileSync(
     "npm",
-    ["pack", "--pack-destination", destination, "--silent"],
+    [
+      "pack",
+      "--ignore-scripts=false",
+      "--pack-destination",
+      destination,
+      "--silent",
+    ],
     { cwd: workspaceDir, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }
   );
   // `npm pack --silent` still prints the filename; take the last non-empty

@@ -56,7 +56,7 @@ imports (`protocol.ts`, the WebMCP launch flags):
 npm run bundle:browserd -w @mcpjam/inspector
 ```
 
-Commit both files in `dist/`. `pretest` fails if the bundle is stale.
+Commit both files in `dist/`. `test:prepare` fails if the bundle is stale.
 
 ## Auth-sensitive areas
 
