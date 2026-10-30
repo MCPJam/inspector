@@ -99,6 +99,55 @@ function wrapper({
 const flushMicrotasks = () => act(() => Promise.resolve());
 
 describe("useAutoConnectProjectServers", () => {
+  it.each([false, true])("admits ten real checks, preserving drag/manual priority and in-flight work (storage blocked=%s)", async (blocked) => {
+    const projectId = `queue-admission-cards-${blocked}`;
+    const sharedId = `queue-admission-shared-${blocked}`;
+    const names = Array.from({ length: 14 }, (_, i) => `server-${i}`);
+    const saved = [...names].reverse();
+    localStorage.setItem("mcp-server-order", JSON.stringify({ [projectId]: saved }));
+    const write = blocked ? vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("Storage blocked"); }) : undefined;
+    const appState = { ...makeAppState(names), activeProjectId: projectId };
+    const starts: string[] = [];
+    const releases = new Map<string, () => void>();
+    const ensureServersReady = vi.fn(async (requested: string[]) => {
+      await Promise.all(requested.map((name) => serverCheckQueue.run(
+        { projectId: sharedId, serverName: name, identity: "admission-host" },
+        () => new Promise<void>((resolve) => { starts.push(name); releases.set(name, resolve); }),
+      )));
+      return { readyServerNames: requested, failedServerNames: [], missingServerNames: [], reauthServerNames: [] };
+    });
+    const provider = ({ children }: { children: ReactNode }) => wrapper({ children, appState, ensureServersReady });
+    const { result } = renderHook(() => {
+      const order = useServerCardOrder({ projectId, queueProjectId: sharedId, catalogNames: names, visibleNames: names, ready: true });
+      useAutoConnectProjectServers({ projectId: sharedId, hostScopeKey: "admission-host", serverNames: names, serverOrder: order.catalogOrder });
+      return order;
+    }, { wrapper: provider });
+    const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+    await act(tick);
+    expect(starts).toEqual(saved.slice(0, 10));
+    act(() => result.current.setOrderedServerNames(names));
+    const consumer = renderHook(() => useAutoConnectProjectServers({ projectId: sharedId, hostScopeKey: "admission-host", serverNames: names }), { wrapper: provider });
+    consumer.rerender();
+    expect(starts).toHaveLength(10);
+    // Promote waiting work: manual wins over the new card order, while checks
+    // already admitted keep their original attempts.
+    act(() => serverCheckQueue.markManual(sharedId, "server-2"));
+    releases.get(saved[0])!();
+    await act(tick);
+    expect(starts.at(-1)).toBe("server-2");
+    releases.get(saved[1])!();
+    await act(tick);
+    expect(starts.at(-1)).toBe("server-0");
+    for (let i = 0; i < names.length; i++) {
+      for (const release of releases.values()) release();
+      await act(tick);
+    }
+    expect(starts).toHaveLength(names.length);
+    expect(new Set(starts).size).toBe(names.length);
+    expect(ensureServersReady).toHaveBeenCalledOnce();
+    write?.mockRestore();
+  });
+
   it("publishes Connect order before admission and never replaces live queue order with stale storage", async () => {
     const projectId = "order-handoff-local";
     const sharedId = "order-handoff-shared";

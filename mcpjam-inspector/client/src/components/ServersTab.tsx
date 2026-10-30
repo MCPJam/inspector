@@ -544,7 +544,10 @@ function SortableServerCard({
 interface ServersTabProps {
   projectServers: Record<string, ServerWithName>;
   pendingDashboardOAuth?: PendingDashboardOAuthState | null;
-  onConnect: (formData: ServerFormData) => void;
+  onConnect: (
+    formData: ServerFormData,
+    options?: { onConfigSaved?: () => void }
+  ) => void | Promise<void>;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
@@ -764,14 +767,19 @@ export function ServersTab({
   const orderReady =
     !!orderProject && orderProject.id === activeProjectId &&
     areServersHydrated && !isLoadingProjects && !isAuthHydrating;
-  const { orderedServerNames, setOrderedServerNames, catalogOrder } =
-    useServerCardOrder({
-      projectId: activeProjectId,
-      queueProjectId: sharedProjectIdForHostScope ?? activeProjectId,
-      catalogNames: Object.keys(orderProject?.servers ?? {}),
-      visibleNames: allNames,
-      ready: orderReady,
-    });
+  const {
+    orderedServerNames,
+    setOrderedServerNames,
+    catalogOrder,
+    beginRename,
+    beginImport,
+  } = useServerCardOrder({
+    projectId: activeProjectId,
+    queueProjectId: sharedProjectIdForHostScope ?? activeProjectId,
+    catalogNames: Object.keys(orderProject?.servers ?? {}),
+    visibleNames: allNames,
+    ready: orderReady,
+  });
 
   useAutoConnectProjectServers({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
@@ -861,6 +869,8 @@ export function ServersTab({
     sessionKey: 0,
     serverSnapshot: null,
   });
+  const detailProjectRef = useRef(activeProjectId);
+  detailProjectRef.current = activeProjectId;
 
   useEffect(() => {
     const persistedFocus = readPersistedLoggerFocus(activeProjectId);
@@ -1248,19 +1258,24 @@ export function ServersTab({
 
   const handleSubmitDetailModal = useCallback(
     async (formData: ServerFormData, originalServerName: string) => {
-      const optimisticServerName = formData.name.trim() || originalServerName;
-
-      setDetailModalState((prev) => ({
-        ...prev,
-        serverName: optimisticServerName,
-        serverSnapshot: prev.serverSnapshot
-          ? { ...prev.serverSnapshot, name: optimisticServerName }
-          : prev.serverSnapshot,
-      }));
-
-      const result = await onUpdate(originalServerName, formData);
+      const originProjectId = activeProjectId;
+      const sessionKey = detailModalState.sessionKey;
+      const finishRename = beginRename(originalServerName, formData.name.trim());
+      let result: ServerUpdateResult;
+      try {
+        result = await onUpdate(originalServerName, formData);
+      } catch (error) {
+        finishRename(false);
+        throw error;
+      }
+      finishRename(result.ok);
 
       setDetailModalState((prev) => {
+        if (
+          detailProjectRef.current !== originProjectId ||
+          prev.sessionKey !== sessionKey
+        )
+          return prev;
         const liveServer = projectServers[result.serverName];
 
         return {
@@ -1276,7 +1291,13 @@ export function ServersTab({
 
       return result;
     },
-    [onUpdate, projectServers]
+    [
+      onUpdate,
+      projectServers,
+      beginRename,
+      activeProjectId,
+      detailModalState.sessionKey,
+    ]
   );
 
   useEffect(() => {
@@ -1311,9 +1332,22 @@ export function ServersTab({
       );
       return;
     }
-    servers.forEach((server) => {
+    const finishImport = beginImport(servers.map((server) => server.name));
+    servers.forEach(async (server) => {
       focusLoggerOnServer(server.name);
-      onConnect(server);
+      let saved = false;
+      try {
+        await onConnect(server, {
+          onConfigSaved: () => {
+            saved = true;
+            finishImport(server.name, true);
+          },
+        });
+      } catch (error) {
+        reportCaught(error, { source: "server_json_import" });
+      } finally {
+        if (!saved) finishImport(server.name, false);
+      }
     });
   };
 

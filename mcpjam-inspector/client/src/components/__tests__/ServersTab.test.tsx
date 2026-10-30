@@ -3,6 +3,7 @@ import {
   render as rtlRender,
   screen,
   fireEvent,
+  act,
   waitFor,
   within,
   type RenderOptions,
@@ -399,7 +400,12 @@ vi.mock("../connection/AddServerModal", () => ({
 }));
 
 vi.mock("../connection/JsonImportModal", () => ({
-  JsonImportModal: () => null,
+  JsonImportModal: ({ onImport }: { onImport: (servers: ServerFormData[]) => void }) => (
+    <button onClick={() => onImport([
+      { name: "Imported-X", type: "http", url: "https://example.com/mcp" },
+      { name: "Imported-Y", type: "http", url: "https://example.com/mcp" },
+    ])}>Import Fixtures</button>
+  ),
 }));
 
 vi.mock("../project/ProjectShareButton", () => ({
@@ -1078,7 +1084,7 @@ describe("ServersTab shared detail modal", () => {
       serverName: "renamed-server",
     });
 
-    render(<ServersTab {...defaultProps} onUpdate={onUpdate} />);
+    const view = render(<ServersTab {...defaultProps} onUpdate={onUpdate} />);
 
     fireEvent.click(screen.getByText("Open test-server"));
     fireEvent.click(screen.getByText("Save Rename"));
@@ -1093,6 +1099,43 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.getByTestId("modal-server-name")).toHaveTextContent(
       "renamed-server"
     );
+    const renamed = { "renamed-server": createServer({ name: "renamed-server" }) };
+    view.rerender(<ServersTab {...defaultProps} onUpdate={onUpdate} projectServers={renamed} projects={{ "project-1": createProject(renamed) }} />);
+  });
+
+  it("retains the original modal name and card order on a refused rename", async () => {
+    const onUpdate = vi.fn().mockResolvedValue({ ok: false, serverName: "test-server" });
+    render(<ServersTab {...defaultProps} onUpdate={onUpdate} />);
+    fireEvent.click(screen.getByText("Open test-server"));
+    fireEvent.click(screen.getByText("Save Rename"));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce());
+    expect(screen.getByTestId("modal-server-name")).toHaveTextContent("test-server");
+    expect(JSON.parse(localStorage.getItem("mcp-server-order")!)["project-1"]).toEqual(["test-server"]);
+  });
+
+  it("wires JSON import intent before independent saves and retains catalog group order", async () => {
+    const callbacks = new Map<string, (() => void) | undefined>();
+    const onConnect = vi.fn((_form: ServerFormData, options?: { onConfigSaved?: () => void }) => {
+      return new Promise<void>((resolve) => callbacks.set(_form.name, () => {
+        options?.onConfigSaved?.();
+        resolve();
+      }));
+    });
+    const view = render(<ServersTab {...defaultProps} onConnect={onConnect} />);
+    fireEvent.click(screen.getByText("Import Fixtures"));
+    expect(onConnect).toHaveBeenCalledTimes(2);
+    // Catalog delivery can lag the confirmed save and can arrive out of order.
+    await waitFor(() => expect(callbacks.get("Imported-Y")).toBeTypeOf("function"));
+    await act(async () => {
+      callbacks.get("Imported-Y")!();
+      callbacks.get("Imported-X")!();
+    });
+    const withY = { ...projectServers, "Imported-Y": createServer({ name: "Imported-Y" }) };
+    view.rerender(<ServersTab {...defaultProps} onConnect={onConnect} projectServers={withY} projects={{ "project-1": createProject(withY) }} />);
+    expect(screen.getAllByTestId(/^server-card-/).map((card) => card.dataset.testid)).toEqual(["server-card-Imported-Y", "server-card-test-server"]);
+    const complete = { ...projectServers, "Imported-X": createServer({ name: "Imported-X" }), "Imported-Y": withY["Imported-Y"] };
+    view.rerender(<ServersTab {...defaultProps} onConnect={onConnect} projectServers={complete} projects={{ "project-1": createProject(complete) }} />);
+    expect(screen.getAllByTestId(/^server-card-/).map((card) => card.dataset.testid)).toEqual(["server-card-Imported-X", "server-card-Imported-Y", "server-card-test-server"]);
   });
 
   it("reopens the shared modal on configuration after returning from OAuth", async () => {
