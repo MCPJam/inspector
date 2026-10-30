@@ -543,6 +543,7 @@ export type {
   MrtrOperationState,
   MrtrLegResult,
   MrtrLegSender,
+  MrtrLegMiddleware,
   MrtrSupportedModes,
   MrtrInputCollector,
   MrtrValidateResponse,

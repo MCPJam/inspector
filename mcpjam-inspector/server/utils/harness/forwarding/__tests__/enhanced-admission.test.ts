@@ -6,7 +6,10 @@ const caps = {
     "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
   },
 };
-function candidate(config: Record<string, unknown> = {}, capabilities = caps) {
+function candidate(
+  config: Record<string, unknown> = {},
+  capabilities: object = caps,
+) {
   return {
     manager: {
       getServerConfig: () => ({
@@ -26,6 +29,16 @@ function candidate(config: Record<string, unknown> = {}, capabilities = caps) {
 }
 it("selects the qualified modern bridge before starting the CLI", () => {
   expect(forwardingAdmission(candidate()).delivery).toBe("bridge");
+});
+it("requires owned input delivery separately from the legacy callback", () => {
+  const input = candidate({}, { ...caps, elicitation: { form: {}, url: {} } });
+  expect(
+    forwardingAdmission({ ...input, elicitationRuntimeVersion: "2.1.245" })
+      .delivery,
+  ).toBeUndefined();
+  expect(
+    forwardingAdmission({ ...input, modernInputAvailable: true }).delivery,
+  ).toBe("bridge");
 });
 it("retains the existing path for connection behavior the bridge cannot reproduce", () => {
   expect(

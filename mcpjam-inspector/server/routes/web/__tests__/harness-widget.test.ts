@@ -9,6 +9,9 @@ const state = vi.hoisted(() => ({
   gate: vi.fn(),
   dispatch: vi.fn(),
   connect: vi.fn(),
+  collect: vi.fn(),
+  inputGate: vi.fn(),
+  ask: vi.fn(),
   tools: [{ name: "write", _meta: { ui: { visibility: ["app"] } } }],
 }));
 vi.mock("../../../utils/v1-convex-token.js", () => ({
@@ -34,13 +37,16 @@ vi.mock("../../../utils/harness/forwarding/execution-gate.js", () => ({
   executeForwardedOperation: state.gate,
 }));
 vi.mock("../../../utils/harness/forwarding/approval.js", () => ({
-  forwardingApproval: () => ({}),
+  forwardingApproval: () => ({ binding: {}, ask: state.ask }),
+}));
+vi.mock("../../../utils/harness/forwarding/mrtr-gate.js", () => ({
+  createForwardingMrtrGate: state.inputGate,
 }));
 vi.mock("../../../utils/harness/forwarding/native-rpc-logs.js", () => ({
   createNativeRpcLogger: () => ({}),
 }));
 vi.mock("../../../utils/harness/harness-connection-profile.js", () => ({
-  isModernAppsProfile: () => true,
+  isEnhancedMcpProfile: () => true,
 }));
 vi.mock("../../../utils/route-error-report.js", () => ({
   reportRouteFailure: vi.fn(),
@@ -51,6 +57,13 @@ beforeEach(() => {
   vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
   vi.stubEnv("HARNESS_FORWARDING_ORGANIZATION_IDS", "internal");
   state.userId = "user";
+  state.ask.mockImplementation(async ({ approvalId }) => ({
+    approvalId,
+    decision: "approved",
+  }));
+  state.inputGate.mockReturnValue(
+    async ({ send }: { send: () => Promise<unknown> }) => send(),
+  );
   state.tools = [{ name: "write", _meta: { ui: { visibility: ["app"] } } }];
   state.scope.mockResolvedValue({
     projectId: "project",
@@ -66,6 +79,7 @@ beforeEach(() => {
       listTools: async () => ({ tools: state.tools }),
       executeTool: state.dispatch,
       disconnectAllServers: async () => {},
+      setMrtrInputCollector: state.collect,
     },
   });
   state.gate.mockImplementation(async ({ dispatch, operation }) =>
@@ -79,11 +93,16 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 
-function request(signal?: AbortSignal) {
+function request(signal?: AbortSignal, inputVersion?: string) {
   return harnessWidgets.request("/widget", {
     method: "POST",
     signal,
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(inputVersion
+        ? { "x-mcpjam-harness-input-version": inputVersion }
+        : {}),
+    },
     body: JSON.stringify({
       context: {
         owner: {
@@ -105,6 +124,49 @@ it("withdraws widget admission when forwarding is disabled", async () => {
   expect((await request()).status).toBe(404);
   expect(state.scope).not.toHaveBeenCalled();
   expect(state.manager).not.toHaveBeenCalled();
+});
+it("requires the owned-input browser before opening an eliciting widget connection", async () => {
+  state.scope.mockResolvedValue({
+    projectId: "project",
+    organizationId: "internal",
+    turnId: "turn",
+    chatSessionId: "chat",
+    expiresAt: Date.now() + 60_000,
+    hostConfig: { clientCapabilities: { elicitation: { form: {} } } },
+  });
+  expect((await request()).status).toBe(409);
+  expect(state.manager).not.toHaveBeenCalled();
+  const response = await request(undefined, "1");
+  expect(await response.text()).toContain('"type":"result"');
+  expect(state.collect).toHaveBeenCalledWith(
+    "server",
+    expect.any(Function),
+    expect.objectContaining({ aroundLeg: expect.any(Function) }),
+  );
+});
+it("presents parent and continuation approvals through the same widget stream", async () => {
+  state.scope.mockResolvedValue({
+    projectId: "project",
+    organizationId: "internal",
+    turnId: "turn",
+    chatSessionId: "chat",
+    expiresAt: Date.now() + 60_000,
+    hostConfig: { clientCapabilities: { elicitation: { form: {} } } },
+  });
+  state.gate.mockImplementation(async ({ approval, dispatch, operation }) => {
+    expect(state.inputGate.mock.calls[0][0].approval).toBe(approval);
+    for (const executionId of ["parent", "continuation"])
+      await approval.ask({
+        executionId,
+        approvalId: executionId,
+        signal: new AbortController().signal,
+      });
+    return dispatch(async () => {}, operation);
+  });
+  const text = await (await request(undefined, "1")).text();
+  expect(text.match(/"type":"approval"/g)).toHaveLength(2);
+  expect(text).toContain("continuation");
+  expect(text).toContain('"type":"result"');
 });
 it("withdraws widget admission when its organization is removed", async () => {
   vi.stubEnv("HARNESS_FORWARDING_ORGANIZATION_IDS", "another-org");

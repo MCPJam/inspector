@@ -3,7 +3,7 @@ import type { MCPClientManager } from "@mcpjam/sdk";
 import {
   harnessConnectionProfile,
   harnessConnectionFingerprint,
-  isModernAppsProfile,
+  isEnhancedMcpProfile,
   isEnhancedModelPolicy,
 } from "../harness-connection-profile";
 function manager(
@@ -31,6 +31,26 @@ const ui = {
   },
 };
 describe("harness connection profiles", () => {
+  it("qualifies modern input only when an owned handler is installed", () => {
+    const m = manager({ ...ui, elicitation: { form: {}, url: {} } });
+    expect(isEnhancedMcpProfile(m, "server")).toBe(false);
+    expect(isEnhancedMcpProfile(m, "server", true)).toBe(true);
+    expect(
+      isEnhancedMcpProfile(
+        manager({ elicitation: { form: {} } }),
+        "server",
+        true,
+      ),
+    ).toBe(true);
+    expect(
+      isEnhancedMcpProfile(
+        manager({ ...ui, elicitation: { future: {} } }),
+        "server",
+        true,
+      ),
+    ).toBe(false);
+  });
+
   it("preserves opaque capabilities and pins without copying credentials", () => {
     const m = manager({ extensions: { future: { enabled: true } } });
     const profile = harnessConnectionProfile(m, "server");
@@ -55,21 +75,21 @@ describe("harness connection profiles", () => {
     );
   });
   it("qualifies only the known modern App declaration", () => {
-    expect(isModernAppsProfile(manager(ui), "server")).toBe(true);
-    expect(isModernAppsProfile(manager(ui, "2025-11-25"), "server")).toBe(
+    expect(isEnhancedMcpProfile(manager(ui), "server")).toBe(true);
+    expect(isEnhancedMcpProfile(manager(ui, "2025-11-25"), "server")).toBe(
       false,
     );
     expect(
-      isModernAppsProfile(manager({ ...ui, sampling: {} }), "server"),
+      isEnhancedMcpProfile(manager({ ...ui, sampling: {} }), "server"),
     ).toBe(false);
     expect(
-      isModernAppsProfile(
+      isEnhancedMcpProfile(
         manager({ extensions: { ...ui.extensions, future: {} } }),
         "server",
       ),
     ).toBe(false);
     expect(
-      isModernAppsProfile(
+      isEnhancedMcpProfile(
         manager({
           extensions: {
             "io.modelcontextprotocol/ui": { mimeTypes: ["future/type"] },
@@ -79,7 +99,7 @@ describe("harness connection profiles", () => {
       ),
     ).toBe(false);
     expect(
-      isModernAppsProfile(
+      isEnhancedMcpProfile(
         manager({
           extensions: {
             "io.modelcontextprotocol/ui": {

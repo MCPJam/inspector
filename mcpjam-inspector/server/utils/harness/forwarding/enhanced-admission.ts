@@ -2,11 +2,12 @@ import type { MCPClientManager } from "@mcpjam/sdk";
 import { nativeForwardingGaps } from "./native-admission.js";
 import {
   isEnhancedModelPolicy,
-  isModernAppsProfile,
+  isEnhancedMcpProfile,
 } from "../harness-connection-profile.js";
 
 type Candidate = Omit<Parameters<typeof nativeForwardingGaps>[0], "manager"> & {
   manager: MCPClientManager;
+  modernInputAvailable?: boolean;
 };
 const BRIDGED_GAPS = new Set([
   "tool-visibility",
@@ -33,7 +34,11 @@ export function forwardingAdmission(candidate: Candidate): {
     isEnhancedModelPolicy(candidate.modelVisibleMcpToolResults) &&
     gaps.every((gap) => BRIDGED_GAPS.has(gap)) &&
     candidate.serverIds.every((id) =>
-      isModernAppsProfile(candidate.manager, id),
+      isEnhancedMcpProfile(
+        candidate.manager,
+        id,
+        candidate.modernInputAvailable === true,
+      ),
     );
   return { delivery: bridged ? "bridge" : undefined, gaps };
 }

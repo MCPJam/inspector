@@ -1,6 +1,14 @@
 import { TurnResources } from "./resources.js";
+import {
+  createHarnessInputHost,
+  harnessElicitationModes,
+} from "../../utils/harness/input-host.js";
+import { isForwardingOrganization } from "../../utils/harness/forwarding/native-turn.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
-import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
+import {
+  HOSTED_ELICITATION_VERSION,
+  HOSTED_HARNESS_INPUT_VERSION,
+} from "../../../shared/hosted-elicitation.js";
 import { hasServiceCredential } from "../service-credential.js";
 import { PluginInvocationError } from "../plugin-host/invocation.js";
 import { describePluginError } from "../../../shared/plugin-diagnostics.js";
@@ -132,6 +140,7 @@ export async function prepareManagedConnections(args: {
     selectedServerIds,
     selectedServerNames,
     scenarioId,
+    hostId,
     accessVersion,
     modelDefinition,
     turnMode,
@@ -300,6 +309,21 @@ export async function prepareManagedConnections(args: {
   resources.own(async () => {
     await elicitationBridge?.dispose();
   });
+
+  const harnessInput =
+    elicitationBridge &&
+    resolvedExecution.harness === "claude-code" &&
+    rawBody.hostedHarnessInputVersion === HOSTED_HARNESS_INPUT_VERSION &&
+    process.env.HARNESS_NATIVE_FORWARDING === "true" &&
+    turnRail === "hosted" &&
+    hostId && !scenarioId && !rawBody.harnessExecutionTarget
+      ? createHarnessInputHost({
+          allowedServerIds: new Set(effectiveServerIds),
+          modes: harnessElicitationModes(effectiveClientCapabilities),
+          handle: elicitationBridge.callback,
+          signal: c.req.raw.signal,
+        })
+      : undefined;
 
   const mrtrBridge =
     mrtrEnabled && convexBearer
@@ -562,11 +586,17 @@ export async function prepareManagedConnections(args: {
       // Registered SYNCHRONOUSLY inside createAuthorizedManager (before the
       // connect microtask) so `buildCapabilities` advertises `elicitation`
       // for MRTR-capable servers — same race discipline as elicitation.
-      ...(mrtrBridge
+      ...(mrtrBridge || harnessInput
         ? {
-            mrtrInputCollectorForServer: (serverId: string) =>
+            mrtrInputCollectorForServer: (
+              serverId: string,
+              organizationId?: string | null,
+            ) =>
               modelMrtr?.collectorForServer(serverId) ??
-              mrtrBridge.mrtrInputCollectorForServer(serverId),
+              mrtrBridge?.mrtrInputCollectorForServer(serverId) ??
+              (isForwardingOrganization(organizationId)
+                ? harnessInput?.collectMrtrForServer(serverId)
+                : undefined),
           }
         : {}),
       // Same scope the bash tool reserves under, so a plugin's stdio
@@ -690,6 +720,7 @@ export async function prepareManagedConnections(args: {
 
   return {
     tasksSeam,
+    harnessOwnedInput: !!harnessInput,
     scopeStepUpResumeRequest,
     scopeStepUpCancelRequest,
     scopeStepUpEnabled,

@@ -55,7 +55,8 @@ export type ExecutionIntent = {
   policyDigest?: string;
   nativeToolCallId?: string;
   turnId: string;
-  rpcId: string | number;
+  rpcId?: string | number;
+  continuation?: { executionId: string; operationId: string; round: number };
   method: string;
   paramsJson: string;
   expiresAt: number;
@@ -176,6 +177,7 @@ export function createExecutionControl(args: {
           turnId: z.string(),
           expiresAt: z.number(),
           hostConfig: z.record(z.string(), z.unknown()),
+          chatSessionId: z.string().optional(),
         }),
       ),
     bindPolicy: (turnId: string, policyDigest: string) =>
@@ -195,6 +197,7 @@ export function createExecutionControl(args: {
           expiresAt: z.number(),
           turnId: z.string().min(1),
           policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
+          chatSessionId: z.string().nullable().optional(),
         }),
       ),
     turnApprovals: (turnId: string) =>

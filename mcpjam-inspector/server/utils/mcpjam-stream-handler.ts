@@ -1322,6 +1322,7 @@ export interface MCPJamHandlerOptions {
   /** Starts log delivery only after the harness's MCP route and owner scopes are fixed. */
   onHarnessMcpReady?: (scopeIds?: Record<string, string>) => void;
   onHarnessElicitation?: HarnessElicitationHandler;
+  harnessOwnedInput?: boolean;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;

@@ -223,7 +223,12 @@ export async function prepareNativeForwarding(args: {
 
 /** Rollout uses the organization resolved by hosted authorization, never the request body. */
 export function hasForwardingOrganization(manager: MCPClientManager): boolean {
-  const organizationId = getManagerOrganization(manager);
+  return isForwardingOrganization(getManagerOrganization(manager));
+}
+
+export function isForwardingOrganization(
+  organizationId?: string | null,
+): boolean {
   return (
     !!organizationId &&
     (process.env.HARNESS_FORWARDING_ORGANIZATION_IDS ?? "")
