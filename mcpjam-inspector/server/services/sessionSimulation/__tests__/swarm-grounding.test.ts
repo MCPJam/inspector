@@ -387,6 +387,7 @@ describe("setup turn integration", () => {
       writeCallsDispatched: 1,
       createdEntities: [{ id: "real-id", name: "Created" }],
     });
+    expect(error.partial.reason).toBe("transport_failed");
     expect(dispose).toHaveBeenCalledOnce();
     expect(prepareChatV2).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -395,6 +396,53 @@ describe("setup turn integration", () => {
         requireToolApproval: false,
       }),
     );
+  });
+  it("keeps the record-limit reason when setup throws after overflowing it", async () => {
+    vi.mocked(prepareChatV2).mockResolvedValue({
+      allTools: {
+        create_project: {
+          inputSchema: {},
+          execute: async () => ({
+            structuredContent: {
+              projects: Array.from({ length: 26 }, (_, i) => ({
+                id: `id-${i}`,
+                name: `Project ${i}`,
+              })),
+            },
+          }),
+        },
+      },
+      enhancedSystemPrompt: "setup",
+      resolvedTemperature: 0,
+    } as never);
+    vi.mocked(drainAssistantTurn).mockImplementation(async (args) => {
+      await args.tools!.create_project.execute!(
+        {},
+        { toolCallId: "c", messages: [], context: {} },
+      );
+      throw new Error("connection lost after write");
+    });
+    const error = await runSwarmSetupTurn({
+      runId: "r",
+      projectId: "p",
+      target: { hostId: "h", targetId: "t" } as never,
+      persona: { name: "Tester" } as never,
+      modelDefinition: { id: "model" } as never,
+      authHeader: "Bearer test",
+      managerFactory: async () => ({
+        manager: {
+          listTools: vi.fn(async () => ({
+            tools: [tool("create_project", write)],
+          })),
+        } as never,
+        connectedServerIds: ["s"],
+        dispose: async () => {},
+      }),
+    }).catch((e) => e);
+    expect(error.partial).toMatchObject({
+      createdEntitiesTruncated: true,
+      reason: "entity_record_limit",
+    });
   });
   it("does not label a sibling parent reference as a newly created entity", () => {
     const s = setup();

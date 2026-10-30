@@ -298,7 +298,16 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
     );
     setup.status = "failed";
     setup.readiness = "unavailable";
-    setup.reason = deadline.signal.aborted ? "timeout" : "transport_failed";
+    // A record-limit overflow would have stopped the target anyway, and its
+    // sentence leaves out the "Run it again" a timeout or lost connection
+    // gives: another run creates another batch.
+    setup.reason = setup.createdEntitiesTruncated
+      ? "entity_record_limit"
+      : setup.toolCallsTruncated
+        ? "call_record_limit"
+        : deadline.signal.aborted
+          ? "timeout"
+          : "transport_failed";
     const platformFailure = args.sponsored
       ? sponsoredPlatformFailure({
           code:
