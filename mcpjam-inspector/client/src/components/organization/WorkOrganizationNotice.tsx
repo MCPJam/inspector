@@ -184,7 +184,7 @@ export function WorkOrganizationNotice({
       "Ask a company organization owner to invite you. Your personal work stays available.",
     unavailable:
       "Contact your organization owner or try again. Your personal work stays available.",
-    joined: "You are a member of your company’s default work organization.",
+    joined: "You are a member of your company’s default organization.",
   };
   return (
     <div className="mx-auto w-full max-w-3xl px-6 pt-6 sm:px-8">
