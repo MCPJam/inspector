@@ -4,9 +4,8 @@ import type {
   HarnessV1PromptControl,
   HarnessV1PromptTurnOptions,
 } from "@ai-sdk/harness";
-import type { ElicitationCallbackRequest } from "@mcpjam/sdk";
-import type { ElicitResult } from "@modelcontextprotocol/client";
 import { z } from "zod/v4";
+import { createHarnessInputHost, type HarnessInputHandler } from "./input-host.js";
 
 const PRIVATE_EVENT = "mcpjam:elicitation";
 const controlId = z.string().startsWith(`${PRIVATE_EVENT}:`).max(512);
@@ -29,12 +28,7 @@ const cancelEvent = z.object({
   controlId,
 });
 
-export interface HarnessElicitationHandler {
-  (
-    request: ElicitationCallbackRequest,
-    signal: AbortSignal,
-  ): Promise<ElicitResult>;
-}
+export type HarnessElicitationHandler = HarnessInputHandler;
 
 /** Consume private control events before the agent's raw-event persistence. */
 export function withHarnessElicitation<T extends HarnessV1>(
@@ -46,6 +40,7 @@ export function withHarnessElicitation<T extends HarnessV1>(
     signal: AbortSignal;
   },
 ): T {
+  const inputHost = createHarnessInputHost({ ...args, modes: ["form"] });
   return new Proxy(harness, {
     get(target, key) {
       if (key !== "doStart") {
@@ -121,24 +116,20 @@ export function withHarnessElicitation<T extends HarnessV1>(
                     ? args.keyToServerId[request.serverName]
                     : undefined;
                   const result =
-                    !serverId ||
-                    controller.signal.aborted ||
-                    request.mode === "url"
+                    !serverId
                       ? { action: "cancel" as const }
-                      : !args.allowedServerIds.has(serverId)
-                        ? { action: "decline" as const }
-                        : await args.handle(
-                            {
-                              requestId: id,
-                              serverId,
-                              message: request.message,
-                              mode: request.mode ?? "form",
-                              schema: request.requestedSchema,
-                              url: request.url,
-                              elicitationId: request.elicitationId,
-                            },
-                            controller.signal,
-                          );
+                      : await inputHost.answer(
+                          {
+                            requestId: id,
+                            serverId,
+                            message: request.message,
+                            mode: request.mode ?? "form",
+                            schema: request.requestedSchema,
+                            url: request.url,
+                            elicitationId: request.elicitationId,
+                          },
+                          controller.signal,
+                        );
                   const state = await ready;
                   if ("error" in state) throw state.error;
                   await state.control.submitToolResult({
