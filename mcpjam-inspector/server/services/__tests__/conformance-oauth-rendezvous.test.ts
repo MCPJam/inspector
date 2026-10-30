@@ -265,6 +265,26 @@ describe("running replica: publishing the result", () => {
     });
   });
 
+  it("still ends the row when the result can't be serialized", async () => {
+    const http = stubFetch({ "/conformance-oauth/poll": [awaiting] });
+    const run = controllableRun();
+    runRendezvousOnThisReplica(fakeSession(run.promise));
+
+    const broken = rawResult();
+    Object.defineProperty(broken, "steps", {
+      get() {
+        throw new Error("unreadable steps");
+      },
+    });
+    run.resolve(broken);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(
+      http.calls.find((c) => c.path === "/conformance-oauth/finish")?.body,
+    ).toEqual({ sessionId: "oauth-conf-1", error: OAUTH_RUN_STOPPED_MESSAGE });
+    expect(liveConformanceOAuthRunCount()).toBe(0);
+  });
+
   it("marks live runs as stopped on shutdown", async () => {
     const http = stubFetch({ "/conformance-oauth/poll": [awaiting] });
     runRendezvousOnThisReplica(fakeSession(controllableRun().promise));

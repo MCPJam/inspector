@@ -370,11 +370,22 @@ async function publish(
 ): Promise<void> {
   let body: { resultJson: string } | { error: string };
   if ("result" in outcome) {
-    const resultJson = JSON.stringify(toBrowserOAuthResult(outcome.result));
+    // A result that can't be shaped still has to end the row, or the browser
+    // waits out the whole window for nothing.
+    let resultJson: string | undefined;
+    try {
+      resultJson = JSON.stringify(toBrowserOAuthResult(outcome.result));
+    } catch (error) {
+      logger.warn("[conformance-oauth] result not serializable", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     body =
-      Buffer.byteLength(resultJson) > MAX_RESULT_BYTES
-        ? { error: RESULT_TOO_LARGE_MESSAGE }
-        : { resultJson };
+      resultJson === undefined
+        ? { error: OAUTH_RUN_STOPPED_MESSAGE }
+        : Buffer.byteLength(resultJson) > MAX_RESULT_BYTES
+          ? { error: RESULT_TOO_LARGE_MESSAGE }
+          : { resultJson };
   } else {
     body = { error: outcome.error };
   }
