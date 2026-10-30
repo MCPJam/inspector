@@ -1,10 +1,13 @@
 /**
  * The Playground's throwaway-computer path.
  *
- * Every CLOUD harness turn runs on a disposable, per-conversation box: killed
- * after 30 idle minutes, capped at 4 hours of age, and limited to 4 live boxes
- * per user and 12 per org. There is no persistent machine in this path, so a
- * Claude Code / Codex / Cursor client needs only its own harness flag.
+ * Every CLOUD harness turn runs on a disposable, per-conversation box: paused
+ * after 30 idle minutes and woken in place by the conversation's next turn
+ * (same box id, so the harness session resumes), capped at 4 hours of running
+ * age, and limited to 4 live boxes per user and 12 per org. A box that holds
+ * plaintext secrets is deleted when idle instead of paused. There is no
+ * persistent machine in this path, so a Claude Code / Codex / Cursor client
+ * needs only its own harness flag.
  *
  * Why a box rather than the member's personal computer: a personal computer is
  * reused, attached to several hosts, and has no stable binding to an
