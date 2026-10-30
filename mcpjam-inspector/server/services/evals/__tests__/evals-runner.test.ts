@@ -468,8 +468,14 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     ];
     // Rows as the backend pre-creates them: the snapshot query is the case's
     // first prompt, not the runner's "Pinned tool call: …". Another case's
-    // row for iteration 3 and this case's row for iteration 2 come first.
-    const row = (_id: string, testCaseId: string, iterationNumber: number) => ({
+    // row for iteration 3, this case's row for iteration 2 and another
+    // model's row for this case's iteration 3 come first.
+    const row = (
+      _id: string,
+      testCaseId: string,
+      iterationNumber: number,
+      model = test.model,
+    ) => ({
       _id,
       testCaseId,
       iterationNumber,
@@ -477,7 +483,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       testCaseSnapshot: {
         title: "Case",
         query: "Hello",
-        model: test.model,
+        model,
         provider: test.provider,
       },
     });
@@ -487,6 +493,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             iterations: [
               row("other-row-3", "case-2", 3),
               row("row-2", "case-1", 2),
+              row("other-model-3", "case-1", 3, "other-model"),
               row("row-3", "case-1", 3),
             ],
           }

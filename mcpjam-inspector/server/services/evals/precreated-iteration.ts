@@ -49,6 +49,6 @@ export function findPrecreatedIterationByCase<T extends PrecreatedIterationRow>(
         stored.query === testCaseSnapshot.query
       );
     }
-    return testCaseId !== undefined && iter.testCaseId === testCaseId;
+    return false;
   });
 }
