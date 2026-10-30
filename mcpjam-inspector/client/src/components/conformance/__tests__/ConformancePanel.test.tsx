@@ -1984,6 +1984,12 @@ describe("ConformanceTab blocked sign-in window", () => {
         "OAuth checks need you to sign in to http-server. The other checks keep running.",
       ),
     ).toBeInTheDocument();
+    // It opens on its own, so a stray key must not land on Skip OAuth.
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Open sign-in page" }),
+      ).toHaveFocus(),
+    );
   });
 
   it("keeps the dialog open when the browser blocks the window again", async () => {

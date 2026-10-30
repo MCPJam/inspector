@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,10 +35,19 @@ export function OAuthPopupBlockedDialog({
   onOpen: () => void;
   onSkip: () => void;
 }) {
+  const openRef = useRef<HTMLButtonElement>(null);
+
   return (
     <AlertDialog open={open}>
       <AlertDialogContent
         onEscapeKeyDown={(event) => event.preventDefault()}
+        // AlertDialog focuses Cancel on open, which is Skip OAuth here. The
+        // dialog opens on its own, so a key pressed as it appears would skip
+        // OAuth for the run; start on the action that keeps it instead.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          openRef.current?.focus({ preventScroll: true });
+        }}
         className="sm:max-w-md"
         data-testid="oauth-popup-blocked-dialog"
       >
@@ -50,7 +60,9 @@ export function OAuthPopupBlockedDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onSkip}>Skip OAuth</AlertDialogCancel>
-          <AlertDialogAction onClick={onOpen}>Open sign-in page</AlertDialogAction>
+          <AlertDialogAction ref={openRef} onClick={onOpen}>
+            Open sign-in page
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
