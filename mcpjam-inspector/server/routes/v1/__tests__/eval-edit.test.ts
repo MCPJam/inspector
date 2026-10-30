@@ -4678,10 +4678,12 @@ describe("v1 eval-edit routes", () => {
 /**
  * The CI-owned suite lock, as an API caller experiences it.
  *
- * The platform decides — there is no route-level ownership check, deliberately:
- * a second copy of the rule here is a copy that can disagree with the one that
- * actually guards the write. What these routes owe the caller is (a) a way to
- * write AS the file, and (b) a refusal they can act on instead of a 500.
+ * The platform decides: Convex guards every write. What these routes owe the
+ * caller is (a) a way to write AS the file, and (b) a refusal they can act on
+ * instead of a 500. Since PLB-238 they also refuse the predictable case UP
+ * FRONT — a CI-owned suite with no marker — so an API caller editing one in a
+ * loop no longer reopens Sentry CONVEX-2AT with refusals that are working as
+ * designed. The mutation is never called for those.
  *
  * 409, not 403. The caller's ROLE is fine and no amount of privilege changes
  * the answer; what changes it is editing the source of truth or taking a copy.
@@ -4748,11 +4750,39 @@ describe("v1 eval-edit — CI-owned suites", () => {
       "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       { title: "renamed" },
     ],
+    [
+      "POST case batch",
+      "POST",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+      {
+        cases: [
+          {
+            title: "added",
+            steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+          },
+        ],
+      },
+    ],
+    [
+      "POST environment",
+      "POST",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+      { environmentId: "js7abc0def1ghj2klm3nop4qrs5tuv6w" },
+    ],
+    [
+      "DELETE case",
+      "DELETE",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      undefined,
+    ],
   ] as const)(
     "refuses %s without the marker, as a 409 naming the remedy",
     async (_label, method, path, body) => {
-      const res = await request(method, path, { ...body });
+      const res = await request(method, path, body ? { ...body } : undefined);
       expect(res.status).toBe(409);
+      // Refused by the route, not by Convex: the mutation was never sent, so
+      // the refusal is not an uncaught backend error for Sentry to count.
+      expect(convexMutationMock).not.toHaveBeenCalled();
       const json = (await res.json()) as {
         code?: string;
         message?: string;
@@ -4912,17 +4942,22 @@ describe("v1 eval-edit — CI-owned suites", () => {
   it("sends NO fileSync at all when the caller did not name an id", async () => {
     // An older platform rejects an unknown mutation argument outright, so
     // `fileSync: undefined` would break every ordinary suite edit against a
-    // deployment that predates the lock.
+    // deployment that predates the lock. An ORDINARY edit is one on a
+    // UI-owned suite — a CI-owned one no longer reaches the mutation at all.
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
     convexMutationMock.mockImplementation((name: string, args?: any) =>
       defaultMutationImpl(name, args),
     );
-    await request(
+    const res = await request(
       "PATCH",
       "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       {
         name: "renamed",
       },
     );
+    expect(res.status).toBe(200);
     const call = convexMutationMock.mock.calls.find(
       ([name]: [string]) => name === "testSuites:updateTestSuite",
     );
@@ -4943,6 +4978,54 @@ describe("v1 eval-edit — CI-owned suites", () => {
     // write the caller had no way to know would be refused.
     expect(body.managedBy).toBe("ci");
   });
+
+  it("refuses an SDK-ingested suite up front too — the lock's second clause", async () => {
+    // No declared id to name, so no marker can ever authorize this write; it
+    // is refused before the mutation like the file-owned case above.
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite")
+        return Promise.resolve({ ...SUITE_DOC, source: "sdk" });
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { title: "renamed" },
+    );
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { details?: { reason?: string } };
+    expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("still maps a refusal that reaches Convex to the same 409", async () => {
+    // The route's copy of the predicate said "writable" (a plain UI suite)
+    // but the platform refused anyway — a new locked action, or a predicate
+    // this copy lags behind. The backend stays the guard, and its refusal
+    // must land as the identical 409, not a 500.
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    convexMutationMock.mockImplementation(() => {
+      throw ciOwnedRefusal();
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { name: "renamed" },
+    );
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as {
+      code?: string;
+      message?: string;
+      details?: { reason?: string; hint?: string };
+    };
+    expect(json.code).toBe("CONFLICT");
+    expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+    expect(json.message).toMatch(/duplicate/i);
+    expect(json.details?.hint).toContain("declaredSuiteId");
+    expect(convexMutationMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 // =============================================================================
@@ -4959,6 +5042,21 @@ describe("v1 eval-edit — CI-owned suites", () => {
 describe("eval vocabulary negotiation", () => {
   const SUITE_PATH =
     "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+  // Its own setup: this block used to inherit whatever mocks the previous
+  // describe's last test left behind.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_URL = "https://convex.example.com";
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    convexMutationMock.mockImplementation((name: string, args?: any) =>
+      defaultMutationImpl(name, args),
+    );
+  });
 
   const updateArgs = () =>
     convexMutationMock.mock.calls.find(
