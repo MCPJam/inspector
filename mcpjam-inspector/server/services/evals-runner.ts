@@ -197,6 +197,7 @@ import {
   createSuiteRunRecorder,
   type SuiteRunRecorder,
 } from "./evals/recorder";
+import { findPrecreatedIterationByCase } from "./evals/precreated-iteration";
 import { finalizeAiSdkTraceOnFailure } from "./evals/eval-trace-capture";
 import type {
   EvalTraceBlobV1,
@@ -2937,8 +2938,9 @@ const runHostedIteration = async (
 // the guard-vs-model-free-fork at the top and the per-branch runner family
 // differ. `runTestCase` / `streamTestCase` are thin wrappers below.
 // Locate the pending/running iteration row for a (test, runIndex) so a timeout
-// can mark it `timed_out`. Prefers the precreated id; otherwise matches on
-// testCaseId (model-free) or snapshot identity + iteration number.
+// or credit stop can settle it. Prefers the precreated id; otherwise pairs like
+// the recorder does: by case, iteration and model, or by case and iteration
+// alone for a case with no prompt.
 async function findIterationIdForTimeout(args: {
   convexClient: ConvexHttpClient;
   runId: string | null;
@@ -2953,37 +2955,35 @@ async function findIterationIdForTimeout(args: {
     return undefined;
   }
 
-  const resolvedTest = resolveEvalTestCase(args.test);
-  const shouldMatchByTestCaseOnly =
-    !turnsNeedModel({
-      caseType: args.test.caseType,
-      promptTurns: resolvedTest.promptTurns,
-    }) && Boolean(args.test.testCaseId);
   try {
     const response = await args.convexClient.query(
       "testSuites:getTestSuiteRunDetails" as any,
       { runId: args.runId },
     );
-    const iterations = response?.iterations ?? [];
-    const matching = iterations.find((iteration: any) => {
-      if (
-        shouldMatchByTestCaseOnly &&
-        iteration.testCaseId === args.test.testCaseId &&
-        iteration.iterationNumber === args.runIndex + 1 &&
-        (iteration.status === "pending" || iteration.status === "running")
-      ) {
-        return true;
-      }
-
-      const snapshot = iteration.testCaseSnapshot ?? {};
-      return (
-        snapshot.title === args.test.title &&
-        snapshot.query === resolvedTest.query &&
-        snapshot.model === args.test.model &&
-        snapshot.provider === args.test.provider &&
-        iteration.iterationNumber === args.runIndex + 1 &&
-        (iteration.status === "pending" || iteration.status === "running")
-      );
+    const open = (response?.iterations ?? []).filter(
+      (iteration: any) =>
+        iteration.status === "pending" || iteration.status === "running",
+    );
+    const resolvedTest = resolveEvalTestCase(args.test);
+    // The backend files a case with no prompt under a display-only sentinel
+    // model, so its row cannot be matched on the runner's model.
+    const caseNeedsModel = turnsNeedModel({
+      caseType: args.test.caseType,
+      promptTurns: resolvedTest.promptTurns,
+    });
+    const matching = findPrecreatedIterationByCase(open, {
+      testCaseId: args.test.testCaseId,
+      ...(caseNeedsModel
+        ? {
+            testCaseSnapshot: {
+              title: args.test.title,
+              query: resolvedTest.query,
+              model: args.test.model,
+              provider: args.test.provider,
+            },
+          }
+        : {}),
+      iterationNumber: args.runIndex + 1,
     });
     return matching?._id as string | undefined;
   } catch (error) {
@@ -5149,11 +5149,9 @@ const runLocalIteration = async ({
     (precreatedIterationId !== undefined || recorder !== null);
   const iterationParams = {
     ...iterationParamsBase,
-    // Model-free (pinned-only) iterations omit the testCaseSnapshot so the
-    // recorder pairs the pre-created row by testCaseId + iterationNumber. The
-    // snapshot's query is synthesized ("Pinned tool call: …") and would never
-    // match the pre-created row's stored query, leaving the row unpaired and
-    // perpetually pending. Mirrors the old probe path, which passed no snapshot.
+    // Model-free (pinned-only) iterations omit the testCaseSnapshot so pairing
+    // never compares the backend's display-only sentinel model. A row without
+    // a case id still cannot pair (PLB-407). Mirrors the old probe path.
     ...(shouldOmitSnapshotForPairing ? {} : { testCaseSnapshot }),
   };
 

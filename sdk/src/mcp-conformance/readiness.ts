@@ -366,9 +366,13 @@ async function sessionTerminationWarning(
     }),
     timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
   });
-  if (deleteResult.status < 500) {
-    // 2xx terminated it, 405 declined to support termination (MAY), and any
-    // other 4xx is at worst odd — none of these earn advice.
+  // The spec names exactly two answers: terminating the session, and 405 to
+  // decline termination (MAY). It names no success code, so any 2xx counts as
+  // terminated; every other answer is one the spec never offers.
+  if (
+    (deleteResult.status >= 200 && deleteResult.status < 300) ||
+    deleteResult.status === 405
+  ) {
     return undefined;
   }
 
@@ -376,7 +380,7 @@ async function sessionTerminationWarning(
     "readiness-session-termination",
     "Explicit Session Termination",
     "SHOULD",
-    `DELETE with the session id got HTTP ${deleteResult.status}. Clients SHOULD send this DELETE when abandoning a session (servers MAY answer 405 to decline), but a 5xx means the termination handler itself is broken`,
+    `DELETE with the session id got HTTP ${deleteResult.status}. Clients SHOULD send this DELETE when abandoning a session; the server should terminate it (2xx) or decline with 405 Method Not Allowed (MAY)`,
     { status: deleteResult.status }
   );
 }
