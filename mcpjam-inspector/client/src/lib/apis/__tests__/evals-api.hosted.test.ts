@@ -48,9 +48,6 @@ describe("evals-api hosted mode", () => {
       return {
         projectId: "project-1",
         serverIds,
-        oauthTokens: serverIds.includes("srv_a")
-          ? { srv_a: "oauth-token-a" }
-          : undefined,
         clientCapabilities: { sampling: true },
       };
     });

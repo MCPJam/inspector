@@ -83,7 +83,8 @@ vi.mock("../registry.js", async () => {
   };
 });
 
-vi.mock("../forwarding/native-turn.js", () => ({
+vi.mock("../forwarding/native-turn.js", async (original) => ({
+  ...(await original<typeof import("../forwarding/native-turn.js")>()),
   hasForwardingOrganization: () => true,
   nativeForwardingSelection: () => ({
     harnessSessionId: "lane",
@@ -274,6 +275,11 @@ describe("runHarnessTurn activity", () => {
         options({
           hostId: "host",
           selectedServers: ["server-1"],
+          respectToolVisibility: false,
+          mcpClientManager: {
+            getServerConfig: () => ({ url: "https://mcp.example/mcp", clientCapabilities: {} }),
+            getInitializationInfo: () => ({ transport: "streamable-http", protocolVersion: "2025-11-25", clientCapabilities: {} }),
+          },
           harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
           onToolResult,
         }) as Parameters<typeof runHarnessTurn>[0],
