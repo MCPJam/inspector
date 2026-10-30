@@ -118,7 +118,7 @@ import {
 import type { ServerFormData } from "@/shared/types.js";
 import {
   validateBearerTargetUrl,
-  validateServerFormData,
+  validateFirstRunServerFormData,
 } from "@/lib/server-form-validation";
 import { parseCommandInput } from "@/lib/command-input";
 import { listTools } from "@/lib/apis/mcp-tools-api";
@@ -4017,7 +4017,7 @@ export default function App() {
       const validationError =
         (authorizationHeader && draft.transport === "http"
           ? validateBearerTargetUrl(effectiveUrlOrCommand)
-          : null) ?? validateServerFormData(formData);
+          : null) ?? validateFirstRunServerFormData(formData);
       if (validationError) {
         trackFirstRunConnectionFailed(analyticsContext, "validation");
         setFirstRunConnectionState({
@@ -4028,6 +4028,7 @@ export default function App() {
           serverName: formData.name,
           serverKind: "personal",
           error: validationError,
+          validationKind: HOSTED_MODE && formData.type === "stdio" ? "hosted-stdio" : "input",
         });
         return;
       }

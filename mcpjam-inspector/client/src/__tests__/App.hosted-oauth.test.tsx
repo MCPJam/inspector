@@ -1,3 +1,4 @@
+import { registerFirstRunValidationCases } from "./first-run-validation-cases";
 import * as memberActor from "../hooks/use-is-member-actor";
 import { projectTransitionRecovery } from "../lib/auth/project-transition-recovery";
 import { type ReactNode, useLayoutEffect, useState } from "react";
@@ -365,8 +366,10 @@ vi.mock("../hooks/usePostHogOrgContext", () => ({
   usePostHogOrgContext: vi.fn(),
 }));
 
+vi.mock("../hooks/use-inspector-command-bus", () => ({ useInspectorCommandBus: vi.fn() }));
+const onboardingRuntime = vi.hoisted(() => ({ hosted: true }));
 vi.mock("../lib/config", () => ({
-  HOSTED_MODE: true,
+  get HOSTED_MODE() { return onboardingRuntime.hosted; },
 }));
 
 vi.mock("../lib/theme-utils", () => ({
@@ -577,6 +580,7 @@ vi.mock("../components/hosted/ScenarioChatPage", () => ({
 
 describe("App hosted OAuth callback handling", () => {
   beforeEach(() => {
+    onboardingRuntime.hosted = true;
     projectTransitionRecovery.clear();
     projectTransitionRecovery.observeActor("guest:reset", "/");
     mockServersById.clear();
@@ -4375,6 +4379,21 @@ describe("App hosted OAuth callback handling", () => {
     );
   });
 
+  registerFirstRunValidationCases((hosted) => {
+    onboardingRuntime.hosted = hosted;
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+    return { handleConnect: appState.handleConnect, track: mockTrack };
+  });
+
   it("asks for OAuth authorization inside onboarding and resumes on approval", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -4592,51 +4611,6 @@ describe("App hosted OAuth callback handling", () => {
       projectId: "project-1",
       serverId: "server-secure",
     });
-  });
-
-  it("preserves quoted arguments in a first-run stdio command", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    mockUnseenOnboardingState();
-    window.history.replaceState({}, "", "/servers");
-    mockConvexAuthState.isAuthenticated = true;
-    mockWorkOsAuthState.user = null;
-    mockHostedShellGateState.value = "ready";
-    mockFreshGuestUser();
-    const appState = createAppStateMock();
-    mockUseAppState.mockReturnValue(appState);
-
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
-      target: { value: 'node server.js --config "My Files/config.json" ""' },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-
-    await waitFor(() => {
-      expect(appState.handleConnect).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "stdio",
-          command: "node",
-          args: ["server.js", "--config", "My Files/config.json", ""],
-        }),
-        expect.objectContaining({
-          suppressErrorToast: true,
-          suppressSuccessToast: true,
-          requestOAuthAuthorization: expect.any(Function),
-        }),
-      );
-    });
-    expect(mockTrack).toHaveBeenCalledWith(
-      "first_run_onboarding_connection_started",
-      {
-        location: "first_run_onboarding",
-        server_kind: "personal",
-        transport: "stdio",
-        authentication: "auto",
-      },
-    );
   });
 
   it("keeps the Excalidraw demo in onboarding while it connects", async () => {
