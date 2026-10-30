@@ -127,6 +127,23 @@ describe("hosted conformance — saved login", () => {
     ).toBe("Bearer browser-token");
   });
 
+  it("protocol replaces a saved authorization header in any case", async () => {
+    authorizeServerMock.mockResolvedValue({
+      ...authorizedServer("saved-token"),
+      serverConfig: {
+        transportType: "http",
+        url: "https://mcp.example.test/mcp",
+        headers: { authorization: "Bearer stale" },
+      },
+    });
+
+    await post("/protocol", { projectId: "p1", serverId: "s1" });
+
+    expect(runProtocolConformanceMock.mock.calls[0][0].customHeaders).toEqual({
+      Authorization: "Bearer saved-token",
+    });
+  });
+
   it.each(["/apps", "/tasks"])("%s connects with the saved login", async (path) => {
     const res = await post(path, {
       projectId: "p1",

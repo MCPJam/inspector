@@ -127,6 +127,11 @@ async function resolveHostedHttpConfig(
     ...(auth.serverConfig.headers ?? {}),
   };
   if (oauthToken) {
+    // Replace a saved header in any case, or the request would carry two
+    // Authorization values and the server would see them joined.
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === "authorization") delete headers[key];
+    }
     headers["Authorization"] = `Bearer ${oauthToken}`;
   }
 
