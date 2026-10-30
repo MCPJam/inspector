@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Hosted connects keep the user's OAuth login in Convex and rarely leave a
@@ -70,8 +70,12 @@ function authorizedServer(savedLogin?: string) {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  // `mcp.example.test` never resolves. Pin the egress guard's DNS so these
+  // tests reach the mocked runners in hosted mode too.
+  const guard = await import("../../../utils/hosted-egress-guard.js");
+  guard.setEgressHostResolverForTests(async () => ["93.184.216.34"]);
   authorizeServerMock.mockResolvedValue(authorizedServer("saved-token"));
   toHttpConfigMock.mockImplementation((_auth: unknown, timeoutMs: number) => ({
     url: "https://mcp.example.test/mcp",
@@ -88,6 +92,11 @@ beforeEach(() => {
     result: { outcome: "passed", checks: [] },
   });
   startOAuthConformanceMock.mockResolvedValue({ phase: "complete" });
+});
+
+afterEach(async () => {
+  const guard = await import("../../../utils/hosted-egress-guard.js");
+  guard.setEgressHostResolverForTests(null);
 });
 
 describe("hosted conformance — saved login", () => {
