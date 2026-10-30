@@ -86,6 +86,7 @@ describe("describeSwarmAttemptFailure", () => {
   it.each([
     "Setup couldn't create this target's test data, so its conversations didn't run. Run it again.",
     "Setup created more test data than it can track, so this target's conversations didn't run.",
+    "Setup made more tool calls than it can track, so this target's conversations didn't run.",
     "Setup ran out of time before this target's test data was ready, so its conversations didn't run. Run it again.",
     "Setup couldn't reach the MCP server, so this target's conversations didn't run. Check the server's connection, then run it again.",
     "MCPJam couldn't run setup for this target, so its conversations didn't run. Run it again later.",

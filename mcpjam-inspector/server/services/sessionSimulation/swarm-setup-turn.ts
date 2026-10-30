@@ -63,6 +63,8 @@ export function setupFailureMessage(
   // No re-run advice: another run would create another batch.
   if (setup.reason === "entity_record_limit")
     return "Setup created more test data than it can track, so this target's conversations didn't run.";
+  if (setup.reason === "call_record_limit")
+    return "Setup made more tool calls than it can track, so this target's conversations didn't run.";
   return "Setup couldn't create this target's test data, so its conversations didn't run. Run it again.";
 }
 export function swarmSetupChatSessionId(

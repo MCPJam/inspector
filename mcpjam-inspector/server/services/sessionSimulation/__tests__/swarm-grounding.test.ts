@@ -172,7 +172,7 @@ describe("setup evidence and readiness", () => {
     // Calls past the record limit are dropped, so a write among them is unknown.
     expect(
       judgeReadiness({ ...wrote, toolCallsTruncated: true }, missing),
-    ).toEqual({ readiness: "unavailable", reason: "write_errored" });
+    ).toEqual({ readiness: "unavailable", reason: "call_record_limit" });
     expect(
       judgeReadiness(
         { ...writeFailed, createdEntitiesTruncated: true },
@@ -194,6 +194,9 @@ describe("setup evidence and readiness", () => {
     );
     expect(stopped("entity_record_limit")).toBe(
       "Setup created more test data than it can track, so this target's conversations didn't run.",
+    );
+    expect(stopped("call_record_limit")).toBe(
+      "Setup made more tool calls than it can track, so this target's conversations didn't run.",
     );
     expect(stopped("timeout")).toMatch(/^Setup ran out of time/);
     expect(stopped("transport_failed")).toMatch(/^Setup couldn't reach/);
