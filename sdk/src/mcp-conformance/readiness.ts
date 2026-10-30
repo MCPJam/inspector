@@ -128,6 +128,66 @@ function metadataQualityWarning(
   );
 }
 
+/**
+ * The core "Tool Names" SHOULDs (length, character set, uniqueness), checked
+ * over every tool. They first appear in 2025-11-25, so an older negotiated
+ * revision gets no advice. Informational until advice has a grading rubric.
+ */
+function toolNameConventionsWarning(
+  ctx: MCPClientCheckContext,
+  tools: Tool[]
+): MCPReadinessWarning | undefined {
+  const negotiated = ctx.initializationInfo?.protocolVersion;
+  if (
+    ctx.config.era !== "modern" &&
+    (negotiated === undefined || negotiated < "2025-11-25")
+  ) {
+    return undefined;
+  }
+
+  const badLength = tools
+    .filter((tool) => tool.name.length < 1 || tool.name.length > 128)
+    .map((tool) => tool.name);
+  const badCharacters = tools
+    .filter((tool) => !/^[A-Za-z0-9_\-.]+$/.test(tool.name))
+    .map((tool) => tool.name);
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const tool of tools) {
+    if (seen.has(tool.name)) {
+      duplicates.add(tool.name);
+    }
+    seen.add(tool.name);
+  }
+
+  const problems: string[] = [];
+  if (badLength.length > 0) {
+    problems.push(
+      `${badLength.length} tool name(s) are not between 1 and 128 characters`
+    );
+  }
+  if (badCharacters.length > 0) {
+    problems.push(
+      `${badCharacters.length} tool name(s) use characters other than A-Z, a-z, 0-9, underscore, hyphen, or dot`
+    );
+  }
+  if (duplicates.size > 0) {
+    problems.push(`${duplicates.size} tool name(s) appear more than once`);
+  }
+
+  if (problems.length === 0) {
+    return undefined;
+  }
+
+  return informational(
+    "readiness-tool-name-conventions",
+    "Tool Name Conventions",
+    "SHOULD",
+    `Tool names break the spec's naming conventions: ${problems.join("; ")}`,
+    { badLength, badCharacters, duplicates: [...duplicates] }
+  );
+}
+
 function deprecatedFeatureWarning(
   ctx: MCPClientCheckContext,
   capabilities: Record<string, unknown>
@@ -205,6 +265,11 @@ export async function collectClientReadiness(
   );
   if (metadataWarning) {
     warnings.push(metadataWarning);
+  }
+
+  const toolNameWarning = toolNameConventionsWarning(ctx, surface.tools);
+  if (toolNameWarning) {
+    warnings.push(toolNameWarning);
   }
 
   const deprecated = deprecatedFeatureWarning(
