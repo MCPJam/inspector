@@ -1913,6 +1913,7 @@ export {
   canDeclareTasksExtension,
   readDeclaredInputCapabilities,
   TaskInputRejectedError,
+  validateEmbeddedClientRequest,
   DEFAULT_TASK_INPUT_LIMITS,
   createStrictElicitationContentValidator,
   retryAfterMsFromError,

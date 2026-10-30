@@ -10,8 +10,8 @@
  * ## Why a serializable stepper (not just an async loop)
  *
  * Hosted MCPJam is horizontally scaled: a modern `input_required` can arrive
- * mid-tool-execution while a worker holds an SSE stream open, and §12.5.2
- * forbids blocking a worker while a human thinks. The loop is therefore split
+ * mid-tool-execution while a worker holds an SSE stream open. Durable
+ * suspension is a platform choice. The loop is therefore split
  * into a **pure data state** ({@link MrtrOperationState}) and pure step
  * functions ({@link executeInputRequiredLeg} / {@link
  * resumeInputRequiredOperation}). A local/CLI surface layers the convenience

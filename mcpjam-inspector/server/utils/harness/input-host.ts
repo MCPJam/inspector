@@ -1,13 +1,11 @@
 import {
   validateInputRequests,
+  validateEmbeddedClientRequest,
   type ElicitationCallbackRequest,
   type MrtrInputCollector,
   type TaskInputHandlers,
 } from "@mcpjam/sdk";
-import {
-  specTypeSchemas,
-  type ElicitResult,
-} from "@modelcontextprotocol/client";
+import { type ElicitResult } from "@modelcontextprotocol/client";
 import { z } from "zod/v4";
 import { withAbort } from "./forwarding/execution-gate.js";
 
@@ -44,13 +42,9 @@ const inputParams = z.object({
   url: z.string().optional(),
   elicitationId: z.string().optional(),
 });
-
 async function validatedParams(params: unknown) {
-  const result = await specTypeSchemas.ElicitRequest["~standard"].validate({
-    method: "elicitation/create",
-    params,
-  });
-  if (result.issues) throw new Error("Malformed harness elicitation request");
+  const result = validateEmbeddedClientRequest("elicitation/create", params);
+  if (!result.ok) throw new Error("Malformed harness elicitation request");
   return inputParams.parse(params);
 }
 
