@@ -9,6 +9,7 @@ import {
 } from "@mcpjam/sdk";
 import "../../types/hono";
 import {
+  OAUTH_SESSION_EXPIRED_MESSAGE,
   OAuthConformanceSessionFailedError,
   OAuthConformanceSessionNotFoundError,
   UnsupportedTransportError,
@@ -324,7 +325,7 @@ conformance.post("/oauth/authorize", async (c) => {
       return c.json(
         {
           success: false,
-          error: "Session not found or not waiting for authorization",
+          error: OAUTH_SESSION_EXPIRED_MESSAGE,
         },
         404,
       );

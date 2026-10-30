@@ -14,7 +14,6 @@
  */
 
 import type { Tool } from "@modelcontextprotocol/client";
-import { scanXMcpHeaderDeclarations } from "../mcp-client-manager/mcp-header-mirror.js";
 import { listTools } from "../operations.js";
 import type {
   MCPClientCheckContext,
@@ -33,7 +32,6 @@ import {
   modernHeaders,
   modernRequestBody,
   rawRequest,
-  walkToolsList,
 } from "./raw-http.js";
 
 /** Capabilities whose 2025-era mechanics were replaced in the 2026 revision. */
@@ -248,81 +246,6 @@ async function cacheTtlWarning(
     "SHOULD",
     "Cacheable results advertise ttlMs: 0, so no client can reuse them; a non-zero TTL on stable listings removes a round trip per call",
     { method: "tools/list", ttlMs }
-  );
-}
-
-/**
- * SEP-2243 `x-mcp-header` declarations, on the ADVICE channel.
- *
- * The MUST is `tools-x-mcp-header-declarations-valid`; this is the
- * interoperability half of the same observation, said in the words an operator
- * needs. The spec's consequence for a bad declaration is not "the header is
- * skipped" — a conforming client treats the whole TOOL DEFINITION as invalid
- * and drops it from `tools/list`, so the tool silently disappears from that
- * client. A pass/fail verdict does not convey that; this does.
- *
- * Raw, for the same unavoidable reason as the check: the official client
- * applies the exclusion itself, so `surface.tools` never contains an offender
- * and a client-side scan would always come back clean.
- */
-async function xMcpHeaderDeclarationsWarning(
-  ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
-  if (ctx.config.era !== "modern") {
-    // Before 2026-07-28 the annotation carries no meaning; advising on it
-    // would invent a requirement the revision never stated.
-    return undefined;
-  }
-
-  const version = ctx.config.protocolVersion ?? "2026-07-28";
-
-  // The SAME bounded, cycle-safe walk the declaration check runs. A
-  // first-page-only scan would let a paginated server keep hiding tools from
-  // conforming clients without ever earning the advice, and a second copy of
-  // the walk would be a second place for a cursor bug to live. What a
-  // truncated walk MEANS still differs by caller: the check cannot pass over
-  // tools it never read, while advice simply reports on what it saw.
-  const walk = await walkToolsList({
-    startId: 8110,
-    request: ({ id, cursor }) =>
-      rawRequest(ctx, {
-        headers: modernHeaders({
-          protocolVersion: version,
-          method: "tools/list",
-        }),
-        body: modernRequestBody({
-          id,
-          method: "tools/list",
-          protocolVersion: version,
-          ...(cursor !== undefined ? { params: { cursor } } : {}),
-        }),
-      }),
-  });
-
-  const invalid: Array<{ tool: string; reason: string }> = [];
-  for (const entry of walk.tools) {
-    if (entry.inputSchema === undefined) continue;
-    const scan = scanXMcpHeaderDeclarations(entry.inputSchema);
-    if (!scan.valid) {
-      invalid.push({
-        tool: typeof entry.name === "string" ? entry.name : "<unnamed>",
-        reason: scan.reason,
-      });
-    }
-  }
-
-  if (invalid.length === 0) return undefined;
-
-  return warning(
-    "readiness-x-mcp-header-declarations",
-    "x-mcp-header Declarations",
-    "SHOULD",
-    `${invalid.length} tool(s) declare x-mcp-header in a way SEP-2243 does not permit: ${invalid
-      .map((entry) => `${entry.tool} (${entry.reason})`)
-      .join(
-        "; "
-      )}. Clients that implement the mirroring exclude these tools from tools/list entirely, so they become invisible rather than merely losing a header`,
-    { invalid }
   );
 }
 
@@ -666,7 +589,6 @@ export async function collectRawReadiness(
   const probes = [
     cacheTtlWarning(ctx),
     oauthIssWarning(ctx),
-    xMcpHeaderDeclarationsWarning(ctx),
     parseErrorHandlingWarning(ctx),
     sessionTerminationWarning(ctx),
     protocolVersionHeaderWarning(ctx),

@@ -4,6 +4,8 @@
  */
 
 import type { ReactNode } from "react";
+import { AlertTriangle, Plus } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
   SelectContent,
@@ -19,11 +21,24 @@ import { ConformanceScorePreview } from "./ConformanceScorePreview";
 
 export const RUN_LABEL = "Run conformance checks";
 
+export const NO_SERVERS_MESSAGE = "Add a server to run conformance checks.";
+
 /**
  * The pre-run state: the animated score card above the first-run prompt.
  * It fills the space above whatever follows it in the scroll container.
+ * With no servers configured it asks for one instead of offering a run.
  */
-export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
+export function ConformancePreRun({
+  runButton,
+  serverPicker,
+  onAddServer,
+}: {
+  runButton: ReactNode;
+  /** Shown left of the run button, so the server is picked where you run. */
+  serverPicker?: ReactNode;
+  /** Set when there is no server to pick: the prompt offers to add one. */
+  onAddServer?: () => void;
+}) {
   return (
     // `my-auto` rather than `justify-center`: it centers the prompt while
     // there is room and, unlike justify-center, never clips the top once
@@ -36,11 +51,72 @@ export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
             Run your first conformance check
           </h3>
           <p className="text-sm text-muted-foreground">
-            We assess protocol, apps, tasks, and OAuth on the server of your
-            choice.
+            {onAddServer
+              ? NO_SERVERS_MESSAGE
+              : "We assess protocol, apps, tasks, and OAuth on the server of your choice."}
           </p>
-          <div className="pt-4">{runButton}</div>
+          <div className="flex items-center gap-2 pt-4">
+            {/* With no servers the run button stays, disabled, beside Add
+                server, so the page shows where a run starts once one exists. */}
+            {onAddServer ? (
+              <Button size="sm" onClick={onAddServer}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Add server
+              </Button>
+            ) : (
+              serverPicker
+            )}
+            {runButton}
+          </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A background connect that failed when Run was clicked: names the server and
+ * offers the two ways forward, rather than a toast that is gone in seconds.
+ */
+export function ConformanceConnectError({
+  server,
+  needsSignIn,
+  onRetry,
+  onEdit,
+}: {
+  server: ServerWithName;
+  needsSignIn: boolean;
+  onRetry: () => void;
+  onEdit?: () => void;
+}) {
+  const reason = needsSignIn
+    ? "It needs you to sign in again."
+    : (server.lastNormalizedError?.oneLine ??
+      server.lastError ??
+      "Check that it is running and that its server settings are right.");
+  return (
+    <div
+      role="alert"
+      className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-500/30 bg-red-500/5 px-4 py-3"
+    >
+      <div className="flex min-w-0 items-start gap-2 text-sm">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+        <div className="min-w-0">
+          <div className="font-medium">Couldn't connect to "{server.name}"</div>
+          <div className="text-muted-foreground">{reason}</div>
+        </div>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        {/* A plain retry would hit the same missing sign-in, so this one
+            opens it. */}
+        <Button size="sm" variant="outline" onClick={onRetry}>
+          {needsSignIn ? "Sign in" : "Retry"}
+        </Button>
+        {onEdit ? (
+          <Button size="sm" variant="ghost" onClick={onEdit}>
+            Edit connection
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -184,7 +260,8 @@ export function ProtocolVersionSelect({
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="auto">Auto (negotiated)</SelectItem>
-        {MCP_PROTOCOL_VERSIONS.map((version) => (
+        {/* Newest first: the revision most servers are moving to leads. */}
+        {[...MCP_PROTOCOL_VERSIONS].reverse().map((version) => (
           <SelectItem key={version} value={version}>
             {version}
           </SelectItem>
@@ -192,6 +269,21 @@ export function ProtocolVersionSelect({
       </SelectContent>
     </Select>
   );
+}
+
+/** How a server that is not connected reads in the picker; Run connects it. */
+function connectionNote(server: ServerWithName): string | null {
+  switch (server.connectionStatus) {
+    case "connected":
+      return null;
+    case "connecting":
+    case "oauth-flow":
+      return "Connecting";
+    case "failed":
+      return "Could not connect. Run to retry";
+    default:
+      return "Not connected";
+  }
 }
 
 /** The page's own server picker; replaces the shell's header server tabs. */
@@ -215,18 +307,27 @@ export function ConformanceServerPicker({
       disabled={servers.length === 0}
     >
       <SelectTrigger aria-label="Server" className="h-8 w-auto gap-2 text-sm">
-        <SelectValue
-          placeholder={
-            servers.length === 0 ? "No connected servers" : "Select a server"
-          }
-        />
+        {/* Labelled like the protocol select beside it: "Server · <name>". */}
+        <span>
+          Server ·{" "}
+          <SelectValue placeholder={servers.length === 0 ? "None" : "Select"} />
+        </span>
       </SelectTrigger>
       <SelectContent>
-        {servers.map((server) => (
-          <SelectItem key={server.name} value={server.name}>
-            {server.name}
-          </SelectItem>
-        ))}
+        {servers.map((server) => {
+          const note = connectionNote(server);
+          return (
+            // The note goes in `description`, which stays in the menu: the
+            // closed trigger repeats only the item text.
+            <SelectItem
+              key={server.name}
+              value={server.name}
+              description={note ?? undefined}
+            >
+              {server.name}
+            </SelectItem>
+          );
+        })}
       </SelectContent>
     </Select>
   );

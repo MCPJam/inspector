@@ -62,7 +62,6 @@ export interface ApiContext {
   xaaPolicy?: XaaEnterprisePolicy;
   clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
-  oauthTokensByServerId?: Record<string, string>;
   /**
    * Resolved scenario identity. After /api/web/scenarios/redeem resolves,
    * the host clones these onto every scenario-aware API call. The URL link
@@ -180,6 +179,45 @@ export function getApiContextRevision(): number {
   return apiContextRevision;
 }
 
+let serverRequestKeyCache: {
+  revision: number;
+  serverNameOrId: string;
+  key: string | null;
+} | null = null;
+
+/**
+ * What a single-server request for `serverNameOrId` would carry right now, as
+ * a string, or `null` while the context cannot build one (no project yet, the
+ * server not mapped, client config still syncing). Equal keys mean the same
+ * request, so a caller can refetch when the request would change instead of
+ * on every revision: most revisions leave a given server's request exactly as
+ * it was (PLB-118). The bearer KIND (guest or session) is part of it, the
+ * bearer token is not; a server's OAuth access token is, because the request
+ * body carries it.
+ */
+export function getServerRequestKey(serverNameOrId: string): string | null {
+  const cached = serverRequestKeyCache;
+  if (
+    cached &&
+    cached.revision === apiContextRevision &&
+    cached.serverNameOrId === serverNameOrId
+  ) {
+    return cached.key;
+  }
+  // Only "not ready yet" reads as null. Anything else `buildServerRequest`
+  // throws is a bug and surfaces as one instead of silently stopping callers.
+  const key =
+    apiContext.clientConfigSyncPending ||
+    !tryResolveProjectServer(serverNameOrId)
+      ? null
+      : JSON.stringify([
+          shouldPreferGuestBearer(),
+          buildServerRequest(serverNameOrId),
+        ]);
+  serverRequestKeyCache = { revision: apiContextRevision, serverNameOrId, key };
+  return key;
+}
+
 function assertHostedMode() {
   if (!HOSTED_MODE) {
     throw new Error("Hosted API context is only available in hosted mode");
@@ -276,6 +314,9 @@ export function injectHostedServerMapping(
   serverName: string,
   serverId: string
 ): void {
+  // Every connect re-injects the mapping it already has. Announcing that as a
+  // change made every subscriber refetch for a context that had not moved.
+  if (apiContext.serverIdsByName[serverName] === serverId) return;
   apiContext = {
     ...apiContext,
     serverIdsByName: {
@@ -381,6 +422,17 @@ function findHostedServerName(serverId: string): string | undefined {
 }
 
 /**
+ * A local build's managed turns tag tool calls with the Convex server id, but
+ * this app's own MCP connections are keyed by name. Returns the current
+ * project's name for that id so widget and Rerun requests reach the
+ * connection that exists here. Hosted builds address servers by id.
+ */
+export function localServerNameForId(serverId: string): string | undefined {
+  if (HOSTED_MODE) return undefined;
+  return findHostedServerName(serverId);
+}
+
+/**
  * Resolves a hosted server display name or Convex server document ID to a
  * user-facing label when the server still exists in the current
  * `serverIdsByName` mapping. Returns undefined when the ref cannot be resolved
@@ -462,10 +514,6 @@ function resolveHostedServerEntries(
   return resolved;
 }
 
-export function getHostedOAuthToken(serverId: string): string | undefined {
-  return apiContext.oauthTokensByServerId?.[serverId];
-}
-
 export function getHostedScenarioId(): string | undefined {
   return apiContext.scenarioId;
 }
@@ -535,7 +583,6 @@ export function buildServerRequest(
   // would just confuse the user about what's actually missing.
   const projectId = getHostedProjectId();
   const serverId = resolveHostedServerId(serverNameOrId);
-  const oauthToken = getHostedOAuthToken(serverId);
   const scenarioId = getHostedScenarioId();
   const accessVersion = getHostedScenarioAccessVersion();
   const accessScope = getHostedAccessScope();
@@ -546,7 +593,6 @@ export function buildServerRequest(
       apiContext.serverIdsByName[serverNameOrId] !== undefined
         ? serverNameOrId
         : findHostedServerName(serverId) ?? serverNameOrId,
-    ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
     ...(apiContext.clientCapabilities
       ? { clientCapabilities: apiContext.clientCapabilities }
       : {}),
@@ -588,7 +634,6 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   dropToolListChanged?: true;
   toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   xaaPolicy?: XaaEnterprisePolicy;
-  oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   scenarioId?: string;
   accessVersion?: number;
@@ -598,7 +643,6 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   const serverEntries = resolveHostedServerEntries(serverNamesOrIds);
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
-  const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const protocolVersions = buildBatchProtocolVersionMap(serverIds);
   const scenarioId = getHostedScenarioId();
   const accessVersion = getHostedScenarioAccessVersion();
@@ -620,7 +664,6 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
     // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
     ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
-    ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(scenarioId ? { scenarioId } : {}),
     ...(scenarioId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
@@ -649,7 +692,6 @@ export function buildResolvedServerBatchRequest(input: {
   projectId: string;
   serverIds: string[];
   serverNames: string[];
-  oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   scenarioId?: string;
   accessVersion?: number;
@@ -668,7 +710,6 @@ export function buildResolvedServerBatchRequest(input: {
   dropToolListChanged?: true;
   toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   xaaPolicy?: XaaEnterprisePolicy;
-  oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   scenarioId?: string;
   accessVersion?: number;
@@ -692,7 +733,6 @@ export function buildResolvedServerBatchRequest(input: {
     // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
     ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
-    ...(input.oauthTokens ? { oauthTokens: input.oauthTokens } : {}),
     ...(input.accessScope ? { accessScope: input.accessScope } : {}),
     ...(input.scenarioId ? { scenarioId: input.scenarioId } : {}),
     ...(input.scenarioId && Number.isFinite(input.accessVersion)
@@ -716,7 +756,6 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   dropToolListChanged?: true;
   toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   xaaPolicy?: XaaEnterprisePolicy;
-  oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   scenarioId?: string;
   accessVersion?: number;
@@ -726,7 +765,6 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   const serverEntries = resolveHostedServerEntries(serverNamesOrIds);
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
-  const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const protocolVersions = buildBatchProtocolVersionMap(serverIds);
   const scenarioId = getHostedScenarioId();
   const accessVersion = getHostedScenarioAccessVersion();
@@ -749,22 +787,10 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
     // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
     ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
-    ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(scenarioId ? { scenarioId } : {}),
     ...(scenarioId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
   };
-}
-
-export function buildHostedOAuthTokensMap(
-  serverIds: string[]
-): Record<string, string> | undefined {
-  const map: Record<string, string> = {};
-  for (const id of serverIds) {
-    const token = getHostedOAuthToken(id);
-    if (token) map[id] = token;
-  }
-  return Object.keys(map).length > 0 ? map : undefined;
 }
 
 function awaitSessionBearerToken(): Promise<string | null> {

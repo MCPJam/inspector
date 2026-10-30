@@ -57,52 +57,47 @@ export function Collapse({
   );
 }
 
-/** A check's verdict as a small filled circle. */
+/**
+ * A check's verdict as a small filled circle. `muted` keeps the glyph but
+ * drops the color, for a result that is reported without counting (an
+ * unscored check): a red ✕ beside "unscored" read as a failure that counts.
+ */
 export function StatusIcon({
   status,
   skipReason,
+  muted = false,
 }: {
   status: string;
   skipReason?: string;
+  muted?: boolean;
 }) {
   const circle =
     "flex h-4 w-4 shrink-0 items-center justify-center rounded-full";
-  if (status === "passed") {
-    return (
-      <span
-        className={cn(
-          circle,
+  const [color, glyph] =
+    status === "passed"
+      ? [
           "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-        )}
-      >
-        <Check className="h-2.5 w-2.5" strokeWidth={3} />
-      </span>
-    );
-  }
-  if (status === "failed") {
-    return (
-      <span
-        className={cn(circle, "bg-red-500/15 text-red-600 dark:text-red-400")}
-      >
-        <X className="h-2.5 w-2.5" strokeWidth={3} />
-      </span>
-    );
-  }
-  if (skipReason === "could-not-run") {
-    return (
-      <span
-        className={cn(
-          circle,
-          "bg-amber-400/25 text-amber-700 dark:text-amber-400",
-        )}
-      >
-        <span className="text-[10px] leading-none font-bold">!</span>
-      </span>
-    );
-  }
+          <Check className="h-2.5 w-2.5" strokeWidth={3} />,
+        ]
+      : status === "failed"
+        ? [
+            "bg-red-500/15 text-red-600 dark:text-red-400",
+            <X className="h-2.5 w-2.5" strokeWidth={3} />,
+          ]
+        : skipReason === "could-not-run"
+          ? [
+              "bg-amber-400/25 text-amber-700 dark:text-amber-400",
+              <span className="text-[10px] leading-none font-bold">!</span>,
+            ]
+          : [
+              "bg-muted text-muted-foreground",
+              <Minus className="h-2.5 w-2.5" strokeWidth={3} />,
+            ];
   return (
-    <span className={cn(circle, "bg-muted text-muted-foreground")}>
-      <Minus className="h-2.5 w-2.5" strokeWidth={3} />
+    <span
+      className={cn(circle, muted ? "bg-muted text-muted-foreground" : color)}
+    >
+      {glyph}
     </span>
   );
 }
@@ -219,11 +214,14 @@ export type ScoreSummary = Pick<
   ConformanceScore,
   "score" | "outcome" | "applicable" | "passed" | "failed" | "couldNotRun"
 > &
-  Partial<Pick<ConformanceScore, "notApplicable" | "advisories">>;
+  Partial<Pick<ConformanceScore, "notApplicable" | "advisories" | "pending">>;
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /**
  * The run's headline: pooled score, what it was judged against, the verdict
- * in words, and a bar splitting the applicable checks by outcome.
+ * in words, every count by kind, and a bar splitting the applicable checks by
+ * outcome.
  */
 export function OverallScoreCard({
   score,
@@ -231,6 +229,8 @@ export function OverallScoreCard({
   version,
   isRunning = false,
   oauthNotScored = false,
+  blockedBySignIn = 0,
+  action,
 }: {
   score: ScoreSummary | undefined;
   serverName: string;
@@ -238,14 +238,39 @@ export function OverallScoreCard({
   version: string;
   isRunning?: boolean;
   oauthNotScored?: boolean;
+  /**
+   * How many checks were refused for credentials. A run blocked that way says
+   * nothing definitive about the server, so the verdict names the sign-in
+   * instead of calling the server not conformant. It can count checks the
+   * score counts, so pass only scored refusals; the verdict also clamps it to
+   * `couldNotRun`.
+   */
+  blockedBySignIn?: number;
+  /** Shown at the end of the verdict line, e.g. a link to the saved run. */
+  action?: ReactNode;
 }) {
   const scored = score && score.score !== null ? score : undefined;
   const initials = serverName.replace(/[^a-z0-9]/gi, "").slice(0, 2) || "?";
+  // Checks that could not run stay in the denominator, so the number is only
+  // a partial picture until every applicable check has run.
+  const partial = Boolean(scored && (isRunning || scored.couldNotRun > 0));
 
   const verdict = (() => {
     // A partial score is no verdict: a clean Protocol would read "Fully
     // conformant." until a suite still running fails.
     if (isRunning) return "Running conformance checks...";
+    const signInBlocked = Math.min(blockedBySignIn, score?.couldNotRun ?? 0);
+    if (score && signInBlocked > 0) {
+      const otherUnrun = score.couldNotRun - signInBlocked;
+      return [
+        `Incomplete. ${plural(signInBlocked, "check")} could not run because sign-in failed.`,
+        otherUnrun > 0 ? `${otherUnrun} more could not run.` : null,
+        score.failed > 0 ? `${plural(score.failed, "check")} failed.` : null,
+        "Reconnect the server and run again.",
+      ]
+        .filter(Boolean)
+        .join(" ");
+    }
     if (!scored) {
       // A run that ended before any check was scored, such as one that timed
       // out, is incomplete rather than empty.
@@ -253,8 +278,6 @@ export function OverallScoreCard({
         ? "Incomplete. No check finished, so there is no score."
         : "Nothing applicable to score on this server.";
     }
-    const plural = (n: number, word: string) =>
-      `${n} ${word}${n === 1 ? "" : "s"}`;
     if (scored.outcome === "failed") {
       return `Not conformant. ${plural(scored.failed, "check")} failed.`;
     }
@@ -268,13 +291,21 @@ export function OverallScoreCard({
       : "Fully conformant.";
   })();
 
-  const notes = [
-    score?.notApplicable ? `${score.notApplicable} not applicable` : null,
-    oauthNotScored ? "OAuth not scored (no auth)" : null,
-  ].filter(Boolean);
+  // Every kind of count on its own, so "10/62" never has to stand in for
+  // what failed, what could not run, and what was left out of the score.
+  const counts = score
+    ? [
+        scored ? `${score.passed} passed` : null,
+        score.failed ? `${score.failed} failed` : null,
+        score.couldNotRun ? `${score.couldNotRun} could not run` : null,
+        score.pending ? `${score.pending} unscored` : null,
+        score.notApplicable ? `${score.notApplicable} not applicable` : null,
+        oauthNotScored ? "OAuth not scored (no auth)" : null,
+      ].filter(Boolean)
+    : [];
 
   return (
-    <div className="relative flex flex-col gap-4.5 overflow-hidden rounded-lg border border-border bg-card px-6 pt-6 pb-5">
+    <div className="relative flex flex-col gap-4.5 overflow-hidden rounded-lg border border-border bg-popover px-6 pt-6 pb-5">
       <div className="text-[11px] font-semibold tracking-[0.08em] text-primary">
         OVERALL SCORE · PROTOCOL {version.toUpperCase()}
       </div>
@@ -292,6 +323,7 @@ export function OverallScoreCard({
               </div>
               <span className="pb-2 text-sm font-medium text-muted-foreground tabular-nums">
                 {scored.passed}/{scored.applicable}
+                {partial ? " · partial" : ""}
               </span>
             </>
           ) : (
@@ -307,14 +339,16 @@ export function OverallScoreCard({
           <span className="truncate text-base font-semibold">{serverName}</span>
         </div>
       </div>
-      <div className="text-sm font-medium">
-        {verdict}
-        {notes.length > 0 && (
-          <span className="font-normal text-muted-foreground">
-            {" "}
-            · {notes.join(" · ")}
-          </span>
-        )}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="text-sm font-medium">{verdict}</div>
+          {counts.length > 0 && (
+            <div className="text-xs text-muted-foreground tabular-nums">
+              {counts.join(" · ")}
+            </div>
+          )}
+        </div>
+        {action}
       </div>
       {scored && scored.applicable > 0 && (
         <div className="absolute inset-x-0 bottom-0 flex h-1.5">

@@ -427,7 +427,7 @@ export function useAutoConnectProjectServers({
 
     serverCheckQueue.markAutomatic(projectId, fresh);
     let cancelled = false;
-    ensureServersReady(fresh).then(
+    ensureServersReady(fresh, { automatic: true }).then(
       (result) => {
         if (cancelled) return;
         lastResultRef.current = result;

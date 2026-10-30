@@ -53,6 +53,13 @@ import {
 import { ErrorCode, WebRouteError } from "../errors.js";
 import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
 
+// This device has approved every stdio command: the per-device approval gate
+// has its own suite, local-server-resolver.stdio-approval.test.ts.
+vi.mock("../../../utils/stdio-command-approvals.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/stdio-command-approvals.js")>()),
+  checkStdioLaunchApproval: async () => ({ approval: "approved" as const }),
+}));
+
 // Faithful Hono Context stub: `get`, `var`, and `set` all read/write the same
 // store (in real Hono `c.get(k)` === `c.var[k]`). The delegated-auth header
 // builder reads `c.get("authMethod")`, so the mock must implement `get`.
@@ -177,13 +184,14 @@ describe("web auth manager batching", () => {
         },
       }),
     ) as typeof fetch;
-    await createAuthorizedManager(
+    const authorized = await createAuthorizedManager(
       { authMethod: "jwt" } as Parameters<typeof createAuthorizedManager>[0],
       "bearer",
       "project-1",
       ["enrolled", "shared"],
       10_000,
     );
+    expect(authorized.authenticatedUserId).toBe("authenticated-user");
     expect(admissionMock).toHaveBeenCalledTimes(1);
     expect(admissionMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -235,13 +243,13 @@ describe("web auth manager batching", () => {
     ).rejects.toMatchObject<WebRouteError>({
       status: 404,
       code: "NOT_FOUND",
-      message: "server-b failed",
+      message: '"server-b" couldn\'t connect: server-b failed. Check the server\'s settings on the Servers page.',
     });
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a refused server out of the batch when asked to tolerate refusals", async () => {
+  it.each([true, false])("keeps refusals named with caller names present: %s", async (callerNames) => {
     global.fetch = vi.fn(async () =>
       Response.json({
         results: {
@@ -250,6 +258,7 @@ describe("web auth manager batching", () => {
             status: 403,
             code: "FORBIDDEN",
             message: "server-a failed",
+            serverName: "A",
           },
           "server-b": {
             ok: true,
@@ -259,6 +268,7 @@ describe("web auth manager batching", () => {
             serverConfig: {
               transportType: "http",
               url: "https://server-b.example.com/mcp",
+              name: "B",
             },
           },
           // An explicit-OAuth server with no token is refused in pass 1 too.
@@ -270,6 +280,7 @@ describe("web auth manager batching", () => {
             serverConfig: {
               transportType: "http",
               url: "https://server-c.example.com/mcp",
+              name: "C",
               useOAuth: true,
             },
           },
@@ -285,14 +296,15 @@ describe("web auth manager batching", () => {
       10_000,
       undefined,
       undefined,
-      { serverNames: ["A", "B", "C"], tolerateServerRefusals: true },
+      { ...(callerNames ? { serverNames: ["A", "B", "C"] } : {}), tolerateServerRefusals: true },
     );
+    expect(result.serverNamesById).toEqual({ "server-a": "A", "server-b": "B", "server-c": "C" });
 
     // Each refusal is the error the server's own request would have thrown.
     expect(result.refusedServers?.["server-a"]).toMatchObject({
       status: 403,
       code: "FORBIDDEN",
-      message: "server-a failed",
+      message: '\"A\" couldn\'t connect: server-a failed. Check the server\'s settings on the Servers page.',
       details: { serverId: "server-a", serverName: "A" },
     });
     expect(result.refusedServers?.["server-c"]).toMatchObject({
@@ -374,7 +386,7 @@ describe("web auth manager batching", () => {
     global.fetch = batch(true);
     await expect(run()).rejects.toMatchObject({
       status: 403,
-      message: "srv-chosen failed",
+      message: '"srv-chosen" couldn\'t connect: srv-chosen failed. Check the server\'s settings on the Servers page.',
     });
   });
 
@@ -1179,7 +1191,11 @@ describe("web auth manager batching", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
-  it("recovers a private-authorization-server credential BEFORE connecting", async () => {
+  it.each([
+    ["", undefined],
+    // A request token must not stand in for the recovery.
+    [", ignoring a request token", { "server-1": "request-token" }],
+  ])("recovers a private-authorization-server credential BEFORE connecting%s", async (_case, oauthTokens) => {
     // The batch cannot return a token — the backend structurally cannot refresh
     // an authorization server on the user's machine — so it reports why. Without
     // this pre-connect pass the fallback only ever covered a mid-session 401,
@@ -1244,7 +1260,8 @@ describe("web auth manager batching", () => {
       "bearer-token",
       "project-1",
       ["server-1"],
-      10_000
+      10_000,
+      oauthTokens
     );
 
     // The connect carries the locally-minted token, and the live-401 handler is
@@ -1375,7 +1392,7 @@ describe("web auth manager batching", () => {
       status: 401,
       code: "UNAUTHORIZED",
       message:
-        'Server "Asana" requires OAuth authentication. Please complete the OAuth flow first.',
+        '"Asana" needs you to sign in. Sign in from the Servers page, then try again.',
       details: {
         oauthRequired: true,
         serverId: "server-1",
@@ -1420,7 +1437,9 @@ describe("web auth manager batching", () => {
     ) as typeof fetch;
   }
 
-  async function captureConnectError(): Promise<WebRouteError> {
+  async function captureConnectError(
+    oauthTokens?: Record<string, string>
+  ): Promise<WebRouteError> {
     try {
       await createAuthorizedManager(
         callerContextFromHono(mockContext),
@@ -1428,7 +1447,7 @@ describe("web auth manager batching", () => {
         "project-1",
         ["server-1"],
         10_000,
-        undefined,
+        oauthTokens,
         undefined,
         { serverNames: ["Asana"] }
       );
@@ -1555,6 +1574,87 @@ describe("web auth manager batching", () => {
       'Credentials for "Asana" are being refreshed by another request. Try again shortly.'
     );
     expect(error.headers).toBeUndefined();
+  });
+
+  // A token in the request body is the caller's, not the saved credential the
+  // backend withheld. Were it allowed to skip the refusal, every reason above
+  // would be only as strong as a request that leaves the token out.
+  it.each([
+    ["credential_origin_mismatch", 401],
+    ["credential_export_denied", 403],
+    ["authorization_server_unreachable", 503],
+    ["refresh_in_progress", 429],
+  ])(
+    "keeps the %s refusal when the request carries its own token",
+    async (reason, status) => {
+      global.fetch = batchWithOAuthUnavailableReason(reason);
+
+      const error = await captureConnectError({ "server-1": "request-token" });
+
+      expect(error.status).toBe(status);
+      expect(mcpClientManagerMock).not.toHaveBeenCalled();
+    }
+  );
+
+  function withServerConfig(
+    batch: typeof fetch,
+    serverConfig: Record<string, unknown>
+  ): typeof fetch {
+    return vi.fn(async (...args: Parameters<typeof fetch>) => {
+      const body = await (await batch(...args)).json();
+      body.results["server-1"].serverConfig = serverConfig;
+      return Response.json(body);
+    }) as typeof fetch;
+  }
+
+  it("connects a discover server without the request's token once the backend refused its own", async () => {
+    global.fetch = withServerConfig(
+      batchWithOAuthUnavailableReason("credential_origin_mismatch"),
+      {
+        transportType: "http",
+        url: "https://server-1.example.com/mcp",
+        headers: {},
+        authMethod: "auto",
+      }
+    );
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      { "server-1": "request-token" }
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config.requestInit?.headers?.Authorization).toBeUndefined();
+  });
+
+  it("still sends a bearer server's request token: the reason is about OAuth", async () => {
+    global.fetch = withServerConfig(
+      batchWithOAuthUnavailableReason("credential_origin_mismatch"),
+      {
+        transportType: "http",
+        url: "https://server-1.example.com/mcp",
+        headers: {},
+        authMethod: "bearer",
+      }
+    );
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      { "server-1": "request-token" }
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config.requestInit?.headers?.Authorization).toBe(
+      "Bearer request-token"
+    );
   });
 
   it("connects a tokenless auto (discover) server unauthenticated and tags a live 401", async () => {

@@ -12,6 +12,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 const harnessState = vi.hoisted(() => ({
+  native: false,
+  readNativeResult: vi.fn(async () => ({
+    content: [{ type: "text", text: "original MCP result" }],
+    structuredContent: { value: 7 },
+  })),
   // Each entry is a part, or a function run at that point (to fire a Stop).
   script: [] as Array<
     (Record<string, unknown> & { type?: string }) | (() => void | Promise<void>)
@@ -50,26 +55,55 @@ vi.mock("@ai-sdk/harness/agent", () => ({
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
 }));
 
-vi.mock("../registry.js", () => ({
-  // Broker-only credential delivery (COMP-23): the turn builds dummy auth
-  // pointed at the broker proxy; there is no per-adapter resolveAuth anymore.
-  buildBrokerDummyAuth: vi.fn(() => ({
-    anthropic: {
-      apiKey: "",
-      authToken: "mcpjam-broker-dummy",
-      baseUrl: "https://broker.example",
+vi.mock("../registry.js", async () => {
+  const { parseHarnessToolName } =
+    await vi.importActual<typeof import("../mcp-config.js")>(
+      "../mcp-config.js",
+    );
+  return {
+    // Broker-only credential delivery (COMP-23): the turn builds dummy auth
+    // pointed at the broker proxy; there is no per-adapter resolveAuth anymore.
+    buildBrokerDummyAuth: vi.fn(() => ({
+      anthropic: {
+        apiKey: "",
+        authToken: "mcpjam-broker-dummy",
+        baseUrl: "https://broker.example",
+      },
+    })),
+    getHarnessAdapter: vi.fn(() => ({
+      id: "claude-code",
+      displayName: "Claude Code",
+      defaultPermissionMode: "allow-all",
+      supportsSkills: false,
+      mcpDelivery: harnessState.native ? "harness" : "mcpjam",
+      supportsModel: vi.fn(() => true),
+      createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
+      parseToolName: parseHarnessToolName,
+    })),
+  };
+});
+
+vi.mock("../forwarding/native-turn.js", async (original) => ({
+  ...(await original<typeof import("../forwarding/native-turn.js")>()),
+  hasForwardingOrganization: () => true,
+  nativeForwardingSelection: () => ({
+    harnessSessionId: "lane",
+    hostId: "host",
+    servers: [{ serverId: "server-1" }],
+  }),
+  prepareNativeForwarding: async () => ({
+    mcpJson: {
+      mcpServers: {
+        native_server: { type: "http", url: "https://forward.example/mcp" },
+      },
     },
-  })),
-  getHarnessAdapter: vi.fn(() => ({
-    id: "claude-code",
-    displayName: "Claude Code",
-    defaultPermissionMode: "allow-all",
-    supportsSkills: false,
-    mcpDelivery: "mcpjam",
-    supportsModel: vi.fn(() => true),
-    createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
-    parseToolName: vi.fn((toolName: string) => ({ toolName })),
-  })),
+    keyToServerId: { native_server: "server-1" },
+    policyDigest: "a".repeat(64),
+    logScopeIds: {},
+    readToolResult: harnessState.readNativeResult,
+    isForwardedTool: () => true,
+    stop: async () => {},
+  }),
 }));
 
 vi.mock("../resolve-sandbox.js", () => ({
@@ -120,6 +154,7 @@ vi.mock("../harness-model-broker.js", () => ({
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
+    forwarding: { owners: [], origin: "https://forward.example" },
   })),
 }));
 
@@ -197,11 +232,88 @@ describe("runHarnessTurn activity", () => {
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token-with-enough-length");
     harnessState.script = [];
     harnessState.finalText = "";
+    harnessState.native = false;
+    harnessState.readNativeResult.mockClear();
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
   });
+
+  it.each([false, true])(
+    "hydrates the native result without changing the model result, error=%s",
+    async (isError) => {
+      vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
+      harnessState.native = true;
+      const rawResult = {
+        content: [{ type: "text", text: "original MCP result" }],
+        structuredContent: { value: 7 },
+        ...(isError ? { isError: true } : {}),
+      };
+      harnessState.readNativeResult.mockResolvedValueOnce(rawResult);
+      harnessState.script = [
+        {
+          type: "tool-call",
+          toolCallId: "native-call",
+          toolName: "mcp__native_server__read",
+          input: {},
+        },
+        {
+          type: isError ? "tool-error" : "tool-result",
+          toolCallId: "native-call",
+          toolName: "mcp__native_server__read",
+          ...(isError
+            ? { error: "Claude projection" }
+            : { output: "Claude projection" }),
+        },
+        { type: "text-delta", delta: "Done." },
+        { type: "finish", finishReason: "stop" },
+      ];
+      harnessState.finalText = "Done.";
+      const onToolResult = vi.fn();
+      const result = await runHarnessTurn(
+        options({
+          hostId: "host",
+          selectedServers: ["server-1"],
+          respectToolVisibility: false,
+          mcpClientManager: {
+            getServerConfig: () => ({ url: "https://mcp.example/mcp", clientCapabilities: {} }),
+            getInitializationInfo: () => ({ transport: "streamable-http", protocolVersion: "2025-11-25", clientCapabilities: {} }),
+          },
+          harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
+          onToolResult,
+        }) as Parameters<typeof runHarnessTurn>[0],
+        "ui",
+      );
+      const chunks = sseChunks(await result.response!.text());
+      expect(harnessState.readNativeResult).toHaveBeenCalledWith(
+        "server-1",
+        "native-call",
+      );
+      expect(chunks).toContainEqual(
+        expect.objectContaining({
+          type: "tool-output-available",
+          toolCallId: "native-call",
+          output: rawResult,
+        }),
+      );
+      expect(onToolResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "server-1",
+          toolCallId: "native-call",
+          output: "Claude projection",
+          isError,
+          rawResult,
+        }),
+      );
+      expect(JSON.stringify(result.messageHistory)).toContain(
+        "Claude projection",
+      );
+      expect(JSON.stringify(result.messageHistory)).not.toContain(
+        "original MCP result",
+      );
+    },
+  );
 
   it("streams Codex's plan as one checklist part, updated in place", async () => {
     harnessState.script = [
@@ -300,31 +412,62 @@ describe("runHarnessTurn activity", () => {
         providerExecuted: true,
       }),
     ]);
-    expect(onToolResult).toHaveBeenCalledWith(expect.objectContaining({
-      toolCallId: "call_1", isError: true,
-      output: "Exit code 1\ncat: missing.txt: No such file or directory",
-    }));
+    expect(onToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolCallId: "call_1",
+        isError: true,
+        output: "Exit code 1\ncat: missing.txt: No such file or directory",
+      }),
+    );
     expect(JSON.stringify(result.messageHistory)).toContain("cat: missing.txt");
     expect(onToolResult).toHaveBeenCalledTimes(1);
   });
 
   it("persists a resumed tool failure once when the call came from history", async () => {
     const onToolResult = vi.fn();
-    const failure = { type: "tool-error", toolCallId: "prior-call", error: "sandbox failed" };
-    harnessState.script = [failure, failure, { type: "text-delta", delta: "Failed." }];
+    const failure = {
+      type: "tool-error",
+      toolCallId: "prior-call",
+      error: "sandbox failed",
+    };
+    harnessState.script = [
+      failure,
+      failure,
+      { type: "text-delta", delta: "Failed." },
+    ];
     harnessState.finalText = "Failed.";
-    const result = await runHarnessTurn(options({
-      onToolResult,
-      messages: [
-        { role: "user", content: "Run it" },
-        { role: "assistant", content: [{ type: "tool-call", toolCallId: "prior-call", toolName: "Bash", input: { command: "pwd" } }] },
-      ],
-    }) as any, "ui");
+    const result = await runHarnessTurn(
+      options({
+        onToolResult,
+        messages: [
+          { role: "user", content: "Run it" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "prior-call",
+                toolName: "Bash",
+                input: { command: "pwd" },
+              },
+            ],
+          },
+        ],
+      }) as any,
+      "ui",
+    );
     const chunks = sseChunks(await result.response!.text());
-    expect(chunks.filter((chunk) => chunk.type === "tool-output-error")).toHaveLength(1);
-    expect(onToolResult).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      toolCallId: "prior-call", toolName: "Bash", isError: true, output: "sandbox failed",
-    }));
+    expect(
+      chunks.filter((chunk) => chunk.type === "tool-output-error"),
+    ).toHaveLength(1);
+    expect(onToolResult).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        toolCallId: "prior-call",
+        toolName: "Bash",
+        isError: true,
+        output: "sandbox failed",
+      }),
+    );
     expect(JSON.stringify(result.messageHistory)).toContain("sandbox failed");
   });
 });

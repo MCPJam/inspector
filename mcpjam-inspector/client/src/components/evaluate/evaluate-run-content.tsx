@@ -229,7 +229,11 @@ export function SingleRunContent({
       chains.status,
     ],
   );
-  useRunErrorBreakdownToast(String(run._id), errorBreakdown);
+  useRunErrorBreakdownToast(
+    String(run._id),
+    errorBreakdown,
+    projectId ?? undefined,
+  );
 
   const descriptionExperimentEnabled = useDescriptionExperimentEnabled();
   const descriptionExperiment = useEvalDescriptionExperiment({
