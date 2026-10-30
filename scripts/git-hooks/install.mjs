@@ -2,7 +2,7 @@
 /**
  * Point git at scripts/git-hooks, so the slop checks run for every author:
  * people, Claude Code, Codex, Cursor and Devin all commit through git. Run by
- * the root `prepare` script on `npm install`; safe to run by hand.
+ * the root `setup` script after `npm install`; safe to run by hand.
  *
  * Does nothing in CI, outside a git checkout (Docker builds copy only the
  * manifests), or when the repo already has its own hooks: an existing

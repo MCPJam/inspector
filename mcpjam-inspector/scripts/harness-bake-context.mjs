@@ -272,7 +272,7 @@ async function loadCodexAppServerRecipe() {
   if (!existsSync(generatedPath)) {
     throw new Error(
       "the Codex bridge bundle has not been generated; run " +
-        "`npm run bundle:codex-appserver-bridge` (or `npm run pretest`) first",
+        "`npm run bundle:codex-appserver-bridge` (or `npm run test:prepare`) first",
     );
   }
   const { bundleCodexAppServerBridgeSources } =

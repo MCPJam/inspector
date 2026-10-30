@@ -171,8 +171,8 @@ export function evaluateDevEnv(input) {
         message:
           `The DMG maker's native addon '${addon.name}' cannot be loaded` +
           `${addon.reason ? `: ${addon.reason}.` : "."}` +
-          ` It is an optional dependency, so 'npm install' succeeded without` +
-          ` compiling it and the failure only surfaces inside the maker.`,
+          ` The root .npmrc skips install scripts, so 'npm install' never` +
+          ` compiles it and the failure only surfaces inside the maker.`,
         fix: "npm run electron:fix:dmg-deps -w @mcpjam/inspector",
       });
     }

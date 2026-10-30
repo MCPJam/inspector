@@ -55,11 +55,17 @@ Most contributions target the `mcpjam-inspector/` workspace.
 
 ### Setup
 
-Install dependencies for all workspaces from the repo root:
+Install dependencies for all workspaces from the repo root, then run the setup
+step once:
 
 ```bash
 npm install
+npm run setup
 ```
+
+The root `.npmrc` sets `ignore-scripts=true`, so no dependency runs code at
+install time. `npm run setup` installs the git hooks, generates the telemetry
+catalogs and builds `node-pty` (the local terminal).
 
 ## Development
 
