@@ -169,6 +169,10 @@ describe("setup evidence and readiness", () => {
       readiness: "unavailable",
       reason: "write_errored",
     });
+    // Calls past the record limit are dropped, so a write among them is unknown.
+    expect(
+      judgeReadiness({ ...wrote, toolCallsTruncated: true }, missing),
+    ).toEqual({ readiness: "unavailable", reason: "write_errored" });
     expect(
       judgeReadiness(
         { ...writeFailed, createdEntitiesTruncated: true },

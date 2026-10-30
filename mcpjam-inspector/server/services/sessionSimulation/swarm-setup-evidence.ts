@@ -91,7 +91,12 @@ export function judgeReadiness(
     return { readiness: "not_assessed", reason: setup.reason };
   if (setup.createdEntitiesTruncated)
     return { readiness: "unavailable", reason: "entity_record_limit" };
-  if (setup.toolCalls.some((c) => c.isWrite && !c.ok))
+  // Calls past the record limit aren't kept, so a failed or refused write
+  // among them can't be ruled out.
+  if (
+    setup.toolCallsTruncated ||
+    setup.toolCalls.some((c) => c.isWrite && !c.ok)
+  )
     return { readiness: "unavailable", reason: "write_errored" };
   // Only what setup did can stop the target. The persona is seeded from write
   // results, never from the model's report, so an unreadable, "missing" or

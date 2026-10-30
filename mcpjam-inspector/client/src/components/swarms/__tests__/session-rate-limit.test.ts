@@ -101,6 +101,7 @@ describe("describeSwarmAttemptFailure", () => {
       likelyCauses: [],
       nextSteps: [],
       rawCode: "prerequisites_unavailable",
+      docsAnchor: "/troubleshooting/error-codes",
     });
     expect(JSON.stringify(error)).not.toContain("New error class");
   });

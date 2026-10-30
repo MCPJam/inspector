@@ -184,6 +184,8 @@ export function describeSwarmAttemptFailure(
     return {
       ...describeAsSlug("internal/unknown"),
       slug: "swarm/attempt_failed",
+      // The page root, not the unknown-error section this case is not.
+      docsAnchor: "/troubleshooting/error-codes",
       title: "Setup stopped this target",
       oneLine: info.message,
       likelyCauses: [],
