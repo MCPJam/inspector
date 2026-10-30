@@ -683,4 +683,32 @@ describe("hosted /api/web/tasks", () => {
     expect(lifecycle).toEqual([]);
   });
 
+  it("refuses an owner change even when the new user can access the same account", async () => {
+    const getTaskExt = vi.fn().mockResolvedValue({ taskId: "same-id" });
+    const manager = setManager({ getTaskExt });
+    installTaskAccounts(
+      manager as unknown as Parameters<typeof installTaskAccounts>[0],
+      "actual-owner",
+    );
+    expect(
+      (
+        await post("/get", {
+          taskId: "same-id",
+          connectionId: "account-b",
+          ownerScope: "previous-owner",
+        })
+      ).status,
+    ).toBe(403);
+    expect(getTaskExt).not.toHaveBeenCalled();
+    expect(
+      (
+        await post("/get", {
+          taskId: "same-id",
+          connectionId: "account-b",
+          ownerScope: "actual-owner",
+        })
+      ).status,
+    ).toBe(200);
+  });
+
 });

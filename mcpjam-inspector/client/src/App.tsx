@@ -47,7 +47,7 @@ import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
-import { TasksTab } from "./components/TasksTab";
+import { TaskAccountsTab } from "./components/TaskAccountsTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
@@ -2471,7 +2471,7 @@ export function TasksRoute() {
   const { selectedMCPConfig, appState } = useAppRouteContext();
   return (
     <div className="h-full overflow-hidden">
-      <TasksTab
+      <TaskAccountsTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
         isActive

@@ -1,3 +1,4 @@
+import { notifyTaskBookmarksChanged } from "./task-tracker-events";
 /**
  * Durable Task bookmarks, scoped by project, server, account and wire.
  * Store scheduling hints and acknowledged input keys, never prompts, answers
@@ -326,6 +327,7 @@ function saveTasks(tasks: TrackedTask[]): void {
         tasks: payload.filter(isBoundHandle),
       }),
     );
+    notifyTaskBookmarksChanged();
   } catch {
     // localStorage might be full or unavailable
   }
@@ -339,12 +341,13 @@ export function getTrackedTasksForServer(
   serverId: string,
   wire?: TasksWire,
   connectionId?: string,
+  scope?: string,
 ): TrackedTask[] {
   return loadTasks().filter(
     (t) =>
       t.serverId === serverId &&
       !t.dismissed &&
-      sameAccount(t, { wire, connectionId }),
+      sameAccount(t, { wire, connectionId, scope }),
   );
 }
 
@@ -746,8 +749,15 @@ export function getDismissedTaskIds(
   return dismissed;
 }
 
-export function clearTrackedTasksForServer(serverId: string): void {
-  saveInScope(loadTasks().filter((t) => t.serverId !== serverId));
+export function clearTrackedTasksForServer(
+  serverId: string,
+  selection?: TaskAccountSelection,
+): void {
+  saveInScope(
+    loadTasks().filter(
+      (t) => t.serverId !== serverId || !sameAccount(t, selection),
+    ),
+  );
 }
 
 /**
@@ -777,6 +787,7 @@ export function clearTrackedTasksForScope(
 export function clearAllTrackedTasks(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
+    notifyTaskBookmarksChanged();
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     localStorage.removeItem(DISMISSED_REGISTRY_KEY);
   } catch {

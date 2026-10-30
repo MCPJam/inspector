@@ -1,4 +1,8 @@
-import { setManagerOrganization } from "../../utils/mcp-connections.js";
+import { taskOwnerScope } from "../../../shared/task-owner.js";
+import {
+  setManagerTaskOwnerScope,
+  setManagerOrganization,
+} from "../../utils/mcp-connections.js";
 import { nameServerRefusal } from "../../utils/server-refusal.js";
 import {
   serverCheckScope,
@@ -292,6 +296,7 @@ const taskTargetSchema = projectServerSchema.extend({
     .regex(/^[^\u0000]+$/)
     .optional(),
   wire: z.enum(["legacy", "extension"]).optional(),
+  ownerScope: z.string().min(1).max(2048).optional(),
 });
 
 export const taskGetSchema = taskTargetSchema.extend({
@@ -602,8 +607,7 @@ export type ConvexBatchAuthorizeSuccess = {
 };
 
 export type ConvexBatchAuthorizeResult =
-  | ConvexBatchAuthorizeFailure
-  | ConvexBatchAuthorizeSuccess;
+  ConvexBatchAuthorizeFailure | ConvexBatchAuthorizeSuccess;
 
 export type ConvexBatchAuthorizeResponse = {
   organizationId?: string | null;
@@ -796,7 +800,9 @@ export async function authorizeServer(
         : `Authorization failed (${response.status})`;
     throw new WebRouteError(response.status, code as ErrorCode, message, {
       serverId,
-      ...(typeof body?.refusalReason === "string" ? { refusalReason: body.refusalReason } : {}),
+      ...(typeof body?.refusalReason === "string"
+        ? { refusalReason: body.refusalReason }
+        : {}),
     });
   }
 
@@ -2644,6 +2650,9 @@ export async function createAuthorizedManager(
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
   setManagerOrganization(manager, batch.organizationId);
+  const ownerScope = taskOwnerScope(projectId, authorizedUserId);
+  if (ownerScope)
+    setManagerTaskOwnerScope(manager, Object.keys(observedConfigs), ownerScope);
   return {
     manager,
     ...(options?.lazyConnect
@@ -2813,8 +2822,7 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
 
   const rawProtocolVersionsByServerId = raw.mcpProtocolVersionsByServerId;
   const mcpProtocolVersionsByServerId:
-    | Record<string, McpProtocolVersion>
-    | undefined =
+    Record<string, McpProtocolVersion> | undefined =
     rawProtocolVersionsByServerId &&
     typeof rawProtocolVersionsByServerId === "object" &&
     !Array.isArray(rawProtocolVersionsByServerId)

@@ -1,5 +1,9 @@
 import type { MCPClientManager } from "@mcpjam/sdk";
-import { getManagerConnections } from "./mcp-connections.js";
+import {
+  getManagerConnections,
+  getManagerTaskOwnerScope,
+  localConnectionKeysForServer,
+} from "./mcp-connections.js";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 
 /** Resolve a saved account pin without substituting the current default. */
@@ -9,6 +13,7 @@ export function taskConnectionKey(
     serverId?: string;
     connectionId?: string;
     wire?: "legacy" | "extension";
+    ownerScope?: string;
   },
 ): string {
   if (
@@ -28,19 +33,48 @@ export function taskConnectionKey(
       "Invalid task target",
     );
   }
-  let key = target.serverId;
-  if (target.connectionId !== undefined) {
-    const connection = getManagerConnections(manager)?.[target.serverId]?.find(
-      (candidate) => candidate.connectionId === target.connectionId,
+  const groups = getManagerConnections(manager) ?? {};
+  const localKeys = localConnectionKeysForServer(manager, target.serverId);
+  let key = localKeys.length === 1 ? localKeys[0] : target.serverId;
+  if (
+    target.ownerScope &&
+    target.connectionId === undefined &&
+    localKeys.length > 1
+  ) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "More than one local connection matches this task. Reconnect its server to continue.",
     );
-    if (!connection) {
+  }
+  if (target.connectionId !== undefined) {
+    const direct = groups[target.serverId] ?? groups[key] ?? [];
+    const matches = Object.values(groups)
+      .flat()
+      .filter(
+        (candidate) =>
+          candidate.connectionId === target.connectionId &&
+          (candidate.serverId === target.serverId ||
+            direct.includes(candidate)),
+      );
+    if (matches.length !== 1) {
       throw new WebRouteError(
         403,
         ErrorCode.FORBIDDEN,
         "The account saved with this task is unavailable. Reconnect that account to continue.",
       );
     }
-    key = connection.key;
+    key = matches[0].key;
+  }
+  if (
+    target.ownerScope !== undefined &&
+    getManagerTaskOwnerScope(manager, key) !== target.ownerScope
+  ) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "The signed-in account changed. Return to the task's account to continue.",
+    );
   }
   if (
     target.wire !== undefined &&

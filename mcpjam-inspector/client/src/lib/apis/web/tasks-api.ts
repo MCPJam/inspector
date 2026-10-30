@@ -9,6 +9,9 @@ function taskRequest(request: TaskRequestTarget & { serverNameOrId: string }) {
       ? { connectionId: request.connectionId }
       : {}),
     ...(request.wire !== undefined ? { wire: request.wire } : {}),
+    ...(request.ownerScope !== undefined
+      ? { ownerScope: request.ownerScope }
+      : {}),
   };
 }
 

@@ -1,9 +1,17 @@
 import type { MCPClientManager } from "@mcpjam/sdk";
-import { setManagerConnections } from "../mcp-connections.js";
+import {
+  setManagerConnections,
+  setManagerTaskOwnerScope,
+} from "../mcp-connections.js";
 
 export const TASK_ACCOUNT_KEY = "s1::account-b";
 
-export function installTaskAccounts(manager: MCPClientManager): void {
+export function installTaskAccounts(
+  manager: MCPClientManager,
+  ownerScope?: string,
+): void {
+  if (ownerScope)
+    setManagerTaskOwnerScope(manager, ["s1", TASK_ACCOUNT_KEY], ownerScope);
   setManagerConnections(manager, {
     s1: [
       {

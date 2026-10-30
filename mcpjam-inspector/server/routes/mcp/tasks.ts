@@ -270,13 +270,20 @@ tasks.post("/capabilities", async (c) => {
 // Progress is local-only: hosted connections are ephemeral per request.
 tasks.post("/progress", async (c) => {
   try {
-    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
+    const body = (await readRequestJson(c)) as TaskRequestTarget & {
+      serverId?: string;
+    };
+    const { serverId } = body;
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
-    const progress = progressStore.getLatestProgress(serverId);
+    const progress = progressStore.getLatestProgress(
+      taskConnectionKey(c.mcpClientManager, body),
+    );
     return c.json({ progress: progress ?? null });
   } catch (error) {
+    const feature = featureErrorResponse(error);
+    if (feature) return c.json(feature.body, feature.status);
     reportRouteFailure("Error getting progress", error, {
       // Progress is local-only (see the note above the route) — our state.
       source: "mcp.tasks.progress",
@@ -288,13 +295,20 @@ tasks.post("/progress", async (c) => {
 
 tasks.post("/progress/all", async (c) => {
   try {
-    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
+    const body = (await readRequestJson(c)) as TaskRequestTarget & {
+      serverId?: string;
+    };
+    const { serverId } = body;
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
-    const allProgress = progressStore.getAllProgress(serverId);
+    const allProgress = progressStore.getAllProgress(
+      taskConnectionKey(c.mcpClientManager, body),
+    );
     return c.json({ progress: allProgress });
   } catch (error) {
+    const feature = featureErrorResponse(error);
+    if (feature) return c.json(feature.body, feature.status);
     reportRouteFailure("Error getting all progress", error, {
       source: "mcp.tasks.progress.all",
       hop: "mcpjam_internal",
