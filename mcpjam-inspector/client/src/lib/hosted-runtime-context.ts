@@ -84,7 +84,6 @@ export type HostedRuntimeContext = {
    */
   hiddenEnvironment?: HostedHiddenEnvironment;
   selectedServerIds?: string[];
-  oauthTokens?: Record<string, string>;
   /**
    * Saved host being previewed (Playground / host-bound direct chat). Absent
    * for non-host direct chat and for published-scenario sessions (which carry

@@ -43,7 +43,6 @@ import {
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
-import { gateSwitchDisabledReason } from "./judge-gate-panel";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import { JudgeModelControl } from "./judges-section";
@@ -107,7 +106,6 @@ export function SuiteScorerTable({
   scenarioMigrationNotice,
   stageFacts,
   capabilities,
-  unavailableReason,
   passOrFailHint,
   headerContent,
   headerDescription,
@@ -129,11 +127,9 @@ export function SuiteScorerTable({
    */
   onManageOrgProviders?: () => void;
   scenarioMigrationNotice?: React.ReactNode;
-  judgeAccessory?: React.ReactNode;
   rubricEditor?: React.ReactNode;
   stageFacts?: Partial<Record<UserValueStage, React.ReactNode>>;
   capabilities?: SuiteCapabilities | null;
-  unavailableReason?: string;
   passOrFailHint: string;
   judgeHint: string;
   groundednessEvidence?: GroundednessRunEvidence;
@@ -216,13 +212,6 @@ export function SuiteScorerTable({
   const authorableKinds = authorablePredicateKinds(
     capabilities?.scorers?.predicateKinds,
   );
-  const judgeDisabledReason = gateSwitchDisabledReason(
-    capabilities?.judge,
-    unavailableReason,
-  );
-  // A deployment without judge gating can never make the judge Required, so
-  // the role is shown, not offered.
-  const judgeGatingOff = capabilities?.judge?.gating.enabled === false;
 
   /** A rule this page may edit in place: its own list, not an inherited one. */
   const editable = (rule: EffectiveRule | undefined) =>
@@ -490,8 +479,6 @@ export function SuiteScorerTable({
                           openAllEditors();
                         }}
                         checkPolicy={checkPolicy}
-                        judgeDisabledReason={judgeDisabledReason}
-                        judgeGatingOff={judgeGatingOff}
                         judgeConfig={judgeConfig}
                         expanded={editMode}
                         editable={
@@ -624,8 +611,6 @@ function ScorerRow({
   onDisabledReason,
   onEnabledChange,
   checkPolicy,
-  judgeDisabledReason,
-  judgeGatingOff,
   judgeConfig,
   expanded,
   editable,
@@ -641,8 +626,6 @@ function ScorerRow({
   onDisabledReason: string | undefined;
   onEnabledChange: (enabled: boolean) => void;
   checkPolicy: boolean;
-  judgeDisabledReason: string | undefined;
-  judgeGatingOff: boolean;
   judgeConfig: EvalJudgeConfig | undefined;
   expanded: boolean;
   /** This page may change the row's threshold, role and body in place. */
@@ -792,8 +775,6 @@ function ScorerRow({
             row={row}
             predicate={predicate}
             checkPolicy={checkPolicy}
-            judgeDisabledReason={judgeDisabledReason}
-            judgeGatingOff={judgeGatingOff}
             judgeEditable={judgeEditable}
             editable={editable}
             onPredicateChange={onPredicateChange}
@@ -871,8 +852,6 @@ function RoleCell({
   row,
   predicate,
   checkPolicy,
-  judgeDisabledReason,
-  judgeGatingOff,
   judgeEditable,
   editable,
   onPredicateChange,
@@ -881,8 +860,6 @@ function RoleCell({
   row: ScorerTableRow;
   predicate: Predicate | undefined;
   checkPolicy: boolean;
-  judgeDisabledReason: string | undefined;
-  judgeGatingOff: boolean;
   /** The suite page edits the judge's role; a case only reads it. */
   judgeEditable: boolean;
   /** This page owns the assertion; an inherited one reads its role. */
@@ -898,32 +875,20 @@ function RoleCell({
     return <RoleChip role={row.role} />;
   }
   if (row.kind === "judge") {
-    if (row.judgeSlot === "groundedness" || !judgeEditable || judgeGatingOff) {
+    if (row.judgeSlot === "groundedness" || !judgeEditable) {
       return <RoleChip role={row.role} />;
     }
-    const requiredEnabled = judgeDisabledReason === undefined;
-    // Two segments unconditionally. The judge-severity capability used to
-    // decide whether a third segment, Warn, could be offered; with Warn and
-    // Report collapsed into Advisory there is no third tier for it to gate.
+    // Two segments unconditionally, both always offered: Required is the
+    // author's choice. With Warn and Report collapsed into Advisory there is
+    // no third tier.
     const roles: ScorerUiRole[] = ["required", "advisory"];
     return (
-      <div className="space-y-1">
-        <RoleSegmentGroup
-          value={row.role}
-          roles={roles}
-          disabledRoles={requiredEnabled ? undefined : ["required"]}
-          ariaLabel="Judge role"
-          onChange={onJudgeRoleChange}
-        />
-        {judgeDisabledReason ? (
-          <p
-            className="text-[11px] text-muted-foreground"
-            data-testid="judge-gate-disabled-reason"
-          >
-            {judgeDisabledReason}
-          </p>
-        ) : null}
-      </div>
+      <RoleSegmentGroup
+        value={row.role}
+        roles={roles}
+        ariaLabel="Judge role"
+        onChange={onJudgeRoleChange}
+      />
     );
   }
   if (

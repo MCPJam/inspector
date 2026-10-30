@@ -320,10 +320,11 @@ async function handle(c: any) {
         "", // bearer ignored on the workos_api_key path
         claims.projectId,
         [serverId],
-        HARNESS_MCP_TIMEOUT_MS,
+        sealed?.profile?.timeout ?? HARNESS_MCP_TIMEOUT_MS,
         undefined,
-        undefined,
+        sealed?.profile?.clientCapabilities,
         {
+          ...(sealed?.profile ? { initializePins: sealed.profile } : {}),
           // Per-server XAA works on the harness proxy (configured servers
           // mint instead of 500ing). KNOWN LIMITATION: the host's
           // enterprise-managed POLICY is NOT enforced here — the harness
@@ -358,7 +359,7 @@ async function handle(c: any) {
               logger.warn(
                 `[harness-mcp] rpc log publish failed serverId=${sid}: ${
                   error instanceof Error ? error.message : error
-                }`
+                }`,
               );
             }
             enqueueHarnessRpcLog({
@@ -393,11 +394,11 @@ async function handle(c: any) {
               logger.warn(
                 `[harness-mcp] http log publish failed serverId=${
                   exchange.serverId
-                }: ${error instanceof Error ? error.message : error}`
+                }: ${error instanceof Error ? error.message : error}`,
               );
             }
           },
-        }
+        },
       ),
       async (manager) => {
         // Enforce `toolPolicy` BEFORE the bridge: a denied call must never
@@ -413,7 +414,7 @@ async function handle(c: any) {
           });
           if (block) {
             logger.info(
-              `[harness-mcp] tool policy blocked serverId=${serverId} tool=${block.marker.toolName} reason=${block.marker.reason}`
+              `[harness-mcp] tool policy blocked serverId=${serverId} tool=${block.marker.toolName} reason=${block.marker.reason}`,
             );
             // Report the refusal to the RUN, not just to the model: the harness
             // adapter flattens this result's content blocks to a bare string, so
@@ -431,7 +432,7 @@ async function handle(c: any) {
             const correlationId = readScopeStepUpCorrelationId(c);
             const deliveredLocally = publishHarnessPolicyBlock(
               correlationId,
-              event
+              event,
             );
             if (
               !deliveredLocally &&
@@ -440,7 +441,7 @@ async function handle(c: any) {
             ) {
               const relay = buildCrossInstanceHarnessPolicyBlockMessage(
                 correlationId,
-                event
+                event,
               );
               if (relay) {
                 enqueueHarnessRpcLog({
@@ -466,10 +467,7 @@ async function handle(c: any) {
           ...(evidenceHook ? { toolCallEvidence: evidenceHook } : {}),
           // Bridge failures answer 200 with a JSON-RPC error envelope —
           // invisible to http.request.failed; this is their typed record.
-          failureReporter: createRequestStreamFailureReporter(
-            c,
-            "harness-mcp",
-          ),
+          failureReporter: createRequestStreamFailureReporter(c, "harness-mcp"),
           onToolCallError: async (context) => {
             const info = scopeStepUpInfoFromToolError(context);
             if (!info) return;
@@ -483,7 +481,7 @@ async function handle(c: any) {
             const correlationId = readScopeStepUpCorrelationId(c);
             const deliveredLocally = publishHarnessScopeStepUp(
               correlationId,
-              event
+              event,
             );
             if (
               deliveredLocally ||
@@ -495,7 +493,7 @@ async function handle(c: any) {
 
             const relay = buildCrossInstanceHarnessScopeStepUpMessage(
               correlationId,
-              event
+              event,
             );
             if (!relay) return;
             enqueueHarnessRpcLog({
@@ -513,12 +511,12 @@ async function handle(c: any) {
             await new Promise((resolve) =>
               setTimeout(
                 resolve,
-                CROSS_INSTANCE_SCOPE_STEP_UP_DELIVERY_GRACE_MS
-              )
+                CROSS_INSTANCE_SCOPE_STEP_UP_DELIVERY_GRACE_MS,
+              ),
             );
           },
         });
-      }
+      },
     );
     // Notification (no id) → 202 Accepted, no body.
     if (!response) return c.body("Accepted", 202);

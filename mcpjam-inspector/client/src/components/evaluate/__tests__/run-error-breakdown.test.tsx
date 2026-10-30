@@ -1,9 +1,24 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, renderHook, screen } from "@testing-library/react";
+import { fireEvent, render, renderHook, screen } from "@testing-library/react";
 
 const toastWarning = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/toast", () => ({
   toast: { warning: toastWarning },
+}));
+const handoff = vi.hoisted(() => ({
+  manage: undefined as (() => void) | undefined,
+  orgId: vi.fn(),
+}));
+vi.mock("@/hooks/use-org-models-handoff", () => ({
+  useOrgModelsHandoff: (organizationId: string | null) => {
+    handoff.orgId(organizationId);
+    return handoff.manage;
+  },
+}));
+vi.mock("@/state/app-state-context", () => ({
+  useOptionalSharedAppState: () => ({
+    projects: { p1: { id: "p1", organizationId: "org_1" } },
+  }),
 }));
 
 import {
@@ -39,6 +54,76 @@ describe("RunErrorBreakdownDescription", () => {
       "max-h-[min(16rem,40vh)]",
       "overflow-y-auto",
     );
+  });
+});
+
+describe("RunErrorBreakdownDescription — organization AI provider refusals", () => {
+  const refused: RunErrorBreakdownView = {
+    errored: 1,
+    finished: 1,
+    headline: "The only result in this run ended in an error.",
+    groups: [
+      {
+        cause: "orgProviders",
+        title: "An organization admin needs to add or reconnect an AI provider",
+        errors: [
+          { message: "The anthropic provider isn't turned on", count: 1 },
+        ],
+        count: 1,
+      },
+    ],
+  };
+  beforeEach(() => {
+    handoff.orgId.mockClear();
+    handoff.manage = undefined;
+  });
+
+  it("links an org admin to the organization's AI providers", () => {
+    const manage = vi.fn();
+    handoff.manage = manage;
+    render(<RunErrorBreakdownDescription breakdown={refused} projectId="p1" />);
+    expect(handoff.orgId).toHaveBeenCalledWith("org_1");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Manage AI providers" }),
+    );
+    expect(manage).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a member the title's pointer to an admin, with no button", () => {
+    handoff.manage = undefined;
+    render(<RunErrorBreakdownDescription breakdown={refused} projectId="p1" />);
+    expect(
+      screen.queryByRole("button", { name: "Manage AI providers" }),
+    ).not.toBeInTheDocument();
+    // The title already says an admin can fix it; a second line would repeat it.
+    expect(
+      screen.queryByText(
+        "Ask an organization admin to add or reconnect a provider.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("adds nothing to other causes", () => {
+    handoff.manage = vi.fn();
+    render(
+      <RunErrorBreakdownDescription breakdown={breakdown} projectId="p1" />,
+    );
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("reaches the toast with the run's project", () => {
+    toastWarning.mockClear();
+    handoff.manage = vi.fn();
+    renderHook(() => useRunErrorBreakdownToast("run_p1", refused, "p1"));
+    const { description } = toastWarning.mock.calls[0][1] as {
+      description: React.ReactNode;
+    };
+    render(<>{description}</>);
+    // Without the project there is no organization, and no button for anyone.
+    expect(handoff.orgId).toHaveBeenCalledWith("org_1");
+    expect(
+      screen.getByRole("button", { name: "Manage AI providers" }),
+    ).toBeInTheDocument();
   });
 });
 

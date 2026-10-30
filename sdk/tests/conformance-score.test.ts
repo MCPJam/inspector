@@ -78,15 +78,39 @@ describe("computeConformanceScore", () => {
 
     expect(score.outcome).toBe("incomplete");
     expect(score.applicable).toBe(26);
-    // 95 × 25/26 + 5 = 96.3 — but an incomplete run is barred from the
-    // MUST-clean band, so it reads 94 at most.
+    // 25/26 = 96% — but an incomplete run is barred from the MUST-clean
+    // band, so it reads 94 at most.
     expect(score.score).toBe(94);
   });
 
+  it("scores a failed or incomplete run as the share that passed, advice aside", () => {
+    // Staging QA: 0/36 read 3% and 22/25 read 87%, because the 5-point
+    // advice budget was granted to runs that were not MUST-clean.
+    const blocked = computeConformanceScore(
+      Array.from({ length: 36 }, (_, index) =>
+        check(`unrun-${index}`, "skipped", "could-not-run"),
+      ),
+      [{ id: "advice", tier: "should" }],
+    );
+    expect(blocked.outcome).toBe("incomplete");
+    expect(blocked.score).toBe(0);
+
+    const failing = computeConformanceScore(
+      [
+        ...passing(22),
+        check("failed-1", "failed"),
+        check("failed-2", "failed"),
+        check("failed-3", "failed"),
+      ],
+      [{ id: "advice", tier: "should" }],
+    );
+    expect(failing.score).toBe(88);
+  });
+
   it("reserves the 95–100 band for MUST-clean, complete runs", () => {
-    // With a large denominator one failure costs less than the 5-point advice
-    // budget (95 × 199/200 + 5 = 99.5), which would rank a violating server
-    // above a clean-but-advised one. The band cap prevents exactly that.
+    // With a large denominator one failure barely moves the share (199/200 =
+    // 99.5%), which would rank a violating server above a clean-but-advised
+    // one. The band cap prevents exactly that.
     const failedOne = computeConformanceScore([
       ...passing(199),
       check("failed-one", "failed"),
@@ -171,8 +195,8 @@ describe("computeConformanceScore", () => {
       check("bad", "failed"),
     ]);
     expect(failed.outcome).toBe("failed");
-    // 95 × 3/4 + 5 = 76.25 → 76, under the band cap.
-    expect(failed.score).toBe(76);
+    // 3/4 = 75%: a failed run scores its passed share, under the band cap.
+    expect(failed.score).toBe(75);
   });
 });
 
@@ -188,10 +212,10 @@ describe("pooledConformanceScore", () => {
     expect(pooled.applicable).toBe(39);
     expect(pooled.passed).toBe(30);
     expect(pooled.failed).toBe(9);
-    // 95 × 30/39 + 5 = 78 — an average of suite scores (≈ (100+5)/2 = 52 or
-    // a naive mean of 100 and 5) would say something different; summing is
-    // what keeps the 0-for-9 OAuth run visible.
-    expect(pooled.score).toBe(78);
+    // 30/39 = 77% — an average of suite scores (a naive mean of 100 and 0 is
+    // 50) would say something different; summing is what keeps the 0-for-9
+    // OAuth run visible.
+    expect(pooled.score).toBe(77);
     expect(pooled.outcome).toBe("failed");
   });
 
@@ -267,7 +291,7 @@ describe("describeConformanceScore", () => {
     );
 
     expect(line).toBe(
-      "91/100 — 24/26 applicable checks passed, 2 failed, 1 advisory (−2) [2025-11-25]",
+      "92/100 — 24/26 applicable checks passed, 2 failed, 1 advisory (−2) [2025-11-25]",
     );
   });
 
@@ -485,13 +509,13 @@ describe("suite adapters", () => {
   it("scores OAuth from the step evidence, not the suite's own verdict", () => {
     // The runner can currently stamp outcome "passed" over could-not-run
     // steps; the score must not inherit that. 1 passed + 1 unrun of 2
-    // applicable → 95 × 1/2 + 5 = 52.5 → 53, outcome incomplete.
+    // applicable → 1/2 = 50%, outcome incomplete.
     const score = scoreFromOAuthResult(oauthResult());
 
     expect(score.outcome).toBe("incomplete");
     expect(score.applicable).toBe(2);
     expect(score.couldNotRun).toBe(1);
-    expect(score.score).toBe(53);
+    expect(score.score).toBe(50);
   });
 
   it("returns a scoreless result for a server without auth — OPTIONAL costs nothing", () => {
