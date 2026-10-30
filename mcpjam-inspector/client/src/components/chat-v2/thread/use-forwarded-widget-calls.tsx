@@ -61,7 +61,7 @@ export function useForwardedWidgetCalls(
   return {
     approvals: pending.map((entry) => (
       <ToolPart
-        key={entry.key}
+        key={entry.id}
         chatSessionId={chatSessionId}
         part={{
           type: "dynamic-tool",
@@ -106,6 +106,8 @@ export function useForwardedWidgetCalls(
           if (!parsed.success) continue;
           const event = parsed.data;
           if (event.type === "approval") {
+            if (cancelPending)
+              abort.signal.removeEventListener("abort", cancelPending);
             // A proxy can keep the response open after fetch aborts. Revoke
             // the pending approval explicitly, using its existing signed id.
             cancelPending = () => {
