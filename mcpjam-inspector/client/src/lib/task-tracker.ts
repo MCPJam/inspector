@@ -27,20 +27,19 @@ export type {
   TaskAccountSelection,
 } from "./task-tracker-types";
 
-/**
- * Current auth/org context. Set from the API context so a logout or an
- * organization switch immediately hides — and on the next write drops —
- * handles belonging to the previous actor.
- */
-let activeScope: string | undefined;
-
-export function setTrackedTaskScope(scope: string | null | undefined): void {
-  activeScope = scope ?? undefined;
-}
-
-export function getTrackedTaskScope(): string | undefined {
-  return activeScope;
-}
+import {
+  dismissedRegistryKey,
+  getOwnedTaskScope,
+  isBoundTask as isBoundHandle,
+  isActiveTaskScope as inScope,
+  withTaskScope,
+} from "./task-tracker-scope";
+export {
+  getTrackedTaskScope,
+  setTrackedTaskScope,
+  getOwnedTaskScope,
+  setTrackedTaskOwner,
+} from "./task-tracker-scope";
 
 function sameAccount(
   task: TrackedTask,
@@ -48,12 +47,9 @@ function sameAccount(
 ): boolean {
   return (
     task.connectionId === selection?.connectionId &&
+    (selection?.scope === undefined || task.scope === selection.scope) &&
     (selection?.wire === undefined || task.wire === selection.wire)
   );
-}
-
-function inScope(task: TrackedTask): boolean {
-  return (task.scope ?? undefined) === activeScope;
 }
 
 const LEGACY_STORAGE_KEY = "mcp-tracked-tasks";
@@ -253,11 +249,6 @@ function migrate(parsed: unknown): TrackedTask[] {
     .filter((task): task is TrackedTask => task !== undefined);
 }
 
-/** Old tabs keep owning ordinary handles; only bound handles use the new format. */
-function isBoundHandle(task: TrackedTask): boolean {
-  return task.connectionId !== undefined || task.sourceExecutionId !== undefined;
-}
-
 function readStoredTasks(key: string): TrackedTask[] {
   try {
     const data = localStorage.getItem(key);
@@ -371,7 +362,8 @@ export function getTrackedTaskById(
 }
 
 export function trackTask(task: Omit<TrackedTask, "dismissed">): void {
-  const scoped = { ...task, scope: task.scope ?? activeScope };
+  const scoped = withTaskScope(task);
+  if (isBoundHandle(scoped) && scoped.scope === undefined) return;
   // Same identity bound as the read path, applied HERE so an over-length
   // server-chosen id is refused at the door. Writing it and rejecting it on
   // the next `loadTasks` would make the handle vanish at the next reload with
@@ -466,9 +458,7 @@ export function recordTaskObservations(
   const byKey = new Map(tasks.map((task) => [taskIdentity(task), task]));
   let changed = false;
   for (const { identity, observation } of entries) {
-    const entry = byKey.get(
-      taskIdentity({ ...identity, scope: identity.scope ?? activeScope })
-    );
+    const entry = byKey.get(taskIdentity(withTaskScope(identity)));
     // Never resurrects an untracked handle: this must not recreate an entry
     // the user cleared or that belongs to another actor.
     if (!entry) continue;
@@ -500,8 +490,8 @@ export function getTrackedTaskRestoreStates(
   const callerKeyByStoredKey = new Map<string, string>();
   for (const identity of identities) {
     callerKeyByStoredKey.set(
-      taskIdentity({ ...identity, scope: identity.scope ?? activeScope }),
-      taskIdentity(identity)
+      taskIdentity(withTaskScope(identity)),
+      taskIdentity(identity),
     );
   }
   for (const entry of loadTasks()) {
@@ -526,10 +516,7 @@ export function getTrackedTaskRestoreStates(
 export function getTrackedTaskSchedule(
   identity: TaskIdentityRef,
 ): Omit<TrackedTaskRestoreState, "respondedInputKeys"> | undefined {
-  const key = taskIdentity({
-    ...identity,
-    scope: identity.scope ?? activeScope,
-  });
+  const key = taskIdentity(withTaskScope(identity));
   const entry = loadTasks().find((task) => taskIdentity(task) === key);
   if (!entry) return undefined;
   return {
@@ -545,7 +532,7 @@ export function recordTaskObservation(
   identity: TaskIdentityRef,
   observation: TaskObservationPatch,
 ): void {
-  const scoped = { ...identity, scope: identity.scope ?? activeScope };
+  const scoped = withTaskScope(identity);
   const key = taskIdentity(scoped);
   const tasks = loadTasks();
   const entry = tasks.find((t) => taskIdentity(t) === key);
@@ -564,7 +551,7 @@ export function recordRespondedInputKeys(
   keys: readonly string[],
 ): void {
   if (keys.length === 0) return;
-  const scoped = { ...identity, scope: identity.scope ?? activeScope };
+  const scoped = withTaskScope(identity);
   const key = taskIdentity(scoped);
   const tasks = loadTasks();
   const entry = tasks.find((t) => taskIdentity(t) === key);
@@ -578,7 +565,7 @@ export function recordRespondedInputKeys(
 }
 
 export function getRespondedInputKeys(identity: TaskIdentityRef): string[] {
-  const scoped = { ...identity, scope: identity.scope ?? activeScope };
+  const scoped = withTaskScope(identity);
   const key = taskIdentity(scoped);
   return (
     loadTasks().find((t) => taskIdentity(t) === key)?.respondedInputKeys ?? []
@@ -671,16 +658,6 @@ export function dismissTasksForServer(
 const DISMISSED_REGISTRY_KEY = "mcp-dismissed-registry-tasks";
 const MAX_DISMISSED_REGISTRY_IDS_PER_SERVER = 200;
 
-function dismissedRegistryKey(
-  serverId: string,
-  selection?: TaskAccountSelection,
-): string {
-  const base = `${activeScope ?? ""}\u0000${serverId}`;
-  return selection?.wire !== undefined || selection?.connectionId !== undefined
-    ? `${base}\u0000${selection.wire ?? ""}\u0000${selection.connectionId ?? ""}`
-    : base;
-}
-
 function loadDismissedRegistry(): Record<string, string[]> {
   try {
     const raw = localStorage.getItem(DISMISSED_REGISTRY_KEY);
@@ -726,6 +703,12 @@ export function dismissRegistryTasks(
   taskIds: readonly string[],
   selection?: TaskAccountSelection,
 ): void {
+  if (
+    selection?.connectionId !== undefined &&
+    selection.scope === undefined &&
+    getOwnedTaskScope() === undefined
+  )
+    return;
   const ids = taskIds.filter((id) => identityString(id) !== undefined);
   if (ids.length === 0) return;
   const store = loadDismissedRegistry();
@@ -741,6 +724,12 @@ export function getDismissedTaskIds(
   serverId: string,
   selection?: TaskAccountSelection,
 ): Set<string> {
+  if (
+    selection?.connectionId !== undefined &&
+    selection.scope === undefined &&
+    getOwnedTaskScope() === undefined
+  )
+    return new Set();
   const dismissed = new Set(
     loadTasks()
       .filter(
@@ -751,7 +740,7 @@ export function getDismissedTaskIds(
   );
   const store = loadDismissedRegistry();
   const keys = [dismissedRegistryKey(serverId, selection)];
-  if (selection?.connectionId === undefined)
+  if (selection?.connectionId === undefined && selection?.scope === undefined)
     keys.push(dismissedRegistryKey(serverId));
   for (const key of keys) for (const id of store[key] ?? []) dismissed.add(id);
   return dismissed;

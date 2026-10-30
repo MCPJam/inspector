@@ -1,3 +1,8 @@
+import {
+  getOwnedTaskScope,
+  getTrackedTasks,
+  trackTask,
+} from "@/lib/task-tracker";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useApiContext } from "../use-hosted-api-context";
@@ -165,5 +170,49 @@ describe("useApiContext — publishes only real changes", () => {
     await settle();
 
     expect(listToolsForServers).toHaveBeenCalledTimes(callsAfterLoad);
+  });
+});
+
+
+describe("Task owner context", () => {
+  afterEach(() => {
+    setApiContext(null);
+    localStorage.clear();
+  });
+
+  it("isolates bound handles on same-project actor changes while preserving legacy bookmarks", () => {
+    localStorage.clear();
+    const { rerender } = renderHook(
+      ({ taskOwnerId }: { taskOwnerId: string | null }) =>
+        useApiContext({ ...baseOptions, taskOwnerId }),
+      { initialProps: { taskOwnerId: "actor-a" as string | null } },
+    );
+    const firstScope = getOwnedTaskScope();
+    trackTask({
+      taskId: "legacy",
+      serverId: "asana",
+      wire: "extension",
+      createdAt: new Date().toISOString(),
+    });
+    trackTask({
+      taskId: "bound",
+      serverId: "server-1",
+      wire: "extension",
+      connectionId: "account",
+      createdAt: new Date().toISOString(),
+    });
+    rerender({ taskOwnerId: "actor-b" });
+    expect(getOwnedTaskScope()).not.toBe(firstScope);
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["legacy"]);
+    rerender({ taskOwnerId: null });
+    expect(getOwnedTaskScope()).toBeUndefined();
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["legacy"]);
+    rerender({ taskOwnerId: "actor-a" });
+    expect(
+      getTrackedTasks()
+        .map((t) => t.taskId)
+        .sort(),
+    ).toEqual(["bound", "legacy"]);
+    expect(buildServerRequest("asana")).not.toHaveProperty("taskOwnerId");
   });
 });

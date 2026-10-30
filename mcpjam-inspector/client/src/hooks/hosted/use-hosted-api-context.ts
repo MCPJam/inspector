@@ -7,6 +7,7 @@ import type {
 } from "@mcpjam/sdk/browser";
 
 interface UseApiContextOptions {
+  taskOwnerId?: string | null;
   projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
@@ -37,6 +38,7 @@ interface UseApiContextOptions {
 }
 
 export function useApiContext({
+  taskOwnerId,
   projectId,
   serverIdsByName,
   clientCapabilities,
@@ -74,6 +76,7 @@ export function useApiContext({
     }
 
     const next: ApiContext = {
+      taskOwnerId,
       projectId,
       serverIdsByName,
       clientCapabilities,
@@ -101,6 +104,7 @@ export function useApiContext({
     setApiContext(next);
   }, [
     enabled,
+    taskOwnerId,
     projectId,
     serverIdsByName,
     clientCapabilities,

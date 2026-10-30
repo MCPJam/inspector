@@ -5120,6 +5120,8 @@ export default function App() {
     appState.servers,
   ]);
   useApiContext({
+    taskOwnerId:
+      typeof currentUser?._id === "string" ? currentUser._id : undefined,
     projectId: convexProjectId,
     serverIdsByName: hostedServerIdsByName,
     clientCapabilities: hostedClientCapabilities,

@@ -14,6 +14,8 @@ import {
   markTaskExpired,
   trackTask,
   setTrackedTaskScope,
+  setTrackedTaskOwner,
+  getOwnedTaskScope,
   untrackTask,
 } from "../task-tracker";
 
@@ -27,6 +29,78 @@ describe("task-tracker", () => {
   beforeEach(() => {
     localStorage.clear();
     setTrackedTaskScope(undefined);
+    setTrackedTaskOwner("project-fixture", "actor-fixture");
+  });
+
+  it("keeps matching bound task IDs private across actors in the same project", () => {
+    setTrackedTaskScope("project");
+    trackTask({
+      taskId: "legacy",
+      serverId: "s",
+      wire: "extension",
+      createdAt: NOW,
+    });
+    const task = {
+      taskId: "same",
+      serverId: "s",
+      wire: "extension" as const,
+      connectionId: "account",
+      createdAt: NOW,
+    };
+    setTrackedTaskOwner("project", "actor-a");
+    trackTask({ ...task, sourceExecutionId: "source-a" });
+    recordRespondedInputKeys(task, ["a-answer"]);
+    setTrackedTaskOwner("project", "actor-b");
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["legacy"]);
+    trackTask({ ...task, sourceExecutionId: "source-b" });
+    recordRespondedInputKeys(task, ["b-answer"]);
+    expect(getRespondedInputKeys(task)).toEqual(["b-answer"]);
+    setTrackedTaskOwner("project", "actor-a");
+    expect(getTrackedTaskById("same", "s", task)?.sourceExecutionId).toBe(
+      "source-a",
+    );
+    expect(getRespondedInputKeys(task)).toEqual(["a-answer"]);
+    expect(getTrackedTasks().map((t) => t.taskId)).toContain("legacy");
+  });
+
+  it("does not store bound tasks while their actor is unresolved", () => {
+    setTrackedTaskOwner("project", null);
+    trackTask({
+      taskId: "bound",
+      serverId: "s",
+      wire: "extension",
+      sourceExecutionId: "source",
+      createdAt: NOW,
+    });
+    expect(getTrackedTasks()).toEqual([]);
+    trackTask({
+      taskId: "legacy",
+      serverId: "s",
+      wire: "extension",
+      createdAt: NOW,
+    });
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["legacy"]);
+  });
+
+  it("preserves a captured owner on late provenance-only events", () => {
+    setTrackedTaskOwner("project", "actor-a");
+    const captured = getOwnedTaskScope();
+    setTrackedTaskOwner("project", "actor-b");
+    trackTask({
+      taskId: "late",
+      serverId: "s",
+      wire: "extension",
+      sourceExecutionId: "source",
+      scope: captured,
+      createdAt: NOW,
+    });
+    expect(getTrackedTasks()).toEqual([]);
+    setTrackedTaskOwner("project", "actor-a");
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["late"]);
+    setTrackedTaskOwner(null, null);
+    expect(getTrackedTasks()).toEqual([]);
+    setTrackedTaskOwner("project", "actor-a");
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["late"]);
   });
 
   it("migrates v1 bare-array entries to legacy-tagged records", () => {

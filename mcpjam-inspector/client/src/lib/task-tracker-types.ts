@@ -3,7 +3,11 @@ import type { TasksWire } from "./apis/mcp-tasks-api";
 
 export type PrimitiveType = "tool" | "prompt" | "resource";
 
-export type TaskAccountSelection = { connectionId?: string; wire?: TasksWire };
+export type TaskAccountSelection = {
+  connectionId?: string;
+  wire?: TasksWire;
+  scope?: string;
+};
 
 export interface TrackedTask {
   taskId: string;
