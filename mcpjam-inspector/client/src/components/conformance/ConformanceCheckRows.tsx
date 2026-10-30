@@ -242,6 +242,15 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
             {step.summary}
           </div>
 
+          {typeof step.error?.details === "string" && (
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+              <div className="mb-1 font-medium text-foreground/70">Details</div>
+              <div className="whitespace-pre-wrap break-all font-mono text-[10px]">
+                {step.error.details}
+              </div>
+            </div>
+          )}
+
           {step.teachableMoments && step.teachableMoments.length > 0 && (
             <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
               <div className="mb-1 font-medium text-foreground/70">
@@ -350,6 +359,30 @@ export function CatalogRow({ entry }: { entry: CatalogEntry }) {
           {entry.description}
         </div>
       </Collapse>
+    </div>
+  );
+}
+
+/**
+ * A suite's checks as a gray list: before a run ("not run yet") and for a
+ * suite that did not apply, so the reader can still see what it covers.
+ */
+export function CatalogList({
+  catalog,
+  note,
+}: {
+  catalog: CatalogEntry[];
+  /** The rest of the line after "N checks in this suite", punctuation included. */
+  note: string;
+}) {
+  return (
+    <div className="pl-7">
+      <div className="py-1 text-[11px] text-muted-foreground">
+        {catalog.length} checks in this suite{note}
+      </div>
+      {catalog.map((entry) => (
+        <CatalogRow key={entry.id} entry={entry} />
+      ))}
     </div>
   );
 }

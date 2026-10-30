@@ -38,7 +38,7 @@ export const PASS_OR_FAIL_HINT =
   "Evaluators grade the evidence available for each iteration.";
 
 export const JUDGE_HINT =
-  "A judge scores iteration evidence from 0–1. Goal completion can gate after review-protocol and calibration requirements are met, or through an explicit owner acknowledgement once protocol readiness is met.";
+  "A judge scores iteration evidence from 0–1. Set goal completion to Required to let it fail a run.";
 
 export function SuitePassOrFailSection({
   matchOptions,
@@ -52,11 +52,9 @@ export function SuitePassOrFailSection({
   onManageOrgProviders,
   onAddProvider,
   scenarioMigrationNotice,
-  judgeAccessory,
   rubricEditor,
   stageFacts,
   capabilities,
-  unavailableReason,
   groundednessEvidence,
   judgeRubric,
 }: {
@@ -83,8 +81,6 @@ export function SuitePassOrFailSection({
   onAddProvider: (() => void) | null;
   /** The "migrate scenario assertions per case" warning, when the suite has any. */
   scenarioMigrationNotice?: React.ReactNode;
-  /** S6 mounts the agreement line, the gate switch and its acknowledgement. */
-  judgeAccessory?: React.ReactNode;
   /** S6 mounts the judge rubric editor under the user-value group. */
   rubricEditor?: React.ReactNode;
   /**
@@ -95,7 +91,6 @@ export function SuitePassOrFailSection({
    */
   stageFacts?: Partial<Record<UserValueStage, React.ReactNode>>;
   capabilities?: SuiteCapabilities | null;
-  unavailableReason?: string;
   groundednessEvidence?: GroundednessRunEvidence;
   /** The suite's rubric; the rubric-checks card lists its criteria. */
   judgeRubric?: EvalJudgeRubric;
@@ -112,11 +107,9 @@ export function SuitePassOrFailSection({
       onManageOrgProviders={onManageOrgProviders}
       onAddProvider={onAddProvider}
       scenarioMigrationNotice={scenarioMigrationNotice}
-      judgeAccessory={judgeAccessory}
       rubricEditor={rubricEditor}
       stageFacts={stageFacts}
       capabilities={capabilities}
-      unavailableReason={unavailableReason}
       passOrFailHint={PASS_OR_FAIL_HINT}
       judgeHint={JUDGE_HINT}
       groundednessEvidence={groundednessEvidence}

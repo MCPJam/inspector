@@ -49,6 +49,11 @@ import {
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
 import { resolveServerOAuthProtocolSelection } from "@/state/oauth-orchestrator";
+import {
+  assertSavedSecretTargets,
+  loadSavedClientSecret,
+  oauthTargetUrl,
+} from "@/lib/oauth/saved-client-secret";
 
 export type SuiteStatus =
   | "idle"
@@ -106,6 +111,11 @@ export interface OAuthSuiteState extends SuiteState {
    * window that never existed until the session expired.
    */
   popupBlocked?: boolean;
+  /**
+   * The user chose Skip OAuth. The suite reads "unavailable" like a server
+   * that needs no auth, but its checks were never run, not ruled out.
+   */
+  skipped?: boolean;
 }
 
 /**
@@ -604,12 +614,19 @@ export function useConformanceRun({
           versionPin === "auto"
             ? resolveServerOAuthProtocolSelection(currentServer).protocolVersion
             : versionPin;
-        const baseProfile = profile.serverUrl
+        const saved =
+          profile.clientSecret || !profile.clientId
+            ? undefined
+            : await loadSavedClientSecret(currentServer);
+        if (!isRunActive(runToken, serverName)) return;
+        if (saved) assertSavedSecretTargets(serverName, saved);
+        const serverUrl = oauthTargetUrl(currentServer, profile.serverUrl);
+        const baseProfile = serverUrl
           ? {
-              serverUrl: profile.serverUrl,
+              serverUrl,
               registrationStrategy: profile.registrationStrategy,
               clientId: profile.clientId || undefined,
-              clientSecret: profile.clientSecret || undefined,
+              clientSecret: profile.clientSecret || saved?.clientSecret,
               scopes: profile.scopes || undefined,
               customHeaders: profile.customHeaders.length
                 ? profile.customHeaders
@@ -698,6 +715,7 @@ export function useConformanceRun({
     setOAuth({
       status: "unavailable",
       unavailableReason: "OAuth was skipped, so it is not scored for this run.",
+      skipped: true,
     });
   }, [clearOAuthListeners]);
 

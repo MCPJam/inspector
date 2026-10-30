@@ -8,6 +8,7 @@ export async function forwardNativeMcp(args: {
   url: string;
   serverId: string;
   request: Request;
+  signal?: AbortSignal;
   body?: string;
   message?: NativeMessage;
   trustedHeaders?: HeadersInit;
@@ -24,7 +25,7 @@ export async function forwardNativeMcp(args: {
     method: args.request.method,
     headers,
     body: args.body,
-    signal: args.request.signal,
+    signal: args.signal ?? args.request.signal,
     redirect: "follow",
   };
   const send = () => {
@@ -46,7 +47,8 @@ export async function forwardNativeMcp(args: {
     }
   }
   const id =
-    typeof args.message?.id === "string" || typeof args.message?.id === "number"
+    typeof args.message?.method === "string" &&
+    (typeof args.message.id === "string" || typeof args.message.id === "number")
       ? args.message.id
       : undefined;
   return nativeResponse({

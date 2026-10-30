@@ -14,9 +14,12 @@
  *     how much advice fired.
  *   - SEP-1730 sets tier lines at 100% and 80%; the 95/5 split keeps advice
  *     from ever demoting a MUST-clean server across either line. The 95–100
- *     band is reserved for runs that are MUST-clean and complete (a failed or
- *     incomplete run caps at 94), so a violating server can never outrank a
- *     clean-but-advised one and reading ≥95 always means the same thing.
+ *     band is reserved for runs that are MUST-clean and complete, so a
+ *     violating server can never outrank a clean-but-advised one and reading
+ *     ≥95 always means the same thing.
+ *   - A failed or incomplete run scores the plain share of applicable checks
+ *     that passed (capped at 94), so the number never disagrees with the
+ *     passed/applicable fraction shown beside it.
  *   - RFC 2119 makes RECOMMENDED the SHOULD tier ("SHOULD — this word, or the
  *     adjective RECOMMENDED") and MAY the weakest, hence −2 / −1.
  *
@@ -128,23 +131,25 @@ function scoreFromCounts(
 
   let score: number | null = null;
   if (applicable > 0) {
-    const mustPoints = (MUST_POINTS * counts.passed) / applicable;
-    const advicePoints = ADVICE_POINTS - advicePointsLost;
-    score = Math.round(mustPoints + advicePoints);
-    // The bands must mean something, so two caps guard them:
+    // The bands must mean something, so the two outcomes score differently:
     //
-    //   - 95–100 is reserved for runs that are MUST-clean AND complete. With
-    //     a large enough denominator, one failure costs less than the 5-point
-    //     advice budget (95·25/26 + 5 ≈ 96), which would rank a violating
-    //     server above a clean-but-advised one. A failed or incomplete run
-    //     therefore caps at 94: reading ≥95 always means every applicable
-    //     MUST passed and was exercised.
-    //   - 100 is reserved for the run with nothing left to say. Rounding
-    //     alone would print 100 from 95·(n−1)/n + 5 once n ≈ 190.
+    //   - A failed or incomplete run scores the share of applicable checks
+    //     that passed, so the number always matches the fraction beside it.
+    //     The advice budget is only earned by a MUST-clean run: granting it
+    //     here printed 3% next to 0/36. It caps at 94, so reading ≥95 always
+    //     means every applicable MUST passed and was exercised (one failure
+    //     in 62 would otherwise round to 98).
+    //   - A passed run is MUST-clean, so its 95 points are whole and only
+    //     advice moves it within 95–100. 100 is reserved for the run with
+    //     nothing left to say.
     if (outcome !== "passed") {
-      score = Math.min(score, MUST_POINTS - 1);
-    } else if (advisories.length > 0) {
-      score = Math.min(score, 99);
+      score = Math.min(
+        Math.round((100 * counts.passed) / applicable),
+        MUST_POINTS - 1,
+      );
+    } else {
+      score = MUST_POINTS + ADVICE_POINTS - advicePointsLost;
+      if (advisories.length > 0) score = Math.min(score, 99);
     }
   }
 

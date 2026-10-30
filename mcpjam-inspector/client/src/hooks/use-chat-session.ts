@@ -2040,7 +2040,6 @@ export function useChatSession(
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
-  const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedScenarioId = hostedContext?.scenarioId;
   const hostedHostId = hostedContext?.hostId;
   // A hidden environment rides a CLIENT-turn context: it needs the client it
@@ -3774,11 +3773,6 @@ export function useChatSession(
         serverIds: servers?.serverIds ?? hostedSelectedServerIds,
         serverNames: servers?.serverNames ?? selectedServers,
         accessScope: "chat_v2",
-        ...(isHostedDirectChat &&
-        hostedOAuthTokens &&
-        Object.keys(hostedOAuthTokens).length > 0
-          ? { oauthTokens: hostedOAuthTokens }
-          : {}),
         ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
         ...(hostedScenarioId && Number.isFinite(hostedAccessVersion)
           ? { accessVersion: hostedAccessVersion }
@@ -4091,7 +4085,6 @@ export function useChatSession(
     options.pluginGlobalContext,
     chatSessionId,
     hostedSelectedServerIds,
-    hostedOAuthTokens,
     hostedScenarioId,
     hostedHostId,
     hostedExecutionTarget,
