@@ -4,7 +4,7 @@
  */
 
 import type { ReactNode } from "react";
-import { AlertTriangle, Plus } from "lucide-react";
+import { AlertTriangle, Server } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
@@ -24,21 +24,11 @@ export const RUN_LABEL = "Run conformance checks";
 export const NO_SERVERS_MESSAGE = "Add a server to run conformance checks.";
 
 /**
- * The pre-run state: the animated score card above the first-run prompt.
- * It fills the space above whatever follows it in the scroll container.
- * With no servers configured it asks for one instead of offering a run.
+ * The pre-run state: the sample score card above the first-run prompt and its
+ * one Run button. It fills the space above whatever follows it in the scroll
+ * container.
  */
-export function ConformancePreRun({
-  runButton,
-  serverPicker,
-  onAddServer,
-}: {
-  runButton: ReactNode;
-  /** Shown left of the run button, so the server is picked where you run. */
-  serverPicker?: ReactNode;
-  /** Set when there is no server to pick: the prompt offers to add one. */
-  onAddServer?: () => void;
-}) {
+export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
   return (
     // `my-auto` rather than `justify-center`: it centers the prompt while
     // there is room and, unlike justify-center, never clips the top once
@@ -46,28 +36,15 @@ export function ConformancePreRun({
     <div className="flex shrink-0 grow flex-col py-4">
       <div className="my-auto flex flex-col items-center gap-4">
         <ConformanceScorePreview />
-        <div className="flex flex-col items-center gap-2 pt-2 text-center">
+        <div className="flex flex-col items-center gap-2 pt-6 text-center">
           <h3 className="text-xl font-semibold tracking-tight">
             Run your first conformance check
           </h3>
           <p className="text-sm text-muted-foreground">
-            {onAddServer
-              ? NO_SERVERS_MESSAGE
-              : "We assess protocol, apps, tasks, and OAuth on the server of your choice."}
+            We assess protocol, apps, tasks, and OAuth on the server of your
+            choice.
           </p>
-          <div className="flex items-center gap-2 pt-4">
-            {/* With no servers the run button stays, disabled, beside Add
-                server, so the page shows where a run starts once one exists. */}
-            {onAddServer ? (
-              <Button size="sm" onClick={onAddServer}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Add server
-              </Button>
-            ) : (
-              serverPicker
-            )}
-            {runButton}
-          </div>
+          <div className="flex pt-6">{runButton}</div>
         </div>
       </div>
     </div>
@@ -241,10 +218,16 @@ export function ProtocolVersionSelect({
   value,
   onChange,
   disabled,
+  variant = "compact",
+  labelledBy,
 }: {
   value: ProtocolVersionPin;
   onChange?: (value: ProtocolVersionPin) => void;
   disabled?: boolean;
+  /** `field` spans its column under a visible label, as in Run's setup. */
+  variant?: "compact" | "field";
+  /** The visible label's id; without one the select names itself. */
+  labelledBy?: string;
 }) {
   return (
     <Select
@@ -253,8 +236,14 @@ export function ProtocolVersionSelect({
       disabled={disabled}
     >
       <SelectTrigger
-        aria-label="Protocol version"
-        className="h-8 w-auto gap-2 text-sm"
+        aria-label={labelledBy ? undefined : "Protocol version"}
+        aria-labelledby={labelledBy}
+        className={cn(
+          "gap-2 text-sm",
+          variant === "field"
+            ? "h-9.5 w-full justify-between px-3"
+            : "h-8 w-auto",
+        )}
       >
         <span>Protocol · {value === "auto" ? "Auto" : value}</span>
       </SelectTrigger>
@@ -291,28 +280,59 @@ export function ConformanceServerPicker({
   servers,
   selectedName,
   onSelect,
+  variant = "compact",
+  labelledBy,
 }: {
   servers: ServerWithName[];
   selectedName: string | null;
   onSelect: (name: string) => void;
+  /**
+   * `pill` is the server chip the rest of the app picks servers with (the
+   * hosts `ServerPicker`): dashed until a server is chosen.
+   */
+  variant?: "compact" | "pill";
+  /** The visible label's id; without one the select names itself. */
+  labelledBy?: string;
 }) {
   const value =
     selectedName && servers.some((server) => server.name === selectedName)
       ? selectedName
       : undefined;
+  const placeholder = servers.length === 0 ? "None" : "Select";
   return (
     <Select
       value={value}
       onValueChange={onSelect}
       disabled={servers.length === 0}
     >
-      <SelectTrigger aria-label="Server" className="h-8 w-auto gap-2 text-sm">
-        {/* Labelled like the protocol select beside it: "Server · <name>". */}
-        <span>
-          Server ·{" "}
-          <SelectValue placeholder={servers.length === 0 ? "None" : "Select"} />
-        </span>
-      </SelectTrigger>
+      {variant === "pill" ? (
+        <SelectTrigger
+          aria-label={labelledBy ? undefined : "Server"}
+          aria-labelledby={labelledBy}
+          className={cn(
+            "h-8 w-auto max-w-[260px] gap-1.5 rounded-full px-2.5 text-xs font-medium shadow-none",
+            value
+              ? "border-border/60 bg-muted/40 hover:bg-muted/60"
+              : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
+          )}
+        >
+          <Server className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate">
+            <SelectValue placeholder={placeholder} />
+          </span>
+        </SelectTrigger>
+      ) : (
+        <SelectTrigger
+          aria-label={labelledBy ? undefined : "Server"}
+          aria-labelledby={labelledBy}
+          className="h-8 w-auto gap-2 text-sm"
+        >
+          {/* Labelled like the protocol select beside it: "Server · <name>". */}
+          <span>
+            Server · <SelectValue placeholder={placeholder} />
+          </span>
+        </SelectTrigger>
+      )}
       <SelectContent>
         {servers.map((server) => {
           const note = connectionNote(server);

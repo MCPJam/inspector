@@ -58,7 +58,7 @@ vi.mock(
   }),
 );
 
-import { ConformanceTab } from "../ConformancePanel";
+import { ConformanceTab } from "../ConformanceTab";
 import { RUN_LABEL } from "../ConformancePageChrome";
 
 function createHttpServer(): ServerWithName {

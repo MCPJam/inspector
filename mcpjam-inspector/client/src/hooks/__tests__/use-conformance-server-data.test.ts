@@ -1,0 +1,75 @@
+import { renderHook } from "@testing-library/react";
+import { getFunctionName, type FunctionReference } from "convex/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mockUseQueries = vi.fn();
+vi.mock("convex/react", () => ({
+  useQueries: (queries: unknown) => mockUseQueries(queries),
+  useMutation: () => vi.fn(),
+}));
+
+import { useConformanceServerData } from "../use-conformance-server-data";
+
+const serversById = new Map([["srv_1", "alpha"]]);
+const serversByName = new Map([["alpha", "srv_1"]]);
+
+function queryName(queries: {
+  result?: { query: FunctionReference<"query"> };
+}) {
+  return queries?.result ? getFunctionName(queries.result.query) : undefined;
+}
+
+describe("useConformanceServerData", () => {
+  beforeEach(() => mockUseQueries.mockReset());
+
+  it("reads defaults and each server's latest run by name", () => {
+    mockUseQueries.mockImplementation((queries) =>
+      queryName(queries) === "conformanceSettings:listServerSettings"
+        ? { result: [{ serverId: "srv_1", defaultChecks: { oauth: false } }] }
+        : {
+            result: {
+              page: [
+                { _id: "run_new", serverId: "srv_1" },
+                { _id: "run_old", serverId: "srv_1" },
+              ],
+            },
+          },
+    );
+    const { result } = renderHook(() =>
+      useConformanceServerData({
+        projectId: "proj_1",
+        serversById,
+        serversByName,
+      }),
+    );
+
+    expect(result.current.defaultsByServer).toEqual({
+      alpha: { oauth: false },
+    });
+    expect(result.current.lastRunByServer.alpha?._id).toBe("run_new");
+    expect(result.current.saveDefaults).toBeDefined();
+  });
+
+  it("keeps the page up when the backend lacks the settings function", () => {
+    mockUseQueries.mockImplementation((queries) =>
+      queryName(queries) === "conformanceSettings:listServerSettings"
+        ? {
+            result: new Error(
+              "Could not find public function for 'conformanceSettings:listServerSettings'",
+            ),
+          }
+        : { result: { page: [] } },
+    );
+    const { result } = renderHook(() =>
+      useConformanceServerData({
+        projectId: "proj_1",
+        serversById,
+        serversByName,
+      }),
+    );
+
+    expect(result.current.defaultsByServer).toEqual({});
+    // Nothing to save to: Settings stays hidden.
+    expect(result.current.saveDefaults).toBeUndefined();
+  });
+});
