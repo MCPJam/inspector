@@ -1942,6 +1942,9 @@ export async function streamChatTurn(
       ? { onSecretEnvDelivered: persist.onSecretEnvDelivered }
       : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    ...(runtime.elicitationBridge
+      ? { onHarnessElicitation: runtime.elicitationBridge.callback }
+      : {}),
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume
     // request the engine drives one retry leg (reconstructing tool
     // output-schema validation) before the first model call, splices the
@@ -1982,10 +1985,7 @@ export async function streamChatTurn(
       );
       emitTurnNotices(writer);
       runtime.rpcCollector?.attachStreamWriter(writer);
-      // NOTE: for HARNESS hosts this writer exists but elicitation still won't
-      // fire — harness MCP traffic goes through separate /api/web/harness-mcp
-      // requests, not this turn's manager, so the callback is never invoked.
-      // Attaching is harmless and keeps the three sites uniform.
+      // Native Claude elicitation uses this same owned bridge and writer.
       runtime.elicitationBridge?.attachStreamWriter(writer);
       // MRTR suspend emits `data-mrtr-input-required` on this same stream.
       runtime.mrtrBridge?.attachStreamWriter(writer);
