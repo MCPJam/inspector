@@ -287,8 +287,13 @@ export const harnessForwardingApprovals = new Hono();
 harnessForwardingApprovals.post("/approval", async (c) => {
   try {
     const body = z
-      .object({ id: z.string().max(8192), approved: z.boolean() })
+      .object({
+        id: z.string().max(8192),
+        approved: z.boolean(),
+        cancelled: z.literal(true).optional(),
+      })
       .strict()
+      .refine((value) => !(value.cancelled && value.approved))
       .parse(JSON.parse(await readNativeBody(c.req.raw, 10_000)));
     const tag = readForwardingApprovalId(body.id);
     if (!tag) return c.json({ error: "Invalid approval." }, 400);
@@ -324,12 +329,17 @@ harnessForwardingApprovals.post("/approval", async (c) => {
       }).ok
     )
       return c.json({ error: "Invalid approval." }, 403);
+    const decision = body.cancelled
+      ? "cancelled"
+      : body.approved
+        ? "approved"
+        : "denied";
     const result = await control.answerApproval(
       tag.executionId,
       nonceHash,
-      body.approved ? "approved" : "denied",
+      decision,
     );
-    if (result.state !== (body.approved ? "approved" : "denied"))
+    if (result.state !== decision)
       return c.json({ error: "This approval is no longer available." }, 409);
     return c.json({ ok: true });
   } catch (error) {
