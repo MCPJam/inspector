@@ -20,28 +20,17 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  MCPAppsCheckId,
-  MCPCheckId,
-  MCPConformanceResult,
-  MCPAppsConformanceResult,
-  MCPTasksCheckId,
-  MCPTasksConformanceResult,
-} from "@mcpjam/sdk";
 // Browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls Node-only
 // transitive deps that break the Vite browser bundle.
 import {
-  canRunConformance,
   pooledConformanceScore,
   scoreFromAppsResult,
   scoreFromOAuthResult,
   scoreFromProtocolResult,
   scoreFromTasksResult,
   type ConformanceScore,
-  type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import type { OAuthConformanceStartResult } from "@/lib/apis/mcp-conformance-api";
 import {
   completeOAuthConformance,
   runAppsConformance,
@@ -67,7 +56,6 @@ import {
   type OAuthSuiteState,
   type ProtocolSuiteState,
   type ProtocolVersionPin,
-  type SuiteState,
   type TasksSuiteState,
 } from "@/hooks/conformance-suite-state";
 import {
