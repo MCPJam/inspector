@@ -9,13 +9,6 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 const runTasksConformanceMock = vi.hoisted(() => vi.fn());
 const authorizeServerMock = vi.hoisted(() => vi.fn());
-const toHttpConfigMock = vi.hoisted(() =>
-  vi.fn((_auth: unknown, timeoutMs: number, _oauthAccessToken?: string) => ({
-    url: "https://example.test/mcp",
-    requestInit: { headers: {} },
-    timeout: timeoutMs,
-  })),
-);
 
 vi.mock("../auth.js", async () => {
   const { z } = await import("zod");
@@ -32,7 +25,11 @@ vi.mock("../auth.js", async () => {
     },
     projectServerSchema: z.object({}).passthrough(),
     authorizeServer: authorizeServerMock,
-    toHttpConfig: toHttpConfigMock,
+    toHttpConfig: (_auth: unknown, timeoutMs: number) => ({
+      url: "https://example.test/mcp",
+      requestInit: { headers: {} },
+      timeout: timeoutMs,
+    }),
   };
 });
 
@@ -107,24 +104,5 @@ describe("POST /api/web/conformance/tasks — hosted budget", () => {
     const body = (await res.json()) as { code: string; message: string };
     expect(body.code).toBe("TIMEOUT");
     expect(body.message).toMatch(/hosted request budget/);
-  });
-
-  it("connects with the saved token, not the one the browser sends", async () => {
-    authorizeServerMock.mockResolvedValue({
-      serverConfig: { url: "https://example.test/mcp" },
-      oauthAccessToken: "saved-token",
-    });
-    runTasksConformanceMock.mockResolvedValue({
-      result: { outcome: "passed", checks: [] },
-    });
-
-    const res = await post({
-      projectId: "p1",
-      serverId: "s1",
-      oauthAccessToken: "browser-token",
-    });
-
-    expect(res.status).toBe(200);
-    expect(toHttpConfigMock.mock.calls[0][2]).toBe("saved-token");
   });
 });

@@ -77,16 +77,17 @@ async function assertConformanceTarget(
 /**
  * Resolve HTTP server URL and headers for conformance from authorized config.
  *
- * The credential is the one the backend saved for this server row, never one
- * the browser sends: hosted OAuth keeps tokens server-side, so a browser copy
- * is usually absent. `attachSavedToken: false` is for the OAuth suite, which
- * runs its own flow and must start unauthenticated to see the 401.
+ * `withLogin` adds the user's login as `Authorization: Bearer`: the one saved
+ * in Convex when they connected (`authorizeServer` hands it back). A token in
+ * the request body is ignored. Hosted OAuth never leaves a token in the page,
+ * and when the backend withholds its saved token on purpose (a repointed URL,
+ * an export policy), a body token must not get past that refusal.
  */
 async function resolveHostedHttpConfig(
   c: any,
   bearerToken: string,
   body: Record<string, unknown>,
-  options: { attachSavedToken: boolean }
+  options: { withLogin: boolean }
 ): Promise<{
   serverUrl: string;
   accessToken?: string;
@@ -121,13 +122,18 @@ async function resolveHostedHttpConfig(
     );
   }
 
-  const oauthToken = options.attachSavedToken
-    ? auth.oauthAccessToken ?? undefined
+  const oauthToken = options.withLogin
+    ? (auth.oauthAccessToken ?? undefined)
     : undefined;
   const headers: Record<string, string> = {
     ...(auth.serverConfig.headers ?? {}),
   };
   if (oauthToken) {
+    // Replace a saved header in any case, or the request would carry two
+    // Authorization values and the server would see them joined.
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === "authorization") delete headers[key];
+    }
     headers["Authorization"] = `Bearer ${oauthToken}`;
   }
 
@@ -140,10 +146,7 @@ async function resolveHostedHttpConfig(
   };
 }
 
-/**
- * Resolve any-transport server config for Apps/Tasks conformance on hosted.
- * Uses the backend's saved token, as `resolveHostedHttpConfig` does.
- */
+/** Resolve any-transport server config for Apps/Tasks conformance on hosted. */
 async function resolveHostedServerConfig(
   c: any,
   bearerToken: string,
@@ -162,6 +165,7 @@ async function resolveHostedServerConfig(
     }
   );
 
+  // Saved login only — see `resolveHostedHttpConfig`.
   const httpConfig = toHttpConfig(
     auth,
     WEB_CALL_TIMEOUT_MS,
@@ -242,7 +246,7 @@ conformanceWeb.post("/protocol", async (c) =>
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
     const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
-      attachSavedToken: true,
+      withLogin: true,
     });
     const parsed = parseWithSchema(protocolSchema, body);
 
@@ -358,8 +362,12 @@ conformanceWeb.post("/oauth/start", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
+    // No login here: the OAuth suite grades the server from an
+    // unauthenticated request and runs its own fresh authorization. Its probes
+    // merge these headers, so a bearer would make the server answer 200 and
+    // the suite would grade OAuth as not required.
     const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
-      attachSavedToken: false,
+      withLogin: false,
     });
     const parsed = parseWithSchema(oauthStartSchema, body);
 
