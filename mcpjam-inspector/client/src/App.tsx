@@ -1715,11 +1715,18 @@ export function ConformanceRoute() {
     if (server) setEditing({ name, snapshot: server });
   };
   // Follows a rename the way the Servers tab's form does: the new name while
-  // the save runs, then the name the save settled on.
+  // the save runs, then the name the save settled on. The snapshot stays the
+  // same object, so the form does not reload over the user's draft before
+  // the renamed server arrives.
   const followEditedName = (name: string) =>
-    setEditing((prev) =>
-      prev ? { name, snapshot: { ...prev.snapshot, name } } : prev,
-    );
+    setEditing((prev) => (prev ? { ...prev, name } : prev));
+  // The snapshot keeps the original name, which still maps to the row while
+  // the new one has not synced yet.
+  const editingServerId = editing
+    ? (serversByName.get(editing.name) ??
+      serversByName.get(editing.snapshot.name) ??
+      null)
+    : null;
   const connectServer: ConformanceConnectServer = async (name, options) => {
     const result: EnsureServersReadyResult = await ensureServersReady(
       [name],
@@ -1784,6 +1791,9 @@ export function ConformanceRoute() {
           onReconnect={handleReconnect}
           existingServerNames={Object.keys(appState.servers)}
           projectId={convexProjectId ?? null}
+          // Saving an auth change on a server with hidden headers reveals
+          // them by row id.
+          hostedServerId={editingServerId}
         />
       ) : null}
     </>

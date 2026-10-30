@@ -93,7 +93,7 @@ export function ConformanceConnectError({
     ? "It needs you to sign in again."
     : (server.lastNormalizedError?.oneLine ??
       server.lastError ??
-      "Check that it is running and that its connection settings are right.");
+      "Check that it is running and that its server settings are right.");
   return (
     <div
       role="alert"

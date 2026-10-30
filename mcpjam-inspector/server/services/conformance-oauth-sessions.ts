@@ -10,6 +10,7 @@
  * client poll). The sweep runs every 60 seconds.
  */
 
+import { randomUUID } from "node:crypto";
 import {
   createRemoteBrowserAuthorizationController,
   type ConformanceResult,
@@ -20,6 +21,12 @@ import {
 
 export interface OAuthConformanceSession {
   id: string;
+  /**
+   * Who started the run (`principalKey`), on hosted sessions. Code delivery
+   * and polling answer only that caller: the result carries the run's
+   * evidence, so another signed-in user must not be able to claim it.
+   */
+  owner?: string;
   controller: RemoteBrowserAuthorizationController;
   /** Authorization URL once the runner has surfaced it. */
   authorizationUrl?: string;
@@ -79,8 +86,6 @@ function ensureCleanupTimer() {
 
 // ── Public API ──────────────────────────────────────────────────────────
 
-let nextId = 1;
-
 export interface CreateSessionOptions {
   /**
    * Public URL that the authorization server will redirect back to. For local
@@ -93,12 +98,15 @@ export interface CreateSessionOptions {
    * Defaults to {@link AUTHORIZATION_WAIT_MS}.
    */
   codeTimeoutMs?: number;
+  /** The caller that started the run; see {@link OAuthConformanceSession.owner}. */
+  owner?: string;
 }
 
 export function createSession(
   options: CreateSessionOptions,
 ): OAuthConformanceSession {
-  const id = `oauth-conf-${Date.now()}-${nextId++}`;
+  // Unguessable: the ID is the only handle on a run's result.
+  const id = `oauth-conf-${randomUUID()}`;
   const controller = createRemoteBrowserAuthorizationController({
     redirectUrl: options.redirectUrl,
     codeTimeoutMs: options.codeTimeoutMs ?? AUTHORIZATION_WAIT_MS,
@@ -106,6 +114,7 @@ export function createSession(
   const now = Date.now();
   const session: OAuthConformanceSession = {
     id,
+    ...(options.owner ? { owner: options.owner } : {}),
     controller,
     completedSteps: [],
     createdAt: now,
@@ -127,10 +136,17 @@ export function createSession(
   return session;
 }
 
+/**
+ * A session, if it exists and `owner` is the caller that started it. A local
+ * session has no owner and matches only a caller that names none; a mismatch
+ * reads as "not found" so it reveals nothing about another caller's run.
+ */
 export function getSession(
   sessionId: string,
+  owner?: string,
 ): OAuthConformanceSession | undefined {
-  return sessions.get(sessionId);
+  const session = sessions.get(sessionId);
+  return session && session.owner === owner ? session : undefined;
 }
 
 /** Keep a session alive while a client is still polling it. */
@@ -155,8 +171,9 @@ export function submitAuthorizationCode(
   sessionId: string,
   code: string,
   state?: string,
+  owner?: string,
 ): boolean {
-  const session = sessions.get(sessionId);
+  const session = getSession(sessionId, owner);
   // No way to ask the SDK controller "are you waiting?" directly, so we rely
   // on the runner's own state-mismatch handling and treat any unknown session
   // as a miss. A result before the code means the authorization wait ran out.

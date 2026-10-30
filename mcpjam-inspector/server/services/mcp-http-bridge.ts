@@ -10,6 +10,8 @@ import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 export type BridgeMode = "adapter" | "manager";
 
 export type JsonRpcBridgeOptions = {
+  signal?: AbortSignal;
+  downstreamProtocolVersion?: string;
   /**
    * Observation-only hook for a failed `tools/call`. Failures in the hook are
    * isolated so they can never change the JSON-RPC response.
@@ -440,6 +442,7 @@ export async function handleJsonRpc(
         if (info) {
           const result: any = {
             protocolVersion:
+              options.downstreamProtocolVersion ??
               info.protocolVersion ??
               (typeof params?.protocolVersion === "string"
                 ? params.protocolVersion
@@ -457,14 +460,17 @@ export async function handleJsonRpc(
         return respond({ result: buildInitializeResult(serverId, mode) });
       }
       case "tools/list": {
-        const list = await clientManager.listTools(serverId);
+        const list = await clientManager.listTools(serverId, params, {
+          signal: options.signal,
+        });
         const tools = (list?.tools ?? []).map((tool: any) => {
           const mappedTool: any = {
+            ...tool,
             name: tool.name,
             description: tool.description,
             inputSchema: toJsonSchemaMaybe(tool.inputSchema),
             outputSchema: toJsonSchemaMaybe(
-              tool.outputSchema ?? tool.resultSchema
+              tool.outputSchema ?? tool.resultSchema,
             ),
           };
           // Preserve _meta field for OpenAI Apps SDK and other metadata
@@ -473,7 +479,7 @@ export async function handleJsonRpc(
           }
           return mappedTool;
         });
-        return respond({ result: { tools } });
+        return respond({ result: { ...list, tools } });
       }
       case "tools/call": {
         let targetServerId = serverId;
@@ -539,7 +545,8 @@ export async function handleJsonRpc(
           const exec: unknown = await clientManager.executeTool(
             targetServerId,
             toolName,
-            toolArguments
+            toolArguments,
+            { signal: options.signal },
           );
 
           if (evidence) {
@@ -640,9 +647,13 @@ export async function handleJsonRpc(
       }
       case "resources/read": {
         try {
-          const resource = await clientManager.readResource(serverId, {
-            uri: params?.uri,
-          });
+          const resource = await clientManager.readResource(
+            serverId,
+            {
+              uri: params?.uri,
+            },
+            { signal: options.signal },
+          );
           if (mode === "manager") {
             const firstContent = (resource as any)?.contents?.[0];
             const text =
