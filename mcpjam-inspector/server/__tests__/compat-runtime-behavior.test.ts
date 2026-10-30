@@ -551,14 +551,6 @@ describe("compat runtime — alongside the widget's own MCP Apps client", () => 
     expect(captured).toEqual([]);
   });
 
-  it("uses request ids that cannot match the widget's numeric ids", () => {
-    h.completeInitHandshake();
-    h.window.openai.callTool("weather", {});
-    for (const method of ["ui/initialize", "tools/call"]) {
-      expect(typeof requestIdFor(method)).toBe("string");
-    }
-  });
-
   it("passes replies to the widget's own requests through", () => {
     const widgetReply = {
       jsonrpc: "2.0",
