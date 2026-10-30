@@ -172,11 +172,16 @@ cases:
         prompt: >-
           What was the result of the most recent eval run in the project
           'MCPJam MCP dogfood'? Do not start anything new.
+      # The answer has to come from a recorded run, not from memory. Any of
+      # the three reads that return one will do: list_eval_suites (its
+      # latestRun), list_eval_suite_runs, or get_eval_run. Each carries the
+      # run's passRate, so no one route is required.
       - id: a1
         kind: assert
         assertion:
-          type: toolCalledAtLeastOnce
-          toolName: list_eval_suite_runs
+          type: toolResultContains
+          needle: passRate
+          caseSensitive: true
       # The two that spend money. An agent that reaches for either here has
       # read "do not start anything new" and done it anyway.
       - id: a2
