@@ -242,6 +242,15 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
             {step.summary}
           </div>
 
+          {typeof step.error?.details === "string" && (
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+              <div className="mb-1 font-medium text-foreground/70">Details</div>
+              <div className="whitespace-pre-wrap break-all font-mono text-[10px]">
+                {step.error.details}
+              </div>
+            </div>
+          )}
+
           {step.teachableMoments && step.teachableMoments.length > 0 && (
             <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
               <div className="mb-1 font-medium text-foreground/70">
