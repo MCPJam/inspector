@@ -18,8 +18,41 @@ import {
 } from "./execution-control.js";
 import { startForwardingApprovalPresentation } from "./approval.js";
 import { nativeRpcLogScope } from "./native-rpc-logs.js";
-import { nativePolicyDigest } from "./native-policy.js";
+import { nativePolicyDigest, forwardingToolPolicy } from "./native-policy.js";
 import { readNativeToolResult } from "./native-results.js";
+import type { HarnessConnectionProfile } from "../harness-connection-profile.js";
+import {
+  mergeMcpToolConnectionMetadata,
+  mergeMcpWidgetContext,
+  mergeMcpOriginalResult,
+  type McpConnectionAttribution,
+  type McpWidgetExecutionContext,
+} from "@/shared/mcp-tool-origin-metadata";
+
+export function nativeToolMetadata(
+  forwarding:
+    | {
+        delivery?: "native" | "bridge";
+        widgetContext?: (
+          serverId: string,
+          callId: string,
+        ) => McpWidgetExecutionContext | undefined;
+      }
+    | undefined,
+  serverId: string | undefined,
+  callId: string,
+  connection: McpConnectionAttribution | undefined,
+  originalResult?: unknown,
+) {
+  return mergeMcpOriginalResult(
+    mergeMcpWidgetContext(
+      mergeMcpToolConnectionMetadata(undefined, connection),
+      serverId ? forwarding?.widgetContext?.(serverId, callId) : undefined,
+      forwarding?.delivery,
+    ),
+    originalResult,
+  );
+}
 
 export type NativeForwardingSelection = {
   harnessSessionId: string;
@@ -67,6 +100,8 @@ export async function prepareNativeForwarding(args: {
   authHeader: string;
   policies?: Record<string, ToolPolicySnapshot>;
   writer: ChunkWriter;
+  delivery?: "native" | "bridge";
+  profiles?: Record<string, HarnessConnectionProfile>;
 }) {
   if (args.strategy.plane !== "web-authorized" || !args.owners.length)
     throw new Error("Native forwarding route is unavailable.");
@@ -89,7 +124,12 @@ export async function prepareNativeForwarding(args: {
   );
   const mcpJson = buildHarnessProxyMcpJson(inputs);
   const keyToServerId = harnessServerKeyToName(inputs);
-  const policyDigest = nativePolicyDigest(args.policies);
+  const policyDigest = nativePolicyDigest(
+    args.policies,
+    args.profiles
+      ? { delivery: args.delivery, profiles: args.profiles }
+      : undefined,
+  );
   for (const [key, serverId] of Object.entries(keyToServerId)) {
     // The native HTTP request includes the human approval wait at the gate.
     mcpJson.mcpServers[key].timeout = Math.max(
@@ -108,15 +148,16 @@ export async function prepareNativeForwarding(args: {
       // query must open a new connection after the credential lease rotates.
       Connection: "close",
       "X-MCPJam-Forwarding-Context": sealHarnessProxyToken({
-        token: JSON.stringify({ owner, turnId: args.turnId, policyDigest }),
+        token: JSON.stringify({
+          owner,
+          turnId: args.turnId,
+          policyDigest,
+          ...(args.delivery ? { delivery: args.delivery } : {}),
+        }),
         serverId,
-        policy: args.policies?.[serverId] ?? {
-          mode: "default",
-          denied: {},
-          known: [],
-          unknownTool: "allow",
-        },
+        policy: forwardingToolPolicy(args.policies?.[serverId]),
         expiresAtMs: args.expiresAt,
+        profile: args.profiles?.[serverId],
       }),
     };
   }
@@ -129,8 +170,10 @@ export async function prepareNativeForwarding(args: {
       writer: args.writer,
     }),
   );
+  const widgetParents = new Map<string, string>();
   return {
     mcpJson,
+    delivery: args.delivery ?? "native",
     policyDigest,
     keyToServerId,
     readToolResult: async (serverId: string, toolCallId: string) => {
@@ -143,7 +186,23 @@ export async function prepareNativeForwarding(args: {
         createExecutionControl({ owner }),
         args.turnId,
         toolCallId,
+        (executionId) =>
+          widgetParents.set(
+            JSON.stringify([serverId, toolCallId]),
+            executionId,
+          ),
       );
+    },
+    widgetContext: (serverId: string, toolCallId: string) => {
+      const owner = args.owners.find(
+        (candidate) => candidate.serverId === serverId,
+      );
+      const parentExecutionId = widgetParents.get(
+        JSON.stringify([serverId, toolCallId]),
+      );
+      return owner?.kind === "chat" && parentExecutionId
+        ? { owner, parentExecutionId }
+        : undefined;
     },
     logScopeIds: Object.fromEntries(
       args.owners.map((owner) => [

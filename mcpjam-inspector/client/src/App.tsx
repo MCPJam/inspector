@@ -78,7 +78,12 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspectorTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import { ConformanceTab } from "./components/conformance/ConformancePanel";
+import {
+  ConformanceTab,
+  type ConformanceConnectServer,
+} from "./components/conformance/ConformancePanel";
+import { AddServerModal } from "./components/connection/AddServerModal";
+import { ServerDetailModal } from "./components/connection/ServerDetailModal";
 import {
   ConformanceHistory,
   ConformanceRunDetailPage,
@@ -340,6 +345,7 @@ import {
 import {
   buildElectronMcpCallbackUrl,
   resolveEffectiveWireProtocolVersion,
+  type EnsureServersReadyResult,
 } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import {
@@ -1674,40 +1680,123 @@ export function ConformanceRoute() {
     appState,
     selectedServerEntry,
     setSelectedServer,
+    activeProject,
     convexProjectId,
     isAuthenticated,
+    ensureServersReady,
+    handleConnect,
+    handleUpdate,
+    handleDisconnect,
+    handleReconnect,
   } = useAppRouteContext();
   const { serversByName, serversById } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
+  const [isAddingServer, setIsAddingServer] = useState(false);
+  // The name the edit form is open on, plus the server as it was then: a
+  // rename drops the old name from `appState.servers` before the new one
+  // lands, and without the snapshot the form would close mid-save.
+  const [editing, setEditing] = useState<{
+    name: string;
+    snapshot: ServerWithName;
+  } | null>(null);
   const savedServerId = selectedServerEntry?.name
     ? (serversByName.get(selectedServerEntry.name) ?? null)
     : null;
-  // The page picks its server from its own select, not the header tabs.
-  const connectedServers = Object.values<ServerWithName>(
-    appState.servers,
-  ).filter((s) => s.connectionStatus === "connected");
+  // The page picks its server from its own select, not the header tabs, and
+  // offers every server: Run connects one that is not connected.
+  const servers = Object.values<ServerWithName>(appState.servers);
+  const editingServer = editing
+    ? (appState.servers[editing.name] ?? editing.snapshot)
+    : undefined;
+  const editServer = (name: string) => {
+    const server = appState.servers[name];
+    if (server) setEditing({ name, snapshot: server });
+  };
+  // Follows a rename the way the Servers tab's form does: the new name while
+  // the save runs, then the name the save settled on. The snapshot stays the
+  // same object, so the form does not reload over the user's draft before
+  // the renamed server arrives.
+  const followEditedName = (name: string) =>
+    setEditing((prev) => (prev ? { ...prev, name } : prev));
+  // The snapshot keeps the original name, which still maps to the row while
+  // the new one has not synced yet.
+  const editingServerId = editing
+    ? (serversByName.get(editing.name) ??
+      serversByName.get(editing.snapshot.name) ??
+      null)
+    : null;
+  const connectServer: ConformanceConnectServer = async (name, options) => {
+    const result: EnsureServersReadyResult = await ensureServersReady(
+      [name],
+      options?.signIn ? { allowInteractiveOAuthFlow: true } : undefined,
+    );
+    if (result.readyServerNames.includes(name)) return "ready";
+    return result.reauthServerNames.includes(name) ? "reauth" : "failed";
+  };
   return (
-    <ConformanceTab
-      server={selectedServerEntry ?? null}
-      servers={connectedServers}
-      onSelectServer={setSelectedServer}
-      persist={
-        convexProjectId
-          ? { projectId: convexProjectId, serverId: savedServerId }
-          : undefined
-      }
-      history={
-        convexProjectId ? (
-          <ConformanceHistory
-            key={convexProjectId}
-            projectId={convexProjectId}
-            serverNames={serversById}
-          />
-        ) : undefined
-      }
-    />
+    <>
+      <ConformanceTab
+        server={selectedServerEntry ?? null}
+        servers={servers}
+        onSelectServer={setSelectedServer}
+        onConnectServer={connectServer}
+        onAddServer={() => setIsAddingServer(true)}
+        onEditServer={editServer}
+        persist={
+          convexProjectId
+            ? { projectId: convexProjectId, serverId: savedServerId }
+            : undefined
+        }
+        history={
+          convexProjectId ? (
+            <ConformanceHistory
+              key={convexProjectId}
+              projectId={convexProjectId}
+              serverNames={serversById}
+            />
+          ) : undefined
+        }
+      />
+      {/* Added and edited here, not on Connect: the page keeps its place. */}
+      <AddServerModal
+        isOpen={isAddingServer}
+        onClose={() => setIsAddingServer(false)}
+        onSubmit={(formData) => {
+          track("connecting_server", { location: "conformance" });
+          handleConnect(formData);
+          setIsAddingServer(false);
+        }}
+        // Same project defaults as the Servers tab's form. No `projectId`:
+        // its protocol-version pin is only persisted by the Servers tab.
+        projectClientConfig={activeProject?.clientConfig}
+        projectXaaDefaultIdentity={
+          activeProject?.xaaTestDefaults?.defaultIdentity ?? null
+        }
+      />
+      {editingServer ? (
+        <ServerDetailModal
+          isOpen
+          onClose={() => setEditing(null)}
+          server={editingServer}
+          defaultTab="configuration"
+          onSubmit={async (formData, originalServerName) => {
+            followEditedName(formData.name.trim() || originalServerName);
+            const result = await handleUpdate(originalServerName, formData);
+            followEditedName(result.serverName);
+            return result;
+          }}
+          onDisconnect={handleDisconnect}
+          onReconnect={handleReconnect}
+          existingServerNames={Object.keys(appState.servers)}
+          projectId={convexProjectId ?? null}
+          // Saving an auth change on a server with hidden headers reveals
+          // them by row id.
+          hostedServerId={editingServerId}
+        />
+      ) : null}
+    </>
   );
 }
 
