@@ -76,7 +76,7 @@ async function replayRegistrationFailure(
   );
   wrapped({ error: dcr.error });
   wrapped({ error: dcr.errorWithFallbackHint });
-  return { updateState };
+  return { updateState, dcr };
 }
 
 function registrationAnswer(status: number, body: unknown) {
@@ -410,8 +410,11 @@ describe("OAuth debugger step-failure reporting", () => {
       vi.mocked(authFetch).mockResolvedValue(
         new Response(JSON.stringify({ status, body: {} })),
       );
-      await replayRegistrationFailure(wrappedUpdateState().execute);
+      const { dcr } = await replayRegistrationFailure(
+        wrappedUpdateState().execute,
+      );
 
+      expect(dcr.error).toBe(`Dynamic Client Registration failed (${status}).`);
       expect(reportCaught).toHaveBeenCalledTimes(2);
     },
   );
