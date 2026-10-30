@@ -26,14 +26,7 @@ describe("useConformanceServerData", () => {
     mockUseQueries.mockImplementation((queries) =>
       queryName(queries) === "conformanceSettings:listServerSettings"
         ? { result: [{ serverId: "srv_1", defaultChecks: { oauth: false } }] }
-        : {
-            result: {
-              page: [
-                { _id: "run_new", serverId: "srv_1" },
-                { _id: "run_old", serverId: "srv_1" },
-              ],
-            },
-          },
+        : { result: [{ _id: "run_new", serverId: "srv_1" }] },
     );
     const { result } = renderHook(() =>
       useConformanceServerData({
@@ -58,7 +51,7 @@ describe("useConformanceServerData", () => {
               "Could not find public function for 'conformanceSettings:listServerSettings'",
             ),
           }
-        : { result: { page: [] } },
+        : { result: [] },
     );
     const { result } = renderHook(() =>
       useConformanceServerData({
@@ -84,7 +77,7 @@ describe("useConformanceServerData", () => {
               },
             ],
           }
-        : { result: { page: [] } },
+        : { result: [] },
     );
     const { result } = renderHook(() =>
       useConformanceServerData({
@@ -114,7 +107,7 @@ describe("useConformanceServerData", () => {
     mockUseQueries.mockImplementation((queries) =>
       queryName(queries) === "conformanceSettings:listServerSettings"
         ? { result: [] }
-        : { result: { page: [] } },
+        : { result: [] },
     );
     const { result } = renderHook(() =>
       useConformanceServerData({
