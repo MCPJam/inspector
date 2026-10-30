@@ -556,6 +556,17 @@ function rememberServer(name: string): void {
   }
 }
 
+/** Writes the tab to `?view=`, keeping the router's history entry state. */
+function syncViewParam(view: ConformanceView) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (view === "history") url.searchParams.set("view", "history");
+  else url.searchParams.delete("view");
+  if (url.href !== window.location.href) {
+    window.history.replaceState(window.history.state, "", url);
+  }
+}
+
 export function ConformanceTab({
   server,
   persist,
@@ -578,6 +589,13 @@ export function ConformanceTab({
       ? "history"
       : "overview",
   );
+  // The URL follows the tab, so a refresh lands where the user is. Otherwise
+  // `?view=history` from a run's page outlives a switch to Overview (by tab
+  // or by Run) and a refresh drops the user back on History.
+  const changeView = (next: ConformanceView) => {
+    setView(next);
+    syncViewParam(next);
+  };
   const showHistory = history !== undefined;
   // `?view=history` can outlive the History tab, e.g. a run link opened where
   // no history is passed. With the tabs hidden there would be no way back.
@@ -632,7 +650,7 @@ export function ConformanceTab({
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <ConformanceHeader
           view={activeView}
-          onViewChange={setView}
+          onViewChange={changeView}
           showHistory={showHistory}
         >
           {serverPicker}
@@ -665,7 +683,7 @@ export function ConformanceTab({
       server={server}
       persist={persist}
       view={activeView}
-      onViewChange={setView}
+      onViewChange={changeView}
       showHistory={showHistory}
       history={history}
       serverPicker={serverPicker}
