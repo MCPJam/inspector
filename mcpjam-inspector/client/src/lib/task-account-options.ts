@@ -37,7 +37,7 @@ export function taskAccountOptions(
         id,
         label:
           wires.length > 1
-            ? `${label} (${wire === "extension" ? "2026" : "2025"})`
+            ? `${label} (${wire === "extension" ? "MCP 2026" : "MCP 2025"})`
             : label,
         target: { serverId, scope, connectionId, wire },
       });
@@ -51,7 +51,7 @@ export function taskAccountOptions(
       id !== undefined &&
       !accounts.some((account) => account.connectionId === id),
   );
-  missing.forEach((id, index) => add(id, `Disconnected account ${index + 1}`));
+  missing.forEach((id, index) => add(id, `Saved account ${index + 1}`));
   if (!accounts.length || tasks.some((task) => task.connectionId === undefined))
     add(undefined, "Saved tasks");
   return options;

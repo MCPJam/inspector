@@ -108,7 +108,7 @@ function TaskAccountPanel(
         </Select>
         {error && (
           <Button variant="ghost" size="sm" onClick={refetch}>
-            Retry accounts
+            Reload accounts
           </Button>
         )}
       </div>

@@ -30,7 +30,7 @@ describe("Task account choices", () => {
     const options = taskAccountOptions("server", "owner", [], [task]);
     expect(
       options.find((option) => option.target?.connectionId === "b")?.label,
-    ).toContain("Disconnected");
+    ).toContain("Saved account");
   });
   it("offers recovery for account-free tasks when the browser has no bookmarks", () => {
     expect(

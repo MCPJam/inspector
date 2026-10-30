@@ -73,7 +73,7 @@ export function taskConnectionKey(
     throw new WebRouteError(
       403,
       ErrorCode.FORBIDDEN,
-      "The signed-in account changed. Return to the task's account to continue.",
+      "This task's saved user or project does not match the current session. Open it in its original MCPJam account and project.",
     );
   }
   if (
