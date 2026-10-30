@@ -553,12 +553,18 @@ export function withLiveProjectSkills(
     knownSkillIds.add(skill.skillId);
     added.push(skill);
   }
-  if (added.length === 0 && problems.length === set.problems.length) {
+  const localSkills = live.localSkills.filter((skill) => {
+    if (usedRefs.has(skill.ref)) return false;
+    usedRefs.add(skill.ref);
+    return true;
+  });
+  if (added.length === 0 && localSkills.length === 0 && problems.length === set.problems.length) {
     return set;
   }
   return {
     ...set,
     standaloneSkills: [...set.standaloneSkills, ...added],
+    localSkills: [...set.localSkills, ...localSkills],
     problems,
   };
 }

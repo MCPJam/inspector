@@ -67,7 +67,6 @@ vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
             permissions: {},
             features: {},
             judge: {
-              gating: { enabled: false, reason: "not_enabled_on_deployment" },
               role: "advisory",
               hasRubric: false,
               agreement: {
@@ -75,12 +74,7 @@ vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
                 agreements: 0,
                 rate: null,
                 lowerBound: null,
-                threshold: 0.8,
-                minReviews: 20,
-                eligible: false,
-                reasons: ["insufficient_reviews"],
               },
-              acknowledgement: null,
             },
             revisionNumber: 1,
           }

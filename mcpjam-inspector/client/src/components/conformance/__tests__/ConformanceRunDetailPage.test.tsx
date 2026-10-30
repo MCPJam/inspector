@@ -8,18 +8,22 @@ import {
 } from "@testing-library/react";
 import type { ConformanceRunListItem } from "../ConformanceHistory";
 
-const { navigateMock, useArtifactQueryMock, fetchArtifactMock } = vi.hoisted(
-  () => ({
-    navigateMock: vi.fn(),
-    useArtifactQueryMock: vi.fn(),
-    fetchArtifactMock: vi.fn(),
-  }),
-);
+const {
+  navigateMock,
+  useArtifactQueryMock,
+  fetchArtifactMock,
+  setSharingMock,
+} = vi.hoisted(() => ({
+  navigateMock: vi.fn(),
+  useArtifactQueryMock: vi.fn(),
+  setSharingMock: vi.fn(),
+  fetchArtifactMock: vi.fn(),
+}));
 
 vi.mock("convex/react", () => ({
   useQuery: vi.fn(),
   useMutation: () => vi.fn(),
-  useAction: () => vi.fn(),
+  useAction: () => setSharingMock,
 }));
 
 vi.mock("@/lib/artifact-urls", () => ({
@@ -116,6 +120,7 @@ describe("ConformanceRunDetailPage", () => {
   beforeEach(() => {
     useArtifactQueryMock.mockReset();
     fetchArtifactMock.mockReset();
+    setSharingMock.mockReset();
   });
 
   it("says it is loading until the run arrives", () => {
@@ -128,6 +133,41 @@ describe("ConformanceRunDetailPage", () => {
     useArtifactQueryMock.mockReturnValue(null);
     render(<ConformanceRunDetailPage runId="run_1" />);
     expect(screen.getByText("Run not found")).toBeInTheDocument();
+  });
+
+  it("labels an app run as UI, with no Client-reported tag and no Private button", () => {
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    expect(screen.getByText(/· UI$/)).toBeInTheDocument();
+    expect(screen.queryByText(/Inspector ·|· Inspector/)).toBeNull();
+    expect(screen.queryByText(/Client-reported/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Private/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
+  });
+
+  it("offers Share on a private run, which turns sharing on", async () => {
+    setSharingMock.mockResolvedValue({ enabled: false });
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    await waitFor(() =>
+      expect(setSharingMock).toHaveBeenCalledWith({
+        runId: "run_1",
+        enabled: true,
+      }),
+    );
+  });
+
+  it("keeps a way to stop sharing a run that is already shared", () => {
+    useArtifactQueryMock.mockReturnValue(
+      run([report()], { sharingEnabled: true }),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+    expect(
+      screen.getByRole("button", { name: /Shareable/ }),
+    ).toBeInTheDocument();
   });
 
   it("names the server from the project's saved servers", () => {
@@ -201,7 +241,37 @@ describe("ConformanceRunDetailPage", () => {
       .getByText("This server does not require authorization.")
       .closest("button")!;
     expect(within(oauth).getByText("NOT APPLICABLE")).toBeInTheDocument();
-    expect(oauth).toBeDisabled();
+    // Shut by default, but it opens to the suite's checks so the reader can
+    // see what it covers. There is no report to fetch for it.
+    expect(oauth).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(oauth);
+    expect(oauth).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByText(/checks in this suite\. None apply to this server\./),
+    ).toBeInTheDocument();
+    expect(fetchArtifactMock).not.toHaveBeenCalled();
+  });
+
+  it("says a skipped suite was not run, not that nothing applies", () => {
+    useArtifactQueryMock.mockReturnValue(
+      run([
+        report(),
+        report({
+          suiteKind: "oauth",
+          status: "skipped",
+          score: null,
+          applicable: 0,
+          passed: 0,
+          incompleteReason: "OAuth was skipped.",
+        }),
+      ]),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    const oauth = screen.getByText("OAuth was skipped.").closest("button")!;
+    fireEvent.click(oauth);
+    expect(screen.getByText(/checks in this suite\. Not run\./)).toBeInTheDocument();
+    expect(screen.queryByText(/None apply to this server/)).toBeNull();
   });
 
   it("opens a failed suite and loads its checks from the report", async () => {

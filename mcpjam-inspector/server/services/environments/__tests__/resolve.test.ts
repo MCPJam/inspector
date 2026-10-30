@@ -355,6 +355,19 @@ describe("environmentLaunchRejectionError", () => {
     }
   });
 
+  it("keeps a browser profile refusal a 400 with the backend's message", () => {
+    const message =
+      'Client "Docs" uses a saved browser profile you cannot access.';
+    const err = environmentLaunchRejectionError(
+      new ConvexError({ code: "BROWSER_PROFILE_NOT_DELIVERABLE", message }),
+    )!;
+    expect(err.status).toBe(400);
+    expect(err.message).toBe(message);
+    expect((err.details as Record<string, unknown>).code).toBe(
+      "BROWSER_PROFILE_NOT_DELIVERABLE",
+    );
+  });
+
   it("returns null for anything unrecognized so a real fault stays a logged 500", () => {
     expect(
       environmentLaunchRejectionError(

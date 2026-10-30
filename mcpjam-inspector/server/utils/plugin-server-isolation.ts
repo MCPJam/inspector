@@ -15,8 +15,11 @@ import { markOnboardingPhase } from "../services/plugin-host/onboarding-trace.js
 import { logger } from "./logger.js";
 
 /** Recorded scenarios require every server; interactive turns isolate each one. */
-export function chatTurnIsolatedServerIds(serverIds: readonly string[], isScenario = false): string[] {
-  return isScenario ? [] : [...serverIds];
+export function chatTurnIsolatedServerIds(
+  serverIds: readonly string[],
+  mode: "interactive" | "recorded",
+): string[] {
+  return mode === "recorded" ? [] : [...serverIds];
 }
 
 type ToolsByServer = Awaited<

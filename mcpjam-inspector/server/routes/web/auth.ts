@@ -1,3 +1,4 @@
+import { setManagerOrganization } from "../../utils/mcp-connections.js";
 import { nameServerRefusal } from "../../utils/server-refusal.js";
 import {
   serverCheckScope,
@@ -469,6 +470,8 @@ export type ConvexAuthorizeResponse = {
   oauthCredentialId?: string;
   oauthCredentialAuthorizedAt?: number;
   oauthConnections?: AuthorizedOAuthConnection[];
+  /** The single-server route sends it too; see `ConvexOAuthUnavailableReason`. */
+  oauthUnavailableReason?: ConvexOAuthUnavailableReason;
   permissions: {
     chatOnly: boolean;
   };
@@ -955,7 +958,7 @@ export async function authorizeProject(
   caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
-): Promise<void> {
+): Promise<{ chatEnvironments: boolean }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -980,7 +983,22 @@ export async function authorizeProject(
       `Failed to reach authorization service: ${parseErrorMessage(error)}`,
     );
   }
-  if (response.ok) return;
+  if (response.ok) {
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      // Older successful authorization responses need not advertise features.
+      return { chatEnvironments: false };
+    }
+    return {
+      chatEnvironments:
+        !!payload &&
+        typeof payload === "object" &&
+        "chatEnvironmentVersion" in payload &&
+        payload.chatEnvironmentVersion === 1,
+    };
+  }
 
   // A refusal with no JSON body still fails closed, with a generic message. A
   // backend that predates the route is one: its router answers 404 in plain
@@ -1328,6 +1346,32 @@ function isServerRefusal(error: unknown, id: string, tolerate: Tolerate) {
   );
 }
 
+/**
+ * The caller's own OAuth token for a server, unless the backend named a reason
+ * for withholding the saved one.
+ *
+ * The reason is the backend's verdict on this server's OAuth credential — a
+ * repointed URL, the organization's export policy, an authorization server
+ * that did not answer or is mid-refresh — and a token from the request body
+ * must not stand in for it, or every refusal is only as strong as a request
+ * that leaves it out. Only servers on the OAuth rails are governed: a bearer
+ * row's token is the header the user typed, not the credential the reason is
+ * about, and an XAA server replaces whatever token it is given with its mint.
+ */
+export function callerOAuthTokenUnlessRefused(
+  auth: { oauthUnavailableReason?: ConvexOAuthUnavailableReason },
+  effectiveAuth: EffectiveAuthMethod,
+  callerToken: string | undefined,
+): string | undefined {
+  if (
+    auth.oauthUnavailableReason &&
+    (effectiveAuth === "oauth" || effectiveAuth === "discover")
+  ) {
+    return undefined;
+  }
+  return callerToken;
+}
+
 export async function createAuthorizedManager(
   caller: ManagerCallerContext,
   bearerToken: string,
@@ -1660,6 +1704,12 @@ export async function createAuthorizedManager(
       );
       effectiveAuthByServerId.set(serverId, effectiveAuth);
       const isHttp = auth.serverConfig.transportType === "http";
+      // Never a way around the reason checks below.
+      const callerToken = callerOAuthTokenUnlessRefused(
+        auth,
+        effectiveAuth,
+        oauthTokens?.[serverId],
+      );
 
       // Enterprise policy, unconfigured `auto` server: never silently downgrade
       // to the discover ladder. "Not configured" (no stored client registration
@@ -1758,7 +1808,7 @@ export async function createAuthorizedManager(
       // already did; the recovery pass raises the actionable message instead.
       const privateAuthorizationServer =
         auth.oauthUnavailableReason === "private_authorization_server" &&
-        !(auth.oauthAccessToken ?? oauthTokens?.[serverId]);
+        !(auth.oauthAccessToken ?? callerToken);
       if (
         privateAuthorizationServer &&
         (effectiveAuth === "oauth" || effectiveAuth === "discover")
@@ -1777,7 +1827,7 @@ export async function createAuthorizedManager(
       // token the same policy withholds, so both answer with the policy.
       if (
         auth.oauthUnavailableReason === "credential_export_denied" &&
-        !(auth.oauthAccessToken ?? oauthTokens?.[serverId]) &&
+        !(auth.oauthAccessToken ?? callerToken) &&
         (effectiveAuth === "oauth" || effectiveAuth === "discover")
       ) {
         throw new WebRouteError(
@@ -1804,7 +1854,7 @@ export async function createAuthorizedManager(
       // complete an OAuth flow that was never the problem.
       if (
         effectiveAuth === "oauth" &&
-        !(auth.oauthAccessToken ?? oauthTokens?.[serverId])
+        !(auth.oauthAccessToken ?? callerToken)
       ) {
         const errorDetails = {
           oauthUnavailableReason: auth.oauthUnavailableReason,
@@ -1961,17 +2011,6 @@ export async function createAuthorizedManager(
           { ok: true }
         >;
 
-        // `recoveredOAuthTokens` first: it is the freshest, minted moments ago
-        // by PASS 1b for a credential the backend could not refresh itself.
-        const oauthToken =
-          recoveredOAuthTokens[serverId] ??
-          auth.oauthAccessToken ??
-          oauthTokens?.[serverId];
-        const displayServerName = displayNameForServer(
-          serverId,
-          serverNamesById,
-          auth.serverConfig,
-        );
         // Resolved in PASS 1 (canonical authMethod wins; "auto" selects XAA
         // when configured or when the host policy forces it, "discover"
         // otherwise; legacy rows fall back to the boolean pair). Reused rather
@@ -1980,6 +2019,21 @@ export async function createAuthorizedManager(
         const effectiveAuth = effectiveAuthByServerId.get(
           serverId,
         ) as EffectiveAuthMethod;
+        // `recoveredOAuthTokens` first: it is the freshest, minted moments ago
+        // by PASS 1b for a credential the backend could not refresh itself.
+        const oauthToken =
+          recoveredOAuthTokens[serverId] ??
+          auth.oauthAccessToken ??
+          callerOAuthTokenUnlessRefused(
+            auth,
+            effectiveAuth,
+            oauthTokens?.[serverId],
+          );
+        const displayServerName = displayNameForServer(
+          serverId,
+          serverNamesById,
+          auth.serverConfig,
+        );
 
         const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
           serverId,
@@ -2547,6 +2601,7 @@ export async function createAuthorizedManager(
   }
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
+  setManagerOrganization(manager, batch.organizationId);
   return {
     manager,
     ...(options?.lazyConnect
@@ -2557,7 +2612,7 @@ export async function createAuthorizedManager(
       : {}),
     oauthServerUrls,
     serverNamesById,
-    authenticatedUserId: caller.getLogContext?.()?.userId ?? null,
+    authenticatedUserId: authorizedUserId,
     ...(options?.tolerateServerRefusals ? { refusedServers } : {}),
   };
 }
