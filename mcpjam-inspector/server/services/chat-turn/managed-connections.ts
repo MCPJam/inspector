@@ -372,13 +372,11 @@ export async function prepareManagedConnections(args: {
   // form extensions are advertised or handled at all.
   // Emulated and Codex harness turns (whose MCP tools run here, in process)
   // take the same plugin executor; see `chatPluginFormPlan`.
+  const hostPins = hostRuntimeConfig
+    ? buildHostConnectionPins(hostRuntimeConfig, WEB_STREAM_TIMEOUT_MS)
+    : undefined;
   const pluginPins =
-    pluginWorkspace && hostRuntimeConfig && turnMode === "interactive"
-      ? buildHostConnectionPins(
-          hostRuntimeConfig as never,
-          WEB_STREAM_TIMEOUT_MS,
-        )
-      : undefined;
+    pluginWorkspace && turnMode === "interactive" ? hostPins : undefined;
   const pluginPinFor = (id: string) =>
     pluginPins?.mcpProtocolVersionsByServerId?.[id] ??
     pluginPins?.initializePins?.mcpProtocolVersion;
@@ -511,7 +509,7 @@ export async function prepareManagedConnections(args: {
     bearerToken,
     hostedBody.projectId,
     effectiveServerIds,
-    WEB_STREAM_TIMEOUT_MS,
+    hostPins?.timeoutMs ?? WEB_STREAM_TIMEOUT_MS,
     hostedBody.oauthTokens,
     // Scenario: advertise the HOST's capabilities, not the body's, so the
     // wire matches what we're prepared to honor.
@@ -548,6 +546,7 @@ export async function prepareManagedConnections(args: {
       httpLogger: rpcCollector.httpLogger,
       serverNames: effectiveServerNames,
       initializePins: effectiveInitializePins,
+      requestTimeoutByServerId: hostPins?.requestTimeoutByServerId,
       mcpProtocolVersionsByServerId,
       xaaPolicy,
       // Required for any XAA server in the batch (policy-forced or

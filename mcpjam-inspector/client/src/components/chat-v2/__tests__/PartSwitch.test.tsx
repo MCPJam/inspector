@@ -10,10 +10,23 @@ import {
 } from "@/lib/apis/web/context";
 import type { UIMessage } from "@ai-sdk/react";
 
-const { mockDetectUIType, mockToolPart, mockWidgetReplay } = vi.hoisted(() => ({
+const {
+  mockDetectUIType,
+  mockToolPart,
+  mockWidgetReplay,
+  mockForwardedWidgetCall,
+} = vi.hoisted(() => ({
   mockDetectUIType: vi.fn(),
   mockToolPart: vi.fn(),
   mockWidgetReplay: vi.fn(),
+  mockForwardedWidgetCall: vi.fn(),
+}));
+
+vi.mock("../thread/use-forwarded-widget-calls", () => ({
+  useForwardedWidgetCalls: () => ({
+    approvals: [],
+    call: mockForwardedWidgetCall,
+  }),
 }));
 
 // Mock all part components
@@ -189,6 +202,45 @@ describe("PartSwitch", () => {
     onRequestFullscreen: vi.fn(),
     onExitFullscreen: vi.fn(),
   };
+
+  it("uses the gated widget route for context delivered in AI SDK result metadata", async () => {
+    mockDetectUIType.mockReturnValue("mcp-apps");
+    const originalResult = { content: [], structuredContent: { count: 7 }, _meta: { private: "widget-only" } };
+    const context = {
+      owner: {
+        kind: "chat",
+        userId: "user",
+        serverId: "server",
+        harnessSessionId: "lane",
+      },
+      parentExecutionId: "parent",
+    };
+    render(
+      <PartSwitch
+        {...defaultProps}
+        part={{
+          type: "dynamic-tool",
+          toolName: "qa_read",
+          toolCallId: "call",
+          state: "output-available",
+          input: {},
+          output: { type: "text", value: "model projection" },
+          resultProviderMetadata: { mcpjam: { widgetContext: context, originalResult } },
+        }}
+      />,
+    );
+    const rendered = mockWidgetReplay.mock.calls.at(-1)?.[0];
+    expect(rendered).toBeDefined();
+    expect(rendered.toolOutput).toEqual(originalResult);
+    expect(rendered.rawOutput).toEqual(originalResult);
+    await rendered.onCallTool("qa_write", {});
+    expect(mockForwardedWidgetCall).toHaveBeenCalledWith(
+      context,
+      "qa_write",
+      {},
+    );
+    expect(callTool).not.toHaveBeenCalled();
+  });
 
   it("renders titled App text as one labeled item and mention references using the same chip", () => {
     const view = render(

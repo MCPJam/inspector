@@ -49,6 +49,97 @@ export function isRejectedToolCallMetadata(metadata: unknown): boolean {
 
 export type McpToolOriginProviderMetadata = Record<string, JSONObject>;
 
+export type McpWidgetExecutionContext = {
+  owner: {
+    kind: "chat";
+    userId: string;
+    serverId: string;
+    harnessSessionId: string;
+    connectionId?: string;
+  };
+  parentExecutionId: string;
+};
+
+export function mergeMcpWidgetContext(
+  metadata: unknown,
+  context: McpWidgetExecutionContext | undefined,
+  delivery?: "native" | "bridge",
+) {
+  const base = toProviderMetadata(metadata);
+  return context
+    ? {
+        ...base,
+        mcpjam: {
+          ...base.mcpjam,
+          widgetContext: context,
+          ...(delivery
+            ? {
+                upstreamMcpClient: delivery === "bridge" ? "mcpjam" : "harness",
+                mcpDelivery: delivery,
+              }
+            : {}),
+        },
+      }
+    : metadata;
+}
+
+export function readMcpWidgetContext(
+  metadata: unknown,
+): McpWidgetExecutionContext | undefined {
+  if (!isRecord(metadata) || !isRecord(metadata.mcpjam)) return;
+  const value = metadata.mcpjam.widgetContext;
+  if (
+    !isRecord(value) ||
+    typeof value.parentExecutionId !== "string" ||
+    !isRecord(value.owner)
+  )
+    return;
+  const owner = value.owner;
+  if (
+    owner.kind !== "chat" ||
+    typeof owner.userId !== "string" ||
+    typeof owner.serverId !== "string" ||
+    typeof owner.harnessSessionId !== "string" ||
+    (owner.connectionId !== undefined && typeof owner.connectionId !== "string")
+  )
+    return;
+  return {
+    parentExecutionId: value.parentExecutionId,
+    owner: {
+      kind: "chat",
+      userId: owner.userId,
+      serverId: owner.serverId,
+      harnessSessionId: owner.harnessSessionId,
+      ...(typeof owner.connectionId === "string"
+        ? { connectionId: owner.connectionId }
+        : {}),
+    },
+  };
+}
+
+export function mergeMcpOriginalResult(
+  metadata: unknown,
+  result: unknown,
+): McpToolOriginProviderMetadata | undefined {
+  const base = toProviderMetadata(metadata);
+  if (!readMcpWidgetContext(base) || result === undefined)
+    return Object.keys(base).length ? base : undefined;
+  return toProviderMetadata({
+    ...base,
+    mcpjam: { ...base.mcpjam, originalResult: result },
+  });
+}
+
+export function readMcpOriginalResult(metadata: unknown): unknown {
+  if (
+    !readMcpWidgetContext(metadata) ||
+    !isRecord(metadata) ||
+    !isRecord(metadata.mcpjam)
+  )
+    return;
+  return metadata.mcpjam.originalResult;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

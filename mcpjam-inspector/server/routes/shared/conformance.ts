@@ -259,6 +259,11 @@ export interface StartOAuthConformanceInput {
   /** Public callback URL that the authorization server will redirect to. */
   redirectUrl: string;
   oauthProfile?: OAuthConformanceProfile;
+  /**
+   * Hosted only: the caller starting the run (`principalKey`). Only that
+   * caller can then deliver its code or read its result. Local runs omit it.
+   */
+  owner?: string;
 }
 
 export async function startOAuthConformance(
@@ -269,7 +274,10 @@ export async function startOAuthConformance(
     normalizeCustomHeaders(input.oauthProfile?.customHeaders) ??
     input.defaultCustomHeaders;
 
-  const session = createSession({ redirectUrl: input.redirectUrl });
+  const session = createSession({
+    redirectUrl: input.redirectUrl,
+    owner: input.owner,
+  });
   const { controller } = session;
 
   const oauthConfig: OAuthConformanceConfig = {
@@ -356,17 +364,26 @@ export interface SubmitOAuthConformanceCodeInput {
   sessionId: string;
   code: string;
   state?: string;
+  /** The caller that started the run; see `StartOAuthConformanceInput.owner`. */
+  owner?: string;
 }
 
 /** Returns whether a session accepted the code (false when unknown/expired). */
 export function submitOAuthConformanceCode(
   input: SubmitOAuthConformanceCodeInput,
 ): boolean {
-  return submitAuthorizationCode(input.sessionId, input.code, input.state);
+  return submitAuthorizationCode(
+    input.sessionId,
+    input.code,
+    input.state,
+    input.owner,
+  );
 }
 
 export interface CompleteOAuthConformanceInput {
   sessionId: string;
+  /** The caller that started the run; see `StartOAuthConformanceInput.owner`. */
+  owner?: string;
   /** How long to long-poll before returning `pending`. Defaults to 25s. */
   pollTimeoutMs?: number;
   /** Interval between polls. Defaults to 500ms. */
@@ -388,7 +405,7 @@ export class OAuthConformanceSessionFailedError extends Error {
 export async function completeOAuthConformance(
   input: CompleteOAuthConformanceInput,
 ): Promise<CompleteOAuthConformanceResult> {
-  const session = getSession(input.sessionId);
+  const session = getSession(input.sessionId, input.owner);
   if (!session) {
     throw new OAuthConformanceSessionNotFoundError(
       OAUTH_SESSION_EXPIRED_MESSAGE,
@@ -408,7 +425,7 @@ export async function completeOAuthConformance(
 
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-    const current = getSession(input.sessionId);
+    const current = getSession(input.sessionId, input.owner);
     if (!current) {
       throw new OAuthConformanceSessionNotFoundError(
         OAUTH_SESSION_EXPIRED_MESSAGE,

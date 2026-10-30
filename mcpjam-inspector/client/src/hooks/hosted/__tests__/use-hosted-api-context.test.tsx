@@ -92,7 +92,6 @@ describe("useApiContext — publishes only real changes", () => {
     serverIdsByName: { asana: "server-1", linear: "server-2" },
     supportedProtocolVersions: ["2025-11-25"],
     mcpProtocolVersionsByServerId: { "server-1": "2025-11-25" as const },
-    oauthTokensByServerId: { "server-1": "oauth-token" },
     toolCallCancellation: { legacy: false },
   });
 

@@ -11,6 +11,7 @@
 
 import { readModelOutputImage } from "@mcpjam/sdk/browser";
 import { unwrapToolOutputEnvelope } from "./tool-output-envelope.js";
+import { readMcpWidgetContext } from "./mcp-tool-origin-metadata.js";
 
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
@@ -64,6 +65,9 @@ export function isModelVisibleImageOutput(value: unknown): boolean {
 export function readHydratedToolOutput(part: Record<string, unknown>): unknown {
   const hasResult = hasOwn(part, "result");
   const hasOutput = hasOwn(part, "output");
+  // Forwarded widgets read their original result from presentation metadata.
+  if (hasOutput && readMcpWidgetContext(part.providerOptions))
+    return part.output;
   // The model-facing copy intentionally omits host ownership metadata. Keep
   // the original UI result when that control is present, including malformed
   // or expired controls: the owned renderer must refuse them, never silently
@@ -99,8 +103,10 @@ export function readHydratedToolOutput(part: Record<string, unknown>): unknown {
 export function hydratedToolResultOutput(toolResult: {
   result?: unknown;
   output?: unknown;
+  providerOptions?: unknown;
 }): unknown {
   const merged: Record<string, unknown> = {};
+  merged.providerOptions = toolResult.providerOptions;
   const mergedResult =
     toolResult.result !== undefined ? toolResult.result : toolResult.output;
   if (mergedResult !== undefined) merged.result = mergedResult;
