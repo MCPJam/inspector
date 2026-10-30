@@ -1690,7 +1690,7 @@ export function ConformanceRoute() {
     projectId: convexProjectId,
   });
   const navigate = useAppNavigate();
-  const { defaultsByServer, lastRunByServer, saveDefaults } =
+  const { defaultsByServer, defaultsLoaded, lastRunByServer, saveDefaults } =
     useConformanceServerData({
       projectId: convexProjectId,
       serversById,
@@ -1760,6 +1760,7 @@ export function ConformanceRoute() {
           ) : undefined
         }
         serverDefaults={defaultsByServer}
+        serverDefaultsLoaded={defaultsLoaded}
         onSaveServerDefaults={saveDefaults}
         lastRuns={lastRunByServer}
         onViewRun={

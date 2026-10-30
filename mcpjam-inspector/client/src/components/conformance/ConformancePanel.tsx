@@ -715,5 +715,3 @@ export function ConformanceContent({
     </div>
   );
 }
-
-/** The server last selected on this page, so the next visit starts there. */

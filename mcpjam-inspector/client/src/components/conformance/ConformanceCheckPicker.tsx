@@ -63,13 +63,18 @@ export function withPicked(
     if (picked) next.add(id);
     else next.delete(id);
   }
+  // A version pin shows only its own checks; the ones it hides keep their
+  // pick, or a change here would drop them from the saved defaults.
+  const shown = new Set(catalog.map((entry) => entry.id));
+  const stored = selection[suite] as readonly string[] | undefined;
+  const all = checkCatalogs("auto")[suite].map((entry) => entry.id);
+  const kept = all.filter((id) =>
+    shown.has(id) ? next.has(id) : stored === undefined || stored.includes(id),
+  );
   // Everything picked goes back to "the whole suite".
-  const whole = next.size === catalog.length;
   return {
     ...selection,
-    [suite]: whole
-      ? undefined
-      : catalog.map((entry) => entry.id).filter((id) => next.has(id)),
+    [suite]: kept.length === all.length ? undefined : kept,
   };
 }
 

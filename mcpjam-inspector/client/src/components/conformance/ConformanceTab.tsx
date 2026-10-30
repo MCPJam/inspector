@@ -58,6 +58,7 @@ export function ConformanceTab({
   onEditServer,
   history,
   serverDefaults,
+  serverDefaultsLoaded = true,
   onSaveServerDefaults,
   lastRuns,
   onViewRun,
@@ -78,6 +79,8 @@ export function ConformanceTab({
   history?: ReactNode;
   /** Each server's saved default checks, by server name. */
   serverDefaults?: Record<string, ConformanceSelection>;
+  /** False while `serverDefaults` is still loading: nothing runs on a guess. */
+  serverDefaultsLoaded?: boolean;
   /** Saves a server's default checks. Omit to hide Settings. */
   onSaveServerDefaults?: (
     serverName: string,
@@ -126,8 +129,10 @@ export function ConformanceTab({
   const startedIdRef = useRef(0);
   // The server whose Conformance Settings are open, over the run view.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
-  // Defaults changed here, ahead of the saved rows coming back: Run again
-  // right after a change in Settings must already run the new checks.
+  // Defaults changed here while their save is in flight: Run again right
+  // after a change in Settings must already run the new checks. Each entry
+  // goes once its save settles, so the saved rows (a teammate's changes
+  // included) are what the page reads after that.
   const [changedDefaults, setChangedDefaults] = useState<
     Record<string, ConformanceSelection>
   >({});
@@ -136,7 +141,20 @@ export function ConformanceTab({
   const saveDefaults = onSaveServerDefaults
     ? (serverName: string, selection: ConformanceSelection) => {
         setChangedDefaults((prev) => ({ ...prev, [serverName]: selection }));
-        return onSaveServerDefaults(serverName, selection);
+        const settle = () =>
+          setChangedDefaults((prev) => {
+            // A later change owns the entry now.
+            if (prev[serverName] !== selection) return prev;
+            const { [serverName]: _settled, ...rest } = prev;
+            return rest;
+          });
+        return onSaveServerDefaults(serverName, selection).then(
+          settle,
+          (error: unknown) => {
+            settle();
+            throw error;
+          },
+        );
       }
     : undefined;
   // `?view=history` can outlive the History tab, e.g. a run link opened where
@@ -193,6 +211,7 @@ export function ConformanceTab({
       <ConformanceServerList
         runs={recentServers}
         onViewRun={onViewRun}
+        disabled={!serverDefaultsLoaded || selectionIsReconnecting}
         onRun={(serverName) =>
           startRun(serverName, "auto", defaultsFor(serverName) ?? {})
         }
@@ -203,18 +222,25 @@ export function ConformanceTab({
   const openSetup =
     servers && onSelectServer ? () => setSetupOpen(true) : undefined;
 
-  if (setupOpen && servers && onSelectServer) {
-    return (
+  const setup =
+    setupOpen && servers && onSelectServer ? (
       <ConformanceSetup
         servers={servers}
         initialServerName={selectionIsOffered ? (server?.name ?? null) : null}
         initialVersionPin={start?.versionPin ?? "auto"}
         // Saved defaults win, as they do for Run again: they already hold the
-        // last setup run's picks, plus any Settings change since.
+        // last setup run's picks, plus any Settings change since. The last
+        // run's picks only count for the server it ran on.
         initialSelection={
-          start && !defaultsFor(start.serverName) ? start.selection : undefined
+          start &&
+          selectionIsOffered &&
+          start.serverName === server?.name &&
+          !defaultsFor(start.serverName)
+            ? start.selection
+            : undefined
         }
         defaultsFor={defaultsFor}
+        defaultsLoaded={serverDefaultsLoaded}
         onCancel={() => setSetupOpen(false)}
         onRun={(serverName, versionPin, selection) => {
           setSetupOpen(false);
@@ -229,8 +255,7 @@ export function ConformanceTab({
           });
         }}
       />
-    );
-  }
+    ) : null;
 
   // In hosted mode `selectedMCPConfig` can arrive as a stub with falsy name
   // and/or missing config while the project is still hydrating — treat any
@@ -238,6 +263,7 @@ export function ConformanceTab({
   // against `undefined` (which would surface as "Hosted server not found
   // for 'undefined'" when Apps conformance calls the hosted resolver).
   if (!server || !server.name || server.name === "none" || !server.config) {
+    if (setup) return setup;
     // Same pre-run page as with a server; running just asks for one first.
     const noServerRunButton = (
       <Button
@@ -313,24 +339,32 @@ export function ConformanceTab({
     />
   );
   const settingsOpen = Boolean(settingsServer && onSaveServerDefaults);
-  // The run view stays mounted, at the same place in the tree, under
-  // Settings: remounting it would drop the results and cancel a run still
-  // going.
+  // The run view stays mounted, at the same place in the tree, under the
+  // setup steps and Settings: remounting it would drop the results and cancel
+  // a run still going.
   return (
     <>
-      <div className={settingsOpen ? "hidden" : "contents"}>{content}</div>
-      {settingsOpen && settingsServer && saveDefaults ? (
-        <ConformanceSettings
-          serverName={settingsServer}
-          defaults={
-            defaultsFor(settingsServer) ??
-            // Nothing saved yet: the run's own picks.
-            (start?.serverName === settingsServer ? start.selection : undefined)
-          }
-          onSave={(selection) => saveDefaults(settingsServer, selection)}
-          onBack={() => setSettingsFor(null)}
-        />
-      ) : null}
+      <div
+        hidden={Boolean(setup) || settingsOpen}
+        className={setup || settingsOpen ? "hidden" : "contents"}
+      >
+        {content}
+      </div>
+      {setup ??
+        (settingsOpen && settingsServer && saveDefaults ? (
+          <ConformanceSettings
+            serverName={settingsServer}
+            defaults={
+              defaultsFor(settingsServer) ??
+              // Nothing saved yet: the run's own picks.
+              (start?.serverName === settingsServer
+                ? start.selection
+                : undefined)
+            }
+            onSave={(selection) => saveDefaults(settingsServer, selection)}
+            onBack={() => setSettingsFor(null)}
+          />
+        ) : null)}
     </>
   );
 }

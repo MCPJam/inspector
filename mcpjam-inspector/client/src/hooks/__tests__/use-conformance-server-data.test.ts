@@ -72,4 +72,60 @@ describe("useConformanceServerData", () => {
     // Nothing to save to: Settings stays hidden.
     expect(result.current.saveDefaults).toBeUndefined();
   });
+
+  it("drops saved check ids this build does not know", () => {
+    mockUseQueries.mockImplementation((queries) =>
+      queryName(queries) === "conformanceSettings:listServerSettings"
+        ? {
+            result: [
+              {
+                serverId: "srv_1",
+                defaultChecks: { protocol: ["ping", "renamed-check"] },
+              },
+            ],
+          }
+        : { result: { page: [] } },
+    );
+    const { result } = renderHook(() =>
+      useConformanceServerData({
+        projectId: "proj_1",
+        serversById,
+        serversByName,
+      }),
+    );
+
+    expect(result.current.defaultsByServer.alpha?.protocol).toEqual(["ping"]);
+  });
+
+  it("reports the defaults as loading until they are read", () => {
+    mockUseQueries.mockImplementation(() => ({}));
+    const { result } = renderHook(() =>
+      useConformanceServerData({
+        projectId: "proj_1",
+        serversById,
+        serversByName,
+      }),
+    );
+
+    expect(result.current.defaultsLoaded).toBe(false);
+  });
+
+  it("fails the save for a server it cannot save to", async () => {
+    mockUseQueries.mockImplementation((queries) =>
+      queryName(queries) === "conformanceSettings:listServerSettings"
+        ? { result: [] }
+        : { result: { page: [] } },
+    );
+    const { result } = renderHook(() =>
+      useConformanceServerData({
+        projectId: "proj_1",
+        serversById,
+        serversByName,
+      }),
+    );
+
+    await expect(
+      result.current.saveDefaults!("unsaved", { oauth: false }),
+    ).rejects.toThrow();
+  });
 });

@@ -7,7 +7,10 @@
 import { useCallback, useMemo } from "react";
 import { useMutation } from "convex/react";
 import { makeFunctionReference } from "convex/server";
-import type { ConformanceSelection } from "@/hooks/use-conformance-run";
+import {
+  runnableSelection,
+  type ConformanceSelection,
+} from "@/hooks/use-conformance-run";
 import { useSoftQuery } from "@/hooks/use-soft-query";
 import type { ConformanceRunListItem } from "@/components/conformance/ConformanceHistory";
 
@@ -63,7 +66,9 @@ export function useConformanceServerData({
     const byName: Record<string, ConformanceSelection> = {};
     for (const row of settingsRows ?? []) {
       const name = serversById.get(row.serverId);
-      if (name) byName[name] = row.defaultChecks;
+      // Stored as plain strings: drop ids this build does not know.
+      const defaults = runnableSelection(row.defaultChecks, "auto");
+      if (name && defaults) byName[name] = defaults;
     }
     return byName;
   }, [settingsRows, serversById]);
@@ -81,7 +86,10 @@ export function useConformanceServerData({
   const saveDefaults = useCallback(
     async (serverName: string, selection: ConformanceSelection) => {
       const serverId = serversByName.get(serverName);
-      if (!projectId || !serverId) return;
+      // Throw, not return: the caller's toast must say the change was lost.
+      if (!projectId || !serverId) {
+        throw new Error(`No saved server named "${serverName}" to save to.`);
+      }
       await saveSettings({
         projectId,
         serverId,
@@ -93,6 +101,9 @@ export function useConformanceServerData({
 
   return {
     defaultsByServer,
+    /** False until the saved defaults are read, or known to be unreadable. */
+    defaultsLoaded:
+      !projectId || settingsRows !== undefined || settingsError !== undefined,
     lastRunByServer,
     /** Unset when the page has no project to save to, or can't read the
      *  saved defaults back. */

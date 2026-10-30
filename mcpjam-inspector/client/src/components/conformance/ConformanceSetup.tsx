@@ -36,6 +36,7 @@ export function ConformanceSetup({
   initialVersionPin,
   initialSelection,
   defaultsFor,
+  defaultsLoaded = true,
   onCancel,
   onRun,
 }: {
@@ -47,6 +48,8 @@ export function ConformanceSetup({
   initialSelection?: ConformanceSelection;
   /** A server's saved default checks, from its Conformance Settings. */
   defaultsFor?: (serverName: string) => ConformanceSelection | undefined;
+  /** False while the saved defaults are still loading: step 2 waits. */
+  defaultsLoaded?: boolean;
   onCancel: () => void;
   onRun: (
     serverName: string,
@@ -64,10 +67,10 @@ export function ConformanceSetup({
     (name === initialServerName ? initialSelection : undefined) ??
     (name ? defaultsFor?.(name) : undefined) ??
     {};
-  const [selection, setSelection] = useState<ConformanceSelection>(() =>
-    startingSelection(initialServerName),
-  );
-  const [selectionFor, setSelectionFor] = useState(initialServerName);
+  // Built on the first Continue, not here: the saved defaults may still be
+  // loading when the steps open.
+  const [selection, setSelection] = useState<ConformanceSelection>({});
+  const [selectionFor, setSelectionFor] = useState<string | null>(null);
   const serverLabelId = useId();
   const versionLabelId = useId();
   const canContinue = Boolean(
@@ -128,7 +131,6 @@ export function ConformanceSetup({
                   Choose the server you want to test for protocol conformance
                 </div>
                 <ConformanceServerPicker
-                  variant="pill"
                   servers={servers}
                   selectedName={serverName}
                   onSelect={setServerName}
@@ -148,7 +150,6 @@ export function ConformanceSetup({
                   Select protocol version
                 </div>
                 <ProtocolVersionSelect
-                  variant="field"
                   value={versionPin}
                   onChange={setVersionPin}
                   labelledBy={versionLabelId}
@@ -160,7 +161,10 @@ export function ConformanceSetup({
               <Button variant="ghost" onClick={onCancel}>
                 Cancel
               </Button>
-              <Button disabled={!canContinue} onClick={continueToChecks}>
+              <Button
+                disabled={!canContinue || !defaultsLoaded}
+                onClick={continueToChecks}
+              >
                 Continue
               </Button>
             </div>
@@ -171,7 +175,7 @@ export function ConformanceSetup({
               Set what you'd like to test
             </h2>
             <p className="mt-1.5 text-sm leading-relaxed font-medium">
-              All categories have been selected by default.
+              Pick the suites and checks this run covers.
             </p>
 
             {/* The protocol list follows the revision picked in step 1. */}

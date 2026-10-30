@@ -218,14 +218,11 @@ export function ProtocolVersionSelect({
   value,
   onChange,
   disabled,
-  variant = "compact",
   labelledBy,
 }: {
   value: ProtocolVersionPin;
   onChange?: (value: ProtocolVersionPin) => void;
   disabled?: boolean;
-  /** `field` spans its column under a visible label, as in Run's setup. */
-  variant?: "compact" | "field";
   /** The visible label's id; without one the select names itself. */
   labelledBy?: string;
 }) {
@@ -238,12 +235,7 @@ export function ProtocolVersionSelect({
       <SelectTrigger
         aria-label={labelledBy ? undefined : "Protocol version"}
         aria-labelledby={labelledBy}
-        className={cn(
-          "gap-2 text-sm",
-          variant === "field"
-            ? "h-9.5 w-full justify-between px-3"
-            : "h-8 w-auto",
-        )}
+        className="h-9.5 w-full justify-between gap-2 px-3 text-sm"
       >
         <span>Protocol · {value === "auto" ? "Auto" : value}</span>
       </SelectTrigger>
@@ -280,17 +272,11 @@ export function ConformanceServerPicker({
   servers,
   selectedName,
   onSelect,
-  variant = "compact",
   labelledBy,
 }: {
   servers: ServerWithName[];
   selectedName: string | null;
   onSelect: (name: string) => void;
-  /**
-   * `pill` is the server chip the rest of the app picks servers with (the
-   * hosts `ServerPicker`): dashed until a server is chosen.
-   */
-  variant?: "compact" | "pill";
   /** The visible label's id; without one the select names itself. */
   labelledBy?: string;
 }) {
@@ -305,34 +291,21 @@ export function ConformanceServerPicker({
       onValueChange={onSelect}
       disabled={servers.length === 0}
     >
-      {variant === "pill" ? (
-        <SelectTrigger
-          aria-label={labelledBy ? undefined : "Server"}
-          aria-labelledby={labelledBy}
-          className={cn(
-            "h-8 w-auto max-w-[260px] gap-1.5 rounded-full px-2.5 text-xs font-medium shadow-none",
-            value
-              ? "border-border/60 bg-muted/40 hover:bg-muted/60"
-              : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
-          )}
-        >
-          <Server className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate">
-            <SelectValue placeholder={placeholder} />
-          </span>
-        </SelectTrigger>
-      ) : (
-        <SelectTrigger
-          aria-label={labelledBy ? undefined : "Server"}
-          aria-labelledby={labelledBy}
-          className="h-8 w-auto gap-2 text-sm"
-        >
-          {/* Labelled like the protocol select beside it: "Server · <name>". */}
-          <span>
-            Server · <SelectValue placeholder={placeholder} />
-          </span>
-        </SelectTrigger>
-      )}
+      <SelectTrigger
+        aria-label={labelledBy ? undefined : "Server"}
+        aria-labelledby={labelledBy}
+        className={cn(
+          "h-8 w-auto max-w-[260px] gap-1.5 rounded-full px-2.5 text-xs font-medium shadow-none",
+          value
+            ? "border-border/60 bg-muted/40 hover:bg-muted/60"
+            : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
+        )}
+      >
+        <Server className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate">
+          <SelectValue placeholder={placeholder} />
+        </span>
+      </SelectTrigger>
       <SelectContent>
         {servers.map((server) => {
           const note = connectionNote(server);

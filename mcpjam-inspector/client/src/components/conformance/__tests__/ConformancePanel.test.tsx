@@ -1118,6 +1118,82 @@ describe("ConformanceTab", () => {
     expect(screen.getByText("NOT SELECTED")).toBeInTheDocument();
   });
 
+  it("rolls a Settings change back when its save fails", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const onSaveServerDefaults = vi.fn(async () => {});
+    const error = vi.spyOn(toast, "error");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={onSaveServerDefaults}
+      />,
+    );
+    await runToCompletion();
+    expect(mockRunTasks).toHaveBeenCalledTimes(1);
+
+    onSaveServerDefaults.mockRejectedValueOnce(
+      new Error("[Request ID: abc] Server Error"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+
+    // A fixed message, not the raw backend error; the box goes back.
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        "Could not save the default checks. Try again.",
+      ),
+    );
+    expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
+      "data-state",
+      "checked",
+    );
+
+    // Run again does not use the change that was never saved.
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await runToCompletion();
+    expect(mockRunTasks).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  it("keeps the finished run when the setup steps are cancelled", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        history={<p>History table</p>}
+      />,
+    );
+    await runToCompletion();
+
+    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
+  });
+
+  it("waits for the saved defaults before step 2", () => {
+    const alpha = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        serverDefaultsLoaded={false}
+        onSaveServerDefaults={vi.fn(async () => {})}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+
   it("keeps at least one check in Settings", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
@@ -1426,45 +1502,13 @@ describe("ConformanceTab", () => {
     );
 
     const trigger = screen.getByRole("combobox", { name: "Server" });
-    expect(trigger).toHaveTextContent("Server · alpha");
+    expect(trigger).toHaveTextContent("alpha");
     expect(trigger).not.toHaveTextContent("Not connected");
 
     await user.click(trigger);
     expect(screen.getByRole("option", { name: /alpha/ })).toHaveTextContent(
       "Not connected",
     );
-  });
-
-  it("labels the server select like the protocol select", () => {
-    const server = createHttpServer({ name: "alpha" });
-    const { rerender } = render(
-      <ConformanceServerPicker
-        servers={[server]}
-        selectedName="alpha"
-        onSelect={vi.fn()}
-      />,
-    );
-    const trigger = () => screen.getByRole("combobox", { name: "Server" });
-    expect(trigger()).toHaveTextContent("Server · alpha");
-
-    // Servers to pick from, none selected yet.
-    rerender(
-      <ConformanceServerPicker
-        servers={[server]}
-        selectedName={null}
-        onSelect={vi.fn()}
-      />,
-    );
-    expect(trigger()).toHaveTextContent("Server · Select");
-
-    rerender(
-      <ConformanceServerPicker
-        servers={[]}
-        selectedName={null}
-        onSelect={vi.fn()}
-      />,
-    );
-    expect(trigger()).toHaveTextContent("Server · None");
   });
 
   it("lists protocol versions newest first, after Auto", async () => {

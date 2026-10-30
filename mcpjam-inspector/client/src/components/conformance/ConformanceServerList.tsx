@@ -31,7 +31,7 @@ export function ConformanceServerList({
   runs: Array<{ serverName: string; run: ConformanceRunListItem }>;
   onViewRun: (runId: string) => void;
   onRun: (serverName: string) => void;
-  /** A run is going: starting another would drop it. */
+  /** A run is connecting, or the saved defaults are still loading. */
   disabled?: boolean;
 }) {
   return (
@@ -42,7 +42,7 @@ export function ConformanceServerList({
           className="flex items-center justify-between gap-6 rounded-lg border border-border bg-card px-6 py-4"
         >
           <div className="flex min-w-0 grow items-center gap-3">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-indigo-500/10 text-[13px] font-bold text-indigo-700 dark:text-indigo-300">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[13px] font-bold text-primary">
               {initialsOf(serverName)}
             </span>
             <div className="flex min-w-0 flex-col gap-0.5">
