@@ -284,24 +284,34 @@ export const toolsExecuteSchema = projectServerSchema
 
 export { HOSTED_TASK_BATCH_MAX } from "../../../shared/hosted-tasks.js";
 
-export const taskGetSchema = projectServerSchema.extend({
+const taskTargetSchema = projectServerSchema.extend({
+  connectionId: z
+    .string()
+    .min(1)
+    .max(2000)
+    .regex(/^[^\u0000]+$/)
+    .optional(),
+  wire: z.enum(["legacy", "extension"]).optional(),
+});
+
+export const taskGetSchema = taskTargetSchema.extend({
   taskId: z.string().min(1),
 });
 
-export const taskGetBatchSchema = projectServerSchema.extend({
+export const taskGetBatchSchema = taskTargetSchema.extend({
   taskIds: z.array(z.string().min(1)).min(1).max(HOSTED_TASK_BATCH_MAX_SHARED),
 });
 
-export const taskListSchema = projectServerSchema.extend({
+export const taskListSchema = taskTargetSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const taskUpdateSchema = projectServerSchema.extend({
+export const taskUpdateSchema = taskTargetSchema.extend({
   taskId: z.string().min(1),
   inputResponses: z.record(z.string(), z.unknown()),
 });
 
-export const taskCapabilitiesSchema = projectServerSchema;
+export const taskCapabilitiesSchema = taskTargetSchema;
 
 export const resourcesListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
@@ -1384,6 +1394,8 @@ export async function createAuthorizedManager(
     /** Authorize fully, but let a request owner decide when to connect. */
     lazyConnect?: boolean;
     multiConnection?: boolean;
+    /** Build transports only for the explicitly pinned accounts. */
+    onlySelectedConnections?: boolean;
     connectionIds?: Record<string, string>;
     accessScope?: "project_member" | "chat_v2";
     /**
@@ -1606,7 +1618,8 @@ export async function createAuthorizedManager(
     projectId,
     uniqueServerIds,
     {
-      includeConnections: options?.multiConnection,
+      includeConnections:
+        options?.multiConnection || options?.onlySelectedConnections,
       connectionIds: options?.connectionIds,
       accessScope: options?.accessScope,
       scenarioId: options?.scenarioId,
@@ -1620,12 +1633,25 @@ export async function createAuthorizedManager(
       serverNamesById[serverId] = storedName.trim();
     }
   }
-  if (options?.multiConnection) {
+  if (options?.multiConnection || options?.onlySelectedConnections) {
     for (const [id, auth] of Object.entries(batch.results)) {
-      if (auth.ok && auth.oauthConnections?.length) {
-        const live = auth.oauthConnections.filter(
-          (c) => c.accessToken && !c.needsReauth,
+      if (auth.ok) {
+        const selectedId = options.onlySelectedConnections
+          ? options.connectionIds?.[id]
+          : undefined;
+        const live = (auth.oauthConnections ?? []).filter(
+          (c) =>
+            c.accessToken &&
+            !c.needsReauth &&
+            (selectedId === undefined || c.connectionId === selectedId),
         );
+        if (options.onlySelectedConnections && (!selectedId || !live.length)) {
+          throw new WebRouteError(
+            403,
+            ErrorCode.FORBIDDEN,
+            "The account saved with this task is unavailable. Reconnect that account to continue.",
+          );
+        }
         // A disconnected default must not hide another usable account.
         auth.oauthAccessToken ||= live[0]?.accessToken;
         // Every row dead (no token, or all needing reauthorization) is NOT a
@@ -1691,7 +1717,11 @@ export async function createAuthorizedManager(
           auth.status,
           auth.code as ErrorCode,
           auth.message,
-          { serverId, serverName: serverNamesById?.[serverId] ?? null, refusalReason: auth.refusalReason },
+          {
+            serverId,
+            serverName: serverNamesById?.[serverId] ?? null,
+            refusalReason: auth.refusalReason,
+          },
         );
       }
       const displayServerName = displayNameForServer(
@@ -1923,7 +1953,11 @@ export async function createAuthorizedManager(
         }
       }
     } catch (error) {
-      nameServerRefusal(error, serverId, serverNamesById?.[serverId] ?? serverId);
+      nameServerRefusal(
+        error,
+        serverId,
+        serverNamesById?.[serverId] ?? serverId,
+      );
       if (!isServerRefusal(error, serverId, tolerate)) throw error;
       refusedServers[serverId] = error;
     }
@@ -2418,7 +2452,11 @@ export async function createAuthorizedManager(
           ),
         ] as const;
       } catch (error) {
-        nameServerRefusal(error, serverId, serverNamesById?.[serverId] ?? serverId);
+        nameServerRefusal(
+          error,
+          serverId,
+          serverNamesById?.[serverId] ?? serverId,
+        );
         if (!isServerRefusal(error, serverId, tolerate)) throw error;
         refusedServers[serverId] = error;
         return undefined;
@@ -3097,6 +3135,13 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       (raw.clientCapabilities as Record<string, unknown> | undefined),
     {
       ...(options?.lazyConnect ? { lazyConnect: true } : {}),
+      ...(typeof raw.connectionId === "string" &&
+      typeof raw.serverId === "string"
+        ? {
+            connectionIds: { [raw.serverId]: raw.connectionId },
+            onlySelectedConnections: true,
+          }
+        : {}),
       accessScope,
       scenarioId,
       accessVersion,

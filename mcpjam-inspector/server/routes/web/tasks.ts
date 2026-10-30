@@ -1,31 +1,13 @@
 /**
- * Hosted-mode MCP tasks routes.
+ * Hosted Task operations reconnect for each request. A saved account pin must
+ * still be authorized; it never falls back to the current default account.
  *
- * ## Durable deferred tasks via reconnect-per-poll
+ * Live state comes from the MCP server. The caller-scoped recovery index only
+ * retains handles, including extension tasks that have no tasks/list method.
+ * Batch polling shares a connection within one server/account/wire scope.
  *
- * The hosted plane is horizontally scaled and keeps no MCP sessions: every
- * request builds an ephemeral `MCPClientManager` (authorize → connect →
- * request → disconnect) on whichever replica the load balancer picked. Tasks
- * bind to the AUTHORIZATION context rather than the session on both wires, so
- * polling a task from a fresh connection is spec-blessed (SEP-2663 explicitly
- * tells clients to persist task IDs and resume polling after a restart) and
- * needs no session affinity, no worker, and no server-side registry.
- *
- * Consequences that shape this file:
- *
- * - **Task handles live client-side** (the localStorage tracker), so there is
- *   no `/list` of hosted tasks beyond what the server itself remembers; the
- *   legacy `/list` is a passthrough and the extension answers `{tasks: []}`.
- * - **`/get-batch` exists** so a TasksTab tick costs ONE connection per server
- *   instead of one per tracked task. `HOSTED_TASK_BATCH_MAX` caps it.
- * - **Progress/notification endpoints are absent**, not stubbed: they need a
- *   live notification stream that an ephemeral connection cannot have. Polling
- *   is the spec-guaranteed path; the hosted client renders no progress UI.
- * - **A forgotten task is normal, not an error.** A server that drops tasks
- *   when the session ends is spec-legal, so `-32602` maps to the stable
- *   `TASK_NOT_FOUND` code and the client marks the handle unavailable —
- *   distinguishable from a structureless 404 (older replica mid-rollout) and
- *   from a transient connect failure.
+ * A server's unknown-task response marks that handle unavailable. Transient
+ * connection failures remain retryable and do not discard the handle.
  */
 
 import { Hono } from "hono";
@@ -63,6 +45,8 @@ import {
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 
+import { taskConnectionKey } from "../../utils/task-connection-key.js";
+
 const tasks = new Hono();
 
 /**
@@ -90,6 +74,7 @@ async function fetchRegistryTasks(
   body: {
     projectId: string;
     serverId: string;
+    connectionId?: string;
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
   },
@@ -103,6 +88,9 @@ async function fetchRegistryTasks(
       bearer,
       projectId: body.projectId,
       serverId: body.serverId,
+      ...(body.connectionId !== undefined
+        ? { connectionId: body.connectionId }
+        : {}),
     });
   } catch (error) {
     logger.warn("[web/tasks] registry recovery read unavailable", {
@@ -129,6 +117,7 @@ async function reportObservedStatuses(
   body: {
     projectId: string;
     serverId: string;
+    connectionId?: string;
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
   },
@@ -161,7 +150,12 @@ async function reportObservedStatuses(
     // `reportTaskStatuses` never throws and stamps `observed: true` on every
     // update — these all came from a live read that answered.
     await reportTaskStatuses(
-      { bearer, projectId: body.projectId, serverId: body.serverId },
+      {
+        bearer,
+        projectId: body.projectId,
+        serverId: body.serverId,
+        connectionId: body.connectionId,
+      },
       updates,
     );
   } catch (error) {
@@ -197,7 +191,7 @@ async function mapTaskErrors<T>(fn: () => Promise<T>): Promise<T> {
 
 tasks.post("/capabilities", async (c) =>
   withEphemeralConnection(c, taskCapabilitiesSchema, async (manager, body) =>
-    taskCapabilitiesForWire(manager, body.serverId),
+    taskCapabilitiesForWire(manager, taskConnectionKey(manager, body)),
   ),
 );
 
@@ -210,7 +204,7 @@ tasks.post("/list", async (c) =>
   withEphemeralConnection(c, taskListSchema, async (manager, body) => {
     const result = await mapTaskErrors(() =>
       listTasksForWire(manager, {
-        serverId: body.serverId,
+        serverId: taskConnectionKey(manager, body),
         cursor: body.cursor,
       }),
     );
@@ -233,7 +227,7 @@ tasks.post("/get", async (c) =>
     try {
       const result = await mapTaskErrors(() =>
         getTaskForWire(manager, {
-          serverId: body.serverId,
+          serverId: taskConnectionKey(manager, body),
           taskId: body.taskId,
         }),
       );
@@ -264,7 +258,7 @@ tasks.post("/get-batch", async (c) =>
   withEphemeralConnection(c, taskGetBatchSchema, async (manager, body) => {
     const result = await mapTaskErrors(() =>
       getTasksBatchForWire(manager, {
-        serverId: body.serverId,
+        serverId: taskConnectionKey(manager, body),
         taskIds: body.taskIds,
       }),
     );
@@ -281,7 +275,7 @@ tasks.post("/result", async (c) =>
   withEphemeralConnection(c, taskGetSchema, (manager, body) =>
     mapTaskErrors(() =>
       getTaskResultForWire(manager, {
-        serverId: body.serverId,
+        serverId: taskConnectionKey(manager, body),
         taskId: body.taskId,
       }),
     ),
@@ -293,7 +287,7 @@ tasks.post("/update", async (c) =>
   withEphemeralConnection(c, taskUpdateSchema, (manager, body) =>
     mapTaskErrors(() =>
       updateTaskForWire(manager, {
-        serverId: body.serverId,
+        serverId: taskConnectionKey(manager, body),
         taskId: body.taskId,
         inputResponses: body.inputResponses,
       }),
@@ -305,7 +299,7 @@ tasks.post("/cancel", async (c) =>
   withEphemeralConnection(c, taskGetSchema, (manager, body) =>
     mapTaskErrors(() =>
       cancelTaskForWire(manager, {
-        serverId: body.serverId,
+        serverId: taskConnectionKey(manager, body),
         taskId: body.taskId,
       }),
     ),

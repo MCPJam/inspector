@@ -1,3 +1,4 @@
+import { taskConnectionKey } from "../../../utils/task-connection-key.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -48,6 +49,7 @@ import {
   createAuthorizedManager,
   createManualHostedConnection,
   projectServerSchema,
+  taskCapabilitiesSchema,
   callerContextFromHono,
 } from "../auth.js";
 import { ErrorCode, WebRouteError } from "../errors.js";
@@ -95,9 +97,13 @@ describe("web auth manager batching", () => {
     }
   });
 
-  it.each([false, true])(
-    "keeps full authorization with optional lazy connection ownership: %s",
-    async (lazyConnect) => {
+  it.each([
+    { lazyConnect: false, connectionId: undefined },
+    { lazyConnect: true, connectionId: undefined },
+    { lazyConnect: true, connectionId: "saved-account" },
+  ])(
+    "keeps full authorization with optional lazy connection ownership: %j",
+    async ({ lazyConnect, connectionId }) => {
       global.fetch = vi.fn(async () =>
         Response.json({
           results: {
@@ -109,6 +115,18 @@ describe("web auth manager batching", () => {
               oauthAccessToken: "wire-token-not-identity",
               oauthCredentialId: "saved-credential",
               oauthCredentialAuthorizedAt: 42,
+              oauthConnections: [
+                {
+                  connectionId: "other-account",
+                  accessToken: "other-token",
+                  isDefault: true,
+                },
+                {
+                  connectionId: "saved-account",
+                  accessToken: "saved-token",
+                  isDefault: false,
+                },
+              ],
               serverConfig: {
                 transportType: "http",
                 url: "https://fixture.example/mcp",
@@ -131,13 +149,19 @@ describe("web auth manager batching", () => {
       } as unknown as Context;
       const result = await createManualHostedConnection(
         c,
-        { projectId: "project-1", serverId: "server-1" },
-        projectServerSchema,
+        { projectId: "project-1", serverId: "server-1", connectionId },
+        connectionId ? taskCapabilitiesSchema : projectServerSchema,
         lazyConnect ? { lazyConnect: true } : undefined,
       );
       expect(global.fetch).toHaveBeenCalledOnce();
       expect(String(vi.mocked(global.fetch).mock.calls[0][0])).toContain(
         "/web/authorize-batch",
+      );
+      const authorization = JSON.parse(
+        String(vi.mocked(global.fetch).mock.calls[0][1]?.body),
+      );
+      expect(authorization.connectionIds).toEqual(
+        connectionId ? { "server-1": connectionId } : undefined,
       );
       const [configs, options] = mcpClientManagerMock.mock.calls[0];
       expect(options.lazyConnect).toBe(lazyConnect ? true : undefined);
@@ -155,8 +179,79 @@ describe("web auth manager batching", () => {
         expect(result.authorizedServerConfigs).toBeUndefined();
         expect(result.authorizedServerIdentities).toBeUndefined();
       }
-      expect(configs["server-1"].baseFetch).toBeTypeOf("function");
+      const key = connectionId
+        ? taskConnectionKey(result.manager, {
+            serverId: "server-1",
+            connectionId,
+          })
+        : "server-1";
+      expect(Object.keys(configs)).toEqual([key]);
+      expect(configs[key].baseFetch).toBeTypeOf("function");
+      if (connectionId) {
+        expect(configs[key].requestInit.headers.get("Authorization")).toBe(
+          "Bearer saved-token",
+        );
+      }
       await result.manager.disconnectAllServers();
+    },
+  );
+
+
+  it.each([false, true])(
+    "refuses a missing or revoked pin before constructing any transport: %s",
+    async (revoked) => {
+      global.fetch = vi.fn(async () =>
+        Response.json({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://fixture.example/mcp",
+                useOAuth: true,
+              },
+              oauthConnections: [
+                {
+                  connectionId: "default",
+                  accessToken: "default-token",
+                  isDefault: true,
+                },
+                ...(revoked
+                  ? [
+                      {
+                        connectionId: "saved-account",
+                        accessToken: "stale-token",
+                        needsReauth: true,
+                      },
+                    ]
+                  : []),
+              ],
+            },
+          },
+        }),
+      ) as typeof fetch;
+      const c = {
+        ...mockContext,
+        req: {
+          url: "http://localhost:6274/api/web/tasks/get",
+          header: () => "Bearer fixture-bearer",
+        },
+      } as unknown as Context;
+      await expect(
+        createManualHostedConnection(
+          c,
+          {
+            projectId: "project-1",
+            serverId: "server-1",
+            connectionId: "saved-account",
+          },
+          taskCapabilitiesSchema,
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(mcpClientManagerMock).not.toHaveBeenCalled();
     },
   );
 
