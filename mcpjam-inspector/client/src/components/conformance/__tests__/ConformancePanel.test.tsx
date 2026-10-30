@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  act,
   render,
   screen,
   fireEvent,
@@ -489,6 +490,16 @@ describe("ConformanceTab", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "History" }));
     expect(window.location.search).toBe("?view=history");
+
+    // The sidebar's plain `/conformance` link: the page follows the address.
+    act(() => {
+      window.history.pushState({}, "", "/conformance");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("stays on History when Run has no server to run", () => {
@@ -507,7 +518,7 @@ describe("ConformanceTab", () => {
     clickRun();
 
     expect(info).toHaveBeenCalledWith(
-      "Connect an MCP server to run conformance checks.",
+      "Add a server to run conformance checks.",
     );
     expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
       "aria-selected",

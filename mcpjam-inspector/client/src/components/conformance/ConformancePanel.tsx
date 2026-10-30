@@ -42,6 +42,7 @@ import {
   type ConformanceView,
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
+import { useAppNavigate, useCurrentLocationParts } from "@/lib/app-navigation";
 import { useConformanceRun, type SuiteState } from "@/hooks/use-conformance-run";
 import {
   PersistConformanceRun,
@@ -609,17 +610,6 @@ function rememberServer(name: string): void {
   }
 }
 
-/** Writes the tab to `?view=`, keeping the router's history entry state. */
-function syncViewParam(view: ConformanceView) {
-  if (typeof window === "undefined") return;
-  const url = new URL(window.location.href);
-  if (view === "history") url.searchParams.set("view", "history");
-  else url.searchParams.delete("view");
-  if (url.href !== window.location.href) {
-    window.history.replaceState(window.history.state, "", url);
-  }
-}
-
 export function ConformanceTab({
   server,
   persist,
@@ -647,19 +637,25 @@ export function ConformanceTab({
   /** The History tab's content. Omit to hide the tab. */
   history?: ReactNode;
 }) {
-  // A run's detail page links back with `?view=history`.
-  const [view, setView] = useState<ConformanceView>(() =>
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("view") === "history"
+  // The tab lives in the URL (`?view=history`, which a run's page links back
+  // with), so a refresh, Back/Forward and the sidebar's plain `/conformance`
+  // all land on the tab the address names. Both hooks work with or without a
+  // router.
+  const location = useCurrentLocationParts();
+  const navigate = useAppNavigate();
+  const view: ConformanceView =
+    new URLSearchParams(location.search).get("view") === "history"
       ? "history"
-      : "overview",
-  );
-  // The URL follows the tab, so a refresh lands where the user is. Otherwise
-  // `?view=history` from a run's page outlives a switch to Overview (by tab
-  // or by Run) and a refresh drops the user back on History.
+      : "overview";
   const changeView = (next: ConformanceView) => {
-    setView(next);
-    syncViewParam(next);
+    if (next === view) return;
+    const params = new URLSearchParams(location.search);
+    if (next === "history") params.set("view", "history");
+    else params.delete("view");
+    const query = params.toString();
+    navigate(`${location.pathname}${query ? `?${query}` : ""}${location.hash}`, {
+      replace: true,
+    });
   };
   const showHistory = history !== undefined;
   // `?view=history` can outlive the History tab, e.g. a run link opened where
