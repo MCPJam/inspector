@@ -182,6 +182,96 @@ describe("client readiness advice", () => {
     expect(deprecated?.message).toMatch(/logging\/setLevel/);
     expect(deprecated?.message).toMatch(/subscriptions\/listen/);
   });
+
+  it("advises on tool names that break the naming conventions, without costing points", async () => {
+    const longName = "a".repeat(129);
+    const tools = [tool(longName), tool("has space"), tool("dup"), tool("dup")];
+    mockedOperations.listTools.mockResolvedValue({
+      tools,
+      nextCursor: undefined,
+    } as never);
+
+    const warnings = await collectClientReadiness(
+      clientContext(),
+      surface({ tools })
+    );
+    const names = warnings.find(
+      (item) => item.id === "readiness-tool-name-conventions"
+    );
+
+    expect(names?.specStrength).toBe("SHOULD");
+    expect(names?.informational).toBe(true);
+    expect(names?.details).toEqual({
+      badLength: [longName],
+      badCharacters: ["has space"],
+      duplicates: ["dup"],
+    });
+  });
+
+  it("gives no tool-name advice before 2025-11-25, where the rules do not exist", async () => {
+    const tools = [tool("has space")];
+    mockedOperations.listTools.mockResolvedValue({
+      tools,
+      nextCursor: undefined,
+    } as never);
+
+    const warnings = await collectClientReadiness(
+      clientContext({ protocolVersion: "2025-06-18" }),
+      surface({ tools })
+    );
+
+    expect(
+      warnings.find((item) => item.id === "readiness-tool-name-conventions")
+    ).toBeUndefined();
+  });
+
+  it("counts each bad name once, names it in the message, and skips names that are not strings", async () => {
+    const tools = [
+      tool("has space"),
+      tool("has space"),
+      tool(""),
+      tool(null as unknown as string),
+    ];
+    mockedOperations.listTools.mockResolvedValue({
+      tools,
+      nextCursor: undefined,
+    } as never);
+
+    const warnings = await collectClientReadiness(
+      clientContext(),
+      surface({ tools })
+    );
+    const names = warnings.find(
+      (item) => item.id === "readiness-tool-name-conventions"
+    );
+
+    expect(names?.details).toEqual({
+      badLength: [""],
+      badCharacters: ["has space"],
+      duplicates: ["has space"],
+    });
+    expect(names?.message).toContain('"has space"');
+  });
+
+  it("advises on a modern run, with or without a negotiated revision", async () => {
+    const tools = [tool("has space")];
+    mockedOperations.listTools.mockResolvedValue({
+      tools,
+      nextCursor: undefined,
+    } as never);
+    const find = (warnings: Awaited<ReturnType<typeof collectClientReadiness>>) =>
+      warnings.find((item) => item.id === "readiness-tool-name-conventions");
+
+    const modern = clientContext({ protocolVersion: "2026-07-28" });
+    expect(
+      find(await collectClientReadiness(modern, surface({ tools })))
+    ).toBeDefined();
+
+    const noNegotiation = { ...modern, initializationInfo: undefined };
+    expect(
+      find(await collectClientReadiness(noNegotiation, surface({ tools })))
+    ).toBeDefined();
+  });
 });
 
 describe("raw readiness advice", () => {
