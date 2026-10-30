@@ -13,7 +13,11 @@ export const APPLICATION_SCREENS = [
   ["swarm", "product", ["swarm-overview", "swarm-personas", "swarm-sessions"]],
   ["tool-errors", "product", ["tool-error"]],
   ["swarm-authoring", "product", ["swarm-empty", "swarm-create"]],
-  ["task-accounts", "product", ["task account panel"]],
+  [
+    "task-accounts",
+    "product",
+    ["task account panel", "task form input", "task url input"],
+  ],
 ];
 export const APPLICATION_SCREEN_COUNT = APPLICATION_SCREENS.reduce(
   (count, [, , screens]) => count + screens.length,
