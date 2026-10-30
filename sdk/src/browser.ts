@@ -1212,3 +1212,6 @@ export type {
 export { modelRejectsTemperature } from "./model-sampling-support.js";
 
 export { aiRequestHeaders } from "./ai-request-headers.js";
+
+/** Use the same validation before rendering embedded Task or MRTR input. */
+export { validateEmbeddedClientRequest } from "./mcp-client-manager/task-input-driver.js";
