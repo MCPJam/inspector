@@ -44,6 +44,18 @@ function host(
 }
 
 describe("shared harness input contract", () => {
+  it("preserves handler failures when the request was not cancelled", async () => {
+    const inputs = host(async () => {
+      throw new Error("UI connection failed");
+    });
+    await expect(
+      inputs.answer(
+        { serverId: "server", requestId: "request", message: "Choose", schema: {} },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("UI connection failed");
+  });
+
   it.each(["accept", "decline", "cancel"] as const)(
     "preserves %s for native, modern and task input adapters",
     async (action) => {

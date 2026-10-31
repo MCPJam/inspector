@@ -240,6 +240,36 @@ describe("harness elicitation control", () => {
     },
   );
 
+  it.each(["turn", "native"] as const)(
+    "settles %s cancellation even when the input handler never answers",
+    async (source) => {
+      const handle = vi.fn<HarnessElicitationHandler>(
+        () => new Promise(() => {}),
+      );
+      const f = await fixture(handle);
+      f.send(event());
+      expect(handle).toHaveBeenCalledTimes(1);
+      if (source === "turn") f.abort.abort();
+      else
+        f.send({
+          type: "raw",
+          rawValue: {
+            type: "mcpjam:elicitation",
+            phase: "cancel",
+            controlId: "mcpjam:elicitation:request",
+          },
+        });
+      await vi.waitFor(() =>
+        expect(f.submitToolResult).toHaveBeenCalledWith({
+          toolCallId: "mcpjam:elicitation:request",
+          output: { action: "cancel" },
+        }),
+      );
+      f.finish();
+      await f.control.done;
+    },
+  );
+
   it("consumes malformed private events and fails without logging their payload", async () => {
     const f = await fixture(async () => ({ action: "accept" }));
     f.send({

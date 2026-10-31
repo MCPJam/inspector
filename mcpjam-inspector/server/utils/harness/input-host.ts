@@ -61,8 +61,13 @@ export function createHarnessInputHost(args: {
       return { action: "cancel" };
     if (!request.serverId || !args.allowedServerIds.has(request.serverId))
       return { action: "decline" };
-    const result = await args.handle(request, signal);
-    return signal.aborted ? { action: "cancel" } : result;
+    try {
+      const result = await withAbort(args.handle(request, signal), signal);
+      return signal.aborted ? { action: "cancel" } : result;
+    } catch (error) {
+      if (signal.aborted) return { action: "cancel" };
+      throw error;
+    }
   };
 
   const request = async (
