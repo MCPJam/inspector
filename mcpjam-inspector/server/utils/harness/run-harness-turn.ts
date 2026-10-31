@@ -1583,6 +1583,7 @@ export async function runHarnessTurn(
       const admission = nativeCandidate ? forwardingAdmission({ manager: mcpClientManager, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
             elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
             modernInputAvailable: options.harnessOwnedInput === true,
+            ownedTasksAvailable: options.harnessOwnedTasks === true,
           })
         : { delivery: undefined, gaps: [] };
       const nativeGaps = admission.gaps;
@@ -2587,6 +2588,7 @@ export async function runHarnessTurn(
         if (useNativeForwarding) {
           if (!broker.forwarding || !harnessMcpProxy) throw new Error("Native forwarding was not confirmed.");
           nativeForwarding = await prepareNativeForwarding({ ...broker.forwarding, expiresAt: broker.expiresAt, turnId: turnRunId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer,
+            tasks,
             ...(enhancedApps
               ? {
                   delivery: "bridge",
@@ -2595,6 +2597,7 @@ export async function runHarnessTurn(
                     selectedServers ?? [],
                     respectToolVisibility !== false,
                     modelVisibleMcpToolResults,
+                    tasks?.mode === "expose",
                   ),
                 }
               : {}),
@@ -3904,7 +3907,7 @@ export async function runHarnessTurn(
             }
             // Provider-executed (in-sandbox) — see tool-input-available above.
             const rawNativeResult = nativeForwarding && meta.serverId && !policyBlock
-              ? await nativeForwarding.readToolResult(meta.serverId, toolCallId)
+              ? await nativeForwarding.readToolResult(meta.serverId, toolCallId, meta.toolName)
               : undefined;
             if (rawNativeResult !== undefined)
               nativePresentations.set(toolCallId, {

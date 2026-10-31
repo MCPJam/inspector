@@ -47,6 +47,38 @@ import { logger } from "../../utils/logger.js";
 
 import { taskConnectionKey } from "../../utils/task-connection-key.js";
 
+import { isRecord } from '../../utils/byok/list-request.js';
+import { authorizeTaskSources } from '../../utils/task-source-authorization.js';
+
+const withVerifiedTaskConnection: typeof withEphemeralConnection = (c, schema, fn, options) => {
+  let authorized: Awaited<ReturnType<typeof authorizeTaskSources>>;
+  return withEphemeralConnection(c, schema, async (manager, body, ...rest) => {
+    if (!isRecord(body)) throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Invalid task target");
+    // Resolve account and owner before connecting; compare the wire only after negotiation.
+    await manager.ensureTasksSupport(taskConnectionKey(manager, { ...body, wire: undefined }));
+    if (authorized) {
+      const current = await authorizeTaskSources(c, body);
+      if (!current || current.binding !== authorized.binding)
+        throw new WebRouteError(403, ErrorCode.FORBIDDEN, "The Task's original connection changed. Reopen it in its original chat.");
+    }
+    return fn(manager, body, ...rest);
+  }, {
+    ...options,
+    beforeConnect: async (raw) => {
+      await options?.beforeConnect?.(raw);
+      authorized = await authorizeTaskSources(c, raw);
+      if (authorized) {
+        // The saved host and stored account own these settings, including absent policies.
+        for (const key of ["clientCapabilities", "xaaPolicy", "oauthAccessToken", "oauthTokens", "scenarioId", "accessVersion"])
+          delete raw[key];
+        raw.accessScope = "project_member";
+      }
+    },
+    hostConfigForBody: async (raw) => authorized?.hostConfig ?? options?.hostConfigForBody?.(raw),
+
+  });
+};
+
 const tasks = new Hono();
 
 /**
@@ -190,7 +222,7 @@ async function mapTaskErrors<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 tasks.post("/capabilities", async (c) =>
-  withEphemeralConnection(c, taskCapabilitiesSchema, async (manager, body) =>
+  withVerifiedTaskConnection(c, taskCapabilitiesSchema, async (manager, body) =>
     taskCapabilitiesForWire(manager, taskConnectionKey(manager, body)),
   ),
 );
@@ -201,7 +233,7 @@ tasks.post("/capabilities", async (c) =>
 // empty. AWAITED (unlike the /get-batch report): the whole point of the read
 // is to be in this response.
 tasks.post("/list", async (c) =>
-  withEphemeralConnection(c, taskListSchema, async (manager, body) => {
+  withVerifiedTaskConnection(c, taskListSchema, async (manager, body) => {
     const result = await mapTaskErrors(() =>
       listTasksForWire(manager, {
         serverId: taskConnectionKey(manager, body),
@@ -223,7 +255,7 @@ tasks.post("/list", async (c) =>
 // still an observation (the one that lets the backend retire the row), so it
 // reports `expired` before the mapped 404 propagates.
 tasks.post("/get", async (c) =>
-  withEphemeralConnection(c, taskGetSchema, async (manager, body) => {
+  withVerifiedTaskConnection(c, taskGetSchema, async (manager, body) => {
     try {
       const result = await mapTaskErrors(() =>
         getTaskForWire(manager, {
@@ -255,7 +287,7 @@ tasks.post("/get", async (c) =>
 // One connection per server per poll tick; per-task failures are reported
 // inside the batch so one forgotten task can't fail the whole tick.
 tasks.post("/get-batch", async (c) =>
-  withEphemeralConnection(c, taskGetBatchSchema, async (manager, body) => {
+  withVerifiedTaskConnection(c, taskGetBatchSchema, async (manager, body) => {
     const result = await mapTaskErrors(() =>
       getTasksBatchForWire(manager, {
         serverId: taskConnectionKey(manager, body),
@@ -272,7 +304,7 @@ tasks.post("/get-batch", async (c) =>
 
 // Legacy only: the extension carries the result inline on tasks/get.
 tasks.post("/result", async (c) =>
-  withEphemeralConnection(c, taskGetSchema, (manager, body) =>
+  withVerifiedTaskConnection(c, taskGetSchema, (manager, body) =>
     mapTaskErrors(() =>
       getTaskResultForWire(manager, {
         serverId: taskConnectionKey(manager, body),
@@ -284,7 +316,7 @@ tasks.post("/result", async (c) =>
 
 // Extension only: submit responses to the keyed inputRequests snapshot.
 tasks.post("/update", async (c) =>
-  withEphemeralConnection(c, taskUpdateSchema, (manager, body) =>
+  withVerifiedTaskConnection(c, taskUpdateSchema, (manager, body) =>
     mapTaskErrors(() =>
       updateTaskForWire(manager, {
         serverId: taskConnectionKey(manager, body),
@@ -296,7 +328,7 @@ tasks.post("/update", async (c) =>
 );
 
 tasks.post("/cancel", async (c) =>
-  withEphemeralConnection(c, taskGetSchema, (manager, body) =>
+  withVerifiedTaskConnection(c, taskGetSchema, (manager, body) =>
     mapTaskErrors(() =>
       cancelTaskForWire(manager, {
         serverId: taskConnectionKey(manager, body),

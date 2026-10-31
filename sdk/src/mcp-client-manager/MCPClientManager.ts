@@ -2048,6 +2048,12 @@ export class MCPClientManager {
     );
   }
 
+  /** Wait for negotiation before reading support on an ephemeral connection. */
+  async ensureTasksSupport(serverId: string): Promise<TasksSupport> {
+    await this.ensureConnected(serverId);
+    return this.getTasksSupport(serverId);
+  }
+
   /**
    * `tasks/get` on the SEP-2663 extension wire. A completed task carries its
    * `result` inline; an expired/unknown task raises the server's `-32602`.

@@ -18,6 +18,12 @@ import { taskConnectionKey } from "../../utils/task-connection-key.js";
 import { WebRouteError } from "../web/errors.js";
 
 const tasks = new Hono();
+tasks.use('*', async (c, next) => {
+  const body = await c.req.json();
+  if (body?.sourceExecutions !== undefined)
+    return c.json({error: "Open this hosted Task in its original MCPJam chat.", code: "TASKS_UNSUPPORTED"}, 400);
+  await next();
+});
 
 /**
  * Tasks exist on two mutually incompatible wires: the 2025-11-25 in-core
