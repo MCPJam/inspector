@@ -183,7 +183,7 @@ export async function prepareNativeForwarding(args: {
     delivery: args.delivery ?? "native",
     policyDigest,
     keyToServerId,
-    readToolResult: async (serverId: string, toolCallId: string) => {
+    readToolResult: async (serverId: string, toolCallId: string, toolName?: string) => {
       const owner = args.owners.find(
         (candidate) => candidate.serverId === serverId,
       );
@@ -212,7 +212,7 @@ export async function prepareNativeForwarding(args: {
         await runToolTaskSeam(
           {
             serverId,
-            toolName: "Task",
+            toolName: toolName ?? "Task",
             wire: "extension",
             callPlain: async () => result,
             callEligible: async () => result,

@@ -3907,7 +3907,7 @@ export async function runHarnessTurn(
             }
             // Provider-executed (in-sandbox) — see tool-input-available above.
             const rawNativeResult = nativeForwarding && meta.serverId && !policyBlock
-              ? await nativeForwarding.readToolResult(meta.serverId, toolCallId)
+              ? await nativeForwarding.readToolResult(meta.serverId, toolCallId, meta.toolName)
               : undefined;
             if (rawNativeResult !== undefined)
               nativePresentations.set(toolCallId, {
