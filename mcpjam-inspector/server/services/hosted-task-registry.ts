@@ -64,6 +64,7 @@ export interface HostedTaskRegistryOptions {
 /** Identity every read/report/delete call is scoped by. */
 export interface HostedTaskRegistryScope extends HostedTaskRegistryOptions {
   serverId: string;
+  connectionId?: string;
 }
 
 /**
@@ -249,13 +250,16 @@ export async function recordCreatedTask(
     {
       projectId: scope.projectId,
       serverId: scope.serverId,
+      ...(scope.connectionId !== undefined
+        ? { connectionId: scope.connectionId }
+        : {}),
       wire: task.wire,
       taskId: task.taskId,
       lastKnownStatus: task.status ?? "working",
       ...(task.createdAt !== undefined ? { createdAt: task.createdAt } : {}),
       // No `ownerUserId`, no `authContextKey`: both are server-derived and
       // the backend rejects them outright.
-    }
+    },
   );
   return logUpsertOutcome(outcome, task.taskId);
 }
@@ -277,6 +281,7 @@ export async function recordHostedTask(
       bearer: options.bearer,
       projectId: options.projectId,
       serverId: event.identity.serverId,
+      connectionId: event.identity.connectionId,
     },
     {
       wire: event.wire,
@@ -285,7 +290,7 @@ export async function recordHostedTask(
       ...(event.createdAt !== undefined
         ? { createdAt: Date.parse(event.createdAt) }
         : {}),
-    }
+    },
   );
 }
 
@@ -309,6 +314,9 @@ export async function listRegistryTasks(
   }>(LIST_PATH, scope.bearer, {
     projectId: scope.projectId,
     serverId: scope.serverId,
+    ...(scope.connectionId !== undefined
+      ? { connectionId: scope.connectionId }
+      : {}),
     ...(options.nonTerminalOnly === true ? { nonTerminalOnly: true } : {}),
     ...(typeof options.limit === "number" ? { limit: options.limit } : {}),
   });
@@ -366,6 +374,9 @@ export async function reportTaskStatuses(
       {
         projectId: scope.projectId,
         serverId: scope.serverId,
+        ...(scope.connectionId !== undefined
+          ? { connectionId: scope.connectionId }
+          : {}),
         updates: updates.map((update) => ({
           wire: update.wire,
           taskId: update.taskId,
@@ -375,7 +386,7 @@ export async function reportTaskStatuses(
           // anything but an explicit `true`.
           observed: true,
         })),
-      }
+      },
     );
     if (outcome.kind === "disabled") return;
     if (outcome.kind !== "ok") {
@@ -418,9 +429,12 @@ export async function deleteRegistryTask(
     {
       projectId: scope.projectId,
       serverId: scope.serverId,
+      ...(scope.connectionId !== undefined
+        ? { connectionId: scope.connectionId }
+        : {}),
       wire: task.wire,
       taskId: task.taskId,
-    }
+    },
   );
   switch (outcome.kind) {
     case "ok":

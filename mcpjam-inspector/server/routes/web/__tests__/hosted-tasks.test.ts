@@ -1,3 +1,7 @@
+import {
+  installTaskAccounts,
+  TASK_ACCOUNT_KEY,
+} from "../../../utils/__tests__/task-account-fixture.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -598,4 +602,85 @@ describe("hosted /api/web/tasks", () => {
       }).success,
     ).toBe(true);
   });
+  it.each([
+    ["/get", "getTaskExt", { taskId: "same-id" }],
+    ["/get-batch", "getTaskExt", { taskIds: ["same-id"] }],
+    [
+      "/update",
+      "updateTask",
+      { taskId: "same-id", inputResponses: { choice: { action: "accept" } } },
+    ],
+    ["/cancel", "cancelTaskExt", { taskId: "same-id" }],
+  ] as const)(
+    "dispatches %s to the saved account, not the default",
+    async (path, method, body) => {
+      const execute = vi
+        .fn()
+        .mockResolvedValue({ taskId: "same-id", status: "working" });
+      const manager = setManager({ [method]: execute });
+      installTaskAccounts(
+        manager as unknown as Parameters<typeof installTaskAccounts>[0],
+      );
+      const response = await post(path, {
+        ...body,
+        connectionId: "account-b",
+        wire: "extension",
+      });
+      expect(response.status).toBe(200);
+      expect(execute.mock.calls[0][0]).toBe(TASK_ACCOUNT_KEY);
+      const registryCall = mockReportTaskStatuses.mock.calls[0];
+      if (registryCall)
+        expect(registryCall[0]).toMatchObject({
+          serverId: "s1",
+          connectionId: "account-b",
+        });
+    },
+  );
+
+  it("keeps recovery scoped to the selected account", async () => {
+    const manager = setManager({});
+    installTaskAccounts(
+      manager as unknown as Parameters<typeof installTaskAccounts>[0],
+    );
+    mockListRegistryTasks.mockResolvedValue([]);
+    expect(
+      (await post("/list", { connectionId: "account-b", wire: "extension" }))
+        .status,
+    ).toBe(200);
+    expect(mockListRegistryTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: "s1", connectionId: "account-b" }),
+    );
+  });
+
+  it("refuses a missing saved account without reading the current default", async () => {
+    const getTaskExt = vi.fn();
+    const manager = setManager({ getTaskExt });
+    installTaskAccounts(
+      manager as unknown as Parameters<typeof installTaskAccounts>[0],
+    );
+    expect(
+      (await post("/get", { taskId: "same-id", connectionId: "removed" }))
+        .status,
+    ).toBe(403);
+    expect(getTaskExt).not.toHaveBeenCalled();
+  });
+
+  it("refuses a changed wire without interpreting an old task ID on the new wire", async () => {
+    const getTaskExt = vi.fn();
+    setManager({ getTaskExt });
+    expect(
+      (await post("/get", { taskId: "same-id", wire: "legacy" })).status,
+    ).toBe(409);
+    expect(getTaskExt).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed pins before connecting", async () => {
+    setManager({});
+    expect(
+      (await post("/get", { taskId: "same-id", connectionId: "bad\u0000pin" }))
+        .status,
+    ).toBe(400);
+    expect(lifecycle).toEqual([]);
+  });
+
 });

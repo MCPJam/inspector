@@ -18,6 +18,7 @@ import {
   getLatestProgress,
   getTask,
   getTaskCapabilities,
+  getTaskResult,
   getTasksBatch,
   listTasks,
   updateTask,
@@ -238,4 +239,42 @@ describe("mcp-tasks-api (hosted mode)", () => {
 
     expect(getTrackedTasksForServer("my-server")).toHaveLength(0);
   });
+  it.each([
+    "get",
+    "batch",
+    "list",
+    "result",
+    "update",
+    "cancel",
+    "capabilities",
+  ] as const)(
+    "preserves the saved account and wire on %s",
+    async (operation) => {
+      const target = {
+        connectionId: "saved-account",
+        wire: "extension" as const,
+      };
+      authFetchMock.mockResolvedValue(
+        jsonResponse({ wire: "extension", task: {}, tasks: [] }),
+      );
+      if (operation === "get") await getTask("my-server", "t1", target);
+      else if (operation === "batch")
+        await getTasksBatch("my-server", ["t1"], target);
+      else if (operation === "list")
+        await listTasks("my-server", undefined, target);
+      else if (operation === "result")
+        await getTaskResult("my-server", "t1", target);
+      else if (operation === "update")
+        await updateTask("my-server", "t1", {}, target);
+      else if (operation === "cancel")
+        await cancelTask("my-server", "t1", target);
+      else await getTaskCapabilities("my-server", target);
+      expect(lastCall().body).toMatchObject({
+        projectId: "project-1",
+        serverId: "server-1",
+        ...target,
+      });
+    },
+  );
+
 });
