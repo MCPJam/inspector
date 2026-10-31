@@ -34,8 +34,21 @@ import {
 } from "../../utils/hosted-egress-guard.js";
 import { principalKey } from "../../utils/request-principal.js";
 import { toBrowserOAuthResult } from "../../utils/oauth-conformance-browser-result.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { logger } from "../../utils/logger.js";
+import {
+  awaitRendezvousResult,
+  createRendezvous,
+  isConformanceOAuthRendezvousEnabled,
+  runRendezvousOnThisReplica,
+  submitRendezvousCode,
+} from "../../services/conformance-oauth-rendezvous.js";
 
 const conformanceWeb = new Hono();
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -389,6 +402,13 @@ conformanceWeb.post("/oauth/start", async (c) =>
       );
     }
 
+    // Prod runs several replicas with no sticky sessions: the run stays here,
+    // but the code and the result cross over through Convex (see
+    // services/conformance-oauth-rendezvous.ts).
+    const convexBearer = isConformanceOAuthRendezvousEnabled()
+      ? await getConvexBearerForRequest(c)
+      : undefined;
+
     try {
       const started = await startOAuthConformance({
         defaultServerUrl: resolved.serverUrl,
@@ -399,6 +419,25 @@ conformanceWeb.post("/oauth/start", async (c) =>
         )}/oauth/callback/debug`,
         oauthProfile: parsed.oauthProfile,
         owner: principalKey(c),
+        ...(convexBearer
+          ? {
+              onAuthorizationNeeded: async (session) => {
+                try {
+                  await createRendezvous(convexBearer, session.id);
+                } catch (error) {
+                  logger.warn("[conformance-oauth] rendezvous not created", {
+                    error: errorText(error),
+                  });
+                  throw new WebRouteError(
+                    503,
+                    ErrorCode.INTERNAL_ERROR,
+                    "Couldn't start the OAuth checks. Run the checks again."
+                  );
+                }
+                runRendezvousOnThisReplica(session);
+              },
+            }
+          : {}),
       });
       return started.phase === "complete"
         ? { ...started, result: toBrowserOAuthResult(started.result) }
@@ -421,6 +460,32 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
   handleRoute(c, async () => {
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthAuthorizeSchema, body);
+
+    if (isConformanceOAuthRendezvousEnabled()) {
+      // The run may live on another replica: leave the code in Convex for it.
+      const bearer = await getConvexBearerForRequest(c);
+      let outcome: "accepted" | "gone";
+      try {
+        outcome = await submitRendezvousCode(bearer, parsed);
+      } catch (error) {
+        logger.warn("[conformance-oauth] code not submitted", {
+          error: errorText(error),
+        });
+        throw new WebRouteError(
+          503,
+          ErrorCode.INTERNAL_ERROR,
+          "Couldn't send the sign-in code to the OAuth checks. Run the checks again."
+        );
+      }
+      if (outcome === "gone") {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          OAUTH_SESSION_EXPIRED_MESSAGE
+        );
+      }
+      return { success: true };
+    }
 
     const delivered = submitOAuthConformanceCode({
       ...parsed,
@@ -447,6 +512,30 @@ conformanceWeb.post("/oauth/complete", async (c) =>
   handleRoute(c, async () => {
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthCompleteSchema, body);
+
+    if (isConformanceOAuthRendezvousEnabled()) {
+      // Written by whichever replica ran the checks, already shaped for the
+      // browser.
+      const outcome = await awaitRendezvousResult(
+        await getConvexBearerForRequest(c),
+        parsed.sessionId
+      );
+      switch (outcome.phase) {
+        case "complete":
+          return { phase: "complete" as const, result: outcome.result };
+        case "pending":
+          return { phase: "pending" as const, completedSteps: [] };
+        case "failed":
+          throw new WebRouteError(500, ErrorCode.INTERNAL_ERROR, outcome.error);
+        case "gone":
+          throw new WebRouteError(
+            404,
+            ErrorCode.NOT_FOUND,
+            OAUTH_SESSION_EXPIRED_MESSAGE
+          );
+      }
+    }
+
     try {
       const completed = await completeOAuthConformance({
         ...parsed,
