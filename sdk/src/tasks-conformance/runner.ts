@@ -1019,8 +1019,10 @@ export function findRawResult(
  * extension's `CreateTaskResult`) or nested `task.taskId` (2025-11-25).
  *
  * `resultType: "task"` is a task even with no id, so it gets a placeholder
- * rather than passing. A result with an array `content` is a normal
- * `CallToolResult`, and stray `taskId`/`task` keys on it do not make it one.
+ * rather than passing. A nested `task` with both `taskId` and `status` is a
+ * 2025-11-25 `CreateTaskResult` even if `content` rides along. Otherwise a
+ * result with an array `content` is a normal `CallToolResult`, and a stray
+ * `taskId`/`task` key on it does not make it a task.
  */
 export function findCreatedTaskId(result: unknown): string | undefined {
   if (!isRecord(result)) return undefined;
@@ -1031,12 +1033,14 @@ export function findCreatedTaskId(result: unknown): string | undefined {
   if (result.resultType === "task") {
     return flatId ?? "(task result with no taskId)";
   }
-  if (Array.isArray(result.content)) return undefined;
-  if (flatId) return flatId;
   const nested = isRecord(result.task) ? result.task : undefined;
-  return typeof nested?.taskId === "string" && nested.taskId.length > 0
-    ? nested.taskId
-    : undefined;
+  const nestedId =
+    typeof nested?.taskId === "string" && nested.taskId.length > 0
+      ? nested.taskId
+      : undefined;
+  if (nestedId && typeof nested?.status === "string") return nestedId;
+  if (Array.isArray(result.content)) return undefined;
+  return flatId ?? nestedId;
 }
 
 export function findRawTaskResponse(

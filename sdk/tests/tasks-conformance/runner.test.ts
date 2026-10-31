@@ -471,6 +471,15 @@ describe("findCreatedTaskId", () => {
       })
     ).toBeUndefined();
   });
+
+  it("treats a full legacy task as a task even when content rides along", () => {
+    expect(
+      findCreatedTaskId({
+        content: [{ type: "text", text: "ok" }],
+        task: { taskId: "t3", status: "working" },
+      })
+    ).toBe("t3");
+  });
 });
 
 describe("shape validators", () => {
