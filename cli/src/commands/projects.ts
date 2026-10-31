@@ -331,7 +331,7 @@ export function registerProjectsCommands(program: Command): void {
       .command("get")
       .description("Get one saved MCP server")
       .option("--project <id-or-name>", "Project name or ID")
-      .requiredOption("--server <id>", "Server ID").action(async (options: PlatformOptions & { server: string }, command) => {
+      .requiredOption("--server <id-or-name>", "Server name or ID").action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const project = requireProject(command, platformOptions);
