@@ -1533,6 +1533,7 @@ export async function createAuthorizedManager(
     >["extensionRequestHandlers"];
     mrtrInputCollectorForServer?: (
       serverId: string,
+      organizationId?: string | null,
     ) => MrtrInputCollector | undefined;
     /**
      * The turn's execution scope, forwarded to the computer reservation that
@@ -2593,7 +2594,10 @@ export async function createAuthorizedManager(
         Object.entries(connectionsByServerId).find(([, group]) =>
           group.some((connection) => connection.key === serverId),
         )?.[0] ?? serverId;
-      const collector = options.mrtrInputCollectorForServer(baseServerId);
+      const collector = options.mrtrInputCollectorForServer(
+        baseServerId,
+        batch.organizationId,
+      );
       if (collector) {
         manager.setMrtrInputCollector(serverId, collector);
       }
@@ -2909,6 +2913,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     >["extensionRequestHandlers"];
     mrtrInputCollectorForServer?: (
       serverId: string,
+      organizationId?: string | null,
     ) => MrtrInputCollector | undefined;
     /** See `createAuthorizedManager`'s option of the same name. */
     advertiseSkillsExtension?: boolean;

@@ -577,6 +577,7 @@ export interface WebChatTurnRuntime {
    * client speaks the hosted-elicitation handshake; see `chat-v2.ts`.
    */
   elicitationBridge?: HostedElicitationBridge;
+  harnessOwnedInput?: boolean;
   /**
    * Hosted MRTR (§12.5, PR5) bridge — attached to the stream writer so the
    * suspending collector can emit `data-mrtr-input-required` parts. Present only
@@ -1945,6 +1946,7 @@ export async function streamChatTurn(
     ...(runtime.elicitationBridge
       ? { onHarnessElicitation: runtime.elicitationBridge.callback }
       : {}),
+    harnessOwnedInput: runtime.harnessOwnedInput,
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume
     // request the engine drives one retry leg (reconstructing tool
     // output-schema validation) before the first model call, splices the

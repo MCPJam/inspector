@@ -30,6 +30,8 @@ import {
   verifyToolApprovalId,
 } from "../../utils/tool-approval-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { forwardingInputHost } from "../../utils/harness/forwarding/owned-input.js";
+import { createForwardingMrtrGate } from "../../utils/harness/forwarding/mrtr-gate.js";
 import {
   enhancedMcpResponse,
   enhancedToolPolicy,
@@ -85,6 +87,21 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
       raw === undefined
         ? undefined
         : parseNativeMessage(raw, c.req.raw.headers);
+    let waitingForInput = () => {};
+    const input =
+      context.delivery === "bridge"
+        ? await forwardingInputHost({
+            ...caller,
+            serverId,
+            capabilities: sealed.profile?.clientCapabilities,
+            signal: c.req.raw.signal,
+            credential: {
+              externalId: caller.externalId,
+              organizationId: caller.organizationId,
+            },
+            onInput: () => waitingForInput(),
+          })
+        : undefined;
     const authorized = await createAuthorizedManager(
       {
         authMethod: "workos_api_key",
@@ -101,6 +118,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
         : undefined,
       {
         lazyConnect: true,
+        ...(input ? { elicitationCallback: input.host.callback } : {}),
         ...(context.delivery === "bridge" && sealed.profile
           ? { initializePins: sealed.profile }
           : {}),
@@ -123,6 +141,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
       signal: c.req.raw.signal,
       onError: reportNativeFailure,
       run: async (waiting, signal) => {
+        waitingForInput = waiting;
         try {
           const config = authorized.authorizedServerConfigs?.[serverId];
           if (
@@ -136,6 +155,26 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
           if (context.delivery === "bridge") {
             if (!sealed.profile)
               throw new Error("Enhanced profile is unavailable.");
+            if (input)
+              authorized.manager.setMrtrInputCollector(
+                serverId,
+                input.host.collectMrtrForServer(serverId),
+                {
+                  aroundLeg: createForwardingMrtrGate({
+                    control,
+                    approval: forwardingApproval(
+                      control,
+                      context.owner,
+                      caller.projectId,
+                    ),
+                    policy: sealed.policy,
+                    turnId: caller.turnId,
+                    policyDigest: context.policyDigest,
+                    expiresAt: caller.expiresAt,
+                    signal,
+                  }),
+                },
+              );
             await authorized.manager.connectToServer(serverId, config, {
               signal,
             });
@@ -259,6 +298,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
             dispatch: (settle) => send(settle),
           });
         } finally {
+          await input?.dispose();
           await authorized.manager.disconnectAllServers();
         }
       },

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { harnessElicitationModes } from "./input-host.js";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { createHash } from "node:crypto";
 import { canonicalJson } from "../tool-approval-token.js";
@@ -99,9 +100,10 @@ export function enhancedConnectionProfiles(
 }
 
 /** Apps are bridged only on the qualified stateless upstream protocol. */
-export function isModernAppsProfile(
+export function isEnhancedMcpProfile(
   manager: MCPClientManager,
   serverId: string,
+  allowElicitation = false,
 ): boolean {
   const info = manager.getInitializationInfo(serverId);
   const caps = info?.clientCapabilities;
@@ -109,10 +111,19 @@ export function isModernAppsProfile(
     info?.protocolVersion !== "2026-07-28" ||
     !caps ||
     Object.keys(caps).some(
-      (key) => key !== "extensions" && key !== "experimental",
+      (key) =>
+        key !== "extensions" &&
+        key !== "experimental" &&
+        !(allowElicitation && key === "elicitation"),
     )
   )
     return false;
+  if (
+    caps.elicitation &&
+    (!allowElicitation || !harnessElicitationModes(caps).length)
+  )
+    return false;
+  if (caps.experimental && Object.keys(caps.experimental).length) return false;
   const config = manager.getServerConfig(serverId);
   if (
     !config ||
@@ -122,6 +133,7 @@ export function isModernAppsProfile(
   )
     return false;
   const extensions = caps.extensions;
+  if (!extensions) return allowElicitation && !!caps.elicitation;
   if (
     !extensions ||
     Object.keys(extensions).length !== 1 ||
@@ -143,7 +155,6 @@ export function isModernAppsProfile(
     mimeTypes[0] !== "text/html;profile=mcp-app"
   )
     return false;
-  if (caps.experimental && Object.keys(caps.experimental).length) return false;
   return true;
 }
 

@@ -1,13 +1,11 @@
 import {
   validateInputRequests,
+  validateEmbeddedClientRequest,
   type ElicitationCallbackRequest,
   type MrtrInputCollector,
   type TaskInputHandlers,
 } from "@mcpjam/sdk";
-import {
-  specTypeSchemas,
-  type ElicitResult,
-} from "@modelcontextprotocol/client";
+import { type ElicitResult } from "@modelcontextprotocol/client";
 import { z } from "zod/v4";
 import { withAbort } from "./forwarding/execution-gate.js";
 
@@ -16,6 +14,27 @@ export type HarnessInputHandler = (
   signal: AbortSignal,
 ) => Promise<ElicitResult>;
 
+const elicitationModes = z
+  .object({
+    form: z.object({}).strict().optional(),
+    url: z.object({}).strict().optional(),
+  })
+  .strict();
+
+export function harnessElicitationModes(
+  capabilities: unknown,
+): ("form" | "url")[] {
+  const caps = z
+    .object({ elicitation: elicitationModes })
+    .safeParse(capabilities);
+  if (!caps.success) return [];
+  const { form, url } = caps.data.elicitation;
+  return [
+    ...(form || !url ? ["form" as const] : []),
+    ...(url ? ["url" as const] : []),
+  ];
+}
+
 const inputParams = z.object({
   message: z.string(),
   mode: z.enum(["form", "url"]).optional(),
@@ -23,13 +42,9 @@ const inputParams = z.object({
   url: z.string().optional(),
   elicitationId: z.string().optional(),
 });
-
 async function validatedParams(params: unknown) {
-  const result = await specTypeSchemas.ElicitRequest["~standard"].validate({
-    method: "elicitation/create",
-    params,
-  });
-  if (result.issues) throw new Error("Malformed harness elicitation request");
+  const result = validateEmbeddedClientRequest("elicitation/create", params);
+  if (!result.ok) throw new Error("Malformed harness elicitation request");
   return inputParams.parse(params);
 }
 
@@ -133,5 +148,9 @@ export function createHarnessInputHost(args: {
     },
   };
 
-  return { answer, collectMrtrForServer, taskHandlers };
+  const callback = (
+    request: ElicitationCallbackRequest,
+    signal = args.signal,
+  ) => answer(request, signal);
+  return { answer, callback, collectMrtrForServer, taskHandlers };
 }

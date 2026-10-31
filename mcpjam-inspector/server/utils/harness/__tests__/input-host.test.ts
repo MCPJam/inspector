@@ -28,7 +28,6 @@ const url = {
     mode: "url",
     message: "Connect account",
     url: "https://example.com/consent",
-    elicitationId: "consent-1",
   },
 } satisfies InputRequests[string];
 
@@ -179,7 +178,8 @@ describe("shared harness input contract", () => {
   });
 
   it.each([
-    { mode: "url", message: "Missing URL and elicitation id" },
+    { mode: "url", message: "Missing URL" },
+    { mode: "url", message: "Invalid URL", url: "not a URL" },
     { message: "Missing form schema" },
   ])(
     "refuses malformed input before opening another form: %j",
@@ -198,6 +198,31 @@ describe("shared harness input contract", () => {
       expect(handle).not.toHaveBeenCalled();
     },
   );
+
+  it("accepts modern URL input without inventing a legacy elicitation id", async () => {
+    const handle = vi.fn<HarnessInputHandler>(async () => ({
+      action: "accept",
+    }));
+    const inputs = host(handle);
+    await expect(
+      inputs.collectMrtrForServer("server")({
+        state: initInputRequiredState({ method: "tools/call", params: {} }),
+        inputRequests: { consent: url },
+      }),
+    ).resolves.toEqual({ consent: { action: "accept" } });
+    await expect(
+      inputs.taskHandlers.elicitation?.(url.params, {
+        serverId: "server",
+        taskId: "task",
+        inputKey: "consent",
+      }),
+    ).resolves.toEqual({ action: "accept" });
+    expect(handle).toHaveBeenCalledTimes(2);
+    for (const [request] of handle.mock.calls) {
+      expect(request.mode).toBe("url");
+      expect(request).not.toHaveProperty("elicitationId");
+    }
+  });
 
   it("withdraws sibling forms when a round cannot collect all answers", async () => {
     const withdrawn = vi.fn();

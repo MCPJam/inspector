@@ -10,7 +10,10 @@ import {
   forwardingOwnerSchema,
   ExecutionControlError,
 } from "../../utils/harness/forwarding/execution-control.js";
-import { executeForwardedOperation } from "../../utils/harness/forwarding/execution-gate.js";
+import {
+  executeForwardedOperation,
+  type GateApproval,
+} from "../../utils/harness/forwarding/execution-gate.js";
 import { forwardingApproval } from "../../utils/harness/forwarding/approval.js";
 import { forwardingApprovalId } from "@/shared/forwarding-approval";
 import { readNativeBody } from "../../utils/harness/forwarding/native-wire.js";
@@ -21,7 +24,11 @@ import {
 import { isVisibleToModelOnly } from "@mcpjam/sdk/widget-runtime";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import { createNativeRpcLogger } from "../../utils/harness/forwarding/native-rpc-logs.js";
-import { isModernAppsProfile } from "../../utils/harness/harness-connection-profile.js";
+import { isEnhancedMcpProfile } from "../../utils/harness/harness-connection-profile.js";
+import { forwardingInputHost } from "../../utils/harness/forwarding/owned-input.js";
+import { createForwardingMrtrGate } from "../../utils/harness/forwarding/mrtr-gate.js";
+import { harnessElicitationModes } from "../../utils/harness/input-host.js";
+import { HOSTED_HARNESS_INPUT_VERSION } from "@/shared/hosted-elicitation";
 import {
   conformanceKnobsFromMcpProfile,
   mirrorToolParamHeadersFromMcpProfile,
@@ -72,6 +79,24 @@ harnessWidgets.post("/widget", async (c) => {
     if (!allowed.includes(scope.organizationId))
       return c.json({ error: "App forwarding is unavailable." }, 403);
     const pins = buildHostConnectionPins(scope.hostConfig, 300_000);
+    const capabilities = hostClientCapabilities(scope.hostConfig);
+    if (
+      harnessElicitationModes(capabilities).length &&
+      c.req.header("x-mcpjam-harness-input-version") !==
+        String(HOSTED_HARNESS_INPUT_VERSION)
+    )
+      return c.json(
+        { error: "Reload this chat before answering App input." },
+        409,
+      );
+    const input = await forwardingInputHost({
+      credential: { bearer },
+      projectId: scope.projectId,
+      chatSessionId: scope.chatSessionId,
+      serverId: owner.serverId,
+      capabilities,
+      signal: c.req.raw.signal,
+    });
     const initializePins = {
       ...pins.initializePins,
       ...conformanceKnobsFromMcpProfile(scope.hostConfig.mcpProfile),
@@ -86,9 +111,10 @@ harnessWidgets.post("/widget", async (c) => {
       [owner.serverId],
       pins.timeoutMs,
       undefined,
-      hostClientCapabilities(scope.hostConfig),
+      capabilities,
       {
         lazyConnect: true,
+        ...(input ? { elicitationCallback: input.host.callback } : {}),
         initializePins,
         mcpProtocolVersionsByServerId: pins.mcpProtocolVersionsByServerId,
         requestTimeoutByServerId: pins.requestTimeoutByServerId,
@@ -122,9 +148,42 @@ harnessWidgets.post("/widget", async (c) => {
         if (!closed) controller.enqueue(encoder.encode(": waiting\n\n"));
       }, 10_000);
       try {
+        const baseApproval = forwardingApproval(
+          control,
+          owner,
+          scope.projectId,
+        );
+        const approval: GateApproval = {
+          ...baseApproval,
+          ask: async (request) => {
+            send({
+              type: "approval",
+              id: forwardingApprovalId(
+                request.executionId,
+                owner,
+                request.approvalId,
+              ),
+            });
+            return baseApproval.ask(request);
+          },
+        };
         const config = authorized.authorizedServerConfigs?.[owner.serverId];
         if (!config || !("url" in config))
           throw new Error("App connection unavailable");
+        if (input)
+          authorized.manager.setMrtrInputCollector(
+            owner.serverId,
+            input.host.collectMrtrForServer(owner.serverId),
+            {
+              aroundLeg: createForwardingMrtrGate({
+                control,
+                approval,
+                turnId: scope.turnId,
+                expiresAt: Math.min(scope.expiresAt, Date.now() + 300_000),
+                signal: abort.signal,
+              }),
+            },
+          );
         await authorized.manager.connectToServer(owner.serverId, config, {
           signal: abort.signal,
         });
@@ -133,7 +192,7 @@ harnessWidgets.post("/widget", async (c) => {
           undefined,
           { signal: abort.signal },
         );
-        if (!isModernAppsProfile(authorized.manager, owner.serverId))
+        if (!isEnhancedMcpProfile(authorized.manager, owner.serverId, !!input))
           throw new Error(
             "App connection no longer matches its qualified profile",
           );
@@ -142,7 +201,6 @@ harnessWidgets.post("/widget", async (c) => {
         );
         if (!tool || isVisibleToModelOnly(tool._meta))
           throw new Error("App tool unavailable");
-        const approval = forwardingApproval(control, owner, scope.projectId);
         const result = await executeForwardedOperation({
           control,
           signal: abort.signal,
@@ -155,20 +213,7 @@ harnessWidgets.post("/widget", async (c) => {
             paramsPresent: true,
             expiresAt: Math.min(scope.expiresAt, Date.now() + 300_000),
           },
-          approval: {
-            ...approval,
-            ask: async (request) => {
-              send({
-                type: "approval",
-                id: forwardingApprovalId(
-                  request.executionId,
-                  owner,
-                  request.approvalId,
-                ),
-              });
-              return approval.ask(request);
-            },
-          },
+          approval,
           dispatch: async (settle, snapshot) => {
             const params = z
               .object({
@@ -213,6 +258,7 @@ harnessWidgets.post("/widget", async (c) => {
       } finally {
         clearInterval(heartbeat);
         c.req.raw.signal.removeEventListener("abort", onAbort);
+        await input?.dispose();
         await authorized.manager.disconnectAllServers();
         if (!closed) {
           closed = true;

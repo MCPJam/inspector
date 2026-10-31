@@ -86,6 +86,10 @@ import {
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
+import {
+  useOwnedChatElicitations,
+  mergeChatElicitations,
+} from "./use-owned-chat-elicitations";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
@@ -247,6 +251,7 @@ import {
 } from "@/shared/hosted-rpc-log";
 import {
   HOSTED_ELICITATION_VERSION,
+  HOSTED_HARNESS_INPUT_VERSION,
   isHostedElicitationDataPart,
   type HostedElicitationAction,
   type HostedElicitationRequestEvent,
@@ -3807,6 +3812,7 @@ export function useChatSession(
         // any server that elicits. The server only registers its callback —
         // and therefore only advertises `elicitation` — when it sees this.
         hostedElicitationVersion: HOSTED_ELICITATION_VERSION,
+        hostedHarnessInputVersion: HOSTED_HARNESS_INPUT_VERSION,
         // Handshake: tells the server this bundle can render a suspended MRTR
         // (`input_required`) round AND resume it (§12.5). The server only
         // registers the suspending collector — and therefore only takes the
@@ -6181,6 +6187,13 @@ export function useChatSession(
     setPendingElicitations((queue) => (queue.length > 0 ? [] : queue));
   }, [isStreaming]);
 
+  const ownedElicitations = useOwnedChatElicitations({
+    enabled:
+      isAuthenticated && (HOSTED_MODE || hostedRequiresWebChatApi),
+    projectId: hostedProjectId ?? undefined,
+    chatSessionId,
+  });
+
   const respondToElicitation = useCallback(
     async (answer: {
       rendezvousId: string;
@@ -6341,7 +6354,10 @@ export function useChatSession(
     traceViewsSupported,
 
     // Elicitation (hosted): a server is blocking a tool call on this user.
-    pendingElicitations,
+    pendingElicitations: mergeChatElicitations(
+      pendingElicitations,
+      ownedElicitations,
+    ),
     respondToElicitation,
     elicitationResponding,
     urlElicitationRequired,

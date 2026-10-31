@@ -181,6 +181,8 @@ export interface HostedElicitationBridgeOptions {
   convexBearer: string;
   projectId: string;
   chatSessionId?: string;
+  /** Remote harness requests are delivered by the actor-owned chat query. */
+  delivery?: "stream" | "owned-chat-query";
   /** Display labels only; `serverId` stays the trusted anchor. */
   serverNamesById: Record<string, string>;
   /** The turn's abort signal — a closed stream must not leave a pending row. */
@@ -252,7 +254,10 @@ export class HostedElicitationBridge {
   private disposal: Promise<void> | undefined;
   private disposed = false;
 
-  constructor(private readonly options: HostedElicitationBridgeOptions) {}
+  constructor(private readonly options: HostedElicitationBridgeOptions) {
+    if (options.delivery === "owned-chat-query" && !options.chatSessionId)
+      throw new Error("Owned elicitation delivery requires a chat session");
+  }
 
   attachStreamWriter(writer: ElicitationChunkWriter): void {
     this.writer = writer;
@@ -276,7 +281,8 @@ export class HostedElicitationBridge {
 
     // Pre-writer: nothing can render this, and its consumer is the very stream
     // that hasn't been created yet. Fail fast rather than deadlock to TTL.
-    if ((!this.writer && !this.options.pluginWorkspaceId) || this.disposed) {
+    if ((!this.writer && !this.options.pluginWorkspaceId &&
+      this.options.delivery !== "owned-chat-query") || this.disposed) {
       logger.warn(
         "[elicitation] request arrived with no live stream; cancelling",
         { serverId, mode, disposed: this.disposed },

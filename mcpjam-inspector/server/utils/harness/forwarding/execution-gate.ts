@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { forwardingExecutionContext } from "./execution-context.js";
 import {
   decideToolPolicyFromSnapshot,
   type ToolPolicySnapshot,
@@ -236,7 +237,10 @@ export async function executeForwardedOperation<T>(args: {
       .then(() => undefined));
   try {
     args.signal?.throwIfAborted();
-    return await args.dispatch(settle, snapshot);
+    return await forwardingExecutionContext.run(
+      { executionId: prepared.executionId },
+      () => args.dispatch(settle, snapshot),
+    );
   } catch (error) {
     await settle({ outcome: "incomplete" });
     throw error;
