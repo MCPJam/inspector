@@ -2,6 +2,7 @@ import { useMutation } from "convex/react";
 import { useSoftQuery } from "@/hooks/use-soft-query";
 
 export type NotificationType =
+  | "organization_domain_default"
   | "project_added"
   | "project_removed"
   | "workspace_added"
